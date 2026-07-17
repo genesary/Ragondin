@@ -1,0 +1,63 @@
+[workspace]
+resolver = "2"
+members = [
+    "core/rag-types",
+    "core/rag-pipeline",
+    "core/rag-contracts",
+    "wire/rag-proto",
+    "wire/rag-remote",
+    "engine/rag-engine",
+    "eval/rag-metrics",
+    "eval/rag-benchmarks",
+    "eval/rag-harness",
+    "runtime/rag-config",
+    "runtime/rag-server",
+    "runtime/rag-experiments",
+    "testkit/rag-conformance",
+    "bin/rag",
+]
+
+# Metadata shared by every member crate. A member opts in with
+# `version.workspace = true`, `edition.workspace = true`, etc.
+[workspace.package]
+version = "0.0.0"
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/genesary/benchmark-platform"
+rust-version = "1.85"
+
+# The single source of truth for dependency versions (AGENTS.md: "Dependency
+# versions are declared only in [workspace.dependencies]"). A member crate
+# references a dependency with `<name>.workspace = true` and never pins a
+# version inline. Internal path dependencies live here too, so the graph is
+# described in exactly one place.
+[workspace.dependencies]
+# --- internal crates (the dependency graph, centralized) ---
+rag-types = { path = "core/rag-types" }
+rag-pipeline = { path = "core/rag-pipeline" }
+rag-contracts = { path = "core/rag-contracts" }
+rag-proto = { path = "wire/rag-proto" }
+rag-remote = { path = "wire/rag-remote" }
+rag-engine = { path = "engine/rag-engine" }
+rag-metrics = { path = "eval/rag-metrics" }
+rag-benchmarks = { path = "eval/rag-benchmarks" }
+rag-harness = { path = "eval/rag-harness" }
+rag-config = { path = "runtime/rag-config" }
+rag-server = { path = "runtime/rag-server" }
+rag-experiments = { path = "runtime/rag-experiments" }
+rag-conformance = { path = "testkit/rag-conformance" }
+
+# --- third-party dependencies ---
+# Kept deliberately small. Heavy backends (tantivy, candle, ort, vector-store
+# and LLM clients) are NOT listed here yet: they arrive with the components
+# that need them, each behind a feature flag (INV-4, and the lean-default-build
+# rule). `serde` is the only dependency the core (`rag-types`) is permitted.
+serde = { version = "1.0", features = ["derive"] }
+sha2 = "0.10"                                      # canonical logical-form hashing (rag-pipeline)
+async-trait = "0.1"                                # dyn-compatible async traits (frozen: not RPITIT)
+thiserror = "2"                                    # typed library errors
+anyhow = "1"                                       # error aggregation, binaries only
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+tower = "0.5"                                      # serving envelope only (INV-11)
+tonic = "0.12"                                     # gRPC transport for the wire layer
+prost = "0.13"                                     # protobuf messages for the wire layer

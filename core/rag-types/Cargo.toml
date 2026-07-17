@@ -1,0 +1,13 @@
+[package]
+name = "rag-types"
+description = "Core value types shared across the platform (Document, Chunk, Query, …)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+# INV-4: the core stays light. `serde` is the ONLY dependency this crate is
+# permitted. No workspace crate, no heavy library. CI enforces this.
+[dependencies]
+serde = { workspace = true }

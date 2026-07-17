@@ -1,0 +1,16 @@
+[package]
+name = "rag-harness"
+description = "Evaluation harness: benchmark → engine → metrics → run."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+# One of the two thin drivers over the SAME `rag-engine` (the other is
+# `rag-server`). Depending on the same engine crate is what makes
+# evaluation/serving skew structurally impossible (P1).
+[dependencies]
+rag-engine = { workspace = true }
+rag-metrics = { workspace = true }
+rag-benchmarks = { workspace = true }

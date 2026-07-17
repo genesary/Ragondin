@@ -1,0 +1,6 @@
+# Pin the toolchain to the STABLE channel. AGENTS.md: "stable Rust, never
+# nightly." Pinning the channel (rather than a fixed version) keeps the build
+# on the current stable release while making a nightly dependency impossible.
+[toolchain]
+channel = "stable"
+components = ["rustfmt", "clippy"]
