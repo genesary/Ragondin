@@ -1,0 +1,54 @@
+name: Decision issue
+description: An architectural question an agent must not answer alone. Resolves into exactly one new ADR in docs/adr/.
+title: "decision: <the question>"
+labels: ["type:decision", "needs-decision"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Open a decision issue when an implementation task requires an architectural choice that `AGENTS.md` and `docs/` do not already settle — or when you believe a frozen decision is wrong. Do **not** guess and do **not** implement anything that presupposes an answer. See the `opening-a-decision-issue` skill.
+
+  - type: textarea
+    id: question
+    attributes:
+      label: The question
+      description: State the specific choice that must be made, sharply and in one place.
+    validations:
+      required: true
+
+  - type: textarea
+    id: why-unsettled
+    attributes:
+      label: Why AGENTS.md and docs/ do not settle it
+      description: Cite what you checked. If the docs almost answer it, say exactly where they stop. This distinguishes a real decision from a rule that was missed.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives and trade-offs
+      description: The genuine options, each with what it costs and what it buys. Do not pre-select a winner — give the decider enough to choose.
+    validations:
+      required: true
+
+  - type: textarea
+    id: blocks
+    attributes:
+      label: Which issues it blocks
+      description: The issues or work that cannot proceed until this is decided. This sets the priority.
+    validations:
+      required: true
+
+  - type: textarea
+    id: left-unimplemented
+    attributes:
+      label: What was deliberately left unimplemented while waiting
+      description: The exact code, crate, or file you did NOT write because it would presuppose an answer. The single most useful line for whoever picks the work back up.
+    validations:
+      required: true
+
+  - type: markdown
+    attributes:
+      value: |
+        **Outcome:** this issue resolves into exactly one new accepted ADR in `docs/adr/`, stating the context, the decision, the alternatives rejected, and the consequences. The ADR — not this issue — is the durable, citable record.

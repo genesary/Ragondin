@@ -1,0 +1,48 @@
+name: Bug report
+description: Something behaves incorrectly.
+title: "bug: <short summary>"
+labels: ["type:bug"]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: The incorrect behaviour you observed.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+      description: The behaviour you expected instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: A minimal, mechanical reproduction — ideally a command or a failing test.
+      value: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Toolchain version, OS, relevant feature flags, the crate(s) involved.
+    validations:
+      required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Logs, `ExecutionTrace` excerpts, or anything else that helps.
+    validations:
+      required: false
