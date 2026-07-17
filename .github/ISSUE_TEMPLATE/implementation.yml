@@ -1,0 +1,95 @@
+name: Implementation issue
+description: An agent-ready unit of work. Self-sufficient: the agent has no prior conversation, so restate all context here.
+title: "<verb> <the thing to build>"
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        An implementation issue is the complete specification an agent works from. It, plus `AGENTS.md` and `docs/`, is the entire brief — the design is settled, so do **not** ask the agent to re-derive it.
+
+        Fill in every section. An empty section is a gap the agent will fill by guessing.
+
+  - type: textarea
+    id: meta
+    attributes:
+      label: Type / Milestone / Labels
+      description: The issue type, its milestone (M0…M7), and the labels to apply (area, crate, size, readiness).
+      value: |
+        - **Type:**
+        - **Milestone:**
+        - **Labels:**
+    validations:
+      required: true
+
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: Blocked by / Blocks
+      description: Which issues must land first, and which issues this one unblocks. Two issues may run in parallel only if they touch disjoint crates.
+      value: |
+        - **Blocked by:**
+        - **Blocks:**
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: >
+        Self-sufficient. The agent has access to no prior conversation; all context it needs must be restated in the issue itself.
+        Explain the problem, the relevant part of the architecture, and why this work exists.
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope-in
+    attributes:
+      label: Scope — IN
+      description: Exactly what to build. The files and crates the agent may touch.
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope-out
+    attributes:
+      label: Scope — OUT
+      description: What the agent must NOT touch — prevents collisions with other agents working in parallel on disjoint crates.
+    validations:
+      required: true
+
+  - type: textarea
+    id: invariants
+    attributes:
+      label: Invariants you must not violate
+      description: The specific invariants (INV-1…INV-11) this work is near, and how to respect them. See the `architecture-invariants` skill.
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: >
+        Mechanically verifiable: a command or a test, never a judgment call. Each criterion must be satisfiable by running something.
+      value: |
+        - [ ]
+    validations:
+      required: true
+
+  - type: textarea
+    id: tests
+    attributes:
+      label: Required tests
+      description: The tests that must exist, written before the implementation (test-driven).
+    validations:
+      required: true
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Implementation notes
+      description: Hints, references to ADRs and docs, gotchas. Anything that helps without prescribing more than necessary.
+    validations:
+      required: false
