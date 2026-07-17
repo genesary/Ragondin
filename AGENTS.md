@@ -57,7 +57,7 @@ Architectural constraints, not style preferences. **A PR that violates one is re
 Dependency arrows point **down only**. Cargo forbids cycles, which makes these boundaries compiler-enforced rather than conventional.
 
 ```
-bins → planes → engine → contracts → ir → types
+bins → planes → engine → contracts → pipeline → types
                   ↑           ↑
             components ───────┘
 ```

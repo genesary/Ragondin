@@ -9,12 +9,21 @@ rust-version.workspace = true
 
 # INV-5 (CI-enforced): the engine knows only traits. It depends on
 # `rag-contracts` (the traits), the IR (`rag-pipeline`), the value types
-# (`rag-types`), and the remote adapter (`rag-remote`) — and on NO crate under
-# `components/`. A component crate appearing in this manifest's dependency
-# closure fails the build.
+# (`rag-types`) — and on NO crate under `components/`. A component crate
+# appearing in this manifest's dependency closure fails the build.
+#
+# `rag-remote` (the gRPC wire adapter → rag-proto → tonic/prost) is an OPTIONAL
+# dependency behind the `remote` feature, OFF by default: a retrieval-only build
+# stays lean (code-architecture.md §11.6) and nothing in M2 uses a Remote
+# component. Any engine code touching `rag-remote` must sit behind
+# `#[cfg(feature = "remote")]`.
 [dependencies]
 rag-contracts = { workspace = true }
 rag-pipeline = { workspace = true }
 rag-types = { workspace = true }
-rag-remote = { workspace = true }
+rag-remote = { workspace = true, optional = true }
 tokio = { workspace = true }
+
+[features]
+default = []
+remote = ["dep:rag-remote"]

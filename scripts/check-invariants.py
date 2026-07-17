@@ -6,7 +6,8 @@ that wall. It parses `cargo metadata` (no third-party dependency, works on any
 runner with Python 3) and enforces:
 
   INV-4 — the core stays light.
-          `rag-types` and `rag-contracts` must carry NO heavy dependency
+          `rag-types`, `rag-pipeline` and `rag-contracts` must carry NO heavy
+          dependency
           (tantivy, tonic, prost, ort, candle-*, vector-store clients, reqwest,
           hyper, ML runtimes). Someone implementing a component compiles only
           the contracts and the value types — never the whole engine.
@@ -57,8 +58,11 @@ DENY_EXACT = {
 }
 DENY_PREFIX = ("candle",)  # candle-core, candle-nn, candle-transformers, …
 
-# The core crates INV-4 protects.
-CORE_CRATES = ("rag-types", "rag-contracts")
+# The core crates INV-4 protects. `rag-pipeline` is included because
+# code-architecture.md §4.1 states the whole of `core/` carries no heavy
+# dependency, and it is an INV-1 stable boundary (INV-3 value types) just like
+# the other two — leaving it unguarded would let the "core is light" rule rot.
+CORE_CRATES = ("rag-types", "rag-pipeline", "rag-contracts")
 
 
 def is_heavy(name: str) -> bool:
@@ -160,14 +164,18 @@ def main() -> int:
     if inv4:
         ok = False
         print("INV-4 VIOLATION — the core must stay light.")
-        print("  rag-types and rag-contracts must carry no heavy dependency, so that")
+        print("  rag-types, rag-pipeline and rag-contracts must carry no heavy dependency, so")
+        print("  that")
         print("  someone implementing a component compiles only the contracts and the")
         print("  value types — not the whole engine. A heavy dependency here is an")
         print("  abstraction leak.")
         for crate, offenders in inv4:
             print(f"    {crate} pulls in heavy dependency: {', '.join(offenders)}")
     else:
-        print("INV-4 OK — core (rag-types, rag-contracts) carries no heavy dependency.")
+        print(
+            "INV-4 OK — core (rag-types, rag-pipeline, rag-contracts) carries no heavy "
+            "dependency."
+        )
 
     component_names, inv5 = check_inv5(md, pkgs_by_id, edges)
     if inv5:
