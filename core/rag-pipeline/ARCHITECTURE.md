@@ -31,8 +31,3 @@ mandatory termination guard), and the open `Extension` variant.
 - **The wire format is separate (INV-9).** The serialized (wire) form is
   hand-maintained and versioned in `rag-config`/`rag-proto`. Never
   `#[derive(Serialize)]` these internal types to produce the wire format.
-
-> Historical note: `AGENTS.md` and some skills refer to this crate as `rag-ir`.
-> The workspace layout in `docs/code-architecture.md` §4 is authoritative and
-> names it `rag-pipeline` ("`pipeline`, not `ir`"); the invariants (INV-1,
-> INV-3, INV-8, INV-9) are identical under either name.

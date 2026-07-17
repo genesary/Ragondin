@@ -26,3 +26,5 @@ target
 .claude/*
 !.claude/skills/
 .tokensave
+# Local, uncommitted external-review prompt
+/REVIEW_PROMPT.md

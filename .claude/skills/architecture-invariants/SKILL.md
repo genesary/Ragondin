@@ -21,9 +21,9 @@ Hold these in working memory first. They are the ones a well-meaning change walk
 
 | ID | Rule |
 |---|---|
-| **INV-1** | `rag-types`, `rag-ir`, `rag-contracts` are **stable API boundaries**. Breaking their public API is a deliberate, versioned act — never a side effect of another change. |
+| **INV-1** | `rag-types`, `rag-pipeline`, `rag-contracts` are **stable API boundaries**. Breaking their public API is a deliberate, versioned act — never a side effect of another change. |
 | **INV-2** | `rag-engine` is **not an API boundary** and never will be. Refactor it freely; do not treat its internals as stable. |
-| **INV-3** | `rag-types` and `rag-ir` contain **value types only**: no global context, no interner, no I/O. A value is fully determined by its content. |
+| **INV-3** | `rag-types` and `rag-pipeline` contain **value types only**: no global context, no interner, no I/O. A value is fully determined by its content. |
 | **INV-4** | **The core stays light.** `rag-types` and `rag-contracts` must carry **no heavy dependency** — no `tantivy`, `tonic`, `ort`, `candle`, vector-store client, or HTTP client. `serde` at most. *CI-enforced.* |
 | **INV-5** | **The engine knows only traits.** `rag-engine` must not depend on any crate under `components/`. *CI-enforced.* |
 | **INV-6** | **No global state.** The component registry lives on an `EngineContext` passed explicitly as a parameter. Never use a static global registry (`inventory`, `linkme`, or equivalent). |
