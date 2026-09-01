@@ -569,6 +569,7 @@ dependencies = [
  "rag-pipeline",
  "rag-types",
  "thiserror",
+ "tokio",
 ]
 
 [[package]]
