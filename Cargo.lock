@@ -611,6 +611,7 @@ version = "0.0.0"
 dependencies = [
  "rag-types",
  "serde",
+ "serde_json",
  "sha2",
 ]
 
