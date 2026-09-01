@@ -15,7 +15,7 @@
 pub mod node;
 
 pub use node::{
-    ExtensionNode, FusionNode, LogicalNode, NodeId, ParamValue, RerankerNode, RetrieverNode,
+    ExtensionNode, FusionNode, LogicalNode, NodeId, ParamValue, Params, RerankerNode, RetrieverNode,
 };
 
 #[cfg(test)]

@@ -6,6 +6,13 @@
 //! (INV-3): plain data, no trait objects, no I/O. Edges are data flow — a node
 //! names the ids of the nodes it consumes, in `inputs`.
 //!
+//! **`inputs` is positional and order-significant.** ADR-C16 derives a node's
+//! consumed kinds from its variant, and a variant with heterogeneous ports — a
+//! reranker consumes a query *and* a chunk list — can only address them by
+//! position. Canonicalization (#10) must therefore **never reorder `inputs`**:
+//! two orderings of the same legs are two configurations, even where the
+//! component itself is commutative.
+//!
 //! **The variant is the sole source of a node's port kinds.** ADR-C16 derives
 //! the `ValueKind` a node produces and consumes by matching on its
 //! `LogicalNode` variant, so no port declaration ever appears in a
@@ -53,8 +60,27 @@ impl NodeId {
 /// hash (INV-8) that #10 computes over the canonical logical form.
 ///
 /// `ParamValue` implements no total order, because `f64` admits none. Canonical
-/// ordering comes from the `BTreeMap` that holds the parameters, whose keys
-/// iterate in sorted order regardless of insertion order.
+/// ordering of *keys* comes from the [`Params`] `BTreeMap`, whose keys iterate
+/// in sorted order regardless of insertion order. Canonicalizing the *values*
+/// is a separate obligation, discharged as follows.
+///
+/// # The float contract
+///
+/// [`ParamValue::Float`] holds an IEEE-754 double, and **only finite values are
+/// within contract**:
+///
+/// - **Non-finite values (`NaN`, `±∞`) are out of contract.** They do not round
+///   trip — JSON encodes them as `null` and then refuses to read them back —
+///   and `NaN` costs `PartialEq` its reflexivity, so a pipeline holding one
+///   stops comparing equal to itself. Rejecting them is validation, hence #9's
+///   job, not this crate's: `ParamValue` is a value type with public variants
+///   (INV-3) and so has no constructor to guard.
+/// - **`-0.0` must be canonicalized to `0.0` before hashing (#10).**
+///   `Float(0.0) == Float(-0.0)` here, but their bit patterns differ, so
+///   hashing a raw `to_bits()` would give two content hashes to two values this
+///   crate calls equal — precisely INV-8's failure mode.
+/// - **`Int` and `Float` are distinct**, deliberately: `k: 60` and `k: 60.0`
+///   are different configurations and hash differently.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum ParamValue {
     String(String),
@@ -103,11 +129,19 @@ pub struct RerankerNode {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ExtensionNode {
     pub id: NodeId,
-    /// Names the *extension node type*, e.g. `"hyde"`.
+    /// Names the *extension node type*, e.g. `"hyde"` — and it is this string
+    /// the registry is keyed on at physical planning.
     ///
     /// Unrelated to ADR-C16's `ValueKind`, which names what travels along an
     /// edge. An extension's port kinds are unknown to the core by construction,
     /// and are resolved from the registry at physical planning.
+    ///
+    /// Note the asymmetry with the primitives, which separate *what* (the
+    /// variant) from *how* (`implementation`) — the separation that lets two
+    /// backends of one technique share a logical hash (§6.1). An extension has
+    /// no such split, so two backends for one extension technique are two
+    /// `kind`s and two logical hashes. This matches issue #7's specified shape;
+    /// it is recorded here so that it stays a decision rather than an accident.
     pub kind: String,
     pub inputs: Vec<NodeId>,
     pub params: Params,
@@ -148,9 +182,9 @@ impl LogicalNode {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeSet, HashMap};
 
-    fn params(pairs: &[(&str, ParamValue)]) -> BTreeMap<String, ParamValue> {
+    fn params(pairs: &[(&str, ParamValue)]) -> Params {
         pairs
             .iter()
             .map(|(k, v)| ((*k).to_string(), v.clone()))
@@ -268,25 +302,25 @@ mod tests {
                 id: NodeId::new("r"),
                 implementation: "bm25".to_string(),
                 inputs: vec![NodeId::new("q")],
-                params: BTreeMap::new(),
+                params: Params::new(),
             }),
             LogicalNode::Fusion(FusionNode {
                 id: NodeId::new("f"),
                 implementation: "rrf".to_string(),
                 inputs: vec![NodeId::new("r")],
-                params: BTreeMap::new(),
+                params: Params::new(),
             }),
             LogicalNode::Reranker(RerankerNode {
                 id: NodeId::new("k"),
                 implementation: "bge".to_string(),
                 inputs: vec![NodeId::new("f")],
-                params: BTreeMap::new(),
+                params: Params::new(),
             }),
             LogicalNode::Extension(ExtensionNode {
                 id: NodeId::new("x"),
                 kind: "hyde".to_string(),
                 inputs: vec![NodeId::new("k")],
-                params: BTreeMap::new(),
+                params: Params::new(),
             }),
         ];
         let ids: Vec<&str> = nodes.iter().map(|n| n.id().as_str()).collect();
@@ -313,7 +347,7 @@ mod tests {
             id: NodeId::new("rrf"),
             implementation: "reciprocal_rank_fusion".to_string(),
             inputs: vec![lexical.id.clone(), dense.id.clone()],
-            params: BTreeMap::new(),
+            params: Params::new(),
         };
         let graph = [
             LogicalNode::Retriever(lexical),
@@ -332,17 +366,94 @@ mod tests {
 
     #[test]
     fn logical_nodes_round_trip_through_serde() {
-        let node = LogicalNode::Extension(ExtensionNode {
-            id: NodeId::new("my_technique"),
-            kind: "hyde".to_string(),
-            inputs: vec![NodeId::new("question")],
-            params: params(&[
-                ("temperature", ParamValue::Float(0.2)),
-                ("enabled", ParamValue::Bool(true)),
-            ]),
-        });
-        let json = serde_json::to_string(&node).unwrap();
-        let back: LogicalNode = serde_json::from_str(&json).unwrap();
-        assert_eq!(back, node);
+        // Every variant, because a `#[serde(skip)]` on any one field would
+        // otherwise ship green while silently dropping a node's identity or
+        // its entire edge set.
+        let nodes = [
+            LogicalNode::Retriever(RetrieverNode {
+                id: NodeId::new("bm25_leg"),
+                implementation: "bm25".to_string(),
+                inputs: vec![NodeId::new("question")],
+                params: params(&[("k", ParamValue::Int(50))]),
+            }),
+            LogicalNode::Fusion(FusionNode {
+                id: NodeId::new("rrf"),
+                implementation: "reciprocal_rank_fusion".to_string(),
+                inputs: vec![NodeId::new("bm25_leg"), NodeId::new("dense_leg")],
+                params: params(&[("k", ParamValue::Float(60.0))]),
+            }),
+            LogicalNode::Reranker(RerankerNode {
+                id: NodeId::new("cross_encoder"),
+                implementation: "bge_reranker".to_string(),
+                inputs: vec![NodeId::new("question"), NodeId::new("rrf")],
+                params: params(&[("top_n", ParamValue::Int(5))]),
+            }),
+            LogicalNode::Extension(ExtensionNode {
+                id: NodeId::new("my_technique"),
+                kind: "hyde".to_string(),
+                inputs: vec![NodeId::new("question")],
+                params: params(&[
+                    ("temperature", ParamValue::Float(0.2)),
+                    ("enabled", ParamValue::Bool(true)),
+                ]),
+            }),
+        ];
+        for node in nodes {
+            let json = serde_json::to_string(&node).unwrap();
+            let back: LogicalNode = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, node, "round trip lost information for {node:?}");
+        }
+    }
+
+    #[test]
+    fn node_ids_serve_as_map_keys_and_sort() {
+        // #9 checks referential integrity with a map keyed by id, and any
+        // `BTreeMap`-keyed adjacency needs the ordering.
+        let mut seen = HashMap::new();
+        seen.insert(NodeId::new("rrf"), 1);
+        assert_eq!(seen.get(&NodeId::new("rrf")), Some(&1));
+        assert_eq!(seen.get(&NodeId::new("absent")), None);
+
+        let sorted: BTreeSet<NodeId> = ["gamma", "alpha", "beta"]
+            .into_iter()
+            .map(NodeId::new)
+            .collect();
+        let sorted: Vec<&str> = sorted.iter().map(NodeId::as_str).collect();
+        assert_eq!(sorted, vec!["alpha", "beta", "gamma"]);
+    }
+
+    #[test]
+    fn param_values_keep_their_full_numeric_width() {
+        // A narrower `Int` would silently truncate a plausible parameter such
+        // as a token budget; a narrower `Float` would saturate to infinity.
+        let wide = [
+            ParamValue::Int(i64::MAX),
+            ParamValue::Int(i64::MIN),
+            ParamValue::Float(1.0e300),
+        ];
+        for case in wide {
+            let json = serde_json::to_string(&case).unwrap();
+            let back: ParamValue = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, case, "width lost for {case:?}");
+        }
+    }
+
+    #[test]
+    fn non_finite_floats_are_outside_the_documented_contract() {
+        // Pinned rather than hidden: this is the boundary #9 must reject at,
+        // and the reason `ParamValue` cannot derive `Eq`.
+        let encoded = serde_json::to_string(&ParamValue::Float(f64::NAN)).unwrap();
+        assert_eq!(encoded, r#"{"Float":null}"#);
+        assert!(
+            serde_json::from_str::<ParamValue>(&encoded).is_err(),
+            "a non-finite float must not silently read back"
+        );
+        // `NaN` costs equality its reflexivity, so such a node stops comparing
+        // equal to itself.
+        assert_ne!(ParamValue::Float(f64::NAN), ParamValue::Float(f64::NAN));
+        // And these two compare equal while their bit patterns differ, which is
+        // why #10 must canonicalize `-0.0` before hashing (INV-8).
+        assert_eq!(ParamValue::Float(0.0), ParamValue::Float(-0.0));
+        assert_ne!(0.0f64.to_bits(), (-0.0f64).to_bits());
     }
 }
