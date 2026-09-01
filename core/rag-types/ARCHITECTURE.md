@@ -20,8 +20,17 @@ on a stable boundary.
   is fully determined by its content. Two equal values are indistinguishable.
 - **The core stays light (INV-4, CI-enforced).** No heavy dependency —
   no `tantivy`, `tonic`, `prost`, `ort`, `candle`, vector-store client, or HTTP
-  client. `serde` is the only dependency permitted. A heavy dependency reaching
-  this crate is an abstraction leak: stop and raise it, do not work around it.
+  client. `serde` is the only dependency permitted **that ships to consumers**;
+  a test-only dev-dependency sits outside INV-4 by design, because it does not
+  reach anyone implementing a component (`scripts/check-invariants.py` excludes
+  dev edges deliberately). A heavy dependency reaching this crate is an
+  abstraction leak: stop and raise it, do not work around it.
+- **The types are not `#[non_exhaustive]`, deliberately.** Adding a field to one
+  of them is therefore a breaking change — which is what INV-1 asks for: a
+  deliberate, versioned act. The alternative would force every construction site
+  through a builder to buy an additive path the crate does not need while it is
+  unpublished at `0.0.0`. Revisit this at the first published version, not
+  before; note that adding `#[non_exhaustive]` later is itself breaking.
 - **No workspace dependency.** This crate depends on no other crate in the
   workspace. If a type here seems to need one, the type is in the wrong crate.
 

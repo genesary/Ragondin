@@ -108,6 +108,10 @@ pub struct Query {
 
 /// A dense vector representation of a text.
 ///
+/// Components are expected to emit finite components: JSON encodes `NaN` and
+/// the infinities as `null`, which then fails to decode back into an `f32`, so
+/// a non-finite value serializes without error and cannot be read back.
+///
 /// An empty embedding is *representable* and reports a dimensionality of zero.
 /// Rejecting it would require a fallible constructor and an error type in a
 /// crate that deliberately has none; a dimensionality disagreement is caught
@@ -156,12 +160,14 @@ pub struct ScoredChunk {
 mod tests {
     use super::*;
     use serde::de::DeserializeOwned;
-    use serde::Serialize;
     use std::fmt::Debug;
 
-    /// Every value type must survive a serde round trip unchanged: the wire
-    /// form is how these cross a process boundary, and a lossy one would make
-    /// a `Remote` component silently disagree with a `Local` one.
+    /// Every value type must survive a serde round trip unchanged.
+    ///
+    /// This proves symmetry only. It cannot see the *shape* of the wire form —
+    /// a renamed field or a lost `#[serde(transparent)]` round trips happily.
+    /// The shape is pinned separately, by the tests that deserialize from a
+    /// literal JSON document.
     fn assert_round_trips<T>(value: &T)
     where
         T: Serialize + DeserializeOwned + PartialEq + Debug,
@@ -188,7 +194,7 @@ mod tests {
 
     #[test]
     fn document_round_trips() {
-        let mut metadata = std::collections::BTreeMap::new();
+        let mut metadata = BTreeMap::new();
         metadata.insert("title".to_string(), "On Cats".to_string());
         metadata.insert("year".to_string(), "1998".to_string());
 
@@ -233,6 +239,58 @@ mod tests {
             chunk: a_chunk(),
             score: 0.87,
         });
+    }
+
+    #[test]
+    fn identifiers_expose_their_inner_value() {
+        assert_eq!(DocId::new("doc-1").as_str(), "doc-1");
+        assert_eq!(ChunkId::new("chunk-1").as_str(), "chunk-1");
+        assert_eq!(QueryId::new("query-1").as_str(), "query-1");
+    }
+
+    #[test]
+    fn embedding_exposes_its_components() {
+        assert_eq!(
+            Embedding::new(vec![0.1, 0.2, 0.3]).as_slice(),
+            [0.1, 0.2, 0.3]
+        );
+    }
+
+    /// The newtypes are `transparent`: they encode as bare scalars, not as
+    /// wrapper objects. Downstream persists runs as JSON on disk (#28) and the
+    /// protobuf mirror (#12) assumes this shape, so it is pinned explicitly —
+    /// a symmetric round trip would not notice it changing.
+    #[test]
+    fn newtypes_encode_as_bare_scalars() {
+        let doc_id = serde_json::to_string(&DocId::new("doc-1")).expect("serializes");
+        assert_eq!(doc_id, r#""doc-1""#);
+
+        let embedding = serde_json::to_string(&Embedding::new(vec![0.5])).expect("serializes");
+        assert_eq!(embedding, "[0.5]");
+    }
+
+    /// Field names are part of the wire form: renaming one is a silent breaking
+    /// change on a stable boundary (INV-1) that a round trip cannot detect.
+    #[test]
+    fn chunk_reads_from_its_documented_shape() {
+        let json = r#"{"id":"chunk-1","text":"the cat sat on the mat","document_id":"doc-1"}"#;
+        let chunk: Chunk = serde_json::from_str(json).expect("field names are the wire form");
+        assert_eq!(chunk, a_chunk());
+    }
+
+    /// Same, for the nested case the retrieval path actually serializes.
+    #[test]
+    fn scored_chunk_reads_from_its_documented_shape() {
+        let json = r#"{"chunk":{"id":"chunk-1","text":"the cat sat on the mat","document_id":"doc-1"},"score":0.87}"#;
+        let scored: ScoredChunk =
+            serde_json::from_str(json).expect("field names are the wire form");
+        assert_eq!(
+            scored,
+            ScoredChunk {
+                chunk: a_chunk(),
+                score: 0.87,
+            }
+        );
     }
 
     #[test]
