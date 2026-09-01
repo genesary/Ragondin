@@ -1,4 +1,136 @@
-//! Deterministic retrieval metrics.
+//! Deterministic retrieval metrics: nDCG@k, recall@k and reciprocal rank.
+//!
+//! These are what make M2 defensible **without an LLM judge** (ADR-10): they
+//! are computed from *qrels* — relevance judgments prepared in advance — and
+//! are fully deterministic. Generation metrics arrive in a later milestone.
+//!
+//! # What these functions are, and are not
+//!
+//! Each one scores **a single query**. The figure a benchmark reports —
+//! "nDCG@10 on SciFact" — is the **mean over queries**, and computing that mean
+//! belongs to the harness. Hence [`reciprocal_rank`] rather than `mrr`: MRR is
+//! the *mean* reciprocal rank, and a function that scores one query cannot be
+//! it. Averaging must also run in a fixed query order, since floating-point
+//! addition is not associative.
+//!
+//! # Inputs
+//!
+//! A ranked list of ids, best first, and the qrels **for that one query** — a
+//! map from id to graded relevance where **`0` means not relevant**. The qrels
+//! type itself belongs to `rag-benchmarks`, which produces it; this crate takes
+//! a borrowed map so that neither crate depends on the other.
+//!
+//! Being *judged* and being *relevant* are different: an id present in the map
+//! with grade `0` was assessed and found irrelevant, and counts for nothing. An
+//! id absent from the map was never assessed, and is likewise treated as
+//! irrelevant — the standard closed-world assumption of TREC-style evaluation.
+//!
+//! # The gain function
+//!
+//! nDCG here uses **linear gain** with a `log2(i + 1)` discount:
+//!
+//! ```text
+//! DCG@k = sum over ranks i in 1..=k of  rel(i) / log2(i + 1)
+//! ```
+//!
+//! This is the Jarvelin-Kekalainen formulation that `trec_eval` implements and
+//! that BEIR reports through `pytrec_eval`, so the figures are comparable to
+//! published BEIR leaderboards.
+//!
+//! **Only the gain function actually matters.** The alternative exponential
+//! gain (`2^rel - 1`) gives different numbers on graded qrels and would make
+//! #33 incomparable to the literature — so if a published BEIR figure ever
+//! fails to reproduce, that is the line to suspect. The *discount base* is not
+//! a real choice: nDCG is a ratio, and changing the base scales `DCG` and
+//! `IDCG` by the same constant, so it cancels. `log2` is written because it is
+//! the conventional statement of the formula, not because the result depends
+//! on it. (Verified by mutation: swapping `log2` for `ln` changes nothing, and
+//! no test can distinguish them.)
+//!
+//! # Degenerate inputs
+//!
+//! Every function returns `0.0` rather than an error or a `NaN`: an empty
+//! ranking, a `k` of zero, qrels with nothing relevant. Note that `trec_eval`
+//! instead **excludes** a query with no relevant document from the mean
+//! altogether, so a harness averaging naively over such queries will report a
+//! lower figure than BEIR does for the same run.
+
+use std::collections::BTreeMap;
+use std::collections::BTreeSet;
+
+use rag_types::DocId;
+
+/// The relevance grade of `id`, with an unjudged document counting as `0`.
+fn grade(relevance: &BTreeMap<DocId, u8>, id: &DocId) -> u8 {
+    relevance.get(id).copied().unwrap_or(0)
+}
+
+/// The discount applied at 1-based rank `i`: `log2(i + 1)`.
+fn discount(rank: usize) -> f64 {
+    ((rank + 1) as f64).log2()
+}
+
+/// Normalized discounted cumulative gain over the first `k` results.
+///
+/// Returns `0.0` when no document is relevant, so the ideal gain is zero and
+/// the ratio would otherwise be undefined. See the module documentation for the
+/// gain function, which is a deliberate convention choice.
+pub fn ndcg_at_k(ranked: &[DocId], relevance: &BTreeMap<DocId, u8>, k: usize) -> f64 {
+    // Summed in rank order, so the result is bit-identical run to run.
+    let dcg: f64 = ranked
+        .iter()
+        .take(k)
+        .enumerate()
+        .map(|(i, id)| f64::from(grade(relevance, id)) / discount(i + 1))
+        .sum();
+
+    // Grade-0 documents are filtered for clarity, not correctness: they sort
+    // last and contribute nothing, so they can never displace a relevant
+    // document inside the cut.
+    let mut ideal: Vec<u8> = relevance.values().copied().filter(|g| *g > 0).collect();
+    ideal.sort_unstable_by(|a, b| b.cmp(a));
+    let idcg: f64 = ideal
+        .into_iter()
+        .take(k)
+        .enumerate()
+        .map(|(i, g)| f64::from(g) / discount(i + 1))
+        .sum();
+
+    if idcg == 0.0 {
+        0.0
+    } else {
+        dcg / idcg
+    }
+}
+
+/// The fraction of relevant documents that appear in the first `k` results.
+///
+/// A document repeated in `ranked` is credited once. Returns `0.0` when nothing
+/// is relevant.
+pub fn recall_at_k(ranked: &[DocId], relevance: &BTreeMap<DocId, u8>, k: usize) -> f64 {
+    let total = relevance.values().filter(|g| **g > 0).count();
+    if total == 0 {
+        return 0.0;
+    }
+    let found: BTreeSet<&DocId> = ranked
+        .iter()
+        .take(k)
+        .filter(|id| grade(relevance, id) > 0)
+        .collect();
+    found.len() as f64 / total as f64
+}
+
+/// The reciprocal of the rank of the first relevant document, or `0.0` if none
+/// appears.
+///
+/// **This is not MRR.** MRR is the mean of this over a query set; see the module
+/// documentation.
+pub fn reciprocal_rank(ranked: &[DocId], relevance: &BTreeMap<DocId, u8>) -> f64 {
+    ranked
+        .iter()
+        .position(|id| grade(relevance, id) > 0)
+        .map_or(0.0, |i| 1.0 / (i + 1) as f64)
+}
 
 #[cfg(test)]
 mod tests {
@@ -7,7 +139,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     fn ids(names: &[&str]) -> Vec<DocId> {
-        names.iter().map(DocId::new).collect()
+        names.iter().copied().map(DocId::new).collect()
     }
 
     /// d1 is highly relevant, d6 is relevant but never retrieved, d4 is
