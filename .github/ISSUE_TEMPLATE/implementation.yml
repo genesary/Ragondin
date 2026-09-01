@@ -47,7 +47,12 @@ body:
     id: scope-in
     attributes:
       label: Scope — IN
-      description: Exactly what to build. The files and crates the agent may touch.
+      description: >-
+        Exactly what to build, and the files and crates the agent may touch. If the
+        work adds a dependency, say so here: the crate's own Cargo.toml and the root
+        [workspace.dependencies] are then in scope too, since AGENTS.md requires
+        versions to be declared only at the root. Writing "<crate>/src/ only" for such
+        an issue states a scope the agent cannot satisfy.
     validations:
       required: true
 
