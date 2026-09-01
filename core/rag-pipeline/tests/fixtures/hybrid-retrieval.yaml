@@ -1,0 +1,36 @@
+# Golden fixture: the hybrid retrieval pipeline of `docs/system-architecture.md`
+# §5.1, trimmed to the nodes the M2 model covers — the query transform, the two
+# retrieval legs, and their fusion. The grader, branch, fallback and generator
+# nodes are omitted; they arrive with M3/M5.
+#
+# Otherwise reproduced verbatim, indentation and comments included. If this file
+# and §5.1 ever disagree, the documentation is the source of truth and this
+# fixture is wrong.
+#
+# Note there is no `version:` key: §5.1 predates the field, and a configuration
+# without one reads as version 1. Note also that `transform` carries neither
+# `inputs` nor `params`, and that `query_transform` is a component family with
+# no `LogicalNode` variant — this level accepts it, because rejecting it is #9's
+# job, not the parser's.
+pipeline:
+  nodes:
+    - id: transform
+      component: query_transform
+      impl: hyde                    # a "named technique" is just an impl value
+
+    - id: dense
+      component: retriever
+      impl: qdrant_dense
+      inputs: [transform]
+      params: { top_k: 50 }
+
+    - id: sparse
+      component: retriever
+      impl: bm25                    # in-process sparse retrieval (§10)
+      inputs: [transform]
+      params: { top_k: 50 }
+
+    - id: fuse
+      component: fusion
+      impl: rrf                     # Reciprocal Rank Fusion — a fusion impl,
+      inputs: [dense, sparse]       # not dedicated engine code

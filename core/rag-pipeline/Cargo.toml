@@ -19,3 +19,4 @@ sha2 = { workspace = true }
 # is unaffected (the invariant check excludes dev-dependencies by design).
 [dev-dependencies]
 serde_json = { workspace = true }
+serde_yaml = { workspace = true }

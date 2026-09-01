@@ -19,6 +19,7 @@
 #![warn(missing_docs)]
 
 pub mod node;
+pub mod raw;
 
 pub use node::{
     ExtensionNode, FusionNode, LogicalNode, NodeId, ParamValue, Params, RerankerNode, RetrieverNode,
