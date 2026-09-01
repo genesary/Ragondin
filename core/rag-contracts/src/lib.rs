@@ -68,9 +68,15 @@ pub enum ComponentError {
     /// The underlying implementation failed.
     ///
     /// Wraps the error of whatever the component is built on — a search index,
-    /// an inference runtime, a store client — so the cause survives the
-    /// boundary instead of being flattened into a string.
-    #[error("backend failure")]
+    /// an inference runtime, a store client — so a `Local` caller can walk
+    /// [`std::error::Error::source`] to the cause instead of parsing a string.
+    ///
+    /// **This fidelity does not cross the wire.** A `Remote` component's error
+    /// arrives as a gRPC status, so `rag-remote` can only reconstruct a message,
+    /// not the original error type. Do not build logic on the concrete type
+    /// behind this box: it is present in-process and absent over the network,
+    /// and the engine cannot tell which face it called (ADR-C3).
+    #[error("backend failure: {0}")]
     Backend(#[source] Box<dyn std::error::Error + Send + Sync>),
 }
 
@@ -91,6 +97,10 @@ pub struct RetrieveParams {
 
 impl RetrieveParams {
     /// Retrieves `top_k` chunks.
+    ///
+    /// Infallible: a `top_k` of zero is representable here and rejected by the
+    /// component, as [`ComponentError::InvalidRequest`] describes. Same stance
+    /// as `rag-types` takes on an empty `Embedding`.
     pub fn new(top_k: usize) -> Self {
         Self { top_k }
     }
@@ -101,7 +111,9 @@ impl RetrieveParams {
 /// Empty today — §5.1's `fuse` node carries no params, and a fusion's own
 /// constants (RRF's `k`) are constructor configuration. It exists so that a
 /// future knob is a field rather than a change to the trait's signature, which
-/// would break every implementation in and out of the repository.
+/// would break every implementation in and out of the repository — including
+/// every third-party `Remote` service, which is the contribution funnel ADR-C3
+/// exists to protect.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct FusionParams {}
@@ -128,6 +140,43 @@ impl RerankParams {
     }
 }
 
+/// Per-call parameters of an [`Embedder`].
+///
+/// Empty today, and deliberately so: **whether an embedder needs to know its
+/// role is an open question.** Asymmetric retrieval models — E5, BGE, GTE —
+/// prefix a query differently from a passage, and embedding both the same way
+/// costs retrieval quality *silently*, with no error anywhere. Either that role
+/// belongs here as a field, or it is constructor configuration and one model
+/// registers twice under two `impl:` names. Both have real costs, so the choice
+/// is not made in passing: see the decision issue linked from
+/// `ARCHITECTURE.md`. The struct exists now so that whichever way it goes, the
+/// answer is a field rather than a change to [`Embedder::embed`]'s signature.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct EmbedParams {}
+
+impl EmbedParams {
+    /// The default embedding parameters.
+    pub fn new() -> Self {
+        Self {}
+    }
+}
+
+/// Per-call parameters of a [`VectorStore`] search.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct SearchParams {
+    /// How many nearest chunks to return.
+    pub top_k: usize,
+}
+
+impl SearchParams {
+    /// Returns the `top_k` nearest chunks.
+    pub fn new(top_k: usize) -> Self {
+        Self { top_k }
+    }
+}
+
 /// A chunk together with its vector, as a [`VectorStore`] holds it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct EmbeddedChunk {
@@ -138,9 +187,20 @@ pub struct EmbeddedChunk {
 }
 
 /// Retrieves candidate chunks for a query.
+///
+/// # The ranking contract
+///
+/// Every trait here that returns `Vec<ScoredChunk>` returns it **sorted by
+/// descending score**, and **every score is finite**. Both halves are
+/// load-bearing and neither is checkable by the type system: nDCG@k and MRR
+/// read position, so an unsorted list silently reports a wrong number; and
+/// `f32` admits `NaN`, on which the `partial_cmp(…).unwrap()` every implementer
+/// writes will panic. `rag-conformance` (#17) is where this is enforced across
+/// implementations.
 #[async_trait]
 pub trait Retriever: Send + Sync {
-    /// Returns the chunks this retriever considers most relevant to `query`.
+    /// Returns the chunks this retriever considers most relevant to `query`,
+    /// sorted by descending score.
     async fn retrieve(
         &self,
         query: &Query,
@@ -152,7 +212,8 @@ pub trait Retriever: Send + Sync {
 #[async_trait]
 pub trait Fusion: Send + Sync {
     /// Fuses `inputs` — one ranked list per upstream retrieval leg, **in the
-    /// order the pipeline wires them** — into a single ranked list.
+    /// order the pipeline wires them** — into a single list, sorted by
+    /// descending score. See [`Retriever`]'s ranking contract.
     async fn fuse(
         &self,
         inputs: Vec<Vec<ScoredChunk>>,
@@ -163,7 +224,8 @@ pub trait Fusion: Send + Sync {
 /// Reorders retrieved chunks against the query.
 #[async_trait]
 pub trait Reranker: Send + Sync {
-    /// Returns `chunks` reordered by relevance to `query`.
+    /// Returns `chunks` reordered by relevance to `query`, sorted by
+    /// descending score. See [`Retriever`]'s ranking contract.
     async fn rerank(
         &self,
         query: &Query,
@@ -176,22 +238,45 @@ pub trait Reranker: Send + Sync {
 #[async_trait]
 pub trait Embedder: Send + Sync {
     /// Embeds `texts`, returning one vector per input **in the same order**.
-    async fn embed(&self, texts: &[String]) -> Result<Vec<Embedding>, ComponentError>;
+    async fn embed(
+        &self,
+        texts: &[String],
+        params: &EmbedParams,
+    ) -> Result<Vec<Embedding>, ComponentError>;
 }
 
 /// The vector index a dense retriever queries.
 #[async_trait]
 pub trait VectorStore: Send + Sync {
     /// Inserts or replaces `entries`, keyed by their chunk ids.
+    ///
+    /// Takes `&self`, not `&mut self`: a `Box<dyn VectorStore>` is shared
+    /// across concurrent queries, so **an implementation that holds mutable
+    /// state must provide its own interior mutability** — a lock, a channel, or
+    /// a client that is already `Sync`. This is a requirement on implementers,
+    /// not an oversight.
     async fn upsert(&self, entries: Vec<EmbeddedChunk>) -> Result<(), ComponentError>;
 
-    /// Returns the `top_k` nearest chunks to `embedding`.
+    /// Returns the nearest chunks to `embedding`, sorted by descending score.
+    /// See [`Retriever`]'s ranking contract.
     async fn search(
         &self,
         embedding: &Embedding,
-        top_k: usize,
+        params: &SearchParams,
     ) -> Result<Vec<ScoredChunk>, ComponentError>;
 }
+
+// D-11: the `Send + Sync` bounds live next to what they constrain, not only in
+// a test whose deletion would remove the guarantee silently.
+const _: fn() = || {
+    fn assert_send_sync<T: Send + Sync + ?Sized>() {}
+    assert_send_sync::<dyn Retriever>();
+    assert_send_sync::<dyn Fusion>();
+    assert_send_sync::<dyn Reranker>();
+    assert_send_sync::<dyn Embedder>();
+    assert_send_sync::<dyn VectorStore>();
+    assert_send_sync::<ComponentError>();
+};
 
 #[cfg(test)]
 mod tests {
@@ -253,8 +338,13 @@ mod tests {
             mut chunks: Vec<ScoredChunk>,
             params: &RerankParams,
         ) -> Result<Vec<ScoredChunk>, ComponentError> {
-            chunks.reverse();
+            // Reranks by chunk id, then re-scores so the result honours the
+            // ranking contract: descending, finite.
+            chunks.sort_by(|a, b| b.chunk.id.as_str().cmp(a.chunk.id.as_str()));
             chunks.truncate(params.top_k);
+            for (i, c) in chunks.iter_mut().enumerate() {
+                c.score = 1.0 - i as f32 / 10.0;
+            }
             Ok(chunks)
         }
     }
@@ -262,7 +352,11 @@ mod tests {
     struct StubEmbedder;
     #[async_trait]
     impl Embedder for StubEmbedder {
-        async fn embed(&self, texts: &[String]) -> Result<Vec<Embedding>, ComponentError> {
+        async fn embed(
+            &self,
+            texts: &[String],
+            _params: &EmbedParams,
+        ) -> Result<Vec<Embedding>, ComponentError> {
             Ok(texts
                 .iter()
                 .map(|t| Embedding::new(vec![t.len() as f32]))
@@ -282,15 +376,15 @@ mod tests {
         async fn search(
             &self,
             embedding: &Embedding,
-            top_k: usize,
+            params: &SearchParams,
         ) -> Result<Vec<ScoredChunk>, ComponentError> {
             if embedding.is_empty() {
                 return Err(ComponentError::InvalidRequest(
                     "an empty embedding has no direction".into(),
                 ));
             }
-            Ok((0..top_k)
-                .map(|i| scored(&format!("hit-{i}"), 0.5))
+            Ok((0..params.top_k)
+                .map(|i| scored(&format!("hit-{i}"), 1.0 - i as f32 / 10.0))
                 .collect())
         }
     }
@@ -340,13 +434,17 @@ mod tests {
             .unwrap();
         assert_eq!(out.len(), 2);
         assert_eq!(out[0].chunk.id.as_str(), "c");
+        assert!(
+            out[0].score >= out[1].score && out.iter().all(|c| c.score.is_finite()),
+            "a reranker returns finite scores in descending order"
+        );
     }
 
     #[tokio::test]
     async fn an_embedder_is_callable_through_a_trait_object() {
         let component: Box<dyn Embedder> = Box::new(StubEmbedder);
         let out = component
-            .embed(&["ab".to_string(), "abcd".to_string()])
+            .embed(&["ab".to_string(), "abcd".to_string()], &EmbedParams::new())
             .await
             .unwrap();
         assert_eq!(out.len(), 2);
@@ -365,7 +463,7 @@ mod tests {
             .await
             .unwrap();
         let hits = component
-            .search(&Embedding::new(vec![1.0]), 2)
+            .search(&Embedding::new(vec![1.0]), &SearchParams::new(2))
             .await
             .unwrap();
         assert_eq!(hits.len(), 2);
@@ -377,7 +475,7 @@ mod tests {
         // has to arrive as this one shared type whichever face produced it.
         let component: Box<dyn VectorStore> = Box::new(StubStore);
         let err = component
-            .search(&Embedding::new(vec![]), 1)
+            .search(&Embedding::new(vec![]), &SearchParams::new(1))
             .await
             .unwrap_err();
         assert!(matches!(err, ComponentError::InvalidRequest(_)));
@@ -395,7 +493,11 @@ mod tests {
         );
         let inner = std::io::Error::other("index corrupt");
         let err = ComponentError::Backend(Box::new(inner));
-        assert_eq!(err.to_string(), "backend failure");
+        assert_eq!(
+            err.to_string(),
+            "backend failure: index corrupt",
+            "the cause must appear in Display, not only via source()"
+        );
         assert_eq!(
             std::error::Error::source(&err).map(|e| e.to_string()),
             Some("index corrupt".to_string()),
@@ -409,7 +511,9 @@ mod tests {
         // `params: { top_k: 8 }` on a reranker, and none on the fusion.
         assert_eq!(RetrieveParams::new(50).top_k, 50);
         assert_eq!(RerankParams::new(8).top_k, 8);
+        assert_eq!(SearchParams::new(50).top_k, 50);
         let _ = FusionParams::new();
+        let _ = EmbedParams::new();
     }
 
     #[test]

@@ -30,10 +30,17 @@ component is a gRPC service honouring the mirror protobuf in `rag-proto`.
 ## Local invariants
 
 - **The core stays light (INV-4, CI-enforced).** Someone implementing a
-  `Reranker` should compile only this crate and `rag-types` — not the engine,
-  not `tantivy`, not `tonic`. **No heavy dependency may appear here.** If one
-  seems necessary, the abstraction is leaking through the contract: stop and
-  raise it, do not add the dependency.
+  `Reranker` compiles this crate, `rag-types`, `async-trait` and `thiserror` —
+  not the engine, not `tantivy`, not `tonic`. **No heavy dependency may appear
+  here.** If one seems necessary, the abstraction is leaking through the
+  contract: stop and raise it, do not add the dependency.
+
+  This crate also *declares* `rag-pipeline` and never references it, which drags
+  `sha2` and its eight transitive crates into a contributor's build. The
+  documented dependency graph sanctions the edge (`engine → contracts → ir →
+  types`), so it is pre-declared rather than stray, and CI stays silent because
+  none of those crates is heavy. It is still weight nobody asked for; tracked
+  separately rather than removed in passing.
 - **Async traits use `async_trait`** (frozen decision): `dyn`-compatible async,
   not RPITIT. Dynamic dispatch is mandatory — the engine cannot tell `Local`
   from `Remote` at compile time.
@@ -46,13 +53,27 @@ component is a gRPC service honouring the mirror protobuf in `rag-proto`.
   concurrent queries, and it cannot tell `Local` from `Remote`. Each trait
   therefore has a test coercing a stub to `Box<dyn _>` and calling **through
   the vtable** — constructing one is not enough to prove the property.
-- **Public structs here are `#[non_exhaustive]` with constructors.** This is
-  the crate every contributor compiles against, and the params structs will
-  gain knobs; a caller who wrote a struct literal should not break. Note this
-  is the *opposite* of `rag-pipeline`'s recorded choice, deliberately: there,
-  an exhaustive `match` that stops compiling is the intended signal that a new
-  node kind needs handling, whereas here breaking a caller signals nothing to
-  anyone.
+- **Every trait method takes a params struct, and every params struct is
+  `#[non_exhaustive]` with a constructor.** One rule, no exceptions — including
+  the structs that are empty today (`FusionParams`, `EmbedParams`). Adding a
+  *field* is additive; changing a method's *arity* breaks every implementation
+  in and out of the repository, third-party `Remote` services included, which
+  is the contribution funnel ADR-C3 exists to protect. The uniformity is the
+  point: an exception is where the next knob will land.
+
+  This is the *opposite* of `rag-pipeline`'s recorded choice, deliberately.
+  There, an exhaustive `match` that stops compiling is the intended signal that
+  a new node kind needs handling. Here, breaking a contributor who wrote a
+  struct literal signals nothing to anyone.
+
+  `EmbeddedChunk` is **not** `#[non_exhaustive]`: it is a plain data carrier
+  that `rag-remote` (#13) must construct by literal in its round-trip tests.
+- **Open question — does an [`Embedder`] need to know its role?** Asymmetric
+  models (E5, BGE, GTE) prefix a query differently from a passage, and getting
+  it wrong costs retrieval quality with no error anywhere. Either that role is a
+  field on `EmbedParams`, or it is constructor configuration and one model
+  registers twice under two `impl:` names. Not settled here; `EmbedParams`
+  exists so the answer is a field either way.
 
 ## Why it is a boundary
 
