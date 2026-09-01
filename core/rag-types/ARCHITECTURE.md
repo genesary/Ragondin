@@ -6,9 +6,13 @@ public API is a deliberate, costly act — never a side effect of another change
 ## What lives here
 
 The platform's core value types: `Document`, `Chunk`, `Query`, `Embedding`,
-`ScoredChunk`, `Context`, `Generation`. Everything downstream depends on these;
-they depend on almost nothing. `rag-types` is the ultimate leaf of the
-dependency graph.
+`ScoredChunk`, and the `DocId` / `ChunkId` / `QueryId` newtypes that name them.
+Everything downstream depends on these; they depend on almost nothing.
+`rag-types` is the ultimate leaf of the dependency graph.
+
+The generation-side types (`Context`, `Generation`) belong here too, but arrive
+with the milestone that consumes them — adding them earlier would be dead code
+on a stable boundary.
 
 ## Local invariants
 
