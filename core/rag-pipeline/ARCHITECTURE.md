@@ -10,7 +10,7 @@ The pipeline representation, in **three levels**:
 | Level | Role | Key property |
 |---|---|---|
 | `RawPipeline` | Permissive deserialization target — unresolved references | May be malformed. **Never executed.** |
-| `LogicalPipeline` | Validated, canonical, implementation-independent | **Content-addressed.** A value type. |
+| `LogicalPipeline` | Validated, canonical — names implementations, resolves none | **Content-addressed.** A value type. |
 | `PhysicalPipeline` | Implementations resolved to trait objects | Ready to execute. Holds `Box<dyn>`. |
 
 Plus the node graph, first-class control flow (`Branch`, `Loop` with a
