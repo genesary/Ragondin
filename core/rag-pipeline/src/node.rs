@@ -135,13 +135,6 @@ pub struct ExtensionNode {
     /// Unrelated to ADR-C16's `ValueKind`, which names what travels along an
     /// edge. An extension's port kinds are unknown to the core by construction,
     /// and are resolved from the registry at physical planning.
-    ///
-    /// Note the asymmetry with the primitives, which separate *what* (the
-    /// variant) from *how* (`implementation`) — the separation that lets two
-    /// backends of one technique share a logical hash (§6.1). An extension has
-    /// no such split, so two backends for one extension technique are two
-    /// `kind`s and two logical hashes. This matches issue #7's specified shape;
-    /// it is recorded here so that it stays a decision rather than an accident.
     pub kind: String,
     pub inputs: Vec<NodeId>,
     pub params: Params,
