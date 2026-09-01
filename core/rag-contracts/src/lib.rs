@@ -1,35 +1,202 @@
 //! # rag-contracts
 //!
-//! The **component contract**: the traits an external contributor implements —
-//! `Chunker`, `Embedder`, `Indexer`, `Retriever`, `Fusion`, `Reranker`,
-//! `ContextBuilder`, `Generator`, `Grader`, `VectorStore`.
+//! The **component contract**: the traits an external contributor implements.
+//! This crate is **face 1** of the two-faced contract (ADR-C3) — the Rust
+//! trait, implemented in-process by a `Local` component. Face 2 is the
+//! protobuf mirror in `rag-proto`, spoken by a `Remote` component over gRPC.
+//! The engine calls the trait either way and cannot tell them apart, which is
+//! why every trait here must be **`dyn`-compatible** and `Send + Sync`.
 //!
 //! This crate is a **stable API boundary** (INV-1) and **the crate a
 //! contributor compiles against**. It must stay light (INV-4): implementing a
 //! component requires only this crate and `rag-types`, never the engine.
 //!
-//! The traits themselves land in a later issue. What exists today is the
-//! compiling skeleton plus the placeholder error type every boundary will
-//! return. See `ARCHITECTURE.md`.
+//! **No privilege for built-ins (INV-7).** These traits are the only API. A
+//! first-party component and a third-party one implement exactly the same
+//! thing, and there is no faster path for either.
+//!
+//! Today it carries the families the M2 retrieval bench exercises. `Chunker`,
+//! `Indexer`, `ContextBuilder`, `Generator` and `Grader` arrive with M3/M4 —
+//! adding a trait is additive, so defining them before anything implements
+//! them would be dead API.
+//!
+//! # Where parameters come from
+//!
+//! A pipeline node carries an untyped parameter map (`rag-pipeline`), and each
+//! trait here takes a **typed** params struct. The two are bridged at physical
+//! planning (`docs/code-architecture.md` §6.3), which resolves an `impl:` name
+//! into a *constructed* component and applies defaults: implementation-specific
+//! configuration — BM25's `k1` and `b`, a model path — is handed to the
+//! constructor, while the params structs below carry only what varies **per
+//! call**. §5.1's reference pipeline shows the split: `top_k` on a retriever
+//! and on a reranker, nothing on the fusion.
+//!
+//! See `ARCHITECTURE.md`.
 
+#![warn(missing_docs)]
+
+use async_trait::async_trait;
+use rag_types::{Chunk, Embedding, Query, ScoredChunk};
 use thiserror::Error;
 
-/// The error type a component returns.
+/// The error every component boundary returns.
 ///
-/// Placeholder for now: concrete, per-boundary variants are added alongside the
-/// traits that produce them, in a later issue. `#[non_exhaustive]` so that
-/// adding those variants is not a breaking change to this stable API boundary.
+/// One type for both faces (ADR-C3): the engine cannot tell a `Local` call
+/// from a `Remote` one, so a failure must arrive in the same shape whichever
+/// produced it. `#[non_exhaustive]` so that adding a variant is not a breaking
+/// change to this stable API boundary.
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum ComponentError {
-    /// An unspecified component failure.
-    #[error("component error: {0}")]
-    Other(String),
+    /// The component could not be reached.
+    ///
+    /// The variant the two-faced contract forces: a `Remote` component fails in
+    /// ways a `Local` one cannot — a refused connection, a timeout — and the
+    /// engine has to be able to see that without knowing which face it called.
+    #[error("component unavailable: {0}")]
+    Unavailable(String),
+
+    /// The call cannot be honoured as made.
+    ///
+    /// A precondition of the call is unmet — an embedding whose dimensionality
+    /// does not match the index, a `top_k` of zero. Distinct from
+    /// [`ComponentError::Backend`] because the caller, not the component, is
+    /// what needs to change.
+    #[error("invalid request: {0}")]
+    InvalidRequest(String),
+
+    /// The underlying implementation failed.
+    ///
+    /// Wraps the error of whatever the component is built on — a search index,
+    /// an inference runtime, a store client — so the cause survives the
+    /// boundary instead of being flattened into a string.
+    #[error("backend failure")]
+    Backend(#[source] Box<dyn std::error::Error + Send + Sync>),
+}
+
+/// Per-call parameters of a [`Retriever`].
+///
+/// `#[non_exhaustive]` with a constructor rather than public construction: this
+/// struct will gain knobs, and on the crate every contributor compiles against,
+/// adding one should not break their code. (`rag-pipeline` makes the opposite
+/// choice for its enums, deliberately — there, an exhaustive `match` that stops
+/// compiling is the intended signal that a new node kind needs handling. Here,
+/// breaking a caller who wrote a struct literal signals nothing to anyone.)
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct RetrieveParams {
+    /// How many chunks to return.
+    pub top_k: usize,
+}
+
+impl RetrieveParams {
+    /// Retrieves `top_k` chunks.
+    pub fn new(top_k: usize) -> Self {
+        Self { top_k }
+    }
+}
+
+/// Per-call parameters of a [`Fusion`].
+///
+/// Empty today — §5.1's `fuse` node carries no params, and a fusion's own
+/// constants (RRF's `k`) are constructor configuration. It exists so that a
+/// future knob is a field rather than a change to the trait's signature, which
+/// would break every implementation in and out of the repository.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct FusionParams {}
+
+impl FusionParams {
+    /// The default fusion parameters.
+    pub fn new() -> Self {
+        Self {}
+    }
+}
+
+/// Per-call parameters of a [`Reranker`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct RerankParams {
+    /// How many chunks to keep after reordering.
+    pub top_k: usize,
+}
+
+impl RerankParams {
+    /// Keeps `top_k` chunks.
+    pub fn new(top_k: usize) -> Self {
+        Self { top_k }
+    }
+}
+
+/// A chunk together with its vector, as a [`VectorStore`] holds it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct EmbeddedChunk {
+    /// The chunk itself.
+    pub chunk: Chunk,
+    /// Its vector.
+    pub embedding: Embedding,
+}
+
+/// Retrieves candidate chunks for a query.
+#[async_trait]
+pub trait Retriever: Send + Sync {
+    /// Returns the chunks this retriever considers most relevant to `query`.
+    async fn retrieve(
+        &self,
+        query: &Query,
+        params: &RetrieveParams,
+    ) -> Result<Vec<ScoredChunk>, ComponentError>;
+}
+
+/// Merges several retrieval results into one.
+#[async_trait]
+pub trait Fusion: Send + Sync {
+    /// Fuses `inputs` — one ranked list per upstream retrieval leg, **in the
+    /// order the pipeline wires them** — into a single ranked list.
+    async fn fuse(
+        &self,
+        inputs: Vec<Vec<ScoredChunk>>,
+        params: &FusionParams,
+    ) -> Result<Vec<ScoredChunk>, ComponentError>;
+}
+
+/// Reorders retrieved chunks against the query.
+#[async_trait]
+pub trait Reranker: Send + Sync {
+    /// Returns `chunks` reordered by relevance to `query`.
+    async fn rerank(
+        &self,
+        query: &Query,
+        chunks: Vec<ScoredChunk>,
+        params: &RerankParams,
+    ) -> Result<Vec<ScoredChunk>, ComponentError>;
+}
+
+/// Turns text into vectors.
+#[async_trait]
+pub trait Embedder: Send + Sync {
+    /// Embeds `texts`, returning one vector per input **in the same order**.
+    async fn embed(&self, texts: &[String]) -> Result<Vec<Embedding>, ComponentError>;
+}
+
+/// The vector index a dense retriever queries.
+#[async_trait]
+pub trait VectorStore: Send + Sync {
+    /// Inserts or replaces `entries`, keyed by their chunk ids.
+    async fn upsert(&self, entries: Vec<EmbeddedChunk>) -> Result<(), ComponentError>;
+
+    /// Returns the `top_k` nearest chunks to `embedding`.
+    async fn search(
+        &self,
+        embedding: &Embedding,
+        top_k: usize,
+    ) -> Result<Vec<ScoredChunk>, ComponentError>;
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rag_types::{ChunkId, DocId, QueryId};
 
     // Each stub proves the trait is `dyn`-compatible (ADR-C8: `async_trait`,
     // not RPITIT) by being coerced to `Box<dyn _>` and called through the
@@ -122,7 +289,9 @@ mod tests {
                     "an empty embedding has no direction".into(),
                 ));
             }
-            Ok((0..top_k).map(|i| scored(&format!("hit-{i}"), 0.5)).collect())
+            Ok((0..top_k)
+                .map(|i| scored(&format!("hit-{i}"), 0.5))
+                .collect())
         }
     }
 
@@ -224,7 +393,7 @@ mod tests {
             ComponentError::Unavailable("reranker-svc: connection refused".into()).to_string(),
             "component unavailable: reranker-svc: connection refused"
         );
-        let inner = std::io::Error::new(std::io::ErrorKind::Other, "index corrupt");
+        let inner = std::io::Error::other("index corrupt");
         let err = ComponentError::Backend(Box::new(inner));
         assert_eq!(err.to_string(), "backend failure");
         assert_eq!(
