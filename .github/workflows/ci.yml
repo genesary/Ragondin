@@ -50,6 +50,13 @@ jobs:
       - name: Clippy (warnings are errors)
         run: cargo clippy --workspace --all-targets -- -D warnings
 
+      # The default build is lean by rule, so it never compiles what sits behind
+      # a feature. Without this step a broken `#[cfg(feature = "remote")]` block
+      # ships unnoticed. When heavy backends arrive and this gets slow, split it
+      # into its own job rather than dropping it.
+      - name: Feature-gated paths compile
+        run: cargo check --workspace --all-features --all-targets
+
       # The most important gate: the architecture invariants (INV-4, INV-5).
       # Python 3 is preinstalled on ubuntu runners; the check has no third-party
       # dependency.

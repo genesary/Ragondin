@@ -21,9 +21,15 @@ clippy:
 fmt:
     cargo fmt --check
 
+# Compile the feature-gated code paths. The default build is lean, so it never
+# sees them: without this, a broken `#[cfg(feature = "...")]` block ships
+# unnoticed. `check` rather than `build` — this proves it compiles, cheaply.
+check-features:
+    cargo check --workspace --all-features --all-targets
+
 # Enforce the CI-guarded architecture invariants (INV-4, INV-5).
 check-invariants:
     python3 scripts/check-invariants.py
 
 # Everything CI runs, in one command. Run this before declaring work done.
-check: fmt build test clippy check-invariants
+check: fmt build test clippy check-features check-invariants
