@@ -51,8 +51,10 @@ rag-conformance = { path = "testkit/rag-conformance" }
 # Kept deliberately small. Heavy backends (tantivy, candle, ort, vector-store
 # and LLM clients) are NOT listed here yet: they arrive with the components
 # that need them, each behind a feature flag (INV-4, and the lean-default-build
-# rule). `serde` is the only dependency the core (`rag-types`) is permitted.
+# rule). `serde` is the only dependency the core (`rag-types`) is permitted to
+# ship; a test-only dev-dependency is outside INV-4 and outside that rule.
 serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"                                 # test-only: serde round-trip assertions (dev-dependency)
 sha2 = "0.10"                                      # canonical logical-form hashing (rag-pipeline)
 async-trait = "0.1"                                # dyn-compatible async traits (frozen: not RPITIT)
 thiserror = "2"                                    # typed library errors
