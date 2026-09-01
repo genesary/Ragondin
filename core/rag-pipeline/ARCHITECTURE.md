@@ -28,6 +28,13 @@ mandatory termination guard), and the open `Extension` variant.
   genuinely new node type is expressed through `Extension` **without changing
   the core**. Repeated use of `Extension` for the same shape is the signal to
   promote it to a primitive — not a reason to special-case it here.
+- **The node variant is the sole source of port kinds (ADR-C16).** The
+  `ValueKind` a node produces and consumes is **derived** by matching on its
+  `LogicalNode` variant, never declared in a configuration — which is why port
+  kinds stay out of the canonical form and the content hash. Never introduce a
+  node type whose output kind depends on its `params` or its `implementation`
+  string, and never collapse the primitive variants into one generic
+  parameterised variant: either would make the derivation impossible.
 - **The wire format is separate (INV-9).** The serialized (wire) form is
   hand-maintained and versioned in `rag-config`/`rag-proto`. Never
   `#[derive(Serialize)]` these internal types to produce the wire format.

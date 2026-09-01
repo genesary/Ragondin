@@ -10,8 +10,13 @@
 //! form**, never over source text (INV-8), and the wire format is kept
 //! **separate** from this in-memory representation (INV-9).
 //!
-//! The representation itself is introduced in a later issue; this is the
-//! compiling skeleton. See `ARCHITECTURE.md`.
+//! See `ARCHITECTURE.md`.
+
+pub mod node;
+
+pub use node::{
+    ExtensionNode, FusionNode, LogicalNode, NodeId, ParamValue, RerankerNode, RetrieverNode,
+};
 
 #[cfg(test)]
 mod tests {
