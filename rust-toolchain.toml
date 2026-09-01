@@ -3,4 +3,7 @@
 # on the current stable release while making a nightly dependency impossible.
 [toolchain]
 channel = "stable"
-components = ["rustfmt", "clippy"]
+# `rust-analyzer` is listed so an IDE picks the version matching this
+# toolchain rather than the one bundled with its extension, which warns and
+# degrades when the two drift apart.
+components = ["rustfmt", "clippy", "rust-analyzer"]
