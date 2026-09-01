@@ -1,0 +1,5 @@
+# Formatting is enforced in CI (`cargo fmt --check`). Only stable rustfmt
+# options are used, so the pinned stable toolchain formats identically
+# everywhere.
+edition = "2021"
+newline_style = "Unix"

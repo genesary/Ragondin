@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Cancel superseded runs on the same ref.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    name: build · test · clippy · fmt · invariants
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # rust-toolchain.toml pins the stable channel and the rustfmt + clippy
+      # components; rustup honours it on first cargo invocation.
+      - name: Show toolchain
+        run: |
+          rustup show
+          cargo --version
+          rustc --version
+
+      - name: Cache cargo registry and build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Format
+        run: cargo fmt --check
+
+      - name: Build
+        run: cargo build --all-targets
+
+      - name: Test
+        run: cargo test --workspace
+
+      - name: Clippy (warnings are errors)
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      # The default build is lean by rule, so it never compiles what sits behind
+      # a feature. Without this step a broken `#[cfg(feature = "remote")]` block
+      # ships unnoticed. When heavy backends arrive and this gets slow, split it
+      # into its own job rather than dropping it.
+      - name: Feature-gated paths compile
+        run: cargo check --workspace --all-features --all-targets
+
+      # The most important gate: the architecture invariants (INV-4, INV-5).
+      # Python 3 is preinstalled on ubuntu runners; the check has no third-party
+      # dependency.
+      - name: Architecture invariants (INV-4, INV-5)
+        run: python3 scripts/check-invariants.py

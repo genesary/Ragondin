@@ -1,0 +1,11 @@
+[package]
+name = "rag-benchmarks"
+description = "BenchmarkAdapter and its implementations (BEIR, CRAG, MultiHop-RAG, …)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+rag-types = { workspace = true }

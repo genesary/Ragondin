@@ -40,9 +40,9 @@ Architectural constraints, not style preferences. **A PR that violates one is re
 
 | ID | Rule |
 |---|---|
-| **INV-1** | `rag-types`, `rag-ir`, `rag-contracts` are **stable API boundaries**. Breaking their public API is a deliberate, versioned act — never a side effect of another change. |
+| **INV-1** | `rag-types`, `rag-pipeline`, `rag-contracts` are **stable API boundaries**. Breaking their public API is a deliberate, versioned act — never a side effect of another change. |
 | **INV-2** | `rag-engine` is **not an API boundary** and never will be. Refactor it freely; do not treat its internals as stable. |
-| **INV-3** | `rag-types` and `rag-ir` contain **value types only**: no global context, no interner, no I/O. A value is fully determined by its content. |
+| **INV-3** | `rag-types` and `rag-pipeline` contain **value types only**: no global context, no interner, no I/O. A value is fully determined by its content. |
 | **INV-4** | **The core stays light.** `rag-types` and `rag-contracts` must carry **no heavy dependency** — no `tantivy`, `tonic`, `ort`, `candle`, vector-store client, or HTTP client. `serde` at most. *CI-enforced.* |
 | **INV-5** | **The engine knows only traits.** `rag-engine` must not depend on any crate under `components/`. *CI-enforced.* |
 | **INV-6** | **No global state.** The component registry lives on an `EngineContext` passed explicitly as a parameter. Never use a static global registry (`inventory`, `linkme`, or equivalent). |
@@ -57,7 +57,7 @@ Architectural constraints, not style preferences. **A PR that violates one is re
 Dependency arrows point **down only**. Cargo forbids cycles, which makes these boundaries compiler-enforced rather than conventional.
 
 ```
-bins → planes → engine → contracts → ir → types
+bins → planes → engine → contracts → pipeline → types
                   ↑           ↑
             components ───────┘
 ```
@@ -127,7 +127,7 @@ Rationale for each decision: `docs/adr/`, where every decision is a numbered, in
 ## Conventions
 
 - **Language:** English everywhere — code, comments, documentation, issues, commit messages, PR descriptions.
-- **Commits:** Conventional Commits, scoped by crate where useful: `feat(rag-ir): add canonical hashing`.
+- **Commits:** Conventional Commits, scoped by crate where useful: `feat(rag-pipeline): add canonical hashing`.
 - **Branches:** `<type>/<issue-number>-<slug>`, e.g. `feat/12-logical-pipeline-hash`.
 
 ---
@@ -136,8 +136,8 @@ Rationale for each decision: `docs/adr/`, where every decision is a numbered, in
 
 | You need | Read |
 |---|---|
-| Why the system is designed this way | `docs/architecture-system.md` |
-| Why the code is organized this way | `docs/architecture-code.md` |
+| Why the system is designed this way | `docs/system-architecture.md` |
+| Why the code is organized this way | `docs/code-architecture.md` |
 | Why a specific decision was made | `docs/adr/` |
 | What is deliberately undecided | `docs/OPEN_QUESTIONS.md` |
 | A crate's local constraints | `<crate>/ARCHITECTURE.md` |

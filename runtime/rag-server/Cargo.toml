@@ -1,0 +1,16 @@
+[package]
+name = "rag-server"
+description = "Serving driver: ingress → Tower stack → engine."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+# The serving driver. `tower` governs the network envelope ONLY (INV-11);
+# `rag-engine` runs the domain logic. Depending on the same engine crate as the
+# harness is what makes serving/evaluation skew impossible (P1).
+[dependencies]
+rag-engine = { workspace = true }
+tower = { workspace = true }
+tokio = { workspace = true }

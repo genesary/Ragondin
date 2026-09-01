@@ -1,0 +1,16 @@
+[package]
+name = "rag-pipeline"
+description = "The pipeline representation: RawPipeline → LogicalPipeline → PhysicalPipeline."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+# INV-4: no heavy dependency. `rag-types` (value types), `serde`
+# (serialization of the logical form), and a hashing crate for content
+# addressing over the canonical logical form (INV-8) are all that is permitted.
+[dependencies]
+rag-types = { workspace = true }
+serde = { workspace = true }
+sha2 = { workspace = true }

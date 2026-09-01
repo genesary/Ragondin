@@ -21,7 +21,7 @@ The point of the wording is to switch off the design half of a general-purpose a
 The dependency graph is a **topological order**. An agent cannot implement:
 
 - a component before the trait it implements (`rag-contracts`),
-- the engine before the IR it executes (`rag-ir`),
+- the engine before the pipeline representation it executes (`rag-pipeline`),
 - a driver before the engine it drives (`rag-engine`).
 
 Two issues may run **in parallel** when they touch **disjoint crates** — for example, two different `components/` leaves, each depending only on `rag-contracts` and `rag-types`, cannot conflict. Two issues must be **serialized** when one depends on an artifact the other produces. When in doubt, read the crate dependency graph in `AGENTS.md` and serialize.
@@ -29,7 +29,7 @@ Two issues may run **in parallel** when they touch **disjoint crates** — for e
 ## When to escalate to a human
 
 - **Any `decision` issue.** These are architectural questions an agent must not answer alone; a human owns the call and the resulting ADR.
-- **Any PR touching `rag-ir`, `rag-contracts`, or `rag-engine`.** The core deserves heavier review than the periphery — a mistake there propagates everywhere, whereas a mistake in a leaf component is contained.
+- **Any PR touching `rag-pipeline`, `rag-contracts`, or `rag-engine`.** The core deserves heavier review than the periphery — a mistake there propagates everywhere, whereas a mistake in a leaf component is contained.
 
 ## Tooling note
 
