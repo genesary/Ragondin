@@ -83,10 +83,15 @@ impl NodeId {
 ///   are different configurations and hash differently.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum ParamValue {
+    /// A text value, e.g. a similarity metric name.
     String(String),
+    /// A whole number, e.g. `top_k`.
     Int(i64),
+    /// A finite IEEE-754 double — see the float contract above.
     Float(f64),
+    /// A flag.
     Bool(bool),
+    /// An ordered sequence; order is significant and preserved by hashing.
     List(Vec<ParamValue>),
 }
 
@@ -96,28 +101,48 @@ pub type Params = BTreeMap<String, ParamValue>;
 /// A retrieval node: it retrieves candidate chunks for a query.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct RetrieverNode {
+    /// This node's identifier, unique within the pipeline.
     pub id: NodeId,
     /// The `impl:` value naming the component to resolve, e.g. `"bm25"`.
+    ///
+    /// Part of the logical form, so it enters the content hash: two backends
+    /// are two different configurations (ADR-C2 § Amendments).
     pub implementation: String,
+    /// The ids of the nodes whose output this node consumes, **in port order**.
     pub inputs: Vec<NodeId>,
+    /// This node's parameters, in canonical key order.
     pub params: Params,
 }
 
 /// A fusion node: it merges several retrieval results into one.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct FusionNode {
+    /// This node's identifier, unique within the pipeline.
     pub id: NodeId,
+    /// The `impl:` value naming the component to resolve, e.g. `"bm25"`.
+    ///
+    /// Part of the logical form, so it enters the content hash: two backends
+    /// are two different configurations (ADR-C2 § Amendments).
     pub implementation: String,
+    /// The ids of the nodes whose output this node consumes, **in port order**.
     pub inputs: Vec<NodeId>,
+    /// This node's parameters, in canonical key order.
     pub params: Params,
 }
 
 /// A reranking node: it reorders retrieved chunks.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct RerankerNode {
+    /// This node's identifier, unique within the pipeline.
     pub id: NodeId,
+    /// The `impl:` value naming the component to resolve, e.g. `"bm25"`.
+    ///
+    /// Part of the logical form, so it enters the content hash: two backends
+    /// are two different configurations (ADR-C2 § Amendments).
     pub implementation: String,
+    /// The ids of the nodes whose output this node consumes, **in port order**.
     pub inputs: Vec<NodeId>,
+    /// This node's parameters, in canonical key order.
     pub params: Params,
 }
 
@@ -128,15 +153,20 @@ pub struct RerankerNode {
 /// same shape is the signal to promote that shape to a primitive.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ExtensionNode {
+    /// This node's identifier, unique within the pipeline.
     pub id: NodeId,
-    /// Names the *extension node type*, e.g. `"hyde"` — and it is this string
-    /// the registry is keyed on at physical planning.
+    /// Names the *extension node type*, e.g. `"hyde"`.
     ///
     /// Unrelated to ADR-C16's `ValueKind`, which names what travels along an
     /// edge. An extension's port kinds are unknown to the core by construction,
-    /// and are resolved from the registry at physical planning.
+    /// and are resolved at physical planning. *How* an extension is looked up
+    /// there is not settled — §8.1 describes one registry per component family,
+    /// keyed on the implementation name, and there is no extension family — so
+    /// this type deliberately says nothing about it.
     pub kind: String,
+    /// The ids of the nodes whose output this node consumes, **in port order**.
     pub inputs: Vec<NodeId>,
+    /// This node's parameters, in canonical key order.
     pub params: Params,
 }
 
@@ -144,9 +174,13 @@ pub struct ExtensionNode {
 /// [`ExtensionNode`].
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum LogicalNode {
+    /// Retrieves candidate chunks.
     Retriever(RetrieverNode),
+    /// Merges several retrieval results into one.
     Fusion(FusionNode),
+    /// Reorders retrieved chunks.
     Reranker(RerankerNode),
+    /// A node defined outside the core (ADR-C3).
     Extension(ExtensionNode),
 }
 
@@ -269,11 +303,16 @@ mod tests {
         let node = RerankerNode {
             id: NodeId::new("cross_encoder"),
             implementation: "bge_reranker".to_string(),
-            inputs: vec![NodeId::new("rrf")],
+            // Two ports, in order: the query, then the chunks to reorder. The
+            // module documentation derives consumed kinds positionally.
+            inputs: vec![NodeId::new("question"), NodeId::new("rrf")],
             params: params(&[("top_n", ParamValue::Int(5))]),
         };
         assert_eq!(node.id.as_str(), "cross_encoder");
-        assert_eq!(node.inputs, vec![NodeId::new("rrf")]);
+        assert_eq!(
+            node.inputs,
+            vec![NodeId::new("question"), NodeId::new("rrf")]
+        );
     }
 
     #[test]
@@ -399,6 +438,25 @@ mod tests {
     }
 
     #[test]
+    fn logical_nodes_keep_their_serialized_shape() {
+        // INV-9 puts the wire format elsewhere, so this shape is internal —
+        // but it is what a persisted logical form would be written as, and a
+        // silent flip of the tagging discipline or a variant rename would make
+        // every stored run unreadable with a green suite. One snapshot makes
+        // such a change deliberate rather than accidental.
+        let node = LogicalNode::Retriever(RetrieverNode {
+            id: NodeId::new("bm25_leg"),
+            implementation: "bm25".to_string(),
+            inputs: vec![NodeId::new("question")],
+            params: params(&[("k", ParamValue::Int(50))]),
+        });
+        assert_eq!(
+            serde_json::to_string(&node).unwrap(),
+            r#"{"Retriever":{"id":"bm25_leg","implementation":"bm25","inputs":["question"],"params":{"k":{"Int":50}}}}"#
+        );
+    }
+
+    #[test]
     fn node_ids_serve_as_map_keys_and_sort() {
         // #9 checks referential integrity with a map keyed by id, and any
         // `BTreeMap`-keyed adjacency needs the ordering.
@@ -417,17 +475,28 @@ mod tests {
 
     #[test]
     fn param_values_keep_their_full_numeric_width() {
-        // A narrower `Int` would silently truncate a plausible parameter such
-        // as a token budget; a narrower `Float` would saturate to infinity.
-        let wide = [
-            ParamValue::Int(i64::MAX),
-            ParamValue::Int(i64::MIN),
-            ParamValue::Float(1.0e300),
-        ];
-        for case in wide {
-            let json = serde_json::to_string(&case).unwrap();
-            let back: ParamValue = serde_json::from_str(&json).unwrap();
-            assert_eq!(back, case, "width lost for {case:?}");
+        // Deliberately no out-of-range Rust literal here: a narrowed `Int` or
+        // `Float` must *fail this test*, not merely fail to compile it. A
+        // narrower type would silently truncate a plausible parameter such as
+        // a token budget, or saturate a threshold to infinity.
+        for (json, reserialized) in [
+            (
+                r#"{"Int":9223372036854775807}"#,
+                r#"{"Int":9223372036854775807}"#,
+            ),
+            (
+                r#"{"Int":-9223372036854775808}"#,
+                r#"{"Int":-9223372036854775808}"#,
+            ),
+            (r#"{"Float":1e300}"#, r#"{"Float":1e+300}"#),
+        ] {
+            let parsed: ParamValue =
+                serde_json::from_str(json).unwrap_or_else(|e| panic!("{json} did not parse: {e}"));
+            assert_eq!(
+                serde_json::to_string(&parsed).unwrap(),
+                reserialized,
+                "{json} did not survive at full width"
+            );
         }
     }
 
