@@ -51,4 +51,4 @@ Compatibility is **derived, never declared**. `rag-pipeline` exposes `ValueKind`
 
 ## Status
 
-Proposed — under discussion in decision issue #5, and not in force until accepted.
+Accepted.
