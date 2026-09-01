@@ -259,10 +259,12 @@ The first structuring decision, refined from DataFusion's logical/physical plan 
 | Level | Role | Produced by | Key property |
 |---|---|---|---|
 | `RawPipeline` | **Permissive** deserialization target — strings, unresolved references | `serde`, from YAML or protobuf | May be malformed. **Never executed.** |
-| `LogicalPipeline` | **Validated, canonical** form, independent of implementations | Validation and canonicalization pass | **Content-addressed.** Serializable. A value type. |
+| `LogicalPipeline` | **Validated, canonical** form — names each implementation, resolves none | Validation and canonicalization pass | **Content-addressed.** Serializable. A value type. |
 | `PhysicalPipeline` | Implementations **resolved** to trait objects; defaults applied | Physical planning, using the registry | Ready to execute. Holds `Box<dyn>` — not serializable. |
 
-**Why three levels and not two.** Separating the *logical* (what) from the *physical* (how) means that two configurations differing only by an interchangeable backend — Qdrant versus pgvector — have the **same logical hash** but distinct physical plans. This is precisely what makes *"same RAG strategy, different backends"* a rigorous comparison, which is a core use case of the bench.
+**Why three levels and not two.** A single validated level would have to be both the content-addressed artifact and the executable one, and it cannot be: resolved implementations are `Box<dyn>` trait objects, so that level is not serializable and cannot be hashed. Separating them also keeps two operations out of the hashed form — applying implementation defaults, and resolving an `Extension` node's kinds from the registry (ADR-C16) — so a configuration's identity does not shift with the registry it was planned against, and `rag validate` works with no `EngineContext` at all.
+
+The logical hash identifies a configuration **completely, backend included**: `impl: qdrant_dense` is part of the logical form, so two backends are two hashes. That is deliberate — a run's identity must suffice to reproduce it (P4), and the configuration promoted from bench to serving must pin the backend it was measured on (P1). Comparing *"same RAG strategy, different backends"* is a **projection** over the logical form that elides `implementation`, not a property of the hash. See ADR-C2, amended 2026-09-01.
 
 Content addressing (P4) is computed over the **canonical form of `LogicalPipeline`**, never over the YAML text: two semantically equivalent configurations formatted differently **must** hash identically, or reproducibility is an illusion (INV-8).
 
@@ -542,7 +544,7 @@ Recording the temptations rejected is as important as recording the decisions ta
 | # | Decision | Alternatives rejected | Rationale |
 |---|---|---|---|
 | **ADR-C1** | **Multi-crate workspace; load-bearing boundaries are crate boundaries** | Single crate with modules | Cargo forbids cycles: the boundary becomes compiled, not conventional |
-| **ADR-C2** | **Three-level representation** (Raw / Logical / Physical) | Two levels (raw / validated) | Separates what from how; a stable logical hash across interchangeable backends |
+| **ADR-C2** | **Three-level representation** (Raw / Logical / Physical) | Two levels (raw / validated) | Separates validation from resolution; the executable level holds `Box<dyn>` and cannot be hashed |
 | **ADR-C3** | **Closed enum plus an open `Extension` variant** | Fully closed enum; trait objects everywhere | Extension without modifying the core |
 | **ADR-C4** | **Engine as an embeddable library with an explicit `EngineContext`** | Application-style engine with global state | Embeddability, testability, multiple contexts per process |
 | **ADR-C5** | **The engine depends only on traits; components are leaves** | Engine wiring in built-in implementations | Decoupling; external contribution (INV-5) |
