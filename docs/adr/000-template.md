@@ -18,8 +18,12 @@
 
 <What follows from the decision — the good, the costs, and the new constraints it imposes. Include the invariants or downstream decisions this one enables or requires.>
 
+## Amendments
+
+<Omit this section unless a factual claim in the reasoning above has been retracted (see process rule 2 in `README.md`). One dated entry per retraction: what was claimed, the original wording **quoted verbatim**, why it is false, on whose authority it was retracted, and why the decision itself still stands. Never use this section to change the Decision — that requires a superseding ADR.>
+
 ## Status
 
 Accepted.
 
-<Or: `Superseded by ADR-N` (reference it), or `Proposed` (under discussion in a decision issue).>
+<Or: `Superseded by ADR-N` (reference it), `Accepted (amended <date>)` (see the Amendments section), or `Proposed` (under discussion in a decision issue).>
