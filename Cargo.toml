@@ -55,6 +55,7 @@ rag-conformance = { path = "testkit/rag-conformance" }
 # ship; a test-only dev-dependency is outside INV-4 and outside that rule.
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"                                 # test-only: serde round-trip assertions (dev-dependency)
+serde_yaml = "0.9"                                 # test-only: golden YAML fixtures (dev-dependency)
 sha2 = "0.10"                                      # canonical logical-form hashing (rag-pipeline)
 async-trait = "0.1"                                # dyn-compatible async traits (frozen: not RPITIT)
 thiserror = "2"                                    # typed library errors

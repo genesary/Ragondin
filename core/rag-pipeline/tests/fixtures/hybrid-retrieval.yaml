@@ -1,0 +1,40 @@
+# Golden fixture: the hybrid retrieval pipeline of `docs/system-architecture.md`
+# §5.1, trimmed to the nodes the M2 model covers — the query transform, the two
+# retrieval legs, and their fusion. Everything below this header is byte-identical
+# to §5.1: indentation, inline comments, em-dash and all. If the two ever
+# disagree, the documentation is the source of truth and this fixture is wrong.
+#
+# The omission is not only scope. The grader and generator are M3/M4, but the
+# `gate` node is a *control-flow* node — `control: branch`, `condition:`,
+# `on_true:` — and `RawNode` requires `component` and `impl`, so the untrimmed
+# §5.1 document does not parse at all. Admitting it later means making those two
+# fields optional on a versioned wire schema inside a stable API boundary
+# (INV-1), which is a deliberate act, not a patch. Tracked separately.
+#
+# Note there is no `version:` key: §5.1 predates the field, and a configuration
+# without one reads as version 1. Note also that `transform` carries neither
+# `inputs` nor `params`, and that `query_transform` is a component family with
+# no `LogicalNode` variant — this level accepts it, because rejecting it is #9's
+# job, not the parser's.
+pipeline:
+  nodes:
+    - id: transform
+      component: query_transform
+      impl: hyde                    # a "named technique" is just an impl value
+
+    - id: dense
+      component: retriever
+      impl: qdrant_dense
+      inputs: [transform]
+      params: { top_k: 50 }
+
+    - id: sparse
+      component: retriever
+      impl: bm25                    # in-process sparse retrieval (§10)
+      inputs: [transform]
+      params: { top_k: 50 }
+
+    - id: fuse
+      component: fusion
+      impl: rrf                     # Reciprocal Rank Fusion — a fusion impl,
+      inputs: [dense, sparse]       # not dedicated engine code

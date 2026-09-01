@@ -7,7 +7,9 @@
 //! the surface an external consumer actually sees.
 
 use rag_pipeline::{
-    ExtensionNode, FusionNode, LogicalNode, NodeId, ParamValue, Params, RerankerNode, RetrieverNode,
+    ExtensionNode, FusionNode, LogicalNode, NodeId, ParamValue, Params, RawGraph, RawNode,
+    RawParamValue, RawPipeline, RerankerNode, RetrieverNode, SchemaVersion,
+    UnsupportedSchemaVersion,
 };
 
 #[test]
@@ -48,4 +50,29 @@ fn every_node_type_is_reachable_from_the_crate_root() {
         vec!["bm25_leg", "rrf", "cross_encoder", "my_technique"]
     );
     assert_eq!(nodes[1].inputs(), &[NodeId::new("bm25_leg")]);
+}
+
+#[test]
+fn every_wire_type_is_reachable_from_the_crate_root() {
+    let doc = RawPipeline {
+        version: SchemaVersion::default(),
+        pipeline: RawGraph {
+            nodes: vec![RawNode {
+                id: "bm25_leg".to_string(),
+                component: "retriever".to_string(),
+                implementation: "bm25".to_string(),
+                inputs: vec!["question".to_string()],
+                params: [("k".to_string(), RawParamValue::Int(10))]
+                    .into_iter()
+                    .collect(),
+            }],
+        },
+    };
+
+    assert_eq!(doc.version.get(), 1);
+    assert_eq!(doc.pipeline.nodes[0].implementation, "bm25");
+    assert_eq!(doc.pipeline.nodes[0].params["k"], RawParamValue::Int(10));
+
+    let refused: UnsupportedSchemaVersion = SchemaVersion::new(2).unwrap_err();
+    assert_eq!(refused.found(), 2);
 }
