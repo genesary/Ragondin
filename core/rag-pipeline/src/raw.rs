@@ -17,9 +17,23 @@
 //! component families with no `LogicalNode` variant, and references to nodes
 //! that do not exist. Rejecting those is validation's job (#9), and a parser
 //! that pre-empted it would turn a user's diagnosable mistake into an opaque
-//! parse failure. What it does *not* tolerate is a schema version it cannot
-//! read — guessing there would mean interpreting a future format's fields as
-//! if they were this one's.
+//! parse failure.
+//!
+//! Two things it does *not* tolerate, for different reasons.
+//!
+//! A **schema version it cannot read** is refused: permissiveness means
+//! tolerating content one does not understand *within a grammar one does*, and
+//! a version bump says the grammar itself may have changed. Continuing there
+//! is not leniency, it is misinterpretation.
+//!
+//! A **parameter that is not a scalar or a list of scalars** — a nested map,
+//! a null — fails to parse, and does so with serde's opaque untagged-enum
+//! message rather than a diagnosis. That is a genuine limit, not a choice:
+//! [`RawParamValue`] mirrors [`crate::ParamValue`], which has no `Map` or
+//! `Null` variant either, so admitting one here would put the wire and logical
+//! models out of step. It is worth knowing that a metadata filter
+//! (`params: { filters: { lang: fr } }`) is ordinary retriever configuration
+//! and is not expressible today.
 //!
 //! Nothing here is executed, and nothing here is hashed.
 
@@ -201,6 +215,67 @@ mod tests {
         assert!(
             err.to_string().contains('7'),
             "the parse error must carry the offending version: {err}"
+        );
+    }
+
+    #[test]
+    fn the_version_error_wording_is_pinned() {
+        // #27 has no better way to tell "this config needs a newer build" from
+        // "this YAML is broken": `serde::de::Error::custom` erases the type
+        // into a string. Until that is addressed, the wording is the contract,
+        // so a reword has to break a test rather than break `rag-config`.
+        assert_eq!(
+            SchemaVersion::new(3).unwrap_err().to_string(),
+            "unsupported pipeline schema version 3: this build reads version 1"
+        );
+    }
+
+    #[test]
+    fn wire_integers_keep_their_full_width() {
+        // A narrowed `Int` would silently truncate on the way to
+        // `ParamValue::Int(i64)`. No out-of-range Rust literal here, so the
+        // narrowing fails this test rather than failing to compile it.
+        let parsed: RawParamValue = serde_json::from_str("9223372036854775807").unwrap();
+        assert_eq!(
+            serde_json::to_string(&parsed).unwrap(),
+            "9223372036854775807"
+        );
+        let parsed: RawParamValue = serde_json::from_str("-9223372036854775808").unwrap();
+        assert_eq!(
+            serde_json::to_string(&parsed).unwrap(),
+            "-9223372036854775808"
+        );
+    }
+
+    #[test]
+    fn non_finite_floats_are_outside_the_documented_contract() {
+        // YAML admits `.inf` and `.nan`, and this level parses them — but they
+        // do not round trip, so the wire contract stops at finite values, as
+        // `ParamValue`'s does. Pinned rather than hidden: this is the boundary
+        // #9 must reject at.
+        let infinite: RawParamValue = serde_yaml::from_str(".inf").unwrap();
+        assert_eq!(
+            serde_json::to_string(&infinite).unwrap(),
+            "null",
+            "a non-finite float is not representable in JSON"
+        );
+        assert!(
+            serde_json::from_str::<RawParamValue>("null").is_err(),
+            "and it does not read back, so the round trip is finite-only"
+        );
+        let nan: RawParamValue = serde_yaml::from_str(".nan").unwrap();
+        assert_ne!(nan, nan, "NaN costs equality its reflexivity");
+    }
+
+    #[test]
+    fn a_nested_map_parameter_is_not_representable() {
+        // Pinned so the limit is a known one. `ParamValue` has no `Map`
+        // variant either, so the wire type mirrors the logical model rather
+        // than diverging from it — but a metadata filter is ordinary retriever
+        // configuration, and today it fails to parse. See the module docs.
+        assert!(
+            serde_yaml::from_str::<RawParamValue>("{lang: fr}").is_err(),
+            "if this starts parsing, the wire and logical param models have diverged"
         );
     }
 

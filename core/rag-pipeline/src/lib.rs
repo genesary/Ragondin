@@ -1,17 +1,21 @@
 //! # rag-pipeline
 //!
-//! The pipeline representation. Eventually three levels — `RawPipeline` →
-//! `LogicalPipeline` → `PhysicalPipeline` — of which **only the logical node
-//! model exists today**; see [`node`].
+//! The pipeline representation, in three levels — `RawPipeline` →
+//! `LogicalPipeline` → `PhysicalPipeline`. Two of them exist today:
+//!
+//! - [`raw`] — the permissive wire schema a configuration file lands in.
+//!   Hand-maintained and independently versioned (INV-9). Never executed.
+//! - [`node`] — the logical node model: validated, canonical value types.
 //!
 //! This crate is a **stable API boundary** (INV-1) and holds **value types
 //! only** (INV-3). The content hash will be computed over the **canonical
-//! logical form**, never over source text (INV-8), and the wire format is kept
-//! **separate** from this in-memory representation (INV-9) — so the `serde`
-//! derives here are for internal round-tripping, not for the wire.
+//! logical form**, never over source text (INV-8), and the wire schema in
+//! [`raw`] is kept **separate** from the in-memory model in [`node`] (INV-9) —
+//! so the `serde` derives on the latter are for internal round-tripping, not
+//! for the wire.
 //!
-//! Not here yet, each owned by its own issue: `RawPipeline` (the permissive
-//! deserialization target), validation and canonicalization, content hashing,
+//! Not here yet, each owned by its own issue: the `RawPipeline` →
+//! `LogicalPipeline` validation and canonicalization pass, content hashing,
 //! `PhysicalPipeline`, and the `Branch`/`Loop` control-flow nodes.
 //!
 //! See `ARCHITECTURE.md`.

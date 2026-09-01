@@ -43,5 +43,10 @@ mandatory termination guard), and the open `Extension` variant.
   first published version, not after. Same choice, same reasoning, as
   `rag-types`.
 - **The wire format is separate (INV-9).** The serialized (wire) form is
-  hand-maintained and versioned in `rag-config`/`rag-proto`. Never
-  `#[derive(Serialize)]` these internal types to produce the wire format.
+  `RawPipeline` (`src/raw.rs`): hand-maintained, carrying its own
+  `SchemaVersion`, and **structurally distinct** from the logical model — a
+  configuration writes `top_k: 50`, which the externally tagged `ParamValue`
+  cannot read at all, so the separation is forced rather than chosen. Never
+  `#[derive(Serialize)]` the internal types to produce the wire format, and
+  never lower one into the other implicitly. `rag-proto` holds the protobuf
+  mirror of the same schema; `rag-config` reads files into it.
