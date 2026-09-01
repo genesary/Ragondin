@@ -50,10 +50,14 @@
 //! # Degenerate inputs
 //!
 //! Every function returns `0.0` rather than an error or a `NaN`: an empty
-//! ranking, a `k` of zero, qrels with nothing relevant. Note that `trec_eval`
-//! instead **excludes** a query with no relevant document from the mean
-//! altogether, so a harness averaging naively over such queries will report a
-//! lower figure than BEIR does for the same run.
+//! ranking, a `k` of zero, qrels with nothing relevant.
+//!
+//! This matches `trec_eval`, which scores such a query `0.0` and **counts it in
+//! the mean** — `m_ndcg_cut.c` leaves the value at zero when the ideal gain is
+//! zero, and `trec_eval.c` increments its query count unconditionally. So a
+//! harness should average over every judged query, this crate's zeros included.
+//! (A query with *no qrels line at all* is a different matter: `trec_eval`
+//! never evaluates it, because it is unjudged rather than judged-and-empty.)
 
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
@@ -76,12 +80,26 @@ fn discount(rank: usize) -> f64 {
 /// the ratio would otherwise be undefined. See the module documentation for the
 /// gain function, which is a deliberate convention choice.
 pub fn ndcg_at_k(ranked: &[DocId], relevance: &BTreeMap<DocId, u8>, k: usize) -> f64 {
-    // Summed in rank order, so the result is bit-identical run to run.
+    // Summed in rank order, so the result is bit-identical run to run. A
+    // repeated id is credited once — at its best rank — while still occupying
+    // the ranks it takes up, matching `recall_at_k`. Without this a retriever
+    // returning one relevant document three times scores above 1.0, which a
+    // normalized metric must never do. `trec_eval` rejects such a run outright
+    // (`form_res_rels.c`, "duplicate docs"); this crate has no error channel,
+    // so it absorbs the duplicate rather than inflating the score. Detecting
+    // it belongs upstream, in the conformance suite.
+    let mut seen: BTreeSet<&DocId> = BTreeSet::new();
     let dcg: f64 = ranked
         .iter()
         .take(k)
         .enumerate()
-        .map(|(i, id)| f64::from(grade(relevance, id)) / discount(i + 1))
+        .map(|(i, id)| {
+            if seen.insert(id) {
+                f64::from(grade(relevance, id)) / discount(i + 1)
+            } else {
+                0.0
+            }
+        })
         .sum();
 
     // Grade-0 documents are filtered for clarity, not correctness: they sort
@@ -99,7 +117,11 @@ pub fn ndcg_at_k(ranked: &[DocId], relevance: &BTreeMap<DocId, u8>, k: usize) ->
     if idcg == 0.0 {
         0.0
     } else {
-        dcg / idcg
+        // `+ 0.0` normalizes negative zero: `f64::sum` folds from `-0.0`, so an
+        // empty cut yields `-0.0`, and `-0.0 / x` stays `-0.0`. It compares
+        // equal to `0.0`, so no assertion would catch it — but it is what gets
+        // serialized into the run store.
+        dcg / idcg + 0.0
     }
 }
 
@@ -125,6 +147,10 @@ pub fn recall_at_k(ranked: &[DocId], relevance: &BTreeMap<DocId, u8>, k: usize) 
 ///
 /// **This is not MRR.** MRR is the mean of this over a query set; see the module
 /// documentation.
+///
+/// There is no `k`, matching `trec_eval`'s uncut `recip_rank`. For the MRR@k
+/// that `docs/system-architecture.md` §9.1 names, slice first:
+/// `reciprocal_rank(&ranked[..k.min(ranked.len())], relevance)`.
 pub fn reciprocal_rank(ranked: &[DocId], relevance: &BTreeMap<DocId, u8>) -> f64 {
     ranked
         .iter()
@@ -275,6 +301,51 @@ mod tests {
         // above what it actually found.
         let got = recall_at_k(&ids(&["d1", "d1", "d1"]), &qrels(), 3);
         assert!((got - 1.0 / 3.0).abs() < TOLERANCE, "recall was {got}");
+    }
+
+    #[test]
+    fn ndcg_cut_below_the_number_of_relevant_documents() {
+        // The case nDCG@10 hits on most BEIR datasets: more relevant documents
+        // exist than the cutoff admits, so the ideal gain must also be
+        // truncated at k. Truncating it at the ranking length instead gives
+        // 0.4749950106150897 — a 10% error that no other test here can see.
+        //
+        //   DCG@2  = 1/log2(2) + 2/log2(3) = 1 + 1.261859507142915
+        //   IDCG@2 = 3/log2(2) + 2/log2(3) = 3 + 1.261859507142915
+        //
+        // Cross-checked against pytrec_eval, the library BEIR evaluates with.
+        let got = ndcg_at_k(&ids(&["d4", "d6", "d1"]), &qrels(), 2);
+        let expected = 0.5307212739772434;
+        assert!(
+            (got - expected).abs() < TOLERANCE,
+            "nDCG@2 was {got}, expected {expected}"
+        );
+    }
+
+    #[test]
+    fn a_duplicated_document_is_credited_once_by_ndcg_too() {
+        // A normalized metric may never exceed 1. Crediting a repeat would
+        // score this 2.13. The duplicate still occupies its rank; it simply
+        // gains nothing.
+        let got = ndcg_at_k(&ids(&["d1", "d1", "d1"]), &qrels(), 3);
+        assert!(got <= 1.0, "nDCG exceeded 1.0: {got}");
+        let expected = 3.0 / (3.0 + 1.261859507142915 + 0.5);
+        assert!(
+            (got - expected).abs() < TOLERANCE,
+            "nDCG was {got}, expected {expected}"
+        );
+    }
+
+    #[test]
+    fn a_degenerate_ndcg_is_positive_zero() {
+        // `-0.0 == 0.0`, so no assert_eq! can see this — but it is what gets
+        // written into the run store.
+        let empty: Vec<DocId> = Vec::new();
+        assert_eq!(ndcg_at_k(&empty, &qrels(), 10).to_bits(), 0.0f64.to_bits());
+        assert_eq!(
+            ndcg_at_k(&ids(&["d1"]), &qrels(), 0).to_bits(),
+            0.0f64.to_bits()
+        );
     }
 
     #[test]
