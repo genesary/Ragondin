@@ -24,6 +24,9 @@ pub mod raw;
 pub use node::{
     ExtensionNode, FusionNode, LogicalNode, NodeId, ParamValue, Params, RerankerNode, RetrieverNode,
 };
+pub use raw::{
+    RawGraph, RawNode, RawParamValue, RawPipeline, SchemaVersion, UnsupportedSchemaVersion,
+};
 
 #[cfg(test)]
 mod tests {

@@ -42,8 +42,14 @@ fn the_reference_pipeline_from_the_documentation_deserializes() {
     assert_eq!(impls, vec!["hyde", "qdrant_dense", "bm25", "rrf"]);
 
     let transform = &doc.pipeline.nodes[0];
-    assert!(transform.inputs.is_empty(), "`transform` declares no inputs");
-    assert!(transform.params.is_empty(), "`transform` declares no params");
+    assert!(
+        transform.inputs.is_empty(),
+        "`transform` declares no inputs"
+    );
+    assert!(
+        transform.params.is_empty(),
+        "`transform` declares no params"
+    );
 
     let dense = &doc.pipeline.nodes[1];
     assert_eq!(dense.inputs, vec!["transform".to_string()]);
