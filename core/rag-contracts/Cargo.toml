@@ -17,3 +17,10 @@ rag-types = { workspace = true }
 rag-pipeline = { workspace = true }
 async-trait = { workspace = true } # dyn-compatible async traits (frozen: async_trait, not RPITIT)
 thiserror = { workspace = true }   # typed component errors
+
+# Test-only. Proving `dyn`-compatibility (ADR-C8) means *calling* through the
+# vtable, which needs an executor. A dev-dependency does not ship to the crate a
+# contributor compiles against, and the invariant check excludes dev-dependencies
+# by design, so INV-4 is unaffected.
+[dev-dependencies]
+tokio = { workspace = true }
