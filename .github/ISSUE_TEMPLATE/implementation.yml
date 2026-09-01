@@ -1,5 +1,7 @@
 name: Implementation issue
-description: An agent-ready unit of work. Self-sufficient: the agent has no prior conversation, so restate all context here.
+description: >-
+  An agent-ready unit of work. Self-sufficient: the agent has no prior
+  conversation, so restate all context here.
 title: "<verb> <the thing to build>"
 labels: []
 body:
