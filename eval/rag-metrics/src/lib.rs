@@ -1,4 +1,5 @@
-//! Deterministic retrieval metrics: nDCG@k, recall@k and reciprocal rank.
+//! Deterministic retrieval metrics: nDCG@k, recall@k, precision@k, MRR@k
+//! (via [`reciprocal_rank_at_k`]) and MAP@k (via [`average_precision_at_k`]).
 //!
 //! These are what make M2 defensible **without an LLM judge** (ADR-10): they
 //! are computed from *qrels* — relevance judgments prepared in advance — and
@@ -8,10 +9,12 @@
 //!
 //! Each one scores **a single query**. The figure a benchmark reports —
 //! "nDCG@10 on SciFact" — is the **mean over queries**, and computing that mean
-//! belongs to the harness. Hence [`reciprocal_rank`] rather than `mrr`: MRR is
-//! the *mean* reciprocal rank, and a function that scores one query cannot be
-//! it. Averaging must also run in a fixed query order, since floating-point
-//! addition is not associative.
+//! belongs to the harness. Two of the five functions are named accordingly
+//! rather than after the aggregate they feed: [`reciprocal_rank_at_k`] rather
+//! than `mrr`, and [`average_precision_at_k`] rather than `map`, because MRR
+//! and MAP are themselves *means of these functions* over a query set, and a
+//! function that scores one query cannot be a mean. Averaging must also run
+//! in a fixed query order, since floating-point addition is not associative.
 //!
 //! # Inputs
 //!
@@ -46,6 +49,23 @@
 //! the conventional statement of the formula, not because the result depends
 //! on it. (Verified by mutation: swapping `log2` for `ln` changes nothing, and
 //! no test can distinguish them.)
+//!
+//! # The `k` cutoff, and what it divides by
+//!
+//! All five functions take a `k`. What differs is the *denominator*, and
+//! getting this wrong is the second most common way to diverge from a
+//! published score (after the gain function above):
+//!
+//! - **nDCG@k** normalizes by the ideal gain of the **first `k` judged
+//!   documents**, not by every judged document — the ideal ranking is
+//!   truncated at `k` exactly like the run is.
+//! - **recall@k** divides by **every** relevant document in the qrels, not
+//!   just the first `k` — that denominator is never truncated.
+//! - **precision@k** divides by `k` itself, even when `ranked` has fewer than
+//!   `k` elements — a short run is penalized, not rewarded.
+//! - **MRR@k** and **MAP@k** discard anything past rank `k` entirely: a
+//!   relevant document beyond the cutoff does not exist as far as either
+//!   metric is concerned.
 //!
 //! # Degenerate inputs
 //!
@@ -322,7 +342,10 @@ mod tests {
         // d1 (relevant) sits at rank 3, but the cutoff is 2: it must not count.
         let ranked = ids(&["d2", "d3", "d1", "d4"]);
         let got = reciprocal_rank_at_k(&ranked, &qrels(), 2);
-        assert_eq!(got, 0.0, "RR@2 was {got}, expected 0.0 — d1 is past the cutoff");
+        assert_eq!(
+            got, 0.0,
+            "RR@2 was {got}, expected 0.0 — d1 is past the cutoff"
+        );
     }
 
     #[test]
@@ -344,7 +367,10 @@ mod tests {
     fn precision_matches_a_hand_computed_value() {
         // Top 5: d1 (relevant) and d4 (relevant) are the hits; d2, d3, d5 are not.
         let got = precision_at_k(&ids(&["d1", "d2", "d3", "d4", "d5"]), &qrels(), 5);
-        assert!((got - 0.4).abs() < TOLERANCE, "precision@5 was {got}, expected 0.4");
+        assert!(
+            (got - 0.4).abs() < TOLERANCE,
+            "precision@5 was {got}, expected 0.4"
+        );
     }
 
     #[test]
@@ -363,7 +389,10 @@ mod tests {
         // Only one document is returned, but the cutoff is 5: trec_eval's
         // convention divides by k regardless, so this is 1/5, not 1/1.
         let got = precision_at_k(&ids(&["d1"]), &qrels(), 5);
-        assert!((got - 0.2).abs() < TOLERANCE, "precision@5 was {got}, expected 0.2");
+        assert!(
+            (got - 0.2).abs() < TOLERANCE,
+            "precision@5 was {got}, expected 0.2"
+        );
     }
 
     #[test]
@@ -392,14 +421,20 @@ mod tests {
     #[test]
     fn average_precision_matches_a_hand_computed_value() {
         let got = average_precision_at_k(&ids(&["d4", "d6", "d1"]), &qrels(), 2);
-        assert!((got - 1.0).abs() < TOLERANCE, "AP@2 was {got}, expected 1.0");
+        assert!(
+            (got - 1.0).abs() < TOLERANCE,
+            "AP@2 was {got}, expected 1.0"
+        );
     }
 
     #[test]
     fn average_precision_only_credits_ranks_where_a_new_relevant_document_appears() {
         // Rank 1 (d1) and rank 4 (d4) are hits; d2, d3, d5 contribute nothing.
         let got = average_precision_at_k(&ids(&["d1", "d2", "d3", "d4", "d5"]), &qrels(), 5);
-        assert!((got - 0.5).abs() < TOLERANCE, "AP@5 was {got}, expected 0.5");
+        assert!(
+            (got - 0.5).abs() < TOLERANCE,
+            "AP@5 was {got}, expected 0.5"
+        );
     }
 
     #[test]
@@ -440,7 +475,11 @@ mod tests {
         assert_eq!(ndcg_at_k(&ranked, &none, 10), 0.0, "IDCG is zero, not NaN");
         assert_eq!(recall_at_k(&ranked, &none, 10), 0.0, "0/0 is reported as 0");
         assert_eq!(reciprocal_rank(&ranked, &none), 0.0);
-        assert_eq!(precision_at_k(&ranked, &none, 10), 0.0, "0 relevant found / 10");
+        assert_eq!(
+            precision_at_k(&ranked, &none, 10),
+            0.0,
+            "0 relevant found / 10"
+        );
         assert_eq!(
             average_precision_at_k(&ranked, &none, 10),
             0.0,
