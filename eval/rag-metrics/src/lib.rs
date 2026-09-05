@@ -420,11 +420,34 @@ mod tests {
 
     #[test]
     fn average_precision_matches_a_hand_computed_value() {
+        // d1 is relevant but sits at rank 3, past the k=2 cutoff: it does not
+        // contribute to the sum, so a perfect AP@2 of 1.0 depends on d1 being
+        // correctly excluded, not merely on d4 and d6 being found.
         let got = average_precision_at_k(&ids(&["d4", "d6", "d1"]), &qrels(), 2);
         assert!(
             (got - 1.0).abs() < TOLERANCE,
             "AP@2 was {got}, expected 1.0"
         );
+    }
+
+    #[test]
+    fn average_precision_ignores_a_relevant_document_past_the_cutoff() {
+        // Same ranking as the hand-computed test above, but cut at k=1: only
+        // d4 counts. If d1 (rank 3) leaked past the cutoff, AP@1 would be
+        // inflated above 1.0, or the wrong rank would be used for d1's term.
+        let got = average_precision_at_k(&ids(&["d4", "d6", "d1"]), &qrels(), 1);
+        assert!(
+            (got - 1.0).abs() < TOLERANCE,
+            "AP@1 was {got}, expected 1.0"
+        );
+    }
+
+    #[test]
+    fn average_precision_is_zero_when_no_relevant_document_is_retrieved() {
+        // d1, d4 and d6 are relevant, but none of them appear in the ranking:
+        // the sum is 0, and the function must not divide 0/0 or panic.
+        let got = average_precision_at_k(&ids(&["d2", "d3", "d5"]), &qrels(), 3);
+        assert_eq!(got, 0.0, "AP@3 was {got}, expected 0.0");
     }
 
     #[test]
