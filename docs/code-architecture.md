@@ -131,8 +131,10 @@ workspace/
 │   └── …                      # each: rag-contracts + rag-types + its own heavy dependency
 │
 ├── eval/
-│   ├── rag-metrics            # nDCG@k, recall@k, MRR (deterministic); generation metrics later
-│   ├── rag-benchmarks         # BenchmarkAdapter + adapters (BEIR, CRAG, MultiHop-RAG…)
+│   ├── rag-metrics            # nDCG@k, recall@k, precision@k, MRR@k, MAP@k (deterministic);
+│   │                          #   generation metrics later
+│   ├── rag-benchmarks         # BenchmarkAdapter + adapters (BEIR/MTEB, CRAG, MultiHop-RAG…),
+│   │                          #   each parsing one canonical corpus/queries/qrels shape
 │   └── rag-harness            # Evaluation harness: benchmark → engine → metrics → run
 │
 ├── runtime/
@@ -504,8 +506,10 @@ The "plugin system" is **not** an exotic dynamic-loading mechanism. It is simply
 | Serialization | Round-trip property tests, domain ⇄ protobuf (§7.2) |
 | Canonicalization | Golden tests: varied YAML inputs → identical `LogicalPipeline` → identical hash (INV-8) |
 | Component conformance | `rag-conformance`: every `Local` and `Remote` implementation passes the same suite (§7.4) |
+| Metric fixtures | `rag-metrics`: frozen run/qrels fixtures checked against `pytrec_eval`-derived expected values, including at least one graded-relevance fixture (permanent regression tests, ADR-10) |
 | Unit | Per-crate tests; each `components/` crate compiles and tests independently |
 | End to end | The evaluation harness on a miniature benchmark — an integration test of the real path |
+| Leaderboard calibration | One-time reproduction of a published BEIR/MTEB nDCG@10 score (SciFact, then NFCorpus) via exact search, within 0.5 point (ADR-10, system §9.8) |
 
 ### 11.5 Dependency governance
 

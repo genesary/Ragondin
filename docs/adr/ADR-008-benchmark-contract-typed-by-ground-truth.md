@@ -10,7 +10,7 @@ The benchmark contract is **typed by the presence or absence of each piece**, wh
 
 | Pieces present | Computable metrics | LLM judge required? |
 |---|---|---|
-| corpus + queries + **qrels** | Retrieval: recall@k, MRR, nDCG@k | **No** — fully deterministic |
+| corpus + queries + **qrels** | Retrieval: recall@k, precision@k, MRR@k, MAP@k, nDCG@k | **No** — fully deterministic |
 | corpus + queries + **reference answers** | Generation: comparison against reference | No, or partially |
 | corpus + **queries only** | Generation: faithfulness, relevance | **Yes** — the noisiest regime |
 
