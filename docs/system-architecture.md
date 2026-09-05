@@ -288,7 +288,7 @@ Benchmark = corpus + queries + qrels + reference answers
 
 | Pieces present | Computable metrics | LLM judge required? |
 |---|---|---|
-| corpus + queries + **qrels** | Retrieval: recall@k, MRR, **nDCG@k** | **No** — fully deterministic |
+| corpus + queries + **qrels** | Retrieval: recall@k, precision@k, MRR@k, MAP@k, **nDCG@k** | **No** — fully deterministic |
 | corpus + queries + **reference answers** | Generation: comparison against reference | No, or partially |
 | corpus + **queries only** | Generation: faithfulness, relevance | **Yes** — the noisiest regime |
 
@@ -585,6 +585,22 @@ What it does guarantee:
 - **Statistical reproducibility** — replicates, with confidence intervals on scores.
 
 A serious bench states this nuance rather than promising a determinism it cannot deliver. Without confidence intervals, configuration rankings are noise dressed as science — disqualifying for a research audience.
+
+### 9.8 Calibrating the harness against a published leaderboard
+
+Implementing the metric formulas is necessary but not sufficient: a metrics library is trusted only once it **reproduces a published score**, because that is the only check that also exercises encoding, pooling and search — not just arithmetic.
+
+**The corpus/queries/qrels model, and where the heterogeneity actually lives.** Every BEIR/MTEB retrieval dataset reduces to the same logical shape — a document corpus, a query set, and qrels linking them — but its physical packaging on Hugging Face varies: `.jsonl` versus `parquet`, `dev` versus `test` splits, language-prefixed subsets, multi-subforum aggregates (CQADupstack averages 12 sub-datasets into one published score), and per-query-sampled "hard negative" corpora that break the assumption of a single global corpus. A `BenchmarkAdapter` (§5.3) absorbs all of this heterogeneity once, in the layer where the conversion tooling already exists, so that the engine and the metrics layer see exactly one canonical shape regardless of source. Two pitfalls recur across every adapter and are worth stating as standing implementation rules rather than per-dataset lore: **ids are strings, never parsed as numbers** (leading zeros are significant), and **the dataset's Hugging Face revision is pinned**, because a published score is attached to a specific commit, not to a dataset name.
+
+**The reproduction procedure.** Freeze a small calibration case — SciFact (binary relevance) first, then NFCorpus (graded relevance, which alone can expose a linear-versus-exponential gain bug) — encode it exactly as the reference model's card specifies (instruction prefixes, `title + text` concatenation, pooling, L2 normalization, truncation length), search it **exactly** (brute force, never the production ANN index — an approximate index would make any discrepancy undiagnosable), and compare nDCG@10 against the published figure:
+
+| Gap to the published score | Interpretation |
+|---|---|
+| < 0.5 point | Pipeline validated |
+| 1–5 points | Almost always an encoding mismatch: prompt prefix, pooling, or normalization |
+| > 10 points | Wrong split, wrong revision, or ids that fail to match between run and qrels |
+
+This reproduction is a one-time gate, but its by-products are permanent: the frozen run, its qrels and the expected scores (cross-checked against `pytrec_eval`, the library BEIR itself evaluates with) become CI regression fixtures. The calibrated exact-search pipeline then becomes the baseline against which a production ANN index's cost is measured on an ongoing basis: replaying the same dataset through that index and comparing recall@k against the exact-search figure yields the recall lost to approximation — a number to monitor continuously, independent of which embedding model is chosen (ADR-10).
 
 ---
 
