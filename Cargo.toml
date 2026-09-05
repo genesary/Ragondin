@@ -23,7 +23,7 @@ members = [
 version = "0.0.0"
 edition = "2021"
 license = "Apache-2.0"
-repository = "https://github.com/genesary/ragondin"
+repository = "https://github.com/genesary/Ragondin"
 rust-version = "1.85"
 
 # The single source of truth for dependency versions (AGENTS.md: "Dependency
