@@ -138,6 +138,7 @@ fn every_metric_agrees_with_pytrec_eval() {
 fn map_at_k_divides_by_every_relevant_document() {
     let case = FIXTURE
         .lines()
+        .map(str::trim_end)
         .find(|line| line.starts_with("2\td1,d6\t"))
         .map(parse)
         .expect("the `perfect top-k with k < R` case is missing from the fixture");

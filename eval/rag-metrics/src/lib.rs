@@ -9,12 +9,13 @@
 //!
 //! Each one scores **a single query**. The figure a benchmark reports —
 //! "nDCG@10 on SciFact" — is the **mean over queries**, and computing that mean
-//! belongs to the harness. Two of the six functions are named accordingly
-//! rather than after the aggregate they feed: [`reciprocal_rank_at_k`] rather
-//! than `mrr`, and [`average_precision_at_k`] rather than `map`, because MRR
-//! and MAP are themselves *means of these functions* over a query set, and a
-//! function that scores one query cannot be a mean. Averaging must also run
-//! in a fixed query order, since floating-point addition is not associative.
+//! belongs to the harness. Three of the six functions are named accordingly
+//! rather than after the aggregate they feed: [`reciprocal_rank`] and
+//! [`reciprocal_rank_at_k`] rather than `mrr`, and [`average_precision_at_k`]
+//! rather than `map`, because MRR and MAP are themselves *means of these
+//! functions* over a query set, and a function that scores one query cannot be
+//! a mean. Averaging must also run in a fixed query order, since floating-point
+//! addition is not associative.
 //!
 //! # Inputs
 //!
@@ -42,7 +43,8 @@
 //!
 //! **Only the gain function actually matters.** The alternative exponential
 //! gain (`2^rel - 1`) gives different numbers on graded qrels and would make
-//! #33 incomparable to the literature — so if a published BEIR figure ever
+//! the M2 leaderboard-reproduction milestone (#33) incomparable to the
+//! literature — so if a published BEIR figure ever
 //! fails to reproduce, that is the line to suspect. The *discount base* is not
 //! a real choice: nDCG is a ratio, and changing the base scales `DCG` and
 //! `IDCG` by the same constant, so it cancels. `log2` is written because it is
@@ -285,6 +287,17 @@ mod tests {
     }
 
     const TOLERANCE: f64 = 1e-9;
+
+    /// The six public functions, in the order the determinism test scores
+    /// them, so a failure names the culprit rather than an index.
+    const METRIC_NAMES: [&str; 6] = [
+        "ndcg_at_k",
+        "recall_at_k",
+        "precision_at_k",
+        "reciprocal_rank",
+        "reciprocal_rank_at_k",
+        "average_precision_at_k",
+    ];
 
     #[test]
     fn ndcg_matches_a_hand_computed_value() {
@@ -544,6 +557,7 @@ mod tests {
         assert_eq!(ndcg_at_k(&empty, &qrels(), 10), 0.0);
         assert_eq!(recall_at_k(&empty, &qrels(), 10), 0.0);
         assert_eq!(reciprocal_rank(&empty, &qrels()), 0.0);
+        assert_eq!(reciprocal_rank_at_k(&empty, &qrels(), 10), 0.0);
         assert_eq!(precision_at_k(&empty, &qrels(), 10), 0.0);
         assert_eq!(average_precision_at_k(&empty, &qrels(), 10), 0.0);
     }
@@ -555,6 +569,7 @@ mod tests {
         assert_eq!(ndcg_at_k(&ranked, &none, 10), 0.0, "IDCG is zero, not NaN");
         assert_eq!(recall_at_k(&ranked, &none, 10), 0.0, "0/0 is reported as 0");
         assert_eq!(reciprocal_rank(&ranked, &none), 0.0);
+        assert_eq!(reciprocal_rank_at_k(&ranked, &none, 10), 0.0);
         assert_eq!(
             precision_at_k(&ranked, &none, 10),
             0.0,
@@ -574,6 +589,8 @@ mod tests {
         assert!(ndcg_at_k(&ranked, &empty, 10).is_finite());
         assert_eq!(ndcg_at_k(&ranked, &empty, 10), 0.0);
         assert_eq!(recall_at_k(&ranked, &empty, 10), 0.0);
+        assert_eq!(reciprocal_rank(&ranked, &empty), 0.0);
+        assert_eq!(reciprocal_rank_at_k(&ranked, &empty, 10), 0.0);
         assert_eq!(precision_at_k(&ranked, &empty, 10), 0.0);
         assert_eq!(average_precision_at_k(&ranked, &empty, 10), 0.0);
     }
@@ -589,6 +606,18 @@ mod tests {
             recall_at_k(&ranked, &qrels(), 5),
             recall_at_k(&ranked, &qrels(), 500)
         );
+        assert_eq!(
+            reciprocal_rank_at_k(&ranked, &qrels(), 5),
+            reciprocal_rank_at_k(&ranked, &qrels(), 500)
+        );
+        assert_eq!(
+            average_precision_at_k(&ranked, &qrels(), 5),
+            average_precision_at_k(&ranked, &qrels(), 500)
+        );
+        // `precision_at_k` is deliberately absent: it divides by `k` itself,
+        // so a `k` past the ranking length lowers the score rather than
+        // leaving it unchanged. That is the documented convention, not an
+        // inconsistency.
     }
 
     #[test]
@@ -596,6 +625,7 @@ mod tests {
         let ranked = ids(&["d1"]);
         assert_eq!(ndcg_at_k(&ranked, &qrels(), 0), 0.0);
         assert_eq!(recall_at_k(&ranked, &qrels(), 0), 0.0);
+        assert_eq!(reciprocal_rank_at_k(&ranked, &qrels(), 0), 0.0);
         assert_eq!(precision_at_k(&ranked, &qrels(), 0), 0.0);
         assert_eq!(average_precision_at_k(&ranked, &qrels(), 0), 0.0);
     }
@@ -630,7 +660,8 @@ mod tests {
     #[test]
     fn a_duplicated_document_is_credited_once_by_ndcg_too() {
         // A normalized metric may never exceed 1. Crediting a repeat would
-        // score this 2.13. The duplicate still occupies its rank; it simply
+        // score this 1.3425 — DCG 6.392789260714372 over IDCG@3
+        // 4.761859507142915. The duplicate still occupies its rank; it simply
         // gains nothing.
         let got = ndcg_at_k(&ids(&["d1", "d1", "d1"]), &qrels(), 3);
         assert!(got <= 1.0, "nDCG exceeded 1.0: {got}");
@@ -655,12 +686,25 @@ mod tests {
 
     #[test]
     fn the_same_input_always_yields_the_same_bits() {
-        // Determinism is the point (ADR-10): the sum runs in rank order, so
-        // repeated evaluation is bit-identical, not merely close.
+        // Determinism is the point (ADR-10): every sum runs in rank order, so
+        // repeated evaluation is bit-identical, not merely close. ADR-10 claims
+        // this of the crate, not of one function, so all six are checked.
         let ranked = ids(&["d1", "d2", "d3", "d4", "d5"]);
-        let first = ndcg_at_k(&ranked, &qrels(), 10);
+        let score_all = || {
+            [
+                ndcg_at_k(&ranked, &qrels(), 10),
+                recall_at_k(&ranked, &qrels(), 10),
+                precision_at_k(&ranked, &qrels(), 10),
+                reciprocal_rank(&ranked, &qrels()),
+                reciprocal_rank_at_k(&ranked, &qrels(), 10),
+                average_precision_at_k(&ranked, &qrels(), 10),
+            ]
+        };
+        let first = score_all();
         for _ in 0..100 {
-            assert_eq!(ndcg_at_k(&ranked, &qrels(), 10).to_bits(), first.to_bits());
+            for (name, (a, b)) in METRIC_NAMES.iter().zip(first.iter().zip(score_all())) {
+                assert_eq!(a.to_bits(), b.to_bits(), "{name} is not bit-stable");
+            }
         }
     }
 }
