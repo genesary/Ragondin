@@ -1,0 +1,16 @@
+[package]
+name = "ragondin-proto"
+description = "Protobuf messages and gRPC service stubs for remote components and config delivery."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+# The wire layer. `tonic` + `prost` are the gRPC/protobuf stack; `ragondin-types` is
+# the source of truth the generated messages mirror. Not a core crate, so heavy
+# transport dependencies are allowed here (INV-4 constrains only the core).
+[dependencies]
+ragondin-types = { workspace = true }
+tonic = { workspace = true }
+prost = { workspace = true }

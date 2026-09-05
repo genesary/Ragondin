@@ -524,93 +524,93 @@ dependencies = [
 ]
 
 [[package]]
-name = "rag"
+name = "ragondin"
 version = "0.0.0"
 dependencies = [
  "anyhow",
- "rag-benchmarks",
- "rag-config",
- "rag-engine",
- "rag-experiments",
- "rag-harness",
- "rag-metrics",
- "rag-server",
+ "ragondin-benchmarks",
+ "ragondin-config",
+ "ragondin-engine",
+ "ragondin-experiments",
+ "ragondin-harness",
+ "ragondin-metrics",
+ "ragondin-server",
  "tokio",
 ]
 
 [[package]]
-name = "rag-benchmarks"
+name = "ragondin-benchmarks"
 version = "0.0.0"
 dependencies = [
- "rag-types",
+ "ragondin-types",
 ]
 
 [[package]]
-name = "rag-config"
+name = "ragondin-config"
 version = "0.0.0"
 dependencies = [
- "rag-pipeline",
- "rag-proto",
+ "ragondin-pipeline",
+ "ragondin-proto",
 ]
 
 [[package]]
-name = "rag-conformance"
+name = "ragondin-conformance"
 version = "0.0.0"
 dependencies = [
- "rag-contracts",
- "rag-types",
+ "ragondin-contracts",
+ "ragondin-types",
 ]
 
 [[package]]
-name = "rag-contracts"
+name = "ragondin-contracts"
 version = "0.0.0"
 dependencies = [
  "async-trait",
- "rag-pipeline",
- "rag-types",
+ "ragondin-pipeline",
+ "ragondin-types",
  "thiserror",
  "tokio",
 ]
 
 [[package]]
-name = "rag-engine"
+name = "ragondin-engine"
 version = "0.0.0"
 dependencies = [
- "rag-contracts",
- "rag-pipeline",
- "rag-remote",
- "rag-types",
+ "ragondin-contracts",
+ "ragondin-pipeline",
+ "ragondin-remote",
+ "ragondin-types",
  "tokio",
 ]
 
 [[package]]
-name = "rag-experiments"
+name = "ragondin-experiments"
 version = "0.0.0"
 dependencies = [
- "rag-types",
+ "ragondin-types",
 ]
 
 [[package]]
-name = "rag-harness"
+name = "ragondin-harness"
 version = "0.0.0"
 dependencies = [
- "rag-benchmarks",
- "rag-engine",
- "rag-metrics",
+ "ragondin-benchmarks",
+ "ragondin-engine",
+ "ragondin-metrics",
 ]
 
 [[package]]
-name = "rag-metrics"
+name = "ragondin-metrics"
 version = "0.0.0"
 dependencies = [
- "rag-types",
+ "ragondin-types",
 ]
 
 [[package]]
-name = "rag-pipeline"
+name = "ragondin-pipeline"
 version = "0.0.0"
 dependencies = [
- "rag-types",
+ "ragondin-types",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -618,35 +618,35 @@ dependencies = [
 ]
 
 [[package]]
-name = "rag-proto"
+name = "ragondin-proto"
 version = "0.0.0"
 dependencies = [
  "prost",
- "rag-types",
+ "ragondin-types",
  "tonic",
 ]
 
 [[package]]
-name = "rag-remote"
+name = "ragondin-remote"
 version = "0.0.0"
 dependencies = [
- "rag-contracts",
- "rag-proto",
- "rag-types",
+ "ragondin-contracts",
+ "ragondin-proto",
+ "ragondin-types",
  "tonic",
 ]
 
 [[package]]
-name = "rag-server"
+name = "ragondin-server"
 version = "0.0.0"
 dependencies = [
- "rag-engine",
+ "ragondin-engine",
  "tokio",
  "tower 0.5.3",
 ]
 
 [[package]]
-name = "rag-types"
+name = "ragondin-types"
 version = "0.0.0"
 dependencies = [
  "serde",

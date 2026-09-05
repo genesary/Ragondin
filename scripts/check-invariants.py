@@ -6,14 +6,14 @@ that wall. It parses `cargo metadata` (no third-party dependency, works on any
 runner with Python 3) and enforces:
 
   INV-4 — the core stays light.
-          `rag-types`, `rag-pipeline` and `rag-contracts` must carry NO heavy
+          `ragondin-types`, `ragondin-pipeline` and `ragondin-contracts` must carry NO heavy
           dependency
           (tantivy, tonic, prost, ort, candle-*, vector-store clients, reqwest,
           hyper, ML runtimes). Someone implementing a component compiles only
           the contracts and the value types — never the whole engine.
 
   INV-5 — the engine knows only traits.
-          `rag-engine` must not depend on any crate under `components/`.
+          `ragondin-engine` must not depend on any crate under `components/`.
           Depending on a concrete component would create a two-tier system in
           which built-ins are privileged over third-party components — the slow
           death of a contribution-driven project.
@@ -58,11 +58,11 @@ DENY_EXACT = {
 }
 DENY_PREFIX = ("candle",)  # candle-core, candle-nn, candle-transformers, …
 
-# The core crates INV-4 protects. `rag-pipeline` is included because
+# The core crates INV-4 protects. `ragondin-pipeline` is included because
 # code-architecture.md §4.1 states the whole of `core/` carries no heavy
 # dependency, and it is an INV-1 stable boundary (INV-3 value types) just like
 # the other two — leaving it unguarded would let the "core is light" rule rot.
-CORE_CRATES = ("rag-types", "rag-pipeline", "rag-contracts")
+CORE_CRATES = ("ragondin-types", "ragondin-pipeline", "ragondin-contracts")
 
 
 def is_heavy(name: str) -> bool:
@@ -142,14 +142,14 @@ def check_inv4(md: dict, pkgs_by_id: dict, edges: dict):
 
 
 def check_inv5(md: dict, pkgs_by_id: dict, edges: dict):
-    """Return (component_crate_names, [offenders in rag-engine's closure])."""
+    """Return (component_crate_names, [offenders in ragondin-engine's closure])."""
     components_dir = os.path.join(md["workspace_root"], "components") + os.sep
     component_ids = {
         mid
         for mid in md["workspace_members"]
         if pkgs_by_id[mid]["manifest_path"].startswith(components_dir)
     }
-    engine_closure = closure(member_id(md, pkgs_by_id, "rag-engine"), edges)
+    engine_closure = closure(member_id(md, pkgs_by_id, "ragondin-engine"), edges)
     offenders = sorted(pkgs_by_id[i]["name"] for i in (engine_closure & component_ids))
     component_names = sorted(pkgs_by_id[i]["name"] for i in component_ids)
     return component_names, offenders
@@ -164,7 +164,7 @@ def main() -> int:
     if inv4:
         ok = False
         print("INV-4 VIOLATION — the core must stay light.")
-        print("  rag-types, rag-pipeline and rag-contracts must carry no heavy dependency, so")
+        print("  ragondin-types, ragondin-pipeline and ragondin-contracts must carry no heavy dependency, so")
         print("  that")
         print("  someone implementing a component compiles only the contracts and the")
         print("  value types — not the whole engine. A heavy dependency here is an")
@@ -173,7 +173,7 @@ def main() -> int:
             print(f"    {crate} pulls in heavy dependency: {', '.join(offenders)}")
     else:
         print(
-            "INV-4 OK — core (rag-types, rag-pipeline, rag-contracts) carries no heavy "
+            "INV-4 OK — core (ragondin-types, ragondin-pipeline, ragondin-contracts) carries no heavy "
             "dependency."
         )
 
@@ -181,14 +181,14 @@ def main() -> int:
     if inv5:
         ok = False
         print("INV-5 VIOLATION — the engine must know only traits.")
-        print("  rag-engine must not depend on any crate under components/. Depending")
+        print("  ragondin-engine must not depend on any crate under components/. Depending")
         print("  on a concrete component creates a two-tier system in which built-ins")
         print("  are privileged over third-party components — the slow death of a")
         print("  contribution-driven project.")
-        print(f"    rag-engine depends on component crate(s): {', '.join(inv5)}")
+        print(f"    ragondin-engine depends on component crate(s): {', '.join(inv5)}")
     else:
         print(
-            f"INV-5 OK — rag-engine depends on none of the {len(component_names)} "
+            f"INV-5 OK — ragondin-engine depends on none of the {len(component_names)} "
             "component crate(s) under components/."
         )
 

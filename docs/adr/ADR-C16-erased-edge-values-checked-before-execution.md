@@ -18,11 +18,11 @@ Two existing commitments then decide *where* the check belongs. §8.3 already pl
 
 Edges carry an **erased value**, and compatibility is checked **before execution**, in two layers over one derivation.
 
-`rag-engine` defines a closed `NodeValue` enum over the kinds the executor routes between nodes, and passes it along each edge. Component authors never see it: each node's adapter destructures the value it expects, calls the component with typed arguments, and re-wraps the typed result.
+`ragondin-engine` defines a closed `NodeValue` enum over the kinds the executor routes between nodes, and passes it along each edge. Component authors never see it: each node's adapter destructures the value it expects, calls the component with typed arguments, and re-wraps the typed result.
 
-Compatibility is **derived, never declared**. `rag-pipeline` exposes `ValueKind` — a closed enum of primitive kinds plus an opaque variant for extensions — together with the functions deriving a node's produced and consumed kinds from its `LogicalNode` variant. That derivation is called at two points:
+Compatibility is **derived, never declared**. `ragondin-pipeline` exposes `ValueKind` — a closed enum of primitive kinds plus an opaque variant for extensions — together with the functions deriving a node's produced and consumed kinds from its `LogicalNode` variant. That derivation is called at two points:
 
-- **`LogicalPipeline` validation** rejects an incompatible wiring between primitive nodes. It needs no registry, so `rag validate` catches it and the configuration service can NACK on it.
+- **`LogicalPipeline` validation** rejects an incompatible wiring between primitive nodes. It needs no registry, so `ragondin validate` catches it and the configuration service can NACK on it.
 - **Physical planning** repeats the same check with the registry resolved — the only point at which an `Extension` node's kinds are known. This is §6.3's "verifies end-to-end type compatibility", honoured as written.
 - **Execution** keeps a typed error for a kind mismatch as a backstop. Reaching it is a defect in one of the two layers above, not the expected path.
 
@@ -31,8 +31,8 @@ Compatibility is **derived, never declared**. `rag-pipeline` exposes `ValueKind`
 ## Alternatives rejected
 
 - **Checking only at execution.** The cheapest to write, and this ADR's own first draft. Rejected on two counts: it contradicts §8.3, which already places a well-formedness check at validation rather than at execution; and it would leave ADR-6's NACK with almost nothing to reject on, so an incompatible configuration would be acknowledged into a running data plane and fail per request.
-- **Declared port types in the configuration.** Would put port kinds into `rag-pipeline`'s public API *and* into the canonical hashed form (INV-8), fixing them before a single real component exists, and would make any later change to the port model rehash stored configurations. Deriving the kinds from the node variant buys the same checking with none of that cost.
-- **A single check at physical planning.** Correct and complete, but it leaves `rag validate` unable to reject a bad wiring without a registry, and pushes admission control later than it needs to be. The logical layer is free: the same derivation function, called earlier.
+- **Declared port types in the configuration.** Would put port kinds into `ragondin-pipeline`'s public API *and* into the canonical hashed form (INV-8), fixing them before a single real component exists, and would make any later change to the port model rehash stored configurations. Deriving the kinds from the node variant buys the same checking with none of that cost.
+- **A single check at physical planning.** Correct and complete, but it leaves `ragondin validate` unable to reject a bad wiring without a registry, and pushes admission control later than it needs to be. The logical layer is free: the same derivation function, called earlier.
 - **`Box<dyn Any>` with `downcast`.** The same erasure, but the set of legal kinds becomes undiscoverable and a mismatch degrades to "downcast failed" with nothing to report. A closed enum gives an exhaustive `match` and a compiler error when a kind is added and a site is missed.
 - **One uniform value type for every component.** Homogeneous edges, at the price of unnatural signatures imposed on component authors — and it breaks outright as soon as generation and grading enter the graph.
 
@@ -41,9 +41,9 @@ Compatibility is **derived, never declared**. `rag-pipeline` exposes `ValueKind`
 - **#15 (physical planning) and #16 (executor) are unblocked**, which is the point of the decision.
 - **One derivation, two call sites.** Validation and planning call the same functions; planning additionally resolves `Extension` kinds from the registry. This is not two mechanisms to keep in sync, so the usual objection to a layered check does not apply here.
 - **`LogicalPipeline` validation (#9) gains the kind check.** Its scope, until now structural well-formedness only, extends to compatibility between primitive nodes — and #9 therefore becomes dependent on this decision.
-- **`rag validate` (#30) becomes a real tool** rather than a parser that prints a hash: it rejects an incompatible wiring with no `EngineContext`. Its documentation must state what it does *not* cover — an `Extension` node's kinds are invisible to it.
-- **`ValueKind` joins `rag-pipeline`'s INV-1 stable surface.** A real cost, taken deliberately: it is the same bet already made with `LogicalNode` — a closed enum with an escape hatch — and it stays out of the canonical form, so INV-8 and every stored `run_id` are untouched.
-- **`NodeValue` stays inside `rag-engine`** and must not appear in `rag-types`, `rag-pipeline`, or `rag-contracts`. It is the executor's representation, and INV-2 keeps it freely refactorable as kinds arrive in M3 and M4.
+- **`ragondin validate` (#30) becomes a real tool** rather than a parser that prints a hash: it rejects an incompatible wiring with no `EngineContext`. Its documentation must state what it does *not* cover — an `Extension` node's kinds are invisible to it.
+- **`ValueKind` joins `ragondin-pipeline`'s INV-1 stable surface.** A real cost, taken deliberately: it is the same bet already made with `LogicalNode` — a closed enum with an escape hatch — and it stays out of the canonical form, so INV-8 and every stored `run_id` are untouched.
+- **`NodeValue` stays inside `ragondin-engine`** and must not appear in `ragondin-types`, `ragondin-pipeline`, or `ragondin-contracts`. It is the executor's representation, and INV-2 keeps it freely refactorable as kinds arrive in M3 and M4.
 - **INV-7 is preserved.** Built-in and third-party components are wrapped by the same adapter; the erased edge value creates no fast path for either.
 - A kind mismatch surfacing at execution is a defect in validation or planning. Its typed error should say so, so that it is fixed upstream rather than absorbed.
 - This ADR does **not** resolve open question 3 (`PhysicalPipeline` serializability): `NodeValue` is an execution-time value, not part of the resolved plan.

@@ -24,10 +24,10 @@ never rely on nightly.
 
 Two invariants are enforced as blocking CI checks, not just documented:
 
-- **INV-4 — the core stays light.** `rag-types` and `rag-contracts` carry no
+- **INV-4 — the core stays light.** `ragondin-types` and `ragondin-contracts` carry no
   heavy dependency (tantivy, tonic, prost, ort, candle, vector-store clients,
   HTTP clients). If you add one, the build fails and tells you why.
-- **INV-5 — the engine knows only traits.** `rag-engine` depends on no crate
+- **INV-5 — the engine knows only traits.** `ragondin-engine` depends on no crate
   under `components/`. Add such a dependency and the build fails.
 
 Run them directly with `just check-invariants` (implemented in
@@ -43,10 +43,10 @@ privilege for built-in components (INV-7).**
 
 ### Local — a Rust crate
 
-A new crate under `components/` that implements a trait from `rag-contracts`.
+A new crate under `components/` that implements a trait from `ragondin-contracts`.
 
-- It depends only on `rag-contracts` and `rag-types` — a component is a **leaf**
-  of the dependency graph. It never depends on `rag-engine` or on another
+- It depends only on `ragondin-contracts` and `ragondin-types` — a component is a **leaf**
+  of the dependency graph. It never depends on `ragondin-engine` or on another
   component. You compile only the contracts crate and the value types, not the
   whole engine.
 - Its heavy dependency (the retrieval engine, the ML runtime, the store client)
@@ -54,15 +54,15 @@ A new crate under `components/` that implements a trait from `rag-contracts`.
   stays lean.
 - It registers on an `EngineContext` through exactly the same mechanism a
   third-party component would use.
-- Naming: `rag-<role>-<implementation>`, e.g. `rag-reranker-onnx`,
-  `rag-store-qdrant`.
+- Naming: `ragondin-<role>-<implementation>`, e.g. `ragondin-reranker-onnx`,
+  `ragondin-store-qdrant`.
 
 See [`components/README.md`](components/README.md).
 
 ### Remote — a gRPC service in any language
 
 A service (commonly Python) implementing the corresponding protobuf service from
-`rag-proto`. It runs outside this repository, in any language, and is named by
+`ragondin-proto`. It runs outside this repository, in any language, and is named by
 URL in the configuration; the engine reaches it through a generic `Remote<T>`
 adapter and cannot tell it apart from a `Local` component.
 
@@ -72,7 +72,7 @@ A `Remote` component that wins a benchmark can later be ported to `Local`
 ### Conformance
 
 Whichever path you take, your component must pass the conformance suite
-(`rag-conformance`) — the behavioural suite every implementation passes, `Local`
+(`ragondin-conformance`) — the behavioural suite every implementation passes, `Local`
 or `Remote`. That is what makes the two paths genuinely equivalent rather than
 equivalent by assertion.
 
@@ -80,6 +80,6 @@ equivalent by assertion.
 
 - **Language:** English everywhere — code, comments, docs, commits, PRs.
 - **Commits:** Conventional Commits, scoped by crate where useful, e.g.
-  `feat(rag-pipeline): add canonical hashing`.
+  `feat(ragondin-pipeline): add canonical hashing`.
 - **Branches:** `<type>/<issue-number>-<slug>`.
 - **Errors:** `thiserror` (typed) in libraries; `anyhow` in binaries only.

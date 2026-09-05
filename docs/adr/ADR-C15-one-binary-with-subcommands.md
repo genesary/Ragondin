@@ -6,7 +6,7 @@ The data plane and the command-line workflow could be shipped as separate binari
 
 ## Decision
 
-A **single binary, `rag`**, is the composition root and the entire user-facing surface, with subcommands: `bench`, `compare`, `serve`, `validate`. This is a **packaging decision, not an architectural one**: the serving driver and the evaluation harness remain distinct crates over the same engine.
+A **single binary, `ragondin`**, is the composition root and the entire user-facing surface, with subcommands: `bench`, `compare`, `serve`, `validate`. This is a **packaging decision, not an architectural one**: the serving driver and the evaluation harness remain distinct crates over the same engine.
 
 ## Alternatives rejected
 

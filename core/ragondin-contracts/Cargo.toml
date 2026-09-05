@@ -1,0 +1,26 @@
+[package]
+name = "ragondin-contracts"
+description = "The component contract: the traits an external contributor implements."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+# INV-4 (CI-enforced): this is the crate an external contributor implements, so
+# it MUST stay light — someone implementing a `Reranker` compiles only this
+# crate and `ragondin-types`, not the whole engine. No heavy dependency here.
+# A heavy dependency appearing means the abstraction is leaking: stop and raise
+# it.
+[dependencies]
+ragondin-types = { workspace = true }
+ragondin-pipeline = { workspace = true }
+async-trait = { workspace = true } # dyn-compatible async traits (frozen: async_trait, not RPITIT)
+thiserror = { workspace = true }   # typed component errors
+
+# Test-only. Proving `dyn`-compatibility (ADR-C8) means *calling* through the
+# vtable, which needs an executor. A dev-dependency does not ship to the crate a
+# contributor compiles against, and the invariant check excludes dev-dependencies
+# by design, so INV-4 is unaffected.
+[dev-dependencies]
+tokio = { workspace = true }

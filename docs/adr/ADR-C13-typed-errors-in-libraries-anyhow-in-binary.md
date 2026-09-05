@@ -6,7 +6,7 @@ Libraries should expose precise, matchable error types so callers can handle fai
 
 ## Decision
 
-Libraries (`core/`, `rag-engine`, `components/`, …) use **typed errors via `thiserror`**, each boundary exposing its own enum — `ComponentError`, `PlanError`, `ExecError`. The **binary uses `anyhow`** for aggregation. A library **never imposes `anyhow`** on its consumers.
+Libraries (`core/`, `ragondin-engine`, `components/`, …) use **typed errors via `thiserror`**, each boundary exposing its own enum — `ComponentError`, `PlanError`, `ExecError`. The **binary uses `anyhow`** for aggregation. A library **never imposes `anyhow`** on its consumers.
 
 ## Alternatives rejected
 

@@ -1,0 +1,17 @@
+[package]
+name = "ragondin-config"
+description = "ConfigSource (LocalFile | Stream); config schema; parse → validate → compile."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+# Compiles a configuration into a `LogicalPipeline` (`ragondin-pipeline`) and speaks
+# the configuration-delivery service (`ragondin-proto::config`). The wire/config
+# format is separate from the in-memory IR and versioned independently (INV-9).
+# A YAML parser is added when parsing is implemented (a later issue), not before
+# there is anything to parse.
+[dependencies]
+ragondin-pipeline = { workspace = true }
+ragondin-proto = { workspace = true }

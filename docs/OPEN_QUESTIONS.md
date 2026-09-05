@@ -20,7 +20,7 @@ Should components be registered **explicitly in the binary** (verbose, but every
 Go or Rust for the Kubernetes controller?
 
 - The network boundary is clean either way: the controller only translates a custom resource into wire configuration and pushes it over the purpose-built gRPC service.
-- `rag-controller` **deliberately does not exist yet.**
+- `ragondin-controller` **deliberately does not exist yet.**
 - **Blocks:** the cloud-native milestone (M6).
 
 ## 3. `PhysicalPipeline` serializability

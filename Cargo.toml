@@ -1,20 +1,20 @@
 [workspace]
 resolver = "2"
 members = [
-    "core/rag-types",
-    "core/rag-pipeline",
-    "core/rag-contracts",
-    "wire/rag-proto",
-    "wire/rag-remote",
-    "engine/rag-engine",
-    "eval/rag-metrics",
-    "eval/rag-benchmarks",
-    "eval/rag-harness",
-    "runtime/rag-config",
-    "runtime/rag-server",
-    "runtime/rag-experiments",
-    "testkit/rag-conformance",
-    "bin/rag",
+    "core/ragondin-types",
+    "core/ragondin-pipeline",
+    "core/ragondin-contracts",
+    "wire/ragondin-proto",
+    "wire/ragondin-remote",
+    "engine/ragondin-engine",
+    "eval/ragondin-metrics",
+    "eval/ragondin-benchmarks",
+    "eval/ragondin-harness",
+    "runtime/ragondin-config",
+    "runtime/ragondin-server",
+    "runtime/ragondin-experiments",
+    "testkit/ragondin-conformance",
+    "bin/ragondin",
 ]
 
 # Metadata shared by every member crate. A member opts in with
@@ -23,7 +23,7 @@ members = [
 version = "0.0.0"
 edition = "2021"
 license = "Apache-2.0"
-repository = "https://github.com/genesary/benchmark-platform"
+repository = "https://github.com/genesary/Ragondin"
 rust-version = "1.85"
 
 # The single source of truth for dependency versions (AGENTS.md: "Dependency
@@ -33,30 +33,30 @@ rust-version = "1.85"
 # described in exactly one place.
 [workspace.dependencies]
 # --- internal crates (the dependency graph, centralized) ---
-rag-types = { path = "core/rag-types" }
-rag-pipeline = { path = "core/rag-pipeline" }
-rag-contracts = { path = "core/rag-contracts" }
-rag-proto = { path = "wire/rag-proto" }
-rag-remote = { path = "wire/rag-remote" }
-rag-engine = { path = "engine/rag-engine" }
-rag-metrics = { path = "eval/rag-metrics" }
-rag-benchmarks = { path = "eval/rag-benchmarks" }
-rag-harness = { path = "eval/rag-harness" }
-rag-config = { path = "runtime/rag-config" }
-rag-server = { path = "runtime/rag-server" }
-rag-experiments = { path = "runtime/rag-experiments" }
-rag-conformance = { path = "testkit/rag-conformance" }
+ragondin-types = { path = "core/ragondin-types" }
+ragondin-pipeline = { path = "core/ragondin-pipeline" }
+ragondin-contracts = { path = "core/ragondin-contracts" }
+ragondin-proto = { path = "wire/ragondin-proto" }
+ragondin-remote = { path = "wire/ragondin-remote" }
+ragondin-engine = { path = "engine/ragondin-engine" }
+ragondin-metrics = { path = "eval/ragondin-metrics" }
+ragondin-benchmarks = { path = "eval/ragondin-benchmarks" }
+ragondin-harness = { path = "eval/ragondin-harness" }
+ragondin-config = { path = "runtime/ragondin-config" }
+ragondin-server = { path = "runtime/ragondin-server" }
+ragondin-experiments = { path = "runtime/ragondin-experiments" }
+ragondin-conformance = { path = "testkit/ragondin-conformance" }
 
 # --- third-party dependencies ---
 # Kept deliberately small. Heavy backends (tantivy, candle, ort, vector-store
 # and LLM clients) are NOT listed here yet: they arrive with the components
 # that need them, each behind a feature flag (INV-4, and the lean-default-build
-# rule). `serde` is the only dependency the core (`rag-types`) is permitted to
+# rule). `serde` is the only dependency the core (`ragondin-types`) is permitted to
 # ship; a test-only dev-dependency is outside INV-4 and outside that rule.
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"                                 # test-only: serde round-trip assertions (dev-dependency)
 serde_yaml = "0.9"                                 # test-only: golden YAML fixtures (dev-dependency)
-sha2 = "0.10"                                      # canonical logical-form hashing (rag-pipeline)
+sha2 = "0.10"                                      # canonical logical-form hashing (ragondin-pipeline)
 async-trait = "0.1"                                # dyn-compatible async traits (frozen: not RPITIT)
 thiserror = "2"                                    # typed library errors
 anyhow = "1"                                       # error aggregation, binaries only

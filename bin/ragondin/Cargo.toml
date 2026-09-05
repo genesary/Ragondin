@@ -1,0 +1,33 @@
+[package]
+name = "ragondin"
+description = "The platform binary. Subcommands: bench, compare, serve, validate. The composition root."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "ragondin"
+path = "src/main.rs"
+
+# The composition root: the ONLY place that knows both the engine and the
+# concrete components. It may depend on anything. `anyhow` aggregates errors
+# here (never in a library, INV / frozen: thiserror in libs, anyhow in bins).
+[dependencies]
+ragondin-engine = { workspace = true }
+ragondin-server = { workspace = true }
+ragondin-harness = { workspace = true }
+ragondin-experiments = { workspace = true }
+ragondin-config = { workspace = true }
+ragondin-metrics = { workspace = true }
+ragondin-benchmarks = { workspace = true }
+anyhow = { workspace = true }
+tokio = { workspace = true }
+
+# The feature-gating pattern, established now with no backends to gate yet: heavy
+# backends (tantivy/bm25, candle, ort, qdrant, the remote client) will each be
+# added as an optional dependency behind a feature, and wired in here. The
+# default build stays lean and compiles fast.
+[features]
+default = []

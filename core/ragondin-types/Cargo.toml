@@ -1,0 +1,19 @@
+[package]
+name = "ragondin-types"
+description = "Core value types shared across the platform (Document, Chunk, Query, …)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+# INV-4: the core stays light. `serde` is the ONLY dependency this crate is
+# permitted. No workspace crate, no heavy library. CI enforces this.
+[dependencies]
+serde = { workspace = true }
+
+# Test-only. A dev-dependency does not ship to this crate's consumers, so
+# implementing a component still compiles `serde` alone (INV-4 is unaffected;
+# the invariant check excludes dev-dependencies by design).
+[dev-dependencies]
+serde_json = { workspace = true }

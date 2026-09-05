@@ -40,11 +40,11 @@ Architectural constraints, not style preferences. **A PR that violates one is re
 
 | ID | Rule |
 |---|---|
-| **INV-1** | `rag-types`, `rag-pipeline`, `rag-contracts` are **stable API boundaries**. Breaking their public API is a deliberate, versioned act — never a side effect of another change. |
-| **INV-2** | `rag-engine` is **not an API boundary** and never will be. Refactor it freely; do not treat its internals as stable. |
-| **INV-3** | `rag-types` and `rag-pipeline` contain **value types only**: no global context, no interner, no I/O. A value is fully determined by its content. |
-| **INV-4** | **The core stays light.** `rag-types` and `rag-contracts` must carry **no heavy dependency** — no `tantivy`, `tonic`, `ort`, `candle`, vector-store client, or HTTP client. `serde` at most. *CI-enforced.* |
-| **INV-5** | **The engine knows only traits.** `rag-engine` must not depend on any crate under `components/`. *CI-enforced.* |
+| **INV-1** | `ragondin-types`, `ragondin-pipeline`, `ragondin-contracts` are **stable API boundaries**. Breaking their public API is a deliberate, versioned act — never a side effect of another change. |
+| **INV-2** | `ragondin-engine` is **not an API boundary** and never will be. Refactor it freely; do not treat its internals as stable. |
+| **INV-3** | `ragondin-types` and `ragondin-pipeline` contain **value types only**: no global context, no interner, no I/O. A value is fully determined by its content. |
+| **INV-4** | **The core stays light.** `ragondin-types` and `ragondin-contracts` must carry **no heavy dependency** — no `tantivy`, `tonic`, `ort`, `candle`, vector-store client, or HTTP client. `serde` at most. *CI-enforced.* |
+| **INV-5** | **The engine knows only traits.** `ragondin-engine` must not depend on any crate under `components/`. *CI-enforced.* |
 | **INV-6** | **No global state.** The component registry lives on an `EngineContext` passed explicitly as a parameter. Never use a static global registry (`inventory`, `linkme`, or equivalent). |
 | **INV-7** | **No privilege for built-in components.** A first-party component registers through exactly the same mechanism as a third-party one. Never add a shortcut, fast path, or special case for a built-in. |
 | **INV-8** | **Hashing is over the canonical logical form**, never over source text. Two semantically equivalent configurations formatted differently **must** produce the same hash. |
@@ -62,8 +62,8 @@ bins → planes → engine → contracts → pipeline → types
             components ───────┘
 ```
 
-- `rag-engine` depends on `rag-contracts` (the traits) and on **no** crate under `components/`.
-- Crates under `components/` depend on `rag-contracts` and `rag-types`, and on **nothing else in the workspace**. A component is a leaf.
+- `ragondin-engine` depends on `ragondin-contracts` (the traits) and on **no** crate under `components/`.
+- Crates under `components/` depend on `ragondin-contracts` and `ragondin-types`, and on **nothing else in the workspace**. A component is a leaf.
 - Only binaries know both the engine and the concrete components. **Binaries are the composition root.**
 
 Each load-bearing crate carries an `ARCHITECTURE.md` stating its local constraints. **Read it before modifying that crate.**
@@ -127,7 +127,7 @@ Rationale for each decision: `docs/adr/`, where every decision is a numbered, in
 ## Conventions
 
 - **Language:** English everywhere — code, comments, documentation, issues, commit messages, PR descriptions.
-- **Commits:** Conventional Commits, scoped by crate where useful: `feat(rag-pipeline): add canonical hashing`.
+- **Commits:** Conventional Commits, scoped by crate where useful: `feat(ragondin-pipeline): add canonical hashing`.
 - **Branches:** `<type>/<issue-number>-<slug>`, e.g. `feat/12-logical-pipeline-hash`.
 
 ---

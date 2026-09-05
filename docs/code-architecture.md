@@ -106,65 +106,65 @@ workspace/
 ├── Cargo.toml                 # [workspace] + [workspace.dependencies] — versions centralized here
 │
 ├── core/                      # THE CORE — stable API boundaries, no heavy dependencies
-│   ├── rag-types              # Document, Chunk, Query, Embedding, ScoredChunk, Context, Generation
+│   ├── ragondin-types              # Document, Chunk, Query, Embedding, ScoredChunk, Context, Generation
 │   │                          #   Value types. serde only. No I/O, no globals.
-│   ├── rag-pipeline           # RawPipeline → LogicalPipeline → PhysicalPipeline
+│   ├── ragondin-pipeline           # RawPipeline → LogicalPipeline → PhysicalPipeline
 │   │                          #   Graph, control flow, Extension variant, canonical hashing
-│   └── rag-contracts          # Traits: Chunker, Embedder, Indexer, Retriever, Fusion, Reranker,
+│   └── ragondin-contracts          # Traits: Chunker, Embedder, Indexer, Retriever, Fusion, Reranker,
 │                              #   ContextBuilder, Generator, Grader, VectorStore
 │                              #   This is what a contributor implements.
 │
 ├── wire/                      # Serialization and remote components
-│   ├── rag-proto              # tonic-build: component service definitions + the configuration service
-│   └── rag-remote             # Generic Remote<T> adapters; domain ⇄ protobuf conversions
+│   ├── ragondin-proto              # tonic-build: component service definitions + the configuration service
+│   └── ragondin-remote             # Generic Remote<T> adapters; domain ⇄ protobuf conversions
 │
 ├── engine/
-│   └── rag-engine             # EngineContext (registry), physical planning, executor, ExecutionTrace
+│   └── ragondin-engine             # EngineContext (registry), physical planning, executor, ExecutionTrace
 │                              #   Depends on contracts + pipeline + types. INTERNAL — never an API boundary.
 │
 ├── components/                # The Local extension surface. One crate per implementation. Feature-gated.
-│   ├── rag-retriever-bm25     # in-process sparse retrieval (tantivy)
-│   ├── rag-retriever-dense    # dense retrieval through a VectorStore
-│   ├── rag-embedder-onnx      # in-process embeddings (ONNX Runtime)
-│   ├── rag-reranker-onnx      # in-process cross-encoder
-│   ├── rag-store-qdrant       # VectorStore implementation
-│   └── …                      # each: rag-contracts + rag-types + its own heavy dependency
+│   ├── ragondin-retriever-bm25     # in-process sparse retrieval (tantivy)
+│   ├── ragondin-retriever-dense    # dense retrieval through a VectorStore
+│   ├── ragondin-embedder-onnx      # in-process embeddings (ONNX Runtime)
+│   ├── ragondin-reranker-onnx      # in-process cross-encoder
+│   ├── ragondin-store-qdrant       # VectorStore implementation
+│   └── …                      # each: ragondin-contracts + ragondin-types + its own heavy dependency
 │
 ├── eval/
-│   ├── rag-metrics            # nDCG@k, recall@k, precision@k, MRR@k, MAP@k (deterministic);
+│   ├── ragondin-metrics            # nDCG@k, recall@k, precision@k, MRR@k, MAP@k (deterministic);
 │   │                          #   generation metrics later
-│   ├── rag-benchmarks         # BenchmarkAdapter + adapters (BEIR/MTEB, CRAG, MultiHop-RAG…),
+│   ├── ragondin-benchmarks         # BenchmarkAdapter + adapters (BEIR/MTEB, CRAG, MultiHop-RAG…),
 │   │                          #   each parsing one canonical corpus/queries/qrels shape
-│   └── rag-harness            # Evaluation harness: benchmark → engine → metrics → run
+│   └── ragondin-harness            # Evaluation harness: benchmark → engine → metrics → run
 │
 ├── runtime/
-│   ├── rag-config             # ConfigSource (LocalFile | Stream); schema; parse → validate → compile
-│   ├── rag-server             # Serving: ingress → Tower stack → engine
-│   └── rag-experiments        # Native run store, registry, the API the UI consumes
+│   ├── ragondin-config             # ConfigSource (LocalFile | Stream); schema; parse → validate → compile
+│   ├── ragondin-server             # Serving: ingress → Tower stack → engine
+│   └── ragondin-experiments        # Native run store, registry, the API the UI consumes
 │
 ├── testkit/
-│   └── rag-conformance        # The suite every component implementation must pass (Local or Remote)
+│   └── ragondin-conformance        # The suite every component implementation must pass (Local or Remote)
 │
 └── bin/
-    └── rag                    # THE binary. Subcommands: bench, compare, serve, validate.
+    └── ragondin                    # THE binary. Subcommands: bench, compare, serve, validate.
                                #   The composition root.
 ```
 
 **Naming conventions**, so that the structure is self-explanatory:
 
-- Components follow `rag-<role>-<implementation>` — `rag-reranker-onnx`, `rag-store-qdrant`. The pattern is guessable rather than memorized.
+- Components follow `ragondin-<role>-<implementation>` — `ragondin-reranker-onnx`, `ragondin-store-qdrant`. The pattern is guessable rather than memorized.
 - Suffixes are the words a newcomer would use: `pipeline`, not `ir`; `harness`, not `eval-driver`; `server`, not `serving`.
-- Plurals where the crate holds many things: `rag-benchmarks` (many adapters), `rag-experiments` (many runs).
+- Plurals where the crate holds many things: `ragondin-benchmarks` (many adapters), `ragondin-experiments` (many runs).
 
 ### 4.2 One binary, four subcommands
 
-A single binary, `rag`, is the composition root and the entire user-facing surface:
+A single binary, `ragondin`, is the composition root and the entire user-facing surface:
 
 ```
-rag bench <config> --benchmark beir/scifact    # evaluate a pipeline against a benchmark
-rag compare <run-a> <run-b>                    # compare two runs
-rag serve <config>                             # serve the pipeline
-rag validate <config>                          # validate a configuration
+ragondin bench <config> --benchmark beir/scifact  # evaluate a pipeline against a benchmark
+ragondin compare <run-a> <run-b>                  # compare two runs
+ragondin serve <config>                           # serve the pipeline
+ragondin validate <config>                        # validate a configuration
 ```
 
 **Rationale.** Separate binaries for the data plane and the command-line workflow would force a user to understand the internal architecture before running anything. One subcommanded binary makes the standalone-first promise (P2) real: **one binary, one configuration file, it runs.**
@@ -178,34 +178,34 @@ Dependency arrows **always point toward the core**. None points back. Cargo guar
 ```mermaid
 flowchart TB
   subgraph BIN["bin/ (composition root)"]
-    RAG[rag]
+    RAG[ragondin]
   end
   subgraph RUNTIME["runtime/"]
-    SRV[rag-server]
-    EXP[rag-experiments]
-    CFG[rag-config]
+    SRV[ragondin-server]
+    EXP[ragondin-experiments]
+    CFG[ragondin-config]
   end
   subgraph EVAL["eval/"]
-    HAR[rag-harness]
-    MET[rag-metrics]
-    BEN[rag-benchmarks]
+    HAR[ragondin-harness]
+    MET[ragondin-metrics]
+    BEN[ragondin-benchmarks]
   end
   subgraph ENGINE["engine/"]
-    ENG[rag-engine]
+    ENG[ragondin-engine]
   end
   subgraph COMP["components/ (Local — leaves)"]
-    C1[rag-retriever-bm25]
-    C2[rag-reranker-onnx]
-    C3[rag-store-qdrant]
+    C1[ragondin-retriever-bm25]
+    C2[ragondin-reranker-onnx]
+    C3[ragondin-store-qdrant]
   end
   subgraph WIRE["wire/"]
-    PRO[rag-proto]
-    REM[rag-remote]
+    PRO[ragondin-proto]
+    REM[ragondin-remote]
   end
   subgraph CORE["core/ (stable API boundaries)"]
-    CON[rag-contracts]
-    PIP[rag-pipeline]
-    TYP[rag-types]
+    CON[ragondin-contracts]
+    PIP[ragondin-pipeline]
+    TYP[ragondin-types]
   end
 
   RAG --> SRV & HAR & EXP & CFG & ENG
@@ -225,10 +225,10 @@ flowchart TB
 
 **Normative reading of the graph:**
 
-- `rag-engine` depends on `rag-contracts` (the traits) but on **no crate under `components/`**. This is load-bearing rule number one.
-- Crates under `components/` depend on `rag-contracts` and `rag-types` and **never the reverse**. A component is a **leaf**.
+- `ragondin-engine` depends on `ragondin-contracts` (the traits) but on **no crate under `components/`**. This is load-bearing rule number one.
+- Crates under `components/` depend on `ragondin-contracts` and `ragondin-types` and **never the reverse**. A component is a **leaf**.
 - Only the **binary** knows both the engine and the concrete components. It is the **composition root**.
-- `rag-types` is the ultimate leaf: everything depends on it; it depends on almost nothing.
+- `ragondin-types` is the ultimate leaf: everything depends on it; it depends on almost nothing.
 
 ---
 
@@ -238,23 +238,23 @@ Following rust-analyzer's practice, each load-bearing crate documents its invari
 
 | # | Invariant | Crates | Precedent |
 |---|---|---|---|
-| **INV-1** | **Stable API boundaries** — versioned; breaking them is a deliberate, costly act. | `rag-types`, `rag-pipeline`, `rag-contracts` | rust-analyzer's syntax crate |
-| **INV-2** | **`rag-engine` is NOT, and will NEVER be, an API boundary.** Full freedom to refactor. | `rag-engine` | rust-analyzer's internal crates |
-| **INV-3** | **Value types** — `rag-types` and `rag-pipeline` have no global context, no interner, no I/O. Fully determined by their content. | `core/` | "the syntax tree is a value type" |
-| **INV-4** | **The core is light** — `rag-types` and `rag-contracts` depend on **no heavy library** (no tantivy, tonic, ONNX Runtime, candle, vector-store client, HTTP client). `serde` at most. *(CI-enforced)* | `core/` | — |
-| **INV-5** | **The engine knows only traits** — `rag-engine` lists **no crate under `components/`** in its `Cargo.toml`. *(CI-enforced)* | `rag-engine` | DataFusion trait-based operators |
-| **INV-6** | **Explicit composition, zero globals** — the registry lives on an `EngineContext` passed as a parameter. No static global registry. | `rag-engine` | DataFusion's session context |
-| **INV-7** | **No privilege for built-ins** — a built-in component registers through exactly the same mechanism as a third-party one. | `rag-engine`, `components/` | DataFusion: built-in = user-defined API |
-| **INV-8** | **The hash is over the canonical logical form**, never over source text. | `rag-pipeline` | — |
-| **INV-9** | **The wire format is separate from the in-memory representation** and versioned independently. | `rag-config`, `rag-proto` | DataFusion plan serialization |
-| **INV-10** | **Traces are an OUTPUT of execution**, not logs. | `rag-engine` | — |
-| **INV-11** | **Tower governs the network envelope, not the domain contract.** | `rag-server` vs `rag-contracts` | linkerd2-proxy |
+| **INV-1** | **Stable API boundaries** — versioned; breaking them is a deliberate, costly act. | `ragondin-types`, `ragondin-pipeline`, `ragondin-contracts` | rust-analyzer's syntax crate |
+| **INV-2** | **`ragondin-engine` is NOT, and will NEVER be, an API boundary.** Full freedom to refactor. | `ragondin-engine` | rust-analyzer's internal crates |
+| **INV-3** | **Value types** — `ragondin-types` and `ragondin-pipeline` have no global context, no interner, no I/O. Fully determined by their content. | `core/` | "the syntax tree is a value type" |
+| **INV-4** | **The core is light** — `ragondin-types` and `ragondin-contracts` depend on **no heavy library** (no tantivy, tonic, ONNX Runtime, candle, vector-store client, HTTP client). `serde` at most. *(CI-enforced)* | `core/` | — |
+| **INV-5** | **The engine knows only traits** — `ragondin-engine` lists **no crate under `components/`** in its `Cargo.toml`. *(CI-enforced)* | `ragondin-engine` | DataFusion trait-based operators |
+| **INV-6** | **Explicit composition, zero globals** — the registry lives on an `EngineContext` passed as a parameter. No static global registry. | `ragondin-engine` | DataFusion's session context |
+| **INV-7** | **No privilege for built-ins** — a built-in component registers through exactly the same mechanism as a third-party one. | `ragondin-engine`, `components/` | DataFusion: built-in = user-defined API |
+| **INV-8** | **The hash is over the canonical logical form**, never over source text. | `ragondin-pipeline` | — |
+| **INV-9** | **The wire format is separate from the in-memory representation** and versioned independently. | `ragondin-config`, `ragondin-proto` | DataFusion plan serialization |
+| **INV-10** | **Traces are an OUTPUT of execution**, not logs. | `ragondin-engine` | — |
+| **INV-11** | **Tower governs the network envelope, not the domain contract.** | `ragondin-server` vs `ragondin-contracts` | linkerd2-proxy |
 
 ---
 
 ## 6. The pipeline representation, in three levels
 
-The first structuring decision, refined from DataFusion's logical/physical plan separation. Home: `rag-pipeline`.
+The first structuring decision, refined from DataFusion's logical/physical plan separation. Home: `ragondin-pipeline`.
 
 ### 6.1 The three levels
 
@@ -264,7 +264,7 @@ The first structuring decision, refined from DataFusion's logical/physical plan 
 | `LogicalPipeline` | **Validated, canonical** form — names each implementation, resolves none | Validation and canonicalization pass | **Content-addressed.** Serializable. A value type. |
 | `PhysicalPipeline` | Implementations **resolved** to trait objects; defaults applied | Physical planning, using the registry | Ready to execute. Holds `Box<dyn>` — not serializable. |
 
-**Why three levels and not two.** A single validated level would have to be both the content-addressed artifact and the executable one, and it cannot be: resolved implementations are `Box<dyn>` trait objects, so that level is not serializable and cannot be hashed. Separating them also keeps two operations out of the hashed form — applying implementation defaults, and resolving an `Extension` node's kinds from the registry (ADR-C16) — so a configuration's identity does not shift with the registry it was planned against, and `rag validate` works with no `EngineContext` at all.
+**Why three levels and not two.** A single validated level would have to be both the content-addressed artifact and the executable one, and it cannot be: resolved implementations are `Box<dyn>` trait objects, so that level is not serializable and cannot be hashed. Separating them also keeps two operations out of the hashed form — applying implementation defaults, and resolving an `Extension` node's kinds from the registry (ADR-C16) — so a configuration's identity does not shift with the registry it was planned against, and `ragondin validate` works with no `EngineContext` at all.
 
 The logical hash identifies a configuration **completely, backend included**: `impl: qdrant_dense` is part of the logical form, so two backends are two hashes. That is deliberate — a run's identity must suffice to reproduce it (P4), and the configuration promoted from bench to serving must pin the backend it was measured on (P1). Comparing *"same RAG strategy, different backends"* is a **projection** over the logical form that elides `implementation`, not a property of the hash. See ADR-C2 § Amendments.
 
@@ -308,7 +308,7 @@ flowchart LR
 
 ## 7. The component contract, in code
 
-Home: `rag-contracts` (face 1), `rag-proto` and `rag-remote` (face 2).
+Home: `ragondin-contracts` (face 1), `ragondin-proto` and `ragondin-remote` (face 2).
 
 ### 7.1 Two mirror faces
 
@@ -334,10 +334,10 @@ service Reranker {
 }
 ```
 
-**The generic `Remote<T>` adapter** (`rag-remote`) implements the trait by delegating over gRPC. The engine never distinguishes the two: both are `Box<dyn Reranker>`.
+**The generic `Remote<T>` adapter** (`ragondin-remote`) implements the trait by delegating over gRPC. The engine never distinguishes the two: both are `Box<dyn Reranker>`.
 
 ```rust
-// rag-remote: a struct implementing the domain trait by speaking protobuf
+// ragondin-remote: a struct implementing the domain trait by speaking protobuf
 pub struct RemoteReranker { client: RerankerClient<Channel> }
 
 #[async_trait]
@@ -352,7 +352,7 @@ impl Reranker for RemoteReranker {
 
 ### 7.2 Source of truth and face synchronization
 
-**Decision.** The **domain types (`rag-types`) are the source of truth**, hand-written for Rust ergonomics. The protobuf is generated by `tonic-build`. `rag-remote` supplies the `From`/`Into` conversions.
+**Decision.** The **domain types (`ragondin-types`) are the source of truth**, hand-written for Rust ergonomics. The protobuf is generated by `tonic-build`. `ragondin-remote` supplies the `From`/`Into` conversions.
 
 The two faces are kept in lockstep by **round-trip property tests**:
 
@@ -376,7 +376,7 @@ Dynamic dispatch is **mandatory**: it is impossible to know at compile time whet
 
 The same reasoning justifies the dynamic dispatch itself: the vtable indirection is negligible next to the work being dispatched, and the flexibility it buys — `Local` and `Remote` indistinguishable to the engine — is the foundation of the entire contribution model.
 
-### 7.4 The conformance suite (`rag-conformance`)
+### 7.4 The conformance suite (`ragondin-conformance`)
 
 So that `Local`/`Remote` equivalence is **real rather than asserted**: a suite of behavioural tests that **every** implementation of a contract must pass, whatever its nature. A contributor — built-in or third-party — plugs their component into the suite and obtains a conformance guarantee.
 
@@ -386,7 +386,7 @@ This is what operationally enforces INV-7. Without it, "no privilege for built-i
 
 ## 8. The engine
 
-Home: `rag-engine`. Status: **internal** (INV-2).
+Home: `ragondin-engine`. Status: **internal** (INV-2).
 
 ### 8.1 `EngineContext` — the composition root
 
@@ -436,9 +436,9 @@ impl Engine {
 
 ## 9. Serving and evaluation: one engine, two drivers
 
-The code translation of principle P1 (zero skew). The engine is mode-agnostic; only the drivers differ, and they are **thin** wrappers over the **same** `rag-engine`. This is what makes skew structurally impossible: there is literally one execution path, and Cargo proves it, since both drivers depend on the same engine crate.
+The code translation of principle P1 (zero skew). The engine is mode-agnostic; only the drivers differ, and they are **thin** wrappers over the **same** `ragondin-engine`. This is what makes skew structurally impossible: there is literally one execution path, and Cargo proves it, since both drivers depend on the same engine crate.
 
-### 9.1 `rag-server` — the Tower envelope
+### 9.1 `ragondin-server` — the Tower envelope
 
 Tower governs the **network envelope**: timeouts, retries, concurrency limits, load shedding, backpressure on `Remote` calls, instrumentation — everything a mature service-mesh data plane has already hardened, and which we have no reason to rewrite.
 
@@ -448,20 +448,20 @@ ingress → [Tower: timeout | concurrency-limit | retry | metrics] → Engine::e
 
 **Why the components are not Tower services (INV-11).** Tower's `Service<Request>` is *uniform*: one request type, one response type. RAG components are *heterogeneous*: a `Retriever` and a `Generator` share neither input nor output. Forcing the latter into the former would destroy the legibility of the domain contracts, and gain nothing. **Each abstraction at its own layer.**
 
-### 9.2 `rag-harness` — the benchmark harness
+### 9.2 `ragondin-harness` — the benchmark harness
 
-Wraps the same engine with an iterator over a benchmark (via `rag-benchmarks`), collects `ExecutionTrace` and metrics (`rag-metrics`), and writes a run identified by the content-addressed tuple.
+Wraps the same engine with an iterator over a benchmark (via `ragondin-benchmarks`), collects `ExecutionTrace` and metrics (`ragondin-metrics`), and writes a run identified by the content-addressed tuple.
 
 ```mermaid
 flowchart LR
-  subgraph ONE["a single rag-engine"]
+  subgraph ONE["a single ragondin-engine"]
     ENG[Engine::execute]
   end
-  ING[Live ingress] --> TW["Tower stack<br/>(rag-server)"] --> ENG
-  DS[Benchmark dataset] --> IT["iterator<br/>(rag-harness)"] --> ENG
+  ING[Live ingress] --> TW["Tower stack<br/>(ragondin-server)"] --> ENG
+  DS[Benchmark dataset] --> IT["iterator<br/>(ragondin-harness)"] --> ENG
   ENG --> TR[ExecutionTrace]
   TR --> RESP[live response]
-  TR --> RUN["run + metrics<br/>(rag-experiments)"]
+  TR --> RUN["run + metrics<br/>(ragondin-experiments)"]
 ```
 
 ---
@@ -470,8 +470,8 @@ flowchart LR
 
 The "plugin system" is **not** an exotic dynamic-loading mechanism. It is simply:
 
-- **`Local` contribution** — a new crate under `components/` implementing a trait from `rag-contracts` and registering on the `EngineContext`. In-repository, compiled, on the hot path. **Compiles only `rag-contracts` and `rag-types`** — not the engine.
-- **`Remote` contribution** — a gRPC service **outside the repository, in any language**, honouring the protobuf service in `rag-proto`. Named by URL in the configuration, resolved to a `Remote<T>`.
+- **`Local` contribution** — a new crate under `components/` implementing a trait from `ragondin-contracts` and registering on the `EngineContext`. In-repository, compiled, on the hot path. **Compiles only `ragondin-contracts` and `ragondin-types`** — not the engine.
+- **`Remote` contribution** — a gRPC service **outside the repository, in any language**, honouring the protobuf service in `ragondin-proto`. Named by URL in the configuration, resolved to a `Remote<T>`.
 - **A genuinely new node type** — the `Extension` variant (§6.2), without touching the core.
 
 **A non-breaking optimization path:** a `Remote` component (Python) that wins the benchmark can later be ported to `Local` (Rust) — same contract, no configuration change for any user.
@@ -484,7 +484,7 @@ The "plugin system" is **not** an exotic dynamic-loading mechanism. It is simply
 
 ### 11.1 Error handling
 
-- **Libraries** (`core/`, `rag-engine`, `components/`, …): **typed** errors via `thiserror`. Each boundary exposes its own error enum — `ComponentError`, `PlanError`, `ExecError`.
+- **Libraries** (`core/`, `ragondin-engine`, `components/`, …): **typed** errors via `thiserror`. Each boundary exposes its own error enum — `ComponentError`, `PlanError`, `ExecError`.
 - **Binary**: `anyhow`, for aggregation at the end of the chain.
 - **Rule:** a library never imposes `anyhow` on its consumers.
 
@@ -497,7 +497,7 @@ The "plugin system" is **not** an exotic dynamic-loading mechanism. It is simply
 ### 11.3 Observability
 
 - `tracing` for operational spans and logs — distinct from `ExecutionTrace` (INV-10).
-- Prometheus metrics exported by `rag-server`.
+- Prometheus metrics exported by `ragondin-server`.
 
 ### 11.4 Testing strategy
 
@@ -505,8 +505,8 @@ The "plugin system" is **not** an exotic dynamic-loading mechanism. It is simply
 |---|---|
 | Serialization | Round-trip property tests, domain ⇄ protobuf (§7.2) |
 | Canonicalization | Golden tests: varied YAML inputs → identical `LogicalPipeline` → identical hash (INV-8) |
-| Component conformance | `rag-conformance`: every `Local` and `Remote` implementation passes the same suite (§7.4) |
-| Metric fixtures | `rag-metrics`: frozen run/qrels fixtures checked against `pytrec_eval`-derived expected values, including at least one graded-relevance fixture (permanent regression tests, ADR-10) |
+| Component conformance | `ragondin-conformance`: every `Local` and `Remote` implementation passes the same suite (§7.4) |
+| Metric fixtures | `ragondin-metrics`: frozen run/qrels fixtures checked against `pytrec_eval`-derived expected values, including at least one graded-relevance fixture (permanent regression tests, ADR-10) |
 | Unit | Per-crate tests; each `components/` crate compiles and tests independently |
 | End to end | The evaluation harness on a miniature benchmark — an integration test of the real path |
 | Leaderboard calibration | One-time reproduction of a published BEIR/MTEB nDCG@10 score (SciFact, then NFCorpus) via exact search, within 0.5 point (ADR-10, system §9.8) |
@@ -523,7 +523,7 @@ Standalone first (P2) translates into **compile discipline**:
 - **A minimal default build** — the core plus a light retriever. Compiles fast.
 - **Every heavy backend behind a feature** — `bm25`, `onnx`, `candle`, `qdrant`, `remote`. A researcher benchmarking retrieval on a laptop should not compile the world.
 - **Fine crate granularity** buys compilation parallelism and independent testing.
-- **The Kubernetes controller may live outside the workspace**: in Go it does not enter the Cargo graph at all; in Rust it is a thin binary depending only on `rag-config` and `rag-proto`. Either way the network boundary is clean, which is what makes the language choice an isolated decision (§15).
+- **The Kubernetes controller may live outside the workspace**: in Go it does not enter the Cargo graph at all; in Rust it is a thin binary depending only on `ragondin-config` and `ragondin-proto`. Either way the network boundary is clean, which is what makes the language choice an isolated decision (§15).
 
 ---
 
@@ -569,7 +569,7 @@ Recording the temptations rejected is as important as recording the decisions ta
 
 | Risk | Severity | Mitigation |
 |---|---|---|
-| **Core abstraction leak** — a heavy dependency reaching `rag-contracts` | High | INV-4, verified in CI by a dependency lint on the core |
+| **Core abstraction leak** — a heavy dependency reaching `ragondin-contracts` | High | INV-4, verified in CI by a dependency lint on the core |
 | **The two contract faces diverging** | High | Round-trip property tests (§7.2) as a blocking CI check |
 | **A two-tier system, built-ins versus third parties** | High | INV-7 plus a mandatory conformance suite (§7.4) |
 | **Accidental engine-to-component coupling** | High | INV-5, made structural by the crate graph — Cargo fails to compile — plus a CI check |
@@ -608,21 +608,21 @@ Every code decision serves a system decision. This table guarantees none is orph
 
 | System element | Code translation |
 |---|---|
-| Contract: pipeline representation (graph + control flow) | `rag-pipeline`: Raw / Logical / Physical, `Branch`, `Loop`, `Extension` (§6) |
-| Contract: component, `Local` / `Remote` | `rag-contracts` + `rag-remote` + `rag-conformance` (§7) |
-| Contract: benchmark (corpus + queries + qrels + references) | `rag-benchmarks` (`BenchmarkAdapter`) + `rag-metrics` (§4) |
-| Plane: pure-compute data plane | `rag-engine` (library) + `rag-server` (Tower) (§8, §9) |
-| Plane: experiment plane | `rag-experiments` + `eval/` (§4) |
-| Plane: external stores behind traits | `rag-store-*`; `Remote` generator calls (§10) |
-| P1 — one engine, two drivers | `rag-server` + `rag-harness` over one `rag-engine` (§9) |
+| Contract: pipeline representation (graph + control flow) | `ragondin-pipeline`: Raw / Logical / Physical, `Branch`, `Loop`, `Extension` (§6) |
+| Contract: component, `Local` / `Remote` | `ragondin-contracts` + `ragondin-remote` + `ragondin-conformance` (§7) |
+| Contract: benchmark (corpus + queries + qrels + references) | `ragondin-benchmarks` (`BenchmarkAdapter`) + `ragondin-metrics` (§4) |
+| Plane: pure-compute data plane | `ragondin-engine` (library) + `ragondin-server` (Tower) (§8, §9) |
+| Plane: experiment plane | `ragondin-experiments` + `eval/` (§4) |
+| Plane: external stores behind traits | `ragondin-store-*`; `Remote` generator calls (§10) |
+| P1 — one engine, two drivers | `ragondin-server` + `ragondin-harness` over one `ragondin-engine` (§9) |
 | P2 — standalone first | Lean build, feature flags, one subcommanded binary (§4.2, §11.6) |
 | P3 — pure compute, externalized state | Engine holds no durable state; stores behind traits (§8, §10) |
 | P4 — content addressing | Hash of the canonical `LogicalPipeline` (§6, INV-8) |
 | P5 — agnostic at the edges | Vector store and inference server behind traits (§10) |
-| Configuration delivery: purpose-built gRPC, `ConfigSource` | `rag-proto` + `rag-config` (`LocalFile` \| `Stream`) (§4) |
-| Custom resource = serialization of the representation | Separate, versioned wire format in `rag-config` (INV-9) |
-| The judge is a component | One more `Grader` trait in `rag-contracts`; **no code exception anywhere** (§7) |
-| Native run store with export adapters | `rag-experiments` plus an export trait (§4) |
+| Configuration delivery: purpose-built gRPC, `ConfigSource` | `ragondin-proto` + `ragondin-config` (`LocalFile` \| `Stream`) (§4) |
+| Custom resource = serialization of the representation | Separate, versioned wire format in `ragondin-config` (INV-9) |
+| The judge is a component | One more `Grader` trait in `ragondin-contracts`; **no code exception anywhere** (§7) |
+| Native run store with export adapters | `ragondin-experiments` plus an export trait (§4) |
 | Per-node replay is load-bearing | `ExecutionTrace` as a return value (INV-10, §8.2) |
 
 ---
@@ -633,7 +633,7 @@ Every code decision serves a system decision. This table guarantees none is orph
 
 **Composition root** — The single place (the binary) where the engine and the concrete components are assembled.
 
-**Conformance suite** (`rag-conformance`) — The behavioural test suite every component implementation must pass, `Local` or `Remote`.
+**Conformance suite** (`ragondin-conformance`) — The behavioural test suite every component implementation must pass, `Local` or `Remote`.
 
 **Content addressing** — Identifying an entity by the hash of its canonical form; here, the `LogicalPipeline`.
 

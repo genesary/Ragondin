@@ -1,0 +1,11 @@
+[package]
+name = "ragondin-benchmarks"
+description = "BenchmarkAdapter and its implementations (BEIR, CRAG, MultiHop-RAG, …)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+ragondin-types = { workspace = true }

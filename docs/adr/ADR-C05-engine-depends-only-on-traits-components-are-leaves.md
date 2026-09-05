@@ -6,7 +6,7 @@ If the engine depended on concrete component crates, built-in components would b
 
 ## Decision
 
-`rag-engine` depends on `rag-contracts` (the traits) and on **no crate under `components/`**. Crates under `components/` depend on `rag-contracts` and `rag-types` and **never the reverse** — a component is a **leaf**. Only the binary knows both the engine and the concrete components; it is the **composition root**.
+`ragondin-engine` depends on `ragondin-contracts` (the traits) and on **no crate under `components/`**. Crates under `components/` depend on `ragondin-contracts` and `ragondin-types` and **never the reverse** — a component is a **leaf**. Only the binary knows both the engine and the concrete components; it is the **composition root**.
 
 ## Alternatives rejected
 
