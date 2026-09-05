@@ -1,4 +1,4 @@
-# la-plateforme
+# Ragondin
 
 An open-source, cloud-native platform — written in Rust — for **building,
 serving, and evaluating Retrieval-Augmented Generation (RAG) systems**. You
@@ -29,10 +29,10 @@ later milestone layered on top, never a prerequisite.
 One binary, four subcommands:
 
 ```text
-rag bench <config> --benchmark beir/scifact   # evaluate a pipeline against a benchmark
-rag compare <run-a> <run-b>                    # compare two runs
-rag serve <config>                             # serve the pipeline
-rag validate <config>                          # validate a configuration
+ragondin bench <config> --benchmark beir/scifact  # evaluate a pipeline against a benchmark
+ragondin compare <run-a> <run-b>                  # compare two runs
+ragondin serve <config>                           # serve the pipeline
+ragondin validate <config>                        # validate a configuration
 ```
 
 ## Architecture in one breath

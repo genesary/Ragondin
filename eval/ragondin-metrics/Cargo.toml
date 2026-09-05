@@ -1,0 +1,11 @@
+[package]
+name = "ragondin-metrics"
+description = "Deterministic retrieval metrics: nDCG@k, recall@k, precision@k, MRR@k, MAP@k."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+ragondin-types = { workspace = true }

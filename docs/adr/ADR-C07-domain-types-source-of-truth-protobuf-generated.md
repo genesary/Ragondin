@@ -6,7 +6,7 @@ The component contract has two faces — a Rust trait and a mirror protobuf serv
 
 ## Decision
 
-The **domain types (`rag-types`) are the source of truth**, hand-written for Rust ergonomics. The protobuf is **generated** by `tonic-build`. The `From`/`Into` conversions live in `rag-remote`. The two faces are kept in lockstep by **round-trip property tests**: for all `x` in the domain, `from_proto(to_proto(x)) == x`.
+The **domain types (`ragondin-types`) are the source of truth**, hand-written for Rust ergonomics. The protobuf is **generated** by `tonic-build`. The `From`/`Into` conversions live in `ragondin-remote`. The two faces are kept in lockstep by **round-trip property tests**: for all `x` in the domain, `from_proto(to_proto(x)) == x`.
 
 ## Alternatives rejected
 

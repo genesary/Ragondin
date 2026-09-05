@@ -1,0 +1,16 @@
+[package]
+name = "ragondin-harness"
+description = "Evaluation harness: benchmark → engine → metrics → run."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+# One of the two thin drivers over the SAME `ragondin-engine` (the other is
+# `ragondin-server`). Depending on the same engine crate is what makes
+# evaluation/serving skew structurally impossible (P1).
+[dependencies]
+ragondin-engine = { workspace = true }
+ragondin-metrics = { workspace = true }
+ragondin-benchmarks = { workspace = true }

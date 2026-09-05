@@ -6,7 +6,7 @@ The Kubernetes controller only **translates** a custom resource into wire config
 
 ## Decision
 
-The controller **may live outside the Cargo workspace**. In Go it does not enter the Cargo graph at all; in Rust it is a thin binary depending only on `rag-config` and `rag-proto`. Either way the network boundary is clean.
+The controller **may live outside the Cargo workspace**. In Go it does not enter the Cargo graph at all; in Rust it is a thin binary depending only on `ragondin-config` and `ragondin-proto`. Either way the network boundary is clean.
 
 ## Alternatives rejected
 

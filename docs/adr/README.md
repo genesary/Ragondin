@@ -31,6 +31,21 @@ Each file is self-contained: it should be understandable and actionable on its o
 - Code-architecture decisions use the `C` prefix: `ADR-C1` … `ADR-C16`.
 - New decisions (from `decision` issues) continue the appropriate sequence and are added, never inserted retroactively.
 
+## The 2026-09-05 rename
+
+The project was renamed to **Ragondin**, and every crate was renamed with it:
+`rag-types` became `ragondin-types`, the binary `rag` became `ragondin`, and so
+on throughout. That rename was applied **mechanically to these ADRs**, which
+means accepted ADRs were edited — normally forbidden by process rule 1.
+
+It is not an exception to that rule, because **no decision changed**. Only
+identifiers did: every ADR states exactly what it stated before, about the same
+crates under different names. Nothing was reworded, retracted or re-argued, and
+no `## Amendments` section was added, because there is nothing to amend.
+
+Recorded here so that a future reader comparing an ADR against its git history
+sees a rename rather than unexplained drift.
+
 ## Status values
 
 - **Accepted** — the decision is in force.

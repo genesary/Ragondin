@@ -1,0 +1,22 @@
+[package]
+name = "ragondin-pipeline"
+description = "The pipeline representation: RawPipeline → LogicalPipeline → PhysicalPipeline."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+# INV-4: no heavy dependency. `ragondin-types` (value types), `serde`
+# (serialization of the logical form), and a hashing crate for content
+# addressing over the canonical logical form (INV-8) are all that is permitted.
+[dependencies]
+ragondin-types = { workspace = true }
+serde = { workspace = true }
+sha2 = { workspace = true }
+
+# Test-only. A dev-dependency does not ship to this crate's consumers, so INV-4
+# is unaffected (the invariant check excludes dev-dependencies by design).
+[dev-dependencies]
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
