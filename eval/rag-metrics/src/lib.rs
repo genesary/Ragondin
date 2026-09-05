@@ -183,6 +183,41 @@ pub fn reciprocal_rank_at_k(ranked: &[DocId], relevance: &BTreeMap<DocId, u8>, k
     reciprocal_rank(&ranked[..cutoff], relevance)
 }
 
+/// Average precision over the first `k` results: the mean of
+/// [`precision_at_k`]-shaped values taken at each rank where a *new*
+/// relevant document appears, divided by `min(k, number of relevant
+/// documents)`.
+///
+/// **This is not MAP.** MAP@k is the mean of this over a query set — the
+/// same relationship [`reciprocal_rank`] has to MRR.
+///
+/// A document repeated in `ranked` is credited at most once, at its first
+/// occurrence; a later repeat contributes nothing to the sum, even though it
+/// is relevant, because it is not a *new* relevant document found. Returns
+/// `0.0` when `k` is `0` or when nothing in `relevance` is relevant.
+pub fn average_precision_at_k(ranked: &[DocId], relevance: &BTreeMap<DocId, u8>, k: usize) -> f64 {
+    let total_relevant = relevance.values().filter(|g| **g > 0).count();
+    if k == 0 || total_relevant == 0 {
+        return 0.0;
+    }
+    let mut seen: BTreeSet<&DocId> = BTreeSet::new();
+    let mut relevant_found: usize = 0;
+    let sum: f64 = ranked
+        .iter()
+        .take(k)
+        .enumerate()
+        .map(|(i, id)| {
+            if grade(relevance, id) > 0 && seen.insert(id) {
+                relevant_found += 1;
+                relevant_found as f64 / (i + 1) as f64
+            } else {
+                0.0
+            }
+        })
+        .sum();
+    sum / total_relevant.min(k) as f64
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -355,12 +390,47 @@ mod tests {
     }
 
     #[test]
+    fn average_precision_matches_a_hand_computed_value() {
+        let got = average_precision_at_k(&ids(&["d4", "d6", "d1"]), &qrels(), 2);
+        assert!((got - 1.0).abs() < TOLERANCE, "AP@2 was {got}, expected 1.0");
+    }
+
+    #[test]
+    fn average_precision_only_credits_ranks_where_a_new_relevant_document_appears() {
+        // Rank 1 (d1) and rank 4 (d4) are hits; d2, d3, d5 contribute nothing.
+        let got = average_precision_at_k(&ids(&["d1", "d2", "d3", "d4", "d5"]), &qrels(), 5);
+        assert!((got - 0.5).abs() < TOLERANCE, "AP@5 was {got}, expected 0.5");
+    }
+
+    #[test]
+    fn average_precision_divides_by_min_of_k_and_the_number_of_relevant_documents() {
+        // Three documents are relevant in total (d1, d4, d6), but k = 5 is
+        // larger: the divisor is min(5, 3) = 3, not 5.
+        let got = average_precision_at_k(&ids(&["d1", "d2", "d3", "d4", "d5"]), &qrels(), 5);
+        // Sum is 1.5 (see the hand-computed test above); 1.5 / 3 = 0.5, not
+        // 1.5 / 5 = 0.3 — this is the same value as the previous test, and that
+        // is the point: it pins the divisor, not just the final number.
+        assert!((got - 1.5 / 3.0).abs() < TOLERANCE, "AP@5 was {got}");
+    }
+
+    #[test]
+    fn a_duplicated_document_is_credited_once_by_average_precision() {
+        let got = average_precision_at_k(&ids(&["d1", "d1", "d1"]), &qrels(), 3);
+        assert!(
+            (got - 1.0 / 3.0).abs() < TOLERANCE,
+            "AP@3 was {got}, expected {}",
+            1.0 / 3.0
+        );
+    }
+
+    #[test]
     fn an_empty_ranking_scores_zero() {
         let empty: Vec<DocId> = Vec::new();
         assert_eq!(ndcg_at_k(&empty, &qrels(), 10), 0.0);
         assert_eq!(recall_at_k(&empty, &qrels(), 10), 0.0);
         assert_eq!(reciprocal_rank(&empty, &qrels()), 0.0);
         assert_eq!(precision_at_k(&empty, &qrels(), 10), 0.0);
+        assert_eq!(average_precision_at_k(&empty, &qrels(), 10), 0.0);
     }
 
     #[test]
@@ -371,6 +441,11 @@ mod tests {
         assert_eq!(recall_at_k(&ranked, &none, 10), 0.0, "0/0 is reported as 0");
         assert_eq!(reciprocal_rank(&ranked, &none), 0.0);
         assert_eq!(precision_at_k(&ranked, &none, 10), 0.0, "0 relevant found / 10");
+        assert_eq!(
+            average_precision_at_k(&ranked, &none, 10),
+            0.0,
+            "no relevant documents at all"
+        );
     }
 
     #[test]
@@ -381,6 +456,7 @@ mod tests {
         assert_eq!(ndcg_at_k(&ranked, &empty, 10), 0.0);
         assert_eq!(recall_at_k(&ranked, &empty, 10), 0.0);
         assert_eq!(precision_at_k(&ranked, &empty, 10), 0.0);
+        assert_eq!(average_precision_at_k(&ranked, &empty, 10), 0.0);
     }
 
     #[test]
@@ -402,6 +478,7 @@ mod tests {
         assert_eq!(ndcg_at_k(&ranked, &qrels(), 0), 0.0);
         assert_eq!(recall_at_k(&ranked, &qrels(), 0), 0.0);
         assert_eq!(precision_at_k(&ranked, &qrels(), 0), 0.0);
+        assert_eq!(average_precision_at_k(&ranked, &qrels(), 0), 0.0);
     }
 
     #[test]
