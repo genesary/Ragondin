@@ -9,7 +9,7 @@
 //!
 //! Each one scores **a single query**. The figure a benchmark reports —
 //! "nDCG@10 on SciFact" — is the **mean over queries**, and computing that mean
-//! belongs to the harness. Two of the five functions are named accordingly
+//! belongs to the harness. Two of the six functions are named accordingly
 //! rather than after the aggregate they feed: [`reciprocal_rank_at_k`] rather
 //! than `mrr`, and [`average_precision_at_k`] rather than `map`, because MRR
 //! and MAP are themselves *means of these functions* over a query set, and a
@@ -52,9 +52,12 @@
 //!
 //! # The `k` cutoff, and what it divides by
 //!
-//! All five functions take a `k`. What differs is the *denominator*, and
-//! getting this wrong is the second most common way to diverge from a
-//! published score (after the gain function above):
+//! Five of the six functions take a `k` — [`reciprocal_rank`] is the exception,
+//! matching `trec_eval`'s uncut `recip_rank`. What differs between the other
+//! five is the *denominator*, and getting it wrong is the second most common
+//! way to diverge from a published score (after the gain function above). Every
+//! choice below is `trec_eval`'s, because the point of this crate is to replay
+//! a published MTEB/BEIR evaluation and land on the same number:
 //!
 //! - **nDCG@k** normalizes by the ideal gain of the **first `k` judged
 //!   documents**, not by every judged document — the ideal ranking is
@@ -63,9 +66,22 @@
 //!   just the first `k` — that denominator is never truncated.
 //! - **precision@k** divides by `k` itself, even when `ranked` has fewer than
 //!   `k` elements — a short run is penalized, not rewarded.
-//! - **MRR@k** and **MAP@k** discard anything past rank `k` entirely: a
-//!   relevant document beyond the cutoff does not exist as far as either
-//!   metric is concerned.
+//! - **MRR@k** discards anything past rank `k` entirely: a relevant document
+//!   beyond the cutoff does not exist as far as the metric is concerned. There
+//!   is no denominator to get wrong.
+//! - **MAP@k** also discards anything past rank `k` from the *sum*, but its
+//!   **divisor is the total number of relevant documents**, untruncated —
+//!   like recall@k, not like precision@k. `m_map_cut.c` divides by `num_rel`
+//!   regardless of the cutoff, so a perfect top-`k` scores `1.0` only when `k`
+//!   reaches every relevant document: with 50 relevant documents, a perfect
+//!   top-10 scores `0.2`, not `1.0`.
+//!
+//! That last one is the trap. The recommender-systems literature commonly
+//! divides MAP@k by `min(k, R)` instead, which is a defensible metric but a
+//! *different* one, and it inflates every score relative to a BEIR leaderboard
+//! figure. `average_precision_divides_by_every_relevant_document_even_when_k_is_smaller`
+//! pins this; note that any test with `k >= R` is blind to the difference,
+//! since `min(k, R)` then collapses to `R`.
 //!
 //! # Degenerate inputs
 //!
@@ -203,10 +219,18 @@ pub fn reciprocal_rank_at_k(ranked: &[DocId], relevance: &BTreeMap<DocId, u8>, k
     reciprocal_rank(&ranked[..cutoff], relevance)
 }
 
-/// Average precision over the first `k` results: the mean of
-/// [`precision_at_k`]-shaped values taken at each rank where a *new*
-/// relevant document appears, divided by `min(k, number of relevant
-/// documents)`.
+/// Average precision over the first `k` results: the sum of
+/// [`precision_at_k`]-shaped values taken at each rank where a *new* relevant
+/// document appears, divided by the **total** number of relevant documents in
+/// the qrels.
+///
+/// The divisor is deliberately *not* `min(k, number of relevant documents)`.
+/// `trec_eval`'s `m_map_cut.c` divides by `num_rel` whatever the cutoff, so a
+/// perfect top-`k` scores `1.0` only when `k` reaches every relevant document;
+/// with 50 relevant documents, a perfect top-10 scores `0.2`. The `min(k, R)`
+/// variant is the recommender-systems convention and would inflate every
+/// MAP@k this crate produces relative to a published BEIR/MTEB figure. See the
+/// module documentation.
 ///
 /// **This is not MAP.** MAP@k is the mean of this over a query set — the
 /// same relationship [`reciprocal_rank`] has to MRR.
@@ -235,7 +259,10 @@ pub fn average_precision_at_k(ranked: &[DocId], relevance: &BTreeMap<DocId, u8>,
             }
         })
         .sum();
-    sum / total_relevant.min(k) as f64
+    // `+ 0.0` normalizes negative zero, exactly as `ndcg_at_k` does: `f64::sum`
+    // folds from `-0.0`, so a cut containing no relevant document yields
+    // `-0.0`, and `-0.0 / x` stays `-0.0`.
+    sum / total_relevant as f64 + 0.0
 }
 
 #[cfg(test)]
@@ -421,24 +448,27 @@ mod tests {
     #[test]
     fn average_precision_matches_a_hand_computed_value() {
         // d1 is relevant but sits at rank 3, past the k=2 cutoff: it does not
-        // contribute to the sum, so a perfect AP@2 of 1.0 depends on d1 being
-        // correctly excluded, not merely on d4 and d6 being found.
+        // contribute to the sum. So the sum is 1/1 + 2/2 = 2, and the divisor
+        // is the *total* number of relevant documents, 3 — not the 2 that were
+        // reachable within the cut.
         let got = average_precision_at_k(&ids(&["d4", "d6", "d1"]), &qrels(), 2);
         assert!(
-            (got - 1.0).abs() < TOLERANCE,
-            "AP@2 was {got}, expected 1.0"
+            (got - 2.0 / 3.0).abs() < TOLERANCE,
+            "AP@2 was {got}, expected {}",
+            2.0 / 3.0
         );
     }
 
     #[test]
     fn average_precision_ignores_a_relevant_document_past_the_cutoff() {
         // Same ranking as the hand-computed test above, but cut at k=1: only
-        // d4 counts. If d1 (rank 3) leaked past the cutoff, AP@1 would be
-        // inflated above 1.0, or the wrong rank would be used for d1's term.
+        // d4 counts, so the sum is 1/1 and AP@1 is 1/3. If d1 (rank 3) leaked
+        // past the cutoff, the sum would pick up a second term.
         let got = average_precision_at_k(&ids(&["d4", "d6", "d1"]), &qrels(), 1);
         assert!(
-            (got - 1.0).abs() < TOLERANCE,
-            "AP@1 was {got}, expected 1.0"
+            (got - 1.0 / 3.0).abs() < TOLERANCE,
+            "AP@1 was {got}, expected {}",
+            1.0 / 3.0
         );
     }
 
@@ -461,14 +491,41 @@ mod tests {
     }
 
     #[test]
-    fn average_precision_divides_by_min_of_k_and_the_number_of_relevant_documents() {
-        // Three documents are relevant in total (d1, d4, d6), but k = 5 is
-        // larger: the divisor is min(5, 3) = 3, not 5.
-        let got = average_precision_at_k(&ids(&["d1", "d2", "d3", "d4", "d5"]), &qrels(), 5);
-        // Sum is 1.5 (see the hand-computed test above); 1.5 / 3 = 0.5, not
-        // 1.5 / 5 = 0.3 — this is the same value as the previous test, and that
-        // is the point: it pins the divisor, not just the final number.
-        assert!((got - 1.5 / 3.0).abs() < TOLERANCE, "AP@5 was {got}");
+    fn average_precision_divides_by_every_relevant_document_even_when_k_is_smaller() {
+        // The test that pins the divisor, and the one convention mistake that
+        // silently inflates a published MAP@k. Three documents are relevant
+        // (d1, d4, d6) and the top 2 are a *perfect* prefix: sum = 1/1 + 2/2 = 2.
+        //
+        //   trec_eval (`m_map_cut.c`): 2 / 3     = 0.6666…  ← what we implement
+        //   RecSys min(k, R):          2 / min(2,3) = 1.0
+        //
+        // A perfect top-k when k < R must NOT score 1.0: the run was never
+        // given room to find every relevant document, and trec_eval charges it
+        // for the ones it could not reach. Any test with k >= R is blind here,
+        // because min(k, R) collapses to R.
+        let got = average_precision_at_k(&ids(&["d1", "d6"]), &qrels(), 2);
+        assert!(
+            (got - 2.0 / 3.0).abs() < TOLERANCE,
+            "AP@2 was {got}, expected {} — a perfect top-2 out of 3 relevant \
+             documents is 2/3 under trec_eval, not 1.0",
+            2.0 / 3.0
+        );
+    }
+
+    #[test]
+    fn a_degenerate_average_precision_is_positive_zero() {
+        // `f64::sum` folds from `-0.0`, and `-0.0 / 3.0` stays `-0.0`. It
+        // compares equal to `0.0`, so no `assert_eq!` above can see it — but it
+        // is what gets serialized into the run store.
+        let empty: Vec<DocId> = Vec::new();
+        assert_eq!(
+            average_precision_at_k(&empty, &qrels(), 10).to_bits(),
+            0.0f64.to_bits()
+        );
+        assert_eq!(
+            average_precision_at_k(&ids(&["d2", "d3"]), &qrels(), 2).to_bits(),
+            0.0f64.to_bits()
+        );
     }
 
     #[test]
