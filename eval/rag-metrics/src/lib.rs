@@ -166,14 +166,21 @@ pub fn precision_at_k(ranked: &[DocId], relevance: &BTreeMap<DocId, u8>, k: usiz
 /// **This is not MRR.** MRR is the mean of this over a query set; see the module
 /// documentation.
 ///
-/// There is no `k`, matching `trec_eval`'s uncut `recip_rank`. For the MRR@k
-/// that `docs/system-architecture.md` §9.1 names, slice first:
-/// `reciprocal_rank(&ranked[..k.min(ranked.len())], relevance)`.
+/// There is no `k`, matching `trec_eval`'s uncut `recip_rank`. For a cutoff,
+/// use [`reciprocal_rank_at_k`].
 pub fn reciprocal_rank(ranked: &[DocId], relevance: &BTreeMap<DocId, u8>) -> f64 {
     ranked
         .iter()
         .position(|id| grade(relevance, id) > 0)
         .map_or(0.0, |i| 1.0 / (i + 1) as f64)
+}
+
+/// [`reciprocal_rank`], but only the first `k` results are considered — a
+/// relevant document past the cutoff does not count. Returns `0.0` when `k`
+/// is `0`. This is the per-query value that MRR@k averages over a query set.
+pub fn reciprocal_rank_at_k(ranked: &[DocId], relevance: &BTreeMap<DocId, u8>, k: usize) -> f64 {
+    let cutoff = k.min(ranked.len());
+    reciprocal_rank(&ranked[..cutoff], relevance)
 }
 
 #[cfg(test)]
@@ -265,6 +272,37 @@ mod tests {
         // this 1.0.
         let got = reciprocal_rank(&ids(&["d2", "d1"]), &qrels());
         assert!((got - 0.5).abs() < TOLERANCE, "RR was {got}");
+    }
+
+    #[test]
+    fn reciprocal_rank_at_k_matches_reciprocal_rank_when_k_is_not_a_binding_cutoff() {
+        // d1 is the first relevant document, at rank 3; k=4 does not cut it off.
+        let ranked = ids(&["d2", "d3", "d1", "d4"]);
+        let got = reciprocal_rank_at_k(&ranked, &qrels(), 4);
+        assert!((got - 1.0 / 3.0).abs() < TOLERANCE, "RR@4 was {got}");
+    }
+
+    #[test]
+    fn reciprocal_rank_at_k_ignores_a_relevant_document_past_the_cutoff() {
+        // d1 (relevant) sits at rank 3, but the cutoff is 2: it must not count.
+        let ranked = ids(&["d2", "d3", "d1", "d4"]);
+        let got = reciprocal_rank_at_k(&ranked, &qrels(), 2);
+        assert_eq!(got, 0.0, "RR@2 was {got}, expected 0.0 — d1 is past the cutoff");
+    }
+
+    #[test]
+    fn reciprocal_rank_at_k_larger_than_the_ranking_behaves_like_the_uncut_version() {
+        let ranked = ids(&["d2", "d3", "d1", "d4"]);
+        assert_eq!(
+            reciprocal_rank_at_k(&ranked, &qrels(), 500),
+            reciprocal_rank(&ranked, &qrels())
+        );
+    }
+
+    #[test]
+    fn reciprocal_rank_at_k_of_zero_scores_zero() {
+        let ranked = ids(&["d1"]);
+        assert_eq!(reciprocal_rank_at_k(&ranked, &qrels(), 0), 0.0);
     }
 
     #[test]
