@@ -142,6 +142,24 @@ pub fn recall_at_k(ranked: &[DocId], relevance: &BTreeMap<DocId, u8>, k: usize) 
     found.len() as f64 / total as f64
 }
 
+/// The fraction of the first `k` results that are relevant.
+///
+/// The denominator is always `k`, even when `ranked` has fewer than `k`
+/// elements — matching `trec_eval`'s `P_k`, which penalizes a run for
+/// returning too few results rather than rewarding it. A document repeated
+/// in `ranked` is credited once. Returns `0.0` when `k` is `0`.
+pub fn precision_at_k(ranked: &[DocId], relevance: &BTreeMap<DocId, u8>, k: usize) -> f64 {
+    if k == 0 {
+        return 0.0;
+    }
+    let found: BTreeSet<&DocId> = ranked
+        .iter()
+        .take(k)
+        .filter(|id| grade(relevance, id) > 0)
+        .collect();
+    found.len() as f64 / k as f64
+}
+
 /// The reciprocal of the rank of the first relevant document, or `0.0` if none
 /// appears.
 ///
@@ -250,11 +268,61 @@ mod tests {
     }
 
     #[test]
+    fn precision_matches_a_hand_computed_value() {
+        // Top 5: d1 (relevant) and d4 (relevant) are the hits; d2, d3, d5 are not.
+        let got = precision_at_k(&ids(&["d1", "d2", "d3", "d4", "d5"]), &qrels(), 5);
+        assert!((got - 0.4).abs() < TOLERANCE, "precision@5 was {got}, expected 0.4");
+    }
+
+    #[test]
+    fn precision_is_cut_at_k() {
+        // Top 3 only: d1 is the sole hit among d1, d2, d3.
+        let got = precision_at_k(&ids(&["d1", "d2", "d3", "d4", "d5"]), &qrels(), 3);
+        assert!(
+            (got - 1.0 / 3.0).abs() < TOLERANCE,
+            "precision@3 was {got}, expected {}",
+            1.0 / 3.0
+        );
+    }
+
+    #[test]
+    fn precision_denominator_is_always_k_even_if_the_run_returns_fewer_documents() {
+        // Only one document is returned, but the cutoff is 5: trec_eval's
+        // convention divides by k regardless, so this is 1/5, not 1/1.
+        let got = precision_at_k(&ids(&["d1"]), &qrels(), 5);
+        assert!((got - 0.2).abs() < TOLERANCE, "precision@5 was {got}, expected 0.2");
+    }
+
+    #[test]
+    fn a_duplicated_document_is_credited_once_by_precision() {
+        let got = precision_at_k(&ids(&["d1", "d1", "d1"]), &qrels(), 3);
+        assert!(
+            (got - 1.0 / 3.0).abs() < TOLERANCE,
+            "precision@3 was {got}, expected {}",
+            1.0 / 3.0
+        );
+    }
+
+    #[test]
+    fn precision_at_a_cutoff_past_the_ranking_length_still_divides_by_k() {
+        // Only 5 documents are returned; asking for precision@500 means "divide
+        // the (at most 5) hits by 500", not "treat 500 as if it were 5".
+        let ranked = ids(&["d1", "d2", "d3", "d4", "d5"]);
+        let at_500 = precision_at_k(&ranked, &qrels(), 500);
+        assert!(
+            (at_500 - 2.0 / 500.0).abs() < TOLERANCE,
+            "precision@500 was {at_500}, expected {}",
+            2.0 / 500.0
+        );
+    }
+
+    #[test]
     fn an_empty_ranking_scores_zero() {
         let empty: Vec<DocId> = Vec::new();
         assert_eq!(ndcg_at_k(&empty, &qrels(), 10), 0.0);
         assert_eq!(recall_at_k(&empty, &qrels(), 10), 0.0);
         assert_eq!(reciprocal_rank(&empty, &qrels()), 0.0);
+        assert_eq!(precision_at_k(&empty, &qrels(), 10), 0.0);
     }
 
     #[test]
@@ -264,6 +332,7 @@ mod tests {
         assert_eq!(ndcg_at_k(&ranked, &none, 10), 0.0, "IDCG is zero, not NaN");
         assert_eq!(recall_at_k(&ranked, &none, 10), 0.0, "0/0 is reported as 0");
         assert_eq!(reciprocal_rank(&ranked, &none), 0.0);
+        assert_eq!(precision_at_k(&ranked, &none, 10), 0.0, "0 relevant found / 10");
     }
 
     #[test]
@@ -273,6 +342,7 @@ mod tests {
         assert!(ndcg_at_k(&ranked, &empty, 10).is_finite());
         assert_eq!(ndcg_at_k(&ranked, &empty, 10), 0.0);
         assert_eq!(recall_at_k(&ranked, &empty, 10), 0.0);
+        assert_eq!(precision_at_k(&ranked, &empty, 10), 0.0);
     }
 
     #[test]
@@ -293,6 +363,7 @@ mod tests {
         let ranked = ids(&["d1"]);
         assert_eq!(ndcg_at_k(&ranked, &qrels(), 0), 0.0);
         assert_eq!(recall_at_k(&ranked, &qrels(), 0), 0.0);
+        assert_eq!(precision_at_k(&ranked, &qrels(), 0), 0.0);
     }
 
     #[test]
