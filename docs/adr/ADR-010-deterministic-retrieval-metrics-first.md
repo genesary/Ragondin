@@ -22,6 +22,16 @@ Recent literature shows deterministic metrics still dominate practice, and the r
 
 The most defensible possible v0: credibility without depending on a noisy instrument. When the judge is later introduced, it enters as a calibrated instrument (seeds, confidence intervals, a human meta-benchmark), never as a foundation. This is also the primary guard against scope inflation for the first deliverable.
 
+## Amendments
+
+**2026-09-05 — the Decision section was *extended*, not retracted, on the repository owner's decision, in the PR implementing #25.**
+
+This entry does not record a retraction. Nothing above was found false and nothing was removed: the decision as originally accepted — begin with the retrieval half, no judge — stands verbatim as paragraph 1. What happened is that two further normative paragraphs were added to **Decision**: `trec_eval` as the reference implementation rather than a source of inspiration, and credibility earned by reproduction against a frozen `pytrec_eval` fixture.
+
+That is outside the mechanism process rule 2 provides. Rule 2 covers retracting a false claim from the *reasoning*, and is confined to Context, Alternatives rejected and Consequences — "**The Decision section changes only by supersession.**" Adding binding rules to Decision inside an implementation PR is what rule 4 exists to prevent. It was done knowingly and with sign-off rather than by oversight, because the conventions had to be written down somewhere the moment `rag-metrics` had to choose between two defensible MAP@k denominators, and no superseding ADR existed yet.
+
+It is recorded here because the one guarantee still available is that the change not be silent. Two consequences for a future reader: the added paragraphs have had materially less scrutiny than the decision they extend — they were written and reviewed inside a feature PR, not in a `decision` issue — and they now constrain #26, #29 and #33. If they need to change again, supersede this ADR rather than amend it a second time.
+
 ## Status
 
-Accepted.
+Accepted (amended 2026-09-05, see above).
