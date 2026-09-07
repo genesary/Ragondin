@@ -1,3 +1,12 @@
+---
+id: ADR-C08
+title: async_trait in v0
+status: accepted
+invariants: []
+supersedes: []
+superseded_by: null
+---
+
 # ADR-C8: async_trait in v0
 
 ## Context

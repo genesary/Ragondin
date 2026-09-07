@@ -1,3 +1,12 @@
+---
+id: ADR-010
+title: Deterministic retrieval metrics first, judge later
+status: amended
+invariants: []
+supersedes: []
+superseded_by: null
+---
+
 # ADR-10: Deterministic retrieval metrics first, judge later
 
 ## Context

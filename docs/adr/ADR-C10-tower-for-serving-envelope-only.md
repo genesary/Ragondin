@@ -1,3 +1,12 @@
+---
+id: ADR-C10
+title: Tower for the serving envelope only
+status: accepted
+invariants: []
+supersedes: []
+superseded_by: null
+---
+
 # ADR-C10: Tower for the serving envelope only
 
 ## Context

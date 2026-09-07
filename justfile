@@ -37,5 +37,14 @@ check-invariants:
 check-doc-links:
     python3 scripts/check-doc-links.py
 
+# Regenerate the ADR index in docs/adr/README.md from each ADR's front-matter.
+gen-adr-index:
+    python3 scripts/gen-adr-index.py
+
+# Verify the ADR index is current. A generated index that is allowed to go stale
+# is a hand-maintained index with extra steps.
+check-adr-index:
+    python3 scripts/gen-adr-index.py --check
+
 # Everything CI runs, in one command. Run this before declaring work done.
-check: fmt build test clippy check-features check-invariants check-doc-links
+check: fmt build test clippy check-features check-invariants check-doc-links check-adr-index

@@ -1,3 +1,12 @@
+---
+id: ADR-012
+title: UI in the experiment plane, never in the data plane
+status: accepted
+invariants: []
+supersedes: []
+superseded_by: null
+---
+
 # ADR-12: UI in the experiment plane, never in the data plane
 
 ## Context

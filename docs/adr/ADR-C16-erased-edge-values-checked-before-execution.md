@@ -1,3 +1,12 @@
+---
+id: ADR-C16
+title: Erased edge values, with compatibility checked before execution
+status: accepted
+invariants: [INV-1, INV-2, INV-7, INV-8]
+supersedes: []
+superseded_by: null
+---
+
 # ADR-C16: Erased edge values, with compatibility checked before execution
 
 ## Context

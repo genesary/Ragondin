@@ -1,3 +1,12 @@
+---
+id: ADR-C15
+title: One binary with subcommands
+status: accepted
+invariants: []
+supersedes: []
+superseded_by: null
+---
+
 # ADR-C15: One binary with subcommands
 
 ## Context

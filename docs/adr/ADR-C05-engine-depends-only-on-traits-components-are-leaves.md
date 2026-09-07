@@ -1,3 +1,12 @@
+---
+id: ADR-C05
+title: The engine depends only on traits; components are leaves
+status: accepted
+invariants: []
+supersedes: []
+superseded_by: null
+---
+
 # ADR-C5: The engine depends only on traits; components are leaves
 
 ## Context

@@ -1,3 +1,12 @@
+---
+id: ADR-014
+title: Single front end; graph replay is load-bearing, visual authoring is a later trajectory
+status: accepted
+invariants: []
+supersedes: []
+superseded_by: null
+---
+
 # ADR-14: Single front end; graph replay is load-bearing, visual authoring is a later trajectory
 
 ## Context

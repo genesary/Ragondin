@@ -1,3 +1,12 @@
+---
+id: ADR-007
+title: Custom resource = serialization of the representation; the ConfigSource abstraction
+status: accepted
+invariants: []
+supersedes: []
+superseded_by: null
+---
+
 # ADR-7: Custom resource = serialization of the representation; the ConfigSource abstraction
 
 ## Context

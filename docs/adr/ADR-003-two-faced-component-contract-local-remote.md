@@ -1,3 +1,12 @@
+---
+id: ADR-003
+title: Two-faced component contract (Rust trait + protobuf), Local / Remote
+status: accepted
+invariants: []
+supersedes: []
+superseded_by: null
+---
+
 # ADR-3: Two-faced component contract (Rust trait + protobuf), Local / Remote
 
 ## Context

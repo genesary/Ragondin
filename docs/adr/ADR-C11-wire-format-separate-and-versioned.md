@@ -1,3 +1,12 @@
+---
+id: ADR-C11
+title: The wire format is separate and versioned
+status: accepted
+invariants: []
+supersedes: []
+superseded_by: null
+---
+
 # ADR-C11: The wire format is separate and versioned
 
 ## Context

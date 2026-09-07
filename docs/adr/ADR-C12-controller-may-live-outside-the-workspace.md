@@ -1,3 +1,12 @@
+---
+id: ADR-C12
+title: The controller may live outside the workspace
+status: accepted
+invariants: []
+supersedes: []
+superseded_by: null
+---
+
 # ADR-C12: The controller may live outside the workspace
 
 ## Context

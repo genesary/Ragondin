@@ -25,6 +25,90 @@ An **Architecture Decision Record (ADR)** captures one architectural decision: i
 
 Each file is self-contained: it should be understandable and actionable on its own, without first reading `AGENTS.md` or the architecture documents. If an ADR only makes sense after reading something else, it is under-specified and should be fixed.
 
+## The decisions
+
+Generated from each ADR's front-matter. It is generated rather than written
+because a hand-maintained index of immutable documents rots silently, and a stale
+index of citable decisions is worse than none — `just check` fails when it drifts.
+
+<!-- BEGIN GENERATED ADR INDEX -->
+
+<!-- Generated from each ADR's front-matter by `scripts/gen-adr-index.py`.
+     Regenerate with `just gen-adr-index`; do not edit this table by hand. -->
+
+| ADR | Title | Invariants | Status |
+|---|---|---|---|
+| [`ADR-001`](ADR-001-composable-primitives-and-an-engine.md) | Composable primitives and an engine; techniques are configuration | — | accepted |
+| [`ADR-002`](ADR-002-pipeline-representation-is-a-graph-with-control-flow.md) | The pipeline representation is a graph with control flow | — | accepted |
+| [`ADR-003`](ADR-003-two-faced-component-contract-local-remote.md) | Two-faced component contract (Rust trait + protobuf), Local / Remote | — | accepted |
+| [`ADR-004`](ADR-004-one-engine-two-drivers.md) | One engine, serving and evaluation drivers | — | accepted |
+| [`ADR-005`](ADR-005-pure-compute-data-plane.md) | Pure-compute data plane, externalized state | — | accepted |
+| [`ADR-006`](ADR-006-purpose-built-grpc-config-delivery.md) | Purpose-built gRPC configuration delivery, not xDS | — | accepted |
+| [`ADR-007`](ADR-007-custom-resource-is-serialization-of-the-representation.md) | Custom resource = serialization of the representation; the ConfigSource abstraction | — | accepted |
+| [`ADR-008`](ADR-008-benchmark-contract-typed-by-ground-truth.md) | Benchmark contract typed by the presence of qrels and reference answers | — | accepted |
+| [`ADR-009`](ADR-009-the-judge-is-a-component.md) | The LLM judge is a component of the representation | — | accepted |
+| [`ADR-010`](ADR-010-deterministic-retrieval-metrics-first.md) | Deterministic retrieval metrics first, judge later | — | amended |
+| [`ADR-011`](ADR-011-research-bench-before-multi-tenant-service.md) | Research bench before multi-tenant service | — | accepted |
+| [`ADR-012`](ADR-012-ui-in-experiment-plane-not-data-plane.md) | UI in the experiment plane, never in the data plane | — | accepted |
+| [`ADR-013`](ADR-013-native-run-store-with-export-adapters.md) | Native run store with export adapters | — | accepted |
+| [`ADR-014`](ADR-014-single-front-end-graph-replay-load-bearing.md) | Single front end; graph replay is load-bearing, visual authoring is a later trajectory | — | accepted |
+| [`ADR-015`](ADR-015-traceability-and-statistical-reproducibility.md) | Traceability and statistical reproducibility, not strict determinism | — | accepted |
+| [`ADR-C01`](ADR-C01-multi-crate-workspace-boundaries-are-crate-boundaries.md) | Multi-crate workspace; load-bearing boundaries are crate boundaries | — | accepted |
+| [`ADR-C02`](ADR-C02-three-level-pipeline-representation.md) | Three-level pipeline representation (Raw / Logical / Physical) | INV-8 | amended |
+| [`ADR-C03`](ADR-C03-closed-enum-plus-open-extension-variant.md) | Closed enum of primitive nodes plus an open Extension variant | — | accepted |
+| [`ADR-C04`](ADR-C04-engine-as-embeddable-library-with-explicit-context.md) | Engine as an embeddable library with an explicit EngineContext | — | accepted |
+| [`ADR-C05`](ADR-C05-engine-depends-only-on-traits-components-are-leaves.md) | The engine depends only on traits; components are leaves | — | accepted |
+| [`ADR-C06`](ADR-C06-identical-api-plus-conformance-suite.md) | Built-ins and third parties share one API, backed by a conformance suite | — | accepted |
+| [`ADR-C07`](ADR-C07-domain-types-source-of-truth-protobuf-generated.md) | Domain types are the source of truth; protobuf is generated; round-trip tested | — | accepted |
+| [`ADR-C08`](ADR-C08-async-trait-in-v0.md) | async_trait in v0 | — | accepted |
+| [`ADR-C09`](ADR-C09-traces-are-the-executors-return-value.md) | Execution traces are the executor's return value | — | accepted |
+| [`ADR-C10`](ADR-C10-tower-for-serving-envelope-only.md) | Tower for the serving envelope only | — | accepted |
+| [`ADR-C11`](ADR-C11-wire-format-separate-and-versioned.md) | The wire format is separate and versioned | — | accepted |
+| [`ADR-C12`](ADR-C12-controller-may-live-outside-the-workspace.md) | The controller may live outside the workspace | — | accepted |
+| [`ADR-C13`](ADR-C13-typed-errors-in-libraries-anyhow-in-binary.md) | Typed errors (thiserror) in libraries, anyhow in the binary | — | accepted |
+| [`ADR-C14`](ADR-C14-heavy-backends-feature-gated-lean-default-build.md) | Heavy backends feature-gated; lean default build | — | accepted |
+| [`ADR-C15`](ADR-C15-one-binary-with-subcommands.md) | One binary with subcommands | — | accepted |
+| [`ADR-C16`](ADR-C16-erased-edge-values-checked-before-execution.md) | Erased edge values, with compatibility checked before execution | INV-1, INV-2, INV-7, INV-8 | accepted |
+
+<!-- END GENERATED ADR INDEX -->
+
+## Front-matter
+
+Every ADR carries YAML front-matter above its heading:
+
+```yaml
+---
+id: ADR-C02
+title: Three-level pipeline representation (Raw / Logical / Physical)
+status: amended             # accepted | amended | superseded | proposed
+invariants: [INV-8]
+supersedes: []
+superseded_by: null
+---
+```
+
+- **`id`** carries the **padded, filename-matching** form (`ADR-C02`), because it
+  is the machine key for the file. Prose still cites the unpadded ID (`ADR-C2`) —
+  see *Numbering and file naming* below.
+- **`title`** repeats the ADR's own heading, verbatim.
+- **`status`** restates the `## Status` section in one machine-readable word. The
+  section stays the source of truth; the field must agree with it.
+- **`invariants`** names the invariants the ADR grounds — **only** where the ADR's
+  own text names them. An empty list means *this ADR names no invariant*, never
+  *no invariant applies*. Nothing here is inferred: an invented cross-reference is
+  worse than a missing one, because it will be cited.
+- **`supersedes`** / **`superseded_by`** record supersession, and only where an
+  ADR states it. Both are empty across the current set — no decision has been
+  superseded yet — and they exist so the first supersession has somewhere to go.
+
+**Front-matter is metadata about a decision, never part of one.** Adding it edited
+no Context, Decision, Alternatives rejected, Consequences or Status section, and
+changed no decision. Process rule 1 forbids editing an accepted ADR's substance;
+describing it is not editing it. This is the same reasoning recorded below for the
+2026-09-05 rename, and it is recorded for the same purpose: so that a future reader
+comparing an ADR against its git history sees metadata rather than unexplained
+drift.
+
 ## Numbering and file naming
 
 An ADR has an **ID** and a **filename**, and they are deliberately not the same

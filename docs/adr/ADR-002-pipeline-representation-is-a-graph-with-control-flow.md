@@ -1,3 +1,12 @@
+---
+id: ADR-002
+title: The pipeline representation is a graph with control flow
+status: accepted
+invariants: []
+supersedes: []
+superseded_by: null
+---
+
 # ADR-2: The pipeline representation is a graph with control flow
 
 ## Context

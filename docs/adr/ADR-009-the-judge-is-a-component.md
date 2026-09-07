@@ -1,3 +1,12 @@
+---
+id: ADR-009
+title: The LLM judge is a component of the representation
+status: accepted
+invariants: []
+supersedes: []
+superseded_by: null
+---
+
 # ADR-9: The LLM judge is a component of the representation
 
 ## Context
