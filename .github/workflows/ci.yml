@@ -57,10 +57,10 @@ jobs:
       - name: Feature-gated paths compile
         run: cargo check --workspace --all-features --all-targets
 
-      # The most important gate: the architecture invariants (INV-4, INV-5).
-      # Python 3 is preinstalled on ubuntu runners; the check has no third-party
-      # dependency.
-      - name: Architecture invariants (INV-4, INV-5)
+      # The most important gate: the architecture invariants (INV-3, INV-4,
+      # INV-5, INV-6, INV-11). Python 3 is preinstalled on ubuntu runners; the
+      # check has no third-party dependency.
+      - name: Architecture invariants (INV-3, INV-4, INV-5, INV-6, INV-11)
         run: python3 scripts/check-invariants.py
 
       # An ADR citation that does not resolve reads as a missing decision, and an
