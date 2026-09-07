@@ -38,7 +38,7 @@ Hold these in working memory first. They are the ones a well-meaning change walk
 Dependency arrows point **down only**. Cargo forbids cycles, which is what turns these boundaries from conventions that decay into constraints the compiler refuses to violate.
 
 ```
-bins → planes → engine → contracts → ir → types
+bins → planes → engine → contracts → pipeline → types
                   ↑           ↑
             components ───────┘
 ```
