@@ -26,6 +26,9 @@ cargo fmt --check
 # Architecture invariant checks (see "Invariants")
 just check-invariants
 
+# Every ADR citation in the documentation resolves to a real file
+just check-doc-links
+
 # All of the above — run this before declaring any work complete
 just check
 ```
