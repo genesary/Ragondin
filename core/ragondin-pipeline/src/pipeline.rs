@@ -14,10 +14,32 @@ use crate::node::LogicalNode;
 /// A validated, canonical pipeline.
 ///
 /// A value type (INV-3): no I/O, no global context, no interner, fully
-/// determined by its content. Node order is exactly the order the source
-/// `RawPipeline` listed the nodes in — canonical (e.g. topological)
-/// ordering is a later task's job, so this type never sorts, reorders, or
-/// deduplicates what it is given.
+/// determined by its content.
+///
+/// # The canonicalization contract
+///
+/// This is exactly what [`crate::validate::validate`] normalizes, and exactly
+/// what it leaves alone — #10 hashes this value directly, so this statement
+/// is what makes INV-8 ("two semantically equivalent configurations
+/// formatted differently must hash identically") true.
+///
+/// **Normalized:**
+/// - **Node order.** The node list is sorted by [`crate::NodeId`], regardless
+///   of the order the source `RawPipeline` listed them in.
+/// - **Param key order.** Already canonical before this type exists —
+///   [`crate::Params`] is a `BTreeMap`, which iterates in sorted key order
+///   independent of insertion order.
+/// - **`-0.0`.** Normalized to `0.0` during lowering (not here, see
+///   [`crate::validate::validate`]), so `Float(-0.0)` never reaches this
+///   type.
+///
+/// **Never normalized — reordering either would silently change the
+/// configuration, not canonicalize it:**
+/// - **A node's `inputs`.** Positional and order-significant (ADR-C16): a
+///   fusion consuming `[a, b]` and one consuming `[b, a]` are two different
+///   pipelines, never sorted or deduplicated into one.
+/// - **A node's `params` values**, e.g. the elements of a `List` — order
+///   within a list is part of the value.
 ///
 /// Carries no hash (content hashing is #10) and no port kinds: a node's
 /// `ValueKind`s are derived from its [`LogicalNode`] variant
@@ -39,8 +61,9 @@ impl LogicalPipeline {
         Self { nodes }
     }
 
-    /// The pipeline's nodes, in the order the source `RawPipeline` listed
-    /// them.
+    /// The pipeline's nodes, sorted by [`crate::NodeId`] (see the
+    /// canonicalization contract above) regardless of the order the source
+    /// `RawPipeline` listed them in.
     pub fn nodes(&self) -> &[LogicalNode] {
         &self.nodes
     }

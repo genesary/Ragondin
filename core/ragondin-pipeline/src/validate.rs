@@ -1,14 +1,17 @@
 //! `ValidationError`, the raw-to-logical lowering, and [`validate`] (#9).
 //!
-//! Turning a permissive [`crate::RawPipeline`] into a validated
-//! [`crate::LogicalPipeline`] is two passes. First, lowering *one*
+//! Turning a permissive [`crate::RawPipeline`] into a validated, canonical
+//! [`crate::LogicalPipeline`] is three passes. First, lowering *one*
 //! [`crate::RawNode`] into *one* [`crate::LogicalNode`], and *one*
 //! [`crate::RawParamValue`] into *one* [`crate::ParamValue`], rejecting what
 //! cannot be represented. Second, the structural checks over the *whole*
 //! graph — duplicate ids, dangling inputs, cycles — that only make sense once
-//! every node has lowered. [`validate`] runs both, in that order. The kind
-//! check across an edge (`KindMismatch`) is a later task in this issue, and
-//! extends [`ValidationError`] rather than replacing it.
+//! every node has lowered. Third, canonicalization: sorting the node list by
+//! id, the one remaining step that makes two differently-formatted but
+//! equivalent configurations converge (see the contract on
+//! [`crate::LogicalPipeline`]). [`validate`] runs all three, in that order.
+//! The kind check across an edge (`KindMismatch`) is a later task in this
+//! issue, and extends [`ValidationError`] rather than replacing it.
 
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;
@@ -232,14 +235,12 @@ fn lower_node(raw: RawNode) -> Result<LogicalNode, ValidationError> {
 /// 3. checks every `inputs` entry names a node that exists
 ///    ([`ValidationError::DanglingInput`]);
 /// 4. checks the graph of data edges is acyclic
-///    ([`ValidationError::Cycle`]).
-///
-/// Node order is preserved exactly as `raw` lists it: this function never
-/// sorts, reorders, or deduplicates nodes. Canonical ordering is a later
-/// task's job (ADR-C16) — introducing it here would leave that task's
-/// convergence test unable to fail red.
+///    ([`ValidationError::Cycle`]);
+/// 5. sorts the node list by [`NodeId`], the only reordering this function
+///    ever performs — see the canonicalization contract on
+///    [`LogicalPipeline`] for exactly what does, and does not, converge.
 pub fn validate(raw: RawPipeline) -> Result<LogicalPipeline, ValidationError> {
-    let nodes = raw
+    let mut nodes = raw
         .pipeline
         .nodes
         .into_iter()
@@ -272,6 +273,16 @@ pub fn validate(raw: RawPipeline) -> Result<LogicalPipeline, ValidationError> {
     if let Some(cycle) = find_cycle(&nodes, &index) {
         return Err(ValidationError::Cycle { nodes: cycle });
     }
+
+    // Deterministic ordering (Task 4): two `RawPipeline`s listing the same
+    // nodes in different order must canonicalize to the same
+    // `LogicalPipeline` (INV-8). This sorts the *node list* only, by
+    // `NodeId` — it never touches a node's `inputs`, which stays exactly as
+    // the source listed it (Global Constraint 4 / ADR-C16). A node's `params`
+    // is already canonical (`Params` is a `BTreeMap`), and non-finite floats
+    // were already rejected and `-0.0` already normalized during lowering
+    // (settled reading A3), so nothing further needs doing here.
+    nodes.sort_by(|a, b| a.id().cmp(b.id()));
 
     Ok(LogicalPipeline::new(nodes))
 }
@@ -565,10 +576,14 @@ mod tests {
 
     #[test]
     fn a_valid_hybrid_graph_validates() {
+        // Raw deliberately lists `rrf` first, out of `NodeId` order: this
+        // pins deterministic ordering (Task 4) as well as the original
+        // acceptance criterion — the sorted output must not depend on the
+        // order the source `RawPipeline` happened to list nodes in.
         let raw = pipeline(vec![
-            node("bm25_leg", "retriever", &[]),
-            node("dense_leg", "retriever", &[]),
             node("rrf", "fusion", &["bm25_leg", "dense_leg"]),
+            node("dense_leg", "retriever", &[]),
+            node("bm25_leg", "retriever", &[]),
         ]);
         let logical = validate(raw).expect("a valid hybrid graph must validate");
         let ids: Vec<&str> = logical.nodes().iter().map(|n| n.id().as_str()).collect();
@@ -651,5 +666,120 @@ mod tests {
             }
             other => panic!("expected Cycle, got {other:?}"),
         }
+    }
+
+    // --- Task 4: canonicalization ---
+
+    fn node_with_params(
+        id: &str,
+        component: &str,
+        inputs: &[&str],
+        params: BTreeMap<String, RawParamValue>,
+    ) -> RawNode {
+        RawNode {
+            id: id.to_string(),
+            component: component.to_string(),
+            implementation: format!("{component}_impl"),
+            inputs: inputs.iter().map(|s| s.to_string()).collect(),
+            params,
+        }
+    }
+
+    #[test]
+    fn two_pipelines_differing_only_in_node_order_and_param_key_order_canonicalize_equal() {
+        // Same params, built with the keys inserted in two different orders.
+        // `Params` is a `BTreeMap`, so this must already be a non-event, but
+        // the acceptance criterion asks it be proven rather than assumed.
+        let mut params_forward = BTreeMap::new();
+        params_forward.insert("top_k".to_string(), RawParamValue::Int(50));
+        params_forward.insert("alpha".to_string(), RawParamValue::Float(0.5));
+
+        let mut params_reverse = BTreeMap::new();
+        params_reverse.insert("alpha".to_string(), RawParamValue::Float(0.5));
+        params_reverse.insert("top_k".to_string(), RawParamValue::Int(50));
+
+        let forward = pipeline(vec![
+            node_with_params("bm25_leg", "retriever", &[], params_forward.clone()),
+            node_with_params("dense_leg", "retriever", &[], params_forward.clone()),
+            node_with_params("rrf", "fusion", &["bm25_leg", "dense_leg"], params_forward),
+        ]);
+        // Same nodes, listed in reverse, each with its params built in the
+        // opposite key-insertion order.
+        let reversed = pipeline(vec![
+            node_with_params(
+                "rrf",
+                "fusion",
+                &["bm25_leg", "dense_leg"],
+                params_reverse.clone(),
+            ),
+            node_with_params("dense_leg", "retriever", &[], params_reverse.clone()),
+            node_with_params("bm25_leg", "retriever", &[], params_reverse),
+        ]);
+
+        let a = validate(forward).expect("forward pipeline must validate");
+        let b = validate(reversed).expect("reversed pipeline must validate");
+        assert_eq!(
+            a, b,
+            "node order and param key order must not affect the canonical value"
+        );
+    }
+
+    #[test]
+    fn a_fusions_inputs_are_never_reordered_by_canonicalization() {
+        // Global Constraint 4 / ADR-C16: `inputs` is positional and
+        // order-significant. `[a, b]` and `[b, a]` are two different
+        // configurations, not one canonicalized to the other.
+        let ab = pipeline(vec![
+            node("a", "retriever", &[]),
+            node("b", "retriever", &[]),
+            node("rrf", "fusion", &["a", "b"]),
+        ]);
+        let ba = pipeline(vec![
+            node("a", "retriever", &[]),
+            node("b", "retriever", &[]),
+            node("rrf", "fusion", &["b", "a"]),
+        ]);
+        let logical_ab = validate(ab).expect("ab pipeline must validate");
+        let logical_ba = validate(ba).expect("ba pipeline must validate");
+        assert_ne!(
+            logical_ab, logical_ba,
+            "swapping a fusion's inputs must change the canonical value"
+        );
+    }
+
+    #[test]
+    fn negative_zero_survives_into_the_canonical_pipeline() {
+        let mut params = BTreeMap::new();
+        params.insert("bias".to_string(), RawParamValue::Float(-0.0));
+        let raw = pipeline(vec![node_with_params("n", "retriever", &[], params)]);
+        let logical = validate(raw).expect("a valid pipeline must validate");
+        match &logical.nodes()[0] {
+            LogicalNode::Retriever(node) => match node.params.get("bias").unwrap() {
+                ParamValue::Float(f) => assert_eq!(
+                    f.to_bits(),
+                    0.0f64.to_bits(),
+                    "-0.0 must normalize to 0.0 in the canonical pipeline"
+                ),
+                other => panic!("expected Float, got {other:?}"),
+            },
+            other => panic!("expected Retriever, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_logical_pipeline_serde_round_trip_changes_nothing() {
+        // The executable form of "canonicalization is idempotent" (Ruling
+        // R5): `validate` cannot be handed a `LogicalPipeline` back, but
+        // serializing and re-deriving one must reproduce it exactly, which is
+        // exactly what #10 needs from this type.
+        let raw = pipeline(vec![
+            node("bm25_leg", "retriever", &[]),
+            node("dense_leg", "retriever", &[]),
+            node("rrf", "fusion", &["bm25_leg", "dense_leg"]),
+        ]);
+        let logical = validate(raw).expect("a valid pipeline must validate");
+        let json = serde_json::to_string(&logical).unwrap();
+        let back: LogicalPipeline = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, logical, "a serde round trip must change nothing");
     }
 }
