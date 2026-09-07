@@ -53,7 +53,16 @@ impl Qrels {
         self.by_query.get(query)
     }
 
-    /// How many distinct queries carry at least one judgment.
+    /// How many distinct queries the qrels file names, judged or not.
+    ///
+    /// This is **not** the count of *evaluable* queries, and must not be used
+    /// as the denominator of a mean over a run. A qrels file can name a query
+    /// that `queries.jsonl` never defines — `read_queries` filters queries by
+    /// qrels, but nothing filters qrels by queries, so this count can exceed
+    /// the number of queries a run can actually be scored against. The
+    /// correct denominator for a mean over a run is `Benchmark::queries().len()`;
+    /// a harness that macro-averages over this count instead would divide by
+    /// the wrong number and quietly deflate every mean.
     pub fn judged_query_count(&self) -> usize {
         self.by_query.len()
     }
@@ -179,6 +188,22 @@ mod tests {
         assert_eq!(relevance.get(&DocId::new("d-2")), Some(&0));
         assert_eq!(qrels.judged_query_count(), 2);
         assert_eq!(qrels.judgment_count(), 3);
+    }
+
+    #[test]
+    fn qrels_insert_lets_a_repeated_pair_overwrite_rather_than_accumulate() {
+        // `insert`'s doc comment promises last-wins on a repeated (query, doc)
+        // pair. Nothing exercised that before this test, so a regression to
+        // first-wins or to summing grades would have passed the whole suite.
+        let mut qrels = Qrels::new();
+        qrels.insert(QueryId::new("q-1"), DocId::new("d-1"), 1);
+        qrels.insert(QueryId::new("q-1"), DocId::new("d-1"), 3);
+
+        let relevance = qrels
+            .for_query(&QueryId::new("q-1"))
+            .expect("q-1 is judged");
+        assert_eq!(relevance.get(&DocId::new("d-1")), Some(&3));
+        assert_eq!(qrels.judgment_count(), 1);
     }
 
     #[test]

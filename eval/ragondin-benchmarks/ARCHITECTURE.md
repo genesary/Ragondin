@@ -65,6 +65,17 @@ cases.
 is the absence of a title, and storing `""` would make the two
 indistinguishable while preserving nothing.
 
+## BEIR's own `metadata` object is deliberately dropped
+
+Each BEIR corpus line may carry a `metadata` JSON object of its own (for
+example `{"url": "..."}` on a MED-10-style line), separate from `title`. It is
+**not** mapped onto `Document.metadata` — only `title` is preserved there, as
+above. `Document.metadata` is `BTreeMap<String, String>`, while BEIR's
+`metadata` is arbitrary JSON; carrying it over would mean inventing a
+JSON-to-string encoding that nothing in scope consumes. This was a deliberate
+choice, not an oversight, and it is recorded here so it is not "fixed" later
+by someone assuming it was missed.
+
 ## Local constraints
 
 - **I/O here is correct.** INV-3 (value types only, no I/O) names
@@ -89,6 +100,14 @@ indistinguishable while preserving nothing.
   `Benchmark::iter` itself imposes no such rule — it yields an empty relevance
   map for an unjudged query — because that filtering is a per-format decision,
   not a property of the structure.
+- **The corpus is fully materialized in memory.** `Benchmark` holds its corpus
+  as a `Vec<Document>` and exposes only `corpus() -> &[Document]`; there is no
+  streaming path. This is adequate for the datasets M2 targets, which are
+  small enough to hold in memory whole. It would not be adequate for a corpus
+  the size of MS MARCO, which runs to many gigabytes. Adding a streaming
+  ingestion path later would change the shape of `Benchmark` and the contract
+  the harness is written against — that is a decision issue when it is
+  needed, not a change to make quietly inside this crate.
 
 ## What is deliberately not here
 

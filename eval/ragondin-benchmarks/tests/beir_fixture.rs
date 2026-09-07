@@ -5,6 +5,7 @@
 //! reproducible from the repository alone, and a test that reaches the network
 //! is a test that fails on someone else's machine (§9.1 — freeze the snapshot).
 
+use std::fs;
 use std::path::PathBuf;
 
 use ragondin_benchmarks::{BeirAdapter, BenchmarkAdapter, BenchmarkError};
@@ -12,6 +13,31 @@ use ragondin_types::{DocId, QueryId};
 
 fn fixture_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/beir-mini")
+}
+
+/// Builds a throwaway BEIR dataset under the OS temp dir for a test that needs
+/// a shape the checked-in fixture doesn't cover (a headerless qrels file, a
+/// BOM, a null title, ...).
+///
+/// Adding `tempfile` is out of scope for this crate (dependencies are declared
+/// only at the workspace root), so this hand-rolls the same idea: a directory
+/// named with both the process id and the test's own name, so parallel test
+/// binaries — and parallel test *functions* within one binary — never collide
+/// on the same path. It is removed at the start (in case a previous run was
+/// killed before its own cleanup ran) and best-effort at the end.
+fn write_dataset(test_name: &str, corpus: &str, queries: &str, qrels_test: &str) -> PathBuf {
+    let root = std::env::temp_dir().join(format!(
+        "ragondin-benchmarks-beir-{}-{test_name}",
+        std::process::id()
+    ));
+
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(root.join("qrels")).expect("create dataset root and qrels dir");
+    fs::write(root.join("corpus.jsonl"), corpus).expect("write corpus.jsonl");
+    fs::write(root.join("queries.jsonl"), queries).expect("write queries.jsonl");
+    fs::write(root.join("qrels").join("test.tsv"), qrels_test).expect("write qrels/test.tsv");
+
+    root
 }
 
 #[test]
@@ -157,4 +183,146 @@ fn a_missing_qrels_file_is_a_typed_error_naming_the_path() {
         other => panic!("expected a typed Io error, got {other:?}"),
     }
     assert!(error.to_string().contains("dev.tsv"));
+}
+
+#[test]
+fn a_headerless_qrels_file_keeps_its_first_judgment() {
+    // No header row at all: the real first (and only usable) line is data.
+    // The old unconditional `has_headers(true)` swallowed it, taking "q1"
+    // down with it via the queries-filtered-by-qrels rule.
+    let root = write_dataset(
+        "headerless_qrels_keeps_first_judgment",
+        "{\"_id\": \"d1\", \"text\": \"doc one\"}\n{\"_id\": \"d2\", \"text\": \"doc two\"}\n",
+        "{\"_id\": \"q1\", \"text\": \"query one\"}\n{\"_id\": \"q2\", \"text\": \"query two\"}\n",
+        "q1\td1\t1\nq2\td2\t2\n",
+    );
+
+    let benchmark = BeirAdapter::new(&root)
+        .load()
+        .expect("a headerless qrels file must still load");
+
+    let query_ids: Vec<&str> = benchmark.queries().iter().map(|q| q.id.as_str()).collect();
+    assert_eq!(
+        query_ids,
+        vec!["q1", "q2"],
+        "q1 must not be silently dropped for lack of a header row"
+    );
+    assert_eq!(benchmark.qrels().judgment_count(), 2);
+
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_stray_space_around_an_id_does_not_empty_the_query_set() {
+    // Only the score used to be trimmed. A trailing space on the query id
+    // filed the judgment under QueryId("q1 "), which matches no real query,
+    // so "q1" silently vanished from queries() with no error at all.
+    let root = write_dataset(
+        "stray_space_around_id",
+        "{\"_id\": \"d1\", \"text\": \"doc one\"}\n",
+        "{\"_id\": \"q1\", \"text\": \"query one\"}\n",
+        "query-id\tcorpus-id\tscore\nq1 \td1 \t1 \n",
+    );
+
+    let benchmark = BeirAdapter::new(&root)
+        .load()
+        .expect("a stray space around an id must not fail the load");
+
+    assert_eq!(
+        benchmark
+            .queries()
+            .iter()
+            .map(|q| q.id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["q1"],
+        "q1 must survive once every field is trimmed, not just the score"
+    );
+    let judgments = benchmark
+        .qrels()
+        .for_query(&QueryId::new("q1"))
+        .expect("q1 must be judged under its trimmed id");
+    assert_eq!(judgments.get(&DocId::new("d1")), Some(&1));
+
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_null_title_is_treated_the_same_as_an_absent_one() {
+    // `#[serde(default)]` on a `String` only covers an absent key, not a JSON
+    // `null` value; a null title used to abort the whole load with
+    // MalformedJson, an unlisted fourth state beyond present/empty/absent.
+    let root = write_dataset(
+        "null_title",
+        "{\"_id\": \"d1\", \"title\": null, \"text\": \"hello world\"}\n",
+        "{\"_id\": \"q1\", \"text\": \"query one\"}\n",
+        "query-id\tcorpus-id\tscore\nq1\td1\t1\n",
+    );
+
+    let benchmark = BeirAdapter::new(&root)
+        .load()
+        .expect("a null title must load like an absent one");
+
+    let doc = benchmark
+        .corpus()
+        .iter()
+        .find(|d| d.id == DocId::new("d1"))
+        .expect("d1 is in the dataset");
+    assert_eq!(doc.text, "hello world", "no title, so no leading space");
+    assert_eq!(doc.metadata.get("title"), None);
+
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_utf8_bom_on_the_first_line_of_a_jsonl_file_does_not_fail_the_load() {
+    // A BOM can only appear at the very start of a file, attached to the
+    // first record's first byte; unstripped, `serde_json` sees an invalid
+    // leading character and the whole file fails, though every line is
+    // otherwise valid JSON.
+    let root = write_dataset(
+        "utf8_bom_on_first_line",
+        "\u{feff}{\"_id\": \"d1\", \"text\": \"hello\"}\n",
+        "\u{feff}{\"_id\": \"q1\", \"text\": \"query one\"}\n",
+        "query-id\tcorpus-id\tscore\nq1\td1\t1\n",
+    );
+
+    let benchmark = BeirAdapter::new(&root)
+        .load()
+        .expect("a leading BOM must not fail the load");
+
+    assert_eq!(benchmark.corpus().len(), 1);
+    assert_eq!(benchmark.corpus()[0].text, "hello");
+    assert_eq!(benchmark.queries().len(), 1);
+    assert_eq!(benchmark.queries()[0].id, QueryId::new("q1"));
+
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_malformed_qrels_row_after_a_blank_line_reports_its_real_line_number() {
+    // The blank line at physical line 3 is skipped by the csv reader, not
+    // counted; the malformed row is physical line 4. Hand-computed
+    // `index + 2` arithmetic assumes no skipped records and reports line 3.
+    let root = write_dataset(
+        "malformed_row_after_blank_line",
+        "{\"_id\": \"d1\", \"text\": \"doc one\"}\n{\"_id\": \"d2\", \"text\": \"doc two\"}\n",
+        "{\"_id\": \"q1\", \"text\": \"query one\"}\n{\"_id\": \"q2\", \"text\": \"query two\"}\n",
+        "query-id\tcorpus-id\tscore\nq1\td1\t1\n\nq2\td2\tbad\n",
+    );
+
+    let error = BeirAdapter::new(&root)
+        .load()
+        .expect_err("a non-numeric score must be a typed error");
+
+    match &error {
+        BenchmarkError::MalformedRecord { line, .. } => {
+            assert_eq!(
+                *line, 4,
+                "the blank line must not shift the reported line number"
+            );
+        }
+        other => panic!("expected a typed MalformedRecord error, got {other:?}"),
+    }
+
+    let _ = fs::remove_dir_all(&root);
 }
