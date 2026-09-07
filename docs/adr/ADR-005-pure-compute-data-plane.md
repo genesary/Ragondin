@@ -1,3 +1,12 @@
+---
+id: ADR-005
+title: Pure-compute data plane, externalized state
+status: accepted
+invariants: []
+supersedes: []
+superseded_by: null
+---
+
 # ADR-5: Pure-compute data plane, externalized state
 
 ## Context

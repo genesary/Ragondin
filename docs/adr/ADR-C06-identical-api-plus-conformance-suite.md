@@ -1,3 +1,12 @@
+---
+id: ADR-C06
+title: Built-ins and third parties share one API, backed by a conformance suite
+status: accepted
+invariants: []
+supersedes: []
+superseded_by: null
+---
+
 # ADR-C6: Built-ins and third parties share one API, backed by a conformance suite
 
 ## Context

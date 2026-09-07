@@ -68,3 +68,8 @@ jobs:
       # applied to the documentation.
       - name: Documentation links (ADR citations resolve)
         run: python3 scripts/check-doc-links.py
+
+      # The ADR index is generated from front-matter. Letting it go stale would
+      # make it a hand-maintained index with extra steps.
+      - name: ADR index is current
+        run: python3 scripts/gen-adr-index.py --check

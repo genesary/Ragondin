@@ -1,3 +1,12 @@
+---
+id: ADR-006
+title: Purpose-built gRPC configuration delivery, not xDS
+status: accepted
+invariants: []
+supersedes: []
+superseded_by: null
+---
+
 # ADR-6: Purpose-built gRPC configuration delivery, not xDS
 
 ## Context

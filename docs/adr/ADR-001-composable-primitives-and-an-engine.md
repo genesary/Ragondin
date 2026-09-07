@@ -1,3 +1,12 @@
+---
+id: ADR-001
+title: Composable primitives and an engine; techniques are configuration
+status: accepted
+invariants: []
+supersedes: []
+superseded_by: null
+---
+
 # ADR-1: Composable primitives and an engine; techniques are configuration
 
 ## Context

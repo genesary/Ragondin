@@ -1,3 +1,12 @@
+---
+id: ADR-C03
+title: Closed enum of primitive nodes plus an open Extension variant
+status: accepted
+invariants: []
+supersedes: []
+superseded_by: null
+---
+
 # ADR-C3: Closed enum of primitive nodes plus an open Extension variant
 
 ## Context

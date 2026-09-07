@@ -1,3 +1,12 @@
+---
+id: ADR-C04
+title: Engine as an embeddable library with an explicit EngineContext
+status: accepted
+invariants: []
+supersedes: []
+superseded_by: null
+---
+
 # ADR-C4: Engine as an embeddable library with an explicit EngineContext
 
 ## Context

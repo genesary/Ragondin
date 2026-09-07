@@ -1,3 +1,12 @@
+---
+id: ADR-004
+title: One engine, serving and evaluation drivers
+status: accepted
+invariants: []
+supersedes: []
+superseded_by: null
+---
+
 # ADR-4: One engine, serving and evaluation drivers
 
 ## Context

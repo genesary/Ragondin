@@ -1,3 +1,12 @@
+---
+id: ADR-C02
+title: Three-level pipeline representation (Raw / Logical / Physical)
+status: amended
+invariants: [INV-8]
+supersedes: []
+superseded_by: null
+---
+
 # ADR-C2: Three-level pipeline representation (Raw / Logical / Physical)
 
 ## Context

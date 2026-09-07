@@ -1,3 +1,12 @@
+---
+id: ADR-C13
+title: Typed errors (thiserror) in libraries, anyhow in the binary
+status: accepted
+invariants: []
+supersedes: []
+superseded_by: null
+---
+
 # ADR-C13: Typed errors (thiserror) in libraries, anyhow in the binary
 
 ## Context

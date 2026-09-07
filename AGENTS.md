@@ -29,6 +29,12 @@ just check-invariants
 # Every ADR citation in the documentation resolves to a real file
 just check-doc-links
 
+# The generated ADR index in docs/adr/README.md is current
+just check-adr-index
+
+# Regenerate that index after changing an ADR's front-matter
+just gen-adr-index
+
 # All of the above — run this before declaring any work complete
 just check
 ```

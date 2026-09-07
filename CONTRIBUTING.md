@@ -16,8 +16,9 @@ just check                  # everything CI runs, in one command
 ```
 
 `just check` runs build, tests, `clippy` (warnings are errors), `cargo fmt
---check`, the architecture invariant checks, and the documentation link check.
-**A change is not done until `just check` passes.** The toolchain is pinned to stable (`rust-toolchain.toml`);
+--check`, the architecture invariant checks, the documentation link check, and
+the ADR index staleness check. **A change is not done until `just check`
+passes.** The toolchain is pinned to stable (`rust-toolchain.toml`);
 never rely on nightly.
 
 ### The architecture invariant checks
@@ -43,6 +44,20 @@ issue rather than weakening the check.
 [`docs/adr/README.md`](docs/adr/README.md). A citation that does not resolve does
 not read as a typo — it reads as a missing decision, and whoever was sent to read
 it derives their own instead.
+
+### The ADR index
+
+The decision table in [`docs/adr/README.md`](docs/adr/README.md) is **generated**
+from each ADR's YAML front-matter by `scripts/gen-adr-index.py`. Do not edit the
+table by hand: change the front-matter and run `just gen-adr-index`.
+`just check-adr-index` (also a CI step) fails when the committed table no longer
+matches the ADRs.
+
+Front-matter is metadata about a decision, never part of one. Adding or correcting
+it is allowed; editing an ADR's Context, Decision, Alternatives rejected,
+Consequences or Status prose is governed by the process rules in
+[`docs/adr/README.md`](docs/adr/README.md) and is not something a PR does in
+passing.
 
 ## Contributing a component
 

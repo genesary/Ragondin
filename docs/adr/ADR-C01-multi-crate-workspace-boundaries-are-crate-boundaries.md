@@ -1,3 +1,12 @@
+---
+id: ADR-C01
+title: Multi-crate workspace; load-bearing boundaries are crate boundaries
+status: accepted
+invariants: []
+supersedes: []
+superseded_by: null
+---
+
 # ADR-C1: Multi-crate workspace; load-bearing boundaries are crate boundaries
 
 ## Context

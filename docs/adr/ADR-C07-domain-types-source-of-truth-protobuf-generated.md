@@ -1,3 +1,12 @@
+---
+id: ADR-C07
+title: Domain types are the source of truth; protobuf is generated; round-trip tested
+status: accepted
+invariants: []
+supersedes: []
+superseded_by: null
+---
+
 # ADR-C7: Domain types are the source of truth; protobuf is generated; round-trip tested
 
 ## Context

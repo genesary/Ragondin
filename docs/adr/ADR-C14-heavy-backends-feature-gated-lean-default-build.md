@@ -1,3 +1,12 @@
+---
+id: ADR-C14
+title: Heavy backends feature-gated; lean default build
+status: accepted
+invariants: []
+supersedes: []
+superseded_by: null
+---
+
 # ADR-C14: Heavy backends feature-gated; lean default build
 
 ## Context

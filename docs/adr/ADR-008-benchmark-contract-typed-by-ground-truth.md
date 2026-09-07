@@ -1,3 +1,12 @@
+---
+id: ADR-008
+title: Benchmark contract typed by the presence of qrels and reference answers
+status: accepted
+invariants: []
+supersedes: []
+superseded_by: null
+---
+
 # ADR-8: Benchmark contract typed by the presence of qrels and reference answers
 
 ## Context

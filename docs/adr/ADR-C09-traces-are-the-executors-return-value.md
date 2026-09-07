@@ -1,3 +1,12 @@
+---
+id: ADR-C09
+title: Execution traces are the executor's return value
+status: accepted
+invariants: []
+supersedes: []
+superseded_by: null
+---
+
 # ADR-C9: Execution traces are the executor's return value
 
 ## Context

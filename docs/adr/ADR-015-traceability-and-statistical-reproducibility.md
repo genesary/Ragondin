@@ -1,3 +1,12 @@
+---
+id: ADR-015
+title: Traceability and statistical reproducibility, not strict determinism
+status: accepted
+invariants: []
+supersedes: []
+superseded_by: null
+---
+
 # ADR-15: Traceability and statistical reproducibility, not strict determinism
 
 ## Context

@@ -1,3 +1,12 @@
+---
+id: ADR-011
+title: Research bench before multi-tenant service
+status: accepted
+invariants: []
+supersedes: []
+superseded_by: null
+---
+
 # ADR-11: Research bench before multi-tenant service
 
 ## Context

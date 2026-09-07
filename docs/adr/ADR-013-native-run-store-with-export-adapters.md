@@ -1,3 +1,12 @@
+---
+id: ADR-013
+title: Native run store with export adapters
+status: accepted
+invariants: []
+supersedes: []
+superseded_by: null
+---
+
 # ADR-13: Native run store with export adapters
 
 ## Context
