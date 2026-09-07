@@ -19,19 +19,37 @@ Hold these in working memory first. They are the ones a well-meaning change walk
 
 ## All 11 invariants
 
+Split by **how they are enforced**, because that changes what you have to do about them. A CI-enforced invariant tells you when you break it; a review-enforced one does not.
+
+### CI-enforced — `scripts/check-invariants.py` fails the build
+
+Four of these are **dependency-closure** checks over `cargo metadata`: complete, with no way to slip a violation past them. **INV-11 is a source scan: best-effort**, with known blind spots, so it also appears in the review-enforced set below. A green build is evidence for it, not proof.
+
+| ID | Rule |
+|---|---|
+| **INV-3** | `ragondin-types` and `ragondin-pipeline` contain **value types only**: no global context, no interner, no I/O. A value is fully determined by its content. |
+| **INV-4** | **The core stays light.** `ragondin-types` and `ragondin-contracts` must carry **no heavy dependency** — no `tantivy`, `tonic`, `ort`, `candle`, vector-store client, or HTTP client. `serde` at most. |
+| **INV-5** | **The engine knows only traits.** `ragondin-engine` must not depend on any crate under `components/`. |
+| **INV-6** | **No global state.** The component registry lives on an `EngineContext` passed explicitly as a parameter. Never use a static global registry (`inventory`, `linkme`, or equivalent). |
+| **INV-11** | **Tower governs the network envelope only.** Components are heterogeneous domain traits. Never make a component a `tower::Service`. |
+
+INV-3 and INV-6 are checked **in part**: CI decides INV-3's I/O clause and INV-6's two named crates. Their remaining clauses are yours to respect and a reviewer's to catch.
+
+### Review-enforced — nothing catches these but a reader
+
+INV-11 is listed here as well as above: its scan does not see an aliased import (`use tower::Service as Svc;`) or a macro-generated impl.
+
 | ID | Rule |
 |---|---|
 | **INV-1** | `ragondin-types`, `ragondin-pipeline`, `ragondin-contracts` are **stable API boundaries**. Breaking their public API is a deliberate, versioned act — never a side effect of another change. |
 | **INV-2** | `ragondin-engine` is **not an API boundary** and never will be. Refactor it freely; do not treat its internals as stable. |
-| **INV-3** | `ragondin-types` and `ragondin-pipeline` contain **value types only**: no global context, no interner, no I/O. A value is fully determined by its content. *CI-enforced: the I/O clause.* |
-| **INV-4** | **The core stays light.** `ragondin-types` and `ragondin-contracts` must carry **no heavy dependency** — no `tantivy`, `tonic`, `ort`, `candle`, vector-store client, or HTTP client. `serde` at most. *CI-enforced.* |
-| **INV-5** | **The engine knows only traits.** `ragondin-engine` must not depend on any crate under `components/`. *CI-enforced.* |
-| **INV-6** | **No global state.** The component registry lives on an `EngineContext` passed explicitly as a parameter. Never use a static global registry (`inventory`, `linkme`, or equivalent). *CI-enforced: `inventory` and `linkme`.* |
 | **INV-7** | **No privilege for built-in components.** A first-party component registers through exactly the same mechanism as a third-party one. Never add a shortcut, fast path, or special case for a built-in. |
 | **INV-8** | **Hashing is over the canonical logical form**, never over source text. Two semantically equivalent configurations formatted differently **must** produce the same hash. |
 | **INV-9** | **The IR wire format is separate from the in-memory representation** and versioned independently. Never `#[derive(Serialize)]` internal IR types to produce the wire format. |
 | **INV-10** | **Execution traces are a return value, not a log.** The executor's signature returns the trace. `tracing` is used in parallel for operational telemetry, never as a substitute for `ExecutionTrace`. |
-| **INV-11** | **Tower governs the network envelope only.** Components are heterogeneous domain traits. Never make a component a `tower::Service`. *CI-enforced.* |
+| **INV-11** | *(also CI-enforced, best-effort)* **Tower governs the network envelope only.** Components are heterogeneous domain traits. Never make a component a `tower::Service`. |
+
+`AGENTS.md` § Invariants pairs each review-enforced rule with **the sign it leaves in a diff** — what you would *see*, as opposed to what the rule says. Read that column before reviewing a diff or before claiming one is clean; it is not duplicated here.
 
 ## The crate dependency graph
 
