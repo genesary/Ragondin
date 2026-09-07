@@ -1,21 +1,23 @@
 //! `ValidationError`, the raw-to-logical lowering, and [`validate`] (#9).
 //!
 //! Turning a permissive [`crate::RawPipeline`] into a validated, canonical
-//! [`crate::LogicalPipeline`] is three passes. First, lowering *one*
+//! [`crate::LogicalPipeline`] is four passes. First, lowering *one*
 //! [`crate::RawNode`] into *one* [`crate::LogicalNode`], and *one*
 //! [`crate::RawParamValue`] into *one* [`crate::ParamValue`], rejecting what
 //! cannot be represented. Second, the structural checks over the *whole*
 //! graph — duplicate ids, dangling inputs, cycles — that only make sense once
-//! every node has lowered. Third, canonicalization: sorting the node list by
-//! id, the one remaining step that makes two differently-formatted but
-//! equivalent configurations converge (see the contract on
-//! [`crate::LogicalPipeline`]). [`validate`] runs all three, in that order.
-//! The kind check across an edge (`KindMismatch`) is a later task in this
-//! issue, and extends [`ValidationError`] rather than replacing it.
+//! every node has lowered. Third, the kind check across every edge
+//! ([`ValidationError::KindMismatch`], ADR-C16), which needs the graph to be
+//! acyclic and every input already known to resolve. Fourth, canonicalization:
+//! sorting the node list by id, the one remaining step that makes two
+//! differently-formatted but equivalent configurations converge (see the
+//! contract on [`crate::LogicalPipeline`]). [`validate`] runs all four, in
+//! that order.
 
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 
+use crate::kind::{consumed_kinds, produced_kind, PortSpec, ValueKind};
 use crate::node::{
     ExtensionNode, FusionNode, LogicalNode, NodeId, ParamValue, Params, RerankerNode, RetrieverNode,
 };
@@ -30,11 +32,11 @@ use crate::raw::{RawNode, RawParamValue, RawPipeline};
 /// crate's dependencies — the same precedent `raw.rs`'s
 /// `UnsupportedSchemaVersion` sets.
 ///
-/// The lowering variants (`UnknownComponent`, `NonFiniteParam`) came from an
-/// earlier task in #9. This task adds the three structural checks over a
-/// whole graph: `DuplicateId`, `DanglingInput` and `Cycle`. `KindMismatch`
-/// (the edge kind check) is later still; the enum is shaped so each is an
-/// additional variant, not a redesign.
+/// The lowering variants (`UnknownComponent`, `NonFiniteParam`) and the three
+/// structural checks over a whole graph (`DuplicateId`, `DanglingInput`,
+/// `Cycle`) came from earlier tasks in #9. `KindMismatch` is the last: the
+/// edge-kind check ADR-C16 places at `LogicalPipeline` validation. Each
+/// arrived as an additional variant, never a redesign of the ones before it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ValidationError {
     /// A node's `component` names no family this build has a [`LogicalNode`]
@@ -77,6 +79,32 @@ pub enum ValidationError {
         /// reports the single-element cycle `[a]`.
         nodes: Vec<NodeId>,
     },
+    /// An edge's value kinds do not line up (ADR-C16).
+    ///
+    /// `consumer.inputs()[port]` names `producer`, but the kind
+    /// [`produced_kind`] derives for `producer` does not match what
+    /// [`consumed_kinds`] declares `consumer` expects at `port`.
+    ///
+    /// `expected` is `None` when `port` is beyond what a fixed-arity variant
+    /// declares (settled reading A2): there is no port to compare against at
+    /// all, only an edge that should not exist. An `Extension` node is
+    /// skipped on both sides of an edge and never produces this error — its
+    /// real kinds are known only once physical planning (#15) resolves its
+    /// registry entry.
+    KindMismatch {
+        /// The node consuming the mismatched edge.
+        consumer: NodeId,
+        /// The position, within `consumer`'s `inputs`, of the mismatched
+        /// edge.
+        port: usize,
+        /// The node producing the value on the mismatched edge.
+        producer: NodeId,
+        /// The kind `consumer` declares at `port`, or `None` when `port` is
+        /// beyond what a fixed-arity variant declares.
+        expected: Option<ValueKind>,
+        /// The kind `producer` actually produces.
+        found: ValueKind,
+    },
 }
 
 impl fmt::Display for ValidationError {
@@ -109,6 +137,27 @@ impl fmt::Display for ValidationError {
                     .join(" -> ");
                 write!(f, "cycle in the pipeline's data edges: {path}")
             }
+            Self::KindMismatch {
+                consumer,
+                port,
+                producer,
+                expected,
+                found,
+            } => match expected {
+                Some(expected) => write!(
+                    f,
+                    "node `{}` port {port} (fed by node `{}`): expected `{expected}`, found `{found}`",
+                    consumer.as_str(),
+                    producer.as_str(),
+                ),
+                None => write!(
+                    f,
+                    "node `{}` port {port} (fed by node `{}`): no port declared at this \
+                     position, found `{found}`",
+                    consumer.as_str(),
+                    producer.as_str(),
+                ),
+            },
         }
     }
 }
@@ -236,7 +285,10 @@ fn lower_node(raw: RawNode) -> Result<LogicalNode, ValidationError> {
 ///    ([`ValidationError::DanglingInput`]);
 /// 4. checks the graph of data edges is acyclic
 ///    ([`ValidationError::Cycle`]);
-/// 5. sorts the node list by [`NodeId`], the only reordering this function
+/// 5. checks every edge's value kinds line up ([`check_kinds`], ADR-C16),
+///    skipping an `Extension` node on either side of an edge
+///    ([`ValidationError::KindMismatch`]);
+/// 6. sorts the node list by [`NodeId`], the only reordering this function
 ///    ever performs — see the canonicalization contract on
 ///    [`LogicalPipeline`] for exactly what does, and does not, converge.
 pub fn validate(raw: RawPipeline) -> Result<LogicalPipeline, ValidationError> {
@@ -274,6 +326,8 @@ pub fn validate(raw: RawPipeline) -> Result<LogicalPipeline, ValidationError> {
         return Err(ValidationError::Cycle { nodes: cycle });
     }
 
+    check_kinds(&nodes, &index)?;
+
     // Deterministic ordering (Task 4): two `RawPipeline`s listing the same
     // nodes in different order must canonicalize to the same
     // `LogicalPipeline` (INV-8). This sorts the *node list* only, by
@@ -285,6 +339,65 @@ pub fn validate(raw: RawPipeline) -> Result<LogicalPipeline, ValidationError> {
     nodes.sort_by(|a, b| a.id().cmp(b.id()));
 
     Ok(LogicalPipeline::new(nodes))
+}
+
+/// Checks every edge's value kinds line up (ADR-C16), given `nodes` is
+/// already known to be acyclic and every `inputs` entry already known to
+/// resolve (`index` maps a [`NodeId`] to its position in `nodes`).
+///
+/// For each node, for each `(position, input_id)` in its `inputs`, this
+/// compares [`produced_kind`] of the node `input_id` names against the kind
+/// [`consumed_kinds`] declares the consumer expects at `position`. A missing
+/// input — a position [`PortSpec::Fixed`] declares but `inputs` does not
+/// reach — is not checked here (settled reading A2); a position `inputs`
+/// *does* reach but that a fixed-arity variant does not declare is a
+/// [`ValidationError::KindMismatch`] with `expected: None`.
+///
+/// An [`LogicalNode::Extension`] is skipped on **both** sides of an edge: as
+/// a consumer, its [`PortSpec`] is [`PortSpec::Unknown`] ADR-C16 says the core
+/// cannot state; as a producer, it yields [`ValueKind::Opaque`], which is not
+/// a real kind to compare against. Either guess would be exactly what
+/// ADR-C16 reserves for physical planning (#15), once the registry is
+/// resolved.
+fn check_kinds(
+    nodes: &[LogicalNode],
+    index: &HashMap<NodeId, usize>,
+) -> Result<(), ValidationError> {
+    for node in nodes {
+        if matches!(node, LogicalNode::Extension(_)) {
+            continue;
+        }
+        let spec = consumed_kinds(node);
+
+        for (position, input_id) in node.inputs().iter().enumerate() {
+            let producer = &nodes[index[input_id]];
+            if matches!(producer, LogicalNode::Extension(_)) {
+                continue;
+            }
+
+            let expected = match &spec {
+                PortSpec::Fixed(kinds) => kinds.get(position).copied(),
+                PortSpec::Variadic(kind) => Some(*kind),
+                PortSpec::Unknown => {
+                    unreachable!(
+                        "only Extension returns PortSpec::Unknown, and it is skipped above"
+                    )
+                }
+            };
+            let found = produced_kind(producer);
+
+            if expected != Some(found) {
+                return Err(ValidationError::KindMismatch {
+                    consumer: node.id().clone(),
+                    port: position,
+                    producer: producer.id().clone(),
+                    expected,
+                    found,
+                });
+            }
+        }
+    }
+    Ok(())
 }
 
 /// The three-colour marking a depth-first search over `nodes` uses to spot
@@ -358,6 +471,7 @@ fn find_cycle(nodes: &[LogicalNode], index: &HashMap<NodeId, usize>) -> Option<V
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::kind::ValueKind;
     use crate::raw::RawGraph;
 
     fn raw_node(component: &str, params: BTreeMap<String, RawParamValue>) -> RawNode {
@@ -764,6 +878,91 @@ mod tests {
             },
             other => panic!("expected Retriever, got {other:?}"),
         }
+    }
+
+    // --- Task 5: the kind check ---
+
+    #[test]
+    fn a_reranker_consuming_chunks_at_the_query_port_fails_with_kind_mismatch() {
+        // `leg` produces `Chunks`; wiring it into the reranker's port 0
+        // (which `consumed_kinds` declares `Query`) must fail.
+        let raw = pipeline(vec![
+            node("leg", "retriever", &[]),
+            node("k", "reranker", &["leg", "leg"]),
+        ]);
+        let err = validate(raw).unwrap_err();
+        assert_eq!(
+            err,
+            ValidationError::KindMismatch {
+                consumer: NodeId::new("k"),
+                port: 0,
+                producer: NodeId::new("leg"),
+                expected: Some(ValueKind::Query),
+                found: ValueKind::Chunks,
+            }
+        );
+        let message = err.to_string();
+        assert!(
+            message.contains("`k`") && message.contains("`leg`"),
+            "the message must name both node ids: {message}"
+        );
+        assert!(
+            message.contains("query") && message.contains("chunks"),
+            "the message must name both the expected and found kinds: {message}"
+        );
+    }
+
+    #[test]
+    fn a_retriever_given_two_inputs_fails_with_kind_mismatch_at_port_one() {
+        // A retriever's `PortSpec` is `Fixed(vec![Query])` — one port. `ext`
+        // is an `Extension` at position 0, which is skipped as a producer
+        // (ADR-C16), so this pins the position-1 failure on the *second*
+        // input being beyond the retriever's declared arity, not on the
+        // first input (nothing in the closed node set produces `Query`, so a
+        // primitive there would fail at port 0 instead and this test would
+        // no longer isolate the excess-arity case).
+        let raw = pipeline(vec![
+            node("ext", "extension", &[]),
+            node("b", "retriever", &[]),
+            node("r", "retriever", &["ext", "b"]),
+        ]);
+        let err = validate(raw).unwrap_err();
+        assert_eq!(
+            err,
+            ValidationError::KindMismatch {
+                consumer: NodeId::new("r"),
+                port: 1,
+                producer: NodeId::new("b"),
+                expected: None,
+                found: ValueKind::Chunks,
+            }
+        );
+    }
+
+    #[test]
+    fn a_fusion_consuming_three_retrievers_validates() {
+        let raw = pipeline(vec![
+            node("a", "retriever", &[]),
+            node("b", "retriever", &[]),
+            node("c", "retriever", &[]),
+            node("rrf", "fusion", &["a", "b", "c"]),
+        ]);
+        validate(raw).expect("a fusion's variadic Chunks port accepts any number of inputs");
+    }
+
+    #[test]
+    fn an_extension_feeding_a_primitive_and_fed_by_one_validates() {
+        // `ext` consumes `src`'s output (an `Extension` consumer's
+        // `PortSpec` is `Unknown`, so this edge is skipped) and feeds `fus`
+        // (an `Extension` producer yields `Opaque`, also skipped). Neither
+        // edge may be falsely rejected, and neither kind may be guessed
+        // (ADR-C16).
+        let raw = pipeline(vec![
+            node("src", "retriever", &[]),
+            node("ext", "extension", &["src"]),
+            node("fus", "fusion", &["ext"]),
+        ]);
+        validate(raw).expect("an Extension node on either side of an edge must not be rejected");
     }
 
     #[test]
