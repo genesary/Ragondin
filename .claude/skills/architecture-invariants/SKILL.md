@@ -49,7 +49,7 @@ INV-11 is listed here as well as above: its scan does not see an aliased import 
 | **INV-10** | **Execution traces are a return value, not a log.** The executor's signature returns the trace. `tracing` is used in parallel for operational telemetry, never as a substitute for `ExecutionTrace`. |
 | **INV-11** | *(also CI-enforced, best-effort)* **Tower governs the network envelope only.** Components are heterogeneous domain traits. Never make a component a `tower::Service`. |
 
-`AGENTS.md` § Invariants pairs each review-enforced rule with **the sign it leaves in a diff** — what you would *see*, as opposed to what the rule says. Read that column before reviewing a diff or before claiming one is clean; it is not duplicated here.
+`AGENTS.md` § Invariants links every rule to the ADR that argues it — read that before proposing an exception, since the alternatives an ADR rejected are usually the exception you were about to propose. It also pairs each review-enforced rule with **the sign it leaves in a diff** — what you would *see*, as opposed to what the rule says. Read that column before reviewing a diff or before claiming one is clean; it is not duplicated here.
 
 ## The crate dependency graph
 
