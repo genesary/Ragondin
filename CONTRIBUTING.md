@@ -82,4 +82,30 @@ equivalent by assertion.
 - **Commits:** Conventional Commits, scoped by crate where useful, e.g.
   `feat(ragondin-pipeline): add canonical hashing`.
 - **Branches:** `<type>/<issue-number>-<slug>`.
+- **Closing an issue from a PR:** write the keyword **bare** — `Closes #123`, not
+  `Closes issue #123`. GitHub matches `<keyword> #<number>` with nothing in
+  between; an intervening word makes the reference an ordinary mention, and the
+  issue stays open when the PR merges. A task-list item is fine — the nesting is
+  not the problem, the extra word is.
 - **Errors:** `thiserror` (typed) in libraries; `anyhow` in binaries only.
+
+### Stacked pull requests
+
+Two changes that touch the same files are sometimes better reviewed as a stack —
+PR B based on PR A's branch rather than on `main` — so each diff shows only its own
+work. That is a real gain in reviewability, and it carries a cost worth knowing
+**before** you choose it rather than after:
+
+- **A stacked PR closes nothing.** GitHub creates closing references only for pull
+  requests targeting the default branch, so a child PR's `Closes #123` is inert
+  while its base is another branch — whatever the wording, and with no warning on
+  the PR.
+- **Merge a stack bottom-up.** As each base lands, GitHub is expected to retarget
+  its children to `main`, at which point the closing reference should register.
+  *Expected, not yet observed in this repository — verify it and correct this line
+  once a stack has been merged.*
+- **Out of order, issues close silently wrong or not at all.** After merging any
+  stacked PR, check that its issue actually closed, and close it by hand if not.
+
+A stack is still the right shape when two PRs genuinely build on each other. Just
+budget for the manual close.
