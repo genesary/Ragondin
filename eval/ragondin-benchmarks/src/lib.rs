@@ -21,8 +21,10 @@
 
 #![warn(missing_docs)]
 
+pub mod beir;
 mod benchmark;
 mod error;
 
+pub use beir::BeirAdapter;
 pub use benchmark::{Benchmark, BenchmarkAdapter, Qrels};
 pub use error::BenchmarkError;
