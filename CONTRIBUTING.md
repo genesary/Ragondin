@@ -23,13 +23,21 @@ never rely on nightly.
 
 ### The architecture invariant checks
 
-Two invariants are enforced as blocking CI checks, not just documented:
+Five invariants are enforced as blocking CI checks, not just documented:
 
 - **INV-4 — the core stays light.** `ragondin-types` and `ragondin-contracts` carry no
   heavy dependency (tantivy, tonic, prost, ort, candle, vector-store clients,
   HTTP clients). If you add one, the build fails and tells you why.
 - **INV-5 — the engine knows only traits.** `ragondin-engine` depends on no crate
   under `components/`. Add such a dependency and the build fails.
+- **INV-3 — value types only.** `ragondin-types` and `ragondin-pipeline` carry no
+  I/O dependency (async runtime, transport, store client). The "no interner" and
+  "no global context" clauses of INV-3 name no crate and stay review-enforced.
+- **INV-6 — no global state.** `inventory` and `linkme` appear nowhere in the
+  workspace. "Or equivalent" is a judgment a reviewer makes; these two are the
+  part a build can decide.
+- **INV-11 — Tower governs the network envelope only.** No `impl tower::Service`
+  under `components/`.
 
 Run them directly with `just check-invariants` (implemented in
 `scripts/check-invariants.py`). If a check blocks you, it is the architecture

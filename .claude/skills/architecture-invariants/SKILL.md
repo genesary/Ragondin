@@ -5,7 +5,7 @@ description: Load this BEFORE writing or modifying any Rust code in this RAG eva
 
 # Architecture invariants
 
-These are **architectural constraints, not style preferences**. A PR that violates one is rejected. Two of them (INV-4, INV-5) are enforced by CI, so violating those fails the build directly. The rest are enforced by review — which means an agent that internalizes them saves everyone a rejected PR.
+These are **architectural constraints, not style preferences**. A PR that violates one is rejected. Five of them (INV-3, INV-4, INV-5, INV-6, INV-11) are enforced by CI, so violating those fails the build directly. The rest are enforced by review — which means an agent that internalizes them saves everyone a rejected PR.
 
 The reason this skill exists: the long-term threat to this project is not defects, it is **erosion**. Each invariant, taken alone, has a plausible-sounding exception ("the engine could just depend on the BM25 crate for speed"; "PhysicalPipeline should really be serializable"). Each exception is defensible in isolation and destructive in aggregate. Knowing the rule is not enough — you need to recognize the moment you are about to talk yourself into breaking it.
 
@@ -23,15 +23,15 @@ Hold these in working memory first. They are the ones a well-meaning change walk
 |---|---|
 | **INV-1** | `ragondin-types`, `ragondin-pipeline`, `ragondin-contracts` are **stable API boundaries**. Breaking their public API is a deliberate, versioned act — never a side effect of another change. |
 | **INV-2** | `ragondin-engine` is **not an API boundary** and never will be. Refactor it freely; do not treat its internals as stable. |
-| **INV-3** | `ragondin-types` and `ragondin-pipeline` contain **value types only**: no global context, no interner, no I/O. A value is fully determined by its content. |
+| **INV-3** | `ragondin-types` and `ragondin-pipeline` contain **value types only**: no global context, no interner, no I/O. A value is fully determined by its content. *CI-enforced: the I/O clause.* |
 | **INV-4** | **The core stays light.** `ragondin-types` and `ragondin-contracts` must carry **no heavy dependency** — no `tantivy`, `tonic`, `ort`, `candle`, vector-store client, or HTTP client. `serde` at most. *CI-enforced.* |
 | **INV-5** | **The engine knows only traits.** `ragondin-engine` must not depend on any crate under `components/`. *CI-enforced.* |
-| **INV-6** | **No global state.** The component registry lives on an `EngineContext` passed explicitly as a parameter. Never use a static global registry (`inventory`, `linkme`, or equivalent). |
+| **INV-6** | **No global state.** The component registry lives on an `EngineContext` passed explicitly as a parameter. Never use a static global registry (`inventory`, `linkme`, or equivalent). *CI-enforced: `inventory` and `linkme`.* |
 | **INV-7** | **No privilege for built-in components.** A first-party component registers through exactly the same mechanism as a third-party one. Never add a shortcut, fast path, or special case for a built-in. |
 | **INV-8** | **Hashing is over the canonical logical form**, never over source text. Two semantically equivalent configurations formatted differently **must** produce the same hash. |
 | **INV-9** | **The IR wire format is separate from the in-memory representation** and versioned independently. Never `#[derive(Serialize)]` internal IR types to produce the wire format. |
 | **INV-10** | **Execution traces are a return value, not a log.** The executor's signature returns the trace. `tracing` is used in parallel for operational telemetry, never as a substitute for `ExecutionTrace`. |
-| **INV-11** | **Tower governs the network envelope only.** Components are heterogeneous domain traits. Never make a component a `tower::Service`. |
+| **INV-11** | **Tower governs the network envelope only.** Components are heterogeneous domain traits. Never make a component a `tower::Service`. *CI-enforced.* |
 
 ## The crate dependency graph
 

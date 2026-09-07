@@ -27,7 +27,8 @@ fmt:
 check-features:
     cargo check --workspace --all-features --all-targets
 
-# Enforce the CI-guarded architecture invariants (INV-4, INV-5).
+# Enforce the CI-guarded architecture invariants (INV-3, INV-4, INV-5, INV-6,
+# INV-11).
 check-invariants:
     python3 scripts/check-invariants.py
 
