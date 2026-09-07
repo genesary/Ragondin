@@ -1,25 +1,23 @@
-//! `ValidationError` and the raw-to-logical lowering (#9).
+//! `ValidationError`, the raw-to-logical lowering, and [`validate`] (#9).
 //!
-//! This is the first half of turning a permissive [`crate::RawPipeline`] into
-//! a validated [`crate::LogicalNode`] graph: lowering *one* [`crate::RawNode`]
-//! into *one* [`crate::LogicalNode`], and *one* [`crate::RawParamValue`] into
-//! *one* [`crate::ParamValue`], rejecting what cannot be represented. The
-//! structural checks over a whole graph — duplicate ids, dangling inputs,
-//! cycles — are a later task in this issue, and the kind check across an edge
-//! (`KindMismatch`) is later still; both extend [`ValidationError`] rather
-//! than replace it.
-//!
-//! Kept private to this module and exercised directly by its own tests: a
-//! public `validate` entry point over a whole [`crate::RawPipeline`] needs the
-//! structural checks to be worth anything, and those are the later task's.
+//! Turning a permissive [`crate::RawPipeline`] into a validated
+//! [`crate::LogicalPipeline`] is two passes. First, lowering *one*
+//! [`crate::RawNode`] into *one* [`crate::LogicalNode`], and *one*
+//! [`crate::RawParamValue`] into *one* [`crate::ParamValue`], rejecting what
+//! cannot be represented. Second, the structural checks over the *whole*
+//! graph — duplicate ids, dangling inputs, cycles — that only make sense once
+//! every node has lowered. [`validate`] runs both, in that order. The kind
+//! check across an edge (`KindMismatch`) is a later task in this issue, and
+//! extends [`ValidationError`] rather than replacing it.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 
 use crate::node::{
     ExtensionNode, FusionNode, LogicalNode, NodeId, ParamValue, Params, RerankerNode, RetrieverNode,
 };
-use crate::raw::{RawNode, RawParamValue};
+use crate::pipeline::LogicalPipeline;
+use crate::raw::{RawNode, RawParamValue, RawPipeline};
 
 /// A `RawPipeline` cannot be lowered into a validated logical form.
 ///
@@ -29,10 +27,11 @@ use crate::raw::{RawNode, RawParamValue};
 /// crate's dependencies — the same precedent `raw.rs`'s
 /// `UnsupportedSchemaVersion` sets.
 ///
-/// This task adds the two variants the lowering itself needs. Later tasks in
-/// #9 add `DuplicateId`, `DanglingInput` and `Cycle` (structural checks over
-/// the whole graph) and `KindMismatch` (the edge kind check); the enum is
-/// shaped so each is an additional variant, not a redesign.
+/// The lowering variants (`UnknownComponent`, `NonFiniteParam`) came from an
+/// earlier task in #9. This task adds the three structural checks over a
+/// whole graph: `DuplicateId`, `DanglingInput` and `Cycle`. `KindMismatch`
+/// (the edge kind check) is later still; the enum is shaped so each is an
+/// additional variant, not a redesign.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ValidationError {
     /// A node's `component` names no family this build has a [`LogicalNode`]
@@ -51,6 +50,30 @@ pub enum ValidationError {
         /// The parameter key under which the non-finite value was found.
         param: String,
     },
+    /// Two nodes in the pipeline share the same id.
+    DuplicateId {
+        /// The id claimed by more than one node.
+        id: NodeId,
+    },
+    /// A node's `inputs` names an id that no node in the pipeline defines.
+    ///
+    /// Per settled reading A2, an *empty* `inputs` list is never a dangling
+    /// input — this fires only for an id that is actually listed and does
+    /// not resolve.
+    DanglingInput {
+        /// The node whose `inputs` names the missing id.
+        node: NodeId,
+        /// The id named in `inputs` that no node in the pipeline defines.
+        missing: NodeId,
+    },
+    /// The graph of data edges (a node's `inputs`) is not acyclic.
+    Cycle {
+        /// The ids of the nodes on the cycle, in the order a depth-first
+        /// traversal walked them. At least one node on the cycle is always
+        /// present; a self-loop (`a` listing `a` in its own `inputs`)
+        /// reports the single-element cycle `[a]`.
+        nodes: Vec<NodeId>,
+    },
 }
 
 impl fmt::Display for ValidationError {
@@ -66,6 +89,23 @@ impl fmt::Display for ValidationError {
                 "node `{}`: parameter `{param}` is not a finite number",
                 node.as_str()
             ),
+            Self::DuplicateId { id } => {
+                write!(f, "duplicate node id `{}`", id.as_str())
+            }
+            Self::DanglingInput { node, missing } => write!(
+                f,
+                "node `{}`: input `{}` names no node in the pipeline",
+                node.as_str(),
+                missing.as_str()
+            ),
+            Self::Cycle { nodes } => {
+                let path = nodes
+                    .iter()
+                    .map(NodeId::as_str)
+                    .collect::<Vec<_>>()
+                    .join(" -> ");
+                write!(f, "cycle in the pipeline's data edges: {path}")
+            }
         }
     }
 }
@@ -115,7 +155,6 @@ fn lower_param_value(
 
 /// Lowers a whole `params` map, preserving its (already canonical, `BTreeMap`)
 /// key order.
-#[allow(dead_code)] // Wired into the public entry point by a later task in #9.
 fn lower_params(
     node: &NodeId,
     raw: BTreeMap<String, RawParamValue>,
@@ -138,7 +177,6 @@ fn lower_params(
 /// source node is written exactly this way, and whether an edge is missing is
 /// a later task's question (#16). `inputs` is carried across positionally,
 /// never reordered (ADR-C16).
-#[allow(dead_code)] // Wired into the public entry point by a later task in #9.
 fn lower_node(raw: RawNode) -> Result<LogicalNode, ValidationError> {
     let RawNode {
         id,
@@ -182,9 +220,134 @@ fn lower_node(raw: RawNode) -> Result<LogicalNode, ValidationError> {
     }
 }
 
+/// Lowers and validates a whole [`RawPipeline`] into a canonical
+/// [`LogicalPipeline`].
+///
+/// Runs, in order — each presupposes the last:
+///
+/// 1. lowers every node ([`lower_node`]), rejecting an unknown `component`
+///    or a non-finite param;
+/// 2. checks every id is unique ([`ValidationError::DuplicateId`]) —
+///    referential integrity is meaningless without unique ids;
+/// 3. checks every `inputs` entry names a node that exists
+///    ([`ValidationError::DanglingInput`]);
+/// 4. checks the graph of data edges is acyclic
+///    ([`ValidationError::Cycle`]).
+///
+/// Node order is preserved exactly as `raw` lists it: this function never
+/// sorts, reorders, or deduplicates nodes. Canonical ordering is a later
+/// task's job (ADR-C16) — introducing it here would leave that task's
+/// convergence test unable to fail red.
+pub fn validate(raw: RawPipeline) -> Result<LogicalPipeline, ValidationError> {
+    let nodes = raw
+        .pipeline
+        .nodes
+        .into_iter()
+        .map(lower_node)
+        .collect::<Result<Vec<_>, _>>()?;
+
+    // Referential integrity is meaningless without unique ids, so this runs
+    // first. The map doubles as the id -> position index the later checks
+    // need.
+    let mut index: HashMap<NodeId, usize> = HashMap::with_capacity(nodes.len());
+    for (position, node) in nodes.iter().enumerate() {
+        if index.insert(node.id().clone(), position).is_some() {
+            return Err(ValidationError::DuplicateId {
+                id: node.id().clone(),
+            });
+        }
+    }
+
+    for node in &nodes {
+        for input in node.inputs() {
+            if !index.contains_key(input) {
+                return Err(ValidationError::DanglingInput {
+                    node: node.id().clone(),
+                    missing: input.clone(),
+                });
+            }
+        }
+    }
+
+    if let Some(cycle) = find_cycle(&nodes, &index) {
+        return Err(ValidationError::Cycle { nodes: cycle });
+    }
+
+    Ok(LogicalPipeline::new(nodes))
+}
+
+/// The three-colour marking a depth-first search over `nodes` uses to spot
+/// a back edge.
+#[derive(Clone, Copy, PartialEq)]
+enum Color {
+    /// Not yet visited.
+    White,
+    /// On the current DFS path — a step into a `Gray` node is a back edge,
+    /// hence a cycle.
+    Gray,
+    /// Fully explored; cannot be part of a cycle discovered from here on.
+    Black,
+}
+
+/// Depth-first search, with three-colour marking, over the "consumes" edges
+/// (a node to each id in its `inputs`) for the first cycle. `index` maps
+/// every node's id to its position in `nodes`; by the time this runs, every
+/// `inputs` entry is already known to resolve (dangling inputs are checked
+/// before this is called), so the lookup below cannot miss.
+fn find_cycle(nodes: &[LogicalNode], index: &HashMap<NodeId, usize>) -> Option<Vec<NodeId>> {
+    fn visit(
+        position: usize,
+        nodes: &[LogicalNode],
+        index: &HashMap<NodeId, usize>,
+        color: &mut [Color],
+        path: &mut Vec<NodeId>,
+    ) -> Option<Vec<NodeId>> {
+        color[position] = Color::Gray;
+        path.push(nodes[position].id().clone());
+
+        for input in nodes[position].inputs() {
+            let next = index[input];
+            match color[next] {
+                Color::White => {
+                    if let Some(cycle) = visit(next, nodes, index, color, path) {
+                        return Some(cycle);
+                    }
+                }
+                Color::Gray => {
+                    // A back edge to a node still on the current path: the
+                    // cycle is everything from that node's first occurrence
+                    // onward, which already loops back to it.
+                    let start = path
+                        .iter()
+                        .position(|id| id == nodes[next].id())
+                        .expect("a Gray node's id is always on the current DFS path");
+                    return Some(path[start..].to_vec());
+                }
+                Color::Black => {}
+            }
+        }
+
+        color[position] = Color::Black;
+        path.pop();
+        None
+    }
+
+    let mut color = vec![Color::White; nodes.len()];
+    let mut path = Vec::new();
+    for position in 0..nodes.len() {
+        if color[position] == Color::White {
+            if let Some(cycle) = visit(position, nodes, index, &mut color, &mut path) {
+                return Some(cycle);
+            }
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::raw::RawGraph;
 
     fn raw_node(component: &str, params: BTreeMap<String, RawParamValue>) -> RawNode {
         RawNode {
@@ -378,6 +541,115 @@ mod tests {
         for (raw, expected) in cases {
             let got = lower_param_value(&id, "p", raw.clone()).unwrap();
             assert_eq!(got, expected, "{raw:?} did not lower to {expected:?}");
+        }
+    }
+
+    // --- `validate`: structural checks over a whole `RawPipeline` ---
+
+    fn node(id: &str, component: &str, inputs: &[&str]) -> RawNode {
+        RawNode {
+            id: id.to_string(),
+            component: component.to_string(),
+            implementation: format!("{component}_impl"),
+            inputs: inputs.iter().map(|s| s.to_string()).collect(),
+            params: BTreeMap::new(),
+        }
+    }
+
+    fn pipeline(nodes: Vec<RawNode>) -> RawPipeline {
+        RawPipeline {
+            version: Default::default(),
+            pipeline: RawGraph { nodes },
+        }
+    }
+
+    #[test]
+    fn a_valid_hybrid_graph_validates() {
+        let raw = pipeline(vec![
+            node("bm25_leg", "retriever", &[]),
+            node("dense_leg", "retriever", &[]),
+            node("rrf", "fusion", &["bm25_leg", "dense_leg"]),
+        ]);
+        let logical = validate(raw).expect("a valid hybrid graph must validate");
+        let ids: Vec<&str> = logical.nodes().iter().map(|n| n.id().as_str()).collect();
+        assert_eq!(ids, vec!["bm25_leg", "dense_leg", "rrf"]);
+    }
+
+    #[test]
+    fn an_empty_inputs_list_validates_as_a_source_node() {
+        // Settled reading A2: a node with no `inputs` is a source node, not
+        // an error — the executor supplies the query.
+        let raw = pipeline(vec![node("question", "retriever", &[])]);
+        let logical = validate(raw).expect("an empty inputs list must not be rejected");
+        assert_eq!(logical.nodes().len(), 1);
+    }
+
+    #[test]
+    fn a_duplicate_id_is_rejected() {
+        let raw = pipeline(vec![
+            node("dup", "retriever", &[]),
+            node("dup", "retriever", &[]),
+        ]);
+        let err = validate(raw).unwrap_err();
+        assert_eq!(
+            err,
+            ValidationError::DuplicateId {
+                id: NodeId::new("dup")
+            }
+        );
+        assert!(
+            err.to_string().contains("dup"),
+            "the message must name the duplicated id: {err}"
+        );
+    }
+
+    #[test]
+    fn a_dangling_input_is_rejected() {
+        let raw = pipeline(vec![node("rrf", "fusion", &["missing"])]);
+        let err = validate(raw).unwrap_err();
+        assert_eq!(
+            err,
+            ValidationError::DanglingInput {
+                node: NodeId::new("rrf"),
+                missing: NodeId::new("missing"),
+            }
+        );
+        assert!(
+            err.to_string().contains("rrf") && err.to_string().contains("missing"),
+            "the message must name both the node and the missing input: {err}"
+        );
+    }
+
+    #[test]
+    fn a_self_loop_is_a_cycle_not_a_dangling_input() {
+        // `a` names itself, which exists — so this must not read as a
+        // dangling input, only as a cycle.
+        let raw = pipeline(vec![node("a", "retriever", &["a"])]);
+        let err = validate(raw).unwrap_err();
+        match err {
+            ValidationError::Cycle { nodes } => {
+                assert!(
+                    nodes.contains(&NodeId::new("a")),
+                    "the cycle must name `a`: {nodes:?}"
+                );
+            }
+            other => panic!("expected Cycle, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_multi_node_cycle_is_detected() {
+        let raw = pipeline(vec![
+            node("a", "retriever", &["b"]),
+            node("b", "retriever", &["a"]),
+        ]);
+        let err = validate(raw).unwrap_err();
+        match err {
+            ValidationError::Cycle { nodes } => {
+                assert!(nodes.contains(&NodeId::new("a")));
+                assert!(nodes.contains(&NodeId::new("b")));
+            }
+            other => panic!("expected Cycle, got {other:?}"),
         }
     }
 }
