@@ -10,7 +10,11 @@ in a `decision` issue, not here.
 
 ## Checklist
 
-- [ ] Closes issue #___
+<!-- Keep the closing keyword bare: `Closes #123`. GitHub matches
+     `<keyword> #<number>` with nothing in between, so `Closes issue #123`
+     silently fails to link and the issue stays open on merge. A task-list
+     item is fine; the intervening word is not. -->
+- [ ] Closes #___
 - [ ] All acceptance criteria met
 - [ ] `just check` passes
 - [ ] New behavior covered by tests written **before** the implementation
