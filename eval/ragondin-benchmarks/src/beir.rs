@@ -209,59 +209,85 @@ fn read_queries(path: &Path, qrels: &Qrels) -> Result<Vec<Query>, BenchmarkError
 ///
 /// BEIR ships a `query-id/corpus-id/score` header, and consuming it as data
 /// invents a judgment for a query nothing will ever answer — but a header row
-/// is not guaranteed: some qrels files in the wild ship without one, and
-/// `has_headers(true)` unconditionally ate whatever the first line was,
-/// silently taking a real judgment down with it when there was no header to
-/// eat. So the reader is built with `has_headers(false)` and the first record
-/// is inspected by hand: it is a header, and is skipped, only when its score
-/// field does not parse as a `u8` — a real judgment row always has a numeric
-/// score, and BEIR's header row has the literal `score` there. Columns are
-/// taken by position, not by header name, because the order is fixed across
-/// BEIR while the spelling is not.
+/// is not guaranteed: some qrels files in the wild ship without one. So the
+/// first parsed record is inspected by hand: it is a header, and is skipped,
+/// only when its score field does not parse as a `u8` — a real judgment row
+/// always has a numeric score, and BEIR's header row has the literal `score`
+/// there. Columns are taken by position, not by header name, because the
+/// order is fixed across BEIR while the spelling is not.
+///
+/// The file is read one physical line at a time — like `read_jsonl` — rather
+/// than handed whole to a single `csv::Reader`. `csv`'s own record positions
+/// cannot be mapped back to physical file lines once blank lines are skipped
+/// (they aren't counted) or the file is CRLF (the line/byte accounting shifts
+/// again), so no arithmetic on those positions is reliable. The physical line
+/// is what an operator needs anyway: it's the number to open the file and
+/// look at the offending row, and counting it directly — the same way
+/// `BufReader::lines()` already lets `read_jsonl` do it — sidesteps the
+/// mismatch entirely instead of trying to correct it after the fact.
 fn read_qrels(path: &Path) -> Result<Qrels, BenchmarkError> {
     let file = File::open(path).map_err(|source| BenchmarkError::Io {
         path: path.to_path_buf(),
         source,
     })?;
 
-    let mut reader = csv::ReaderBuilder::new()
-        .delimiter(b'\t')
-        .has_headers(false)
-        .from_reader(file);
-
     let mut qrels = Qrels::new();
-    let mut records = reader.records();
-    let mut index = 0usize;
+    let mut is_first_record = true;
 
-    while let Some(record) = records.next() {
-        let record = record.map_err(|source| BenchmarkError::MalformedRecord {
+    for (index, line) in BufReader::new(file).lines().enumerate() {
+        let mut line = line.map_err(|source| BenchmarkError::Io {
             path: path.to_path_buf(),
-            // `csv::Error::position()` is only absent for a reader
-            // configuration csv-core itself does not produce here, so the
-            // old `index`-based arithmetic is kept as a fallback rather than
-            // unwrapped away.
-            line: source
-                .position()
-                .map(|position| position.line() as usize)
-                .unwrap_or(index + 1),
-            reason: source.to_string(),
+            source,
         })?;
+        let physical_line = index + 1;
 
-        // A record's own `.position()` is captured *before* that record is
-        // read, so when a blank line was silently skipped just ahead of it,
-        // that position is one line short of where the record actually
-        // sits — the skipped blank line's newline hadn't been consumed yet
-        // when the snapshot was taken. The reader's position *after*
-        // finishing this record, by contrast, is exactly the position of
-        // whatever comes next: one line past this record's own trailing
-        // newline. Subtracting 1 from that recovers this record's true
-        // physical line, blank lines and all — this is the real source of
-        // truth the old `index + 2` arithmetic only approximated.
-        let line = (records.reader().position().line().saturating_sub(1)) as usize;
+        // A UTF-8 BOM, if present at all, is attached to the very first byte
+        // of the file — never to any later line — so it is only ever worth
+        // checking for on the first line. `csv::Reader` used to strip this
+        // transparently when it was fed the whole file; now that each line
+        // goes through its own reader, that's this function's job.
+        if index == 0 {
+            if let Some(stripped) = line.strip_prefix('\u{feff}') {
+                line = stripped.to_string();
+            }
+        }
+
+        if line.trim().is_empty() {
+            continue;
+        }
+
+        // A per-line reader, not a shared one: each line is parsed on its
+        // own, so a short row on one line can never be rejected for having
+        // fewer fields than a different row elsewhere in the file.
+        let mut line_reader = csv::ReaderBuilder::new()
+            .delimiter(b'\t')
+            .has_headers(false)
+            .from_reader(line.as_bytes());
+
+        let record = line_reader
+            .records()
+            .next()
+            .transpose()
+            .map_err(|source| BenchmarkError::MalformedRecord {
+                path: path.to_path_buf(),
+                line: physical_line,
+                reason: source.to_string(),
+            })?
+            // An empty-after-trim check above already filters out blank
+            // lines, so a genuinely empty record here would mean the line
+            // was whitespace the trim check didn't catch (it can't be) —
+            // this is unreachable in practice, but a missing record is
+            // still reported with the correct physical line rather than
+            // panicking.
+            .ok_or_else(|| BenchmarkError::MalformedRecord {
+                path: path.to_path_buf(),
+                line: physical_line,
+                reason: "empty record".to_string(),
+            })?;
 
         let malformed = |reason: String| BenchmarkError::MalformedRecord {
             path: path.to_path_buf(),
-            line,
+            line: physical_line,
             reason,
         };
 
@@ -280,12 +306,13 @@ fn read_qrels(path: &Path) -> Result<Qrels, BenchmarkError> {
         // file, not a judgment to guess at.
         let parsed_score: Result<u8, _> = raw_score.trim().parse();
 
-        if index == 0 && parsed_score.is_err() {
+        if is_first_record && parsed_score.is_err() {
             // The first record's score isn't numeric: this is the header
             // row (BEIR's literal `score`), not a judgment. Skip it.
-            index += 1;
+            is_first_record = false;
             continue;
         }
+        is_first_record = false;
 
         let grade = parsed_score
             .map_err(|_| malformed(format!("score {raw_score:?} is not a grade in 0..=255")))?;
@@ -299,7 +326,6 @@ fn read_qrels(path: &Path) -> Result<Qrels, BenchmarkError> {
         let corpus_id = corpus_id.trim();
 
         qrels.insert(QueryId::new(query_id), DocId::new(corpus_id), grade);
-        index += 1;
     }
 
     Ok(qrels)

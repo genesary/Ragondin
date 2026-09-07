@@ -326,3 +326,122 @@ fn a_malformed_qrels_row_after_a_blank_line_reports_its_real_line_number() {
 
     let _ = fs::remove_dir_all(&root);
 }
+
+/// Loads a `test.tsv` file exactly as given, bypassing `write_dataset`'s
+/// normalization, so CRLF and a missing trailing newline reach the reader
+/// byte-for-byte. Reuses a minimal but sufficient corpus/queries pair.
+fn write_qrels_dataset(test_name: &str, qrels_test: &str) -> PathBuf {
+    write_dataset(
+        test_name,
+        "{\"_id\": \"d1\", \"text\": \"doc one\"}\n{\"_id\": \"d2\", \"text\": \"doc two\"}\n",
+        "{\"_id\": \"q1\", \"text\": \"query one\"}\n{\"_id\": \"q2\", \"text\": \"query two\"}\n",
+        qrels_test,
+    )
+}
+
+fn expect_malformed_line(root: &PathBuf) -> usize {
+    let error = BeirAdapter::new(root)
+        .load()
+        .expect_err("a malformed qrels row must be a typed error");
+
+    match error {
+        BenchmarkError::MalformedRecord { line, .. } => line,
+        other => panic!("expected a typed MalformedRecord error, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_malformed_qrels_row_immediately_after_the_header_reports_line_2() {
+    let root = write_qrels_dataset(
+        "malformed_row_after_header",
+        "query-id\tcorpus-id\tscore\nq1\td1\tbad\n",
+    );
+
+    assert_eq!(
+        expect_malformed_line(&root),
+        2,
+        "the bad row is the second physical line"
+    );
+
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_malformed_qrels_row_after_several_blank_lines_reports_its_true_line() {
+    let root = write_qrels_dataset(
+        "malformed_row_after_several_blank_lines",
+        "query-id\tcorpus-id\tscore\nq1\td1\t1\n\n\n\nq2\td2\tbad\n",
+    );
+
+    // Header (1), data (2), three blank lines (3,4,5), bad row is line 6.
+    assert_eq!(
+        expect_malformed_line(&root),
+        6,
+        "three skipped blank lines must not shift the reported line number"
+    );
+
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_malformed_qrels_row_as_the_last_line_with_no_trailing_newline_reports_its_true_line() {
+    // Deliberately no trailing newline on the final line.
+    let root = write_qrels_dataset(
+        "malformed_last_line_no_trailing_newline",
+        "query-id\tcorpus-id\tscore\nq1\td1\t1\nq2\td2\tbad",
+    );
+
+    assert_eq!(
+        expect_malformed_line(&root),
+        3,
+        "a malformed last line with no trailing newline is still physical line 3"
+    );
+
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_crlf_qrels_file_reports_the_true_line_of_a_malformed_row() {
+    let root = write_qrels_dataset(
+        "crlf_qrels_malformed_row",
+        "query-id\tcorpus-id\tscore\r\nq1\td1\t1\r\nq2\td2\tbad\r\n",
+    );
+
+    assert_eq!(
+        expect_malformed_line(&root),
+        3,
+        "CRLF line endings must not shift the reported line number"
+    );
+
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_crlf_qrels_file_with_a_blank_line_reports_the_true_line_of_a_malformed_row() {
+    let root = write_qrels_dataset(
+        "crlf_qrels_blank_line_malformed_row",
+        "query-id\tcorpus-id\tscore\r\nq1\td1\t1\r\n\r\nq2\td2\tbad\r\n",
+    );
+
+    assert_eq!(
+        expect_malformed_line(&root),
+        4,
+        "a blank CRLF line must not shift the reported line number"
+    );
+
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_qrels_row_with_too_few_fields_reports_the_true_line_and_never_zero() {
+    let root = write_qrels_dataset(
+        "too_few_fields",
+        "query-id\tcorpus-id\tscore\nq1\td1\t1\nq2\tonly-two-columns\n",
+    );
+
+    let line = expect_malformed_line(&root);
+    assert_eq!(line, 3, "the short row is physical line 3");
+    assert_ne!(line, 0, "0 is not a physical line in a 1-based file");
+
+    let _ = fs::remove_dir_all(&root);
+}
