@@ -16,8 +16,8 @@ just check                  # everything CI runs, in one command
 ```
 
 `just check` runs build, tests, `clippy` (warnings are errors), `cargo fmt
---check`, and the architecture invariant checks. **A change is not done until
-`just check` passes.** The toolchain is pinned to stable (`rust-toolchain.toml`);
+--check`, the architecture invariant checks, and the documentation link check.
+**A change is not done until `just check` passes.** The toolchain is pinned to stable (`rust-toolchain.toml`);
 never rely on nightly.
 
 ### The architecture invariant checks
@@ -34,6 +34,15 @@ Run them directly with `just check-invariants` (implemented in
 `scripts/check-invariants.py`). If a check blocks you, it is the architecture
 speaking — do not route around it. If you believe it is wrong, open a `decision`
 issue rather than weakening the check.
+
+### The documentation link check
+
+`just check-doc-links` (`scripts/check-doc-links.py`) verifies that every
+`ADR-<n>` citation in the repository's Markdown resolves to a file under
+`docs/adr/`, and that ADR filenames follow the convention documented in
+[`docs/adr/README.md`](docs/adr/README.md). A citation that does not resolve does
+not read as a typo — it reads as a missing decision, and whoever was sent to read
+it derives their own instead.
 
 ## Contributing a component
 

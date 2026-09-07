@@ -62,3 +62,9 @@ jobs:
       # dependency.
       - name: Architecture invariants (INV-4, INV-5)
         run: python3 scripts/check-invariants.py
+
+      # An ADR citation that does not resolve reads as a missing decision, and an
+      # agent that cannot find the record re-derives it. Same reasoning as above,
+      # applied to the documentation.
+      - name: Documentation links (ADR citations resolve)
+        run: python3 scripts/check-doc-links.py

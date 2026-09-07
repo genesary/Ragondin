@@ -1,6 +1,6 @@
 # Architecture Decision Records
 
-An **Architecture Decision Record (ADR)** captures one architectural decision: its context, the decision itself, the alternatives that were rejected, and the consequences that follow. The point of keeping decisions as ADRs is that a decision becomes an **individually citable artifact** — a contributor or an agent can be pointed at `docs/adr/ADR-4.md` instead of at a row in a table buried inside a long design document.
+An **Architecture Decision Record (ADR)** captures one architectural decision: its context, the decision itself, the alternatives that were rejected, and the consequences that follow. The point of keeping decisions as ADRs is that a decision becomes an **individually citable artifact** — a contributor or an agent can be pointed at `docs/adr/ADR-004-one-engine-two-drivers.md` instead of at a row in a table buried inside a long design document.
 
 `AGENTS.md` and the two architecture documents in `docs/` state the decisions tersely, as rules and rationale. The ADRs here are the durable, per-decision record those documents point to.
 
@@ -20,16 +20,43 @@ An **Architecture Decision Record (ADR)** captures one architectural decision: i
 ## Layout
 
 - **`000-template.md`** — the template every ADR follows: Context / Decision / Alternatives rejected / Consequences / Status, plus an optional Amendments section (process rule 2).
-- **`ADR-1` … `ADR-15`** — the frozen decisions of the *system* architecture, one file per decision.
-- **`ADR-C1` … `ADR-C16`** — the frozen decisions of the *code* architecture, one file per decision.
+- **`ADR-001-*.md` … `ADR-015-*.md`** — the frozen decisions of the *system* architecture, one file per decision, cited as `ADR-1` … `ADR-15`.
+- **`ADR-C01-*.md` … `ADR-C16-*.md`** — the frozen decisions of the *code* architecture, one file per decision, cited as `ADR-C1` … `ADR-C16`.
 
 Each file is self-contained: it should be understandable and actionable on its own, without first reading `AGENTS.md` or the architecture documents. If an ADR only makes sense after reading something else, it is under-specified and should be fixed.
 
-## Numbering
+## Numbering and file naming
+
+An ADR has an **ID** and a **filename**, and they are deliberately not the same
+string. Confusing the two is what makes a citation fail to resolve, so both are
+stated here canonically.
+
+**The ID** is what prose cites, and what the ADR's own `#` heading carries. Its
+number is **never padded**:
 
 - System-architecture decisions use the bare prefix: `ADR-1` … `ADR-15`.
 - Code-architecture decisions use the `C` prefix: `ADR-C1` … `ADR-C16`.
 - New decisions (from `decision` issues) continue the appropriate sequence and are added, never inserted retroactively.
+
+**The filename** is `ADR-<number>-<slug>.md`, where the number **is** padded — to
+**three** digits in the system series, and to **two** digits after the `C` in the
+code series:
+
+| Series | ID | Filename |
+|---|---|---|
+| System | `ADR-4` | `ADR-004-one-engine-two-drivers.md` |
+| Code | `ADR-C3` | `ADR-C03-closed-enum-plus-open-extension-variant.md` |
+
+`<slug>` is a short lowercase kebab-case summary of the decision, written by hand
+when the ADR is created. It is **not** derived from the title and need not
+reproduce it: `ADR-4` is titled *"One engine, serving and evaluation drivers"* and
+is slugged `one-engine-two-drivers`. The slug exists to make a directory listing
+readable; **the number is what identifies the ADR**, and a reference resolves by
+number alone.
+
+`scripts/check-doc-links.py` enforces both halves of this: every ADR filename
+matches the convention above, and every `ADR-<n>` reference in the repository's
+Markdown resolves to exactly one file. It runs as part of `just check`.
 
 ## The 2026-09-05 rename
 
