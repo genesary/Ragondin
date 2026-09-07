@@ -151,42 +151,35 @@ fn lower_node(raw: RawNode) -> Result<LogicalNode, ValidationError> {
     let inputs: Vec<NodeId> = inputs.into_iter().map(NodeId::new).collect();
 
     match component.as_str() {
-        "retriever" | "fusion" | "reranker" | "extension" => {}
-        _ => {
-            return Err(ValidationError::UnknownComponent {
-                node: id,
-                component,
-            })
-        }
-    }
-    let params = lower_params(&id, params)?;
-
-    Ok(match component.as_str() {
-        "retriever" => LogicalNode::Retriever(RetrieverNode {
+        "retriever" => Ok(LogicalNode::Retriever(RetrieverNode {
+            params: lower_params(&id, params)?,
             id,
             implementation,
             inputs,
-            params,
-        }),
-        "fusion" => LogicalNode::Fusion(FusionNode {
+        })),
+        "fusion" => Ok(LogicalNode::Fusion(FusionNode {
+            params: lower_params(&id, params)?,
             id,
             implementation,
             inputs,
-            params,
-        }),
-        "reranker" => LogicalNode::Reranker(RerankerNode {
+        })),
+        "reranker" => Ok(LogicalNode::Reranker(RerankerNode {
+            params: lower_params(&id, params)?,
             id,
             implementation,
             inputs,
-            params,
-        }),
-        _ => LogicalNode::Extension(ExtensionNode {
+        })),
+        "extension" => Ok(LogicalNode::Extension(ExtensionNode {
+            params: lower_params(&id, params)?,
             id,
             kind: implementation,
             inputs,
-            params,
+        })),
+        other => Err(ValidationError::UnknownComponent {
+            node: id,
+            component: other.to_string(),
         }),
-    })
+    }
 }
 
 #[cfg(test)]
