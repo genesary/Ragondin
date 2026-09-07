@@ -25,6 +25,7 @@
 pub mod kind;
 pub mod node;
 pub mod raw;
+pub mod validate;
 
 pub use kind::{consumed_kinds, produced_kind, PortSpec, ValueKind};
 pub use node::{
@@ -33,6 +34,7 @@ pub use node::{
 pub use raw::{
     RawGraph, RawNode, RawParamValue, RawPipeline, SchemaVersion, UnsupportedSchemaVersion,
 };
+pub use validate::ValidationError;
 
 #[cfg(test)]
 mod tests {
