@@ -37,6 +37,6 @@ If you are not implementing an existing contract but inventing a new node *type*
 
 Whether `Local` or `Remote`, every implementation must pass the shared conformance suite — a set of behavioural tests every implementation of a contract must satisfy, whatever its nature. This is what operationally enforces **INV-7: no privilege for built-in components.** A built-in registers, and is tested, through *exactly* the same mechanism as a third-party one. Without the suite, "no privilege for built-ins" is only a slogan; with it, `Local`/`Remote` equivalence is verified rather than asserted.
 
-> The suite lives under `testkit/`. Its crate is named `ragondin-conformance` in the code-architecture document; the issue that commissioned this skill referred to it as `ragondin-contract-tests`. The two names are being reconciled — check the actual workspace layout for the current path rather than trusting either name blindly.
+> The suite lives at `testkit/ragondin-conformance`, a workspace member declared in the root `Cargo.toml`. The workspace layout remains the authority on the path.
 
 > The source of truth for the component contract is `docs/` (the component contract sections) and `ragondin-contracts` itself. This skill summarizes the procedure; when a detail here and the code disagree, the code and `docs/` win.
