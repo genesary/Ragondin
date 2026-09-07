@@ -17,6 +17,17 @@ decision, no process — this file says what a word *means*, never what you must
 
 ---
 
+## Words that carry more than one sense
+
+Two terms in this repository are used in more than one way, in texts that are all
+correct. Both are recorded here because the ambiguity is invisible while the
+vocabulary is implicit, and costs a reader time exactly once per reader.
+
+| Term | The senses, and which one to assume | Grounded in |
+|---|---|---|
+| **Invariant** | **In this repository, an *invariant* means one of the eleven numbered rules INV-1…INV-11** in `AGENTS.md` § Invariants. That is the sense to assume, and the only sense in which "an invariant" is a citable thing. But the ADRs also use the word in its **ordinary English sense**, for any property the design holds fixed — including properties that are *not* in the table. `ADR-C15` is the worked example: *"The **single-engine invariant** is untouched — the drivers stay distinct crates."* There is no single-engine entry in INV-1…INV-11; the property it names is principle **P1** and [ADR-4](docs/adr/ADR-004-one-engine-two-drivers.md) (*"There is **one engine**. Only the feed differs, through thin **drivers**"*). So a phrase of the form "the X invariant" in an ADR is not necessarily a reference to the table — check the table before assuming it is. | `AGENTS.md` § Invariants · [ADR-C15](docs/adr/ADR-C15-one-binary-with-subcommands.md) · [ADR-4](docs/adr/ADR-004-one-engine-two-drivers.md) |
+| **Composition root** | The binary, per the glossary — see *Components and the engine* below, where the second usage is recorded. | [`docs/code-architecture.md`](docs/code-architecture.md) §17, §4.3, §8.1 |
+
 ## The pipeline representation
 
 | Term | Meaning | Grounded in |
