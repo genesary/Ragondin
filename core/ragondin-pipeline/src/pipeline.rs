@@ -32,6 +32,11 @@ use crate::node::LogicalNode;
 /// - **`-0.0`.** Normalized to `0.0` during lowering (not here, see
 ///   [`crate::validate::validate`]), so `Float(-0.0)` never reaches this
 ///   type.
+/// - **The wire `SchemaVersion`.** Discarded during lowering and never
+///   carried into this type. Deliberate, not an oversight: the schema version
+///   says only what this crate can *read*, not what pipeline it produces, so
+///   storing it here would rehash every unchanged pipeline on a schema bump
+///   alone — the opposite of what INV-8 asks for.
 ///
 /// **Never normalized — reordering either would silently change the
 /// configuration, not canonicalize it:**

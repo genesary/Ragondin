@@ -4,15 +4,16 @@
 //! [`crate::LogicalPipeline`] is four passes. First, lowering *one*
 //! [`crate::RawNode`] into *one* [`crate::LogicalNode`], and *one*
 //! [`crate::RawParamValue`] into *one* [`crate::ParamValue`], rejecting what
-//! cannot be represented. Second, the structural checks over the *whole*
-//! graph — duplicate ids, dangling inputs, cycles — that only make sense once
-//! every node has lowered. Third, the kind check across every edge
+//! cannot be represented. Second, sorting the node list by id — the one
+//! normalization this pass performs (see the contract on
+//! [`crate::LogicalPipeline`]) — done before any check runs, so that which of
+//! two faults a malformed graph reports never depends on the order the source
+//! `RawPipeline` happened to list nodes in. Third, the structural checks over
+//! the *whole* graph — duplicate ids, dangling inputs, cycles — that only make
+//! sense once every node has lowered. Fourth, the kind check across every edge
 //! ([`ValidationError::KindMismatch`], ADR-C16), which needs the graph to be
-//! acyclic and every input already known to resolve. Fourth, canonicalization:
-//! sorting the node list by id, the one remaining step that makes two
-//! differently-formatted but equivalent configurations converge (see the
-//! contract on [`crate::LogicalPipeline`]). [`validate`] runs all four, in
-//! that order.
+//! acyclic and every input already known to resolve. [`validate`] runs all
+//! four, in that order.
 
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;
@@ -34,7 +35,7 @@ use crate::raw::{RawNode, RawParamValue, RawPipeline};
 ///
 /// The lowering variants (`UnknownComponent`, `NonFiniteParam`) and the three
 /// structural checks over a whole graph (`DuplicateId`, `DanglingInput`,
-/// `Cycle`) came from earlier tasks in #9. `KindMismatch` is the last: the
+/// `Cycle`) cover well-formedness. `KindMismatch` is additional: the
 /// edge-kind check ADR-C16 places at `LogicalPipeline` validation. Each
 /// arrived as an additional variant, never a redesign of the ones before it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -87,10 +88,14 @@ pub enum ValidationError {
     ///
     /// `expected` is `None` when `port` is beyond what a fixed-arity variant
     /// declares (settled reading A2): there is no port to compare against at
-    /// all, only an edge that should not exist. An `Extension` node is
-    /// skipped on both sides of an edge and never produces this error — its
-    /// real kinds are known only once physical planning (#15) resolves its
-    /// registry entry.
+    /// all, only an edge that should not exist. That fires regardless of what
+    /// produces the edge — the consumer's arity is fully known from its own
+    /// variant — so an `Extension` producer can appear here with
+    /// `found: ValueKind::Opaque`. An `Extension` node is never a
+    /// *consumer* of this check (its `PortSpec` is unknown to the core), and
+    /// an `Extension` *producer* is otherwise skipped whenever a port
+    /// genuinely exists (`expected` is `Some`): its real kind is known only
+    /// once physical planning (#15) resolves its registry entry.
     KindMismatch {
         /// The node consuming the mismatched edge.
         consumer: NodeId,
@@ -130,11 +135,15 @@ impl fmt::Display for ValidationError {
                 missing.as_str()
             ),
             Self::Cycle { nodes } => {
+                // `nodes` walks consumer -> producer (a node, then its
+                // input), the reverse of data flow — rendered as "consumes"
+                // rather than "->" so the direction cannot be misread as
+                // which way values travel.
                 let path = nodes
                     .iter()
                     .map(NodeId::as_str)
                     .collect::<Vec<_>>()
-                    .join(" -> ");
+                    .join(" consumes ");
                 write!(f, "cycle in the pipeline's data edges: {path}")
             }
             Self::KindMismatch {
@@ -172,7 +181,6 @@ impl std::error::Error for ValidationError {}
 /// canonical form, `#10` only hashes it, and hashing a raw `to_bits()` would
 /// otherwise give two content hashes to two values `ParamValue` calls equal
 /// (INV-8).
-#[allow(dead_code)] // Wired into the public entry point by a later task in #9.
 fn lower_param_value(
     node: &NodeId,
     param: &str,
@@ -279,18 +287,21 @@ fn lower_node(raw: RawNode) -> Result<LogicalNode, ValidationError> {
 ///
 /// 1. lowers every node ([`lower_node`]), rejecting an unknown `component`
 ///    or a non-finite param;
-/// 2. checks every id is unique ([`ValidationError::DuplicateId`]) —
+/// 2. sorts the node list by [`NodeId`] — the only reordering this function
+///    ever performs (see the canonicalization contract on
+///    [`LogicalPipeline`] for exactly what does, and does not, converge) —
+///    so every check below, and which of two faults a malformed graph
+///    reports, runs in a deterministic order regardless of how the source
+///    `RawPipeline` listed its nodes;
+/// 3. checks every id is unique ([`ValidationError::DuplicateId`]) —
 ///    referential integrity is meaningless without unique ids;
-/// 3. checks every `inputs` entry names a node that exists
+/// 4. checks every `inputs` entry names a node that exists
 ///    ([`ValidationError::DanglingInput`]);
-/// 4. checks the graph of data edges is acyclic
+/// 5. checks the graph of data edges is acyclic
 ///    ([`ValidationError::Cycle`]);
-/// 5. checks every edge's value kinds line up ([`check_kinds`], ADR-C16),
+/// 6. checks every edge's value kinds line up ([`check_kinds`], ADR-C16),
 ///    skipping an `Extension` node on either side of an edge
-///    ([`ValidationError::KindMismatch`]);
-/// 6. sorts the node list by [`NodeId`], the only reordering this function
-///    ever performs — see the canonicalization contract on
-///    [`LogicalPipeline`] for exactly what does, and does not, converge.
+///    ([`ValidationError::KindMismatch`]).
 pub fn validate(raw: RawPipeline) -> Result<LogicalPipeline, ValidationError> {
     let mut nodes = raw
         .pipeline
@@ -298,6 +309,18 @@ pub fn validate(raw: RawPipeline) -> Result<LogicalPipeline, ValidationError> {
         .into_iter()
         .map(lower_node)
         .collect::<Result<Vec<_>, _>>()?;
+
+    // Sorted first, before any check runs: two `RawPipeline`s listing the
+    // same nodes in different order must canonicalize to the same
+    // `LogicalPipeline` (INV-8), and every check below must report the same
+    // fault regardless of the order the source `RawPipeline` happened to
+    // list nodes in. This sorts the *node list* only, by `NodeId` — it never
+    // touches a node's `inputs`, which stays exactly as the source listed it
+    // (ADR-C16). A node's `params` is already canonical (`Params` is a
+    // `BTreeMap`), and non-finite floats were already rejected and `-0.0`
+    // already normalized during lowering (settled reading A3), so nothing
+    // further needs doing here.
+    nodes.sort_by(|a, b| a.id().cmp(b.id()));
 
     // Referential integrity is meaningless without unique ids, so this runs
     // first. The map doubles as the id -> position index the later checks
@@ -328,16 +351,6 @@ pub fn validate(raw: RawPipeline) -> Result<LogicalPipeline, ValidationError> {
 
     check_kinds(&nodes, &index)?;
 
-    // Deterministic ordering (Task 4): two `RawPipeline`s listing the same
-    // nodes in different order must canonicalize to the same
-    // `LogicalPipeline` (INV-8). This sorts the *node list* only, by
-    // `NodeId` — it never touches a node's `inputs`, which stays exactly as
-    // the source listed it (Global Constraint 4 / ADR-C16). A node's `params`
-    // is already canonical (`Params` is a `BTreeMap`), and non-finite floats
-    // were already rejected and `-0.0` already normalized during lowering
-    // (settled reading A3), so nothing further needs doing here.
-    nodes.sort_by(|a, b| a.id().cmp(b.id()));
-
     Ok(LogicalPipeline::new(nodes))
 }
 
@@ -345,20 +358,28 @@ pub fn validate(raw: RawPipeline) -> Result<LogicalPipeline, ValidationError> {
 /// already known to be acyclic and every `inputs` entry already known to
 /// resolve (`index` maps a [`NodeId`] to its position in `nodes`).
 ///
-/// For each node, for each `(position, input_id)` in its `inputs`, this
-/// compares [`produced_kind`] of the node `input_id` names against the kind
-/// [`consumed_kinds`] declares the consumer expects at `position`. A missing
-/// input — a position [`PortSpec::Fixed`] declares but `inputs` does not
-/// reach — is not checked here (settled reading A2); a position `inputs`
-/// *does* reach but that a fixed-arity variant does not declare is a
-/// [`ValidationError::KindMismatch`] with `expected: None`.
+/// For each node, for each `(position, input_id)` in its `inputs`, this first
+/// derives `expected` — the kind [`consumed_kinds`] declares the consumer
+/// wants at `position`, `None` when `position` is beyond what a fixed-arity
+/// variant declares. That derivation depends only on the *consumer's* own
+/// variant, so it runs **regardless of what feeds the port**: an
+/// [`LogicalNode::Extension`] producer makes the producer's *kind* unknown to
+/// the core (ADR-C16), but says nothing about the consumer's arity, which
+/// stays fully known. A position `inputs` reaches but that a fixed-arity
+/// variant does not declare is therefore always a
+/// [`ValidationError::KindMismatch`] with `expected: None`, whatever produces
+/// it — [`produced_kind`] is representable even for an `Extension` producer
+/// ([`ValueKind::Opaque`]), so `found` is reported normally.
 ///
-/// An [`LogicalNode::Extension`] is skipped on **both** sides of an edge: as
-/// a consumer, its [`PortSpec`] is [`PortSpec::Unknown`] ADR-C16 says the core
-/// cannot state; as a producer, it yields [`ValueKind::Opaque`], which is not
-/// a real kind to compare against. Either guess would be exactly what
-/// ADR-C16 reserves for physical planning (#15), once the registry is
-/// resolved.
+/// Only once a port is known to exist (`expected` is `Some`) does an
+/// `Extension` producer's unknowable kind excuse the edge from the
+/// *comparison* that follows: guessing which kind an `Extension` yields is
+/// exactly what ADR-C16 reserves for physical planning (#15), once the
+/// registry is resolved. A missing input — a position [`PortSpec::Fixed`]
+/// declares but `inputs` does not reach — is not checked here (settled
+/// reading A2). An [`LogicalNode::Extension`] *consumer* is skipped
+/// entirely, at the top of the outer loop: its [`PortSpec`] is
+/// [`PortSpec::Unknown`], which ADR-C16 says the core cannot state.
 fn check_kinds(
     nodes: &[LogicalNode],
     index: &HashMap<NodeId, usize>,
@@ -371,9 +392,6 @@ fn check_kinds(
 
         for (position, input_id) in node.inputs().iter().enumerate() {
             let producer = &nodes[index[input_id]];
-            if matches!(producer, LogicalNode::Extension(_)) {
-                continue;
-            }
 
             let expected = match &spec {
                 PortSpec::Fixed(kinds) => kinds.get(position).copied(),
@@ -384,8 +402,15 @@ fn check_kinds(
                     )
                 }
             };
-            let found = produced_kind(producer);
 
+            // The consumer's arity is checked above regardless of the
+            // producer's variant. Only when a port genuinely exists does an
+            // Extension producer's kind stay unguessed.
+            if expected.is_some() && matches!(producer, LogicalNode::Extension(_)) {
+                continue;
+            }
+
+            let found = produced_kind(producer);
             if expected != Some(found) {
                 return Err(ValidationError::KindMismatch {
                     consumer: node.id().clone(),
@@ -691,9 +716,9 @@ mod tests {
     #[test]
     fn a_valid_hybrid_graph_validates() {
         // Raw deliberately lists `rrf` first, out of `NodeId` order: this
-        // pins deterministic ordering (Task 4) as well as the original
-        // acceptance criterion — the sorted output must not depend on the
-        // order the source `RawPipeline` happened to list nodes in.
+        // pins deterministic ordering as well as the original acceptance
+        // criterion — the sorted output must not depend on the order the
+        // source `RawPipeline` happened to list nodes in.
         let raw = pipeline(vec![
             node("rrf", "fusion", &["bm25_leg", "dense_leg"]),
             node("dense_leg", "retriever", &[]),
@@ -702,6 +727,22 @@ mod tests {
         let logical = validate(raw).expect("a valid hybrid graph must validate");
         let ids: Vec<&str> = logical.nodes().iter().map(|n| n.id().as_str()).collect();
         assert_eq!(ids, vec!["bm25_leg", "dense_leg", "rrf"]);
+
+        // The node list is sorted, but a fusion's `inputs` are positional and
+        // order-significant (ADR-C16, INV-8) and must never be touched by
+        // that sort. `assert_ne` elsewhere (below) catches a reordering that
+        // swaps the two legs; this pins the actual, positive shape, which an
+        // injective mangling such as reversal could still satisfy.
+        let rrf = logical
+            .nodes()
+            .iter()
+            .find(|n| n.id().as_str() == "rrf")
+            .expect("rrf must be present");
+        assert_eq!(
+            rrf.inputs(),
+            &[NodeId::new("bm25_leg"), NodeId::new("dense_leg")],
+            "the fusion's inputs must stay exactly [bm25_leg, dense_leg]"
+        );
     }
 
     #[test]
@@ -750,20 +791,42 @@ mod tests {
     }
 
     #[test]
+    fn which_of_two_dangling_inputs_is_reported_does_not_depend_on_source_order() {
+        // Two nodes, each with its own dangling input. `zeta` is listed
+        // first in the source `RawPipeline`; `alpha` sorts first by
+        // `NodeId`. If the structural checks ran on source order (as they
+        // did before nodes were sorted first), this would report `zeta`'s
+        // fault instead — making which of two faults a malformed graph
+        // reports depend on the order the YAML happened to list nodes in.
+        let raw = pipeline(vec![
+            node("zeta", "retriever", &["missing_z"]),
+            node("alpha", "retriever", &["missing_a"]),
+        ]);
+        let err = validate(raw).unwrap_err();
+        assert_eq!(
+            err,
+            ValidationError::DanglingInput {
+                node: NodeId::new("alpha"),
+                missing: NodeId::new("missing_a"),
+            },
+            "the fault on the alphabetically-first node must be reported, regardless of \
+             the order the source RawPipeline listed nodes in"
+        );
+    }
+
+    #[test]
     fn a_self_loop_is_a_cycle_not_a_dangling_input() {
         // `a` names itself, which exists — so this must not read as a
         // dangling input, only as a cycle.
         let raw = pipeline(vec![node("a", "retriever", &["a"])]);
         let err = validate(raw).unwrap_err();
-        match err {
-            ValidationError::Cycle { nodes } => {
-                assert!(
-                    nodes.contains(&NodeId::new("a")),
-                    "the cycle must name `a`: {nodes:?}"
-                );
-            }
-            other => panic!("expected Cycle, got {other:?}"),
-        }
+        assert_eq!(
+            err,
+            ValidationError::Cycle {
+                nodes: vec![NodeId::new("a")]
+            },
+            "a self-loop must report the single-element cycle [a], exactly"
+        );
     }
 
     #[test]
@@ -782,7 +845,7 @@ mod tests {
         }
     }
 
-    // --- Task 4: canonicalization ---
+    // --- canonicalization ---
 
     fn node_with_params(
         id: &str,
@@ -801,34 +864,67 @@ mod tests {
 
     #[test]
     fn two_pipelines_differing_only_in_node_order_and_param_key_order_canonicalize_equal() {
-        // Same params, built with the keys inserted in two different orders.
-        // `Params` is a `BTreeMap`, so this must already be a non-event, but
-        // the acceptance criterion asks it be proven rather than assumed.
-        let mut params_forward = BTreeMap::new();
-        params_forward.insert("top_k".to_string(), RawParamValue::Int(50));
-        params_forward.insert("alpha".to_string(), RawParamValue::Float(0.5));
+        // Deserialized from two YAML documents whose `params` keys are
+        // written in opposite order and whose nodes are listed in opposite
+        // order, exercising the whole path end to end. A `BTreeMap` built
+        // directly in Rust (the previous form of this test) is already equal
+        // before `validate` ever runs, so it cannot fail no matter what the
+        // code does — proving nothing. Going through `serde_yaml` means the
+        // key order in the source text is what differs, not two
+        // already-equal maps.
+        let forward = r#"
+version: 1
+pipeline:
+  nodes:
+    - id: bm25_leg
+      component: retriever
+      impl: bm25
+      params:
+        top_k: 50
+        alpha: 0.5
+    - id: dense_leg
+      component: retriever
+      impl: dense
+      params:
+        top_k: 50
+        alpha: 0.5
+    - id: rrf
+      component: fusion
+      impl: rrf
+      inputs: [bm25_leg, dense_leg]
+      params:
+        top_k: 50
+        alpha: 0.5
+"#;
+        // Same nodes, listed in reverse, each with its `params` keys written
+        // in the opposite order.
+        let reversed = r#"
+version: 1
+pipeline:
+  nodes:
+    - id: rrf
+      component: fusion
+      impl: rrf
+      inputs: [bm25_leg, dense_leg]
+      params:
+        alpha: 0.5
+        top_k: 50
+    - id: dense_leg
+      component: retriever
+      impl: dense
+      params:
+        alpha: 0.5
+        top_k: 50
+    - id: bm25_leg
+      component: retriever
+      impl: bm25
+      params:
+        alpha: 0.5
+        top_k: 50
+"#;
 
-        let mut params_reverse = BTreeMap::new();
-        params_reverse.insert("alpha".to_string(), RawParamValue::Float(0.5));
-        params_reverse.insert("top_k".to_string(), RawParamValue::Int(50));
-
-        let forward = pipeline(vec![
-            node_with_params("bm25_leg", "retriever", &[], params_forward.clone()),
-            node_with_params("dense_leg", "retriever", &[], params_forward.clone()),
-            node_with_params("rrf", "fusion", &["bm25_leg", "dense_leg"], params_forward),
-        ]);
-        // Same nodes, listed in reverse, each with its params built in the
-        // opposite key-insertion order.
-        let reversed = pipeline(vec![
-            node_with_params(
-                "rrf",
-                "fusion",
-                &["bm25_leg", "dense_leg"],
-                params_reverse.clone(),
-            ),
-            node_with_params("dense_leg", "retriever", &[], params_reverse.clone()),
-            node_with_params("bm25_leg", "retriever", &[], params_reverse),
-        ]);
+        let forward: RawPipeline = serde_yaml::from_str(forward).unwrap();
+        let reversed: RawPipeline = serde_yaml::from_str(reversed).unwrap();
 
         let a = validate(forward).expect("forward pipeline must validate");
         let b = validate(reversed).expect("reversed pipeline must validate");
@@ -840,9 +936,9 @@ mod tests {
 
     #[test]
     fn a_fusions_inputs_are_never_reordered_by_canonicalization() {
-        // Global Constraint 4 / ADR-C16: `inputs` is positional and
-        // order-significant. `[a, b]` and `[b, a]` are two different
-        // configurations, not one canonicalized to the other.
+        // ADR-C16: `inputs` is positional and order-significant. `[a, b]` and
+        // `[b, a]` are two different configurations, not one canonicalized to
+        // the other.
         let ab = pipeline(vec![
             node("a", "retriever", &[]),
             node("b", "retriever", &[]),
@@ -880,7 +976,7 @@ mod tests {
         }
     }
 
-    // --- Task 5: the kind check ---
+    // --- the kind check (ADR-C16) ---
 
     #[test]
     fn a_reranker_consuming_chunks_at_the_query_port_fails_with_kind_mismatch() {
@@ -913,6 +1009,29 @@ mod tests {
     }
 
     #[test]
+    fn a_reranker_wired_with_an_extension_at_the_query_port_validates() {
+        // Nothing in the closed primitive set produces `ValueKind::Query`
+        // (see `produced_kind`): until a query-transform primitive exists
+        // (M3), a reranker's port 0 can only be fed through ADR-C16's
+        // `Extension` escape hatch — exactly the shape a `transform` node
+        // (`docs/system-architecture.md` §5.1) lowers to under settled
+        // reading A1, since that family has no `LogicalNode` variant of its
+        // own. That producer is skipped by the kind check, so this pipeline
+        // validates today, and this test is the proof a reranker can be
+        // wired at all.
+        let raw = pipeline(vec![
+            node("qx", "extension", &[]),
+            node("a", "retriever", &[]),
+            node("b", "retriever", &[]),
+            node("rrf", "fusion", &["a", "b"]),
+            node("k", "reranker", &["qx", "rrf"]),
+        ]);
+        validate(raw).expect(
+            "a reranker fed by an extension at port 0 and a fusion at port 1 must validate",
+        );
+    }
+
+    #[test]
     fn a_retriever_given_two_inputs_fails_with_kind_mismatch_at_port_one() {
         // A retriever's `PortSpec` is `Fixed(vec![Query])` — one port. `ext`
         // is an `Extension` at position 0, which is skipped as a producer
@@ -936,6 +1055,46 @@ mod tests {
                 expected: None,
                 found: ValueKind::Chunks,
             }
+        );
+    }
+
+    #[test]
+    fn a_fixed_arity_consumer_fed_entirely_by_extension_producers_still_fails_the_arity_check() {
+        // Regression for the bug where the `Extension`-producer skip ran
+        // before `expected` was computed: both `ext_a` and `ext_b` are
+        // `Extension` producers, so the buggy code skipped both edges
+        // outright and this pipeline validated. ADR-C16 makes an
+        // `Extension`'s *kind* unknown to the core, but says nothing about
+        // the *consumer's* arity, which is derived from `r`'s own variant
+        // alone and is fully known regardless of what feeds each port: `r`
+        // is a retriever (`Fixed(vec![Query])`, one port), so port 1 is
+        // beyond its declared arity no matter which node produces it.
+        let raw = pipeline(vec![
+            node("ext_a", "extension", &[]),
+            node("ext_b", "extension", &[]),
+            node("r", "retriever", &["ext_a", "ext_b"]),
+        ]);
+        let err = validate(raw).unwrap_err();
+        assert_eq!(
+            err,
+            ValidationError::KindMismatch {
+                consumer: NodeId::new("r"),
+                port: 1,
+                producer: NodeId::new("ext_b"),
+                expected: None,
+                found: ValueKind::Opaque,
+            }
+        );
+        // The `expected: None` branch of `KindMismatch`'s `Display` is
+        // otherwise never rendered by any test.
+        let message = err.to_string();
+        assert!(
+            message.contains("no port declared at this"),
+            "the expected: None branch must render its own message: {message}"
+        );
+        assert!(
+            message.contains("`r`") && message.contains("`ext_b`") && message.contains("opaque"),
+            "the message must name both node ids and the found (opaque) kind: {message}"
         );
     }
 

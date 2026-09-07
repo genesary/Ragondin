@@ -4,8 +4,8 @@
 //! consuming/producing node's [`LogicalNode`] variant alone, so no port
 //! declaration ever appears in a configuration and nothing enters the
 //! canonical form or the content hash (INV-8). This module is that
-//! derivation, written once: `LogicalPipeline` validation (a later task in
-//! this issue) and #15's physical planning both call the same functions.
+//! derivation, written once: `LogicalPipeline` validation and #15's physical
+//! planning both call the same functions.
 
 use std::fmt;
 
@@ -25,8 +25,9 @@ pub enum ValueKind {
     Query,
     /// A list of retrieved chunks, scored or not.
     Chunks,
-    /// The kind of a value produced or consumed by an [`crate::ExtensionNode`],
-    /// unknown to the core by construction (ADR-C16).
+    /// The kind of a value produced or consumed by an
+    /// [`ExtensionNode`](crate::node::ExtensionNode), unknown to the core by
+    /// construction (ADR-C16).
     Opaque,
 }
 
@@ -48,8 +49,9 @@ impl fmt::Display for ValueKind {
 ///
 /// Describes, without checking anything itself, what a variant's `inputs`
 /// must look like once matched against [`ValueKind`]s: an exact sequence, an
-/// unbounded repetition of one kind, or — for [`crate::ExtensionNode`] — a
-/// shape the core cannot state at all.
+/// unbounded repetition of one kind, or — for
+/// [`ExtensionNode`](crate::node::ExtensionNode) — a shape the core cannot
+/// state at all.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PortSpec {
     /// Exactly these kinds, in this order. An input beyond the last kind
@@ -58,9 +60,9 @@ pub enum PortSpec {
     Fixed(Vec<ValueKind>),
     /// Any number of ports, all of the given kind.
     Variadic(ValueKind),
-    /// The core cannot say: an [`crate::ExtensionNode`]'s consumed kinds are
-    /// resolved only once its registry entry is known (ADR-C16), so nothing
-    /// is checked at this level.
+    /// The core cannot say: an [`ExtensionNode`](crate::node::ExtensionNode)'s
+    /// consumed kinds are resolved only once its registry entry is known
+    /// (ADR-C16), so nothing is checked at this level.
     Unknown,
 }
 
@@ -182,8 +184,8 @@ mod tests {
 
     #[test]
     fn value_kind_display_renders_stable_human_readable_strings() {
-        // Pinned exactly: `KindMismatch`'s message (a later task) depends on
-        // these strings, so a drift here is a silent message change there.
+        // Pinned exactly: `KindMismatch`'s message depends on these strings,
+        // so a drift here is a silent message change there.
         assert_eq!(ValueKind::Query.to_string(), "query");
         assert_eq!(ValueKind::Chunks.to_string(), "chunks");
         assert_eq!(ValueKind::Opaque.to_string(), "opaque");
