@@ -543,6 +543,9 @@ name = "ragondin-benchmarks"
 version = "0.0.0"
 dependencies = [
  "ragondin-types",
+ "serde",
+ "serde_json",
+ "thiserror",
 ]
 
 [[package]]
