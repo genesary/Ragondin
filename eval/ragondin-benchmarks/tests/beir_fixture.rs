@@ -498,3 +498,49 @@ fn a_four_column_qrels_header_is_a_typed_error() {
 
     let _ = fs::remove_dir_all(&root);
 }
+
+/// Ids are trimmed on **both** sides — the qrels TSV and the JSONL files.
+///
+/// Trimming only the qrels side is the shape that silently breaks a dataset
+/// whose ids carry the same surrounding whitespace in every file: the qrels
+/// id becomes `q1` while the query id stays `q1 `, they stop matching, and
+/// `read_queries` filters the query out. The benchmark then loads `Ok` with
+/// judgments but no evaluable queries — no error anywhere, and a run over it
+/// scores nothing. Untrimmed on both sides used to match; trimmed on both
+/// sides matches too. One side only is the broken case.
+#[test]
+fn ids_carrying_the_same_whitespace_in_every_file_still_match() {
+    let root = write_dataset(
+        "symmetric-whitespace-ids",
+        "{\"_id\": \"d1 \", \"text\": \"body\"}\n",
+        "{\"_id\": \"q1 \", \"text\": \"question\"}\n",
+        "query-id\tcorpus-id\tscore\nq1 \td1 \t1\n",
+    );
+
+    let benchmark = BeirAdapter::new(&root).load().expect("the dataset loads");
+
+    assert_eq!(
+        benchmark.queries().len(),
+        1,
+        "the judged query must survive the qrels filter"
+    );
+    assert_eq!(benchmark.queries()[0].id, QueryId::new("q1"));
+    assert_eq!(
+        benchmark.corpus()[0].id,
+        DocId::new("d1"),
+        "a corpus id must be trimmed the same way a qrels corpus-id is, or a \
+         retrieved document can never match its own judgment"
+    );
+
+    let relevance = benchmark
+        .qrels()
+        .for_query(&QueryId::new("q1"))
+        .expect("the query is judged");
+    assert_eq!(
+        relevance.get(&DocId::new("d1")),
+        Some(&1),
+        "the judgment must be reachable under the same id the corpus carries"
+    );
+
+    let _ = fs::remove_dir_all(&root);
+}

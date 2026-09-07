@@ -170,7 +170,11 @@ fn read_corpus(path: &Path) -> Result<Vec<Document>, BenchmarkError> {
             metadata.insert("title".to_string(), title.clone());
         }
         Document {
-            id: DocId::new(record.id),
+            // Trimmed for the same reason `read_qrels` trims: an id must be
+            // treated identically wherever it appears, or a corpus id and the
+            // qrels corpus-id naming the same document stop matching and every
+            // judgment silently misses.
+            id: DocId::new(record.id.trim()),
             text: combined_text(&title, &record.text),
             metadata,
         }
@@ -195,7 +199,12 @@ fn combined_text(title: &str, text: &str) -> String {
 /// run is reproducible.
 fn read_queries(path: &Path, qrels: &Qrels) -> Result<Vec<Query>, BenchmarkError> {
     let all = read_jsonl(path, |record: QueryRecord| Query {
-        id: QueryId::new(record.id),
+        // Trimmed to match `read_qrels`. Trimming one side only is worse than
+        // trimming neither: it turns a dataset whose ids carry the same
+        // whitespace everywhere — which used to match itself — into one whose
+        // queries are all filtered out below, with judgments loaded and no
+        // error raised.
+        id: QueryId::new(record.id.trim()),
         text: record.text,
     })?;
 

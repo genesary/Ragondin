@@ -76,6 +76,37 @@ JSON-to-string encoding that nothing in scope consumes. This was a deliberate
 choice, not an oversight, and it is recorded here so it is not "fixed" later
 by someone assuming it was missed.
 
+## The qrels header is detected, not assumed — and ids are trimmed everywhere
+
+Two rules in `read_qrels` look like fussy defensiveness and are not. Both were
+written after the plain version was shown to lose data silently.
+
+**The header row is identified by its content, not by its position.** A BEIR
+qrels TSV normally opens with `query-id  corpus-id  score`, and reading that
+as data invents a judgment for a query called `query-id` that no run will ever
+answer, quietly lowering every mean. The obvious guard — always skip line one —
+fails the other way round on the qrels files that ship without a header, where
+it discards a real judgment *and*, because `read_queries` filters queries by
+qrels, removes that query from the run entirely. So the first record is a
+header, and is skipped, **only when its score field does not parse as a `u8`**.
+A judgment always has a numeric score; BEIR's header has the literal word
+`score`. Do not replace this with `has_headers(true)`.
+
+**Ids are trimmed on every side — the qrels TSV, `corpus.jsonl` and
+`queries.jsonl`.** Trimming is all-or-nothing here. Trimming *one* side is
+strictly worse than trimming none: a dataset whose ids carry the same
+surrounding whitespace in every file matches itself when nothing is trimmed,
+but with only the qrels side trimmed, `q1` no longer equals `q1 `, every query
+is filtered away, and the benchmark loads successfully with judgments and no
+queries — no error raised anywhere. If you ever remove a `.trim()` here, remove
+all of them.
+
+The same asymmetry principle governs the physical line numbers in
+`BenchmarkError`: they are counted while reading rather than derived from the
+`csv` reader's record positions, which cannot be mapped back to file lines once
+blank lines are skipped or the file is CRLF. Three separate attempts at that
+arithmetic each fixed one file shape and broke another.
+
 ## Local constraints
 
 - **I/O here is correct.** INV-3 (value types only, no I/O) names
