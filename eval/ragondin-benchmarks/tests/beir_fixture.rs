@@ -340,12 +340,16 @@ fn write_qrels_dataset(test_name: &str, qrels_test: &str) -> PathBuf {
 }
 
 fn expect_malformed_line(root: &PathBuf) -> usize {
+    expect_malformed(root).0
+}
+
+fn expect_malformed(root: &PathBuf) -> (usize, String) {
     let error = BeirAdapter::new(root)
         .load()
         .expect_err("a malformed qrels row must be a typed error");
 
     match error {
-        BenchmarkError::MalformedRecord { line, .. } => line,
+        BenchmarkError::MalformedRecord { line, reason, .. } => (line, reason),
         other => panic!("expected a typed MalformedRecord error, got {other:?}"),
     }
 }
@@ -434,14 +438,63 @@ fn a_crlf_qrels_file_with_a_blank_line_reports_the_true_line_of_a_malformed_row(
 
 #[test]
 fn a_qrels_row_with_too_few_fields_reports_the_true_line_and_never_zero() {
+    // Previously asserted only the line number, when the row was still
+    // rejected via `record.get(2)` returning `None` ("missing score"). A
+    // 2-field row now fails the explicit field-count check first, so this
+    // also pins the new reason text to make sure that's the path taken.
     let root = write_qrels_dataset(
         "too_few_fields",
         "query-id\tcorpus-id\tscore\nq1\td1\t1\nq2\tonly-two-columns\n",
     );
 
-    let line = expect_malformed_line(&root);
+    let (line, reason) = expect_malformed(&root);
     assert_eq!(line, 3, "the short row is physical line 3");
     assert_ne!(line, 0, "0 is not a physical line in a 1-based file");
+    assert!(
+        reason.contains("expected 3 fields") && reason.contains('2'),
+        "expected a field-count reason, got {reason:?}"
+    );
+
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_qrels_data_row_with_a_stray_extra_field_is_a_typed_error() {
+    // Previously loaded silently, discarding the 4th column: a per-line
+    // `csv::Reader` has no previous row to compare field counts against, so
+    // the whole-file reader's implicit rejection was lost when parsing moved
+    // to one line at a time.
+    let root = write_qrels_dataset(
+        "data_row_stray_extra_field",
+        "query-id\tcorpus-id\tscore\nq1\td1\t1\nq2\td2\t1\tstray-4th-column\n",
+    );
+
+    let (line, reason) = expect_malformed(&root);
+    assert_eq!(line, 3, "the malformed row is physical line 3");
+    assert!(
+        reason.contains("expected 3 fields") && reason.contains('4'),
+        "expected a field-count reason, got {reason:?}"
+    );
+
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_four_column_qrels_header_is_a_typed_error() {
+    // A header whose own column count disagrees with the data rows means the
+    // file's shape is wrong regardless of which row notices it first, so the
+    // field-count check must fire on the header record too.
+    let root = write_qrels_dataset(
+        "four_column_header",
+        "query-id\tcorpus-id\tscore\textra\nq1\td1\t1\n",
+    );
+
+    let (line, reason) = expect_malformed(&root);
+    assert_eq!(line, 1, "the malformed header is physical line 1");
+    assert!(
+        reason.contains("expected 3 fields") && reason.contains('4'),
+        "expected a field-count reason, got {reason:?}"
+    );
 
     let _ = fs::remove_dir_all(&root);
 }

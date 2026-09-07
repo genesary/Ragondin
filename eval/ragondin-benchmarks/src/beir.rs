@@ -225,6 +225,14 @@ fn read_queries(path: &Path, qrels: &Qrels) -> Result<Vec<Query>, BenchmarkError
 /// look at the offending row, and counting it directly — the same way
 /// `BufReader::lines()` already lets `read_jsonl` do it — sidesteps the
 /// mismatch entirely instead of trying to correct it after the fact.
+///
+/// One known consequence of parsing per physical line: a quoted field
+/// containing an embedded newline, and a lone `\r` used on its own as a line
+/// terminator, parse differently than they would under a whole-file reader,
+/// which would see them as part of the same logical record. Both are absent
+/// from real BEIR qrels — whose fields are bare ids and small integers, never
+/// quoted — so the trade for physical-line accuracy in error messages is
+/// worth it.
 fn read_qrels(path: &Path) -> Result<Qrels, BenchmarkError> {
     let file = File::open(path).map_err(|source| BenchmarkError::Io {
         path: path.to_path_buf(),
@@ -290,6 +298,19 @@ fn read_qrels(path: &Path) -> Result<Qrels, BenchmarkError> {
             line: physical_line,
             reason,
         };
+
+        // A shared reader across the whole file used to reject a row whose
+        // field count disagreed with the previous row; a per-line reader
+        // never sees a previous row to compare against, so that check has to
+        // be made explicit here. Applied before the header/data split below,
+        // because a header with the wrong number of columns means the file's
+        // shape is wrong regardless of which row happens to notice it.
+        if record.len() != 3 {
+            return Err(malformed(format!(
+                "expected 3 fields, found {}",
+                record.len()
+            )));
+        }
 
         let query_id = record
             .get(0)
