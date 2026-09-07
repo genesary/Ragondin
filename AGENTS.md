@@ -136,10 +136,13 @@ Rationale for each decision: `docs/adr/`, where every decision is a numbered, in
 
 | You need | Read |
 |---|---|
+| What a word in this repository means | `CONTEXT.md` |
 | Why the system is designed this way | `docs/system-architecture.md` |
 | Why the code is organized this way | `docs/code-architecture.md` |
 | Why a specific decision was made | `docs/adr/` |
 | What is deliberately undecided | `docs/OPEN_QUESTIONS.md` |
 | A crate's local constraints | `<crate>/ARCHITECTURE.md` |
+
+Read `CONTEXT.md` first, and once: it is the domain vocabulary this file's rules are written in — *canonical logical form*, *two-faced contract*, *driver*, *the judge* — with a pointer to where each term is treated in full. It is short, and it saves reading an architecture document to find out what a rule is talking about.
 
 **When in doubt, stop and ask.** An agent that pauses on an ambiguity costs minutes. An agent that guesses an architectural decision costs a refactor — and erodes the architecture one locally reasonable PR at a time.
