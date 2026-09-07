@@ -132,12 +132,28 @@ work. That is a real gain in reviewability, and it carries a cost worth knowing
   requests targeting the default branch, so a child PR's `Closes #123` is inert
   while its base is another branch — whatever the wording, and with no warning on
   the PR.
-- **Merge a stack bottom-up.** As each base lands, GitHub is expected to retarget
-  its children to `main`, at which point the closing reference should register.
-  *Expected, not yet observed in this repository — verify it and correct this line
-  once a stack has been merged.*
+- **Merge a stack bottom-up.** GitHub retargets each child to `main` as its base
+  lands. That part is automatic — but it is **not** enough on its own, see the next
+  point.
+- **After a child retargets, edit its body once.** GitHub evaluates closing
+  references when the body is written, against the base *at that moment*, and does
+  **not** re-evaluate them on retarget. A child whose body was written while its
+  base was a feature branch keeps an inert `Closes #123` forever. Any edit to the
+  body — even re-saving the same text — makes the reference register. Verify it
+  did: the issue should appear under **Development** in the sidebar.
+- **A squash-merged parent leaves the child conflicting.** The parent lands on
+  `main` as one new commit, while the child's branch still carries its own copy of
+  the same work under a different SHA, so Git sees both sides editing the same
+  lines. Resolve it with a rebase that drops the duplicate, never a merge:
+
+  ```bash
+  git fetch origin
+  git rebase --onto origin/main <parent-branch-tip> <child-branch>
+  git push --force-with-lease origin <child-branch>
+  ```
+
 - **Out of order, issues close silently wrong or not at all.** After merging any
   stacked PR, check that its issue actually closed, and close it by hand if not.
 
 A stack is still the right shape when two PRs genuinely build on each other. Just
-budget for the manual close.
+budget for the rebase and the body touch.
