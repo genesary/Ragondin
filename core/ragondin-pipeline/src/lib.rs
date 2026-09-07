@@ -22,9 +22,11 @@
 
 #![warn(missing_docs)]
 
+pub mod kind;
 pub mod node;
 pub mod raw;
 
+pub use kind::{consumed_kinds, produced_kind, PortSpec, ValueKind};
 pub use node::{
     ExtensionNode, FusionNode, LogicalNode, NodeId, ParamValue, Params, RerankerNode, RetrieverNode,
 };
