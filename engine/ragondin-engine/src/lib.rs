@@ -11,17 +11,20 @@
 //! third-party components (INV-7), and `ExecutionTrace` is a **return value of
 //! execution, not a log** (INV-10).
 //!
-//! The engine internals land in a later issue; this is the compiling skeleton.
-//! See `ARCHITECTURE.md`.
+//! Physical planning and the executor land in later issues; the registry is
+//! here. See `ARCHITECTURE.md`.
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn skeleton_links() {
-        let name = env!("CARGO_PKG_NAME");
-        assert!(
-            name.starts_with("ragondin-"),
-            "unexpected crate name: {name}"
-        );
-    }
-}
+#![warn(missing_docs)]
+
+// Private modules with a flat re-export: one path to each item rather than two.
+// The crate is internal (INV-2), so its layout owes nothing to anyone; a reader
+// should not have to reconcile `ragondin_engine::EngineContext` with
+// `ragondin_engine::context::EngineContext`.
+mod context;
+mod error;
+
+pub use context::{
+    ComponentCtor, EmbedderCtor, EngineContext, FusionCtor, RerankerCtor, RetrieverCtor,
+    VectorStoreCtor,
+};
+pub use error::{ComponentFamily, ConstructionError, PlanError};

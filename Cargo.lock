@@ -576,10 +576,12 @@ dependencies = [
 name = "ragondin-engine"
 version = "0.0.0"
 dependencies = [
+ "async-trait",
  "ragondin-contracts",
  "ragondin-pipeline",
  "ragondin-remote",
  "ragondin-types",
+ "thiserror",
  "tokio",
 ]
 
