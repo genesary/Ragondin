@@ -14,3 +14,13 @@ rust-version.workspace = true
 [dependencies]
 ragondin-contracts = { workspace = true }
 ragondin-types = { workspace = true }
+thiserror = { workspace = true } # typed library errors (ConformanceFailure)
+
+# Test-only. The suite is `async` so that it imposes no runtime on the crates
+# that call it; exercising it here does need one. `async-trait` is a
+# dev-dependency for the same reason: the suite calls the contract traits, it
+# does not declare them, and a component crate declares its own — a dependency
+# is not re-exported.
+[dev-dependencies]
+async-trait = { workspace = true }
+tokio = { workspace = true }
