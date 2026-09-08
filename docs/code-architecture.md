@@ -302,6 +302,8 @@ flowchart LR
   PHY -->|execute| OUT[Output + ExecutionTrace]
 ```
 
+**Where a node's parameters go.** A *component* node — one that resolves to an implementation, as `Branch` and `Loop` do not — carries a single untyped parameter map (`Params`). Planning splits it in two, and the halves reach the component by different routes. The keys that configure the *implementation* — a model path, a device, BM25's `k1` and `b` — are consumed by the **constructor** and are fixed for the component's lifetime. The keys that vary *per call* — a retriever's or a reranker's `top_k` — become the typed params struct the trait method takes (§7.1), and ride in every request on the `Remote` face. That split is why `build_reranker` (§8.1) receives configuration and not a `RerankParams`: `RerankParams` is per-call by construction, so a constructor given only that could build nothing.
+
 **v0 decision.** The seam exists — it is an architectural boundary that is expensive to introduce after the fact — but the optimization phase between logical and physical is **the identity function** at first. We reserve the optimizer's place; we do not build the optimizer. (DataFusion's optimizer is an entire subsystem.)
 
 ---
@@ -403,10 +405,12 @@ impl EngineContext {
     pub fn register_reranker(&mut self, name: &str, ctor: RerankerCtor) { /* … */ }
 
     // used by physical planning:
-    pub(crate) fn build_reranker(&self, name: &str, p: &RerankParams)
+    pub(crate) fn build_reranker(&self, name: &str, config: &Params)
         -> Result<Box<dyn Reranker>, PlanError> { /* … */ }
 }
 ```
+
+A constructor receives the node's **configuration** — `ragondin-pipeline`'s untyped `Params` (`BTreeMap<String, ParamValue>`), or the subset of it planning resolves — and never a per-call params struct. `RerankParams` is per-call (§7.1) and carries only `top_k` (`ragondin-contracts`), which is not enough to construct anything: what a reranker needs at construction is a model path and a device, from which it builds the ONNX session it then reranks with. The two kinds of parameter travel by different routes, and §6.3 is where they part.
 
 ### 8.2 The executor and its traces
 
