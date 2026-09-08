@@ -41,7 +41,15 @@ mandatory termination guard), and the open `Extension` variant.
   `Extension` as its additive escape hatch (ADR-C3). Note that adding
   `#[non_exhaustive]` later is itself a breaking change, so revisit this at the
   first published version, not after. Same choice, same reasoning, as
-  `ragondin-types`.
+  `ragondin-types`. `ValueKind`, `PortSpec` and `ValidationError` (#9) join the
+  same stable surface under the same stance: an added `ValueKind` variant, a
+  new `PortSpec` shape, or a new `ValidationError` variant is a visible,
+  deliberate act on this boundary, not a silent one, and none of the three is
+  `#[non_exhaustive]` either. `ValidationError::KindMismatch` carries
+  `expected: Option<ValueKind>`, where `None` means the consumer declares no
+  port at that position at all — chosen over inventing a fourth `ValueKind`
+  variant for "no kind", which would have put a non-kind into ADR-C16's edge
+  vocabulary that issue #15 reuses.
 - **The wire format is separate (INV-9).** The serialized (wire) form is
   `RawPipeline` (`src/raw.rs`): hand-maintained, carrying its own
   `SchemaVersion`, and **structurally distinct** from the logical model — a
