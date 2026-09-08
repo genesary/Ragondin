@@ -557,8 +557,11 @@ dependencies = [
 name = "ragondin-conformance"
 version = "0.0.0"
 dependencies = [
+ "async-trait",
  "ragondin-contracts",
  "ragondin-types",
+ "thiserror",
+ "tokio",
 ]
 
 [[package]]
