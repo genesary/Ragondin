@@ -31,9 +31,10 @@ pub(crate) enum ResolvedComponent {
     /// A resolved [`LogicalNode::Retriever`].
     //
     // The trait object is written by planning and read by the executor (#16),
-    // which lands in its own issue — so until it does, nothing outside this
-    // crate's tests reads it. The `allow` is per variant, and not on the enum,
-    // so that a variant added later does not inherit the exemption unnoticed.
+    // which lands in its own issue — so in the library build nothing reads it
+    // yet, and `dead_code` fires on the field rather than on the variant. The
+    // `allow` is per variant, and not on the enum, so that a variant added
+    // later does not inherit the exemption unnoticed.
     #[allow(dead_code)]
     Retriever(Box<dyn Retriever>),
     /// A resolved [`LogicalNode::Fusion`].
@@ -162,17 +163,24 @@ fn optimize(logical: &LogicalPipeline) -> &LogicalPipeline {
 
 /// Checks every edge's kinds line up, ADR-C16's second layer over the same
 /// derivation validation ran ([`consumed_kinds`], [`produced_kind`] — never a
-/// copy of them).
+/// copy of *them*).
+///
+/// The *comparison* around that derivation is, however, a second copy of
+/// `ragondin-pipeline`'s, which is private to that crate and returns its own
+/// error type. ADR-C16's "one derivation, two call sites" therefore holds for
+/// the derivation and not for the loop, so the loop is written to stay in step
+/// with the other one clause for clause — including the `Extension`-producer
+/// clause below, which nothing here can currently reach.
 ///
 /// What this layer is *for* is an [`LogicalNode::Extension`] node, whose kinds
 /// only the registry knows. There is no registry entry for one to consult (see
 /// [`PlanError::ExtensionUnsupported`] and #93), and every `Extension` is
-/// refused before this runs — so what remains here is a **backstop** over
-/// primitives,
-/// reachable only by a [`LogicalPipeline`] that did not come through
-/// `validate`. It is kept, and kept honest by its own test, because the layer
-/// ADR-C16 asks for has to exist at the point where the extension check will
-/// slot into it.
+/// refused before this runs — so what remains reachable is a **backstop** over
+/// primitives, and only for a [`LogicalPipeline`] that did not come through
+/// `validate`. It is kept because the layer ADR-C16 asks for has to exist at
+/// the point where the extension check will slot into it. That slotting is
+/// **not** a no-op: the `PortSpec::Unknown` arm below must stop being
+/// unreachable for an `Extension` *consumer* to be checked at all.
 fn check_kinds(
     nodes: &[LogicalNode],
     index: &HashMap<&NodeId, &LogicalNode>,
@@ -194,6 +202,22 @@ fn check_kinds(
                 ),
             };
 
+            // The clause `ragondin-pipeline`'s check carries, kept here in
+            // step with it: once a port is known to exist, an `Extension`
+            // producer's kind stays unguessed (ADR-C16). Unreachable today,
+            // since every `Extension` is refused before this runs — but its
+            // *absence* is what would make the two layers disagree the day #93
+            // lands, rejecting an edge `validate` accepts (which
+            // `ragondin-pipeline`'s own
+            // `an_extension_feeding_a_primitive_and_fed_by_one_validates`
+            // requires to stay legal).
+            if expected.is_some() && matches!(producer, LogicalNode::Extension(_)) {
+                continue;
+            }
+
+            // Derived from the *producer*, never from `node`: indistinguishable
+            // today, since every primitive produces `Chunks`, and a live bug the
+            // moment a node kind that does not arrives (#93, or a generator).
             let found = produced_kind(producer);
             if expected != Some(found) {
                 return Err(PlanError::KindMismatch {
@@ -211,6 +235,13 @@ fn check_kinds(
 
 /// Resolves one node's `impl:` name against `ctx`, constructing the component
 /// from the node's params.
+///
+/// #15's "applying default params" is discharged here by doing nothing, and
+/// deliberately: a constructor receives the node's configuration and is the
+/// only thing that knows its own defaults (§8.1, and `EngineContext` has
+/// nowhere to declare one), so a default applied here could only be a second,
+/// disagreeing copy of what the component already does — the shape #14's
+/// `counting_retriever` established when it read a missing `count` as `0`.
 ///
 /// The match is on the node's **variant**, which is what selects the family's
 /// registry — never on the implementation name (INV-7): a built-in resolves
@@ -239,11 +270,16 @@ mod tests {
     use ragondin_contracts::{
         ComponentError, FusionParams, RerankParams, Reranker, RetrieveParams, Retriever,
     };
-    use ragondin_pipeline::{validate, RawGraph, RawNode, RawPipeline, ValueKind};
-    use ragondin_types::{Query, ScoredChunk};
+    use ragondin_pipeline::{
+        validate, ParamValue, Params, RawGraph, RawNode, RawParamValue, RawPipeline,
+        ValidationError, ValueKind,
+    };
+    use ragondin_types::{Chunk, ChunkId, DocId, Query, QueryId, ScoredChunk};
     use std::collections::BTreeMap;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
 
-    use crate::error::ComponentFamily;
+    use crate::error::{ComponentFamily, ConstructionError};
 
     struct StubRetriever;
 
@@ -256,6 +292,44 @@ mod tests {
         ) -> Result<Vec<ScoredChunk>, ComponentError> {
             Ok(Vec::new())
         }
+    }
+
+    /// Returns `count` chunks, where `count` came from its **configuration**.
+    /// Empty-vector stubs cannot tell "the node's params reached the
+    /// constructor" from "an empty map did"; this one can.
+    struct ConfiguredRetriever {
+        count: usize,
+    }
+
+    #[async_trait]
+    impl Retriever for ConfiguredRetriever {
+        async fn retrieve(
+            &self,
+            _query: &Query,
+            _params: &RetrieveParams,
+        ) -> Result<Vec<ScoredChunk>, ComponentError> {
+            Ok((0..self.count)
+                .map(|i| ScoredChunk {
+                    chunk: Chunk {
+                        id: ChunkId::new(format!("c{i}")),
+                        text: String::new(),
+                        document_id: DocId::new("doc"),
+                    },
+                    score: 1.0,
+                })
+                .collect())
+        }
+    }
+
+    /// Refuses a configuration without `count`, so a constructor handed the
+    /// wrong params fails loudly rather than quietly building the same thing.
+    fn configured_retriever(config: &Params) -> Result<Box<dyn Retriever>, ConstructionError> {
+        let Some(ParamValue::Int(count)) = config.get("count") else {
+            return Err("`count` must be an integer, and this node has none".into());
+        };
+        Ok(Box::new(ConfiguredRetriever {
+            count: *count as usize,
+        }))
     }
 
     struct StubFusion;
@@ -292,6 +366,7 @@ mod tests {
         ctx.register_retriever("dense", Box::new(|_| Ok(Box::new(StubRetriever))));
         ctx.register_fusion("rrf", Box::new(|_| Ok(Box::new(StubFusion))));
         ctx.register_reranker("cross_encoder", Box::new(|_| Ok(Box::new(StubReranker))));
+        ctx.register_retriever("configured", Box::new(configured_retriever));
         ctx
     }
 
@@ -303,6 +378,13 @@ mod tests {
             inputs: inputs.iter().map(|i| (*i).to_string()).collect(),
             params: BTreeMap::new(),
         }
+    }
+
+    fn raw_counting(id: &str, count: i64) -> RawNode {
+        let mut node = raw(id, "retriever", "configured", &[]);
+        node.params
+            .insert("count".to_string(), RawParamValue::Int(count));
+        node
     }
 
     /// The legitimate way to a `LogicalPipeline`: through validation.
@@ -319,9 +401,13 @@ mod tests {
     /// Planning's kind check is a second layer over the derivation validation
     /// already ran, so nothing that came through `validate` can reach it.
     /// `serde` is the only way in: `LogicalPipeline` derives `Deserialize`, and
-    /// that path re-runs no check. This is the shape a `LogicalPipeline`
-    /// deserialized from a run store or sent over a wire could have — which is
-    /// why planning does not simply trust its input.
+    /// that path re-runs no check. Not a wire path — anything arriving over one
+    /// goes `RawPipeline` → `validate` (INV-9) — but the two doors out of this
+    /// crate are `validate` and that derive, and only one of them checks.
+    ///
+    /// It also bypasses canonical node ordering, so a fixture must be written
+    /// in [`NodeId`] order to satisfy what [`PhysicalPipeline::nodes`]
+    /// documents.
     fn forged(json: &str) -> LogicalPipeline {
         serde_json::from_str(json).expect("the forged JSON must match LogicalPipeline's shape")
     }
@@ -513,10 +599,11 @@ mod tests {
     }
 
     #[test]
-    fn an_edge_beyond_a_fixed_arity_variant_is_refused_with_no_expected_kind() {
-        // A retriever declares one port. A second input reaches a position it
-        // never declared: there is no kind to compare against, only an edge
-        // that should not exist.
+    fn a_retriever_fed_by_a_retriever_is_refused_at_port_zero() {
+        // Named for what it proves: port 0 faults first, so this never reaches
+        // the second input. The `expected: None` case has its own test below —
+        // conflating the two is how a branch goes uncovered while looking
+        // covered.
         let pipeline = forged(
             r#"{"nodes":[
                 {"Retriever":{"id":"a","implementation":"bm25","inputs":[],"params":{}}},
@@ -525,7 +612,7 @@ mod tests {
         );
 
         let Err(err) = plan_physical(&pipeline, &context()) else {
-            panic!("a retriever declares exactly one port")
+            panic!("a retriever's only port wants a query, and `a` produces chunks")
         };
 
         assert!(
@@ -540,6 +627,71 @@ mod tests {
                 } if consumer.as_str() == "b"
             ),
             "port 0 is the first fault, and it is a kind mismatch: {err:?}"
+        );
+    }
+
+    #[test]
+    fn an_edge_beyond_a_fixed_arity_variant_is_refused_with_no_expected_kind() {
+        // A retriever declares one port. Port 0 is dangling and therefore
+        // skipped, which lets port 1 — a position the variant never declared —
+        // carry the fault: no kind to compare against, only an edge that should
+        // not exist. That skip is the only route to `expected: None` in this
+        // build, since every primitive produces `Chunks` and every fixed port 0
+        // wants `Query`, so no edge can match port 0 and then overflow arity.
+        let pipeline = forged(
+            r#"{"nodes":[
+                {"Retriever":{"id":"a","implementation":"bm25","inputs":[],"params":{}}},
+                {"Retriever":{"id":"b","implementation":"dense","inputs":["nowhere","a"],"params":{}}}
+            ]}"#,
+        );
+
+        let Err(err) = plan_physical(&pipeline, &context()) else {
+            panic!("a retriever declares exactly one port")
+        };
+
+        assert!(
+            matches!(
+                &err,
+                PlanError::KindMismatch {
+                    consumer,
+                    port: 1,
+                    producer,
+                    expected: None,
+                    found: ValueKind::Chunks,
+                } if consumer.as_str() == "b" && producer.as_str() == "a"
+            ),
+            "expected an arity fault at port 1 with no declared kind, got {err:?}"
+        );
+        assert!(
+            err.to_string()
+                .contains("no port declared at this position"),
+            "the message must say no port exists there, not name a kind: {err}"
+        );
+    }
+
+    #[test]
+    fn a_rerankers_ports_are_read_by_position_not_by_first() {
+        // The reranker is the only node with heterogeneous ports — `[Query,
+        // Chunks]` — so it is the only node that can tell a positional lookup
+        // from one that always reads the first declared kind. Port 0 dangles
+        // and is skipped; port 1 legitimately takes the chunks a retriever
+        // produces, so this must plan.
+        let pipeline = forged(
+            r#"{"nodes":[
+                {"Retriever":{"id":"leg","implementation":"bm25","inputs":[],"params":{}}},
+                {"Reranker":{"id":"rank","implementation":"cross_encoder","inputs":["nowhere","leg"],"params":{}}}
+            ]}"#,
+        );
+
+        let plan = plan_physical(&pipeline, &context())
+            .expect("port 1 of a reranker takes chunks, which `leg` produces");
+
+        let families: Vec<ComponentFamily> =
+            plan.nodes().iter().map(|n| family(n.component())).collect();
+        assert_eq!(
+            families,
+            vec![ComponentFamily::Retriever, ComponentFamily::Reranker],
+            "and a reranker node resolves through the reranker registry"
         );
     }
 
@@ -562,7 +714,7 @@ mod tests {
     fn a_dangling_input_is_left_for_the_executor_to_report() {
         // Referential integrity is `validate`'s (#9) and the executor's (#16).
         // Planning must not grow a third copy of it — and must not panic on
-        // one either.
+        // one either, which is what the lookup's `else { continue }` is for.
         let pipeline = forged(
             r#"{"nodes":[
                 {"Fusion":{"id":"fuse","implementation":"rrf","inputs":["nowhere"],"params":{}}}
@@ -576,18 +728,145 @@ mod tests {
     }
 
     #[test]
-    fn planning_twice_from_one_context_yields_two_independent_plans() {
-        // A registration answers every node that names it, in every plan built
-        // from the context (`ComponentCtor` is `Fn`, not `FnOnce`) — which is
-        // what lets the harness (#29) plan a baseline and a candidate from one
-        // context.
-        let pipeline = logical(vec![raw("leg", "retriever", "bm25", &[])]);
+    fn a_dangling_input_does_not_abandon_the_rest_of_the_kind_check() {
+        // "Skip this edge" and "stop checking" are indistinguishable on a
+        // one-node graph. Here the dangling edge comes first and a genuine
+        // fault comes after it, so only the former still reports.
+        let pipeline = forged(
+            r#"{"nodes":[
+                {"Fusion":{"id":"fuse","implementation":"rrf","inputs":["nowhere"],"params":{}}},
+                {"Reranker":{"id":"rank","implementation":"cross_encoder","inputs":["fuse","fuse"],"params":{}}}
+            ]}"#,
+        );
+
+        let Err(err) = plan_physical(&pipeline, &context()) else {
+            panic!("`fuse` produces chunks, and a reranker's port 0 wants a query")
+        };
+
+        assert!(
+            matches!(
+                &err,
+                PlanError::KindMismatch { consumer, port: 0, .. } if consumer.as_str() == "rank"
+            ),
+            "the fault after the skipped edge must still be reported: {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn each_node_is_constructed_from_its_own_params() {
+        // §6.3: the constructor receives the node's configuration. Two nodes,
+        // one implementation, two configurations — so a planner that passed an
+        // empty map, or one node's params to another, cannot pass this.
+        let pipeline = logical(vec![raw_counting("few", 2), raw_counting("many", 5)]);
+
+        let plan = plan_physical(&pipeline, &context()).expect("`configured` is registered");
+
+        let mut counts = Vec::new();
+        for node in plan.nodes() {
+            let ResolvedComponent::Retriever(retriever) = node.component() else {
+                panic!("both nodes are retrievers")
+            };
+            let hits = retriever
+                .retrieve(
+                    &Query {
+                        id: QueryId::new("q"),
+                        text: "anything".to_string(),
+                    },
+                    &RetrieveParams::new(10),
+                )
+                .await
+                .expect("the stub does not fail");
+            counts.push((node.logical().id().as_str(), hits.len()));
+        }
+
+        assert_eq!(
+            counts,
+            vec![("few", 2), ("many", 5)],
+            "each component must be built from the params of its own node"
+        );
+    }
+
+    #[test]
+    fn two_pipelines_planned_from_one_context_each_get_their_own_configuration() {
+        // The harness scenario (#29): a baseline and a candidate planned from
+        // one context. `ComponentCtor` is `Fn`, so one registration answers
+        // both — and each plan carries its own configuration, not the first's.
         let ctx = context();
+        let baseline = plan_physical(&logical(vec![raw_counting("leg", 1)]), &ctx)
+            .expect("`configured` is registered");
+        let candidate = plan_physical(&logical(vec![raw_counting("leg", 9)]), &ctx)
+            .expect("`configured` is registered");
 
-        let first = plan_physical(&pipeline, &ctx).expect("registered");
-        let second = plan_physical(&pipeline, &ctx).expect("registered");
+        // The configuration is only observable through the built component, so
+        // compare what each plan kept of its own node.
+        let params_of = |plan: &PhysicalPipeline| match plan.nodes()[0].logical() {
+            LogicalNode::Retriever(node) => node.params.get("count").cloned(),
+            other => panic!("expected a retriever, got {other:?}"),
+        };
+        assert_eq!(params_of(&baseline), Some(ParamValue::Int(1)));
+        assert_eq!(params_of(&candidate), Some(ParamValue::Int(9)));
+    }
 
-        assert_eq!(first.nodes().len(), 1);
-        assert_eq!(second.nodes().len(), 1);
+    #[test]
+    fn a_miswired_edge_is_refused_before_any_component_is_constructed() {
+        // The other half of the pass ordering `plan_physical` documents: the
+        // kind check is cheap and construction may load a model, so a plan that
+        // cannot run must be refused before a constructor is called.
+        let constructions = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&constructions);
+        let mut ctx = context();
+        ctx.register_retriever(
+            "counted",
+            Box::new(move |_| {
+                counter.fetch_add(1, Ordering::SeqCst);
+                Ok(Box::new(StubRetriever))
+            }),
+        );
+        let pipeline = forged(
+            r#"{"nodes":[
+                {"Retriever":{"id":"leg","implementation":"counted","inputs":[],"params":{}}},
+                {"Reranker":{"id":"rank","implementation":"cross_encoder","inputs":["leg","leg"],"params":{}}}
+            ]}"#,
+        );
+
+        let Err(err) = plan_physical(&pipeline, &ctx) else {
+            panic!("a retriever cannot feed a reranker's query port")
+        };
+
+        assert!(matches!(&err, PlanError::KindMismatch { .. }), "{err:?}");
+        assert_eq!(
+            constructions.load(Ordering::SeqCst),
+            0,
+            "no component may be constructed for a plan the kind check refuses"
+        );
+    }
+
+    #[test]
+    fn the_two_kind_check_layers_report_one_fault_identically() {
+        // ADR-C16's "one derivation, two call sites" is only true for a reader
+        // if both layers render the same edge the same way. The derivation is
+        // shared; these two `Display`s are not, so nothing but this test keeps
+        // them from drifting apart.
+        for expected in [Some(ValueKind::Query), None] {
+            let planning = PlanError::KindMismatch {
+                consumer: NodeId::new("rank"),
+                port: 1,
+                producer: NodeId::new("leg"),
+                expected,
+                found: ValueKind::Chunks,
+            };
+            let validation = ValidationError::KindMismatch {
+                consumer: NodeId::new("rank"),
+                port: 1,
+                producer: NodeId::new("leg"),
+                expected,
+                found: ValueKind::Chunks,
+            };
+            assert_eq!(
+                planning.to_string(),
+                validation.to_string(),
+                "the planning and validation layers must word one fault alike"
+            );
+        }
     }
 }
