@@ -333,6 +333,43 @@ impl Fusion for AscendingFusion {
     }
 }
 
+/// Answers even when given nothing to fuse. Only the empty-input scenario
+/// sees it, which is why that scenario needs a stub of its own.
+struct EchoingFusion;
+
+#[async_trait]
+impl Fusion for EchoingFusion {
+    async fn fuse(
+        &self,
+        inputs: Vec<Vec<ScoredChunk>>,
+        _params: &FusionParams,
+    ) -> Result<Vec<ScoredChunk>, ComponentError> {
+        let mut fused = deduped(inputs);
+        if fused.is_empty() {
+            fused.push(scored("out-of-nowhere", 1.0));
+        }
+        Ok(rescored_descending(fused))
+    }
+}
+
+/// Emits one chunk of a single leg twice.
+struct DoublingFusion;
+
+#[async_trait]
+impl Fusion for DoublingFusion {
+    async fn fuse(
+        &self,
+        inputs: Vec<Vec<ScoredChunk>>,
+        _params: &FusionParams,
+    ) -> Result<Vec<ScoredChunk>, ComponentError> {
+        let mut fused = deduped(inputs);
+        if let Some(first) = fused.first().cloned() {
+            fused.insert(1, first);
+        }
+        Ok(rescored_descending(fused))
+    }
+}
+
 #[tokio::test]
 async fn a_conformant_fusion_passes() {
     check_fusion_conformance(|| Box::new(GoodFusion))
@@ -379,6 +416,22 @@ async fn a_fusion_returning_ascending_scores_fails() {
         .await
         .expect_err("the ranking contract binds every family that ranks");
     assert_eq!(failure.check(), "descending scores");
+}
+
+#[tokio::test]
+async fn a_fusion_answering_an_empty_input_fails() {
+    let failure = check_fusion_conformance(|| Box::new(EchoingFusion))
+        .await
+        .expect_err("with nothing offered, any answer is invented");
+    assert_eq!(failure.check(), "no fabricated ids");
+}
+
+#[tokio::test]
+async fn a_fusion_repeating_a_chunk_of_one_leg_fails() {
+    let failure = check_fusion_conformance(|| Box::new(DoublingFusion))
+        .await
+        .expect_err("a ranked list ranks each chunk once");
+    assert_eq!(failure.check(), "no duplicate ids");
 }
 
 #[tokio::test]
@@ -511,6 +564,29 @@ impl Reranker for OverlongReranker {
     }
 }
 
+/// Answers even when given no candidates.
+struct EchoingReranker;
+
+#[async_trait]
+impl Reranker for EchoingReranker {
+    async fn rerank(
+        &self,
+        _query: &Query,
+        chunks: Vec<ScoredChunk>,
+        params: &RerankParams,
+    ) -> Result<Vec<ScoredChunk>, ComponentError> {
+        if params.top_k == 0 {
+            return Err(ComponentError::InvalidRequest("top_k of zero".into()));
+        }
+        let mut out = chunks;
+        if out.is_empty() {
+            out.push(scored("out-of-nowhere", 1.0));
+        }
+        out.truncate(params.top_k);
+        Ok(rescored_descending(out))
+    }
+}
+
 #[tokio::test]
 async fn a_conformant_reranker_passes() {
     check_reranker_conformance(|| Box::new(GoodReranker))
@@ -557,6 +633,14 @@ async fn a_reranker_returning_more_than_top_k_fails() {
         .await
         .expect_err("top_k bounds the answer");
     assert_eq!(failure.check(), "top_k respected");
+}
+
+#[tokio::test]
+async fn a_reranker_answering_an_empty_candidate_list_fails() {
+    let failure = check_reranker_conformance(|| Box::new(EchoingReranker))
+        .await
+        .expect_err("with no candidates, any answer is invented");
+    assert_eq!(failure.check(), "no fabricated ids");
 }
 
 #[tokio::test]
@@ -950,6 +1034,29 @@ impl VectorStore for ZeroTopKStore {
     }
 }
 
+/// Stores happily and finds nothing — a search that was never wired.
+struct SilentStore {
+    inner: GoodStore,
+}
+
+#[async_trait]
+impl VectorStore for SilentStore {
+    async fn upsert(&self, entries: Vec<EmbeddedChunk>) -> Result<(), ComponentError> {
+        self.inner.upsert(entries).await
+    }
+
+    async fn search(
+        &self,
+        _embedding: &Embedding,
+        params: &SearchParams,
+    ) -> Result<Vec<ScoredChunk>, ComponentError> {
+        if params.top_k == 0 {
+            return Err(ComponentError::InvalidRequest("top_k of zero".into()));
+        }
+        Ok(Vec::new())
+    }
+}
+
 #[tokio::test]
 async fn a_conformant_vector_store_passes() {
     check_vector_store_conformance(|| Box::new(GoodStore::new()), DIM)
@@ -1070,6 +1177,26 @@ async fn a_vector_store_accepting_a_zero_top_k_fails() {
     .await
     .expect_err("a zero top_k is an unmet precondition");
     assert_eq!(failure.check(), "zero top_k rejected");
+}
+
+#[tokio::test]
+async fn a_vector_store_that_finds_nothing_fails() {
+    let failure = check_vector_store_conformance(
+        || {
+            Box::new(SilentStore {
+                inner: GoodStore::new(),
+            })
+        },
+        DIM,
+    )
+    .await
+    .expect_err("an inserted vector must be findable");
+    assert_eq!(failure.check(), "nearest neighbour is itself");
+    assert!(
+        failure.detail().contains("returned nothing"),
+        "the diagnosis must distinguish nothing from the wrong neighbour: {}",
+        failure.detail()
+    );
 }
 
 #[tokio::test]
