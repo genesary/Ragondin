@@ -11,8 +11,8 @@
 //! third-party components (INV-7), and `ExecutionTrace` is a **return value of
 //! execution, not a log** (INV-10).
 //!
-//! Physical planning and the executor land in later issues; the registry is
-//! here. See `ARCHITECTURE.md`.
+//! The registry and physical planning are here. The executor lands in its
+//! own issue. See `ARCHITECTURE.md`.
 
 #![warn(missing_docs)]
 
@@ -22,9 +22,11 @@
 // `ragondin_engine::context::EngineContext`.
 mod context;
 mod error;
+mod plan;
 
 pub use context::{
     ComponentCtor, EmbedderCtor, EngineContext, FusionCtor, RerankerCtor, RetrieverCtor,
     VectorStoreCtor,
 };
 pub use error::{ComponentFamily, ConstructionError, PlanError};
+pub use plan::{plan_physical, PhysicalPipeline};

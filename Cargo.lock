@@ -584,6 +584,7 @@ dependencies = [
  "ragondin-pipeline",
  "ragondin-remote",
  "ragondin-types",
+ "serde_json",
  "thiserror",
  "tokio",
 ]

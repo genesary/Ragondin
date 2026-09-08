@@ -30,6 +30,11 @@ tokio = { workspace = true }
 # traits are declared with.
 [dev-dependencies]
 async-trait = { workspace = true }
+# Planning's kind check is a second layer over a check `validate` already ran,
+# so no pipeline built the legitimate way can reach it. `serde` is the only way
+# to hold a `LogicalPipeline` that did not come through validation, which is
+# what the backstop's test needs.
+serde_json = { workspace = true }
 
 [features]
 default = []
