@@ -10,16 +10,41 @@
 //!
 //! One function per trait family, called from the component crate's own tests:
 //!
-//! ```ignore
-//! #[tokio::test]
-//! async fn the_reranker_is_conformant() {
-//!     assert_reranker_conformance(|| Box::new(MyReranker::new())).await;
+//! ```
+//! use async_trait::async_trait;
+//! use ragondin_conformance::assert_reranker_conformance;
+//! use ragondin_contracts::{ComponentError, RerankParams, Reranker};
+//! use ragondin_types::{Query, ScoredChunk};
+//!
+//! struct MyReranker;
+//!
+//! #[async_trait]
+//! impl Reranker for MyReranker {
+//!     async fn rerank(
+//!         &self,
+//!         _query: &Query,
+//!         mut chunks: Vec<ScoredChunk>,
+//!         params: &RerankParams,
+//!     ) -> Result<Vec<ScoredChunk>, ComponentError> {
+//!         if params.top_k == 0 {
+//!             return Err(ComponentError::InvalidRequest("top_k of zero".into()));
+//!         }
+//!         chunks.sort_by(|a, b| b.score.total_cmp(&a.score));
+//!         chunks.truncate(params.top_k);
+//!         Ok(chunks)
+//!     }
 //! }
+//!
+//! # tokio::runtime::Runtime::new().unwrap().block_on(async {
+//! // #[tokio::test]
+//! assert_reranker_conformance(|| Box::new(MyReranker)).await;
+//! # });
 //! ```
 //!
 //! Each takes a **constructor**, not an instance: a scenario that writes must
 //! not decide the next one's outcome, and one shape for all five families
-//! means a contributor writes the same call whatever they implement. The
+//! means a contributor writes the same call whatever they implement. It must
+//! be cheap, infallible and synchronous, and it is called more than once. The
 //! `check_*` form returns the failure instead of panicking, for callers that
 //! want to assert on it.
 //!
@@ -30,14 +55,31 @@
 //!
 //! **Contract behaviour, never quality.** A conformant reranker need not be a
 //! *good* reranker, only a well-behaved one; retrieval quality is measured by
-//! `ragondin-metrics` against a benchmark, not here.
+//! `ragondin-metrics` against a benchmark, not here. **Conformance is a
+//! floor**: a retriever returning nothing, or a reranker rejecting every
+//! candidate, is conformant.
 //!
-//! The suite knows nothing about the corpus, index or model an implementation
-//! was built over, so it asserts only what holds whatever those contain. That
-//! is why no check requires a *non-empty* result — except for the vector
-//! store, the one family the suite can write to before it reads.
+//! For a retriever, an embedder or a reranker the suite knows nothing about
+//! the corpus, index or model behind the trait object, so it asserts only what
+//! holds whatever those contain. A fusion and a vector store are different:
+//! the suite owns their whole input — it supplies the lists, and it writes the
+//! vectors — so there it says what a correct answer looks like.
 //!
-//! See `docs/code-architecture.md` §7.4.
+//! # The check names
+//!
+//! [`ConformanceFailure::check`] returns one of these, and they are stable:
+//!
+//! | Check | Families |
+//! |---|---|
+//! | `well-formed call succeeds` | all |
+//! | `descending scores`, `finite scores` | every family returning a ranked list |
+//! | `top_k respected`, `zero top_k rejected` | `Retriever`, `Reranker`, `VectorStore` |
+//! | `no fabricated ids`, `no duplicate ids` | `Fusion`, `Reranker` |
+//! | `non-empty input yields output`, `order preserved` | `Fusion` |
+//! | `one vector per input`, `constant dimensionality`, `finite components` | `Embedder` |
+//! | `empty store yields no results`, `nearest neighbour is itself`, `upsert replaces by id`, `dimensionality` | `VectorStore` |
+//!
+//! See `ARCHITECTURE.md` and `docs/code-architecture.md` §7.4.
 
 #![warn(missing_docs)]
 

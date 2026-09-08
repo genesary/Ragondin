@@ -4,22 +4,31 @@ use ragondin_contracts::{Fusion, FusionParams};
 use ragondin_types::ScoredChunk;
 
 use crate::{
-    checks::{check_no_fabricated_ids, check_ranking},
+    checks::{check_no_duplicate_ids, check_no_fabricated_ids, check_ranking},
     failure::ConformanceFailure,
-    fixtures::{ids, ranked},
+    fixtures::{ids, ranked, scored},
 };
 
 const COMPONENT: &str = "Fusion";
 
 /// Checks that `make`'s fusions honour the [`Fusion`] contract.
 ///
-/// - **Fusing nothing yields nothing**: no input lists, or only empty ones,
-///   fuses to an empty list rather than to an error.
-/// - **Output ids are a subset of the union of the inputs.** A fusion merges;
-///   it never introduces a chunk no upstream leg produced.
-/// - **A single list is order-preserving up to ties**: with one leg of
-///   strictly descending scores, the surviving ids come back in the order they
-///   went in.
+/// Unlike the families whose answers depend on a corpus, a fusion's entire
+/// input is the suite's own — so this is the one family where the suite can
+/// say what a *correct* answer looks like, and it does:
+///
+/// - **Fusing nothing yields nothing.** With no ids offered, any result is a
+///   fabrication, which is how that case is reported.
+/// - **Output ids are a subset of the union of the inputs**, with **no
+///   duplicates**. The two legs the suite fuses **share a chunk**, so a fusion
+///   that concatenates without merging is caught here — that is a fusion's
+///   whole job, and the bug is invisible downstream except as an inflated
+///   score.
+/// - **A non-empty input yields a non-empty output.** Safe for RRF, CombSUM,
+///   CombMNZ and interleaving alike: no corpus, index or model is involved.
+/// - **A single leg comes back in the order it went in.** Its scores are
+///   distinct, so no tie can arise from the input; a fusion that re-scores is
+///   free to change the *scores*, not the *order*.
 /// - The **ranking contract** — descending, finite scores.
 pub async fn check_fusion_conformance(
     make: impl Fn() -> Box<dyn Fusion>,
@@ -37,16 +46,7 @@ pub async fn check_fusion_conformance(
             .fuse(inputs, &FusionParams::new())
             .await
             .map_err(|error| ConformanceFailure::from_call(COMPONENT, context, &error))?;
-        // Fabrication first: with nothing offered, *any* result is invented,
-        // and that is the more precise diagnosis of the two.
         check_no_fabricated_ids(COMPONENT, context, &fused, &[])?;
-        if !fused.is_empty() {
-            return Err(ConformanceFailure::new(
-                COMPONENT,
-                "empty inputs yield empty output",
-                format!("{context}: returned {} results", fused.len()),
-            ));
-        }
     }
 
     let leg = ranked("leg-a", 3);
@@ -56,12 +56,20 @@ pub async fn check_fusion_conformance(
         .await
         .map_err(|error| ConformanceFailure::from_call(COMPONENT, context, &error))?;
     check_no_fabricated_ids(COMPONENT, context, &fused, &ids(&leg))?;
+    check_no_duplicate_ids(COMPONENT, context, &fused)?;
+    check_non_empty(context, &fused)?;
     check_ranking(COMPONENT, context, &fused)?;
     check_order_preserved(context, &leg, &fused)?;
 
-    let left = ranked("leg-a", 3);
-    let right = ranked("leg-b", 2);
-    let context = "fuse of two ranked lists";
+    // The legs overlap on `shared-0`: a fusion that concatenates rather than
+    // merges returns it twice, and nothing but this scenario would notice.
+    let left = vec![
+        scored("shared-0", 0.9),
+        scored("leg-a-1", 0.6),
+        scored("leg-a-2", 0.3),
+    ];
+    let right = vec![scored("shared-0", 0.8), scored("leg-b-1", 0.4)];
+    let context = "fuse of two ranked lists sharing a chunk";
     let fused = fusion
         .fuse(vec![left.clone(), right.clone()], &FusionParams::new())
         .await
@@ -69,7 +77,20 @@ pub async fn check_fusion_conformance(
     let mut union = ids(&left);
     union.extend(ids(&right));
     check_no_fabricated_ids(COMPONENT, context, &fused, &union)?;
+    check_no_duplicate_ids(COMPONENT, context, &fused)?;
+    check_non_empty(context, &fused)?;
     check_ranking(COMPONENT, context, &fused)
+}
+
+fn check_non_empty(context: &str, fused: &[ScoredChunk]) -> Result<(), ConformanceFailure> {
+    if fused.is_empty() {
+        return Err(ConformanceFailure::new(
+            COMPONENT,
+            "non-empty input yields output",
+            format!("{context}: returned nothing"),
+        ));
+    }
+    Ok(())
 }
 
 /// The ids that survived must appear in the order they were given.
