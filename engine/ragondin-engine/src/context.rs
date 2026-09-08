@@ -17,16 +17,7 @@ use std::collections::BTreeMap;
 use ragondin_contracts::{Embedder, Fusion, Reranker, Retriever, VectorStore};
 use ragondin_pipeline::Params;
 
-use crate::error::{ComponentFamily, PlanError};
-
-/// What a constructor reports when it cannot build its component.
-///
-/// Boxed rather than a fixed enum because the reason belongs to the component,
-/// not to the engine: a missing ONNX model file, an unparseable parameter, a
-/// store client that cannot resolve its URL. The registry wraps whatever
-/// arrives in [`PlanError::Construction`], adding the family and the name —
-/// the two things it knows and the constructor does not.
-pub type ConstructionError = Box<dyn std::error::Error + Send + Sync>;
+use crate::error::{ComponentFamily, ConstructionError, PlanError};
 
 /// A constructor for a component of trait `T`.
 ///
@@ -92,8 +83,17 @@ impl<T: ?Sized> Registry<T> {
 ///
 /// Construct one, register the components the binary was built with, and hand
 /// it to physical planning. Registering is `&mut self` and building is
-/// `&self`: a context is populated once at composition time and then only read,
-/// which is what makes sharing one across concurrent plans sound.
+/// `&self`, so a context is populated once at composition time and then only
+/// read.
+///
+/// It is shareable across threads — the harness (#29) plans two configurations
+/// concurrently against one context — but the `&mut`/`&` split is not what
+/// makes that sound: every stored value being `Send + Sync` is. The assertion
+/// below is where that guarantee lives, next to what it constrains rather than
+/// in a test whose deletion would remove it silently (the rule
+/// `ragondin-contracts` states as D-11). Adding a field that is not `Sync` — an
+/// `Rc`, a bare `RefCell` cache — breaks the build here rather than at a
+/// `tokio::spawn` boundary in another crate.
 pub struct EngineContext {
     retrievers: Registry<dyn Retriever>,
     fusions: Registry<dyn Fusion>,
@@ -159,11 +159,16 @@ impl EngineContext {
 /// (INV-2).
 ///
 /// That caller is #15 and lands in its own issue; until it does, this crate's
-/// tests are what exercises these — hence the allow, which is about the order
-/// two issues land in and not about the methods being unnecessary.
-#[allow(dead_code)]
+/// tests are what exercises these — hence the per-method allows below, which
+/// are about the order two issues land in and not about a method being
+/// unnecessary. Per method rather than on the block, so that a method added
+/// here before #15 lands does not inherit the exemption unnoticed.
+///
+/// `allow` and not `expect`: in the `cfg(test)` build the tests do use these,
+/// so an expectation would go unfulfilled and fail `clippy -D warnings`.
 impl EngineContext {
     /// Builds the [`Retriever`] registered under `name` from `config`.
+    #[allow(dead_code)]
     pub(crate) fn build_retriever(
         &self,
         name: &str,
@@ -173,6 +178,7 @@ impl EngineContext {
     }
 
     /// Builds the [`Fusion`] registered under `name` from `config`.
+    #[allow(dead_code)]
     pub(crate) fn build_fusion(
         &self,
         name: &str,
@@ -182,6 +188,7 @@ impl EngineContext {
     }
 
     /// Builds the [`Reranker`] registered under `name` from `config`.
+    #[allow(dead_code)]
     pub(crate) fn build_reranker(
         &self,
         name: &str,
@@ -191,6 +198,7 @@ impl EngineContext {
     }
 
     /// Builds the [`Embedder`] registered under `name` from `config`.
+    #[allow(dead_code)]
     pub(crate) fn build_embedder(
         &self,
         name: &str,
@@ -200,6 +208,7 @@ impl EngineContext {
     }
 
     /// Builds the [`VectorStore`] registered under `name` from `config`.
+    #[allow(dead_code)]
     pub(crate) fn build_vector_store(
         &self,
         name: &str,
@@ -214,6 +223,11 @@ impl Default for EngineContext {
         Self::new()
     }
 }
+
+const _: fn() = || {
+    fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<EngineContext>();
+};
 
 #[cfg(test)]
 mod tests {
@@ -446,6 +460,10 @@ mod tests {
         assert!(
             std::error::Error::source(&err).is_some(),
             "the constructor's own error stays reachable as the source"
+        );
+        assert!(
+            err.to_string().contains("non-negative integer"),
+            "the cause must appear in Display, not only via source(): {err}"
         );
     }
 

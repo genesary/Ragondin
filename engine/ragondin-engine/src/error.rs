@@ -46,12 +46,29 @@ impl fmt::Display for ComponentFamily {
     }
 }
 
+/// What a constructor reports when it cannot build its component.
+///
+/// Boxed rather than a fixed enum because the reason belongs to the component,
+/// not to the engine: a missing ONNX model file, an unparseable parameter, a
+/// store client that cannot resolve its URL. The registry wraps whatever
+/// arrives in [`PlanError::Construction`], adding the family and the name —
+/// the two things it knows and the constructor does not.
+pub type ConstructionError = Box<dyn std::error::Error + Send + Sync>;
+
 /// A configuration that cannot be turned into something executable.
 ///
 /// Typed, per the error convention (`thiserror` in libraries, `anyhow` only in
 /// binaries): the binary reporting this to a user needs to tell an unregistered
 /// name apart from a component that refused its configuration, and those two
 /// send the reader to different places.
+///
+/// **Exhaustive, deliberately** — the opposite choice from
+/// [`ragondin_contracts::ComponentError`], for the reason `ragondin-pipeline`
+/// makes it for `ValidationError`: this enum is not on a stable boundary
+/// (INV-2), and physical planning (#15) will add variants for an unsupported
+/// `Extension` and for a kind mismatch. When it does, a `match` in the binary
+/// that stops compiling is the intended signal that a new refusal needs
+/// reporting — which `#[non_exhaustive]` would suppress.
 #[derive(Debug, thiserror::Error)]
 pub enum PlanError {
     /// No implementation is registered under this name for this family.
@@ -69,12 +86,15 @@ pub enum PlanError {
 
     /// The implementation was found, and refused to be built.
     ///
-    /// The constructor's own error is kept as the [`source`], so a caller can
-    /// walk to the cause — a missing model file, an unreadable parameter —
-    /// instead of parsing this message.
+    /// The cause is rendered in `Display` **and** kept as the [`source`], the
+    /// same way [`ragondin_contracts::ComponentError::Backend`] handles the
+    /// error it wraps: a caller can walk to the cause, and a caller that only
+    /// prints this one does not lose it. Which parameter a constructor refused
+    /// is the whole diagnostic here — a message saying only that construction
+    /// failed sends the reader nowhere.
     ///
     /// [`source`]: std::error::Error::source
-    #[error("the {family} implementation `{name}` could not be constructed")]
+    #[error("the {family} implementation `{name}` could not be constructed: {source}")]
     Construction {
         /// The family whose registry was consulted.
         family: ComponentFamily,
@@ -82,6 +102,6 @@ pub enum PlanError {
         name: String,
         /// What the constructor reported.
         #[source]
-        source: Box<dyn std::error::Error + Send + Sync>,
+        source: ConstructionError,
     },
 }

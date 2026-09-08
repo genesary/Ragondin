@@ -16,11 +16,15 @@
 
 #![warn(missing_docs)]
 
-pub mod context;
-pub mod error;
+// Private modules with a flat re-export: one path to each item rather than two.
+// The crate is internal (INV-2), so its layout owes nothing to anyone; a reader
+// should not have to reconcile `ragondin_engine::EngineContext` with
+// `ragondin_engine::context::EngineContext`.
+mod context;
+mod error;
 
 pub use context::{
-    ComponentCtor, ConstructionError, EmbedderCtor, EngineContext, FusionCtor, RerankerCtor,
-    RetrieverCtor, VectorStoreCtor,
+    ComponentCtor, EmbedderCtor, EngineContext, FusionCtor, RerankerCtor, RetrieverCtor,
+    VectorStoreCtor,
 };
-pub use error::{ComponentFamily, PlanError};
+pub use error::{ComponentFamily, ConstructionError, PlanError};
