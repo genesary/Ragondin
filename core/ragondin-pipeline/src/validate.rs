@@ -16,7 +16,6 @@
 //! four, in that order.
 
 use std::collections::{BTreeMap, HashMap};
-use std::fmt;
 
 use crate::kind::{consumed_kinds, produced_kind, PortSpec, ValueKind};
 use crate::node::{
@@ -27,21 +26,24 @@ use crate::raw::{RawNode, RawParamValue, RawPipeline};
 
 /// A `RawPipeline` cannot be lowered into a validated logical form.
 ///
-/// Written out by hand rather than derived: `ragondin-pipeline`'s
-/// `ARCHITECTURE.md` permits `ragondin-types`, `serde` and a hashing crate and
-/// nothing else, and one error type is not reason enough to widen a core
-/// crate's dependencies — the same precedent `raw.rs`'s
-/// `UnsupportedSchemaVersion` sets.
+/// Derived via `thiserror` rather than hand-written: `ragondin-pipeline`'s
+/// `ARCHITECTURE.md` used to read as forbidding `thiserror` outright, and #9
+/// followed that precedent (the same one `raw.rs`'s
+/// `UnsupportedSchemaVersion` set). But ADR-C13 requires typed errors via
+/// `thiserror` in every library in this workspace, so #84 corrected
+/// `ARCHITECTURE.md` to permit it, and this enum no longer needs a
+/// hand-rolled `Display`.
 ///
 /// The lowering variants (`UnknownComponent`, `NonFiniteParam`) and the three
 /// structural checks over a whole graph (`DuplicateId`, `DanglingInput`,
 /// `Cycle`) cover well-formedness. `KindMismatch` is additional: the
 /// edge-kind check ADR-C16 places at `LogicalPipeline` validation. Each
 /// arrived as an additional variant, never a redesign of the ones before it.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum ValidationError {
     /// A node's `component` names no family this build has a [`LogicalNode`]
     /// variant for (settled reading A1).
+    #[error("node `{}`: unknown component `{component}`", node.as_str())]
     UnknownComponent {
         /// The node whose `component` could not be resolved.
         node: NodeId,
@@ -50,6 +52,10 @@ pub enum ValidationError {
     },
     /// A node's parameters hold a `NaN` or `±∞` float, directly or nested
     /// inside a `List` (settled reading A3).
+    #[error(
+        "node `{}`: parameter `{param}` is not a finite number",
+        node.as_str()
+    )]
     NonFiniteParam {
         /// The node whose parameters hold the non-finite value.
         node: NodeId,
@@ -57,6 +63,7 @@ pub enum ValidationError {
         param: String,
     },
     /// Two nodes in the pipeline share the same id.
+    #[error("duplicate node id `{}`", id.as_str())]
     DuplicateId {
         /// The id claimed by more than one node.
         id: NodeId,
@@ -66,6 +73,11 @@ pub enum ValidationError {
     /// Per settled reading A2, an *empty* `inputs` list is never a dangling
     /// input — this fires only for an id that is actually listed and does
     /// not resolve.
+    #[error(
+        "node `{}`: input `{}` names no node in the pipeline",
+        node.as_str(),
+        missing.as_str()
+    )]
     DanglingInput {
         /// The node whose `inputs` names the missing id.
         node: NodeId,
@@ -73,6 +85,13 @@ pub enum ValidationError {
         missing: NodeId,
     },
     /// The graph of data edges (a node's `inputs`) is not acyclic.
+    // `nodes` walks consumer -> producer (a node, then its input), the
+    // reverse of data flow — rendered as "consumes" rather than "->" so the
+    // direction cannot be misread as which way values travel.
+    #[error(
+        "cycle in the pipeline's data edges: {}",
+        nodes.iter().map(NodeId::as_str).collect::<Vec<_>>().join(" consumes ")
+    )]
     Cycle {
         /// The ids of the nodes on the cycle, in the order a depth-first
         /// traversal walked them. At least one node on the cycle is always
@@ -96,6 +115,16 @@ pub enum ValidationError {
     /// an `Extension` *producer* is otherwise skipped whenever a port
     /// genuinely exists (`expected` is `Some`): its real kind is known only
     /// once physical planning (#15) resolves its registry entry.
+    // `thiserror`'s `#[error(...)]` cannot branch on a field's value, and
+    // `expected` renders differently for `Some` and `None` — so the
+    // `Some`/`None` clause is built by `kind_mismatch_expected_clause` and
+    // interpolated as one fragment rather than by a hand-written `Display`.
+    #[error(
+        "node `{}` port {port} (fed by node `{}`): {}found `{found}`",
+        consumer.as_str(),
+        producer.as_str(),
+        kind_mismatch_expected_clause(expected)
+    )]
     KindMismatch {
         /// The node consuming the mismatched edge.
         consumer: NodeId,
@@ -112,66 +141,17 @@ pub enum ValidationError {
     },
 }
 
-impl fmt::Display for ValidationError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::UnknownComponent { node, component } => write!(
-                f,
-                "node `{}`: unknown component `{component}`",
-                node.as_str()
-            ),
-            Self::NonFiniteParam { node, param } => write!(
-                f,
-                "node `{}`: parameter `{param}` is not a finite number",
-                node.as_str()
-            ),
-            Self::DuplicateId { id } => {
-                write!(f, "duplicate node id `{}`", id.as_str())
-            }
-            Self::DanglingInput { node, missing } => write!(
-                f,
-                "node `{}`: input `{}` names no node in the pipeline",
-                node.as_str(),
-                missing.as_str()
-            ),
-            Self::Cycle { nodes } => {
-                // `nodes` walks consumer -> producer (a node, then its
-                // input), the reverse of data flow — rendered as "consumes"
-                // rather than "->" so the direction cannot be misread as
-                // which way values travel.
-                let path = nodes
-                    .iter()
-                    .map(NodeId::as_str)
-                    .collect::<Vec<_>>()
-                    .join(" consumes ");
-                write!(f, "cycle in the pipeline's data edges: {path}")
-            }
-            Self::KindMismatch {
-                consumer,
-                port,
-                producer,
-                expected,
-                found,
-            } => match expected {
-                Some(expected) => write!(
-                    f,
-                    "node `{}` port {port} (fed by node `{}`): expected `{expected}`, found `{found}`",
-                    consumer.as_str(),
-                    producer.as_str(),
-                ),
-                None => write!(
-                    f,
-                    "node `{}` port {port} (fed by node `{}`): no port declared at this \
-                     position, found `{found}`",
-                    consumer.as_str(),
-                    producer.as_str(),
-                ),
-            },
-        }
+/// The part of [`ValidationError::KindMismatch`]'s message that depends on
+/// whether a port genuinely exists at all: `expected `X`, ` when it does, or
+/// a note that none was declared at that position when it does not. Pulled
+/// out of the `#[error(...)]` attribute because that attribute cannot branch
+/// on a field's value the way a hand-written `Display` could.
+fn kind_mismatch_expected_clause(expected: &Option<ValueKind>) -> String {
+    match expected {
+        Some(expected) => format!("expected `{expected}`, "),
+        None => "no port declared at this position, ".to_string(),
     }
 }
-
-impl std::error::Error for ValidationError {}
 
 /// Lowers one [`RawParamValue`] into the matching [`ParamValue`], recursing
 /// through `List`.

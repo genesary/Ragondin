@@ -38,7 +38,6 @@
 //! Nothing here is executed, and nothing here is hashed.
 
 use std::collections::BTreeMap;
-use std::fmt;
 
 use serde::{Deserialize, Deserializer, Serialize};
 
@@ -89,10 +88,18 @@ impl<'de> Deserialize<'de> for SchemaVersion {
 
 /// A configuration states a schema version this build cannot read.
 ///
-/// Written out by hand rather than derived: `ragondin-pipeline`'s `ARCHITECTURE.md`
-/// permits `ragondin-types`, `serde` and a hashing crate and nothing else, and one
-/// error type is not reason enough to widen a core crate's dependencies.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Derived via `thiserror` rather than hand-written: `ragondin-pipeline`'s
+/// `ARCHITECTURE.md` used to read as forbidding `thiserror` outright — "one
+/// error type is not reason enough to widen a core crate's dependencies" —
+/// but that reading conflicted with ADR-C13, which requires typed errors via
+/// `thiserror` in every library in this workspace. #84 corrected
+/// `ARCHITECTURE.md` to permit it, so this type no longer needs a hand-rolled
+/// `Display`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+#[error(
+    "unsupported pipeline schema version {found}: this build reads version {}",
+    SchemaVersion::SUPPORTED
+)]
 pub struct UnsupportedSchemaVersion {
     found: u32,
 }
@@ -103,19 +110,6 @@ impl UnsupportedSchemaVersion {
         self.found
     }
 }
-
-impl fmt::Display for UnsupportedSchemaVersion {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "unsupported pipeline schema version {}: this build reads version {}",
-            self.found,
-            SchemaVersion::SUPPORTED
-        )
-    }
-}
-
-impl std::error::Error for UnsupportedSchemaVersion {}
 
 /// A parameter value **as a configuration writes it**: a bare scalar.
 ///

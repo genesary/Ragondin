@@ -19,8 +19,12 @@ mandatory termination guard), and the open `Extension` variant.
 ## Local invariants
 
 - **Value types (INV-3).** No global context, no interner, no I/O.
-- **No heavy dependency (INV-4).** `ragondin-types`, `serde`, and a hashing crate —
-  nothing else.
+- **No heavy dependency (INV-4).** `ragondin-types`, `serde`, a hashing crate,
+  and `thiserror` — nothing else. `thiserror` is *required*, not merely
+  tolerated: [ADR-C13](../../docs/adr/ADR-C13-typed-errors-in-libraries-anyhow-in-binary.md)
+  requires typed errors via `thiserror` in every library in this workspace,
+  and INV-4 targets heavy runtime backends, not a proc-macro that leaves
+  nothing in the dependency closure or the public API.
 - **The hash is over the canonical logical form (INV-8).** Two semantically
   equivalent configurations formatted differently **must** hash identically, or
   reproducibility is an illusion. Never hash source text.
