@@ -11,17 +11,16 @@
 //! third-party components (INV-7), and `ExecutionTrace` is a **return value of
 //! execution, not a log** (INV-10).
 //!
-//! The engine internals land in a later issue; this is the compiling skeleton.
-//! See `ARCHITECTURE.md`.
+//! Physical planning and the executor land in later issues; the registry is
+//! here. See `ARCHITECTURE.md`.
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn skeleton_links() {
-        let name = env!("CARGO_PKG_NAME");
-        assert!(
-            name.starts_with("ragondin-"),
-            "unexpected crate name: {name}"
-        );
-    }
-}
+#![warn(missing_docs)]
+
+pub mod context;
+pub mod error;
+
+pub use context::{
+    ComponentCtor, ConstructionError, EmbedderCtor, EngineContext, FusionCtor, RerankerCtor,
+    RetrieverCtor, VectorStoreCtor,
+};
+pub use error::{ComponentFamily, PlanError};

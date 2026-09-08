@@ -22,7 +22,14 @@ ragondin-contracts = { workspace = true }
 ragondin-pipeline = { workspace = true }
 ragondin-types = { workspace = true }
 ragondin-remote = { workspace = true, optional = true }
+thiserror = { workspace = true } # typed library errors (PlanError)
 tokio = { workspace = true }
+
+# Test-only. The stub components the registry tests register are `async_trait`
+# implementations of the contract traits, so the tests need the attribute the
+# traits are declared with.
+[dev-dependencies]
+async-trait = { workspace = true }
 
 [features]
 default = []
