@@ -240,8 +240,8 @@ pub trait Reranker: Send + Sync {
 /// query differently from a passage, and a text embedded on the wrong side
 /// simply scores worse — no error is raised anywhere, and a conformance suite
 /// cannot see it either, because it does not know which model it is testing.
-/// ADR-C17 therefore makes the role a **per-call** parameter: a caller passes
-/// the role that is true of the text it is embedding, and an implementation
+/// ADR-C17 therefore makes the role a **per-call** parameter: a caller must
+/// pass the role that is true of the text it is embedding, and an implementation
 /// must treat that role as significant unless the model it wraps is symmetric.
 ///
 /// What an asymmetric model prepends for each role is the implementation's own

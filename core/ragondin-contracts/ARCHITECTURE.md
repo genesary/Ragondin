@@ -71,9 +71,9 @@ component is a gRPC service honouring the mirror protobuf in `ragondin-proto`.
 - **An [`Embedder`] is told its role, per call (ADR-C17).** Asymmetric models
   (E5, BGE, GTE) prefix a query differently from a passage, and getting it wrong
   costs retrieval quality with no error anywhere — a failure no conformance
-  check can catch, since the suite does not know the model. The role is
-  therefore a mandatory field on `EmbedParams` (#97), stated by the caller,
-  which is the only party that knows the side. What an asymmetric model
+  check can catch, since the suite does not know the model. The role
+  therefore becomes a mandatory field on `EmbedParams` in #97, stated by the
+  caller, which is the only party that knows the side. What an asymmetric model
   prepends for each side is **constructor configuration of the component**, not
   contract surface: that is what keeps this crate agnostic of the model, and it
   makes a symmetric model a configuration with no prefix rather than a special
