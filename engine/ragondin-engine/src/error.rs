@@ -7,6 +7,8 @@
 
 use std::fmt;
 
+use ragondin_pipeline::{NodeId, ValueKind};
+
 /// The component families the registry keeps one table for.
 ///
 /// Present in every [`PlanError`] the registry raises because the family is
@@ -65,10 +67,10 @@ pub type ConstructionError = Box<dyn std::error::Error + Send + Sync>;
 /// **Exhaustive, deliberately** — the opposite choice from
 /// [`ragondin_contracts::ComponentError`], for the reason `ragondin-pipeline`
 /// makes it for `ValidationError`: this enum is not on a stable boundary
-/// (INV-2), and physical planning (#15) will add variants for an unsupported
-/// `Extension` and for a kind mismatch. When it does, a `match` in the binary
-/// that stops compiling is the intended signal that a new refusal needs
-/// reporting — which `#[non_exhaustive]` would suppress.
+/// (INV-2), so a `match` in the binary that stops compiling when a variant
+/// arrives is the intended signal that a new refusal needs reporting — which
+/// `#[non_exhaustive]` would suppress. Physical planning added the last two
+/// that way.
 #[derive(Debug, thiserror::Error)]
 pub enum PlanError {
     /// No implementation is registered under this name for this family.
@@ -104,4 +106,76 @@ pub enum PlanError {
         #[source]
         source: ConstructionError,
     },
+
+    /// The node is an `Extension`, and nothing in this build can plan one.
+    ///
+    /// ADR-C16 reserves for physical planning the kind check an `Extension`
+    /// node needs, "the only point at which an `Extension` node's kinds are
+    /// known" — because the registry knows them. It does not: §8.1 describes
+    /// one registry per component *family*, keyed on the implementation name,
+    /// and **there is no extension family** (a point `ragondin-pipeline`'s
+    /// `ExtensionNode::kind` already records). How an extension is looked up
+    /// is unsettled — #93 is the decision issue — so this build plans none, and
+    /// says so in one error rather than guessing a mechanism.
+    ///
+    /// Naming the extension type and not only the node id is what makes this
+    /// actionable: it is the word a reader takes to the issue tracker.
+    #[error(
+        "node `{}`: no physical planner for extension type `{kind}`",
+        node.as_str()
+    )]
+    ExtensionUnsupported {
+        /// The node that cannot be planned.
+        node: NodeId,
+        /// Its [`ragondin_pipeline::ExtensionNode::kind`], e.g. `"hyde"`.
+        kind: String,
+    },
+
+    /// An edge's value kinds do not line up (ADR-C16), caught at planning.
+    ///
+    /// Mirrors `ragondin_pipeline::ValidationError::KindMismatch` — the same
+    /// edge, the same three facts, deliberately the same wording — because a
+    /// reader should not have to tell the two layers apart to read the fault.
+    /// `expected` is `None` when `port` is beyond what a fixed-arity variant
+    /// declares: no port exists to compare against, only an edge that should
+    /// not.
+    ///
+    /// Reaching this means the pipeline did **not** come through
+    /// `ragondin_pipeline::validate`, which refuses the same wiring earlier: a
+    /// `LogicalPipeline` deserialized straight from a store or a wire is the
+    /// shape that gets here. It is not, in this build, the `Extension` case
+    /// ADR-C16 wrote the layer for — see [`PlanError::ExtensionUnsupported`].
+    // `thiserror`'s `#[error(...)]` cannot branch on a field's value, so the
+    // clause that differs between `Some` and `None` is built by a function and
+    // interpolated as one fragment.
+    #[error(
+        "node `{}` port {port} (fed by node `{}`): {}found `{found}`",
+        consumer.as_str(),
+        producer.as_str(),
+        kind_mismatch_expected_clause(expected)
+    )]
+    KindMismatch {
+        /// The node consuming the mismatched edge.
+        consumer: NodeId,
+        /// The position, within `consumer`'s `inputs`, of the mismatched edge.
+        port: usize,
+        /// The node producing the value on the mismatched edge.
+        producer: NodeId,
+        /// The kind `consumer` declares at `port`, or `None` when `port` is
+        /// beyond what a fixed-arity variant declares.
+        expected: Option<ValueKind>,
+        /// The kind `producer` actually produces.
+        found: ValueKind,
+    },
+}
+
+/// The part of [`PlanError::KindMismatch`]'s message that depends on whether a
+/// port exists at that position at all. Kept identical to
+/// `ragondin-pipeline`'s helper of the same name: the two layers report one
+/// fault, and a reader who has seen one message must recognise the other.
+fn kind_mismatch_expected_clause(expected: &Option<ValueKind>) -> String {
+    match expected {
+        Some(expected) => format!("expected `{expected}`, "),
+        None => "no port declared at this position, ".to_string(),
+    }
 }
