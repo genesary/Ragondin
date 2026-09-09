@@ -9,20 +9,27 @@
 //! [`crate::LogicalPipeline`]) — done before any check runs, so that which of
 //! two faults a malformed graph reports never depends on the order the source
 //! `RawPipeline` happened to list nodes in. Third, the structural checks over
-//! the *whole* graph — duplicate ids, dangling inputs, cycles — that only make
-//! sense once every node has lowered. Fourth, the kind check across every edge
+//! the *whole* graph — duplicate ids, the pipeline's own input declaration,
+//! dangling inputs, cycles — that only make sense once every node has
+//! lowered. Fourth, the kind check across every edge
 //! ([`ValidationError::KindMismatch`], ADR-C16), which needs the graph to be
 //! acyclic and every input already known to resolve. [`validate`] runs all
-//! four, in that order.
+//! four, in that order, behind a schema-version check that precedes them all.
+//!
+//! Since ADR-C18 a pipeline **declares its inputs**, and an id in a node's
+//! `inputs` resolves either to another node or to one of those declarations.
+//! A declared input is what gives [`crate::ValueKind::Query`] a producer — no
+//! [`LogicalNode`] variant is one — so it is a source: never on a cycle, and
+//! contributing `Query` to the kind check.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::kind::{consumed_kinds, produced_kind, PortSpec, ValueKind};
 use crate::node::{
     ExtensionNode, FusionNode, LogicalNode, NodeId, ParamValue, Params, RerankerNode, RetrieverNode,
 };
 use crate::pipeline::LogicalPipeline;
-use crate::raw::{RawNode, RawParamValue, RawPipeline};
+use crate::raw::{RawNode, RawParamValue, RawPipeline, SchemaVersion};
 
 /// A `RawPipeline` cannot be lowered into a validated logical form.
 ///
@@ -68,21 +75,66 @@ pub enum ValidationError {
         /// The id claimed by more than one node.
         id: NodeId,
     },
-    /// A node's `inputs` names an id that no node in the pipeline defines.
+    /// A node's `inputs` names an id that neither a node nor a declared
+    /// pipeline input defines.
     ///
     /// Per settled reading A2, an *empty* `inputs` list is never a dangling
     /// input — this fires only for an id that is actually listed and does
-    /// not resolve.
+    /// not resolve. Since ADR-C18 an id resolves two ways: to a node, or to
+    /// one of the pipeline's declared inputs.
     #[error(
-        "node `{}`: input `{}` names no node in the pipeline",
+        "node `{}`: input `{}` names neither a node nor a declared input",
         node.as_str(),
         missing.as_str()
     )]
     DanglingInput {
         /// The node whose `inputs` names the missing id.
         node: NodeId,
-        /// The id named in `inputs` that no node in the pipeline defines.
+        /// The id named in `inputs` that nothing in the pipeline defines.
         missing: NodeId,
+    },
+    /// A configuration states, or is read as, a schema version this build
+    /// cannot read.
+    ///
+    /// Checked here rather than only at deserialization because an *absent*
+    /// `version` never reaches [`SchemaVersion::new`]: it defaults to
+    /// [`SchemaVersion::PRE_VERSIONING`], which ADR-C18 made a version this
+    /// build no longer reads. Refusing it here means an unversioned document
+    /// fails on the version it is written in, rather than further down on a
+    /// consequence of it — a missing input declaration it had no way to
+    /// carry.
+    #[error(
+        "unsupported pipeline schema version {found}: this build reads version {}",
+        SchemaVersion::SUPPORTED
+    )]
+    UnsupportedSchemaVersion {
+        /// The version the configuration is read as.
+        found: u32,
+    },
+    /// A pipeline does not declare exactly one input (ADR-C18).
+    ///
+    /// A serving graph takes exactly one value from its caller, the query.
+    /// Declaring none leaves `ValueKind::Query` without the producer no
+    /// [`LogicalNode`] variant is; declaring more than one describes a graph
+    /// this build has no second kind of.
+    ///
+    /// This subsumes a repeated declaration: `[question, question]` declares
+    /// two, and is reported here rather than as a distinct duplicate fault.
+    #[error("a pipeline must declare exactly one input, found {declared}")]
+    InputArity {
+        /// How many inputs the configuration declared.
+        declared: usize,
+    },
+    /// A declared input and a node claim the same id.
+    ///
+    /// Ids are one namespace — a node names an input in `inputs` exactly as
+    /// it names another node — so an id resolving to both is ambiguous. The
+    /// same reasoning as [`ValidationError::DuplicateId`], across the two
+    /// kinds of thing an id can name.
+    #[error("declared input `{}` is also a node id", id.as_str())]
+    InputCollidesWithNode {
+        /// The id claimed by both a declared input and a node.
+        id: NodeId,
     },
     /// The graph of data edges (a node's `inputs`) is not acyclic.
     // `nodes` walks consumer -> producer (a node, then its input), the
@@ -131,7 +183,8 @@ pub enum ValidationError {
         /// The position, within `consumer`'s `inputs`, of the mismatched
         /// edge.
         port: usize,
-        /// The node producing the value on the mismatched edge.
+        /// The node — or, since ADR-C18, the declared pipeline input —
+        /// producing the value on the mismatched edge.
         producer: NodeId,
         /// The kind `consumer` declares at `port`, or `None` when `port` is
         /// beyond what a fixed-arity variant declares.
@@ -275,14 +328,29 @@ fn lower_node(raw: RawNode) -> Result<LogicalNode, ValidationError> {
 ///    `RawPipeline` listed its nodes;
 /// 3. checks every id is unique ([`ValidationError::DuplicateId`]) —
 ///    referential integrity is meaningless without unique ids;
-/// 4. checks every `inputs` entry names a node that exists
+/// 4. checks the pipeline declares exactly one input
+///    ([`ValidationError::InputArity`]) and that no declaration claims a node's
+///    id ([`ValidationError::InputCollidesWithNode`]), ADR-C18;
+/// 5. checks every `inputs` entry names a node or a declared input
 ///    ([`ValidationError::DanglingInput`]);
-/// 5. checks the graph of data edges is acyclic
+/// 6. checks the graph of data edges is acyclic
 ///    ([`ValidationError::Cycle`]);
-/// 6. checks every edge's value kinds line up ([`check_kinds`], ADR-C16),
+/// 7. checks every edge's value kinds line up ([`check_kinds`], ADR-C16),
 ///    skipping an `Extension` node on either side of an edge
 ///    ([`ValidationError::KindMismatch`]).
 pub fn validate(raw: RawPipeline) -> Result<LogicalPipeline, ValidationError> {
+    // First, and before any work: a document this build cannot read is
+    // refused for the version it is written in. An absent `version` defaults
+    // to `PRE_VERSIONING` and so never reached `SchemaVersion::new`, which is
+    // why this check cannot live at deserialization alone.
+    if raw.version.get() != SchemaVersion::SUPPORTED {
+        return Err(ValidationError::UnsupportedSchemaVersion {
+            found: raw.version.get(),
+        });
+    }
+
+    let inputs: Vec<NodeId> = raw.pipeline.inputs.into_iter().map(NodeId::new).collect();
+
     let mut nodes = raw
         .pipeline
         .nodes
@@ -314,9 +382,25 @@ pub fn validate(raw: RawPipeline) -> Result<LogicalPipeline, ValidationError> {
         }
     }
 
+    // The declared inputs, checked once the node ids are known so that the
+    // collision below can be decided, and before referential integrity so
+    // that an id resolving to two things is reported as the ambiguity it is
+    // rather than as whichever edge happened to be walked first.
+    if inputs.len() != 1 {
+        return Err(ValidationError::InputArity {
+            declared: inputs.len(),
+        });
+    }
+    let declared: HashSet<&NodeId> = inputs.iter().collect();
+    for input in &inputs {
+        if index.contains_key(input) {
+            return Err(ValidationError::InputCollidesWithNode { id: input.clone() });
+        }
+    }
+
     for node in &nodes {
         for input in node.inputs() {
-            if !index.contains_key(input) {
+            if !index.contains_key(input) && !declared.contains(input) {
                 return Err(ValidationError::DanglingInput {
                     node: node.id().clone(),
                     missing: input.clone(),
@@ -331,12 +415,17 @@ pub fn validate(raw: RawPipeline) -> Result<LogicalPipeline, ValidationError> {
 
     check_kinds(&nodes, &index)?;
 
-    Ok(LogicalPipeline::new(nodes))
+    Ok(LogicalPipeline::new(inputs, nodes))
 }
 
 /// Checks every edge's value kinds line up (ADR-C16), given `nodes` is
 /// already known to be acyclic and every `inputs` entry already known to
 /// resolve (`index` maps a [`NodeId`] to its position in `nodes`).
+///
+/// An `inputs` entry `index` does not know is therefore a **declared pipeline
+/// input** (ADR-C18) rather than a fault: it produces [`ValueKind::Query`],
+/// which is the whole reason the declaration exists, since no [`LogicalNode`]
+/// variant produces one.
 ///
 /// For each node, for each `(position, input_id)` in its `inputs`, this first
 /// derives `expected` — the kind [`consumed_kinds`] declares the consumer
@@ -371,8 +460,6 @@ fn check_kinds(
         let spec = consumed_kinds(node);
 
         for (position, input_id) in node.inputs().iter().enumerate() {
-            let producer = &nodes[index[input_id]];
-
             let expected = match &spec {
                 PortSpec::Fixed(kinds) => kinds.get(position).copied(),
                 PortSpec::Variadic(kind) => Some(*kind),
@@ -383,19 +470,29 @@ fn check_kinds(
                 }
             };
 
-            // The consumer's arity is checked above regardless of the
-            // producer's variant. Only when a port genuinely exists does an
-            // Extension producer's kind stay unguessed.
-            if expected.is_some() && matches!(producer, LogicalNode::Extension(_)) {
-                continue;
-            }
+            let found = match index.get(input_id) {
+                Some(&at) => {
+                    let producer = &nodes[at];
+                    // The consumer's arity is checked above regardless of the
+                    // producer's variant. Only when a port genuinely exists
+                    // does an Extension producer's kind stay unguessed.
+                    if expected.is_some() && matches!(producer, LogicalNode::Extension(_)) {
+                        continue;
+                    }
+                    produced_kind(producer)
+                }
+                // Not a node, so a declared pipeline input — the dangling
+                // check ran already and left no third possibility. Its kind
+                // follows from the graph, never from a declaration
+                // (ADR-C16, ADR-C18).
+                None => ValueKind::Query,
+            };
 
-            let found = produced_kind(producer);
             if expected != Some(found) {
                 return Err(ValidationError::KindMismatch {
                     consumer: node.id().clone(),
                     port: position,
-                    producer: producer.id().clone(),
+                    producer: input_id.clone(),
                     expected,
                     found,
                 });
@@ -435,7 +532,12 @@ fn find_cycle(nodes: &[LogicalNode], index: &HashMap<NodeId, usize>) -> Option<V
         path.push(nodes[position].id().clone());
 
         for input in nodes[position].inputs() {
-            let next = index[input];
+            // A declared pipeline input is a source: it resolves (dangling
+            // inputs are checked before this runs) but has no node, hence no
+            // outgoing edge, hence no way onto a cycle.
+            let Some(&next) = index.get(input) else {
+                continue;
+            };
             match color[next] {
                 Color::White => {
                     if let Some(cycle) = visit(next, nodes, index, color, path) {
@@ -686,11 +788,184 @@ mod tests {
         }
     }
 
+    /// A `RawPipeline` declaring the one input ADR-C18 requires of a serving
+    /// graph, named `question`. Nothing is obliged to consume it.
     fn pipeline(nodes: Vec<RawNode>) -> RawPipeline {
+        pipeline_declaring(&["question"], nodes)
+    }
+
+    /// A `RawPipeline` declaring exactly the inputs given — what the arity and
+    /// collision checks need, and what `pipeline` hides behind the single
+    /// declaration every other test wants.
+    fn pipeline_declaring(inputs: &[&str], nodes: Vec<RawNode>) -> RawPipeline {
         RawPipeline {
-            version: Default::default(),
-            pipeline: RawGraph { nodes },
+            version: SchemaVersion::new(SchemaVersion::SUPPORTED)
+                .expect("the supported version is supported"),
+            pipeline: RawGraph {
+                inputs: inputs.iter().map(|s| s.to_string()).collect(),
+                nodes,
+            },
         }
+    }
+
+    // --- ADR-C18: the pipeline's own input declaration ---
+
+    #[test]
+    fn a_pipeline_declaring_no_input_is_rejected() {
+        let raw = pipeline_declaring(&[], vec![node("r", "retriever", &[])]);
+        let err = validate(raw).unwrap_err();
+        assert_eq!(err, ValidationError::InputArity { declared: 0 });
+        assert!(
+            err.to_string().contains("exactly one"),
+            "the message must say how many are required: {err}"
+        );
+    }
+
+    #[test]
+    fn a_pipeline_declaring_two_inputs_is_rejected() {
+        let raw = pipeline_declaring(&["question", "corpus"], vec![node("r", "retriever", &[])]);
+        assert_eq!(
+            validate(raw).unwrap_err(),
+            ValidationError::InputArity { declared: 2 }
+        );
+    }
+
+    #[test]
+    fn a_repeated_declaration_is_reported_as_arity_not_as_a_duplicate() {
+        // `[question, question]` declares two inputs, so the arity check
+        // catches it first and there is no reachable duplicate-input fault.
+        // Pinned so that a later relaxation of the arity rule is forced to
+        // decide what a repeat means rather than inheriting silence.
+        let raw = pipeline_declaring(&["question", "question"], vec![node("r", "retriever", &[])]);
+        assert_eq!(
+            validate(raw).unwrap_err(),
+            ValidationError::InputArity { declared: 2 }
+        );
+    }
+
+    #[test]
+    fn a_declared_input_that_is_also_a_node_id_is_rejected() {
+        // Ids are one namespace: a node names an input exactly as it names
+        // another node, so an id resolving to both is ambiguous.
+        let raw = pipeline_declaring(&["shared"], vec![node("shared", "retriever", &[])]);
+        let err = validate(raw).unwrap_err();
+        assert_eq!(
+            err,
+            ValidationError::InputCollidesWithNode {
+                id: NodeId::new("shared")
+            }
+        );
+        assert!(
+            err.to_string().contains("shared"),
+            "the message must name the colliding id: {err}"
+        );
+    }
+
+    #[test]
+    fn a_node_consuming_the_declared_input_validates() {
+        let raw = pipeline(vec![node("r", "retriever", &["question"])]);
+        let logical = validate(raw).expect("a retriever fed by the declared input must validate");
+        assert_eq!(logical.inputs(), &[NodeId::new("question")]);
+    }
+
+    #[test]
+    fn a_reranker_wired_to_the_declared_input_and_a_fusion_validates() {
+        // The shape ADR-C18 exists for: port 0 is the query, port 1 the
+        // chunks, and neither needs an `Extension` to be satisfied.
+        let raw = pipeline(vec![
+            node("fuse", "fusion", &["leg"]),
+            node("leg", "retriever", &["question"]),
+            node("rank", "reranker", &["question", "fuse"]),
+        ]);
+        validate(raw).expect("a reranker wired [question, fuse] must validate");
+    }
+
+    #[test]
+    fn a_reranker_with_its_two_ports_swapped_is_rejected() {
+        // `inputs` is positional (ADR-C16) and canonicalization never
+        // reorders it, so [fuse, question] is a different, invalid pipeline.
+        let raw = pipeline(vec![
+            node("fuse", "fusion", &["leg"]),
+            node("leg", "retriever", &["question"]),
+            node("rank", "reranker", &["fuse", "question"]),
+        ]);
+        assert_eq!(
+            validate(raw).unwrap_err(),
+            ValidationError::KindMismatch {
+                consumer: NodeId::new("rank"),
+                port: 0,
+                producer: NodeId::new("fuse"),
+                expected: Some(ValueKind::Query),
+                found: ValueKind::Chunks,
+            }
+        );
+    }
+
+    #[test]
+    fn a_fusion_fed_by_the_declared_input_is_a_kind_mismatch() {
+        // A declared input produces `Query`; a fusion consumes `Chunks`. The
+        // declaration is not a hole in the check — it participates in it.
+        let raw = pipeline(vec![node("fuse", "fusion", &["question"])]);
+        assert_eq!(
+            validate(raw).unwrap_err(),
+            ValidationError::KindMismatch {
+                consumer: NodeId::new("fuse"),
+                port: 0,
+                producer: NodeId::new("question"),
+                expected: Some(ValueKind::Chunks),
+                found: ValueKind::Query,
+            }
+        );
+    }
+
+    #[test]
+    fn a_declared_input_is_never_reported_as_a_dangling_input() {
+        let raw = pipeline(vec![node("r", "retriever", &["question"])]);
+        assert!(validate(raw).is_ok());
+    }
+
+    #[test]
+    fn a_declared_input_is_a_source_and_cannot_be_on_a_cycle() {
+        // The cycle search walks a node to each id in its `inputs`; a
+        // declared input has no node, so the walk must stop there rather
+        // than index a position that does not exist.
+        let raw = pipeline(vec![
+            node("a", "retriever", &["question"]),
+            node("b", "fusion", &["a"]),
+        ]);
+        validate(raw).expect("a graph rooted at the declared input is acyclic");
+    }
+
+    #[test]
+    fn the_declaration_survives_canonicalization_unchanged() {
+        let raw = pipeline(vec![
+            node("zeta", "retriever", &["question"]),
+            node("alpha", "retriever", &["question"]),
+        ]);
+        let logical = validate(raw).expect("the fixture must validate");
+        // The node list is sorted; the declaration is not touched.
+        let ids: Vec<&str> = logical.nodes().iter().map(|n| n.id().as_str()).collect();
+        assert_eq!(ids, vec!["alpha", "zeta"]);
+        assert_eq!(logical.inputs(), &[NodeId::new("question")]);
+    }
+
+    #[test]
+    fn a_document_in_the_version_that_predates_the_field_is_refused() {
+        let raw = RawPipeline {
+            version: Default::default(),
+            pipeline: RawGraph {
+                inputs: vec!["question".to_string()],
+                nodes: vec![node("r", "retriever", &["question"])],
+            },
+        };
+        let err = validate(raw).unwrap_err();
+        assert_eq!(
+            err,
+            ValidationError::UnsupportedSchemaVersion {
+                found: SchemaVersion::PRE_VERSIONING
+            },
+            "an unversioned document must fail on its version, not on a consequence of it"
+        );
     }
 
     #[test]
@@ -727,9 +1002,11 @@ mod tests {
 
     #[test]
     fn an_empty_inputs_list_validates_as_a_source_node() {
-        // Settled reading A2: a node with no `inputs` is a source node, not
-        // an error — the executor supplies the query.
-        let raw = pipeline(vec![node("question", "retriever", &[])]);
+        // Settled reading A2: a node with no `inputs` is not an error — how
+        // few a variant declares stays unchecked here, and is the executor's
+        // (#16). ADR-C18 did not change that: it gave the query a producer to
+        // be wired to, and did not start enforcing arity.
+        let raw = pipeline(vec![node("lonely", "retriever", &[])]);
         let logical = validate(raw).expect("an empty inputs list must not be rejected");
         assert_eq!(logical.nodes().len(), 1);
     }
@@ -853,8 +1130,9 @@ mod tests {
         // key order in the source text is what differs, not two
         // already-equal maps.
         let forward = r#"
-version: 1
+version: 2
 pipeline:
+  inputs: [question]
   nodes:
     - id: bm25_leg
       component: retriever
@@ -879,8 +1157,9 @@ pipeline:
         // Same nodes, listed in reverse, each with its `params` keys written
         // in the opposite order.
         let reversed = r#"
-version: 1
+version: 2
 pipeline:
+  inputs: [question]
   nodes:
     - id: rrf
       component: fusion
@@ -989,20 +1268,108 @@ pipeline:
     }
 
     #[test]
+    fn the_retrieval_half_of_section_5_1_validates_as_written() {
+        // `docs/system-architecture.md` §5.1 is the document ADR-C18 amended,
+        // so it must be checked rather than trusted. This is its **retrieval
+        // half**, copied from that YAML: the declaration, the query
+        // transform, both retrieval legs, the fusion and the reranker.
+        //
+        // The document illustrates further than this crate reaches, in three
+        // ways that all predate ADR-C18 and none of which it owns:
+        //
+        // - `gate` is a `control: branch` node, and `Branch`/`Loop` have no
+        //   representation here yet (see `node.rs`);
+        // - `grade` and `generate` name families whose `LogicalNode` variants
+        //   arrive with M3;
+        // - `transform` is written `component: query_transform`, a family
+        //   name with no variant either, so the fixture below writes it the
+        //   way settled reading A1 requires it be written today —
+        //   `component: extension` — keeping §5.1's graph *shape* exactly.
+        //
+        // So this pins the half that is representable, in the shape §5.1
+        // gives it, rather than pretending the whole example parses.
+        let doc = r#"
+version: 2
+pipeline:
+  inputs: [question]
+  nodes:
+    - id: transform
+      component: extension          # §5.1 writes `query_transform`; see above
+      impl: hyde
+      inputs: [question]
+
+    - id: dense
+      component: retriever
+      impl: qdrant_dense
+      inputs: [transform]
+      params: { top_k: 50 }
+
+    - id: sparse
+      component: retriever
+      impl: bm25
+      inputs: [transform]
+      params: { top_k: 50 }
+
+    - id: fuse
+      component: fusion
+      impl: rrf
+      inputs: [dense, sparse]
+
+    - id: rerank
+      component: reranker
+      impl: cross_encoder_v2
+      inputs: [question, fuse]
+      params: { top_k: 8 }
+"#;
+        let raw: RawPipeline = serde_yaml::from_str(doc).expect("§5.1 must parse");
+        let logical = validate(raw).expect("§5.1's retrieval half must validate as written");
+        assert_eq!(logical.inputs(), &[NodeId::new("question")]);
+
+        // `query_transform` has no `LogicalNode` variant, so it lowers to
+        // `Extension` (settled reading A1) — the escape hatch still standing
+        // between the declared input and the retrievers.
+        let transform = logical
+            .nodes()
+            .iter()
+            .find(|n| n.id().as_str() == "transform")
+            .expect("transform must be present");
+        assert!(matches!(transform, LogicalNode::Extension(_)));
+
+        // Port 0 of the reranker is the declared input, port 1 the fusion,
+        // in that order and never reordered.
+        let rerank = logical
+            .nodes()
+            .iter()
+            .find(|n| n.id().as_str() == "rerank")
+            .expect("rerank must be present");
+        assert_eq!(
+            rerank.inputs(),
+            &[NodeId::new("question"), NodeId::new("fuse")]
+        );
+    }
+
+    #[test]
     fn a_reranker_wired_with_an_extension_at_the_query_port_validates() {
         // Nothing in the closed primitive set produces `ValueKind::Query`
-        // (see `produced_kind`): until a query-transform primitive exists
-        // (M3), a reranker's port 0 can only be fed through ADR-C16's
-        // `Extension` escape hatch — exactly the shape a `transform` node
-        // (`docs/system-architecture.md` §5.1) lowers to under settled
-        // reading A1, since that family has no `LogicalNode` variant of its
-        // own. That producer is skipped by the kind check, so this pipeline
-        // validates today, and this test is the proof a reranker can be
-        // wired at all.
+        // (see `produced_kind`), and this test once carried the reason a
+        // reranker's port 0 *had* to be an `Extension`: there was nothing
+        // else to feed it. ADR-C18 removed that necessity — a declared
+        // pipeline input produces `Query`, and
+        // `a_reranker_wired_to_the_declared_input_and_a_fusion_validates`
+        // is now the proof a reranker can be wired at all.
+        //
+        // What this test still pins is that the escape hatch stays open: a
+        // `transform` node (`docs/system-architecture.md` §5.1) lowers to
+        // `Extension` under settled reading A1, since that family has no
+        // `LogicalNode` variant of its own, and an `Extension` producer at a
+        // port that exists is skipped by the kind check (ADR-C16). Wiring a
+        // query transform between the declared input and a reranker must
+        // keep validating — that is the whole point of declaring the query
+        // rather than making it ambient.
         let raw = pipeline(vec![
-            node("qx", "extension", &[]),
-            node("a", "retriever", &[]),
-            node("b", "retriever", &[]),
+            node("qx", "extension", &["question"]),
+            node("a", "retriever", &["qx"]),
+            node("b", "retriever", &["qx"]),
             node("rrf", "fusion", &["a", "b"]),
             node("k", "reranker", &["qx", "rrf"]),
         ]);

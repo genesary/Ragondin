@@ -9,7 +9,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::node::LogicalNode;
+use crate::node::{LogicalNode, NodeId};
 
 /// A validated, canonical pipeline.
 ///
@@ -43,6 +43,12 @@ use crate::node::LogicalNode;
 /// - **A node's `inputs`.** Positional and order-significant (ADR-C16): a
 ///   fusion consuming `[a, b]` and one consuming `[b, a]` are two different
 ///   pipelines, never sorted or deduplicated into one.
+/// - **The pipeline's own `inputs`.** The same rule, for the same reason
+///   (ADR-C18): the declared inputs are the graph's signature, positional
+///   like a node's, and #10 hashes this value directly. A serving pipeline
+///   declares exactly one today, so the ordering is not yet observable —
+///   which is precisely why the rule is written down now rather than
+///   discovered later.
 /// - **A node's `params` values**, e.g. the elements of a `List` — order
 ///   within a list is part of the value.
 ///
@@ -52,18 +58,31 @@ use crate::node::LogicalNode;
 /// here, never serialized, never hashed.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct LogicalPipeline {
+    inputs: Vec<NodeId>,
     nodes: Vec<LogicalNode>,
 }
 
 impl LogicalPipeline {
-    /// Wraps an already-validated node list.
+    /// Wraps an already-validated declaration and node list.
     ///
     /// Not exposed outside this crate: [`crate::validate::validate`] is the
     /// only place that establishes referential integrity and acyclicity, so
     /// it is the only legitimate way to produce a `LogicalPipeline` from a
     /// `RawPipeline`.
-    pub(crate) fn new(nodes: Vec<LogicalNode>) -> Self {
-        Self { nodes }
+    pub(crate) fn new(inputs: Vec<NodeId>, nodes: Vec<LogicalNode>) -> Self {
+        Self { inputs, nodes }
+    }
+
+    /// The values this pipeline receives from its caller, in the order the
+    /// source configuration declared them (ADR-C18).
+    ///
+    /// These are the ids a node may name in its `inputs` besides another
+    /// node's: they are what gives [`crate::ValueKind::Query`] a producer,
+    /// which no [`LogicalNode`] variant is. A serving pipeline declares
+    /// exactly one, of kind `Query` — the kind follows from the graph, and is
+    /// never written in a configuration (ADR-C16).
+    pub fn inputs(&self) -> &[NodeId] {
+        &self.inputs
     }
 
     /// The pipeline's nodes, sorted by [`crate::NodeId`] (see the

@@ -7,8 +7,8 @@
 //! the surface an external consumer actually sees.
 
 use ragondin_pipeline::{
-    ExtensionNode, FusionNode, LogicalNode, NodeId, ParamValue, Params, RawGraph, RawNode,
-    RawParamValue, RawPipeline, RerankerNode, RetrieverNode, SchemaVersion,
+    validate, ExtensionNode, FusionNode, LogicalNode, LogicalPipeline, NodeId, ParamValue, Params,
+    RawGraph, RawNode, RawParamValue, RawPipeline, RerankerNode, RetrieverNode, SchemaVersion,
     UnsupportedSchemaVersion,
 };
 
@@ -55,8 +55,10 @@ fn every_node_type_is_reachable_from_the_crate_root() {
 #[test]
 fn every_wire_type_is_reachable_from_the_crate_root() {
     let doc = RawPipeline {
-        version: SchemaVersion::default(),
+        version: SchemaVersion::new(SchemaVersion::SUPPORTED)
+            .expect("the supported version is supported"),
         pipeline: RawGraph {
+            inputs: vec!["question".to_string()],
             nodes: vec![RawNode {
                 id: "bm25_leg".to_string(),
                 component: "retriever".to_string(),
@@ -69,10 +71,38 @@ fn every_wire_type_is_reachable_from_the_crate_root() {
         },
     };
 
-    assert_eq!(doc.version.get(), 1);
+    assert_eq!(doc.version.get(), SchemaVersion::SUPPORTED);
+    assert_eq!(doc.pipeline.inputs, vec!["question".to_string()]);
     assert_eq!(doc.pipeline.nodes[0].implementation, "bm25");
     assert_eq!(doc.pipeline.nodes[0].params["k"], RawParamValue::Int(10));
 
-    let refused: UnsupportedSchemaVersion = SchemaVersion::new(2).unwrap_err();
-    assert_eq!(refused.found(), 2);
+    let refused: UnsupportedSchemaVersion = SchemaVersion::new(7).unwrap_err();
+    assert_eq!(refused.found(), 7);
+}
+
+#[test]
+fn a_pipelines_declared_inputs_are_reachable_from_the_crate_root() {
+    // ADR-C18. `LogicalPipeline`'s field is private and its constructor is
+    // `pub(crate)`, so this accessor is what an external consumer sees — and
+    // adding it is why that change is additive to this surface rather than a
+    // break of it (INV-1). Reached through `validate`, the only door to a
+    // `LogicalPipeline` there is.
+    let doc = RawPipeline {
+        version: SchemaVersion::new(SchemaVersion::SUPPORTED)
+            .expect("the supported version is supported"),
+        pipeline: RawGraph {
+            inputs: vec!["question".to_string()],
+            nodes: vec![RawNode {
+                id: "bm25_leg".to_string(),
+                component: "retriever".to_string(),
+                implementation: "bm25".to_string(),
+                inputs: vec!["question".to_string()],
+                params: Default::default(),
+            }],
+        },
+    };
+
+    let logical: LogicalPipeline = validate(doc).expect("the fixture must validate");
+    assert_eq!(logical.inputs(), &[NodeId::new("question")]);
+    assert_eq!(logical.nodes().len(), 1);
 }

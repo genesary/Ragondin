@@ -5,7 +5,7 @@
 //! documented format and the implemented one have diverged — which is the
 //! failure INV-9 exists to prevent.
 
-use ragondin_pipeline::{RawParamValue, RawPipeline};
+use ragondin_pipeline::{RawParamValue, RawPipeline, SchemaVersion};
 
 const REFERENCE: &str = include_str!("fixtures/hybrid-retrieval.yaml");
 
@@ -17,7 +17,16 @@ fn reference() -> RawPipeline {
 fn the_reference_pipeline_from_the_documentation_deserializes() {
     let doc = reference();
 
-    assert_eq!(doc.version.get(), 1, "an absent version reads as version 1");
+    assert_eq!(
+        doc.version.get(),
+        SchemaVersion::SUPPORTED,
+        "§5.1 states the version it is written in (ADR-C18, INV-9)"
+    );
+    assert_eq!(
+        doc.pipeline.inputs,
+        vec!["question".to_string()],
+        "§5.1 declares the one input a serving graph takes (ADR-C18)"
+    );
 
     let ids: Vec<&str> = doc.pipeline.nodes.iter().map(|n| n.id.as_str()).collect();
     assert_eq!(ids, vec!["transform", "dense", "sparse", "fuse"]);
@@ -42,9 +51,10 @@ fn the_reference_pipeline_from_the_documentation_deserializes() {
     assert_eq!(impls, vec!["hyde", "qdrant_dense", "bm25", "rrf"]);
 
     let transform = &doc.pipeline.nodes[0];
-    assert!(
-        transform.inputs.is_empty(),
-        "`transform` declares no inputs"
+    assert_eq!(
+        transform.inputs,
+        vec!["question".to_string()],
+        "`transform` consumes the pipeline's declared input"
     );
     assert!(
         transform.params.is_empty(),

@@ -147,11 +147,16 @@ This is the first structuring decision. A linear pipeline, or even a purely acyc
 **Illustration.** A hybrid retrieval pipeline with reranking, augmented with a corrective step:
 
 ```yaml
+version: 2
 pipeline:
+  inputs: [question]              # the graph's signature (ADR-C18): the values
+                                  # it receives from its caller. A node consumes
+                                  # one by naming it, exactly as it names a node.
   nodes:
     - id: transform
       component: query_transform
       impl: hyde                    # a "named technique" is just an impl value
+      inputs: [question]
 
     - id: dense
       component: retriever
@@ -173,7 +178,13 @@ pipeline:
     - id: rerank
       component: reranker
       impl: cross_encoder_v2        # may be Local OR Remote — the representation
-      inputs: [fuse]                # does not distinguish them
+      inputs: [question, fuse]      # does not distinguish them.
+                                    # Two positional ports: the query to score
+                                    # against, then the chunks to reorder. Writing
+                                    # `transform` instead of `question` here
+                                    # reranks against the rewritten query — which
+                                    # is the experiment, and why the query is an
+                                    # edge rather than an ambient value.
       params: { top_k: 8 }
 
     - id: grade
@@ -207,6 +218,7 @@ flowchart LR
   D --> F["fusion<br/>impl: rrf"]
   S --> F
   F --> R["reranker<br/>impl: cross_encoder_v2"]
+  Q --> R
   R --> GR["grader<br/>impl: llm_grader"]
   GR --> GATE{"branch:<br/>grade.score &lt; 0.5 ?"}
   GATE -->|yes| W["retriever<br/>impl: web_search"]

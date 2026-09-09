@@ -11,11 +11,11 @@
 //! derivation `ragondin-pipeline` exposes — never a second copy of it, which
 //! would drift from the one `ragondin validate` runs.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use ragondin_contracts::{Fusion, Reranker, Retriever};
 use ragondin_pipeline::{
-    consumed_kinds, produced_kind, LogicalNode, LogicalPipeline, NodeId, PortSpec,
+    consumed_kinds, produced_kind, LogicalNode, LogicalPipeline, NodeId, PortSpec, ValueKind,
 };
 
 use crate::context::EngineContext;
@@ -137,7 +137,8 @@ pub fn plan_physical(
 
     let index: HashMap<&NodeId, &LogicalNode> =
         nodes.iter().map(|node| (node.id(), node)).collect();
-    check_kinds(nodes, &index)?;
+    let declared: HashSet<&NodeId> = logical.inputs().iter().collect();
+    check_kinds(nodes, &index, &declared)?;
 
     let nodes = nodes
         .iter()
@@ -172,6 +173,10 @@ fn optimize(logical: &LogicalPipeline) -> &LogicalPipeline {
 /// with the other one clause for clause — including the `Extension`-producer
 /// clause below, which nothing here can currently reach.
 ///
+/// An `inputs` entry `index` does not know is a **declared pipeline input**
+/// (ADR-C18) when `declared` holds it, and produces [`ValueKind::Query`]; only
+/// an id that is neither is left to the executor.
+///
 /// What this layer is *for* is an [`LogicalNode::Extension`] node, whose kinds
 /// only the registry knows. There is no registry entry for one to consult (see
 /// [`PlanError::ExtensionUnsupported`] and #93), and every `Extension` is
@@ -184,16 +189,12 @@ fn optimize(logical: &LogicalPipeline) -> &LogicalPipeline {
 fn check_kinds(
     nodes: &[LogicalNode],
     index: &HashMap<&NodeId, &LogicalNode>,
+    declared: &HashSet<&NodeId>,
 ) -> Result<(), PlanError> {
     for node in nodes {
         let spec = consumed_kinds(node);
 
         for (port, input_id) in node.inputs().iter().enumerate() {
-            // A dangling input belongs to the executor (see `plan_physical`).
-            let Some(producer) = index.get(input_id) else {
-                continue;
-            };
-
             let expected = match &spec {
                 PortSpec::Fixed(kinds) => kinds.get(port).copied(),
                 PortSpec::Variadic(kind) => Some(*kind),
@@ -202,28 +203,41 @@ fn check_kinds(
                 ),
             };
 
-            // The clause `ragondin-pipeline`'s check carries, kept here in
-            // step with it: once a port is known to exist, an `Extension`
-            // producer's kind stays unguessed (ADR-C16). Unreachable today,
-            // since every `Extension` is refused before this runs — but its
-            // *absence* is what would make the two layers disagree the day #93
-            // lands, rejecting an edge `validate` accepts (which
-            // `ragondin-pipeline`'s own
-            // `an_extension_feeding_a_primitive_and_fed_by_one_validates`
-            // requires to stay legal).
-            if expected.is_some() && matches!(producer, LogicalNode::Extension(_)) {
-                continue;
-            }
-
             // Derived from the *producer*, never from `node`: indistinguishable
             // today, since every primitive produces `Chunks`, and a live bug the
             // moment a node kind that does not arrives (#93, or a generator).
-            let found = produced_kind(producer);
+            let found = match index.get(input_id) {
+                Some(producer) => {
+                    // The clause `ragondin-pipeline`'s check carries, kept here
+                    // in step with it: once a port is known to exist, an
+                    // `Extension` producer's kind stays unguessed (ADR-C16).
+                    // Unreachable today, since every `Extension` is refused
+                    // before this runs — but its *absence* is what would make
+                    // the two layers disagree the day #93 lands, rejecting an
+                    // edge `validate` accepts (which `ragondin-pipeline`'s own
+                    // `an_extension_feeding_a_primitive_and_fed_by_one_validates`
+                    // requires to stay legal).
+                    if expected.is_some() && matches!(producer, LogicalNode::Extension(_)) {
+                        continue;
+                    }
+                    produced_kind(producer)
+                }
+                // A declared pipeline input (ADR-C18) produces `Query`.
+                // Resolving it here is not optional bookkeeping: without it
+                // this loop would fall through to the arm below and skip the
+                // one edge the declaration exists to carry, silently accepting
+                // a wiring `validate` rejects.
+                None if declared.contains(input_id) => ValueKind::Query,
+                // Neither a node nor a declaration: still the executor's
+                // business (see `plan_physical`).
+                None => continue,
+            };
+
             if expected != Some(found) {
                 return Err(PlanError::KindMismatch {
                     consumer: node.id().clone(),
                     port,
-                    producer: producer.id().clone(),
+                    producer: input_id.clone(),
                     expected,
                     found,
                 });
@@ -271,7 +285,7 @@ mod tests {
         ComponentError, FusionParams, RerankParams, Reranker, RetrieveParams, Retriever,
     };
     use ragondin_pipeline::{
-        validate, ParamValue, Params, RawGraph, RawNode, RawParamValue, RawPipeline,
+        validate, ParamValue, Params, RawGraph, RawNode, RawParamValue, RawPipeline, SchemaVersion,
         ValidationError, ValueKind,
     };
     use ragondin_types::{Chunk, ChunkId, DocId, Query, QueryId, ScoredChunk};
@@ -389,9 +403,19 @@ mod tests {
 
     /// The legitimate way to a `LogicalPipeline`: through validation.
     fn logical(nodes: Vec<RawNode>) -> LogicalPipeline {
+        logical_declaring(&["question"], nodes)
+    }
+
+    /// The same, declaring exactly the inputs given (ADR-C18) — for a fixture
+    /// that wires a node to the pipeline's input rather than to another node.
+    fn logical_declaring(inputs: &[&str], nodes: Vec<RawNode>) -> LogicalPipeline {
         validate(RawPipeline {
-            version: Default::default(),
-            pipeline: RawGraph { nodes },
+            version: SchemaVersion::new(SchemaVersion::SUPPORTED)
+                .expect("the supported version is supported"),
+            pipeline: RawGraph {
+                inputs: inputs.iter().map(|s| s.to_string()).collect(),
+                nodes,
+            },
         })
         .expect("the fixture must validate")
     }
@@ -564,7 +588,7 @@ mod tests {
         // impl below is registered, so the kind check is the only thing that
         // can refuse this plan.
         let pipeline = forged(
-            r#"{"nodes":[
+            r#"{"inputs":[],"nodes":[
                 {"Retriever":{"id":"leg","implementation":"bm25","inputs":[],"params":{}}},
                 {"Reranker":{"id":"rank","implementation":"cross_encoder","inputs":["leg","leg"],"params":{}}}
             ]}"#,
@@ -605,7 +629,7 @@ mod tests {
         // conflating the two is how a branch goes uncovered while looking
         // covered.
         let pipeline = forged(
-            r#"{"nodes":[
+            r#"{"inputs":[],"nodes":[
                 {"Retriever":{"id":"a","implementation":"bm25","inputs":[],"params":{}}},
                 {"Retriever":{"id":"b","implementation":"dense","inputs":["a","a"],"params":{}}}
             ]}"#,
@@ -639,7 +663,7 @@ mod tests {
         // build, since every primitive produces `Chunks` and every fixed port 0
         // wants `Query`, so no edge can match port 0 and then overflow arity.
         let pipeline = forged(
-            r#"{"nodes":[
+            r#"{"inputs":[],"nodes":[
                 {"Retriever":{"id":"a","implementation":"bm25","inputs":[],"params":{}}},
                 {"Retriever":{"id":"b","implementation":"dense","inputs":["nowhere","a"],"params":{}}}
             ]}"#,
@@ -677,7 +701,7 @@ mod tests {
         // and is skipped; port 1 legitimately takes the chunks a retriever
         // produces, so this must plan.
         let pipeline = forged(
-            r#"{"nodes":[
+            r#"{"inputs":[],"nodes":[
                 {"Retriever":{"id":"leg","implementation":"bm25","inputs":[],"params":{}}},
                 {"Reranker":{"id":"rank","implementation":"cross_encoder","inputs":["nowhere","leg"],"params":{}}}
             ]}"#,
@@ -716,7 +740,7 @@ mod tests {
         // Planning must not grow a third copy of it — and must not panic on
         // one either, which is what the lookup's `else { continue }` is for.
         let pipeline = forged(
-            r#"{"nodes":[
+            r#"{"inputs":[],"nodes":[
                 {"Fusion":{"id":"fuse","implementation":"rrf","inputs":["nowhere"],"params":{}}}
             ]}"#,
         );
@@ -733,7 +757,7 @@ mod tests {
         // one-node graph. Here the dangling edge comes first and a genuine
         // fault comes after it, so only the former still reports.
         let pipeline = forged(
-            r#"{"nodes":[
+            r#"{"inputs":[],"nodes":[
                 {"Fusion":{"id":"fuse","implementation":"rrf","inputs":["nowhere"],"params":{}}},
                 {"Reranker":{"id":"rank","implementation":"cross_encoder","inputs":["fuse","fuse"],"params":{}}}
             ]}"#,
@@ -823,7 +847,7 @@ mod tests {
             }),
         );
         let pipeline = forged(
-            r#"{"nodes":[
+            r#"{"inputs":[],"nodes":[
                 {"Retriever":{"id":"leg","implementation":"counted","inputs":[],"params":{}}},
                 {"Reranker":{"id":"rank","implementation":"cross_encoder","inputs":["leg","leg"],"params":{}}}
             ]}"#,
@@ -838,6 +862,82 @@ mod tests {
             constructions.load(Ordering::SeqCst),
             0,
             "no component may be constructed for a plan the kind check refuses"
+        );
+    }
+
+    #[test]
+    fn a_declared_input_feeding_a_chunks_port_is_refused_at_planning() {
+        // The trap this issue exists to avoid. Planning resolves a producer
+        // through its node index; a declared input (ADR-C18) is not in it, and
+        // the arm that used to catch a miss simply skipped the edge. If this
+        // layer ever falls back to that skip, planning silently accepts a
+        // wiring `validate` rejects — and the two layers ADR-C16 calls "one
+        // derivation, two call sites" disagree.
+        //
+        // Forged, because `validate` refuses exactly this: the point is what
+        // the *second* layer does with a pipeline that did not come through
+        // the first.
+        let pipeline = forged(
+            r#"{"inputs":["question"],"nodes":[
+                {"Fusion":{"id":"fuse","implementation":"rrf","inputs":["question"],"params":{}}}
+            ]}"#,
+        );
+
+        let Err(err) = plan_physical(&pipeline, &context()) else {
+            panic!("the pipeline's query cannot feed a fusion's chunk port")
+        };
+
+        assert!(
+            matches!(
+                &err,
+                PlanError::KindMismatch {
+                    consumer,
+                    port: 0,
+                    producer,
+                    expected: Some(ValueKind::Chunks),
+                    found: ValueKind::Query,
+                } if consumer.as_str() == "fuse" && producer.as_str() == "question"
+            ),
+            "expected KindMismatch at port 0 naming the declared input, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn an_id_that_is_neither_a_node_nor_a_declaration_is_still_left_to_the_executor() {
+        // The third arm, kept distinct from the one above: a genuinely
+        // unresolvable id is not this layer's fault to report. Only a
+        // `LogicalPipeline` that bypassed `validate` can hold one.
+        let pipeline = forged(
+            r#"{"inputs":[],"nodes":[
+                {"Fusion":{"id":"fuse","implementation":"rrf","inputs":["nowhere"],"params":{}}}
+            ]}"#,
+        );
+        plan_physical(&pipeline, &context()).expect("a dangling input is not planning's to refuse");
+    }
+
+    #[test]
+    fn a_reranker_wired_to_the_declared_input_plans_end_to_end() {
+        // The acceptance criterion of ADR-C18, and what was impossible before
+        // it: a reranker's port 0 wants a `Query`, no primitive produces one,
+        // and the only previous filler was an `Extension` node — which
+        // `plan_physical` refuses outright (see
+        // `an_extension_node_is_refused_as_unsupported`). With the query
+        // declared, the whole graph resolves with no extension anywhere.
+        let pipeline = logical(vec![
+            raw("leg", "retriever", "bm25", &["question"]),
+            raw("fuse", "fusion", "rrf", &["leg"]),
+            raw("rank", "reranker", "cross_encoder", &["question", "fuse"]),
+        ]);
+
+        let physical = plan_physical(&pipeline, &context())
+            .expect("a reranker fed by the declared input must plan");
+        assert_eq!(physical.nodes().len(), 3);
+        assert!(
+            !pipeline
+                .nodes()
+                .iter()
+                .any(|n| matches!(n, LogicalNode::Extension(_))),
+            "the point is that no Extension is needed"
         );
     }
 
