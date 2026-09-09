@@ -1,7 +1,7 @@
 ---
 id: ADR-C18
 title: A pipeline declares its inputs; the query is an explicit edge
-status: accepted
+status: amended
 invariants: [INV-1, INV-8, INV-9]
 supersedes: []
 superseded_by: null
@@ -70,12 +70,28 @@ Four rules follow, and they are the whole decision.
 - **`ValueKind::Query` has a producer**, so a reranker no longer depends on the extension escape hatch, and a pipeline containing one becomes plannable without waiting on extension lookup.
 - **`Generator` and `Grader` inherit the answer** when they arrive, instead of inheriting the question three more times.
 - **§5.1 must be amended** — its `pipeline:` block gains `inputs:`, its retriever and reranker nodes name it, and its mermaid diagram becomes literally accurate. `node.rs`'s module documentation is untouched. One of the two had to lose; the illustrative document loses, not the doc comment on an INV-1 boundary.
-- **The change to `LogicalPipeline` is additive.** Its `nodes` field is private and its constructor is `pub(crate)`, so a private field plus an accessor adds to the public surface without breaking it. The change to the raw wire type is a breaking struct change, sanctioned here and nowhere else, and it bumps `SchemaVersion` per INV-9.
+- **This decision makes four breaking changes on `ragondin-pipeline`'s stable surface (INV-1), sanctioned here and nowhere else.** `RawGraph` gains a public `inputs` field, and the wire `SchemaVersion` bumps with it per INV-9. `ValidationError` gains the variants the new rules are reported through. `LogicalPipeline`'s derived `Deserialize` gains a required field — its struct field is private and its constructor is `pub(crate)`, so no Rust caller breaks, but the derive is public API and a logical form written before this decision no longer reads. And `impl Default for SchemaVersion` is removed, because once `SUPPORTED` and `PRE_VERSIONING` differ a default would have to yield a version the build refuses, which is a trap a caller discovers only at validation. See the Amendments section: an earlier wording of this bullet claimed the `LogicalPipeline` change was additive.
 - **The canonical form changes** (INV-8): declared inputs are ordinary configuration data, entering it totally and deterministically with no defaulting step. Content-addressed hashing is not yet implemented and no `run_id` has ever been stored, so nothing is rehashed. This cost is at its minimum now and rises monotonically.
 - **Configurations become more verbose.** A pipeline names its input once and repeats it on nearly every node. This is accepted deliberately: on this platform the configuration *is* the experiment, and the edge that reads as ceremony is exactly the one edited to move a node from the raw query to a rewritten one — and to measure which retrieves better.
 - **Nothing here bears on whether indexing shares the pipeline formalism.** That question stays open. The mechanism says only that a graph declares what it receives, which is true whether the project ends with one kind of graph or two; the alternatives rejected above are the ones that would have implicitly bet on one.
 - No entry in `docs/OPEN_QUESTIONS.md` is opened, closed, or changed.
 
+## Amendments
+
+### 2026-09-09 — the `LogicalPipeline` change is not additive
+
+**Retracted.** This ADR's Consequences originally read, verbatim:
+
+> - **The change to `LogicalPipeline` is additive.** Its `nodes` field is private and its constructor is `pub(crate)`, so a private field plus an accessor adds to the public surface without breaking it. The change to the raw wire type is a breaking struct change, sanctioned here and nowhere else, and it bumps `SchemaVersion` per INV-9.
+
+**Why it is false.** The argument accounts for the Rust API and stops there. `LogicalPipeline` also derives `Deserialize`, which is public API on an INV-1 boundary, and the new field carries no `#[serde(default)]` — so a logical form serialized before this decision no longer deserializes. The implementation demonstrated it before anyone argued it: seven test fixtures holding hand-written `LogicalPipeline` JSON had to be edited to add the new field, which they would not have needed if the change were additive.
+
+Two further breaking changes were also unaccounted for. `ValidationError` gains three variants, which `core/ragondin-pipeline/ARCHITECTURE.md` requires be "a visible, deliberate act on this boundary, not a silent one". And `impl Default for SchemaVersion` was removed during implementation: once `SUPPORTED` and `PRE_VERSIONING` differ, a default has to yield a version the build refuses, so it becomes a public constructor for an always-rejected value — a trap the caller meets at validation rather than at compilation.
+
+**Why the decision still stands.** The decision rests on giving `ValueKind::Query` a producer, so that a node consuming the query can be wired at all. The retracted claim was cost accounting, not a ground: the cost is higher than stated, and INV-1 permits a break that is deliberate and named — which is what the corrected bullet now does. Since the retraction does not remove the only ground the decision rested on, this is an amendment rather than a supersession.
+
+**On whose authority.** The repository owner, after five review passes over the implementation (#114) found the claim independently three times. The Decision section is untouched, as process rule 2 requires.
+
 ## Status
 
-Accepted.
+Accepted (amended 2026-09-09).
