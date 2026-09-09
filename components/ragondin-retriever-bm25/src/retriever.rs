@@ -76,8 +76,13 @@ impl Bm25Retriever {
         // Positions are never used — a `TermQuery` needs frequencies, and this
         // component runs no phrase query — so indexing them would be paid for
         // on every corpus and read by nothing.
-        let text_indexing =
-            TextFieldIndexing::default().set_index_option(IndexRecordOption::WithFreqs);
+        // The analyzer is named rather than inherited: `"default"` is tantivy's
+        // SimpleTokenizer + RemoveLongFilter(40) + LowerCaser, and the query is
+        // run through this same field's analyzer, so naming it here fixes how
+        // both sides are tokenized.
+        let text_indexing = TextFieldIndexing::default()
+            .set_tokenizer("default")
+            .set_index_option(IndexRecordOption::WithFreqs);
         let text = schema.add_text_field(
             "text",
             TextOptions::default()
@@ -125,7 +130,7 @@ impl Bm25Retriever {
     /// in one as syntax — failing the call, or silently changing what was
     /// asked. Running the field's own analyzer instead means the query is
     /// tokenized exactly as the corpus was.
-    fn parse(&self, text: &str) -> Result<BooleanQuery, ComponentError> {
+    fn analyze(&self, text: &str) -> Result<BooleanQuery, ComponentError> {
         let mut analyzer = self
             .index
             .tokenizer_for_field(self.fields.text)
@@ -196,7 +201,7 @@ impl Retriever for Bm25Retriever {
             ));
         }
 
-        let parsed = self.parse(&query.text)?;
+        let analyzed = self.analyze(&query.text)?;
         let searcher = self.reader.searcher();
         // Every matching document, not the first `top_k` of them. `TopDocs`
         // selects at its own limit by document address, so truncating there
@@ -207,7 +212,7 @@ impl Retriever for Bm25Retriever {
         let ceiling = usize::try_from(searcher.num_docs()).unwrap_or(usize::MAX);
         let hits = searcher
             .search(
-                &parsed,
+                &analyzed,
                 &TopDocs::with_limit(ceiling.max(1)).order_by_score(),
             )
             .map_err(backend)?;
