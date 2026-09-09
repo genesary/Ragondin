@@ -1,13 +1,16 @@
-//! What physical planning refuses, and why.
+//! What physical planning and execution refuse, and why.
 //!
 //! `PlanError` is defined here rather than beside the registry because it is
 //! the whole planning pass's error: resolving a name against the registry is
 //! the first thing planning does, and the kind checks and `Extension`
-//! resolution that follow report through the same type.
+//! resolution that follow report through the same type. `ExecError` is here
+//! for the same reason, one pass later: it is the whole execution pass's
+//! error, raised by the scheduler and by each node's adapter alike.
 
 use std::fmt;
 
-use ragondin_pipeline::{NodeId, ValueKind};
+use ragondin_contracts::ComponentError;
+use ragondin_pipeline::{NodeId, ParamValue, ValueKind};
 
 /// The component families the registry keeps one table for.
 ///
@@ -193,5 +196,184 @@ fn kind_mismatch_expected_clause(expected: &Option<ValueKind>) -> String {
     match expected {
         Some(expected) => format!("expected `{expected}`, "),
         None => "no port declared at this position, ".to_string(),
+    }
+}
+
+/// What execution refuses.
+///
+/// **Exhaustive, deliberately**, for the reason [`PlanError`] states: this
+/// enum is not on a stable boundary (INV-2), so a `match` that stops compiling
+/// when a variant arrives is the intended signal that a new refusal needs
+/// reporting.
+///
+/// Three of these variants report a **defect upstream** rather than a
+/// condition to absorb — [`ExecError::KindMismatch`], [`ExecError::Cycle`] and
+/// [`ExecError::DanglingInput`] — and their messages say so.
+/// `ragondin_pipeline::validate` and [`plan_physical`] refuse the wiring each
+/// of them names, so a plan that came through both cannot raise them; a
+/// `LogicalPipeline` deserialized straight from a store or a wire is the shape
+/// that can.
+///
+/// [`plan_physical`]: crate::plan_physical
+#[derive(Debug, thiserror::Error)]
+pub enum ExecError {
+    /// The node's component was called, and failed.
+    ///
+    /// The node id is the whole diagnostic the engine can add: a
+    /// [`ComponentError`] says what went wrong and never which node it went
+    /// wrong in, because a component does not know its own node. Kept as the
+    /// [`source`] as well as rendered, so a caller can walk to the cause.
+    ///
+    /// [`source`]: std::error::Error::source
+    #[error("node `{}`: {source}", node.as_str())]
+    Component {
+        /// The node whose component failed.
+        node: NodeId,
+        /// What the component reported.
+        #[source]
+        source: ComponentError,
+    },
+
+    /// The node declares fewer inputs than its variant consumes.
+    ///
+    /// "A node has too few inputs" is deliberately unchecked at validation and
+    /// at planning — both walk the `inputs` a node *has* — so ADR-C18 leaves
+    /// it here. Unlike the three defect variants above, this one is reachable
+    /// from a pipeline that came through `validate`, and it is a user error:
+    /// a node was written without the edge it needs.
+    #[error(
+        "node `{}` has no input at port {port}, where a `{expected}` is required",
+        consumer.as_str()
+    )]
+    MissingInput {
+        /// The node missing an edge.
+        consumer: NodeId,
+        /// The position, within `consumer`'s ports, that carries no edge.
+        port: usize,
+        /// The kind `consumer` declares at `port`.
+        expected: ValueKind,
+    },
+
+    /// An edge names a producer this plan does not have.
+    ///
+    /// A defect upstream: `validate` refuses a dangling `inputs` entry, and
+    /// planning skips one rather than growing a second referential-integrity
+    /// check, which leaves the report here.
+    #[error(
+        "node `{}` port {port} names `{}`, which is neither a node of this plan nor one of its declared inputs — validation rejects this wiring, so a plan holding it did not come through it",
+        consumer.as_str(),
+        input.as_str()
+    )]
+    DanglingInput {
+        /// The node whose edge names nothing.
+        consumer: NodeId,
+        /// The position, within `consumer`'s `inputs`, of that edge.
+        port: usize,
+        /// The id the edge names.
+        input: NodeId,
+    },
+
+    /// The value on an edge is not of the kind the consuming port declares.
+    ///
+    /// ADR-C16's **backstop**, and reaching it is a defect in validation or in
+    /// planning, which both check this edge before execution — not a condition
+    /// to absorb here. Worded to send the reader upstream.
+    #[error(
+        "node `{}` port {port} (fed by `{}`): expected `{expected}`, found `{found}` — validation and planning both check this edge, so reaching it at execution is a defect in one of them",
+        consumer.as_str(),
+        producer.as_str()
+    )]
+    KindMismatch {
+        /// The node consuming the mismatched edge.
+        consumer: NodeId,
+        /// The position, within `consumer`'s `inputs`, of the mismatched edge.
+        port: usize,
+        /// The node — or declared pipeline input — on the other end.
+        producer: NodeId,
+        /// The kind `consumer` declares at `port`.
+        expected: ValueKind,
+        /// The kind the value actually is.
+        found: ValueKind,
+    },
+
+    /// No node of this plan is terminal, so there is nothing to return.
+    ///
+    /// A **terminal** node is one whose output no other node consumes. A plan
+    /// with none is either empty or cyclic.
+    #[error("this plan has no terminal node — no node's output is left unconsumed, so nothing is the pipeline's result")]
+    NoTerminalNode,
+
+    /// Several nodes of this plan are terminal, so the result is ambiguous.
+    ///
+    /// See [`ExecError::NoTerminalNode`] for what terminal means. Exactly one
+    /// is required: the executor returns one value, and nothing in the
+    /// representation says which of several unconsumed outputs it would be.
+    #[error(
+        "this plan has {} terminal nodes ({}) — exactly one node's output must be left unconsumed",
+        nodes.len(),
+        node_list(nodes)
+    )]
+    MultipleTerminalNodes {
+        /// The unconsumed nodes, in the plan's canonical order.
+        nodes: Vec<NodeId>,
+    },
+
+    /// A per-call parameter is absent, or not of the kind the executor reads.
+    ///
+    /// The executor reads a node's per-call keys from its `Params` (§6.3) and
+    /// **invents no default**: what a component does in the absence of a
+    /// parameter is the component's to decide, and a default applied here
+    /// could only be a second, disagreeing copy of it.
+    #[error(
+        "node `{}`: the per-call parameter `{key}` must be a non-negative integer, {}",
+        node.as_str(),
+        param_found_clause(found)
+    )]
+    MissingParam {
+        /// The node whose parameter is missing or unusable.
+        node: NodeId,
+        /// The parameter's key.
+        key: &'static str,
+        /// What the node declared under that key instead, if anything.
+        found: Option<ParamValue>,
+    },
+
+    /// The data-flow edges form a cycle, so none of these nodes can be
+    /// scheduled.
+    ///
+    /// A defect upstream: `validate` rejects a cyclic pipeline. Reported
+    /// rather than spun on, because a scheduler that waits for a value nothing
+    /// will produce never returns.
+    #[error(
+        "the data-flow edges of {} form a cycle, so none of them can be scheduled — validation rejects a cyclic pipeline, so a plan holding one did not come through it",
+        node_list(nodes)
+    )]
+    Cycle {
+        /// The nodes that never became ready, in the plan's canonical order.
+        nodes: Vec<NodeId>,
+    },
+}
+
+/// Renders a node list for a message: `` `a`, `b`, `c` ``.
+fn node_list(nodes: &[NodeId]) -> String {
+    nodes
+        .iter()
+        .map(|node| format!("`{}`", node.as_str()))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// The part of [`ExecError::MissingParam`]'s message that says what the node
+/// declared instead. A wrong *value* is named (a `top_k` of `-1` is worth
+/// reading back); a wrong *kind* is named by kind, since printing a whole
+/// list into an error message helps nobody.
+fn param_found_clause(found: &Option<ParamValue>) -> String {
+    match found {
+        None => "and this node declares none".to_string(),
+        Some(ParamValue::Int(value)) => format!("and this node declares `{value}`"),
+        Some(ParamValue::String(_)) => "and this node declares a string".to_string(),
+        Some(ParamValue::Float(_)) => "and this node declares a float".to_string(),
+        Some(ParamValue::Bool(_)) => "and this node declares a boolean".to_string(),
+        Some(ParamValue::List(_)) => "and this node declares a list".to_string(),
     }
 }
