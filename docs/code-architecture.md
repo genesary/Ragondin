@@ -219,7 +219,7 @@ flowchart TB
   MET --> TYP
   BEN --> TYP
   CFG --> PIP & PRO
-  CON --> PIP
+  CON -.->|"sanctioned, unused today"| PIP
   PIP --> TYP
 ```
 
@@ -229,6 +229,7 @@ flowchart TB
 - Crates under `components/` depend on `ragondin-contracts` and `ragondin-types` and **never the reverse**. A component is a **leaf**.
 - Only the **binary** knows both the engine and the concrete components. It is the **composition root**.
 - `ragondin-types` is the ultimate leaf: everything depends on it; it depends on almost nothing.
+- A **dashed** arrow is an edge the architecture sanctions but that no `Cargo.toml` declares today. `ragondin-contracts → ragondin-pipeline` is the only one: a component receives values, not graphs, so no contract references a `ragondin-pipeline` type yet. The arrow stays because the day one does, adding the dependency needs no architectural argument. Solid arrows are edges that exist.
 
 ---
 
