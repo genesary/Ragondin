@@ -14,7 +14,6 @@ rust-version.workspace = true
 # it.
 [dependencies]
 ragondin-types = { workspace = true }
-ragondin-pipeline = { workspace = true }
 async-trait = { workspace = true } # dyn-compatible async traits (frozen: async_trait, not RPITIT)
 thiserror = { workspace = true }   # typed component errors
 
