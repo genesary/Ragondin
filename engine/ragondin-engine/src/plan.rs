@@ -403,17 +403,10 @@ mod tests {
 
     /// The legitimate way to a `LogicalPipeline`: through validation.
     fn logical(nodes: Vec<RawNode>) -> LogicalPipeline {
-        logical_declaring(&["question"], nodes)
-    }
-
-    /// The same, declaring exactly the inputs given (ADR-C18) — for a fixture
-    /// that wires a node to the pipeline's input rather than to another node.
-    fn logical_declaring(inputs: &[&str], nodes: Vec<RawNode>) -> LogicalPipeline {
         validate(RawPipeline {
-            version: SchemaVersion::new(SchemaVersion::SUPPORTED)
-                .expect("the supported version is supported"),
+            version: SchemaVersion::CURRENT,
             pipeline: RawGraph {
-                inputs: inputs.iter().map(|s| s.to_string()).collect(),
+                inputs: vec!["question".to_string()],
                 nodes,
             },
         })

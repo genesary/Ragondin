@@ -41,11 +41,15 @@ use crate::raw::{RawNode, RawParamValue, RawPipeline, SchemaVersion};
 /// `ARCHITECTURE.md` to permit it, and this enum no longer needs a
 /// hand-rolled `Display`.
 ///
-/// The lowering variants (`UnknownComponent`, `NonFiniteParam`) and the three
-/// structural checks over a whole graph (`DuplicateId`, `DanglingInput`,
-/// `Cycle`) cover well-formedness. `KindMismatch` is additional: the
-/// edge-kind check ADR-C16 places at `LogicalPipeline` validation. Each
-/// arrived as an additional variant, never a redesign of the ones before it.
+/// `UnsupportedSchemaVersion` precedes everything: it is neither a lowering
+/// fault nor a graph one, but a statement that the grammar itself may not be
+/// the one this build reads (ADR-C18, INV-9). The lowering variants
+/// (`UnknownComponent`, `NonFiniteParam`) and the five structural checks over
+/// a whole graph (`DuplicateId`, `InputArity`, `InputCollidesWithNode`,
+/// `DanglingInput`, `Cycle`) cover well-formedness. `KindMismatch` is
+/// additional: the edge-kind check ADR-C16 places at `LogicalPipeline`
+/// validation. Each arrived as an additional variant, never a redesign of the
+/// ones before it.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum ValidationError {
     /// A node's `component` names no family this build has a [`LogicalNode`]
@@ -93,8 +97,12 @@ pub enum ValidationError {
         /// The id named in `inputs` that nothing in the pipeline defines.
         missing: NodeId,
     },
-    /// A configuration states, or is read as, a schema version this build
-    /// cannot read.
+    /// A configuration is read as a schema version this build cannot read.
+    ///
+    /// In practice `found` is always [`SchemaVersion::PRE_VERSIONING`]: a
+    /// *stated* bad version fails in `SchemaVersion::new` during
+    /// deserialization and never reaches here, so this covers the one version
+    /// that arrives without being stated.
     ///
     /// Checked here rather than only at deserialization because an *absent*
     /// `version` never reaches [`SchemaVersion::new`]: it defaults to
@@ -172,7 +180,7 @@ pub enum ValidationError {
     // `Some`/`None` clause is built by `kind_mismatch_expected_clause` and
     // interpolated as one fragment rather than by a hand-written `Display`.
     #[error(
-        "node `{}` port {port} (fed by node `{}`): {}found `{found}`",
+        "node `{}` port {port} (fed by `{}`): {}found `{found}`",
         consumer.as_str(),
         producer.as_str(),
         kind_mismatch_expected_clause(expected)
@@ -383,9 +391,14 @@ pub fn validate(raw: RawPipeline) -> Result<LogicalPipeline, ValidationError> {
     }
 
     // The declared inputs, checked once the node ids are known so that the
-    // collision below can be decided, and before referential integrity so
-    // that an id resolving to two things is reported as the ambiguity it is
-    // rather than as whichever edge happened to be walked first.
+    // collision below can be decided, and before the checks that would
+    // otherwise resolve the ambiguous id silently. A colliding id is never
+    // *dangling* — it resolves through `index` — so what the order actually
+    // buys is that `check_kinds` cannot read it as the node, derive `Chunks`
+    // from it, and report a kind fault caused by an ambiguity it never
+    // mentioned. `find_cycle` likewise reads it as the node, and a
+    // self-referential collision surfaces as a cycle that exists only
+    // because of the ambiguity.
     if inputs.len() != 1 {
         return Err(ValidationError::InputArity {
             declared: inputs.len(),
@@ -413,7 +426,7 @@ pub fn validate(raw: RawPipeline) -> Result<LogicalPipeline, ValidationError> {
         return Err(ValidationError::Cycle { nodes: cycle });
     }
 
-    check_kinds(&nodes, &index)?;
+    check_kinds(&nodes, &index, &declared)?;
 
     Ok(LogicalPipeline::new(inputs, nodes))
 }
@@ -422,10 +435,12 @@ pub fn validate(raw: RawPipeline) -> Result<LogicalPipeline, ValidationError> {
 /// already known to be acyclic and every `inputs` entry already known to
 /// resolve (`index` maps a [`NodeId`] to its position in `nodes`).
 ///
-/// An `inputs` entry `index` does not know is therefore a **declared pipeline
-/// input** (ADR-C18) rather than a fault: it produces [`ValueKind::Query`],
-/// which is the whole reason the declaration exists, since no [`LogicalNode`]
-/// variant produces one.
+/// An `inputs` entry `index` does not know is a **declared pipeline input**
+/// (ADR-C18) rather than a fault: it produces [`ValueKind::Query`], which is
+/// the whole reason the declaration exists, since no [`LogicalNode`] variant
+/// produces one. `declared` is what says so — membership is tested, not
+/// inferred from `index` missing, so this loop stays clause for clause the
+/// same as `ragondin-engine`'s mirror of it.
 ///
 /// For each node, for each `(position, input_id)` in its `inputs`, this first
 /// derives `expected` — the kind [`consumed_kinds`] declares the consumer
@@ -452,6 +467,7 @@ pub fn validate(raw: RawPipeline) -> Result<LogicalPipeline, ValidationError> {
 fn check_kinds(
     nodes: &[LogicalNode],
     index: &HashMap<NodeId, usize>,
+    declared: &HashSet<&NodeId>,
 ) -> Result<(), ValidationError> {
     for node in nodes {
         if matches!(node, LogicalNode::Extension(_)) {
@@ -481,11 +497,23 @@ fn check_kinds(
                     }
                     produced_kind(producer)
                 }
-                // Not a node, so a declared pipeline input — the dangling
-                // check ran already and left no third possibility. Its kind
-                // follows from the graph, never from a declaration
+                // A declared pipeline input. Its kind follows from the kind
+                // of graph, never from anything a configuration writes
                 // (ADR-C16, ADR-C18).
-                None => ValueKind::Query,
+                None if declared.contains(input_id) => ValueKind::Query,
+                // The dangling check ran at the call site and left no third
+                // possibility. Tested rather than inferred by elimination:
+                // this keeps the clause identical to `ragondin-engine`'s
+                // mirror of this loop, and keeps the coupling to the arity
+                // rule local — the day `InputArity` relaxes and a declared
+                // input may be some kind other than `Query`, whoever changes
+                // the arm above is standing next to the reason it was safe.
+                None => unreachable!(
+                    "input `{}` of node `{}` resolves to neither a node nor a \
+                     declared input, which the dangling check refuses first",
+                    input_id.as_str(),
+                    node.id().as_str()
+                ),
             };
 
             if expected != Some(found) {
@@ -519,7 +547,9 @@ enum Color {
 /// (a node to each id in its `inputs`) for the first cycle. `index` maps
 /// every node's id to its position in `nodes`; by the time this runs, every
 /// `inputs` entry is already known to resolve (dangling inputs are checked
-/// before this is called), so the lookup below cannot miss.
+/// before this is called), so a lookup that misses is a declared pipeline
+/// input (ADR-C18) rather than a fault — and a source, which no cycle can
+/// contain.
 fn find_cycle(nodes: &[LogicalNode], index: &HashMap<NodeId, usize>) -> Option<Vec<NodeId>> {
     fn visit(
         position: usize,
@@ -532,9 +562,11 @@ fn find_cycle(nodes: &[LogicalNode], index: &HashMap<NodeId, usize>) -> Option<V
         path.push(nodes[position].id().clone());
 
         for input in nodes[position].inputs() {
-            // A declared pipeline input is a source: it resolves (dangling
-            // inputs are checked before this runs) but has no node, hence no
-            // outgoing edge, hence no way onto a cycle.
+            // A declared pipeline input resolves (dangling inputs are
+            // checked before this runs) but has no node, so it has no
+            // `inputs` of its own and the walk stops there. Nothing is
+            // masked: a cycle is a closed walk, so every element of one must
+            // have a successor in this traversal.
             let Some(&next) = index.get(input) else {
                 continue;
             };
@@ -799,8 +831,7 @@ mod tests {
     /// declaration every other test wants.
     fn pipeline_declaring(inputs: &[&str], nodes: Vec<RawNode>) -> RawPipeline {
         RawPipeline {
-            version: SchemaVersion::new(SchemaVersion::SUPPORTED)
-                .expect("the supported version is supported"),
+            version: SchemaVersion::CURRENT,
             pipeline: RawGraph {
                 inputs: inputs.iter().map(|s| s.to_string()).collect(),
                 nodes,
@@ -862,6 +893,53 @@ mod tests {
     }
 
     #[test]
+    fn a_collision_is_reported_ahead_of_the_fault_it_causes() {
+        // The pass order is load-bearing, not incidental. `shared` is both the
+        // declaration and a node that names itself, so if the collision check
+        // ran later the graph would be refused as `Cycle { [shared, shared] }`
+        // — a self-loop that exists only *because* of the ambiguity, which is
+        // the misdiagnosis the order exists to prevent.
+        let raw = pipeline_declaring(&["shared"], vec![node("shared", "retriever", &["shared"])]);
+        assert_eq!(
+            validate(raw).unwrap_err(),
+            ValidationError::InputCollidesWithNode {
+                id: NodeId::new("shared")
+            }
+        );
+    }
+
+    #[test]
+    fn a_declaration_nothing_consumes_is_not_an_error() {
+        // `validate` rejects; it does not lint. Named so that the rule has a
+        // failure message of its own: every other fixture in this file relies
+        // on it silently through the `pipeline` helper, so without this test
+        // breaking the rule fails two dozen unrelated tests inside a helper
+        // and none of them says why.
+        let raw = pipeline(vec![node("lonely", "retriever", &[])]);
+        let logical = validate(raw).expect("an unconsumed declaration is not a fault");
+        assert_eq!(logical.inputs(), &[NodeId::new("question")]);
+    }
+
+    #[test]
+    fn a_declared_input_at_a_non_zero_port_is_resolved_by_id_not_by_position() {
+        // Every other declared-input edge in this file sits at port 0. Here
+        // the reranker's port 1 wants `Chunks` and is handed the declaration,
+        // so a resolution keyed on the port's position rather than on the id
+        // would report the wrong kind — or nothing at all.
+        let raw = pipeline(vec![node("rank", "reranker", &["question", "question"])]);
+        assert_eq!(
+            validate(raw).unwrap_err(),
+            ValidationError::KindMismatch {
+                consumer: NodeId::new("rank"),
+                port: 1,
+                producer: NodeId::new("question"),
+                expected: Some(ValueKind::Chunks),
+                found: ValueKind::Query,
+            }
+        );
+    }
+
+    #[test]
     fn a_node_consuming_the_declared_input_validates() {
         let raw = pipeline(vec![node("r", "retriever", &["question"])]);
         let logical = validate(raw).expect("a retriever fed by the declared input must validate");
@@ -898,6 +976,24 @@ mod tests {
                 expected: Some(ValueKind::Query),
                 found: ValueKind::Chunks,
             }
+        );
+    }
+
+    #[test]
+    fn a_kind_fault_on_a_declared_input_does_not_call_it_a_node() {
+        // The message is the whole diagnosis a user gets, and `question` is
+        // precisely not a node — `InputCollidesWithNode` guarantees it never
+        // is. Telling them to look for one sends them hunting for something
+        // the validator forbids.
+        let raw = pipeline(vec![node("fuse", "fusion", &["question"])]);
+        let message = validate(raw).unwrap_err().to_string();
+        assert!(
+            message.contains("fed by `question`"),
+            "the message must name the producer without calling it a node: {message}"
+        );
+        assert!(
+            !message.contains("node `question`"),
+            "`question` is a declared input, not a node: {message}"
         );
     }
 
@@ -951,13 +1047,15 @@ mod tests {
 
     #[test]
     fn a_document_in_the_version_that_predates_the_field_is_refused() {
-        let raw = RawPipeline {
-            version: Default::default(),
-            pipeline: RawGraph {
-                inputs: vec!["question".to_string()],
-                nodes: vec![node("r", "retriever", &["question"])],
-            },
-        };
+        // Deserialized rather than built, so the whole chain is covered in one
+        // place: an absent `version` key defaults to PRE_VERSIONING, which is
+        // the only way a version this build refuses can reach `validate` at
+        // all (`SchemaVersion::new` refuses every other, and there is no
+        // `Default` to produce one).
+        let raw: RawPipeline = serde_yaml::from_str(
+            "pipeline:\n  inputs: [question]\n  nodes:\n    - id: r\n      component: retriever\n      impl: bm25\n      inputs: [question]\n",
+        )
+        .expect("an unversioned document must parse; refusing it is validation's job");
         let err = validate(raw).unwrap_err();
         assert_eq!(
             err,
@@ -1001,7 +1099,7 @@ mod tests {
     }
 
     #[test]
-    fn an_empty_inputs_list_validates_as_a_source_node() {
+    fn an_empty_inputs_list_is_not_rejected() {
         // Settled reading A2: a node with no `inputs` is not an error — how
         // few a variant declares stays unchecked here, and is the executor's
         // (#16). ADR-C18 did not change that: it gave the query a producer to
@@ -1268,87 +1366,6 @@ pipeline:
     }
 
     #[test]
-    fn the_retrieval_half_of_section_5_1_validates_as_written() {
-        // `docs/system-architecture.md` §5.1 is the document ADR-C18 amended,
-        // so it must be checked rather than trusted. This is its **retrieval
-        // half**, copied from that YAML: the declaration, the query
-        // transform, both retrieval legs, the fusion and the reranker.
-        //
-        // The document illustrates further than this crate reaches, in three
-        // ways that all predate ADR-C18 and none of which it owns:
-        //
-        // - `gate` is a `control: branch` node, and `Branch`/`Loop` have no
-        //   representation here yet (see `node.rs`);
-        // - `grade` and `generate` name families whose `LogicalNode` variants
-        //   arrive with M3;
-        // - `transform` is written `component: query_transform`, a family
-        //   name with no variant either, so the fixture below writes it the
-        //   way settled reading A1 requires it be written today —
-        //   `component: extension` — keeping §5.1's graph *shape* exactly.
-        //
-        // So this pins the half that is representable, in the shape §5.1
-        // gives it, rather than pretending the whole example parses.
-        let doc = r#"
-version: 2
-pipeline:
-  inputs: [question]
-  nodes:
-    - id: transform
-      component: extension          # §5.1 writes `query_transform`; see above
-      impl: hyde
-      inputs: [question]
-
-    - id: dense
-      component: retriever
-      impl: qdrant_dense
-      inputs: [transform]
-      params: { top_k: 50 }
-
-    - id: sparse
-      component: retriever
-      impl: bm25
-      inputs: [transform]
-      params: { top_k: 50 }
-
-    - id: fuse
-      component: fusion
-      impl: rrf
-      inputs: [dense, sparse]
-
-    - id: rerank
-      component: reranker
-      impl: cross_encoder_v2
-      inputs: [question, fuse]
-      params: { top_k: 8 }
-"#;
-        let raw: RawPipeline = serde_yaml::from_str(doc).expect("§5.1 must parse");
-        let logical = validate(raw).expect("§5.1's retrieval half must validate as written");
-        assert_eq!(logical.inputs(), &[NodeId::new("question")]);
-
-        // `query_transform` has no `LogicalNode` variant, so it lowers to
-        // `Extension` (settled reading A1) — the escape hatch still standing
-        // between the declared input and the retrievers.
-        let transform = logical
-            .nodes()
-            .iter()
-            .find(|n| n.id().as_str() == "transform")
-            .expect("transform must be present");
-        assert!(matches!(transform, LogicalNode::Extension(_)));
-
-        // Port 0 of the reranker is the declared input, port 1 the fusion,
-        // in that order and never reordered.
-        let rerank = logical
-            .nodes()
-            .iter()
-            .find(|n| n.id().as_str() == "rerank")
-            .expect("rerank must be present");
-        assert_eq!(
-            rerank.inputs(),
-            &[NodeId::new("question"), NodeId::new("fuse")]
-        );
-    }
-
-    #[test]
     fn a_reranker_wired_with_an_extension_at_the_query_port_validates() {
         // Nothing in the closed primitive set produces `ValueKind::Query`
         // (see `produced_kind`), and this test once carried the reason a
@@ -1359,13 +1376,13 @@ pipeline:
         // is now the proof a reranker can be wired at all.
         //
         // What this test still pins is that the escape hatch stays open: a
-        // `transform` node (`docs/system-architecture.md` §5.1) lowers to
-        // `Extension` under settled reading A1, since that family has no
-        // `LogicalNode` variant of its own, and an `Extension` producer at a
-        // port that exists is skipped by the kind check (ADR-C16). Wiring a
-        // query transform between the declared input and a reranker must
-        // keep validating — that is the whole point of declaring the query
-        // rather than making it ambient.
+        // query transform is written `component: extension` today (§5.1's own
+        // `query_transform` names no family `lower_node` knows, so it is an
+        // `UnknownComponent`), and an `Extension` producer at a port that
+        // exists is skipped by the kind check (ADR-C16). Wiring a query
+        // transform between the declared input and a reranker must keep
+        // validating — that is the whole point of declaring the query rather
+        // than making it ambient.
         let raw = pipeline(vec![
             node("qx", "extension", &["question"]),
             node("a", "retriever", &["qx"]),

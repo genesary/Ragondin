@@ -32,7 +32,11 @@ mandatory termination guard), and the open `Extension` variant.
   genuinely new node type is expressed through `Extension` **without changing
   the core**. Repeated use of `Extension` for the same shape is the signal to
   promote it to a primitive — not a reason to special-case it here.
-- **The node variant is the sole source of port kinds** — see
+- **A pipeline declares its inputs (ADR-C18).** `LogicalPipeline` carries
+  them alongside its nodes. A declared input is a producer with no node, and
+  the only producer of `ValueKind::Query` — no primitive variant is one. It
+  shares one namespace with node ids, which is why a collision is refused.
+- **The node variant is the sole source of a node's port kinds** — see
   [ADR-C16](../../docs/adr/ADR-C16-erased-edge-values-checked-before-execution.md),
   which is normative, and the module documentation on `node.rs`, which states
   the constraint where someone about to break it will read it.

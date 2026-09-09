@@ -212,7 +212,7 @@ pipeline:
 
 ```mermaid
 flowchart LR
-  Q[Query] --> T["query_transform<br/>impl: hyde"]
+  Q[question] --> T["query_transform<br/>impl: hyde"]
   T --> D["retriever<br/>impl: qdrant_dense"]
   T --> S["retriever<br/>impl: bm25"]
   D --> F["fusion<br/>impl: rrf"]
@@ -223,6 +223,8 @@ flowchart LR
   GR --> GATE{"branch:<br/>grade.score &lt; 0.5 ?"}
   GATE -->|yes| W["retriever<br/>impl: web_search"]
   GATE -->|no| GEN["generator<br/>impl: external_llm"]
+  T -.-> W
+  R -.-> GEN
   W --> GEN
 ```
 

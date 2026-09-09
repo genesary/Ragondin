@@ -8,7 +8,8 @@
 //! - [`node`] — the logical node model: validated, canonical value types.
 //! - [`kind`] — `ValueKind` and the port derivation (ADR-C16): the kind of
 //!   value flowing along an edge, derived from a node's [`node::LogicalNode`]
-//!   variant alone.
+//!   variant alone — except on an edge fed by one of the pipeline's declared
+//!   inputs (ADR-C18), which has no variant and produces `Query`.
 //! - [`validate`] — the `RawPipeline` → `LogicalPipeline` validation and
 //!   canonicalization pass: lowering, the structural checks, the kind check,
 //!   and sorting the node list into canonical order.

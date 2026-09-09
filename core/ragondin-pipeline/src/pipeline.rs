@@ -4,8 +4,9 @@
 //! sits between the permissive [`crate::RawPipeline`] and the
 //! not-yet-built `PhysicalPipeline`. Produced only by
 //! [`crate::validate::validate`], which is what actually establishes the
-//! invariants this type's name promises — unique node ids, no dangling
-//! `inputs`, no cycle in the data-flow graph.
+//! invariants this type's name promises — unique node ids, exactly one
+//! declared input, no declaration claiming a node's id, no dangling `inputs`,
+//! no cycle in the data-flow graph.
 
 use serde::{Deserialize, Serialize};
 
@@ -90,5 +91,30 @@ impl LogicalPipeline {
     /// `RawPipeline` listed them in.
     pub fn nodes(&self) -> &[LogicalNode] {
         &self.nodes
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_constructor_preserves_the_declaration_verbatim() {
+        // The canonicalization contract above says declared inputs are never
+        // reordered or deduplicated. `validate` currently permits exactly one,
+        // so that rule is unobservable through it — and a "tidy up the
+        // canonical form" refactor that sorted them would pass every other
+        // test in this crate. This pins the constructor instead, which is
+        // where #10 hashes the value, so the rule is mechanical now rather
+        // than the day arity relaxes.
+        let pipeline = LogicalPipeline::new(
+            vec![NodeId::new("b"), NodeId::new("a"), NodeId::new("b")],
+            Vec::new(),
+        );
+        assert_eq!(
+            pipeline.inputs(),
+            &[NodeId::new("b"), NodeId::new("a"), NodeId::new("b")],
+            "the declaration is the graph's signature: neither sorted nor deduplicated"
+        );
     }
 }
