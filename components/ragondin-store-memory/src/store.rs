@@ -211,6 +211,8 @@ impl VectorStore for MemoryVectorStore {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
     use ragondin_types::{Chunk, ChunkId, DocId};
 
@@ -467,4 +469,145 @@ mod tests {
         assert_eq!(store.len(), 1);
     }
 
+    #[tokio::test]
+    async fn a_stored_vector_with_a_component_that_is_not_a_number_scores_zero() {
+        // The same answer as a stored vector of zero magnitude, for the same
+        // reason: it is already indexed, and a NaN score would break the
+        // ranking contract for every other hit in the list.
+        let store = store_of(vec![
+            entry("not-a-number", vec![f32::NAN, 0.0]),
+            entry("somewhere", vec![1.0, 0.0]),
+        ])
+        .await;
+
+        let hits = store
+            .search(&Embedding::new(vec![1.0, 0.0]), &SearchParams::new(2))
+            .await
+            .expect("a well-formed search succeeds");
+
+        assert!(hits.iter().all(|hit| hit.score.is_finite()));
+        assert_eq!(ids(&hits), ["somewhere", "not-a-number"]);
+        assert_eq!(hits[1].score, 0.0);
+    }
+
+    #[tokio::test]
+    async fn a_query_with_a_component_that_is_not_a_number_is_an_invalid_request() {
+        // The query side of the case above, answered the way the zero vector is
+        // answered: the caller is holding this vector right now and can fix it.
+        let store = store_of(vec![entry("c1", vec![1.0, 0.0])]).await;
+
+        let error = store
+            .search(&Embedding::new(vec![f32::NAN, 1.0]), &SearchParams::new(1))
+            .await
+            .expect_err("a vector that is not a number points nowhere");
+        assert!(matches!(error, ComponentError::InvalidRequest(_)));
+    }
+
+    #[tokio::test]
+    async fn a_vector_whose_squared_norm_overflows_f32_still_scores_finite() {
+        // 1e30 is an ordinary f32 and its square is not: accumulated in f32 the
+        // norm is infinite, and `inf / inf` is the NaN the ranking contract
+        // forbids -- on the one search whose answer is least in doubt, a vector
+        // against itself.
+        let store = store_of(vec![entry("huge", vec![1e30, 0.0])]).await;
+
+        let hits = store
+            .search(&Embedding::new(vec![1e30, 0.0]), &SearchParams::new(1))
+            .await
+            .expect("a well-formed search succeeds");
+
+        assert!(hits[0].score.is_finite(), "scored {}", hits[0].score);
+        assert!(
+            (hits[0].score - 1.0).abs() < 1e-6,
+            "scored {}",
+            hits[0].score
+        );
+    }
+
+    #[tokio::test]
+    async fn a_batch_that_opens_the_store_must_agree_with_itself() {
+        // The empty-store path: there is no held width to check against, so the
+        // batch itself has to fix one, which it can only do if it agrees.
+        let store = MemoryVectorStore::new();
+
+        let error = store
+            .upsert(vec![
+                entry("a", vec![1.0, 0.0]),
+                entry("b", vec![1.0, 0.0, 0.0]),
+            ])
+            .await
+            .expect_err("a batch cannot open the store at two widths");
+
+        assert!(matches!(error, ComponentError::InvalidRequest(_)));
+        assert_eq!(store.len(), 0, "a batch that disagrees is rejected whole");
+    }
+
+    #[tokio::test]
+    async fn an_embedding_of_no_width_cannot_be_stored() {
+        // An empty embedding is representable, so without this a width-zero
+        // batch opens the store at a width against which every later vector --
+        // and every query -- is a disagreement.
+        let store = MemoryVectorStore::new();
+
+        let error = store
+            .upsert(vec![entry("nothing", Vec::new())])
+            .await
+            .expect_err("a store of width zero could answer no search");
+
+        assert!(matches!(error, ComponentError::InvalidRequest(_)));
+        assert_eq!(store.len(), 0);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_upserts_and_searches_leave_one_consistent_store() {
+        // `upsert` takes `&self`, so the contract lets one caller write while
+        // others read. What that has to leave is checkable: every write lands
+        // exactly once, and no reader sees a list breaking the ranking contract.
+        const WRITERS: usize = 4;
+        const PER_WRITER: usize = 25;
+
+        let store = Arc::new(MemoryVectorStore::new());
+        let mut tasks = Vec::new();
+
+        for writer in 0..WRITERS {
+            let store = Arc::clone(&store);
+            tasks.push(tokio::spawn(async move {
+                for i in 0..PER_WRITER {
+                    // Disjoint id ranges, so the final count is arithmetic
+                    // rather than a race the assertion has to tolerate.
+                    let id = format!("w{writer}-{i}");
+                    store
+                        .upsert(vec![entry(&id, vec![1.0, i as f32 / 100.0])])
+                        .await
+                        .expect("a well-formed upsert");
+                }
+            }));
+        }
+
+        for _ in 0..WRITERS {
+            let store = Arc::clone(&store);
+            tasks.push(tokio::spawn(async move {
+                for _ in 0..PER_WRITER {
+                    let hits = store
+                        .search(&Embedding::new(vec![1.0, 0.0]), &SearchParams::new(5))
+                        .await
+                        .expect("a well-formed search succeeds");
+                    assert!(
+                        hits.iter().all(|hit| hit.score.is_finite()),
+                        "a search interleaved with a write returned a non-finite score"
+                    );
+                    assert!(
+                        hits.windows(2).all(|pair| pair[0].score >= pair[1].score),
+                        "a search interleaved with a write returned an unsorted list"
+                    );
+                }
+            }));
+        }
+
+        for task in tasks {
+            task.await.expect("no task panicked");
+        }
+
+        assert_eq!(store.len(), WRITERS * PER_WRITER);
+    }
 }

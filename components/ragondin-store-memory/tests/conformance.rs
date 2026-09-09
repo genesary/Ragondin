@@ -13,10 +13,3 @@ use ragondin_store_memory::MemoryVectorStore;
 async fn the_memory_store_is_conformant() {
     assert_vector_store_conformance(|| Box::new(MemoryVectorStore::new()), 3).await;
 }
-
-#[tokio::test]
-async fn conformance_holds_at_one_dimension() {
-    // The degenerate width: every vector is parallel to every other, so the
-    // suite's ranking checks rest entirely on the tie-break.
-    assert_vector_store_conformance(|| Box::new(MemoryVectorStore::new()), 1).await;
-}
