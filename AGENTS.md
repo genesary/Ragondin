@@ -35,6 +35,11 @@ just check-adr-index
 # Regenerate that index after changing an ADR's front-matter
 just gen-adr-index
 
+# The cross-reference map: one entity's neighbourhood, and every claim the code
+# contradicts. Advisory, and deliberately not part of `just check` (#102).
+just map <entity>
+just map --conflicts
+
 # All of the above — run this before declaring any work complete
 just check
 ```
@@ -156,6 +161,16 @@ Rationale for each decision: `docs/adr/`, where every decision is a numbered, in
 - **Test-driven, strictly.** Write a failing test first; implement the minimum to make it pass; then refactor. A test that passes without exercising the behavior is worse than no test.
 - Every acceptance criterion must be satisfied **mechanically** — by a command or a test, never by a judgment call.
 - Comments explain **why**, not what.
+
+### What you write about the code is checked against the code
+
+Three defects landed in one week, all of them in **prose**, and **not one could fail a build**. Each names the habit that produces it:
+
+- **A citation that resolves is not a citation that is apt.** `ADR-C3` was cited six times for the two-faced contract, which is **ADR-3**'s decision. `check-doc-links.py` passed all six, because it checks that a reference *resolves* and cannot judge what it *means*. **Open an ADR before citing it** — including, and especially, when you are copying the citation from a neighbouring file. That is how these six spread, and one of them reached an ADR that was a review away from being immutable.
+- **A doc comment that describes a mechanism is a claim the code can contradict.** `ComponentFamily`'s comment said a retriever's constructor reaches the registry; `ComponentCtor` receives `&Params` and never an `EngineContext`. **Describe what the code does**, not what it is expected to do once another issue lands.
+- **An issue reference goes stale when the issue closes.** `#9`, `#15` and `#17` are still cited in code as work to come. If you write one, write what it is *for*, so a reader can tell a live pointer from a finished one.
+
+`just map --conflicts` reports all three shapes. **Run it when your diff contains prose that asserts how something works.** Its findings are advisory, and it is not part of `just check`: a build gate over unverified prose would assert more than it knows. That makes running it your job rather than CI's.
 
 ### Definition of done
 
