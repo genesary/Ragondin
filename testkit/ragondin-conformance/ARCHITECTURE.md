@@ -6,6 +6,17 @@ check names it returns, so a rename is a break for every component crate. Treat
 the family functions and the check-name strings as fixed; the modules behind
 them are free.
 
+That has been broken **once**, deliberately, and this is the record of it.
+ADR-C17 gave `check_embedder_conformance` / `assert_embedder_conformance` a
+second parameter, `RolePrefixes`, because the suite cannot know whether the
+fixture in front of it was configured with distinct per-role prefixes — a
+symmetric embedder answering both roles alike is correct — so the caller
+declares it, the same precedent `check_vector_store_conformance(make, dim)`
+already set: what the suite cannot know, the caller states in the argument
+list. No embedder crate existed when it landed, so nothing broke. The
+precedent is the *reason*, not a licence: a family function's argument shape
+changes only when a check needs a fact no fixture can supply from inside.
+
 ## What lives here
 
 The behavioural suite **every** component implementation must pass, whatever its
