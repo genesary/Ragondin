@@ -212,3 +212,89 @@ async fn an_unbounded_top_k_returns_every_match_and_does_not_panic() {
 
     assert_eq!(ids(&hits), vec!["cats-1", "cats-2"]);
 }
+
+/// No stemming and no stopword removal — `default-features = false` on tantivy
+/// drops both features, and the `"default"` analyzer applies neither in any
+/// case. The measurable consequence is pinned here rather than described: `cat`
+/// does not match `cats`, and a stopword is a term like any other. Restoring
+/// either feature, or naming an analyzer that carries one, then shows up as a
+/// failing test instead of as a ranking that quietly changed.
+#[tokio::test]
+async fn a_plural_is_a_different_term_and_a_stopword_is_a_term() {
+    let unstemmed = retriever()
+        .retrieve(&query("cats"), &RetrieveParams::new(5))
+        .await
+        .unwrap();
+    assert!(
+        unstemmed.is_empty(),
+        "`cats` must not reach `cat`, got {:?}",
+        ids(&unstemmed)
+    );
+
+    let stopword = retriever()
+        .retrieve(&query("the"), &RetrieveParams::new(5))
+        .await
+        .unwrap();
+    assert_eq!(
+        stopword.len(),
+        3,
+        "`the` is indexed and scored like any other term, not discarded"
+    );
+}
+
+/// The text field names tantivy's `"default"` analyzer: SimpleTokenizer, then
+/// `RemoveLongFilter(40)`, then `LowerCaser`. Case folds, so a query need not
+/// match the corpus's capitalization; accents do not, so a token keeps the
+/// letters it was written with.
+#[tokio::test]
+async fn the_analyzer_folds_case_but_not_accents() {
+    let retriever = Bm25Retriever::new(vec![chunk("s-1", "doc", "Die Straße war leer")])
+        .expect("the corpus must index");
+
+    let cased = retriever
+        .retrieve(&query("STRAßE"), &RetrieveParams::new(5))
+        .await
+        .unwrap();
+    assert_eq!(ids(&cased), vec!["s-1"], "case must fold");
+
+    let transliterated = retriever
+        .retrieve(&query("strasse"), &RetrieveParams::new(5))
+        .await
+        .unwrap();
+    assert!(
+        transliterated.is_empty(),
+        "`ß` is a letter, not two: got {:?}",
+        ids(&transliterated)
+    );
+}
+
+/// `RemoveLongFilter(40)` drops any token of 40 bytes or more, on both sides of
+/// the call: such a term is neither indexed nor searchable, so a corpus of
+/// base64 blobs or long identifiers retrieves nothing. The limit is in bytes of
+/// UTF-8, not in characters.
+#[tokio::test]
+async fn a_token_of_forty_bytes_or_more_is_dropped() {
+    let too_long = "a".repeat(40);
+    let just_short_enough = "b".repeat(39);
+    let retriever = Bm25Retriever::new(vec![chunk(
+        "t-1",
+        "doc",
+        &format!("{too_long} {just_short_enough}"),
+    )])
+    .expect("the corpus must index");
+
+    let dropped = retriever
+        .retrieve(&query(&too_long), &RetrieveParams::new(5))
+        .await
+        .unwrap();
+    assert!(
+        dropped.is_empty(),
+        "a 40-byte token is filtered out of both the corpus and the query"
+    );
+
+    let kept = retriever
+        .retrieve(&query(&just_short_enough), &RetrieveParams::new(5))
+        .await
+        .unwrap();
+    assert_eq!(ids(&kept), vec!["t-1"], "39 bytes is under the limit");
+}
