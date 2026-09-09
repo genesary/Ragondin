@@ -142,15 +142,13 @@ impl RerankParams {
 
 /// Per-call parameters of an [`Embedder`].
 ///
-/// Empty today, and deliberately so: **whether an embedder needs to know its
-/// role is an open question.** Asymmetric retrieval models — E5, BGE, GTE —
-/// prefix a query differently from a passage, and embedding both the same way
-/// costs retrieval quality *silently*, with no error anywhere. Either that role
-/// belongs here as a field, or it is constructor configuration and one model
-/// registers twice under two `impl:` names. Both have real costs, so the choice
-/// is not made in passing: see the decision issue linked from
-/// `ARCHITECTURE.md`. The struct exists now so that whichever way it goes, the
-/// answer is a field rather than a change to [`Embedder::embed`]'s signature.
+/// Empty today, and no longer an open question: ADR-C17 settles that an
+/// embedder **is** told, per call, which side it is embedding. See
+/// [`Embedder`]'s role contract for what that obliges an implementation to do.
+/// The `role` field carrying it lands here in #97 — this struct exists for
+/// exactly that, so the answer is a field rather than a change to
+/// [`Embedder::embed`]'s arity, which would break every implementation in and
+/// out of the repository.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct EmbedParams {}
@@ -235,6 +233,22 @@ pub trait Reranker: Send + Sync {
 }
 
 /// Turns text into vectors.
+///
+/// # The role contract
+///
+/// Retrieval embedders are frequently **asymmetric**: E5, BGE and GTE prefix a
+/// query differently from a passage, and a text embedded on the wrong side
+/// simply scores worse — no error is raised anywhere, and a conformance suite
+/// cannot see it either, because it does not know which model it is testing.
+/// ADR-C17 therefore makes the role a **per-call** parameter: a caller must
+/// pass the role that is true of the text it is embedding, and an implementation
+/// must treat that role as significant unless the model it wraps is symmetric.
+///
+/// What an asymmetric model prepends for each role is the implementation's own
+/// **constructor configuration** and never appears on this boundary, which
+/// keeps the contract agnostic of the model: a symmetric model is configured
+/// with no prefix on either side rather than special-cased. The field carrying
+/// the role lands on [`EmbedParams`] in #97.
 #[async_trait]
 pub trait Embedder: Send + Sync {
     /// Embeds `texts`, returning one vector per input **in the same order**.

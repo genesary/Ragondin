@@ -68,12 +68,16 @@ component is a gRPC service honouring the mirror protobuf in `ragondin-proto`.
 
   `EmbeddedChunk` is **not** `#[non_exhaustive]`: it is a plain data carrier
   that `ragondin-remote` (#13) must construct by literal in its round-trip tests.
-- **Open question — does an [`Embedder`] need to know its role?** Asymmetric
-  models (E5, BGE, GTE) prefix a query differently from a passage, and getting
-  it wrong costs retrieval quality with no error anywhere. Either that role is a
-  field on `EmbedParams`, or it is constructor configuration and one model
-  registers twice under two `impl:` names. Not settled here; `EmbedParams`
-  exists so the answer is a field either way.
+- **An [`Embedder`] is told its role, per call (ADR-C17).** Asymmetric models
+  (E5, BGE, GTE) prefix a query differently from a passage, and getting it wrong
+  costs retrieval quality with no error anywhere — a failure no conformance
+  check can catch, since the suite does not know the model. The role
+  therefore becomes a mandatory field on `EmbedParams` in #97, stated by the
+  caller, which is the only party that knows the side. What an asymmetric model
+  prepends for each side is **constructor configuration of the component**, not
+  contract surface: that is what keeps this crate agnostic of the model, and it
+  makes a symmetric model a configuration with no prefix rather than a special
+  case.
 
 ## Why it is a boundary
 
