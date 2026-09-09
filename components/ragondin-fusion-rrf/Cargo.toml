@@ -1,0 +1,31 @@
+[package]
+name = "ragondin-fusion-rrf"
+description = "Reciprocal Rank Fusion: a Local Fusion component."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+# A component is a leaf of the dependency graph (INV-5): the contract it
+# implements and the value types it moves, and nothing else in the workspace.
+[dependencies]
+ragondin-contracts = { workspace = true }
+ragondin-types = { workspace = true }
+async-trait = { workspace = true } # dyn-compatible async traits (frozen: async_trait, not RPITIT)
+
+# The suite every implementation passes, built-in or third-party (INV-7), and
+# the runtime that drives it. Both are test-only: neither ships to a user of
+# this component.
+[dev-dependencies]
+ragondin-conformance = { workspace = true }
+tokio = { workspace = true }
+
+# RRF is arithmetic over ranks, so this feature gates no heavy dependency and
+# buys no compile time. It exists so that every component crate is entered the
+# same way -- `--features rrf` here reads like `--features bm25` there -- and
+# uniformity is what makes the pattern guessable. ADR-C14 is the rule it
+# follows; the cost it is paying for uniformity is that this one gates nothing.
+[features]
+default = ["rrf"]
+rrf = []

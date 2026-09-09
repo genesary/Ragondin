@@ -1001,6 +1001,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "ragondin-fusion-rrf"
+version = "0.0.0"
+dependencies = [
+ "async-trait",
+ "ragondin-conformance",
+ "ragondin-contracts",
+ "ragondin-types",
+ "tokio",
+]
+
+[[package]]
 name = "ragondin-harness"
 version = "0.0.0"
 dependencies = [
