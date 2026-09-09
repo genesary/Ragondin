@@ -762,6 +762,32 @@ impl Embedder for RoleIgnoringEmbedder {
     }
 }
 
+/// Conformant under `Query`, and drops an input under `Passage`. The suite
+/// sees it only because every check runs under **both** roles: an embedder
+/// that takes a different path per role can be broken on one side alone, and
+/// the passage side is the corpus side, where a dropped vector misaligns an
+/// index with no error anywhere.
+struct PassageDroppingEmbedder;
+
+#[async_trait]
+impl Embedder for PassageDroppingEmbedder {
+    async fn embed(
+        &self,
+        texts: &[String],
+        params: &EmbedParams,
+    ) -> Result<Vec<Embedding>, ComponentError> {
+        let dropped = match params.role {
+            EmbedRole::Query => 0,
+            EmbedRole::Passage => 1,
+        };
+        Ok(texts
+            .iter()
+            .skip(dropped)
+            .map(|t| Embedding::new(vec![t.len() as f32, 1.0, 0.0]))
+            .collect())
+    }
+}
+
 #[tokio::test]
 async fn a_conformant_embedder_passes() {
     check_embedder_conformance(|| Box::new(GoodEmbedder), RolePrefixes::Undeclared)
@@ -809,6 +835,25 @@ async fn an_embedder_ignoring_a_declared_role_fails() {
             .await
             .expect_err("a fixture declaring distinct prefixes must not answer both roles alike");
     assert_eq!(failure.check(), "role changes the vector");
+    assert_eq!(failure.component(), "Embedder");
+}
+
+#[tokio::test]
+async fn an_embedder_broken_only_under_passage_fails() {
+    // The claim `check_embedder_conformance` makes four times over — every
+    // check runs under both roles — is otherwise untested: every other broken
+    // stub here breaks under `Query` too, so the `Passage` pass proves nothing
+    // about them. Reduce the suite's loop to `[EmbedRole::Query]` and this is
+    // the test that goes red. `Undeclared` on purpose: the failure must come
+    // from the ordinary per-role checks, not from the opt-in role-separation
+    // one.
+    let failure = check_embedder_conformance(
+        || Box::new(PassageDroppingEmbedder),
+        RolePrefixes::Undeclared,
+    )
+    .await
+    .expect_err("a contract broken on one side only is still broken");
+    assert_eq!(failure.check(), "one vector per input");
     assert_eq!(failure.component(), "Embedder");
 }
 
