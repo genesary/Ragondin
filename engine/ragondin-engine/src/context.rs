@@ -234,8 +234,8 @@ mod tests {
     use super::*;
     use async_trait::async_trait;
     use ragondin_contracts::{
-        ComponentError, EmbedParams, EmbeddedChunk, Embedder, Fusion, FusionParams, RerankParams,
-        Reranker, RetrieveParams, Retriever, SearchParams, VectorStore,
+        ComponentError, EmbedParams, EmbedRole, EmbeddedChunk, Embedder, Fusion, FusionParams,
+        RerankParams, Reranker, RetrieveParams, Retriever, SearchParams, VectorStore,
     };
     use ragondin_pipeline::{ParamValue, Params};
     use ragondin_types::{Chunk, ChunkId, DocId, Embedding, Query, QueryId, ScoredChunk};
@@ -539,7 +539,7 @@ mod tests {
         let embeddings = ctx
             .build_embedder("zero", &config)
             .expect("registered")
-            .embed(&["a".to_string()], &EmbedParams::new())
+            .embed(&["a".to_string()], &EmbedParams::new(EmbedRole::Query))
             .await
             .expect("the stub does not fail");
         assert_eq!(embeddings[0].dim(), 4);

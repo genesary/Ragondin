@@ -79,6 +79,7 @@ so a reviewer can see the reasoning rather than reconstruct it.
 | `upsert` replaces by chunk id | `VectorStore::upsert`'s own documentation |
 | finite embedding components | `ragondin-types`, on `Embedding` |
 | **a `top_k` of zero is an invalid request** | stated for `Retriever` on `RetrieveParams::new`; **generalised** to `Reranker` and `VectorStore::search` from `ComponentError::InvalidRequest`'s documentation, which names it as the example and is written on the error every boundary returns. #89 mirrors the sentence onto the two params structs that lack it. |
+| **the role changes the vector** | ADR-C17 and #97, which require the suite to exercise both roles and to check that a fixture *declaring* distinct per-role prefixes honours them. Opt-in by construction: the ADR states the suite cannot detect a wrong role and must not pretend to. |
 | **no duplicate ids** | **generalised**: a ranked list ranks each chunk once. Checked only for `Fusion` and `Reranker`, whose whole input the suite knows, so that "this id appears twice" is a statement about the component and not about a corpus. |
 
 ## What the suite deliberately does not decide
@@ -93,6 +94,12 @@ would have gone:
 - **An empty `upsert`** — #91. That same stub rejects it, while the neighbouring
   families all treat an empty input as success.
 
-Also pending here: if #46 (must an `Embedder` know whether it embeds a query or
-a passage?) resolves to a role on `EmbedParams`, that issue requires the answer
-to be carried into this suite.
+Nor does it decide **which prefix an asymmetric embedder should apply**. ADR-C17
+put the role on `EmbedParams`, so the suite exercises every embedder check under
+both `EmbedRole`s — a contract broken on one side only is still broken. Beyond
+that it can say one thing and no more: where a caller *declares*
+`RolePrefixes::Distinct`, one text must not embed identically under the two
+roles, which catches an implementation that accepts the role and ignores it.
+Whether the prefix it applied was the *right* one is unknowable here, since the
+suite does not know the model — and a symmetric embedder answering both roles
+alike is correct, which is why the check is opt-in rather than universal.

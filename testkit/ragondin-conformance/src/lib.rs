@@ -77,6 +77,7 @@
 //! | `no fabricated ids`, `no duplicate ids` | `Fusion`, `Reranker` |
 //! | `non-empty input yields output`, `order preserved` | `Fusion` |
 //! | `one vector per input`, `constant dimensionality`, `finite components` | `Embedder` |
+//! | `role changes the vector` | `Embedder`, and only where the caller declares distinct per-role prefixes |
 //! | `empty store yields no results`, `nearest neighbour is itself`, `upsert replaces by id`, `dimensionality` | `VectorStore` |
 //!
 //! See `ARCHITECTURE.md` and `docs/code-architecture.md` §7.4.
@@ -94,7 +95,7 @@ mod reranker;
 mod retriever;
 mod vector_store;
 
-pub use embedder::{assert_embedder_conformance, check_embedder_conformance};
+pub use embedder::{assert_embedder_conformance, check_embedder_conformance, RolePrefixes};
 pub use failure::ConformanceFailure;
 pub use fusion::{assert_fusion_conformance, check_fusion_conformance};
 pub use reranker::{assert_reranker_conformance, check_reranker_conformance};
