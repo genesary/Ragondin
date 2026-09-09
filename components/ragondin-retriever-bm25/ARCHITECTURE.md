@@ -42,15 +42,31 @@ composition root that puts the two together (`docs/code-architecture.md` §8.1).
   caller — so this crate sorts on `(score descending, chunk id ascending)`.
   Without that, two chunks with equal BM25 scores could rank two ways over one
   corpus, and the only symptom would be a benchmark number that moves.
+- **The tie-break runs before `top_k` truncates.** `TopDocs::with_limit(top_k)`
+  would make the cut itself by document address, leaving the chunk-id rule to
+  reorder a selection insertion order had already decided. So the collector is
+  given the number of documents in the index as its limit, every match is sorted,
+  and the list is truncated afterwards. That is `O(m log m)` in the number of
+  matching documents rather than `O(m log top_k)`, and it is the price of the
+  reproducibility guarantee: a corpus ranks one way, whatever order it was
+  indexed in. If it ever costs enough to matter, the optimisation is a
+  fast-field comparator inside the collector — tantivy can break the tie itself,
+  on an indexed chunk id, without materializing every hit.
 - **The query is analyzed, never parsed.** A retriever is handed
   natural-language questions. tantivy's `QueryParser` would read `?`, `:` or a
   quote in one as syntax — failing the call, or silently changing what was
   asked — so the query is run through the text field's own analyzer and turned
   into a `Should` disjunction of `TermQuery`s. That also guarantees the query is
-  tokenized exactly as the corpus was.
-- **The index is immutable.** It is built once, in RAM, at construction.
-  Re-indexing means constructing another retriever. That is what makes a run
-  reproducible: the same corpus yields the same index yields the same ranking.
+  tokenized exactly as the corpus was. The analyzer is named explicitly rather
+  than inherited: `"default"`, which in tantivy 0.26 is `SimpleTokenizer` then
+  `RemoveLongFilter(40)` then `LowerCaser` — so case folds, accents do not, and
+  a token of 40 bytes or more is dropped from corpus and query alike.
+- **The index is immutable, and it is entirely in RAM.** It is built once, at
+  construction, by `Index::create_in_ram`. Re-indexing means constructing another
+  retriever. That is what makes a run reproducible: the same corpus yields the
+  same index yields the same ranking. It also sets a ceiling: the text is both
+  `STORED` and indexed, so a corpus is held roughly twice over with no spill to
+  disk, and a corpus that does not fit in memory does not fit this component.
 - **Typed errors (ADR-C13).** `IndexError` for construction, `ComponentError`
   for the call. A library never imposes `anyhow` on its consumers.
 
@@ -61,6 +77,17 @@ constructor configuration. **They are not exposed here**, because tantivy holds
 them as private constants and offers no way to set them: a knob on this
 constructor would be a claim the backend cannot honour. It arrives when the
 backend supports it, not before.
+
+**No stemming and no stopword removal.** `default-features = false` on tantivy
+drops its `stemmer` and `stopwords` features along with the on-disk machinery,
+and the `"default"` analyzer this crate names carries neither in any case. That
+is a choice, not a side effect of a size saving: this component is a plain,
+deterministic BM25 baseline whose query is analysed exactly as its corpus was,
+and stemming is a per-language decision the crate has no way to make — the
+corpus arrives as `Vec<Chunk>` with no language on it. The consequence is
+measurable, so it is pinned by a test rather than described: `cat` does not
+match `cats`, and `the` is scored like any other term instead of being
+discarded. Turning either feature back on breaks that test, which is the point.
 
 ## Conformance
 
