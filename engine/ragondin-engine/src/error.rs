@@ -19,8 +19,21 @@ use ragondin_pipeline::{NodeId, ValueKind};
 ///
 /// Wider than [`ragondin_pipeline::LogicalNode`]'s variants, and deliberately:
 /// `Embedder` and `VectorStore` are not pipeline nodes. They are components a
-/// dense retriever is built from, and they are resolved through the same
-/// registry so that the retriever's constructor can reach them.
+/// dense retriever is built from, registered through the same public
+/// `register_*` API as every other family (INV-7) and **injected into that
+/// retriever at the composition root** (#31), whose registration closure
+/// captures them.
+///
+/// Nothing resolves one from a node, and nothing can: physical planning matches
+/// a `Retriever`, a `Fusion` and a `Reranker`, and a [`crate::ComponentCtor`]
+/// receives the node's `Params` and never the [`crate::EngineContext`]. So both
+/// families are here for the error rather than for a lookup — the registry
+/// keeps one table per family, and the family is part of every name it fails to
+/// find — and their tables have no consumer in planning today, nor do
+/// `build_embedder` and `build_vector_store` outside tests. That is an open
+/// question, not a settled design: how a `Remote` embedder or vector store is
+/// built is #101. Recorded here so it is read as a gap rather than inferred
+/// from an unused table.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ComponentFamily {
     /// [`ragondin_contracts::Retriever`].
