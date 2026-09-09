@@ -128,7 +128,7 @@ pub async fn check_embedder_conformance(
     }
 
     if prefixes == RolePrefixes::Distinct {
-        check_roles_are_separated(make().as_ref()).await?;
+        check_roles_are_separated(embedder.as_ref()).await?;
     }
 
     Ok(())
