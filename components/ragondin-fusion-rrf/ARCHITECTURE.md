@@ -29,8 +29,10 @@ either.
 - **`k` is constructor configuration, not a per-call parameter.**
   `ragondin-contracts` draws that line: a params struct carries only what varies
   per call, and `FusionParams` is empty. `k` is a `usize`, which makes
-  `k + rank >= 1` for every configuration — so the division has no edge case and
-  this component has no failure mode of its own. Every `fuse` call succeeds.
+  `k + rank >= 1` for every configuration, and the sum saturates rather than
+  wrapping, which keeps it inside `1..=usize::MAX` at the other end — so the
+  division has no edge case and this component has no failure mode of its own.
+  Every `fuse` call succeeds.
 - **The result is deterministic, including its ties.** Equal fused scores are
   the common case rather than a rarity, so the order among them is pinned: by
   chunk id, ascending. A chunk offered by several legs keeps the copy of the

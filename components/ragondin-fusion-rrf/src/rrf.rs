@@ -21,8 +21,10 @@ pub const DEFAULT_K: usize = 60;
 /// one placed first by a single leg. It is **constructor configuration**
 /// (`ragondin-contracts`: a params struct carries only what varies per call),
 /// and a [`usize`], which is what keeps the contract's "finite scores" clause
-/// unbreakable: `k + rank >= 1` for every `k`, so the division has no edge case
-/// to guard and this component needs no failure mode of its own.
+/// unbreakable: `k + rank >= 1` for every `k` — and the sum saturates rather
+/// than wrapping, so it never leaves `1..=usize::MAX` either. The division has
+/// no edge case to guard, and this component needs no failure mode of its own:
+/// every `fuse` call succeeds.
 ///
 /// **Ties break by chunk id, ascending.** Equal fused scores are the common
 /// case rather than a rarity — every chunk holding the same ranks ties — and an
@@ -61,7 +63,13 @@ impl Fusion for ReciprocalRankFusion {
 
         for leg in inputs {
             for (index, hit) in leg.into_iter().enumerate() {
-                let contribution = 1.0 / (self.k + index + 1) as f64;
+                // Saturating, not wrapping: `k` near `usize::MAX` would
+                // otherwise overflow — a panic in debug, `inf` in release — and
+                // break the finite-scores clause on a `k` the constructor
+                // accepts. Saturated, every rank collapses onto the same
+                // reciprocal, which is what a `k` that large means anyway.
+                let divisor = self.k.saturating_add(index).saturating_add(1);
+                let contribution = 1.0 / divisor as f64;
                 match seen.get(&hit.chunk.id) {
                     Some(&at) => totals[at].1 += contribution,
                     None => {
@@ -121,6 +129,15 @@ mod tests {
     fn assert_close(got: f32, expected: f32) {
         assert!(
             (got - expected).abs() < 1e-7,
+            "expected {expected}, got {got}"
+        );
+    }
+
+    /// Relative, for scores far below the absolute tolerance above: at `1e-20`
+    /// an absolute comparison passes whatever the code returned, zero included.
+    fn assert_close_relative(got: f32, expected: f32) {
+        assert!(
+            (got - expected).abs() <= expected.abs() * 1e-6,
             "expected {expected}, got {got}"
         );
     }
@@ -209,6 +226,40 @@ mod tests {
         assert_eq!(ids(&fused), ["a", "b"]);
         assert_close(fused[0].score, 1.0);
         assert_close(fused[1].score, 0.5);
+    }
+
+    /// The largest `k` there is. `k + rank` computed as a plain sum overflows
+    /// here — a panic in debug, `inf` in release — and either way the contract's
+    /// "finite scores" clause is broken by a value the constructor accepts.
+    /// Saturating the sum keeps every score finite; every rank then collapses
+    /// onto the same reciprocal, which is the answer a `k` that large asks for.
+    #[tokio::test]
+    async fn a_k_at_the_top_of_the_range_still_yields_finite_scores() {
+        let fusion = ReciprocalRankFusion::new(usize::MAX);
+        let fused = fuse(
+            &fusion,
+            vec![
+                vec![scored("a", 0.9), scored("b", 0.8)],
+                vec![scored("b", 0.7), scored("c", 0.6)],
+            ],
+        )
+        .await;
+
+        for hit in &fused {
+            assert!(
+                hit.score.is_finite(),
+                "{} scored {}",
+                hit.chunk.id.as_str(),
+                hit.score
+            );
+        }
+
+        // `usize::MAX + rank` saturates, so every rank contributes 1/2^64 =
+        // 5.421011e-20: `b`, ranked by both legs, scores twice that.
+        assert_eq!(ids(&fused), ["b", "a", "c"]);
+        assert_close_relative(fused[0].score, 1.084_202_2e-19);
+        assert_close_relative(fused[1].score, 5.421_011e-20);
+        assert_close_relative(fused[2].score, 5.421_011e-20);
     }
 
     #[test]
