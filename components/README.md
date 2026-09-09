@@ -1,9 +1,8 @@
 # components/
 
-**Empty by design, for now.** One crate per component implementation is added
-here in later issues (`ragondin-retriever-bm25`, `ragondin-embedder-onnx`,
-`ragondin-store-qdrant`, …). This directory holds a `.gitkeep` until the first one
-lands.
+One crate per component implementation. `ragondin-retriever-bm25` (in-process
+BM25 over tantivy) is here; `ragondin-embedder-onnx`, `ragondin-store-qdrant` and
+the rest arrive in later issues.
 
 ## What a component crate is
 

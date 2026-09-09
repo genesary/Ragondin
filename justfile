@@ -27,6 +27,13 @@ fmt:
 check-features:
     cargo check --workspace --all-features --all-targets
 
+# Run the tests that live behind a heavy backend's feature. `just test` builds
+# the workspace with default features, which by rule enable no heavy backend, so
+# it compiles those tests away rather than running them; `check-features` proves
+# they compile but runs nothing. This is where they actually execute.
+test-bm25:
+    cargo test -p ragondin-retriever-bm25 --features bm25
+
 # Enforce the CI-guarded architecture invariants (INV-3, INV-4, INV-5, INV-6,
 # INV-11).
 check-invariants:
@@ -68,4 +75,4 @@ map *ARGS:
     python3 scripts/gen-map.py {{ARGS}}
 
 # Everything CI runs, in one command. Run this before declaring work done.
-check: fmt build test clippy check-features check-invariants check-doc-links check-adr-index check-deny
+check: fmt build test test-bm25 clippy check-features check-invariants check-doc-links check-adr-index check-deny

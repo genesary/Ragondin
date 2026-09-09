@@ -47,6 +47,13 @@ jobs:
       - name: Test
         run: cargo test --workspace
 
+      # `cargo test --workspace` uses default features, and by rule no heavy
+      # backend is one, so it compiles the feature-gated tests away rather than
+      # running them. The step below proves such code *compiles*; this one is
+      # where it is actually exercised.
+      - name: Test (feature-gated backends)
+        run: cargo test -p ragondin-retriever-bm25 --features bm25
+
       - name: Clippy (warnings are errors)
         run: cargo clippy --workspace --all-targets -- -D warnings
 
