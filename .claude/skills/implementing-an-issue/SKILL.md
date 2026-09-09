@@ -31,6 +31,7 @@ Before you say the work is complete, confirm every box:
 - [ ] `just check` passes (build, test, clippy with `-D warnings`, fmt, invariant checks).
 - [ ] New behavior is covered by tests written **before** the implementation.
 - [ ] No frozen decision was reopened; no architectural decision was made implicitly (see the `frozen-decisions` skill).
+- [ ] If the diff asserts in prose how something works — a doc comment describing a mechanism, an ADR citation, an issue reference — `just map --conflicts` reports nothing new about it. It is advisory and not part of `just check`, so nothing runs it for you.
 - [ ] The PR description names the issue it closes and any invariants it touches.
 
 ## A note on scope creep
