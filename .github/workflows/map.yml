@@ -106,8 +106,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # `enablement: true` turns Pages on the first time this runs, so no manual
-      # repository setting is a prerequisite for the workflow landing.
+      # `enablement: true` asks the action to create the Pages site when it is
+      # missing. It cannot, and this job failed exactly here on its first run:
+      # the workflow token is refused with "Resource not accessible by
+      # integration". Pages has to be enabled once, out of band -- either
+      # `gh api -X POST repos/:owner/:repo/pages -f build_type=workflow`, or
+      # Settings > Pages with the source set to GitHub Actions. The flag stays,
+      # because it costs nothing once the site exists and it records the intent,
+      # but it is not a substitute for that one-time step.
       - uses: actions/configure-pages@v5
         with:
           enablement: true
