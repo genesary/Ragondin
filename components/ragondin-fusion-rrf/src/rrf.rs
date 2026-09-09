@@ -48,6 +48,11 @@ impl Default for ReciprocalRankFusion {
 
 #[async_trait]
 impl Fusion for ReciprocalRankFusion {
+    /// An id repeated **within a single leg** contributes once per occurrence,
+    /// by construction — the sum is over positions — and a well-behaved
+    /// retriever never produces one, so nothing here guards against it; the
+    /// conformance suite's "no duplicate ids" check reads a `Fusion`'s or a
+    /// `Reranker`'s output, not a retriever's.
     async fn fuse(
         &self,
         inputs: Vec<Vec<ScoredChunk>>,
