@@ -262,6 +262,46 @@ mod tests {
         assert_close_relative(fused[2].score, 5.421_011e-20);
     }
 
+    /// An id repeated **within one leg** contributes once per occurrence: the
+    /// accumulation is over positions, by construction. A well-behaved retriever
+    /// never emits one — the conformance suite's "no duplicate ids" check reads
+    /// a `Fusion`'s or a `Reranker`'s output, not a retriever's — so this pins
+    /// the behaviour rather than endorsing the input.
+    #[tokio::test]
+    async fn an_id_repeated_within_one_leg_contributes_once_per_occurrence() {
+        let fusion = ReciprocalRankFusion::default();
+        let fused = fuse(
+            &fusion,
+            vec![vec![scored("a", 0.9), scored("a", 0.8), scored("b", 0.7)]],
+        )
+        .await;
+
+        // `a` = 1/61 + 1/62 = 0.032522475, from its two positions; `b` = 1/63.
+        assert_eq!(ids(&fused), ["a", "b"]);
+        assert_close(fused[0].score, 0.032_522_475);
+        assert_close(fused[1].score, 0.015_873_016);
+    }
+
+    /// An empty leg is not a rank-0 leg: it contributes nothing, and does not
+    /// shift the positions the other legs are read at.
+    #[tokio::test]
+    async fn an_empty_leg_among_non_empty_ones_contributes_nothing() {
+        let fusion = ReciprocalRankFusion::default();
+        let fused = fuse(
+            &fusion,
+            vec![
+                Vec::new(),
+                vec![scored("a", 0.9), scored("b", 0.8)],
+                Vec::new(),
+            ],
+        )
+        .await;
+
+        assert_eq!(ids(&fused), ["a", "b"]);
+        assert_close(fused[0].score, 0.016_393_443); // 1/61
+        assert_close(fused[1].score, 0.016_129_032); // 1/62
+    }
+
     #[test]
     fn the_default_k_is_sixty() {
         assert_eq!(DEFAULT_K, 60);
