@@ -112,6 +112,20 @@ impl BenchmarkAdapter for BeirAdapter {
         let corpus = read_corpus(&self.root.join("corpus.jsonl"))?;
         let queries = read_queries(&self.root.join("queries.jsonl"), &qrels)?;
 
+        // Judgments on one side and nothing to evaluate on the other is a
+        // mismatch between the two files, not a benchmark. Every id-handling
+        // bug this reader has had ended here, loading `Ok` with zero queries,
+        // and the failure then showed up as a metric of zero computed over an
+        // empty set — a number, in a report, with no error behind it. Empty
+        // qrels is a different case and stays a normal load: a split with
+        // nothing judged is useless, but it is not corrupt.
+        if !qrels.is_empty() && queries.is_empty() {
+            return Err(BenchmarkError::NoJudgedQuery {
+                path: self.qrels_path(),
+                judged: qrels.judgment_count(),
+            });
+        }
+
         Ok(Benchmark::new(corpus, queries, qrels))
     }
 }
@@ -197,13 +211,16 @@ fn combined_text(title: &str, text: &str) -> String {
 /// queries would score them against no judgments at all and drag every mean
 /// metric toward zero. File order is preserved among the queries kept, so the
 /// run is reproducible.
+///
+/// Filtering everything away is not this function's business to report: it
+/// returns an empty `Vec` and `load` decides, since only `load` knows whether
+/// the qrels held anything to match in the first place.
 fn read_queries(path: &Path, qrels: &Qrels) -> Result<Vec<Query>, BenchmarkError> {
     let all = read_jsonl(path, |record: QueryRecord| Query {
         // Trimmed to match `read_qrels`. Trimming one side only is worse than
         // trimming neither: it turns a dataset whose ids carry the same
         // whitespace everywhere — which used to match itself — into one whose
-        // queries are all filtered out below, with judgments loaded and no
-        // error raised.
+        // queries are all filtered out below.
         id: QueryId::new(record.id.trim()),
         text: record.text,
     })?;
@@ -251,23 +268,14 @@ fn read_qrels(path: &Path) -> Result<Qrels, BenchmarkError> {
     let mut qrels = Qrels::new();
     let mut is_first_record = true;
 
+    // A leading UTF-8 BOM needs no handling here: `csv::Reader` strips one from
+    // the start of whatever it is given, per-line reader included.
     for (index, line) in BufReader::new(file).lines().enumerate() {
-        let mut line = line.map_err(|source| BenchmarkError::Io {
+        let line = line.map_err(|source| BenchmarkError::Io {
             path: path.to_path_buf(),
             source,
         })?;
         let physical_line = index + 1;
-
-        // A UTF-8 BOM, if present at all, is attached to the very first byte
-        // of the file — never to any later line — so it is only ever worth
-        // checking for on the first line. `csv::Reader` used to strip this
-        // transparently when it was fed the whole file; now that each line
-        // goes through its own reader, that's this function's job.
-        if index == 0 {
-            if let Some(stripped) = line.strip_prefix('\u{feff}') {
-                line = stripped.to_string();
-            }
-        }
 
         if line.trim().is_empty() {
             continue;
@@ -349,9 +357,10 @@ fn read_qrels(path: &Path) -> Result<Qrels, BenchmarkError> {
 
         // Trim every field, not just the score: an untrimmed id that differs
         // from the "real" id by only whitespace parses fine, inserts fine,
-        // and then matches nothing when `queries()` filters by qrels — a
-        // silent empty result with no error anywhere. Trimming only the
-        // score is exactly the shape that produces that silent mismatch.
+        // and then matches nothing when `queries()` filters by qrels, so the
+        // query set empties out. `load`'s `NoJudgedQuery` guard now catches
+        // that state, but only after the fact and only when *every* query
+        // misses; trimming here is what stops it happening.
         let query_id = query_id.trim();
         let corpus_id = corpus_id.trim();
 

@@ -92,14 +92,41 @@ header, and is skipped, **only when its score field does not parse as a `u8`**.
 A judgment always has a numeric score; BEIR's header has the literal word
 `score`. Do not replace this with `has_headers(true)`.
 
+Detecting the header by content is why a **headerless three-column qrels file
+loads while a four-column TREC-style one (`query-id iteration corpus-id score`)
+is rejected**, which looks inconsistent and is not: the three-column file is
+the BEIR shape with a row this reader can identify by inspection, whereas a
+fourth column means the columns are *positional in a different order*, and
+this reader takes columns by position. Reading it as BEIR would file the
+iteration number as the corpus id and score every judgment against a document
+that does not exist. Rejecting it names the mismatch; tolerating it would
+produce a plausible benchmark computed from the wrong columns.
+
 **Ids are trimmed on every side — the qrels TSV, `corpus.jsonl` and
 `queries.jsonl`.** Trimming is all-or-nothing here. Trimming *one* side is
 strictly worse than trimming none: a dataset whose ids carry the same
 surrounding whitespace in every file matches itself when nothing is trimmed,
-but with only the qrels side trimmed, `q1` no longer equals `q1 `, every query
-is filtered away, and the benchmark loads successfully with judgments and no
-queries — no error raised anywhere. If you ever remove a `.trim()` here, remove
+but with only the qrels side trimmed, `q1` no longer equals `q1 ` and every
+affected query is filtered away. If you ever remove a `.trim()` here, remove
 all of them.
+
+## The repeated symptom has its own guard
+
+Three separate parsing bugs on this reader — a swallowed headerless first row,
+a one-sided trim, a byte welded onto the first id — all ended in the same
+state: judgments loaded, every query filtered out by `read_queries`, and the
+benchmark returned `Ok` with an empty query set. Nothing failed; the mismatch
+between the two files surfaced later as a metric of zero, reported as a
+number.
+
+So `BeirAdapter::load` names that state directly. When the qrels are non-empty
+and the query set comes back empty, it returns
+`BenchmarkError::NoJudgedQuery { path, judged }`, whose message gives the qrels
+path and the judgment count. The guard diagnoses *the symptom*, not any one of
+its causes, which is the point: it is the fourth cause it exists for. Empty
+qrels stays a normal load — a split with nothing judged is useless, not
+corrupt — and a partial mismatch, where some queries still match, is invisible
+to it. The guard is the last line, never the fix.
 
 The same asymmetry principle governs the physical line numbers in
 `BenchmarkError`: they are counted while reading rather than derived from the

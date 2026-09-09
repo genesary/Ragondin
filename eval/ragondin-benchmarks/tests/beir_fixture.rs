@@ -48,18 +48,18 @@ fn loads_the_corpus_queries_and_qrels_of_the_test_split() {
 
     assert_eq!(
         benchmark.corpus().len(),
-        4,
+        5,
         "every corpus line is a document"
     );
 
-    // Three queries are in queries.jsonl; only two are judged in test.tsv, and
-    // evaluating the third would drag every mean metric toward zero.
+    // Four queries are in queries.jsonl; only three are judged in test.tsv,
+    // and evaluating the fourth would drag every mean metric toward zero.
     let query_ids: Vec<&str> = benchmark.queries().iter().map(|q| q.id.as_str()).collect();
-    assert_eq!(query_ids, vec!["q-1", "q-2"]);
+    assert_eq!(query_ids, vec!["q-1", "q-2", "0042"]);
 
     let qrels = benchmark.qrels();
-    assert_eq!(qrels.judged_query_count(), 2);
-    assert_eq!(qrels.judgment_count(), 3);
+    assert_eq!(qrels.judged_query_count(), 3);
+    assert_eq!(qrels.judgment_count(), 4);
 
     let q1 = qrels
         .for_query(&QueryId::new("q-1"))
@@ -76,6 +76,49 @@ fn loads_the_corpus_queries_and_qrels_of_the_test_split() {
 }
 
 #[test]
+fn a_leading_zero_id_survives_as_a_string_on_every_side() {
+    // "4983" already pins that an id is not parsed as a number, but a
+    // round-trip through an integer would return "4983" unchanged, so it
+    // cannot tell parsing from not-parsing. "0042" can: parsed as a number it
+    // comes back "42", and the judgment, the document and the query would then
+    // be filed under three ids that no longer agree. The fixture judges 0042
+    // against a document of the same id, so the doc, the query and the qrels
+    // are each checked against the literal string.
+    let benchmark = BeirAdapter::new(fixture_root())
+        .load()
+        .expect("the fixture must load");
+
+    let doc = benchmark
+        .corpus()
+        .iter()
+        .find(|d| d.id == DocId::new("0042"))
+        .expect("0042 is in the fixture corpus");
+    assert_eq!(doc.id.as_str(), "0042", "the leading zero must survive");
+
+    let query = benchmark
+        .queries()
+        .iter()
+        .find(|q| q.id == QueryId::new("0042"))
+        .expect("0042 is a judged query in the test split");
+    assert_eq!(query.id.as_str(), "0042", "the leading zero must survive");
+
+    let relevance = benchmark
+        .qrels()
+        .for_query(&QueryId::new("0042"))
+        .expect("0042 is judged");
+    assert_eq!(
+        relevance.get(&DocId::new("0042")),
+        Some(&3),
+        "the judgment must be reachable under the unparsed id on both sides"
+    );
+    assert_eq!(
+        relevance.get(&DocId::new("42")),
+        None,
+        "no id may have been normalized through a number"
+    );
+}
+
+#[test]
 fn the_qrels_header_row_is_not_ingested_as_a_judgment() {
     let benchmark = BeirAdapter::new(fixture_root())
         .load()
@@ -88,7 +131,7 @@ fn the_qrels_header_row_is_not_ingested_as_a_judgment() {
             .is_none(),
         "the header row must not become a judgment for a query called query-id"
     );
-    assert_eq!(benchmark.qrels().judgment_count(), 3, "3 data rows, not 4");
+    assert_eq!(benchmark.qrels().judgment_count(), 4, "4 data rows, not 5");
 }
 
 #[test]
@@ -102,7 +145,7 @@ fn iteration_pairs_each_query_with_its_own_judgments() {
         .map(|(query, relevance)| (query.id.as_str(), relevance.len()))
         .collect();
 
-    assert_eq!(pairs, vec![("q-1", 2), ("q-2", 1)]);
+    assert_eq!(pairs, vec![("q-1", 2), ("q-2", 1), ("0042", 1)]);
 }
 
 #[test]
@@ -216,7 +259,8 @@ fn a_headerless_qrels_file_keeps_its_first_judgment() {
 fn a_stray_space_around_an_id_does_not_empty_the_query_set() {
     // Only the score used to be trimmed. A trailing space on the query id
     // filed the judgment under QueryId("q1 "), which matches no real query,
-    // so "q1" silently vanished from queries() with no error at all.
+    // so "q1" vanished from queries() — and, with one query in the file,
+    // emptied the query set entirely.
     let root = write_dataset(
         "stray_space_around_id",
         "{\"_id\": \"d1\", \"text\": \"doc one\"}\n",
@@ -294,6 +338,39 @@ fn a_utf8_bom_on_the_first_line_of_a_jsonl_file_does_not_fail_the_load() {
     assert_eq!(benchmark.corpus()[0].text, "hello");
     assert_eq!(benchmark.queries().len(), 1);
     assert_eq!(benchmark.queries()[0].id, QueryId::new("q1"));
+
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_utf8_bom_on_a_headerless_qrels_file_does_not_corrupt_the_first_query_id() {
+    // The BOM sits on the first byte of the first *data* row here, with no
+    // header row to absorb it: unstripped, the first judgment would be filed
+    // under QueryId("\u{feff}q1"), which matches no query, and "q1" would
+    // vanish from the run. This pins that the BOM never reaches the id — the
+    // property the reader owes its caller — wherever the stripping happens.
+    let root = write_dataset(
+        "utf8_bom_on_headerless_qrels",
+        "{\"_id\": \"d1\", \"text\": \"doc one\"}\n{\"_id\": \"d2\", \"text\": \"doc two\"}\n",
+        "{\"_id\": \"q1\", \"text\": \"query one\"}\n{\"_id\": \"q2\", \"text\": \"query two\"}\n",
+        "\u{feff}q1\td1\t1\nq2\td2\t2\n",
+    );
+
+    let benchmark = BeirAdapter::new(&root)
+        .load()
+        .expect("a BOM on a headerless qrels file must not fail the load");
+
+    let query_ids: Vec<&str> = benchmark.queries().iter().map(|q| q.id.as_str()).collect();
+    assert_eq!(
+        query_ids,
+        vec!["q1", "q2"],
+        "the BOM must not be carried into the first query id"
+    );
+    assert_eq!(benchmark.qrels().judgment_count(), 2);
+    assert!(
+        benchmark.qrels().for_query(&QueryId::new("q1")).is_some(),
+        "q1 must be judged under its own id, not under a BOM-prefixed one"
+    );
 
     let _ = fs::remove_dir_all(&root);
 }
@@ -499,15 +576,82 @@ fn a_four_column_qrels_header_is_a_typed_error() {
     let _ = fs::remove_dir_all(&root);
 }
 
+/// Qrels that name no query the dataset defines is a typed error, not an
+/// `Ok` benchmark with nothing to evaluate.
+///
+/// This is the symptom three separate bugs on this branch produced — a
+/// swallowed headerless first row, a one-sided trim, a BOM welded onto the
+/// first id — each of which ended with judgments loaded, every query filtered
+/// away, and no error anywhere. The guard names the symptom itself, so the
+/// fourth cause of it is diagnosed at the load rather than at the score.
+#[test]
+fn qrels_matching_no_query_at_all_is_a_typed_error_naming_the_qrels_file() {
+    let root = write_dataset(
+        "qrels-name-unknown-queries",
+        "{\"_id\": \"d1\", \"text\": \"doc one\"}\n",
+        "{\"_id\": \"q1\", \"text\": \"query one\"}\n",
+        "query-id\tcorpus-id\tscore\nq-other\td1\t1\nq-also-other\td1\t2\n",
+    );
+
+    let error = BeirAdapter::new(&root)
+        .load()
+        .expect_err("qrels that match no query must not load Ok with zero queries");
+
+    match &error {
+        BenchmarkError::NoJudgedQuery { path, judged } => {
+            assert!(
+                path.ends_with("qrels/test.tsv"),
+                "the error must name the qrels file, got {path:?}"
+            );
+            assert_eq!(*judged, 2, "both judgments must be counted");
+        }
+        other => panic!("expected a typed NoJudgedQuery error, got {other:?}"),
+    }
+
+    let message = error.to_string();
+    assert!(
+        message.contains("test.tsv") && message.contains('2'),
+        "the message must name the qrels path and the judgment count, got {message:?}"
+    );
+
+    let _ = fs::remove_dir_all(&root);
+}
+
+/// The mirror image: empty qrels must stay a normal load.
+///
+/// A guard written as "no queries is an error" rather than "judgments but no
+/// queries is an error" would reject a dataset that simply has nothing judged
+/// in the split, which is a legitimate — if useless — file, not a corruption.
+#[test]
+fn an_empty_qrels_file_still_loads_with_no_queries_and_no_error() {
+    let root = write_dataset(
+        "empty-qrels-loads",
+        "{\"_id\": \"d1\", \"text\": \"doc one\"}\n",
+        "{\"_id\": \"q1\", \"text\": \"query one\"}\n",
+        "query-id\tcorpus-id\tscore\n",
+    );
+
+    let benchmark = BeirAdapter::new(&root)
+        .load()
+        .expect("a qrels file with a header and no judgments is not a corrupt file");
+
+    assert!(benchmark.qrels().is_empty());
+    assert!(benchmark.queries().is_empty());
+    assert_eq!(benchmark.corpus().len(), 1);
+
+    let _ = fs::remove_dir_all(&root);
+}
+
 /// Ids are trimmed on **both** sides — the qrels TSV and the JSONL files.
 ///
 /// Trimming only the qrels side is the shape that silently breaks a dataset
 /// whose ids carry the same surrounding whitespace in every file: the qrels
 /// id becomes `q1` while the query id stays `q1 `, they stop matching, and
-/// `read_queries` filters the query out. The benchmark then loads `Ok` with
-/// judgments but no evaluable queries — no error anywhere, and a run over it
-/// scores nothing. Untrimmed on both sides used to match; trimmed on both
-/// sides matches too. One side only is the broken case.
+/// `read_queries` filters the query out. Untrimmed on both sides used to
+/// match; trimmed on both sides matches too. One side only is the broken case
+/// — and on a dataset with more than one query it drops only the affected
+/// ones, which the `NoJudgedQuery` guard cannot see. Trimming is the fix; the
+/// guard is only the last line.
 #[test]
 fn ids_carrying_the_same_whitespace_in_every_file_still_match() {
     let root = write_dataset(

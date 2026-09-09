@@ -2,3 +2,4 @@
 {"_id": "MED-11", "title": "", "text": "A document whose title is present but empty.", "metadata": {}}
 {"_id": "4983", "text": "A document with no title field at all."}
 {"_id": "MED-12", "title": "Dogs", "text": "The dog barked."}
+{"_id": "0042", "title": "Answers", "text": "A document whose id keeps a leading zero."}

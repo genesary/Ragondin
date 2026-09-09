@@ -42,6 +42,26 @@ pub enum BenchmarkError {
         source: serde_json::Error,
     },
 
+    /// The qrels hold judgments, but not one of them names a query the dataset
+    /// defines — so there is nothing a run could be scored against.
+    ///
+    /// Loading `Ok` here would be worse than failing: every mean metric would
+    /// be computed over an empty query set and reported as a number, and the
+    /// mismatch between the two files would surface as a bad score rather than
+    /// as a bad dataset. Three separate parsing bugs on this reader produced
+    /// exactly this state — a swallowed first row, a one-sided trim, a byte
+    /// welded onto the first id — so the symptom is named at the load.
+    ///
+    /// The path is the qrels file, since that is the side whose ids are being
+    /// compared against the query set.
+    #[error("{path}: {judged} judgments, none naming a query this dataset defines")]
+    NoJudgedQuery {
+        /// The qrels file whose ids matched no query.
+        path: PathBuf,
+        /// How many `(query, document)` judgments it holds.
+        judged: usize,
+    },
+
     /// A delimited record does not have the shape the format requires.
     #[error("{path}:{line}: malformed record: {reason}")]
     MalformedRecord {
