@@ -147,7 +147,6 @@ This is the first structuring decision. A linear pipeline, or even a purely acyc
 **Illustration.** A hybrid retrieval pipeline with reranking, augmented with a corrective step:
 
 ```yaml
-version: 2
 pipeline:
   inputs: [question]              # the graph's signature (ADR-C18): the values
                                   # it receives from its caller. A node consumes

@@ -26,11 +26,10 @@
 //! a version bump says the grammar itself may have changed. Continuing there
 //! is not leniency, it is misinterpretation.
 //!
-//! An **absent** version is a third case, and since ADR-C18 it is tolerated
-//! here on purpose: it defaults to [`SchemaVersion::PRE_VERSIONING`], which
-//! this build does not read, and [`crate::validate`] is what refuses it — so
-//! an unversioned document fails on the version it is written in rather than
-//! on a consequence of it.
+//! An **absent** version reads as the version this build writes: nothing has
+//! ever been serialized in an earlier one, so there is no older document for
+//! a default to be wrong about, and a configuration that says nothing is
+//! current by definition.
 //!
 //! A **parameter that is not a scalar or a list of scalars** — a nested map,
 //! a null — fails to parse, and does so with serde's opaque untagged-enum
@@ -49,17 +48,17 @@ use serde::{Deserialize, Deserializer, Serialize};
 
 /// The version of the wire schema a configuration is written in.
 ///
-/// Absent from a configuration, it reads as [`SchemaVersion::PRE_VERSIONING`]
-/// — version 1 predates the field, so a file written before versioning is
-/// unambiguous. A configuration written in any later version must say so, and
-/// a version this build does not understand is refused rather than guessed at.
+/// Absent from a configuration, it reads as [`SchemaVersion::SUPPORTED`]: a
+/// file that states no version is written in the one this build writes. A
+/// version this build does not understand is refused rather than guessed at.
 ///
-/// The two constants were equal until ADR-C18 added `inputs` to
-/// [`RawGraph`]: a change to the wire schema's shape never leaves this type
-/// untouched (INV-9). They have been distinct ever since, which is why an
-/// absent version is no longer a supported one — a v1 document cannot declare
-/// the input ADR-C18 requires, so reading it as current would reject it for a
-/// missing declaration rather than for the version it is written in.
+/// ADR-C18 bumped the supported version to 2 when it added `inputs` to
+/// [`RawGraph`], because a change to the wire schema's shape never leaves
+/// this type untouched (INV-9). It does **not** follow that an absent version
+/// means 1: nothing has ever been serialized in version 1, so guarding
+/// against documents that do not exist would only cost every configuration a
+/// `version:` line. The mechanism is here and versioned; what it discriminates
+/// between starts mattering when a version is actually in use somewhere.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 #[serde(transparent)]
 pub struct SchemaVersion(u32);
@@ -68,28 +67,17 @@ impl SchemaVersion {
     /// The only schema version this build can read.
     pub const SUPPORTED: u32 = 2;
 
-    /// The version a configuration written before the `version` field existed
-    /// is in. What an absent `version` means, and no longer a version this
-    /// build reads — see the note on this type.
-    pub const PRE_VERSIONING: u32 = 1;
-
-    /// [`SchemaVersion::SUPPORTED`] as a value.
+    /// [`SchemaVersion::SUPPORTED`] as a value, and what
+    /// [`RawPipeline::version`] defaults to.
     ///
-    /// The one a caller building a [`RawPipeline`] in Rust wants. It exists
-    /// because there is deliberately no `Default` for this type: a default
-    /// would have to be [`Self::PRE_VERSIONING`], and a public constructor
-    /// yielding a version the build refuses is a trap — the type's promise is
-    /// that holding one means it is supported.
+    /// Every inhabitant of this type is a version this build reads: [`new`]
+    /// refuses the rest, `Deserialize` routes through it, and this constant
+    /// and [`Default`] both yield [`Self::SUPPORTED`]. Holding a
+    /// `SchemaVersion` therefore means it is supported — a promise worth more
+    /// than distinguishing a version nothing was ever written in.
+    ///
+    /// [`new`]: Self::new
     pub const CURRENT: Self = Self(Self::SUPPORTED);
-
-    /// What an absent `version` field means, for `serde` alone.
-    ///
-    /// Private, and the only constructor that bypasses [`Self::new`]: it is
-    /// reachable solely through the `#[serde(default)]` on
-    /// [`RawPipeline::version`], the one slot [`crate::validate`] guards.
-    fn pre_versioning() -> Self {
-        Self(Self::PRE_VERSIONING)
-    }
 
     /// Accepts a version this build understands, and refuses any other.
     pub fn new(version: u32) -> Result<Self, UnsupportedSchemaVersion> {
@@ -103,6 +91,14 @@ impl SchemaVersion {
     /// The version number.
     pub fn get(self) -> u32 {
         self.0
+    }
+}
+
+impl Default for SchemaVersion {
+    /// [`SchemaVersion::CURRENT`] — the version this build writes, which is
+    /// what a configuration saying nothing is written in.
+    fn default() -> Self {
+        Self::CURRENT
     }
 }
 
@@ -206,15 +202,9 @@ pub struct RawGraph {
 /// `LogicalPipeline` from it is #9.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct RawPipeline {
-    /// The wire schema version. Absent means
-    /// [`SchemaVersion::PRE_VERSIONING`], which this build does not read, so
-    /// an unversioned document parses here and is refused by
-    /// [`crate::validate`].
-    ///
-    /// The default lives on the field rather than on the type: there is no
-    /// `Default for SchemaVersion`, so no Rust caller can produce an
-    /// unsupported version by accident — see [`SchemaVersion::CURRENT`].
-    #[serde(default = "SchemaVersion::pre_versioning")]
+    /// The wire schema version. Absent means [`SchemaVersion::CURRENT`], so a
+    /// configuration only writes this line to pin a version deliberately.
+    #[serde(default)]
     pub version: SchemaVersion,
     /// The pipeline itself.
     pub pipeline: RawGraph,
@@ -225,20 +215,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn an_absent_version_reads_as_the_version_that_predates_the_field() {
+    fn an_absent_version_reads_as_the_version_this_build_writes() {
         let doc: RawPipeline = serde_json::from_str(r#"{"pipeline":{"nodes":[]}}"#).unwrap();
-        assert_eq!(doc.version.get(), SchemaVersion::PRE_VERSIONING);
-        assert_eq!(doc.version.get(), 1);
+        assert_eq!(doc.version, SchemaVersion::CURRENT);
+        assert_eq!(doc.version.get(), SchemaVersion::SUPPORTED);
     }
 
     #[test]
-    fn no_rust_caller_can_build_an_unsupported_version() {
-        // There is deliberately no `Default for SchemaVersion`: it would have
-        // to yield PRE_VERSIONING, and a public constructor producing a
-        // version the build refuses is a trap the caller only discovers at
-        // `validate`. `new` and `CURRENT` are the whole public surface, and
-        // both are supported by construction.
+    fn every_inhabitant_of_this_type_is_a_version_the_build_reads() {
+        // The type's promise: holding a `SchemaVersion` means it is
+        // supported. `new` refuses the rest, `Deserialize` routes through it,
+        // and `Default`/`CURRENT` yield SUPPORTED — so no constructor can
+        // produce a value that fails later.
         assert_eq!(SchemaVersion::CURRENT.get(), SchemaVersion::SUPPORTED);
+        assert_eq!(SchemaVersion::default(), SchemaVersion::CURRENT);
         assert_eq!(
             SchemaVersion::new(SchemaVersion::SUPPORTED).unwrap(),
             SchemaVersion::CURRENT
@@ -253,23 +243,12 @@ mod tests {
         // document into an unreadable one, and the failure surfaces at a
         // later, unrelated read (INV-9).
         let doc: RawPipeline =
-            serde_json::from_str(r#"{"version":2,"pipeline":{"inputs":["question"],"nodes":[]}}"#)
-                .expect("a supported document must parse");
+            serde_json::from_str(r#"{"pipeline":{"inputs":["question"],"nodes":[]}}"#)
+                .expect("a document that states no version must parse");
         let text = serde_json::to_string(&doc).expect("it must serialize");
         let back: RawPipeline =
             serde_json::from_str(&text).expect("what we serialize, we must be able to re-parse");
         assert_eq!(back, doc);
-    }
-
-    #[test]
-    fn the_version_that_predates_the_field_is_no_longer_one_this_build_reads() {
-        // ADR-C18 added `inputs` to the wire schema, so the two constants
-        // parted company (INV-9). Stating version 1 is refused at
-        // deserialization; an *absent* version reaches `validate` instead,
-        // which is where it is refused.
-        assert_ne!(SchemaVersion::PRE_VERSIONING, SchemaVersion::SUPPORTED);
-        let err = SchemaVersion::new(SchemaVersion::PRE_VERSIONING).unwrap_err();
-        assert_eq!(err.found(), 1);
     }
 
     #[test]

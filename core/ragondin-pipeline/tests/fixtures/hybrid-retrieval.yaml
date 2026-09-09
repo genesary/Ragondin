@@ -11,13 +11,13 @@
 # fields optional on a versioned wire schema inside a stable API boundary
 # (INV-1), which is a deliberate act, not a patch. Tracked separately.
 #
-# The `version:` key and the `inputs:` declaration arrived together with
-# ADR-C18: adding `inputs` changed the wire schema's shape, which never leaves
-# `SchemaVersion` untouched (INV-9), so §5.1 now states the version it is
-# written in and an absent one reads as the unsupported version 1. Note that
-# `query_transform` is a component family with no `LogicalNode` variant — this
-# level accepts it, because rejecting it is validation's job, not the parser's.
-version: 2
+# The `inputs:` declaration arrived with ADR-C18. Note there is still no
+# `version:` key: adding `inputs` did bump `SchemaVersion` (INV-9 — a change to
+# the wire schema's shape never leaves it untouched), but an absent version
+# reads as the one this build writes, so a configuration states a version only
+# to pin one deliberately. Note also that `query_transform` is a component
+# family with no `LogicalNode` variant — this level accepts it, because
+# rejecting it is validation's job, not the parser's.
 pipeline:
   inputs: [question]              # the graph's signature (ADR-C18): the values
                                   # it receives from its caller. A node consumes

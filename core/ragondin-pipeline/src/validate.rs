@@ -29,7 +29,7 @@ use crate::node::{
     ExtensionNode, FusionNode, LogicalNode, NodeId, ParamValue, Params, RerankerNode, RetrieverNode,
 };
 use crate::pipeline::LogicalPipeline;
-use crate::raw::{RawNode, RawParamValue, RawPipeline, SchemaVersion};
+use crate::raw::{RawNode, RawParamValue, RawPipeline};
 
 /// A `RawPipeline` cannot be lowered into a validated logical form.
 ///
@@ -41,9 +41,7 @@ use crate::raw::{RawNode, RawParamValue, RawPipeline, SchemaVersion};
 /// `ARCHITECTURE.md` to permit it, and this enum no longer needs a
 /// hand-rolled `Display`.
 ///
-/// `UnsupportedSchemaVersion` precedes everything: it is neither a lowering
-/// fault nor a graph one, but a statement that the grammar itself may not be
-/// the one this build reads (ADR-C18, INV-9). The lowering variants
+/// The lowering variants
 /// (`UnknownComponent`, `NonFiniteParam`) and the five structural checks over
 /// a whole graph (`DuplicateId`, `InputArity`, `InputCollidesWithNode`,
 /// `DanglingInput`, `Cycle`) cover well-formedness. `KindMismatch` is
@@ -96,28 +94,6 @@ pub enum ValidationError {
         node: NodeId,
         /// The id named in `inputs` that nothing in the pipeline defines.
         missing: NodeId,
-    },
-    /// A configuration is read as a schema version this build cannot read.
-    ///
-    /// In practice `found` is always [`SchemaVersion::PRE_VERSIONING`]: a
-    /// *stated* bad version fails in `SchemaVersion::new` during
-    /// deserialization and never reaches here, so this covers the one version
-    /// that arrives without being stated.
-    ///
-    /// Checked here rather than only at deserialization because an *absent*
-    /// `version` never reaches [`SchemaVersion::new`]: it defaults to
-    /// [`SchemaVersion::PRE_VERSIONING`], which ADR-C18 made a version this
-    /// build no longer reads. Refusing it here means an unversioned document
-    /// fails on the version it is written in, rather than further down on a
-    /// consequence of it — a missing input declaration it had no way to
-    /// carry.
-    #[error(
-        "unsupported pipeline schema version {found}: this build reads version {}",
-        SchemaVersion::SUPPORTED
-    )]
-    UnsupportedSchemaVersion {
-        /// The version the configuration is read as.
-        found: u32,
     },
     /// A pipeline does not declare exactly one input (ADR-C18).
     ///
@@ -347,16 +323,10 @@ fn lower_node(raw: RawNode) -> Result<LogicalNode, ValidationError> {
 ///    skipping an `Extension` node on either side of an edge
 ///    ([`ValidationError::KindMismatch`]).
 pub fn validate(raw: RawPipeline) -> Result<LogicalPipeline, ValidationError> {
-    // First, and before any work: a document this build cannot read is
-    // refused for the version it is written in. An absent `version` defaults
-    // to `PRE_VERSIONING` and so never reached `SchemaVersion::new`, which is
-    // why this check cannot live at deserialization alone.
-    if raw.version.get() != SchemaVersion::SUPPORTED {
-        return Err(ValidationError::UnsupportedSchemaVersion {
-            found: raw.version.get(),
-        });
-    }
-
+    // No schema-version check here: every inhabitant of `SchemaVersion` is a
+    // version this build reads, established by `SchemaVersion::new` and by
+    // the `Deserialize` that routes through it, so a document that got this
+    // far is in a grammar this build understands.
     let inputs: Vec<NodeId> = raw.pipeline.inputs.into_iter().map(NodeId::new).collect();
 
     let mut nodes = raw
@@ -611,7 +581,7 @@ fn find_cycle(nodes: &[LogicalNode], index: &HashMap<NodeId, usize>) -> Option<V
 mod tests {
     use super::*;
     use crate::kind::ValueKind;
-    use crate::raw::RawGraph;
+    use crate::raw::{RawGraph, SchemaVersion};
 
     fn raw_node(component: &str, params: BTreeMap<String, RawParamValue>) -> RawNode {
         RawNode {
@@ -1046,24 +1016,17 @@ mod tests {
     }
 
     #[test]
-    fn a_document_in_the_version_that_predates_the_field_is_refused() {
-        // Deserialized rather than built, so the whole chain is covered in one
-        // place: an absent `version` key defaults to PRE_VERSIONING, which is
-        // the only way a version this build refuses can reach `validate` at
-        // all (`SchemaVersion::new` refuses every other, and there is no
-        // `Default` to produce one).
+    fn a_document_that_states_no_version_validates() {
+        // A configuration writes `version:` only to pin one deliberately;
+        // saying nothing means the version this build writes. Deserialized
+        // rather than built, so the default is exercised through the door a
+        // real configuration comes in by.
         let raw: RawPipeline = serde_yaml::from_str(
             "pipeline:\n  inputs: [question]\n  nodes:\n    - id: r\n      component: retriever\n      impl: bm25\n      inputs: [question]\n",
         )
-        .expect("an unversioned document must parse; refusing it is validation's job");
-        let err = validate(raw).unwrap_err();
-        assert_eq!(
-            err,
-            ValidationError::UnsupportedSchemaVersion {
-                found: SchemaVersion::PRE_VERSIONING
-            },
-            "an unversioned document must fail on its version, not on a consequence of it"
-        );
+        .expect("an unversioned document must parse");
+        assert_eq!(raw.version, SchemaVersion::CURRENT);
+        validate(raw).expect("and it must validate");
     }
 
     #[test]

@@ -18,9 +18,9 @@ fn the_reference_pipeline_from_the_documentation_deserializes() {
     let doc = reference();
 
     assert_eq!(
-        doc.version.get(),
-        SchemaVersion::SUPPORTED,
-        "§5.1 states the version it is written in (ADR-C18, INV-9)"
+        doc.version,
+        SchemaVersion::CURRENT,
+        "§5.1 writes no `version:`, which reads as the version this build writes"
     );
     assert_eq!(
         doc.pipeline.inputs,
