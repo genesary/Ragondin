@@ -70,7 +70,7 @@ index of citable decisions is worse than none — `just check` fails when it dri
 | [`ADR-C15`](ADR-C15-one-binary-with-subcommands.md) | One binary with subcommands | — | accepted |
 | [`ADR-C16`](ADR-C16-erased-edge-values-checked-before-execution.md) | Erased edge values, with compatibility checked before execution | INV-1, INV-2, INV-7, INV-8 | accepted |
 | [`ADR-C17`](ADR-C17-embedding-role-per-call-prefixes-in-the-constructor.md) | The embedding role is a per-call parameter; prefix text is constructor configuration | INV-1, INV-7 | accepted |
-| [`ADR-C18`](ADR-C18-a-pipeline-declares-its-inputs.md) | A pipeline declares its inputs; the query is an explicit edge | INV-1, INV-8, INV-9 | accepted |
+| [`ADR-C18`](ADR-C18-a-pipeline-declares-its-inputs.md) | A pipeline declares its inputs; the query is an explicit edge | INV-1, INV-8, INV-9 | amended |
 
 <!-- END GENERATED ADR INDEX -->
 
