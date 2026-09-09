@@ -44,23 +44,43 @@ impl MemoryVectorStore {
     }
 
     fn read(&self) -> std::sync::RwLockReadGuard<'_, Vec<EmbeddedChunk>> {
-        // A poisoned lock means another thread panicked mid-write. Nothing
-        // here can leave the vector inconsistent -- the panic would have come
-        // from the allocator -- so the contents are still sound to read.
+        // A poisoned lock means another thread panicked mid-write. The write
+        // section below inserts and replaces whole entries, so what a reader
+        // then sees is some prefix of a batch rather than a torn value, and
+        // refusing to read it would be a worse answer than serving it.
         self.entries.read().unwrap_or_else(|e| e.into_inner())
     }
 }
 
 /// The cosine of the angle between two vectors of equal width, or `None` when
-/// one of them has no direction to speak of.
+/// one of them has no direction to speak of — zero magnitude, or a component
+/// that is not a finite number.
+///
+/// The arithmetic is `f64` although the components are `f32`, because squaring
+/// is where an ordinary embedding leaves the range: `1e30` is a perfectly good
+/// `f32` and `1e30 * 1e30` is not, so an `f32` accumulator turns a vector's
+/// similarity to *itself* into `inf / inf`, which is `NaN`. Every `f32` is
+/// exactly representable in `f64` and no sum of squares of `f32`s can leave
+/// its range, so the only way a norm here is not finite is that an input
+/// component was not — which is the case the guard below answers.
 fn cosine(a: &[f32], b: &[f32]) -> Option<f32> {
-    let norm = |v: &[f32]| v.iter().map(|c| c * c).sum::<f32>().sqrt();
+    let norm = |v: &[f32]| {
+        v.iter()
+            .map(|c| f64::from(*c) * f64::from(*c))
+            .sum::<f64>()
+            .sqrt()
+    };
+    let directed = |n: f64| n.is_finite() && n != 0.0;
     let (na, nb) = (norm(a), norm(b));
-    if na == 0.0 || nb == 0.0 {
+    if !directed(na) || !directed(nb) {
         return None;
     }
-    let dot: f32 = a.iter().zip(b).map(|(x, y)| x * y).sum();
-    Some(dot / (na * nb))
+    let dot: f64 = a
+        .iter()
+        .zip(b)
+        .map(|(x, y)| f64::from(*x) * f64::from(*y))
+        .sum();
+    Some((dot / (na * nb)) as f32)
 }
 
 #[async_trait]
@@ -74,7 +94,22 @@ impl VectorStore for MemoryVectorStore {
     ///
     /// An empty batch is a no-op rather than an error. The contract leaves that
     /// open (#91) and this is a local choice, not an answer to it.
+    ///
+    /// An entry whose *embedding* is empty is refused. That is also a local
+    /// choice about this store and not an answer to #90, which asks what an
+    /// `Embedder` may legitimately return.
     async fn upsert(&self, entries: Vec<EmbeddedChunk>) -> Result<(), ComponentError> {
+        // Checked before the held width, because a width-zero opening batch is
+        // otherwise accepted and fixes the store at a width no query and no
+        // later vector can match: every search over it is then an
+        // `InvalidRequest` and the store can never be corrected.
+        if let Some(odd) = entries.iter().find(|entry| entry.embedding.dim() == 0) {
+            return Err(ComponentError::InvalidRequest(format!(
+                "`{}` has no components, and a store of vectors of width zero can answer no search",
+                odd.chunk.id.as_str()
+            )));
+        }
+
         let mut held = self
             .entries
             .write()
@@ -146,7 +181,9 @@ impl VectorStore for MemoryVectorStore {
         }
         if cosine(embedding.as_slice(), embedding.as_slice()).is_none() {
             return Err(ComponentError::InvalidRequest(
-                "a query vector of zero magnitude has no direction to search along".into(),
+                "a query vector of zero magnitude, or with a component that is not a finite \
+                 number, has no direction to search along"
+                    .into(),
             ));
         }
 
@@ -154,7 +191,8 @@ impl VectorStore for MemoryVectorStore {
             .iter()
             .map(|entry| ScoredChunk {
                 chunk: entry.chunk.clone(),
-                // A stored vector of zero magnitude is scored rather than
+                // A stored vector with no direction -- zero magnitude, or a
+                // component that is not finite -- is scored rather than
                 // rejected: it is already indexed, and NaN would break the
                 // ranking contract for every other hit in the list.
                 score: cosine(embedding.as_slice(), entry.embedding.as_slice()).unwrap_or(0.0),
@@ -428,4 +466,5 @@ mod tests {
         store.upsert(Vec::new()).await.expect("a no-op upsert");
         assert_eq!(store.len(), 1);
     }
+
 }
