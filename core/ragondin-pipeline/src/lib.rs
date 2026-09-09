@@ -42,7 +42,8 @@ pub use node::{
 };
 pub use pipeline::LogicalPipeline;
 pub use raw::{
-    RawGraph, RawNode, RawParamValue, RawPipeline, SchemaVersion, UnsupportedSchemaVersion,
+    peek_schema_version, RawGraph, RawNode, RawParamValue, RawPipeline, SchemaVersion,
+    SchemaVersionPeekError, UnsupportedSchemaVersion,
 };
 pub use validate::{validate, ValidationError};
 
