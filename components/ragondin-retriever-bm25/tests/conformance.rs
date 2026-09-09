@@ -172,3 +172,43 @@ async fn zero_top_k_is_an_invalid_request() {
 
     assert!(matches!(error, ComponentError::InvalidRequest(_)));
 }
+
+/// The tie-break must happen *before* `top_k` truncates, or it decides only the
+/// order of a selection tantivy already made by document address.
+///
+/// Three equally scoring chunks, `top_k` of two: whichever two survive is the
+/// answer, so the survivors have to be chosen by the component's own rule. The
+/// same corpus is indexed in three insertion orders — the one thing a document
+/// address is a function of — and must answer identically each time.
+#[tokio::test]
+async fn ties_are_broken_before_top_k_truncates() {
+    for order in [["a", "b", "c"], ["b", "c", "a"], ["c", "b", "a"]] {
+        let tied = order
+            .iter()
+            .map(|id| chunk(id, "doc", "identical text"))
+            .collect();
+        let hits = Bm25Retriever::new(tied)
+            .expect("the corpus must index")
+            .retrieve(&query("identical text"), &RetrieveParams::new(2))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            ids(&hits),
+            vec!["a", "b"],
+            "insertion order {order:?} must not change which two chunks survive"
+        );
+    }
+}
+
+/// A `top_k` larger than the corpus is a bound, not an allocation. The largest
+/// one there is must return every match and nothing else.
+#[tokio::test]
+async fn an_unbounded_top_k_returns_every_match_and_does_not_panic() {
+    let hits = retriever()
+        .retrieve(&query("cat"), &RetrieveParams::new(usize::MAX))
+        .await
+        .expect("an enormous top_k is a bound, not a failure");
+
+    assert_eq!(ids(&hits), vec!["cats-1", "cats-2"]);
+}

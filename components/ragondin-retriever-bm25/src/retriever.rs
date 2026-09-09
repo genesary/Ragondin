@@ -40,11 +40,14 @@ impl From<tantivy::TantivyError> for IndexError {
 /// `top_k` hits — and a query matching nothing returns an empty list rather
 /// than an error.
 ///
-/// **Ties are broken by chunk id.** Two chunks with the same BM25 score are
-/// ordered lexicographically, so a corpus can never rank two ways. tantivy's
-/// own tie-break is by document address, which is stable for one index but
-/// carries no meaning a caller could rely on; a benchmark number that moves
-/// because two equal scores swapped is a bug nothing else would report.
+/// **Ties are broken by chunk id, before `top_k` truncates.** Two chunks with
+/// the same BM25 score are ordered lexicographically, so a corpus can never
+/// rank two ways. tantivy's own tie-break is by document address, which is
+/// stable for one index but carries no meaning a caller could rely on; a
+/// benchmark number that moves because two equal scores swapped is a bug
+/// nothing else would report. Ordering the survivors of a `top_k` cut would not
+/// be enough — the cut itself would still be made by document address — so
+/// every matching document is sorted and the list is truncated afterwards.
 pub struct Bm25Retriever {
     reader: IndexReader,
     index: Index,
@@ -195,8 +198,18 @@ impl Retriever for Bm25Retriever {
 
         let parsed = self.parse(&query.text)?;
         let searcher = self.reader.searcher();
+        // Every matching document, not the first `top_k` of them. `TopDocs`
+        // selects at its own limit by document address, so truncating there
+        // would let insertion order decide which of several equally scoring
+        // chunks survive — and the tie-break below would then only reorder a
+        // choice already made. `num_docs` is the ceiling on matches; the clamp
+        // is for the empty corpus, where `with_limit(0)` panics.
+        let ceiling = usize::try_from(searcher.num_docs()).unwrap_or(usize::MAX);
         let hits = searcher
-            .search(&parsed, &TopDocs::with_limit(params.top_k).order_by_score())
+            .search(
+                &parsed,
+                &TopDocs::with_limit(ceiling.max(1)).order_by_score(),
+            )
             .map_err(backend)?;
 
         let mut scored = Vec::with_capacity(hits.len());
@@ -219,6 +232,9 @@ impl Retriever for Bm25Retriever {
                 .total_cmp(&a.score)
                 .then_with(|| a.chunk.id.cmp(&b.chunk.id))
         });
+        // Only now: the order is total, so the cut is a function of the corpus
+        // and the query alone.
+        scored.truncate(params.top_k);
         Ok(scored)
     }
 }
