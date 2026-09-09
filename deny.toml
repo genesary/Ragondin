@@ -1,0 +1,148 @@
+# Dependency policy, enforced by `cargo deny` (#44).
+#
+# CI already ran build, test, clippy, fmt and the invariant scripts, and said
+# nothing at all about what the dependency graph contains. This file is the
+# missing half: which advisories, licences, duplicate versions and source
+# registries this workspace accepts. It follows the repository's own standard --
+# a constraint worth keeping is enforced by a command, not by attention in
+# review -- so it runs from `just check-deny` locally and from the same check in
+# CI.
+#
+# `cargo deny check` runs four independent checks. Each section below configures
+# exactly one of them, in the order the tool reports them.
+
+# ---------------------------------------------------------------------------
+# graph -- which dependency graph the four checks are run against.
+# ---------------------------------------------------------------------------
+[graph]
+# No target filter. Every platform's dependencies are audited, not only the one
+# the developer happens to be sitting on: the lockfile carries the Windows and
+# WASI crates whoever resolves it, and filtering here would make a local run
+# disagree with CI's for reasons that have nothing to do with the change.
+targets = []
+
+# The default build is lean by rule (INV-4, and the lean-default-build rule in
+# AGENTS.md), so it never resolves what sits behind a feature flag -- which is
+# precisely where the heavy backends of M2 (tantivy, ONNX Runtime, candle, a
+# vector-store client) will arrive. Auditing the default graph only would audit
+# everything except the part that most needs it. Same reasoning as the
+# "Feature-gated paths compile" step in ci.yml.
+all-features = true
+
+# ---------------------------------------------------------------------------
+# advisories -- the RustSec database: security vulnerabilities, unmaintained and
+# unsound crates, and crates yanked from the registry.
+# ---------------------------------------------------------------------------
+[advisories]
+# Audit the whole graph, not just the crates this workspace names directly. A
+# vulnerability reaches us the same way whether it is one edge away or five, and
+# every advisory this workspace has actually seen so far has been transitive.
+unmaintained = "all"
+
+# A yanked crate is a crate its author withdrew. Treating that as an error keeps
+# the lockfile installable; the tool's default is only a warning.
+yanked = "deny"
+
+# Empty, and worth keeping that way. This check found exactly one advisory on
+# its first run -- RUSTSEC-2026-0258, h2 queueing empty HTTP/2 DATA frames
+# without limit, reached through tonic -> hyper -> h2 -- and it was fixed by
+# updating h2 rather than allowed here. An allowance is a standing exception
+# that outlives whoever wrote it, so it should cost more than a lockfile bump
+# does, not less. Anything added here needs a date, the reason, and the issue
+# that removes it again.
+ignore = []
+
+# One thing deliberately NOT ignored, recorded here because #44 asks the
+# question directly and the answer is easy to re-derive wrongly:
+#
+# `serde_yaml 0.9.34+deprecated` (a dev-dependency, golden YAML fixtures) needs
+# no allowance. Its version string announces that its author stopped maintaining
+# it, but RustSec carries no unmaintained advisory for it, so this check has
+# nothing to say about it -- neither for `serde_yaml` nor for the
+# `unsafe-libyaml` it pulls. The two advisories that do exist for that pair
+# (RUSTSEC-2018-0005, RUSTSEC-2023-0075) are both fixed in the versions the
+# lockfile already resolves. Choosing a replacement is #27's call, since that is
+# the issue where this crate stops being test-only and starts parsing
+# configuration for real; nothing needs doing here either before or after.
+
+# ---------------------------------------------------------------------------
+# licences -- what this workspace is allowed to redistribute.
+# ---------------------------------------------------------------------------
+[licenses]
+# The workspace itself is Apache-2.0. The list below is the usual permissive
+# set: every licence on it can be combined into an Apache-2.0 distribution
+# without imposing a term on a downstream user.
+#
+# Four of these are what the current lockfile actually needs:
+#
+#   MIT            most of the graph, and one half of the near-universal
+#                  "MIT OR Apache-2.0" dual licence
+#   Apache-2.0     prost, sync_wrapper, and the other half of that dual licence
+#   Unicode-3.0    unicode-ident, whose expression is an AND -- "(MIT OR
+#                  Apache-2.0) AND Unicode-3.0" -- so this one is not optional
+#   BSD-3-Clause   matchit, likewise an AND: "MIT AND BSD-3-Clause"
+#
+# The rest are on the list ahead of need, so that an ordinary permissive
+# dependency does not fail CI at the moment it is added. They are not there
+# because something uses them.
+#
+# MPL-2.0 is deliberately absent. It is file-level copyleft rather than
+# permissive, nothing in the lockfile carries it, and adding it is a decision to
+# take when a crate first needs it -- not in advance.
+allow = [
+    "Apache-2.0",
+    "MIT",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "Zlib",
+]
+
+# The list above is a policy, not an inventory, so entries nothing currently
+# uses are the normal state and must not be reported. Without this the check
+# emits a warning per unused entry on every run, and a check that is noisy when
+# it is happy stops being read when it is not.
+unused-allowed-license = "allow"
+
+# ---------------------------------------------------------------------------
+# bans -- crates this workspace refuses, and duplicate versions of one crate.
+# ---------------------------------------------------------------------------
+[bans]
+# Warn, not deny. Several duplicates are already unavoidable here -- indexmap 1
+# and 2, hashbrown 0.12 and 0.17, socket2 0.5 and 0.6, tower 0.4 and 0.5,
+# windows-sys 0.52 and 0.61 -- each pulled by a different upstream crate whose
+# release cadence this workspace does not control. Denying them would fail the
+# build for a condition no change here can fix, which is the failure mode #44
+# warns about: a check that fails on day one gets permanently ignored. Warning
+# still surfaces the count in every run, which is what makes graph bloat
+# visible as the heavy backends land.
+multiple-versions = "warn"
+
+# Off, and the reason is a property of this workspace rather than a preference.
+# Every member crate is declared as `{ path = "..." }` with no version, which is
+# a wildcard by the letter of the rule and carries none of its risk -- those
+# paths resolve inside this repository. cargo-deny's escape hatch for exactly
+# that case, `allow-wildcard-paths`, applies only to crates marked
+# `publish = false`, and none of these are: whether this workspace publishes to
+# crates.io is an open question, not something to answer as a side effect of
+# adding a lint. So the choice is between thirteen errors, thirteen warnings on
+# every run, or turning the check off.
+#
+# What that gives up is narrow: a third-party `foo = "*"` would go unreported.
+# It would still have to be written into [workspace.dependencies], where
+# AGENTS.md requires every version to be declared and where a reviewer reads it.
+wildcards = "allow"
+
+# ---------------------------------------------------------------------------
+# sources -- where crates are allowed to come from.
+# ---------------------------------------------------------------------------
+[sources]
+# crates.io and nothing else. A git dependency or a private registry is not
+# forbidden in principle, but it is a supply-chain decision rather than a
+# routine one, so it should require editing this file and explaining itself in
+# the diff.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
