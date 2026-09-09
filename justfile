@@ -47,6 +47,15 @@ gen-adr-index:
 check-adr-index:
     python3 scripts/gen-adr-index.py --check
 
+# Audit the dependency graph: RustSec advisories, licences, duplicate versions
+# and source registries. The policy is deny.toml at the workspace root, not
+# cargo-deny's defaults. Unlike the checks above, this one needs a tool that is
+# not in the toolchain, so it says how to get it rather than failing as an
+# unrecognized cargo subcommand.
+check-deny:
+    @cargo deny --version >/dev/null 2>&1 || { echo "error: cargo-deny is not installed. Install it with:"; echo "    cargo install cargo-deny --locked"; exit 1; }
+    cargo deny --all-features check
+
 # The repository's cross-reference map. `just map <entity>` prints one entity's
 # neighbourhood; `just map --conflicts` lists every claim the code contradicts;
 # `just map --view` writes the interactive viewer under target/map/.
@@ -59,4 +68,4 @@ map *ARGS:
     python3 scripts/gen-map.py {{ARGS}}
 
 # Everything CI runs, in one command. Run this before declaring work done.
-check: fmt build test clippy check-features check-invariants check-doc-links check-adr-index
+check: fmt build test clippy check-features check-invariants check-doc-links check-adr-index check-deny

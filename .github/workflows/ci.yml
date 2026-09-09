@@ -73,3 +73,23 @@ jobs:
       # make it a hand-maintained index with extra steps.
       - name: ADR index is current
         run: python3 scripts/gen-adr-index.py --check
+
+      # Nothing above this line looks at what the dependency graph *contains* --
+      # advisories, licences, duplicate versions, source registries. The policy
+      # lives in deny.toml at the workspace root; `just check-deny` runs the same
+      # four checks locally, so this does not fail for the first time on a push.
+      #
+      # Pinned to a full commit SHA rather than to a tag like the actions/* steps
+      # above: those are GitHub's own, this one is third party, and a mutable tag
+      # on a third-party action is a supply-chain hole in the one step whose
+      # purpose is supply-chain hygiene. The trailing comment carries the version
+      # the SHA is, which is the part a human reads. v2.1.1 bundles cargo-deny
+      # 0.20.2; bump both together.
+      #
+      # `arguments` restates the action's own default, so that the flag this runs
+      # with is readable here next to the justfile recipe it has to match, rather
+      # than only in the action's action.yml.
+      - name: Dependency audit (advisories, licences, bans, sources)
+        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          arguments: --all-features

@@ -16,10 +16,16 @@ just check                  # everything CI runs, in one command
 ```
 
 `just check` runs build, tests, `clippy` (warnings are errors), `cargo fmt
---check`, the architecture invariant checks, the documentation link check, and
-the ADR index staleness check. **A change is not done until `just check`
-passes.** The toolchain is pinned to stable (`rust-toolchain.toml`);
-never rely on nightly.
+--check`, the architecture invariant checks, the documentation link check, the
+ADR index staleness check, and the dependency audit. **A change is not done
+until `just check` passes.** The toolchain is pinned to stable
+(`rust-toolchain.toml`); never rely on nightly.
+
+The dependency audit (`just check-deny`) is the one check that needs a tool the
+toolchain does not carry: install it once with `cargo install cargo-deny
+--locked`. Its policy — allowed licences, advisory allowances, duplicate
+versions, source registries — is [`deny.toml`](deny.toml) at the workspace root,
+with each section's reasoning in the file.
 
 ### The architecture invariant checks
 
