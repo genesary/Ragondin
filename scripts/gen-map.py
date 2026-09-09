@@ -33,6 +33,9 @@ Usage:
     scripts/gen-map.py <entity>     one entity's neighbourhood, as text
     scripts/gen-map.py --conflicts  every claim the code contradicts
     scripts/gen-map.py --view       write the interactive viewer
+    scripts/gen-map.py --view --fragment
+                                    also write it without the document wrapper,
+                                    for a host that supplies its own head and body
     scripts/gen-map.py --list       every entity the map knows
 Options:
     --offline   never call `gh`; use the cached issue metadata
@@ -605,10 +608,7 @@ def render_conflicts(conflicts: list) -> str:
     return "\n".join(lines)
 
 
-VIEWER = """<!doctype html>
-<html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Ragondin Reference Map</title>
+VIEWER_HEAD = """<title>Ragondin Reference Map</title>
 <style>
 /* The three provenance tiers are what this tool is for, so the palette encodes a
    trust gradient rather than decorating: proven, provisional, hearsay. Neutrals
@@ -703,8 +703,9 @@ svg text.hub{fill:var(--ink);font-size:13px;font-weight:660}
 .note{color:var(--dim);font-size:13.5px;max-width:68ch}
 .stack{display:flex;flex-direction:column;gap:12px}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
-</style></head><body>
-<header>
+</style>"""
+
+VIEWER_BODY = """<header>
   <h1>Ragondin Reference Map</h1>
   <span id="stamp"></span>
   <span class="tabs">
@@ -878,8 +879,30 @@ document.getElementById("stamp").textContent =
   `${DATA.nodes.length} entities \u00b7 ${DATA.edges.length} edges \u00b7 ` +
   `${DATA.conflicts.length} conflicts \u00b7 ${DATA.stamp}`;
 show(DATA.start);
-</script></body></html>
-"""
+</script>"""
+
+
+def render_page(payload: dict, standalone: bool) -> str:
+    """The viewer, as one document or as a fragment.
+
+    A host that supplies its own `<head>` and `<body>` -- a published artifact,
+    a documentation site -- must be handed the page without a document wrapper.
+    Both forms come from the same two halves, so there is no second copy of the
+    design to drift: the fragment is the standalone page minus its wrapper, and
+    nothing else.
+    """
+    head = VIEWER_HEAD.replace("__DATA__", json.dumps(payload))
+    body = VIEWER_BODY.replace("__DATA__", json.dumps(payload))
+    if not standalone:
+        return head + "\n" + body + "\n"
+    return (
+        '<!doctype html>\n<html lang="en"><head><meta charset="utf-8">\n'
+        '<meta name="viewport" content="width=device-width,initial-scale=1">\n'
+        + head
+        + "</head><body>\n"
+        + body
+        + "\n</body></html>\n"
+    )
 
 
 def build(root: str, offline: bool):
@@ -896,7 +919,7 @@ def build(root: str, offline: bool):
 
 def main() -> int:
     root = repo_root()
-    args = [a for a in sys.argv[1:] if a != "--offline"]
+    args = [a for a in sys.argv[1:] if a not in ("--offline", "--fragment")]
     offline = "--offline" in sys.argv
 
     g, symbols, adrs, issues, conflicts = build(root, offline)
@@ -923,12 +946,16 @@ def main() -> int:
             "start": start,
             "stamp": stamp,
         }
-        html = VIEWER.replace("__DATA__", json.dumps(payload))
-        out = os.path.join(out_dir, "index.html")
-        with open(out, "w", encoding="utf-8") as fh:
-            fh.write(html)
-        print(f"wrote {rel(root, out)}  ({len(g.nodes)} entities, {len(g.edges)} edges, "
-              f"{len(conflicts)} conflicts)")
+        written = []
+        for name, standalone in (("index.html", True), ("fragment.html", False)):
+            if not standalone and "--fragment" not in sys.argv:
+                continue
+            out = os.path.join(out_dir, name)
+            with open(out, "w", encoding="utf-8") as fh:
+                fh.write(render_page(payload, standalone))
+            written.append(rel(root, out))
+        print(f"wrote {', '.join(written)}  ({len(g.nodes)} entities, "
+              f"{len(g.edges)} edges, {len(conflicts)} conflicts)")
         for note in g.notes:
             print(f"note: {note}")
         return 0
