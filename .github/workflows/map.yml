@@ -1,0 +1,132 @@
+# The cross-reference map (#102), in CI — as a diagnostic, never as a gate.
+#
+# Two things happen here, and only one of them could ever block a merge:
+#
+#   push to main       build the map and publish it to GitHub Pages
+#   pull_request       report the findings as a comment, and pass regardless
+#
+# **This workflow must never fail on a finding.** Its edges carry three
+# provenance tiers, and the `claim` tier is unverified prose by construction:
+# a build gate over it would assert more than the tool knows. The first naive
+# run of the reference scan invented six phantom edges to `#123`, a worked
+# example in CONTRIBUTING.md — that is the shape of the risk.
+#
+# What would make a gate honest: the `high` tier ("a claim the code
+# contradicts") holds exactly two findings today, `build_embedder` and
+# `build_vector_store`, both real and both #99. A gate turned on now would be
+# red on its first run, and a check that is red on day one is a check people
+# switch off. Once #99 lands and the tier is empty, going red means something
+# new arrived — and that is the moment to open the issue for it.
+#
+# Deliberately separate from ci.yml so a diagnostic is never mistaken for, and
+# never slows, the build gate.
+name: Reference map
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: map-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  findings:
+    name: findings on the pull request
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+
+      # `just` is not on the runner, and ci.yml already calls the underlying
+      # commands directly for the same reason. `gh` is, and the script degrades
+      # to its cache — or to no issue metadata at all — if the call fails.
+      - name: Build the map
+        id: map
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 scripts/gen-map.py --conflicts > findings.txt || true
+          echo "count=$(grep -c '^\[' findings.txt || true)" >> "$GITHUB_OUTPUT"
+          cat findings.txt
+
+      # One comment per pull request, updated in place. A PR with six pushes
+      # should carry one comment, not six.
+      - name: Report
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const MARK = '<!-- ragondin-reference-map -->';
+            const body = MARK + '\n' + [
+              '## Reference map — ' + `${{ steps.map.outputs.count }}` + ' finding(s)',
+              '',
+              'Advisory, and this check passes either way. Every edge carries the tier it',
+              'was learned from: **closure** walks `cargo metadata` and is complete,',
+              '**scan** reads source text and is best-effort, **claim** is prose and is',
+              'unverified by construction. A finding is a claim the code does not support —',
+              'prose is what makes one visible, code is what wins it.',
+              '',
+              '```',
+              fs.readFileSync('findings.txt', 'utf8').trim() || 'Nothing found.',
+              '```',
+              '',
+              'Reproduce locally with `just map --conflicts`; inspect one entity with',
+              '`just map <entity>`.',
+            ].join('\n');
+            const {owner, repo} = context.repo;
+            const issue_number = context.issue.number;
+            const existing = (await github.rest.issues.listComments({
+              owner, repo, issue_number, per_page: 100,
+            })).data.find(c => c.body && c.body.includes(MARK));
+            if (existing) {
+              await github.rest.issues.updateComment({owner, repo, comment_id: existing.id, body});
+            } else {
+              await github.rest.issues.createComment({owner, repo, issue_number, body});
+            }
+
+  publish:
+    name: publish to Pages
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # `enablement: true` turns Pages on the first time this runs, so no manual
+      # repository setting is a prerequisite for the workflow landing.
+      - uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      - name: Build the viewer
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/gen-map.py --view
+
+      # Only the page. `target/map/` also holds the issue-metadata cache the
+      # script writes, which has no business on a public site.
+      - name: Stage the site
+        run: |
+          mkdir -p site
+          cp target/map/index.html site/index.html
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - id: deploy
+        uses: actions/deploy-pages@v4
