@@ -1070,6 +1070,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "ragondin-store-memory"
+version = "0.0.0"
+dependencies = [
+ "async-trait",
+ "ragondin-conformance",
+ "ragondin-contracts",
+ "ragondin-types",
+ "tokio",
+]
+
+[[package]]
 name = "ragondin-types"
 version = "0.0.0"
 dependencies = [
