@@ -6,6 +6,13 @@
 //! canonical form or the content hash (INV-8). This module is that
 //! derivation, written once: `LogicalPipeline` validation and #15's physical
 //! planning both call the same functions.
+//!
+//! **One edge is not derived from a variant.** Since ADR-C18 a pipeline
+//! declares its inputs, and a declared input produces [`ValueKind::Query`] —
+//! fixed by the kind of graph, never written in a configuration. It has no
+//! [`LogicalNode`], so it comes from neither [`produced_kind`] nor
+//! [`consumed_kinds`]; the two callers supply it, and each tests membership
+//! in the pipeline's declaration rather than inferring it.
 
 use std::fmt;
 
@@ -16,7 +23,9 @@ use crate::node::LogicalNode;
 /// Deliberately **coarse** and **parameterless** (ADR-C16): it names what
 /// kind of thing an edge carries — never an embedding dimensionality, a
 /// chunk provenance, or any other detail. It is derived from a node's
-/// [`LogicalNode`] variant by [`produced_kind`] and [`consumed_kinds`], and
+/// [`LogicalNode`] variant by [`produced_kind`] and [`consumed_kinds`] — with
+/// the one exception named in this module's documentation, a declared
+/// pipeline input, which has no variant to derive from — and
 /// it never enters the canonical form: it is not `Serialize`/`Deserialize`,
 /// never stored in `LogicalPipeline`, never hashed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

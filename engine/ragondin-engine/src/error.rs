@@ -162,7 +162,7 @@ pub enum PlanError {
     // clause that differs between `Some` and `None` is built by a function and
     // interpolated as one fragment.
     #[error(
-        "node `{}` port {port} (fed by node `{}`): {}found `{found}`",
+        "node `{}` port {port} (fed by `{}`): {}found `{found}`",
         consumer.as_str(),
         producer.as_str(),
         kind_mismatch_expected_clause(expected)
@@ -172,7 +172,10 @@ pub enum PlanError {
         consumer: NodeId,
         /// The position, within `consumer`'s `inputs`, of the mismatched edge.
         port: usize,
-        /// The node producing the value on the mismatched edge.
+        /// The node — or, since ADR-C18, the declared pipeline input —
+        /// producing the value on the mismatched edge. Kept word for word
+        /// with `ragondin_pipeline::ValidationError::KindMismatch`'s, which
+        /// is what the "deliberately the same wording" claim above obliges.
         producer: NodeId,
         /// The kind `consumer` declares at `port`, or `None` when `port` is
         /// beyond what a fixed-arity variant declares.

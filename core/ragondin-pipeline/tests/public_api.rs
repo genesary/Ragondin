@@ -7,8 +7,8 @@
 //! the surface an external consumer actually sees.
 
 use ragondin_pipeline::{
-    ExtensionNode, FusionNode, LogicalNode, NodeId, ParamValue, Params, RawGraph, RawNode,
-    RawParamValue, RawPipeline, RerankerNode, RetrieverNode, SchemaVersion,
+    validate, ExtensionNode, FusionNode, LogicalNode, LogicalPipeline, NodeId, ParamValue, Params,
+    RawGraph, RawNode, RawParamValue, RawPipeline, RerankerNode, RetrieverNode, SchemaVersion,
     UnsupportedSchemaVersion,
 };
 
@@ -55,8 +55,9 @@ fn every_node_type_is_reachable_from_the_crate_root() {
 #[test]
 fn every_wire_type_is_reachable_from_the_crate_root() {
     let doc = RawPipeline {
-        version: SchemaVersion::default(),
+        version: SchemaVersion::CURRENT,
         pipeline: RawGraph {
+            inputs: vec!["question".to_string()],
             nodes: vec![RawNode {
                 id: "bm25_leg".to_string(),
                 component: "retriever".to_string(),
@@ -69,10 +70,44 @@ fn every_wire_type_is_reachable_from_the_crate_root() {
         },
     };
 
-    assert_eq!(doc.version.get(), 1);
+    assert_eq!(doc.version.get(), SchemaVersion::SUPPORTED);
+    assert_eq!(doc.pipeline.inputs, vec!["question".to_string()]);
     assert_eq!(doc.pipeline.nodes[0].implementation, "bm25");
     assert_eq!(doc.pipeline.nodes[0].params["k"], RawParamValue::Int(10));
 
-    let refused: UnsupportedSchemaVersion = SchemaVersion::new(2).unwrap_err();
-    assert_eq!(refused.found(), 2);
+    let refused: UnsupportedSchemaVersion = SchemaVersion::new(7).unwrap_err();
+    assert_eq!(refused.found(), 7);
+}
+
+#[test]
+fn a_pipelines_declared_inputs_are_reachable_from_the_crate_root() {
+    // ADR-C18. `LogicalPipeline`'s field is private and its constructor is
+    // `pub(crate)`, so this accessor is what an external consumer sees, and
+    // adding it does not break any Rust caller. That is not the whole story
+    // and this test should not be read as saying it is: the same decision
+    // made four sanctioned breaking changes on this boundary (INV-1) —
+    // `RawGraph` gained a public field, `ValidationError` gained three
+    // variants, `LogicalPipeline`'s derived `Deserialize` gained a required
+    // field, and `Default for SchemaVersion` was removed. Each is sanctioned
+    // by ADR-C18 and by nothing else.
+    //
+    // Reached through `validate`, the only door to a `LogicalPipeline` there
+    // is.
+    let doc = RawPipeline {
+        version: SchemaVersion::CURRENT,
+        pipeline: RawGraph {
+            inputs: vec!["question".to_string()],
+            nodes: vec![RawNode {
+                id: "bm25_leg".to_string(),
+                component: "retriever".to_string(),
+                implementation: "bm25".to_string(),
+                inputs: vec!["question".to_string()],
+                params: Default::default(),
+            }],
+        },
+    };
+
+    let logical: LogicalPipeline = validate(doc).expect("the fixture must validate");
+    assert_eq!(logical.inputs(), &[NodeId::new("question")]);
+    assert_eq!(logical.nodes().len(), 1);
 }

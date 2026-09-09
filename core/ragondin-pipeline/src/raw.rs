@@ -21,10 +21,15 @@
 //!
 //! Two things it does *not* tolerate, for different reasons.
 //!
-//! A **schema version it cannot read** is refused: permissiveness means
+//! A **stated** schema version it cannot read is refused: permissiveness means
 //! tolerating content one does not understand *within a grammar one does*, and
 //! a version bump says the grammar itself may have changed. Continuing there
 //! is not leniency, it is misinterpretation.
+//!
+//! An **absent** version reads as the version this build writes: nothing has
+//! ever been serialized in an earlier one, so there is no older document for
+//! a default to be wrong about, and a configuration that says nothing is
+//! current by definition.
 //!
 //! A **parameter that is not a scalar or a list of scalars** — a nested map,
 //! a null — fails to parse, and does so with serde's opaque untagged-enum
@@ -43,17 +48,36 @@ use serde::{Deserialize, Deserializer, Serialize};
 
 /// The version of the wire schema a configuration is written in.
 ///
-/// Absent from a configuration, it reads as [`SchemaVersion::SUPPORTED`] —
-/// version 1 predates the field, so a file written before versioning is
-/// unambiguous. A configuration written in any later version must say so, and
-/// a version this build does not understand is refused rather than guessed at.
+/// Absent from a configuration, it reads as [`SchemaVersion::SUPPORTED`]: a
+/// file that states no version is written in the one this build writes. A
+/// version this build does not understand is refused rather than guessed at.
+///
+/// ADR-C18 bumped the supported version to 2 when it added `inputs` to
+/// [`RawGraph`], because a change to the wire schema's shape never leaves
+/// this type untouched (INV-9). It does **not** follow that an absent version
+/// means 1: nothing has ever been serialized in version 1, so guarding
+/// against documents that do not exist would only cost every configuration a
+/// `version:` line. The mechanism is here and versioned; what it discriminates
+/// between starts mattering when a version is actually in use somewhere.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 #[serde(transparent)]
 pub struct SchemaVersion(u32);
 
 impl SchemaVersion {
     /// The only schema version this build can read.
-    pub const SUPPORTED: u32 = 1;
+    pub const SUPPORTED: u32 = 2;
+
+    /// [`SchemaVersion::SUPPORTED`] as a value, and what
+    /// [`RawPipeline::version`] defaults to.
+    ///
+    /// Every inhabitant of this type is a version this build reads: [`new`]
+    /// refuses the rest, `Deserialize` routes through it, and this constant
+    /// and [`Default`] both yield [`Self::SUPPORTED`]. Holding a
+    /// `SchemaVersion` therefore means it is supported — a promise worth more
+    /// than distinguishing a version nothing was ever written in.
+    ///
+    /// [`new`]: Self::new
+    pub const CURRENT: Self = Self(Self::SUPPORTED);
 
     /// Accepts a version this build understands, and refuses any other.
     pub fn new(version: u32) -> Result<Self, UnsupportedSchemaVersion> {
@@ -71,8 +95,10 @@ impl SchemaVersion {
 }
 
 impl Default for SchemaVersion {
+    /// [`SchemaVersion::CURRENT`] — the version this build writes, which is
+    /// what a configuration saying nothing is written in.
     fn default() -> Self {
-        Self(Self::SUPPORTED)
+        Self::CURRENT
     }
 }
 
@@ -154,9 +180,18 @@ pub struct RawNode {
     pub params: BTreeMap<String, RawParamValue>,
 }
 
-/// The node list, as it is nested under `pipeline:` in a configuration.
+/// The graph, as it is nested under `pipeline:` in a configuration.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct RawGraph {
+    /// The ids of the values the pipeline receives from its caller, in the
+    /// order the configuration lists them (ADR-C18). A node consumes one by
+    /// naming it in its own `inputs`, exactly as it names another node.
+    ///
+    /// Permissive here, as everything at this level is: absent reads as
+    /// empty, and how many a pipeline must declare — exactly one, of kind
+    /// `Query`, for a serving graph — is [`crate::validate`]'s to enforce.
+    #[serde(default)]
+    pub inputs: Vec<String>,
     /// The nodes, in the order the configuration lists them.
     pub nodes: Vec<RawNode>,
 }
@@ -167,7 +202,8 @@ pub struct RawGraph {
 /// `LogicalPipeline` from it is #9.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct RawPipeline {
-    /// The wire schema version. Absent means [`SchemaVersion::SUPPORTED`].
+    /// The wire schema version. Absent means [`SchemaVersion::CURRENT`], so a
+    /// configuration only writes this line to pin a version deliberately.
     #[serde(default)]
     pub version: SchemaVersion,
     /// The pipeline itself.
@@ -179,17 +215,62 @@ mod tests {
     use super::*;
 
     #[test]
-    fn an_absent_version_reads_as_the_version_that_predates_the_field() {
+    fn an_absent_version_reads_as_the_version_this_build_writes() {
         let doc: RawPipeline = serde_json::from_str(r#"{"pipeline":{"nodes":[]}}"#).unwrap();
-        assert_eq!(doc.version, SchemaVersion::default());
-        assert_eq!(doc.version.get(), 1);
+        assert_eq!(doc.version, SchemaVersion::CURRENT);
+        assert_eq!(doc.version.get(), SchemaVersion::SUPPORTED);
+    }
+
+    #[test]
+    fn every_inhabitant_of_this_type_is_a_version_the_build_reads() {
+        // The type's promise: holding a `SchemaVersion` means it is
+        // supported. `new` refuses the rest, `Deserialize` routes through it,
+        // and `Default`/`CURRENT` yield SUPPORTED — so no constructor can
+        // produce a value that fails later.
+        assert_eq!(SchemaVersion::CURRENT.get(), SchemaVersion::SUPPORTED);
+        assert_eq!(SchemaVersion::default(), SchemaVersion::CURRENT);
+        assert_eq!(
+            SchemaVersion::new(SchemaVersion::SUPPORTED).unwrap(),
+            SchemaVersion::CURRENT
+        );
+    }
+
+    #[test]
+    fn a_document_this_build_reads_survives_a_serialize_reparse_round_trip() {
+        // `Serialize` is derived and transparent; `Deserialize` is hand-rolled
+        // through `new`. The two must stay inverse, or any store or wire hop
+        // that reads a configuration and writes it back turns a readable
+        // document into an unreadable one, and the failure surfaces at a
+        // later, unrelated read (INV-9).
+        let doc: RawPipeline =
+            serde_json::from_str(r#"{"pipeline":{"inputs":["question"],"nodes":[]}}"#)
+                .expect("a document that states no version must parse");
+        let text = serde_json::to_string(&doc).expect("it must serialize");
+        let back: RawPipeline =
+            serde_json::from_str(&text).expect("what we serialize, we must be able to re-parse");
+        assert_eq!(back, doc);
+    }
+
+    #[test]
+    fn absent_inputs_read_as_an_empty_declaration() {
+        // Permissive at this level: how many a pipeline must declare is
+        // `validate`'s business, not `serde`'s.
+        let doc: RawPipeline = serde_json::from_str(r#"{"pipeline":{"nodes":[]}}"#).unwrap();
+        assert!(doc.pipeline.inputs.is_empty());
+    }
+
+    #[test]
+    fn declared_inputs_read_in_the_order_the_configuration_lists_them() {
+        let doc: RawPipeline =
+            serde_json::from_str(r#"{"pipeline":{"inputs":["question"],"nodes":[]}}"#).unwrap();
+        assert_eq!(doc.pipeline.inputs, vec!["question".to_string()]);
     }
 
     #[test]
     fn the_supported_version_is_accepted_when_stated() {
         let doc: RawPipeline =
-            serde_json::from_str(r#"{"version":1,"pipeline":{"nodes":[]}}"#).unwrap();
-        assert_eq!(doc.version.get(), 1);
+            serde_json::from_str(r#"{"version":2,"pipeline":{"nodes":[]}}"#).unwrap();
+        assert_eq!(doc.version.get(), SchemaVersion::SUPPORTED);
     }
 
     #[test]
@@ -197,7 +278,7 @@ mod tests {
         let err = SchemaVersion::new(7).unwrap_err();
         assert_eq!(err.found(), 7);
         assert!(
-            err.to_string().contains('7') && err.to_string().contains('1'),
+            err.to_string().contains('7') && err.to_string().contains('2'),
             "the message must name both what was found and what is understood: {err}"
         );
     }
@@ -220,7 +301,7 @@ mod tests {
         // so a reword has to break a test rather than break `ragondin-config`.
         assert_eq!(
             SchemaVersion::new(3).unwrap_err().to_string(),
-            "unsupported pipeline schema version 3: this build reads version 1"
+            "unsupported pipeline schema version 3: this build reads version 2"
         );
     }
 
@@ -337,7 +418,7 @@ mod tests {
     #[test]
     fn the_wire_form_round_trips() {
         let doc: RawPipeline = serde_json::from_str(
-            r#"{"version":1,"pipeline":{"nodes":[{"id":"d","component":"retriever","impl":"bm25","inputs":["t"],"params":{"top_k":50,"alpha":0.5}}]}}"#,
+            r#"{"version":2,"pipeline":{"inputs":["question"],"nodes":[{"id":"d","component":"retriever","impl":"bm25","inputs":["t"],"params":{"top_k":50,"alpha":0.5}}]}}"#,
         )
         .unwrap();
         let back: RawPipeline =
