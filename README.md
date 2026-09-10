@@ -20,13 +20,14 @@ core.
 
 ## Standalone first
 
-The platform is **usable from a single binary and a configuration file — no
-Kubernetes required**. The default build is lean and compiles fast; heavy
-backends (a sparse index, an ONNX embedder, a vector store) are optional,
-feature-gated, and added only when you want them. Cloud-native operation is a
-later milestone layered on top, never a prerequisite.
+The platform is designed to be driven by **a single binary and a configuration
+file — no Kubernetes required**. Cloud-native operation is a later milestone
+layered on top, never a prerequisite. Heavy backends (a sparse index, an ONNX
+embedder, a vector store) each get their own crate behind a feature flag, so the
+default build stays lean — none of them has been written yet, and `cargo build`
+today pulls in no search engine, no inference runtime and no store client.
 
-One binary, four subcommands:
+One binary, four subcommands — the whole user-facing surface:
 
 ```text
 ragondin bench <config> --benchmark beir/scifact  # evaluate a pipeline against a benchmark
@@ -34,6 +35,9 @@ ragondin compare <run-a> <run-b>                  # compare two runs
 ragondin serve <config>                           # serve the pipeline
 ragondin validate <config>                        # validate a configuration
 ```
+
+**None of the four is implemented yet.** That is the planned surface, not a
+description of today; [§ Status](#status) says what is on `main`.
 
 ## Architecture in one breath
 
@@ -60,10 +64,68 @@ just check             # build + test + clippy + fmt + architecture invariants
 
 ## Status
 
-**Pre-alpha (milestone M0 — Foundations).** This is the workspace scaffold: the
-crate skeleton, the conventions, and the CI checks that make the architecture's
-two most load-bearing constraints impossible to violate. Functionality — the IR,
-the engine, the components, the metrics — arrives in later milestones.
+**Pre-alpha. Milestone M1 — *Core contracts & engine skeleton* — is in
+progress** (13 of its 17 issues are closed). M0 — *Foundations* — has met its
+exit criterion; the seven issues still open under it are `decision:` and
+`record:` issues, not implementation work.
+
+**There is no usable binary yet.** `ragondin` compiles and prints one line; none
+of the four subcommands is implemented. Everything below is a library crate,
+reachable from Rust or from a test, and nothing composes it end to end —
+`components/` is empty, so the engine has nothing concrete to plan or execute.
+
+On `main` today:
+
+| Crate | What is there |
+|---|---|
+| `ragondin-types` | The core value types: `DocId`, `ChunkId`, `QueryId`, `Document`, `Chunk`, `Query`, `Embedding`, `ScoredChunk`. |
+| `ragondin-pipeline` | The versioned `RawPipeline` wire schema, the `LogicalNode` model with its `Extension` variant, the port/`ValueKind` check, and the `RawPipeline → LogicalPipeline` validation and canonicalization pass. Content-addressed hashing over the canonical form (INV-8) is **not** written yet — it is issue #10, still open. |
+| `ragondin-contracts` | Five component traits — `Retriever`, `Fusion`, `Reranker`, `Embedder`, `VectorStore` — with their params and `ComponentError`. |
+| `ragondin-engine` | `EngineContext` and the explicit component registry, physical planning (`LogicalPipeline` + registry → `PhysicalPipeline`), and an executor that returns its `ExecutionTrace` — on failure as well as on success. No `Branch` or `Loop`: no such node variant exists yet. |
+| `ragondin-conformance` | The behavioural suite every implementation of a contract must pass. |
+| `ragondin-metrics` | The deterministic retrieval metrics: nDCG@k, recall@k, precision@k, MRR, MAP@k. |
+
+Still compiling skeletons, each with a doc comment and a link test and no
+behaviour: `ragondin-proto`, `ragondin-remote`, `ragondin-config`,
+`ragondin-server`, `ragondin-harness`, `ragondin-benchmarks`,
+`ragondin-experiments`, and the `ragondin` binary. `components/` holds a
+`.gitkeep` and a README — **no component implementation exists** (BM25, ONNX,
+Qdrant and the rest are M2 issues).
+
+### What using it will look like
+
+The picture below is the whole product surface. Only the lower half of it exists.
+
+```mermaid
+flowchart TB
+    CFG["pipeline.yaml<br/>one configuration file"]
+
+    subgraph CLI["Reserved — not built: no subcommand is implemented"]
+        direction LR
+        VAL["ragondin validate<br/>is this pipeline well-formed?"]
+        BEN["ragondin bench<br/>run it over a benchmark"]
+        SRV["ragondin serve<br/>answer queries over the network"]
+        RUNS[("runs · traces · metrics")]
+        CMP["ragondin compare<br/>which configuration won?"]
+        BEN --> RUNS --> CMP
+    end
+
+    subgraph LIB["On main — library crates only, nothing composes them yet"]
+        direction LR
+        PIPE["ragondin-pipeline<br/>validate + canonicalize"]
+        ENG["ragondin-engine<br/>registry → plan → executor → ExecutionTrace"]
+        MET["ragondin-metrics<br/>nDCG@k · recall@k · MRR"]
+        PIPE --> ENG
+    end
+
+    CFG --> VAL
+    CFG --> BEN
+    CFG --> SRV
+    CLI -.->|"will be built on"| LIB
+```
+
+The dashed arrow is the work that has not happened: the crates exist, the
+binary that wires them to a configuration file and a benchmark does not.
 
 ## License
 
