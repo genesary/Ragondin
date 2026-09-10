@@ -22,21 +22,14 @@ So the single most important instruction is: **suppress the design half, keep th
 5. **Stay inside Scope — IN; honor Scope — OUT.** Scope — OUT exists to prevent collisions with other agents working in parallel on disjoint crates. Touching a file the issue puts out of scope is not a favor; it is a merge conflict and a boundary violation.
 6. **No opportunistic refactors. Apply YAGNI.** No speculative abstraction. If you notice something worth changing outside your scope, note it for a separate issue; do not fix it here.
 7. **Run `just check` before declaring completion.** This is the single mandatory pre-completion command. It runs build, tests, `clippy` with `-D warnings`, `fmt --check`, and the architecture invariant checks. Work is not done until it passes — treat a red `just check` as "not finished," not "finished with caveats."
-8. **If an architectural choice is required that is not already settled** in `AGENTS.md` or `docs/`: **stop and open a `decision` issue** (see the `opening-a-decision-issue` skill). Do not guess. An agent that pauses on an ambiguity costs minutes; an agent that guesses an architectural decision costs a refactor.
+8. **If an architectural choice is required that is not already settled** in `AGENTS.md` or `docs/`: **stop and open a `decision` issue** (see the `opening-a-decision-issue` skill). Do not guess. An agent that pauses on an ambiguity costs minutes; an agent that guesses an architectural decision costs a refactor. The same applies if you are about to reopen a settled decision — load the `frozen-decisions` skill and take the path it gives you.
 
-## Definition of done
+## Before you declare completion
 
-Before you say the work is complete, confirm every box:
+The checklist is `AGENTS.md` § Definition of done — every box there must be checked before the work is done, and a red `just check` means "not finished," not "finished with caveats." Do not restate it here; read it there, and check it against the issue's own acceptance criteria.
 
-- [ ] Every acceptance criterion in the issue is met — **mechanically**, by a command or a test, never by a judgment call.
-- [ ] `just check` passes (build, test, clippy with `-D warnings`, fmt, invariant checks).
-- [ ] New behavior is covered by tests written **before** the implementation.
-- [ ] No frozen decision was reopened; no architectural decision was made implicitly (see the `frozen-decisions` skill).
-- [ ] If the diff asserts in prose how something works — a doc comment describing a mechanism, an ADR citation, an issue reference — `just map --conflicts` reports nothing new about it. It is advisory and not part of `just check`, so nothing runs it for you.
-- [ ] The PR description names the issue it closes and any invariants it touches.
+One box carries a step nothing runs for you: if your diff asserts in prose how something works — a doc comment describing a mechanism, an ADR citation, an issue reference — run `just map --conflicts` and confirm it reports nothing new. It is advisory and deliberately kept out of `just check` (`AGENTS.md` § What you write about the code is checked against the code says why), so running it is your job, not CI's.
 
 ## A note on scope creep
 
 If an issue turns out to require touching more than two crates (outside explicit scaffolding issues), it is mis-scoped. **Say so rather than sprawling.** Surfacing a mis-scoped issue is a contribution; quietly growing the change to cover it is how a two-crate task becomes an un-reviewable ten-crate diff.
-
-> The source of truth for these rules is `AGENTS.md` (§ Rules of engagement, § Definition of done). This skill operationalizes them; if the two disagree, `AGENTS.md` wins.

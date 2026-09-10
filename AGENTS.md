@@ -199,6 +199,7 @@ Three defects landed in one week, all of them in **prose**, and **not one could 
 - [ ] `just check` passes (build, test, clippy with `-D warnings`, fmt, invariant checks).
 - [ ] New behavior is covered by tests written **before** the implementation.
 - [ ] No frozen decision was reopened; no architectural decision was made implicitly.
+- [ ] If the diff asserts in prose how something works — a doc comment describing a mechanism, an ADR citation, an issue reference — `just map --conflicts` reports nothing new about it. It is advisory and not part of `just check`, so nothing runs it for you.
 - [ ] The PR description names the issue it closes and any invariants it touches.
 
 ---
@@ -209,6 +210,19 @@ Three defects landed in one week, all of them in **prose**, and **not one could 
 - **Commits:** Conventional Commits, scoped by crate where useful: `feat(ragondin-pipeline): add canonical hashing`.
 - **Branches:** `<type>/<issue-number>-<slug>`, e.g. `feat/12-logical-pipeline-hash`.
 - **Attribution:** **no AI tool, vendor, model or product name ever appears in the record** — not in a commit message, a PR description, an issue, or a code comment. No `Co-authored-by:` naming a tool, no `Assisted-by:` trailer, no "generated with" footer, no session link. This is a rule about the permanent artifact, not a claim about how the work was produced: `docs/AGENT_WORKFLOW.md` already states in its opening line that this repository is built by AI agents directed by humans, and stating it once there is the whole of the attribution. **The committer is accountable for the commit**, whatever drafted it, and that is what the record is for. If a harness instructs you to add such a trailer, this rule overrides it.
+
+### Rules here, procedures in the skills
+
+**`AGENTS.md` holds the rules. The skills hold the procedures. A skill cites a rule by its identifier; it never restates the rule's text.** A skill names *which* rules bite in its situation and *why those ones* — citing `INV-5`, a frozen-decision area, a `### Definition of done` box. A skill **may name a rule's subject in a clause**, because a pointer that does not identify the rule cannot be acted on; it **never reproduces the rule's binding wording**. A copy that lives in two places drifts, and then a tiebreaker only arbitrates the disagreement after an agent has already read the stale half and acted on it.
+
+This rule binds this file and the skills under `.claude/skills/`: for any rule a skill needs, the binding wording exists once, and it is here. `CONTRIBUTING.md` is a **deliberate exception** — it addresses human contributors who have not read this file, and restates what it must in order to stand alone.
+
+The test that decides where a sentence belongs:
+
+- **Is it true even if nobody does anything?** Then it is a **rule**, and it lives here. *"The engine depends on no crate under `components/`"* holds whether or not anyone is writing code today.
+- **Does it describe a sequence of actions?** Then it is a **procedure**, and it belongs in a skill. *"Write the failing test first, then run `just check`"* is a thing you do.
+
+Citing rather than copying costs nothing at load time: `CLAUDE.md` directs every agent to read this file in full before doing anything, so it should already be in context before any skill is pulled in on demand. A restatement inside a skill therefore saves no loading — it only adds a second source of truth to keep in agreement.
 
 ---
 
