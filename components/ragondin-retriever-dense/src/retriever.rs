@@ -63,7 +63,7 @@ impl Retriever for DenseRetriever {
         // depend on which store it happens to have been built over.
         if params.top_k == 0 {
             return Err(ComponentError::InvalidRequest(
-                "a top_k of zero retrieves nothing".to_string(),
+                "top_k of zero: ask for at least one chunk".to_string(),
             ));
         }
 

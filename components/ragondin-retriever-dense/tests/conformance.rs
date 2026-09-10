@@ -264,3 +264,66 @@ async fn rejects_a_top_k_of_zero_before_embedding() {
     // store it was built over: nothing downstream was reached at all.
     assert!(embedder.roles().is_empty());
 }
+
+/// An [`Embedder`] that answers one text with `count` vectors, which the
+/// contract forbids.
+struct MiscountingEmbedder {
+    count: usize,
+}
+
+#[async_trait]
+impl Embedder for MiscountingEmbedder {
+    async fn embed(
+        &self,
+        _texts: &[String],
+        _params: &EmbedParams,
+    ) -> Result<Vec<Embedding>, ComponentError> {
+        Ok((0..self.count)
+            .map(|_| Embedding::new(vec![1.0, 0.0, 0.0]))
+            .collect())
+    }
+}
+
+#[tokio::test]
+async fn reports_an_embedder_that_returns_no_vector_as_a_backend_failure() {
+    let retriever = DenseRetriever::new(
+        Box::new(MiscountingEmbedder { count: 0 }),
+        Box::new(full_store()),
+    );
+
+    let error = retriever
+        .retrieve(&query("who asks this"), &RetrieveParams::new(1))
+        .await
+        .expect_err("no vector leaves nothing to search with");
+
+    // `Backend`, not `InvalidRequest`: the caller's request was well-formed and
+    // the component this one was built over is what broke.
+    assert!(matches!(error, ComponentError::Backend(_)), "{error:?}");
+    assert_eq!(
+        error.to_string(),
+        "backend failure: the embedder returned 0 vectors for one query; \
+         the contract is one per input"
+    );
+}
+
+#[tokio::test]
+async fn reports_an_embedder_that_returns_several_vectors_as_a_backend_failure() {
+    let retriever = DenseRetriever::new(
+        Box::new(MiscountingEmbedder { count: 2 }),
+        Box::new(full_store()),
+    );
+
+    let error = retriever
+        .retrieve(&query("who asks this"), &RetrieveParams::new(1))
+        .await
+        .expect_err("two vectors for one query is not one of them being right");
+
+    // Refused rather than indexed into: which of the two is the query's vector
+    // is exactly what a broken `Embedder` has stopped saying.
+    assert!(matches!(error, ComponentError::Backend(_)), "{error:?}");
+    assert_eq!(
+        error.to_string(),
+        "backend failure: the embedder returned 2 vectors for one query; \
+         the contract is one per input"
+    );
+}

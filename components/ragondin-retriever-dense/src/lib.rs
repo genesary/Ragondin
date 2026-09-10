@@ -3,7 +3,8 @@
 //! **Dense retrieval through a [`VectorStore`](ragondin_contracts::VectorStore)**:
 //! it embeds the query and returns the nearest chunks the store holds. It is
 //! the dense arm of hybrid retrieval, and on its own it is the dense-only
-//! baseline the M2 exit criterion compares against (`docs/code-architecture.md` §4).
+//! baseline the M2 exit criterion compares against
+//! (`docs/system-architecture.md` §11.3).
 //!
 //! It is a **leaf** of the dependency graph (INV-5): it compiles against
 //! `ragondin-contracts` and `ragondin-types` and nothing else in the workspace,
