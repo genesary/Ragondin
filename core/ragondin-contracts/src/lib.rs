@@ -15,10 +15,11 @@
 //! first-party component and a third-party one implement exactly the same
 //! thing, and there is no faster path for either.
 //!
-//! Today it carries the families the M2 retrieval bench exercises. `Chunker`,
-//! `Indexer`, `ContextBuilder`, `Generator` and `Grader` arrive with M3/M4 —
-//! adding a trait is additive, so defining them before anything implements
-//! them would be dead API.
+//! This crate defines five families: `Retriever`, `Fusion`, `Reranker`,
+//! `Embedder` and `VectorStore`. `Chunker`, `Indexer`, `ContextBuilder`,
+//! `Generator` and `Grader` are not defined here. Adding a trait is additive
+//! on this boundary, so each of those arrives with the work that first
+//! consumes it; defining one before anything needs it would be dead API.
 //!
 //! # Where parameters come from
 //!
@@ -28,8 +29,8 @@
 //! into a *constructed* component and applies defaults: implementation-specific
 //! configuration — BM25's `k1` and `b`, a model path — is handed to the
 //! constructor, while the params structs below carry only what varies **per
-//! call**. §5.1's reference pipeline shows the split: `top_k` on a retriever
-//! and on a reranker, nothing on the fusion.
+//! call**. The reference pipeline in `docs/system-architecture.md` §5.1 shows
+//! the split: `top_k` on a retriever and on a reranker, nothing on the fusion.
 //!
 //! See `ARCHITECTURE.md`.
 
@@ -108,7 +109,8 @@ impl RetrieveParams {
 
 /// Per-call parameters of a [`Fusion`].
 ///
-/// Empty today — §5.1's `fuse` node carries no params, and a fusion's own
+/// Empty today — the `fuse` node of the reference pipeline in
+/// `docs/system-architecture.md` §5.1 carries no params, and a fusion's own
 /// constants (RRF's `k`) are constructor configuration. It exists so that a
 /// future knob is a field rather than a change to the trait's signature, which
 /// would break every implementation in and out of the repository — including
@@ -222,8 +224,10 @@ pub struct EmbeddedChunk {
 /// load-bearing and neither is checkable by the type system: nDCG@k and MRR
 /// read position, so an unsorted list silently reports a wrong number; and
 /// `f32` admits `NaN`, on which the `partial_cmp(…).unwrap()` every implementer
-/// writes will panic. `ragondin-conformance` (#17) is where this is enforced across
-/// implementations.
+/// writes will panic. `ragondin-conformance` is where both halves are checked:
+/// it is the behavioural suite every implementation must pass, so the contract
+/// is enforced rather than trusted, identically for a built-in and a
+/// third-party component (INV-7).
 #[async_trait]
 pub trait Retriever: Send + Sync {
     /// Returns the chunks this retriever considers most relevant to `query`,
@@ -565,8 +569,9 @@ mod tests {
 
     #[test]
     fn params_carry_the_knobs_the_reference_pipeline_sets() {
-        // §5.1 sets `params: { top_k: 50 }` on a retriever and
-        // `params: { top_k: 8 }` on a reranker, and none on the fusion.
+        // The reference pipeline in `docs/system-architecture.md` §5.1 sets
+        // `params: { top_k: 50 }` on a retriever and `params: { top_k: 8 }` on
+        // a reranker, and none on the fusion.
         assert_eq!(RetrieveParams::new(50).top_k, 50);
         assert_eq!(RerankParams::new(8).top_k, 8);
         assert_eq!(SearchParams::new(50).top_k, 50);
