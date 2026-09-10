@@ -239,6 +239,26 @@ def a_citation_in_a_rust_file_that_is_not_utf8_is_still_reported() -> None:
 
 
 @case
+def a_citation_inside_an_adr_file_is_checked() -> None:
+    """`docs/adr/` is scanned like anywhere else — it is not the check's blind spot.
+
+    It is the densest concentration of ADR citations in the repository, and the
+    one place a reader is most certain a reference was verified. Excluding it
+    changes no message and no exit code: the check goes on reporting that every
+    citation resolves, over a corpus quietly missing 33 ADRs and their index.
+    """
+    run_checker(
+        {
+            "docs/adr/ADR-004-one-engine-two-drivers.md": (
+                "# ADR-4 — one engine, two drivers\n\nSupersedes ADR-C99.\n"
+            )
+        }
+    ).exits(1).says("BROKEN ADR REFERENCE").says(
+        "docs/adr/ADR-004-one-engine-two-drivers.md:3: ADR-C99 — no such ADR"
+    )
+
+
+@case
 def an_adr_filename_padded_to_the_wrong_width_fails() -> None:
     """A file the convention cannot place is a file nothing can cite.
 
@@ -251,6 +271,25 @@ def an_adr_filename_padded_to_the_wrong_width_fails() -> None:
     ).exits(1).says("ADR NAMING VIOLATION").says(
         "ADR-04-one-engine-two-drivers.md"
     ).says("padded to 2").says("3 digits")
+
+
+@case
+def an_adr_filename_in_the_code_series_padded_to_the_wrong_width_fails() -> None:
+    """The padding rule names **two** widths, and each needs its own fixture.
+
+    A check gated on the system series alone leaves the whole code series
+    unenforced while every message and every exit code stays exactly as it was.
+    The case above cannot see that: `ADR-04-…` is a system-series filename.
+    """
+    run_checker(
+        {
+            "docs/adr/ADR-C003-closed-enum-plus-open-extension-variant.md": (
+                "# Closed enum plus open extension variant\n"
+            )
+        }
+    ).exits(1).says("ADR NAMING VIOLATION").says(
+        "ADR-C003-closed-enum-plus-open-extension-variant.md"
+    ).says("padded to 3").says("2 digits")
 
 
 @case
@@ -317,9 +356,10 @@ def a_dangling_link_into_the_adr_directory_fails_in_markdown_only() -> None:
 def a_link_to_an_adr_with_an_anchor_resolves() -> None:
     """A `#fragment` names a heading, not a file, so it is stripped before the test.
 
-    Without the strip every anchored link in the repository becomes a failure —
-    loud on the real tree, but silent here until a case says so, because no
-    fixture above appends one.
+    Without the strip every anchored link becomes a failure — and silently, on
+    this tree as much as in these fixtures: of the tracked Markdown links that
+    resolve into `docs/adr/`, not one carries an anchor, and no fixture above
+    appends one. Only this case holds the rule.
     """
     run_checker(
         {
