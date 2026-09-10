@@ -88,10 +88,11 @@ impl<T: ?Sized> Registry<T> {
 ///
 /// It is shareable across threads — the harness (#29) plans two configurations
 /// concurrently against one context — but the `&mut`/`&` split is not what
-/// makes that sound: every stored value being `Send + Sync` is. The assertion
-/// below is where that guarantee lives, next to what it constrains rather than
-/// in a test whose deletion would remove it silently (the rule
-/// `ragondin-contracts` states as D-11). Adding a field that is not `Sync` — an
+/// makes that sound: every stored value being `Send + Sync` is. The
+/// `const _: fn()` block below is where that guarantee lives, next to what it
+/// constrains rather than in a test whose deletion would remove it silently;
+/// `ragondin-contracts` carries the same kind of block, over each of its
+/// trait objects and `ComponentError`. Adding a field that is not `Sync` — an
 /// `Rc`, a bare `RefCell` cache — breaks the build here rather than at a
 /// `tokio::spawn` boundary in another crate.
 pub struct EngineContext {

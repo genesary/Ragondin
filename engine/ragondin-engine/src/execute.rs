@@ -461,12 +461,12 @@ fn per_call_top_k(node: &NodeId, params: &Params) -> Result<usize, ExecError> {
     }
 }
 
-// D-11, as `context.rs` applies it to `EngineContext`: the harness (#29) runs
-// two plans from one context across tasks, so what `execute` takes and returns
-// must cross a `tokio::spawn` boundary. Asserted next to what it constrains
-// rather than in a test whose deletion would remove it silently. A
-// `PhysicalPipeline` is `Send + Sync` because every contract trait is; an
-// `ExecError` because `ComponentError` is.
+// The same rule `context.rs` applies to `EngineContext` in its `const _: fn()`
+// block: the harness (#29) runs two plans from one context across tasks, so
+// what `execute` takes and returns must cross a `tokio::spawn` boundary.
+// Asserted next to what it constrains rather than in a test whose deletion
+// would remove it silently. A `PhysicalPipeline` is `Send + Sync` because
+// every contract trait is; an `ExecError` because `ComponentError` is.
 const _: fn() = || {
     fn assert_send_sync<T: Send + Sync>() {}
     assert_send_sync::<Engine>();
@@ -1183,7 +1183,7 @@ mod tests {
         // The harness (#29) drives two runs from one context across tasks, so
         // the future `execute` returns must cross a `tokio::spawn` boundary.
         // Checked here rather than at that boundary in another crate, the way
-        // `context.rs` checks `EngineContext` (D-11).
+        // `context.rs` checks `EngineContext` in its `const _: fn()` block.
         fn assert_send<F: std::future::Future + Send>(_: &F) {}
         let engine = Engine::new();
         let plan = plan(vec![raw_top_k(
