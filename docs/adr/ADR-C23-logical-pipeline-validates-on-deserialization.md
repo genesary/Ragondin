@@ -47,9 +47,9 @@ system can be asked to run again.
 
 **Two shipped layers already read the unvalidated shape as authoritative.**
 Physical planning builds its set of declared inputs from `logical.inputs()`
-(`engine/ragondin-engine/src/plan.rs:138`) and copies it into the plan
-(`:152`); the executor seeds its value table from the plan's declared inputs
-(`engine/ragondin-engine/src/execute.rs:144`). ADR-C18 introduced `inputs` and
+(`plan_physical`, in `engine/ragondin-engine/src/plan.rs`) and copies it into
+the plan's `inputs`; the executor seeds its value table from the plan's declared
+inputs (the seeding loop in `Engine::execute`, `engine/ragondin-engine/src/execute.rs`). ADR-C18 introduced `inputs` and
 gave both layers a reason to trust it. Neither layer re-derives the arity rule,
 and neither should: ADR-C16 places the structural checks at validation and
 keeps planning's kind check as a *backstop* for the one thing validation cannot
@@ -57,7 +57,7 @@ know, an `Extension` node's kinds. The backstop is a kinds check, not a second
 structural validation.
 
 **The door is currently in deliberate use as a test affordance.**
-`ragondin-engine`'s two `forged` helpers (`plan.rs:429`, `execute.rs:733`)
+`ragondin-engine`'s two `forged` test helpers (one in `plan.rs`, one in `execute.rs`)
 deserialize hand-written JSON precisely because `validate` would refuse it, and
 that is how planning's and the executor's second-layer behaviour is exercised
 at all. `PlanError::KindMismatch`'s rustdoc names the shape in as many words:
@@ -69,19 +69,18 @@ One more fact decides the cost, and it is the opposite of what #116 assumed.
 That issue prices this option as expensive on the grounds that "`validate`
 currently consumes a `RawPipeline`; the checks would have to be reachable from
 a logical-shaped input too." Read against the code, `validate`
-(`core/ragondin-pipeline/src/validate.rs:333`) does two separable things:
+(`core/ragondin-pipeline/src/validate.rs`) does two separable things:
 
-- **lowering**, which is the only Raw-shaped work — `raw.pipeline.inputs` at
-  `:338` and `raw.pipeline.nodes` through `lower_node` at `:340-345`, carrying
-  the non-finite-float rejection and the `-0.0` normalization inside
-  `lower_param_value` (`:207`);
-- **the structural checks**, `:347-407`, which touch `raw` nowhere. They
-  operate on a `Vec<NodeId>` and a `Vec<LogicalNode>` and nothing else: the
-  node sort (`:357`), the unique-id index (`:362`), input arity (`:380`) and
-  the input/node-id collision (`:385-390`), dangling inputs (`:392-401`),
-  `find_cycle` (`:403`, declared `fn find_cycle(nodes: &[LogicalNode], index:
-  &HashMap<NodeId, usize>)` at `:533`), and `check_kinds` (`:407`, declared
-  over `&[LogicalNode]` at `:447`).
+- **lowering**, which is the only Raw-shaped work — reading `raw.pipeline.inputs`
+  and passing `raw.pipeline.nodes` through `lower_node`, which carries the
+  non-finite-float rejection and the `-0.0` normalization inside
+  `lower_param_value`;
+- **the structural checks**, everything in `validate` after lowering, which
+  touch `raw` nowhere. They operate on a `Vec<NodeId>` and a `Vec<LogicalNode>`
+  and nothing else: the node sort, the unique-id index, input arity and the
+  input/node-id collision, dangling inputs, `find_cycle` (declared
+  `fn find_cycle(nodes: &[LogicalNode], index: &HashMap<NodeId, usize>)`), and
+  `check_kinds` (declared over `&[LogicalNode]`).
 
 The second half is already a function of the logical form. Extracting it is a
 pure refactor, and the option's headline cost is mostly imaginary.
@@ -105,7 +104,7 @@ Two requirements bind the implementation. They are part of this decision, not
 notes on it.
 
 1. **The deserializing path canonicalizes before it checks.** It sorts the node
-   list by `NodeId` exactly as `validate` does at `validate.rs:357`, and for
+   list by `NodeId` exactly as `validate` does, and for
    both of that sort's reasons: it *is* the canonicalization INV-8 rests on, so
    a path that skipped it would let two documents listing the same nodes in
    different orders produce two `LogicalPipeline`s and two hashes; and it makes
@@ -214,10 +213,10 @@ notes on it.
   ADR-C16 put it.
 
 - **The implementation is a pure extraction plus a `TryFrom`.** `validate.rs`
-  gains a private `check_structure` covering `:347-407` — the sort and the six
+  gains a private `check_structure` covering the sort and the six
   checks, verified above to touch no `Raw*` type — which `validate` calls after
   lowering and which a `#[serde(try_from = "...")]` shim calls directly. The
-  construction at `:409` stays with each caller, so the extracted function is
+  construction of the `LogicalPipeline` stays with each caller, so the extracted function is
   `fn check_structure(inputs: &[NodeId], nodes: &mut [LogicalNode]) ->
   Result<(), ValidationError>`: it sorts in place and reports, and does not
   build the pipeline. Lowering-only variants of
@@ -231,11 +230,11 @@ notes on it.
   nodes in different orders must produce equal `LogicalPipeline`s. Nothing
   existing would catch its absence: every canonicalization test enters through
   `validate`, and the one fixture that does reach the derive
-  (`validate.rs:1466`) holds nodes that are **already** in `NodeId` order, so a
+  (in `validate.rs`'s tests) holds nodes that are **already** in `NodeId` order, so a
   `try_from` that never sorted would pass the entire current suite in silence.
 
 - **The existing round-trip test survives unchanged and gains meaning.**
-  `a_logical_pipeline_serde_round_trip_changes_nothing` (`validate.rs:1466`)
+  `a_logical_pipeline_serde_round_trip_changes_nothing` (`validate.rs`'s tests)
   serializes a validated pipeline and reads it back; under this decision it
   also pins that the new path accepts everything `validate` accepts, which is
   the half of the change a rejection test cannot cover.
@@ -272,29 +271,29 @@ notes on it.
   implementation lands.** It is listed exhaustively here so the implementation
   issue (#179) inherits the list rather than rediscovering it:
 
-  - `engine/ragondin-engine/src/error.rs:159-163` — `PlanError::KindMismatch`'s
+  - `engine/ragondin-engine/src/error.rs` — `PlanError::KindMismatch`'s
     rustdoc, *"a `LogicalPipeline` deserialized straight from a store or a wire
     is the shape that gets here"*;
-  - `engine/ragondin-engine/src/error.rs:214-215` — the `ExecError` **enum's
+  - `engine/ragondin-engine/src/error.rs` — the `ExecError` **enum's
     own** doc comment, a different item making the same claim: *"a
     `LogicalPipeline` deserialized straight from a store or a wire is the shape
     that can"*;
-  - `engine/ragondin-engine/src/plan.rs:417-428` — the `forged` doc comment,
+  - `engine/ragondin-engine/src/plan.rs` — the `forged` test helper's doc comment,
     including its instruction that a fixture be written in `NodeId` order,
     which a sorting door retires;
-  - `engine/ragondin-engine/src/execute.rs:729-732` — the second `forged` doc
+  - `engine/ragondin-engine/src/execute.rs` — the second `forged` helper's doc
     comment, same two points;
   - `engine/ragondin-engine/Cargo.toml` — the comment on the `serde_json`
     dev-dependency, *"no pipeline built the legitimate way can reach it"*;
-  - `core/ragondin-pipeline/tests/public_api.rs:94-95` — *"Reached through
+  - `core/ragondin-pipeline/tests/public_api.rs`, the ADR-C18 arity test — *"Reached through
     `validate`, the only door to a `LogicalPipeline` there is"*;
   - the inline comments on the forged fixtures that explain why `validate`
     refuses them (`plan.rs`, `execute.rs`).
 
   Two more do not become false but shift meaning once the derive checks, and
   the implementer should read them deliberately rather than skip them:
-  `plan.rs:114-119` (*"the only way to hold one with a dangling input is to
-  have bypassed `validate`"*) and `plan.rs:185` (*"only for a
+  `plan_physical`'s rustdoc in `plan.rs` (*"the only way to hold one with a dangling input is to
+  have bypassed `validate`"*) and `check_kinds`'s rustdoc in the same file (*"only for a
   `LogicalPipeline` that did not come through `validate`"*) — both stay true,
   but "bypassed" now names the test door rather than an open one.
 
