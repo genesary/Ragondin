@@ -13,11 +13,13 @@
 //! `top_k: 50`, and [`crate::ParamValue`] is externally tagged, so it cannot
 //! read that at all. [`RawParamValue`] is the untagged counterpart.
 //!
-//! **This level is deliberately permissive.** It tolerates unknown keys,
-//! component families with no `LogicalNode` variant, and references to nodes
-//! that do not exist. Rejecting those is validation's job (#9), and a parser
-//! that pre-empted it would turn a user's diagnosable mistake into an opaque
-//! parse failure.
+//! **This level is deliberately permissive.** An unknown key is dropped at the
+//! parse — no type here denies unknown fields — so it never reaches a later
+//! pass at all. Component families with no `LogicalNode` variant and
+//! references to nodes that do not exist are carried through intact instead,
+//! and rejecting *those* is [`crate::validate::validate`]'s job, the pass that
+//! lowers this level into a `LogicalPipeline`. A parser that pre-empted it
+//! would turn a user's diagnosable mistake into an opaque parse failure.
 //!
 //! Two things it does *not* tolerate, for different reasons.
 //!
@@ -337,7 +339,7 @@ impl UnsupportedSchemaVersion {
 ///
 /// Untagged, so `top_k: 50` reads as [`RawParamValue::Int`]. This is the wire
 /// counterpart of [`crate::ParamValue`] and must not be confused with it
-/// (INV-9); lowering one to the other is #9's job.
+/// (INV-9); lowering one to the other is [`crate::validate::validate`]'s job.
 ///
 /// Variant order is load-bearing: an untagged enum is tried in declaration
 /// order, so `Bool` precedes `Int` precedes `Float`, and `50` reads as an
@@ -395,7 +397,7 @@ pub struct RawGraph {
 /// A whole configuration document, as `serde` reads it from YAML or protobuf.
 ///
 /// **Never executed.** It may hold a graph that does not validate; producing a
-/// `LogicalPipeline` from it is #9.
+/// `LogicalPipeline` from it is [`crate::validate::validate`]'s job.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct RawPipeline {
     /// The wire schema version. Absent means [`SchemaVersion::CURRENT`], so a
@@ -727,7 +729,7 @@ mod tests {
         // YAML admits `.inf` and `.nan`, and this level parses them — but they
         // do not round trip, so the wire contract stops at finite values, as
         // `ParamValue`'s does. Pinned rather than hidden: this is the boundary
-        // #9 must reject at.
+        // `validate` must reject at when it lowers this level.
         let infinite: RawParamValue = serde_yaml::from_str(".inf").unwrap();
         assert_eq!(
             serde_json::to_string(&infinite).unwrap(),
@@ -806,8 +808,9 @@ mod tests {
 
     #[test]
     fn an_unknown_node_field_is_tolerated() {
-        // The permissive level tolerates what it does not know; rejecting is #9's
-        // job. This is the opposite of the validated level, deliberately.
+        // The permissive level tolerates what it does not know: an unknown
+        // key is dropped at the parse, not carried to `validate`. This is the
+        // opposite of the validated level, deliberately.
         let node: RawNode = serde_json::from_str(
             r#"{"id":"g","component":"retriever","impl":"bm25","next":"generate"}"#,
         )

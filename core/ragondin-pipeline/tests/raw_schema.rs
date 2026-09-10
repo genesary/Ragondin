@@ -82,7 +82,7 @@ fn the_reference_pipeline_round_trips_through_yaml() {
 
 #[test]
 fn a_dangling_input_reference_parses_here_and_is_rejected_later() {
-    // Referential integrity belongs to validation (#9). This level must not
+    // Referential integrity belongs to the `validate` pass. This level must not
     // pre-empt it, or a user's malformed file stops producing a diagnosis and
     // starts producing a parse error.
     let doc: RawPipeline = serde_yaml::from_str(
