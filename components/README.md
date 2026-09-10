@@ -1,8 +1,9 @@
 # components/
 
 One crate per component implementation. `ragondin-retriever-bm25` (in-process
-BM25 over tantivy), `ragondin-store-memory` (an exact brute-force vector store)
-and `ragondin-fusion-rrf` (Reciprocal Rank Fusion) are here;
+BM25 over tantivy), `ragondin-retriever-dense` (dense retrieval through a
+`VectorStore`), `ragondin-store-memory` (an exact brute-force vector store) and
+`ragondin-fusion-rrf` (Reciprocal Rank Fusion) are here;
 `ragondin-embedder-onnx`, `ragondin-store-qdrant` and the rest arrive in later
 issues.
 

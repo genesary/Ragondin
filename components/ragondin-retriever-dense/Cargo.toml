@@ -1,0 +1,35 @@
+[package]
+name = "ragondin-retriever-dense"
+description = "Dense retrieval through a VectorStore: embed the query, search the index."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+# A component is a leaf of the dependency graph (INV-5): the contract it
+# implements and the value types it moves, and nothing else in the workspace.
+# In particular neither the embedder (#20) nor the store (#22, #24) it is built
+# from: both arrive as trait objects, chosen by the composition root.
+[dependencies]
+ragondin-contracts = { workspace = true }
+ragondin-types = { workspace = true }
+async-trait = { workspace = true } # dyn-compatible async traits (frozen: async_trait, not RPITIT)
+thiserror = { workspace = true }   # typed library errors (ADR-C13: never anyhow in a library)
+
+# The suite every implementation passes, built-in or third-party (INV-7), and
+# the runtime that drives it. Both are test-only.
+[dev-dependencies]
+ragondin-conformance = { workspace = true }
+tokio = { workspace = true }
+
+# This component embeds a query and searches a store through trait objects, so
+# it carries no backend of its own and this feature gates nothing heavy. It
+# exists so that every component crate is entered the same way -- one feature
+# named after the implementation -- which is what makes the pattern guessable.
+# It is in `default` for the reason `ragondin-store-memory`'s `memory` is:
+# ADR-C14 keeps *heavy* backends out of the default build, and there is nothing
+# heavy here to keep out.
+[features]
+default = ["dense"]
+dense = []
