@@ -50,13 +50,22 @@
 //! current by definition.
 //!
 //! A **parameter that is not a scalar or a list of scalars** — a nested map,
-//! a null — fails to parse, and does so with serde's opaque untagged-enum
-//! message rather than a diagnosis. That is a genuine limit, not a choice:
-//! [`RawParamValue`] mirrors [`crate::ParamValue`], which has no `Map` or
-//! `Null` variant either, so admitting one here would put the wire and logical
-//! models out of step. It is worth knowing that a metadata filter
-//! (`params: { filters: { lang: fr } }`) is ordinary retriever configuration
-//! and is not expressible today.
+//! a null — fails to parse. That is now a decided limit rather than an
+//! accident (ADR-C22): the parameter grammar is `String | Int | Float | Bool |
+//! List` in both models, and [`RawParamValue`] mirrors [`crate::ParamValue`]
+//! because admitting a shape on one side only would put the wire and logical
+//! models out of step. A **null** is refused permanently — it means *absent*,
+//! which omitting the key already says. A **nested map** is refused only until
+//! a configuration demands one: both enums are extensible by design, so the
+//! variant is additive when that day comes. A metadata filter
+//! (`params: { filters: { lang: fr } }`) is the shape that will ask for it,
+//! and it is not expressible today.
+//!
+//! Two pieces of that decision are not here yet. Neither enum carries
+//! `#[non_exhaustive]`, and a refusal still surfaces as serde's opaque
+//! untagged-enum message, which names neither the offending key nor what was
+//! expected — the one place this level does the thing it exists to prevent.
+//! Both land with ADR-C22's implementation.
 //!
 //! Nothing here is executed, and nothing here is hashed.
 
@@ -344,6 +353,11 @@ impl UnsupportedSchemaVersion {
 /// Variant order is load-bearing: an untagged enum is tried in declaration
 /// order, so `Bool` precedes `Int` precedes `Float`, and `50` reads as an
 /// integer rather than as a float.
+///
+/// These five variants are the whole parameter grammar; a nested map and a
+/// null are refused, and this enum is extensible by design rather than closed.
+/// See ADR-C22 and the module documentation above for which of those refusals
+/// is permanent and which is only current.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum RawParamValue {

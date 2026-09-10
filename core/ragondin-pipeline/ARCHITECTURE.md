@@ -47,17 +47,37 @@ actually look like is not settled, so neither variant exists yet.
   [ADR-C16](../../docs/adr/ADR-C16-erased-edge-values-checked-before-execution.md),
   which is normative, and the module documentation on `node.rs`, which states
   the constraint where someone about to break it will read it.
-- **The public enums are not `#[non_exhaustive]`, deliberately.** `LogicalNode`
-  and `ParamValue` are closed to outside crates only by convention, so a
-  consumer may `match` them exhaustively and a new variant breaks that `match`.
-  That is the intended signal while nothing is published: adding a primitive
-  node kind or a parameter kind **should** be a visible, deliberate act on a
-  stable boundary (INV-1), not a silent one — and `LogicalNode` already has
-  `Extension` as its additive escape hatch (ADR-C3). Note that adding
-  `#[non_exhaustive]` later is itself a breaking change, so revisit this at the
-  first published version, not after. Same choice, same reasoning, as
-  `ragondin-types`. `ValueKind`, `PortSpec` and `ValidationError` (#9) join the
-  same stable surface under the same stance: an added `ValueKind` variant, a
+- **The parameter grammar is flat, and the two parameter enums are extensible
+  by design ([ADR-C22](../../docs/adr/ADR-C22-flat-parameter-grammar-extensible-param-enums.md)).**
+  A parameter value is `String | Int | Float | Bool | List` in both models. A
+  **nested map is rejected** — not forever, but until a configuration actually
+  demands one, because with the two enums extensible a `Map` variant added
+  later is additive rather than breaking. A **null is rejected permanently**: a
+  null parameter means *absent*, which the grammar already expresses by
+  omitting the key, and two spellings of one configuration on a
+  content-addressed boundary (INV-8) is a trap, not a convenience. A refused
+  value must be diagnosed by **key**, naming what was expected; serde's
+  untagged-enum message names neither. Two pieces of that decision are not in
+  the code yet — the `#[non_exhaustive]` attribute below, and the diagnostic —
+  and land together in its implementation.
+- **The public enums are not `#[non_exhaustive]`, deliberately — except the two
+  parameter enums, which ADR-C22 makes extensible.** `LogicalNode` is closed to
+  outside crates only by convention, so a consumer may `match` it exhaustively
+  and a new variant breaks that `match`. That is the intended signal while
+  nothing is published: adding a primitive node kind **should** be a visible,
+  deliberate act on a stable boundary (INV-1), not a silent one — and
+  `LogicalNode` already has `Extension` as its additive escape hatch (ADR-C3).
+  Note that adding `#[non_exhaustive]` later is itself a breaking change, so
+  revisit this at the first published version, not after. Same choice, same
+  reasoning, as `ragondin-types`. **`ParamValue` and `RawParamValue` do not
+  share it.** They are data carriers, not vocabularies the compiler must
+  defend: nothing silently does the wrong thing on meeting a parameter kind it
+  cannot read, so ADR-C22 makes them extensible instead. Neither carries the
+  attribute *today* — it lands with that ADR's implementation, together with
+  the correction to `AGENTS.md`'s INV-1 row, whose "none of these types is
+  `#[non_exhaustive]`" is still true until it does. `ValueKind`, `PortSpec` and
+  `ValidationError` join the same stable surface under `LogicalNode`'s stance
+  and not the parameter enums': an added `ValueKind` variant, a
   new `PortSpec` shape, or a new `ValidationError` variant is a visible,
   deliberate act on this boundary, not a silent one, and none of the three is
   `#[non_exhaustive]` either. `ValidationError::KindMismatch` carries
