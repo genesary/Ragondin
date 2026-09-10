@@ -14,14 +14,30 @@ Two rules are enforced:
            the `C` in the code series (`ADR-C03-…`). The convention is stated in
            `docs/adr/README.md`; this check keeps the directory matching it.
 
-  Resolution — every `ADR-<n>` / `ADR-C<n>` reference in the repository's Markdown
-           names an ADR that exists, and every relative link landing inside
-           `docs/adr/` points at something that exists.
+  Resolution — every `ADR-<n>` / `ADR-C<n>` reference in the repository's tracked
+           Markdown **and Rust** sources names an ADR that exists, and — in
+           Markdown only — every relative link landing inside `docs/adr/` points
+           at something that exists.
 
 A reference resolves **by number**, not by string equality with the filename. The
 ID an ADR carries in its own heading is unpadded (`ADR-4`) and its slug is written
 by hand rather than derived from its title, so the filename cannot be
 reconstructed from a citation — only looked up.
+
+Rust sources are read because that is where the citations live. Five of the six
+wrong `ADR-C3` citations #100 corrected were in `core/ragondin-contracts/src/lib.rs`,
+a file this check could not see at all. The scan is line-based and does not
+distinguish a doc comment from any other line of Rust: a citation is a citation
+wherever it is written.
+
+The **relative-link** rule stays Markdown-only. A `](path)` link has no meaning in
+a doc comment, and rustdoc's intra-doc links are a different mechanism that
+`cargo doc` already validates.
+
+What this check cannot do is judge whether a citation is **apt**. It resolves a
+reference by number and nothing more, so `ADR-C3` cited for `ADR-3`'s decision
+passes here. That one is a human habit — `AGENTS.md` § *What you write about the
+code is checked against the code* — and not a check.
 
 Run via `just check-doc-links`. Exit code 0 = every reference resolves; 1 = at
 least one does not (the message names the file, the line and the reference).
@@ -61,14 +77,14 @@ def repo_root() -> str:
     return result.stdout.strip()
 
 
-def markdown_files(root: str) -> list[str]:
-    """Every tracked Markdown file, repository-relative.
+def tracked_files(root: str, *patterns: str) -> list[str]:
+    """Every tracked file matching `patterns`, repository-relative.
 
     Tracked rather than walked: an untracked scratch file is not part of the
     repository's documentation, and `.gitignore` already says so.
     """
     result = subprocess.run(
-        ["git", "ls-files", "-z", "--", "*.md"],
+        ["git", "ls-files", "-z", "--", *patterns],
         capture_output=True,
         text=True,
         cwd=root,
@@ -107,18 +123,32 @@ def index_adrs(root: str):
     return index, violations
 
 
-def check_references(root: str, files: list[str], index: dict):
-    """Return [(file, line number, reference, reason), …]."""
+def check_references(root: str, files: list[str], index: dict, linked: set[str]):
+    """Return [(file, line number, reference, reason), …].
+
+    Citations are checked in every file in `files`. Relative links are checked in
+    the files in `linked` — the caller's Markdown set, named rather than sniffed
+    from the extension, so that adding a pattern cannot silently switch the rule
+    off. The module docstring says why a `](path)` in a doc comment is not this
+    check's business.
+    """
     failures = []
     for relative in files:
-        with open(os.path.join(root, relative), encoding="utf-8") as handle:
+        # `errors="replace"` rather than a decode error: a tracked file need not
+        # be UTF-8 (a `.rs` fixture may deliberately not be), and a citation is
+        # ASCII, so replacement loses no reference. A gate whose job is a legible
+        # message must not exit through a traceback naming the file only in it.
+        with open(os.path.join(root, relative), encoding="utf-8", errors="replace") as handle:
             lines = handle.read().splitlines()
         directory = os.path.dirname(relative)
+        links_apply = relative in linked
         for number, line in enumerate(lines, start=1):
             for series, digits in ADR_REFERENCE.findall(line):
                 if (series, int(digits)) not in index:
                     label = f"ADR-{series}{digits}"
                     failures.append((relative, number, label, "no such ADR"))
+            if not links_apply:
+                continue
             for target in MARKDOWN_LINK.findall(line):
                 path = link_into_adr_dir(root, directory, target)
                 if path is not None and not os.path.exists(os.path.join(root, path)):
@@ -157,8 +187,9 @@ def main() -> int:
     else:
         print(f"ADR naming OK — {len(index)} ADR file(s) match the documented convention.")
 
-    files = markdown_files(root)
-    failures = check_references(root, files, index)
+    markdown = tracked_files(root, "*.md")
+    rust = tracked_files(root, "*.rs")
+    failures = check_references(root, markdown + rust, index, set(markdown))
     if failures:
         ok = False
         print("BROKEN ADR REFERENCE — a citation does not resolve.")
@@ -169,7 +200,10 @@ def main() -> int:
         for path, number, reference, reason in failures:
             print(f"    {path}:{number}: {reference} — {reason}")
     else:
-        print(f"ADR references OK — every citation in {len(files)} Markdown file(s) resolves.")
+        print(
+            f"ADR references OK — every citation in {len(markdown)} Markdown "
+            f"and {len(rust)} Rust file(s) resolves."
+        )
 
     if not ok:
         print("\nDocumentation link checks FAILED. See the messages above.", file=sys.stderr)
