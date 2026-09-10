@@ -7,7 +7,7 @@ missing record, and the agent re-derives the decision it was sent to read. That 
 the architecture eroding through a broken filename, so the filenames get a wall
 around them the same way the invariants do.
 
-Two rules are enforced:
+Three rules are enforced:
 
   Naming — every ADR file is `ADR-<number>-<slug>.md`, with the number padded to
            three digits in the system series (`ADR-004-…`) and to two digits after
@@ -18,6 +18,18 @@ Two rules are enforced:
            Markdown **and Rust** sources names an ADR that exists, and — in
            Markdown only — every relative link landing inside `docs/adr/` points
            at something that exists.
+
+  Line citations — no file under `docs/adr/` cites source **by line number**
+           (`validate.rs:357`, `plan.rs:114-119`). An accepted ADR is immutable
+           (`docs/adr/README.md`, process rule 1) and so cannot follow the line
+           it names: the next commit to that file leaves the citation pointing
+           at unrelated code, and because a line number resolves to *some* line
+           forever, no check downstream can ever report it stale. An ADR cites
+           a symbol instead — a function, a type, a test by name — which grep
+           finds and `just map` resolves. Scoped to the ADR directory because
+           immutability is what makes the rot unfixable there; elsewhere a
+           stale line number is an ordinary documentation bug the next edit
+           corrects.
 
 A reference resolves **by number**, not by string equality with the filename. The
 ID an ADR carries in its own heading is unpadded (`ADR-4`) and its slug is written
@@ -63,6 +75,16 @@ ADR_REFERENCE = re.compile(r"ADR-(C?)(\d+)")
 
 # A Markdown inline link. Only the target matters here.
 MARKDOWN_LINK = re.compile(r"\[[^\]]*\]\(([^)\s]+)\)")
+
+# A citation of source by line, in either of the two shapes an ADR has used: a
+# path or bare filename with a source extension, a colon and a line number
+# (`validate.rs:357`), or a backticked bare line number standing in for one
+# after the file was named once (`:357`, `:347-407`). A range is either shape
+# with a dash. `v0.26.2` has no extension and `ADR-C16` no colon, so neither
+# matches; a bare `:357` outside backticks is prose, not a citation.
+LINE_CITATION = re.compile(
+    r"[\w./-]+\.(?:rs|py|toml|ya?ml|md):\d+(?:-\d+)?\b|`:\d+(?:-\d+)?`"
+)
 
 
 def repo_root() -> str:
@@ -156,6 +178,23 @@ def check_references(root: str, files: list[str], index: dict, linked: set[str])
     return failures
 
 
+def check_line_citations(root: str, files: list[str]):
+    """Return [(file, line number, citation), …] for every line-number citation.
+
+    The caller passes the files the rule applies to — the tracked Markdown under
+    `docs/adr/` — named rather than sniffed from the path here, so that widening
+    or narrowing the scope is a visible change at one call site.
+    """
+    failures = []
+    for relative in files:
+        with open(os.path.join(root, relative), encoding="utf-8", errors="replace") as handle:
+            lines = handle.read().splitlines()
+        for number, line in enumerate(lines, start=1):
+            for citation in LINE_CITATION.findall(line):
+                failures.append((relative, number, citation))
+    return failures
+
+
 def link_into_adr_dir(root: str, directory: str, target: str) -> str | None:
     """The repository-relative path a link points at, if it lands in `docs/adr/`.
 
@@ -204,6 +243,20 @@ def main() -> int:
             f"ADR references OK — every citation in {len(markdown)} Markdown "
             f"and {len(rust)} Rust file(s) resolves."
         )
+
+    adrs = [path for path in markdown if path.startswith(ADR_DIR + "/")]
+    cited = check_line_citations(root, adrs)
+    if cited:
+        ok = False
+        print("LINE-NUMBER CITATION — an ADR cites code by line.")
+        print("  An accepted ADR is immutable, so it cannot follow the line it names:")
+        print("  the next commit to that file leaves the citation pointing at unrelated")
+        print("  code, and nothing can report it. Name the symbol instead — the function,")
+        print("  the type, the test — which grep finds and `just map` resolves.")
+        for path, number, citation in cited:
+            print(f"    {path}:{number}: {citation}")
+    else:
+        print(f"ADR line citations OK — no file under {ADR_DIR}/ cites code by line number.")
 
     if not ok:
         print("\nDocumentation link checks FAILED. See the messages above.", file=sys.stderr)
