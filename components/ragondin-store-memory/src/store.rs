@@ -115,6 +115,14 @@ impl VectorStore for MemoryVectorStore {
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
 
+        // Read once, before the branch. Indexing `entries[0]` inside the
+        // predicate below was safe only because `find` never calls it on an
+        // empty iterator -- and an empty batch is a supported input, documented
+        // as a no-op just above. A refactor that resolved the reference width
+        // eagerly would have panicked on `upsert(vec![])`, so the safety is
+        // taken out of the reader's hands rather than left to that detail.
+        let opening = entries.first().map(|entry| entry.embedding.dim());
+
         if let Some(width) = held.first().map(|entry| entry.embedding.dim()) {
             if let Some(odd) = entries.iter().find(|entry| entry.embedding.dim() != width) {
                 return Err(ComponentError::InvalidRequest(format!(
@@ -123,18 +131,16 @@ impl VectorStore for MemoryVectorStore {
                     odd.embedding.dim()
                 )));
             }
-        } else if let Some(odd) = entries
-            .iter()
-            .find(|entry| entry.embedding.dim() != entries[0].embedding.dim())
-        {
+        } else if let Some(width) = opening {
             // The store is empty, so the batch itself fixes the width -- and it
             // can only do that if it agrees with itself.
-            return Err(ComponentError::InvalidRequest(format!(
-                "`{}` has {} components, but this batch opens the store at {}",
-                odd.chunk.id.as_str(),
-                odd.embedding.dim(),
-                entries[0].embedding.dim()
-            )));
+            if let Some(odd) = entries.iter().find(|entry| entry.embedding.dim() != width) {
+                return Err(ComponentError::InvalidRequest(format!(
+                    "`{}` has {} components, but this batch opens the store at {width}",
+                    odd.chunk.id.as_str(),
+                    odd.embedding.dim()
+                )));
+            }
         }
 
         for entry in entries {
@@ -167,18 +173,12 @@ impl VectorStore for MemoryVectorStore {
             ));
         }
 
-        let held = self.read();
-        let Some(width) = held.first().map(|entry| entry.embedding.dim()) else {
-            // Nothing is held, so nothing can disagree with the query -- not
-            // even about its width. An empty store answers rather than failing.
-            return Ok(Vec::new());
-        };
-        if embedding.dim() != width {
-            return Err(ComponentError::InvalidRequest(format!(
-                "the query has {} components, but this store holds vectors of {width}",
-                embedding.dim()
-            )));
-        }
+        // Before the empty-store return below, because nothing about this
+        // check depends on what is held: a query with no direction has none
+        // whether the store holds a million vectors or none at all. Ordering it
+        // after gave the same call two verdicts — `Ok([])` on a fresh store,
+        // `InvalidRequest` once one vector was in — so a caller smoke-testing
+        // its embedder saw no error for a vector the store would later refuse.
         if cosine(embedding.as_slice(), embedding.as_slice()).is_none() {
             return Err(ComponentError::InvalidRequest(
                 "a query vector of zero magnitude, or with a component that is not a finite \
@@ -187,25 +187,65 @@ impl VectorStore for MemoryVectorStore {
             ));
         }
 
-        let mut hits: Vec<ScoredChunk> = held
+        let held = self.read();
+        let Some(width) = held.first().map(|entry| entry.embedding.dim()) else {
+            // Nothing is held, so nothing can disagree with the query about its
+            // width -- that check, unlike the one above, genuinely needs a
+            // stored vector to compare against. An empty store answers rather
+            // than failing.
+            return Ok(Vec::new());
+        };
+        if embedding.dim() != width {
+            return Err(ComponentError::InvalidRequest(format!(
+                "the query has {} components, but this store holds vectors of {width}",
+                embedding.dim()
+            )));
+        }
+
+        // Scored by position first, and only the survivors are cloned. Building
+        // a `ScoredChunk` per entry up front means allocating a `String` for
+        // every chunk in the corpus and dropping all but `top_k` of them a few
+        // lines later: at BEIR chunk sizes that copying is the larger half of a
+        // search, and it buys nothing the scan needs.
+        let mut ranked: Vec<(usize, f32)> = held
             .iter()
-            .map(|entry| ScoredChunk {
-                chunk: entry.chunk.clone(),
+            .enumerate()
+            .map(|(position, entry)| {
                 // A stored vector with no direction -- zero magnitude, or a
                 // component that is not finite -- is scored rather than
                 // rejected: it is already indexed, and NaN would break the
                 // ranking contract for every other hit in the list.
-                score: cosine(embedding.as_slice(), entry.embedding.as_slice()).unwrap_or(0.0),
+                //
+                // `+ 0.0` normalizes a negative zero away. `total_cmp` is a
+                // total order over *bit patterns* and separates `-0.0` from
+                // `+0.0`, which `==` calls equal -- so without this, two chunks
+                // that scored identically were ordered by the sign of a zero
+                // rather than by the chunk id this crate promises to break ties
+                // with.
+                let score =
+                    cosine(embedding.as_slice(), entry.embedding.as_slice()).unwrap_or(0.0) + 0.0;
+                (position, score)
             })
             .collect();
 
-        hits.sort_by(|a, b| {
-            b.score
-                .total_cmp(&a.score)
-                .then_with(|| a.chunk.id.as_str().cmp(b.chunk.id.as_str()))
+        ranked.sort_by(|(a_position, a_score), (b_position, b_score)| {
+            b_score.total_cmp(a_score).then_with(|| {
+                held[*a_position]
+                    .chunk
+                    .id
+                    .as_str()
+                    .cmp(held[*b_position].chunk.id.as_str())
+            })
         });
-        hits.truncate(params.top_k);
-        Ok(hits)
+        ranked.truncate(params.top_k);
+
+        Ok(ranked
+            .into_iter()
+            .map(|(position, score)| ScoredChunk {
+                chunk: held[position].chunk.clone(),
+                score,
+            })
+            .collect())
     }
 }
 
@@ -467,6 +507,58 @@ mod tests {
         let store = store_of(vec![entry("c1", vec![1.0, 0.0])]).await;
         store.upsert(Vec::new()).await.expect("a no-op upsert");
         assert_eq!(store.len(), 1);
+    }
+
+    /// Two scores that compare equal must be ordered by chunk id, whatever
+    /// their bit pattern.
+    ///
+    /// `total_cmp` is a *total* order over bit patterns, and it separates
+    /// `-0.0` from `+0.0` — which `==` calls equal. So two chunks that scored
+    /// identically were ordered by the sign of a zero rather than by their id,
+    /// silently, in the one component whose whole justification is that a run
+    /// is reproducible.
+    ///
+    /// `-0.0` is not contrived here: it is what cosine returns for a stored
+    /// vector pointing exactly away from a query with a signed zero in it.
+    #[tokio::test]
+    async fn a_negative_zero_score_does_not_outrank_a_positive_zero() {
+        let store = store_of(vec![
+            entry("zzz", vec![1.0, 1.0, 0.0]),
+            entry("aaa", vec![-1.0, -1.0, -0.0]),
+        ])
+        .await;
+
+        let hits = store
+            .search(&Embedding::new(vec![0.0, 0.0, 1.0]), &SearchParams::new(2))
+            .await
+            .expect("the query has a direction");
+
+        assert_eq!(hits[0].score, hits[1].score, "the two scores compare equal");
+        assert_eq!(
+            ids(&hits),
+            vec!["aaa", "zzz"],
+            "equal scores order by chunk id, not by the sign of a zero"
+        );
+    }
+
+    /// A query with no direction is rejected whether or not anything is held.
+    ///
+    /// The empty-store early return used to come first, so the same call got
+    /// two verdicts depending on unrelated state: `Ok([])` against a fresh
+    /// store, `InvalidRequest` once one vector was in. A caller smoke-testing
+    /// its embedder against an empty store saw no error for a vector the store
+    /// would later refuse. The width check legitimately depends on what is
+    /// held; this one depends on nothing.
+    #[tokio::test]
+    async fn a_query_with_no_direction_is_refused_by_an_empty_store_too() {
+        let store = MemoryVectorStore::new();
+
+        let error = store
+            .search(&Embedding::new(vec![f32::NAN, 1.0]), &SearchParams::new(1))
+            .await
+            .expect_err("a query with no direction has nothing to search along");
+
+        assert!(matches!(error, ComponentError::InvalidRequest(_)));
     }
 
     #[tokio::test]
