@@ -135,6 +135,9 @@ pub struct RerankParams {
 
 impl RerankParams {
     /// Keeps `top_k` chunks.
+    ///
+    /// Infallible: a `top_k` of zero is representable here and rejected by the
+    /// component, as [`ComponentError::InvalidRequest`] describes.
     pub fn new(top_k: usize) -> Self {
         Self { top_k }
     }
@@ -193,6 +196,9 @@ pub struct SearchParams {
 
 impl SearchParams {
     /// Returns the `top_k` nearest chunks.
+    ///
+    /// Infallible: a `top_k` of zero is representable here and rejected by the
+    /// component, as [`ComponentError::InvalidRequest`] describes.
     pub fn new(top_k: usize) -> Self {
         Self { top_k }
     }
