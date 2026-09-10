@@ -34,9 +34,13 @@ all-features = true
 # unsound crates, and crates yanked from the registry.
 # ---------------------------------------------------------------------------
 [advisories]
-# Audit the whole graph, not just the crates this workspace names directly. A
-# vulnerability reaches us the same way whether it is one edge away or five, and
-# every advisory this workspace has actually seen so far has been transitive.
+# This setting governs unmaintained advisories only. "all" reports them for
+# transitive crates too, not only for the crates this workspace names in
+# [workspace.dependencies]; "workspace" would stop at those. Vulnerabilities are
+# checked across the whole graph whatever this is set to: RUSTSEC-2026-0258 was
+# in h2, a crate nothing here names, and would have been reported under the
+# narrower setting just the same. "all" because an unmaintained crate is a
+# liability wherever it sits in the graph.
 unmaintained = "all"
 
 # A yanked crate is a crate its author withdrew. Treating that as an error keeps
@@ -108,6 +112,13 @@ unused-allowed-license = "allow"
 
 # ---------------------------------------------------------------------------
 # bans -- crates this workspace refuses, and duplicate versions of one crate.
+#
+# As configured, this section cannot fail the build: there is no deny list, and
+# both settings below are non-blocking. It reports duplicate versions and
+# nothing else. Two things would make it a gate -- a deny list, once there is a
+# crate this workspace actually refuses; or `wildcards = "deny"`, which first
+# needs `publish = false` on the members, and whether this workspace publishes
+# to crates.io is a decision issue rather than a lint setting.
 # ---------------------------------------------------------------------------
 [bans]
 # Warn, not deny. Several duplicates are already unavoidable here -- indexmap 1

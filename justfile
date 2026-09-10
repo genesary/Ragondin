@@ -53,7 +53,7 @@ check-adr-index:
 # not in the toolchain, so it says how to get it rather than failing as an
 # unrecognized cargo subcommand.
 check-deny:
-    @cargo deny --version >/dev/null 2>&1 || { echo "error: cargo-deny is not installed. Install it with:"; echo "    cargo install cargo-deny --locked"; exit 1; }
+    @cargo deny --version >/dev/null 2>&1 || { echo "error: cargo-deny is not installed. Install the version CI runs with:"; echo "    cargo install cargo-deny --locked --version 0.20.2"; exit 1; }
     cargo deny --all-features check
 
 # The repository's cross-reference map. `just map <entity>` prints one entity's
