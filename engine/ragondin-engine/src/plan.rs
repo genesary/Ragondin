@@ -105,7 +105,9 @@ impl PhysicalPipeline {
 /// 1. every [`LogicalNode::Extension`] is refused
 ///    ([`PlanError::ExtensionUnsupported`]) — see that variant, and #93, for
 ///    why the check ADR-C16 reserves for planning cannot yet apply to them;
-/// 2. every edge's kinds are checked ([`check_kinds`]);
+/// 2. every edge's kinds are checked, and a mismatch refused
+///    ([`PlanError::KindMismatch`]) — see that variant for what the check is,
+///    and for why a pipeline that came through `validate` never reaches it;
 /// 3. every remaining node's `impl:` name is resolved through the registry,
 ///    which constructs the component from the node's params.
 ///
