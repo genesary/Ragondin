@@ -26,7 +26,9 @@ cargo fmt --check
 # Architecture invariant checks (see "Invariants")
 just check-invariants
 
-# Every ADR citation in the documentation resolves to a real file
+# Every ADR citation resolves to a real file, in tracked Markdown and Rust alike
+# — every line of a tracked .rs file, doc comment or not. It checks that a
+# reference resolves, never that it is apt.
 just check-doc-links
 
 # The generated ADR index in docs/adr/README.md is current
