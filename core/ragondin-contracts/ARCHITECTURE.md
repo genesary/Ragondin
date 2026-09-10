@@ -51,7 +51,7 @@ component is a gRPC service honouring the mirror protobuf in `ragondin-proto`.
   the structs that are empty today (`FusionParams`). Adding a
   *field* is additive; changing a method's *arity* breaks every implementation
   in and out of the repository, third-party `Remote` services included, which
-  is the contribution funnel ADR-C3 exists to protect. The uniformity is the
+  is the contribution funnel ADR-3 exists to protect. The uniformity is the
   point: an exception is where the next knob will land.
 
   This is the *opposite* of `ragondin-pipeline`'s recorded choice, deliberately.
