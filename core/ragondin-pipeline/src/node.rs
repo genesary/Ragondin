@@ -4,7 +4,8 @@
 //! of primitive nodes plus one open `Extension` variant** (ADR-C3), so a new
 //! technique can be added without changing the core. Nodes are value types
 //! (INV-3): plain data, no trait objects, no I/O. Edges are data flow — a node
-//! names the ids of the nodes it consumes, in `inputs`.
+//! names in `inputs` the ids of the values it consumes: another node's output,
+//! or one of the pipeline's declared inputs (ADR-C18).
 //!
 //! **`inputs` is positional and order-significant.** ADR-C16 derives a node's
 //! consumed kinds from its variant, and a variant with heterogeneous ports — a
@@ -33,10 +34,18 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-/// The stable identifier of a node within a pipeline.
+/// The stable identifier of a node within a pipeline — and, since ADR-C18, of
+/// a declared pipeline input, which is not a node.
 ///
-/// Edges are expressed by id: a node lists in its `inputs` the ids of the nodes
-/// whose output it consumes.
+/// The two share **one namespace**, which is why this type is also the element
+/// of [`crate::LogicalPipeline::inputs`] even though none of those elements is
+/// a node: a node names a declared input in `inputs` exactly as it names
+/// another node, so an id claimed by both would be ambiguous and validation
+/// refuses it ([`crate::ValidationError::InputCollidesWithNode`]).
+///
+/// Edges are expressed by id: a node lists in its `inputs` the ids of what it
+/// consumes — another node, whose output it takes, or one of the pipeline's
+/// declared inputs.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct NodeId(String);
@@ -108,7 +117,9 @@ pub struct RetrieverNode {
     /// Part of the logical form, so it enters the content hash: two backends
     /// are two different configurations (ADR-C2 § Amendments).
     pub implementation: String,
-    /// The ids of the nodes whose output this node consumes, **in port order**.
+    /// The ids of what this node consumes — another node, whose output it
+    /// takes, or one of the pipeline's declared inputs (ADR-C18) — **in port
+    /// order**.
     pub inputs: Vec<NodeId>,
     /// This node's parameters, in canonical key order.
     pub params: Params,
@@ -124,7 +135,9 @@ pub struct FusionNode {
     /// Part of the logical form, so it enters the content hash: two backends
     /// are two different configurations (ADR-C2 § Amendments).
     pub implementation: String,
-    /// The ids of the nodes whose output this node consumes, **in port order**.
+    /// The ids of what this node consumes — another node, whose output it
+    /// takes, or one of the pipeline's declared inputs (ADR-C18) — **in port
+    /// order**.
     pub inputs: Vec<NodeId>,
     /// This node's parameters, in canonical key order.
     pub params: Params,
@@ -140,7 +153,9 @@ pub struct RerankerNode {
     /// Part of the logical form, so it enters the content hash: two backends
     /// are two different configurations (ADR-C2 § Amendments).
     pub implementation: String,
-    /// The ids of the nodes whose output this node consumes, **in port order**.
+    /// The ids of what this node consumes — another node, whose output it
+    /// takes, or one of the pipeline's declared inputs (ADR-C18) — **in port
+    /// order**.
     pub inputs: Vec<NodeId>,
     /// This node's parameters, in canonical key order.
     pub params: Params,
@@ -164,7 +179,9 @@ pub struct ExtensionNode {
     /// keyed on the implementation name, and there is no extension family — so
     /// this type deliberately says nothing about it.
     pub kind: String,
-    /// The ids of the nodes whose output this node consumes, **in port order**.
+    /// The ids of what this node consumes — another node, whose output it
+    /// takes, or one of the pipeline's declared inputs (ADR-C18) — **in port
+    /// order**.
     pub inputs: Vec<NodeId>,
     /// This node's parameters, in canonical key order.
     pub params: Params,
@@ -195,7 +212,8 @@ impl LogicalNode {
         }
     }
 
-    /// The ids of the nodes whose output this node consumes.
+    /// The ids of what this node consumes: another node, whose output it
+    /// takes, or one of the pipeline's declared inputs (ADR-C18).
     pub fn inputs(&self) -> &[NodeId] {
         match self {
             Self::Retriever(node) => &node.inputs,
