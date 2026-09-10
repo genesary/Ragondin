@@ -325,8 +325,8 @@ pub trait VectorStore: Send + Sync {
     ) -> Result<Vec<ScoredChunk>, ComponentError>;
 }
 
-// D-11: the `Send + Sync` bounds live next to what they constrain, not only in
-// a test whose deletion would remove the guarantee silently.
+// The `Send + Sync` bounds live next to what they constrain, not only in a
+// test whose deletion would remove the guarantee silently.
 const _: fn() = || {
     fn assert_send_sync<T: Send + Sync + ?Sized>() {}
     assert_send_sync::<dyn Retriever>();
