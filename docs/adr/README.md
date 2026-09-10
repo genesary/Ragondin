@@ -21,7 +21,7 @@ An **Architecture Decision Record (ADR)** captures one architectural decision: i
 
 - **`000-template.md`** — the template every ADR follows: Context / Decision / Alternatives rejected / Consequences / Status, plus an optional Amendments section (process rule 2).
 - **`ADR-001-*.md` … `ADR-015-*.md`** — the frozen decisions of the *system* architecture, one file per decision, cited as `ADR-1` … `ADR-15`.
-- **`ADR-C01-*.md` … `ADR-C22-*.md`** — the frozen decisions of the *code* architecture, one file per decision, cited as `ADR-C1` … `ADR-C22`.
+- **`ADR-C01-*.md` … `ADR-C23-*.md`** — the frozen decisions of the *code* architecture, one file per decision, cited as `ADR-C1` … `ADR-C23`.
 
 Each file is self-contained: it should be understandable and actionable on its own, without first reading `AGENTS.md` or the architecture documents. If an ADR only makes sense after reading something else, it is under-specified and should be fixed.
 
@@ -75,6 +75,7 @@ index of citable decisions is worse than none — `just check` fails when it dri
 | [`ADR-C20`](ADR-C20-zero-dimensional-embedding-is-not-a-valid-output.md) | A zero-dimensional embedding is not a valid Embedder output | INV-1, INV-7 | accepted |
 | [`ADR-C21`](ADR-C21-stable-api-boundaries-and-the-internal-engine.md) | Three core crates are stable API boundaries; the engine is deliberately internal | INV-1, INV-2, INV-3, INV-4, INV-7, INV-8, INV-9 | accepted |
 | [`ADR-C22`](ADR-C22-flat-parameter-grammar-extensible-param-enums.md) | The parameter grammar stays flat; the two parameter enums become extensible | INV-1, INV-8, INV-9 | accepted |
+| [`ADR-C23`](ADR-C23-logical-pipeline-validates-on-deserialization.md) | A LogicalPipeline validates on the way in | INV-1, INV-3, INV-8, INV-9 | accepted |
 
 <!-- END GENERATED ADR INDEX -->
 
@@ -125,7 +126,7 @@ stated here canonically.
 number is **never padded**:
 
 - System-architecture decisions use the bare prefix: `ADR-1` … `ADR-15`.
-- Code-architecture decisions use the `C` prefix: `ADR-C1` … `ADR-C22`.
+- Code-architecture decisions use the `C` prefix: `ADR-C1` … `ADR-C23`.
 - New decisions (from `decision` issues) continue the appropriate sequence and are added, never inserted retroactively.
 
 **The filename** is `ADR-<number>-<slug>.md`, where the number **is** padded — to

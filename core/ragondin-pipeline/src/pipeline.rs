@@ -11,13 +11,22 @@
 //! [`crate::validate::validate`] is what establishes the invariants this
 //! type's name promises — unique node ids, exactly one declared input, no
 //! declaration claiming a node's id, no dangling `inputs`, no cycle in the
-//! data-flow graph — and it is the only thing that establishes them. It is
-//! not the only way to obtain the type: `LogicalPipeline` derives
-//! `Deserialize`, which is public and re-runs none of those checks. That is
-//! not a wire path — anything arriving over one goes `RawPipeline` →
-//! `validate` (INV-9) — but a value that did not come through `validate`
-//! carries no guarantee, which is why `ragondin-engine`'s physical planning
-//! checks every edge's kinds again rather than trusting them.
+//! data-flow graph.
+//!
+//! **The rule, decided in ADR-C23 and not yet implemented:** every way of
+//! obtaining a `LogicalPipeline` is to establish those invariants. The public
+//! `Deserialize` derive is to run the same structural checks, sorting the node
+//! list by [`crate::NodeId`] first so that the canonical form INV-8 hashes
+//! will not depend on the order a document listed its nodes in. `Serialize`
+//! is unaffected. That will not make this type a wire format: anything
+//! arriving over a wire still goes `RawPipeline` → `validate` (INV-9).
+//!
+//! **What the code does today**, until the issue implementing ADR-C23 lands
+//! (#179): the derive re-runs none of those checks, so a
+//! value that did not come through `validate` carries no guarantee — which is
+//! why `ragondin-engine`'s physical planning checks every edge's kinds again
+//! rather than trusting them, and how its tests reach that second layer at
+//! all.
 
 use serde::{Deserialize, Serialize};
 
@@ -80,9 +89,17 @@ impl LogicalPipeline {
     /// Not exposed outside this crate: [`crate::validate::validate`] is the
     /// only place that establishes referential integrity and acyclicity, so
     /// it is the only path from a `RawPipeline` to a `LogicalPipeline` that
-    /// establishes them. It is not the only way to obtain the type — the
-    /// public `Deserialize` derive produces one and checks nothing, as this
-    /// module's documentation says.
+    /// establishes them.
+    ///
+    /// ADR-C23 decides that the public `Deserialize` derive is to establish
+    /// them too, by re-running the same structural checks over a
+    /// logical-shaped input. Until the issue implementing it lands
+    /// (#179), that derive produces a `LogicalPipeline` and
+    /// checks nothing — see this module's documentation, which states both
+    /// the rule and the gap. This constructor stays `pub(crate)` either way:
+    /// ADR-C23 leaves it alone, because the test below builds a declaration
+    /// `validate` refuses in order to pin that declared inputs are never
+    /// sorted or deduplicated.
     pub(crate) fn new(inputs: Vec<NodeId>, nodes: Vec<LogicalNode>) -> Self {
         Self { inputs, nodes }
     }
