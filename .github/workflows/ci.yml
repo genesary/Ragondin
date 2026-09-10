@@ -75,9 +75,21 @@ jobs:
       - name: Feature-gated paths compile
         run: cargo check --workspace --all-features --all-targets
 
+      # The gate below is the most important one, which is exactly why its own
+      # test runs before it: a check that quietly stopped gating — a narrower
+      # graph, an edge it no longer looks at — is then reported as a broken
+      # check rather than as a clean repository. Its fixtures are throwaway
+      # cargo workspaces built at run time, whose stand-ins for third-party
+      # crates are path dependencies, so this fetches nothing.
+      - name: Architecture invariant check behaves as documented
+        run: python3 scripts/test-check-invariants.py
+
       # The most important gate: the architecture invariants (INV-3, INV-4,
       # INV-5, INV-6, INV-11). Python 3 is preinstalled on ubuntu runners; the
-      # check has no third-party dependency.
+      # check has no third-party dependency. It resolves the `--all-features`
+      # graph, like the clippy and test steps above: every heavy backend sits
+      # behind a feature by rule, so the lean graph holds no component crate's
+      # real dependencies at all.
       - name: Architecture invariants (INV-3, INV-4, INV-5, INV-6, INV-11)
         run: python3 scripts/check-invariants.py
 
