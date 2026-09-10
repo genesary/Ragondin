@@ -90,7 +90,8 @@ Still compiling skeletons, each with a doc comment and a link test and no
 behaviour: `ragondin-proto`, `ragondin-remote`, `ragondin-config`,
 `ragondin-server`, `ragondin-harness`, `ragondin-experiments`, and the
 `ragondin` binary. `components/` now holds `ragondin-retriever-bm25` (BM25 over
-tantivy) and `ragondin-store-memory` (exact brute-force vector search); ONNX,
+tantivy), `ragondin-store-memory` (exact brute-force vector search) and
+`ragondin-fusion-rrf` (Reciprocal Rank Fusion); ONNX,
 Qdrant and the rest are still M2 issues.
 
 ### What using it will look like
