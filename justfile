@@ -84,10 +84,9 @@ check-deny:
 # neighbourhood; `just map --conflicts` lists every claim the code contradicts;
 # `just map --view` writes the interactive viewer under target/map/.
 #
-# Deliberately NOT part of `just check` (#102). Every edge carries the tier it was
-# learned from -- closure is complete, scan is best-effort, claim is unverified
-# prose -- and a diagnostic that blocks a build on an unverified tier would be
-# asserting more than it knows. Promoting a query to a check is a separate act.
+# Advisory, and deliberately NOT part of `just check` — the reason is in
+# AGENTS.md, § What you write about the code is checked against the code.
+# Promoting a query to a check is a separate act.
 map *ARGS:
     python3 scripts/gen-map.py {{ARGS}}
 
