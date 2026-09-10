@@ -6,8 +6,8 @@
 //! `tracing` macro appears in this crate.
 //!
 //! What a node received and produced is recorded as a **summary** rather than
-//! as the value itself. A [`crate::NodeValue`] carries whole chunks, and a
-//! trace that cloned every one of them would grow with the corpus; the
+//! as the value itself. A [`crate::execute::NodeValue`] carries whole chunks,
+//! and a trace that cloned every one of them would grow with the corpus; the
 //! summary keeps what per-node replay reads — which node, how much came out,
 //! how long it took, and what failed.
 

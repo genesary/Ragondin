@@ -22,7 +22,7 @@ ragondin-contracts = { workspace = true }
 ragondin-pipeline = { workspace = true }
 ragondin-types = { workspace = true }
 ragondin-remote = { workspace = true, optional = true }
-thiserror = { workspace = true } # typed library errors (PlanError)
+thiserror = { workspace = true } # typed library errors (PlanError, ExecError)
 tokio = { workspace = true }
 
 # Test-only. The stub components the registry tests register are `async_trait`

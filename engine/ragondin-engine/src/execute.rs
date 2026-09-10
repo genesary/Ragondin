@@ -35,11 +35,13 @@
 //! more than one is [`ExecError::MultipleTerminalNodes`]. The M2 [`Output`]
 //! is that node's `Vec<ScoredChunk>`.
 //!
-//! **Per-call parameters.** A node's params are split at the seam
-//! (`docs/code-architecture.md` §6.3): the constructor already took the half
-//! that configures the implementation, and the executor reads the half that
-//! varies per call. In M2 that half is one key — `top_k`, on a retriever and
-//! on a reranker — read as a [`ParamValue::Int`] and refused as
+//! **Per-call parameters.** A node's `Params` has two readers, one on each
+//! side of the seam (`docs/code-architecture.md` §6.3): planning passes the
+//! node's whole map to the constructor, which reads what configures the
+//! implementation, and the executor reads the per-call keys from the same
+//! map. Nothing splits the map — the two readers pick different keys out of
+//! it. In M2 the executor's key is one — `top_k`, on a retriever and on a
+//! reranker — read as a [`ParamValue::Int`] and refused as
 //! [`ExecError::InvalidParam`] when it is absent, of another kind, or
 //! negative. **No default is invented here**: what a component does without a
 //! parameter is the component's to decide (§8.1), and a default applied here

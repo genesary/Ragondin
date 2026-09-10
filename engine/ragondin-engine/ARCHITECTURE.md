@@ -38,12 +38,13 @@ Both are stated here because no ADR settles them and both are visible in an
   consumes it. A plan must have exactly one: the executor returns one value,
   and nothing in the representation says which of several unconsumed outputs
   that would be. The M2 `Output` is that node's `Vec<ScoredChunk>`.
-- **Per-call parameters.** Planning splits a node's `Params` at the seam
-  (`docs/code-architecture.md` §6.3): the constructor took the half that
-  configures the implementation, and the executor reads the half that varies
-  per call. In M2 that half is one key — `top_k`, on a retriever and on a
-  reranker — read as a `ParamValue::Int` and refused when absent, of another
-  kind, or negative. **The executor invents no default**: what a component
+- **Per-call parameters.** A node's `Params` has two readers, one on each
+  side of the seam (`docs/code-architecture.md` §6.3): planning passes the
+  node's whole map to the constructor, which reads what configures the
+  implementation, and the executor reads the per-call keys from the same map.
+  Nothing splits the map. In M2 the executor's key is one — `top_k`, on a
+  retriever and on a reranker — read as a `ParamValue::Int` and refused when
+  absent, of another kind, or negative. **The executor invents no default**: what a component
   does without a parameter is the component's to decide, and a default applied
   here could only be a second, disagreeing copy of it.
 
