@@ -50,12 +50,17 @@ jobs:
       # `cargo test --workspace` uses default features, and by rule no heavy
       # backend is one, so it compiles the feature-gated tests away rather than
       # running them. The step below proves such code *compiles*; this one is
-      # where it is actually exercised.
-      - name: Test (feature-gated backends)
-        run: cargo test -p ragondin-retriever-bm25 --features bm25
+      # where it is actually exercised. Feature-blind and whole-workspace on
+      # purpose: naming a crate would mean every future component has to
+      # remember to add itself here, and forgetting is silent.
+      - name: Test (feature-gated paths)
+        run: cargo test --workspace --all-features
 
+      # `--all-features` because a heavy backend is never a default feature:
+      # without it clippy is `cfg`'d out of every component crate's real code,
+      # and this gate covers nothing precisely where it matters most.
       - name: Clippy (warnings are errors)
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
       # The default build is lean by rule, so it never compiles what sits behind
       # a feature. Without this step a broken `#[cfg(feature = "remote")]` block
