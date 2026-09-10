@@ -762,6 +762,35 @@ impl Embedder for RoleIgnoringEmbedder {
     }
 }
 
+/// Internally consistent under each role and yet unusable: 3 components under
+/// `Query`, 2 under `Passage`. Every per-batch check passes — each batch is
+/// homogeneous and finite — so only a comparison *across* the roles sees it.
+///
+/// This is the shape a real embedder takes when the two roles reach different
+/// model sessions, and it is the one the role-separation check cannot catch:
+/// vectors of unequal dimensionality are trivially unequal, so declaring
+/// `Distinct` would *pass* it. Left `Undeclared` in the test below so the
+/// failure has to come from the dimensionality check itself.
+struct SplitDimensionEmbedder;
+
+#[async_trait]
+impl Embedder for SplitDimensionEmbedder {
+    async fn embed(
+        &self,
+        texts: &[String],
+        params: &EmbedParams,
+    ) -> Result<Vec<Embedding>, ComponentError> {
+        let dim = match params.role {
+            EmbedRole::Query => 3,
+            EmbedRole::Passage => 2,
+        };
+        Ok(texts
+            .iter()
+            .map(|t| Embedding::new(vec![t.len() as f32; dim]))
+            .collect())
+    }
+}
+
 /// Conformant under `Query`, and drops an input under `Passage`. The suite
 /// sees it only because every check runs under **both** roles: an embedder
 /// that takes a different path per role can be broken on one side alone, and
@@ -854,6 +883,24 @@ async fn an_embedder_broken_only_under_passage_fails() {
     .await
     .expect_err("a contract broken on one side only is still broken");
     assert_eq!(failure.check(), "one vector per input");
+    assert_eq!(failure.component(), "Embedder");
+}
+
+#[tokio::test]
+async fn an_embedder_whose_dimensionality_depends_on_the_role_fails() {
+    // A query vector is dot-producted against a passage vector by
+    // construction, so one dimensionality per role is one embedding space per
+    // role, and there is no retrieval to be had. Nothing sees it inside a
+    // batch — each is homogeneous — and the role-separation check would pass
+    // it, since unequal dimensionalities are unequal. Only carrying the
+    // dimensionality across the role loop catches it.
+    let failure = check_embedder_conformance(
+        || Box::new(SplitDimensionEmbedder),
+        RolePrefixes::Undeclared,
+    )
+    .await
+    .expect_err("an embedder has one dimensionality, not one per role");
+    assert_eq!(failure.check(), "constant dimensionality");
     assert_eq!(failure.component(), "Embedder");
 }
 

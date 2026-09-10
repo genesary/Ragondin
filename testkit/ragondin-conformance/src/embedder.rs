@@ -33,8 +33,12 @@ pub enum RolePrefixes {
 ///   silently misaligns a corpus from its index: every chunk after the dropped
 ///   one is stored under the wrong vector, and nothing errors. The same check
 ///   covers the empty batch, which must embed to no vectors rather than fail.
-/// - **One dimensionality per batch.** A ragged batch cannot be searched
-///   against a single index.
+/// - **One dimensionality, across every batch and both roles.** A ragged batch
+///   cannot be searched against a single index — and neither can a corpus
+///   embedded under `Passage` be searched by a query embedded under `Query`
+///   into a space of another width. One dimensionality per role is one
+///   embedding space per role, which is no retrieval at all; the role-separation
+///   check below cannot see it, since vectors of unequal width are unequal.
 /// - **Finite components**, for the reason `ragondin-types` gives on
 ///   [`Embedding`](ragondin_types::Embedding): a non-finite component
 ///   serializes without error and cannot be read back.
@@ -69,6 +73,10 @@ pub async fn check_embedder_conformance(
     prefixes: RolePrefixes,
 ) -> Result<(), ConformanceFailure> {
     let embedder = make();
+
+    // The width of the first vector seen, carried across both roles: an
+    // embedder has one embedding space, not one per call.
+    let mut expected_dim: Option<usize> = None;
 
     for role in [EmbedRole::Query, EmbedRole::Passage] {
         let batch = vec![
@@ -112,6 +120,21 @@ pub async fn check_embedder_conformance(
                         vectors[odd].dim()
                     ),
                 ));
+            }
+
+            match expected_dim {
+                None => expected_dim = Some(dim),
+                Some(seen) if seen != dim => {
+                    return Err(ConformanceFailure::new(
+                        COMPONENT,
+                        "constant dimensionality",
+                        format!(
+                            "{context}: {dim} components, where an earlier call \
+                             returned {seen}",
+                        ),
+                    ));
+                }
+                Some(_) => {}
             }
 
             if let Some(odd) = vectors

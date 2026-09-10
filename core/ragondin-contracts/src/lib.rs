@@ -273,6 +273,17 @@ pub trait Reranker: Send + Sync {
 /// keeps the contract agnostic of the model: a symmetric model is configured
 /// with no prefix on either side rather than special-cased, and honouring the
 /// role there means prepending the empty string.
+///
+/// # One embedding space
+///
+/// Every vector an implementation returns has **the same dimensionality**,
+/// whatever the [`EmbedRole`] and whatever the batch. A query vector is scored
+/// against a passage vector by construction, so a width that varies with the
+/// role is a second embedding space rather than a second prefix, and there is
+/// no retrieval to be had between the two: the role selects what is prepended,
+/// never which model answers. Stated here because the role is what makes two
+/// widths expressible at all, and because nothing downstream would name the
+/// embedder — a mismatch surfaces as a `VectorStore` rejecting a search vector.
 #[async_trait]
 pub trait Embedder: Send + Sync {
     /// Embeds `texts`, returning one vector per input **in the same order**.
