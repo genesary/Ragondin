@@ -1072,6 +1072,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "ragondin-retriever-dense"
+version = "0.0.0"
+dependencies = [
+ "async-trait",
+ "ragondin-conformance",
+ "ragondin-contracts",
+ "ragondin-types",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
 name = "ragondin-server"
 version = "0.0.0"
 dependencies = [
