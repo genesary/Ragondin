@@ -1,7 +1,8 @@
 //! The conformance suite exercised against in-suite stubs.
 //!
-//! Two obligations (#17). A correct stub must pass every family's conformance
-//! function, and a **deliberately broken one must fail the check it breaks**.
+//! Two obligations on the suite itself. A correct stub must pass every
+//! family's conformance function, and a **deliberately broken one must fail
+//! the check it breaks**.
 //! The second half is what proves the suite has teeth: a suite that cannot fail
 //! makes INV-7 a slogan again, which is the one thing this crate exists to
 //! prevent. So there is a broken stub per check name, not per family, and each
