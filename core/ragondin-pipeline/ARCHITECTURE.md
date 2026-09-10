@@ -13,8 +13,15 @@ The pipeline representation, in **three levels**:
 | `LogicalPipeline` | Validated, canonical — names implementations, resolves none | **Content-addressed.** A value type. |
 | `PhysicalPipeline` | Implementations resolved to trait objects | Ready to execute. Holds `Box<dyn>`. |
 
-Plus the node graph, first-class control flow (`Branch`, `Loop` with a
-mandatory termination guard), and the open `Extension` variant.
+Plus the node graph and the open `Extension` variant.
+
+`LogicalNode` reserves **no `Branch` or `Loop` variant today**, and `src/node.rs`
+says so where someone about to add one will read it. That control flow belongs
+in the representation at all is argued in
+[ADR-2](../../docs/adr/ADR-002-pipeline-representation-is-a-graph-with-control-flow.md)
+and sketched in [`docs/code-architecture.md`](../../docs/code-architecture.md)
+§6.2; what a bounded loop's mandatory termination guard and a branch's predicate
+actually look like is not settled, so neither variant exists yet.
 
 ## Local invariants
 

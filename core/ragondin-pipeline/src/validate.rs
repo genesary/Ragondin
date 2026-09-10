@@ -1,4 +1,5 @@
-//! `ValidationError`, the raw-to-logical lowering, and [`validate`] (#9).
+//! `ValidationError`, the raw-to-logical lowering, and [`validate`]: the pass
+//! that produces a [`crate::LogicalPipeline`] from a [`crate::RawPipeline`].
 //!
 //! Turning a permissive [`crate::RawPipeline`] into a validated, canonical
 //! [`crate::LogicalPipeline`] is four passes. First, lowering *one*
