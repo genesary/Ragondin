@@ -311,6 +311,18 @@ pub trait Reranker: Send + Sync {
 /// never which model answers. Stated here because the role is what makes two
 /// widths expressible at all, and because nothing downstream would name the
 /// embedder — a mismatch surfaces as a `VectorStore` rejecting a search vector.
+///
+/// # At least one component
+///
+/// Every vector an implementation returns has **at least one component**
+/// (ADR-C20). `ragondin-types` builds an empty [`Embedding`] without complaint,
+/// because a value type with no error type cannot reject anything, but
+/// representable is not valid: a vector of width zero has no direction, so no
+/// similarity is defined against it and no store can answer a search over it.
+/// An implementation that cannot embed a text returns a [`ComponentError`]
+/// rather than a vector of no width, which reports a failure as data no caller
+/// can tell apart from a result. This constrains a *returned vector*, not a
+/// batch: an empty batch still embeds to no vectors.
 #[async_trait]
 pub trait Embedder: Send + Sync {
     /// Embeds `texts`, returning one vector per input **in the same order**.
