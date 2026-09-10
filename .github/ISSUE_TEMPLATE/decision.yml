@@ -51,4 +51,4 @@ body:
   - type: markdown
     attributes:
       value: |
-        **Outcome:** this issue resolves into exactly one new accepted ADR in `docs/adr/`, stating the context, the decision, the alternatives rejected, and the consequences. The ADR — not this issue — is the durable, citable record.
+        **Outcome:** a decision about how the system is built resolves into exactly one new accepted ADR in `docs/adr/`, stating the context, the decision, the alternatives rejected, and the consequences — the ADR, not this issue, is the durable, citable record. A decision about the repository's own governance produces no ADR and resolves by amending the rule where it is stated; `docs/adr/README.md` process rule 3 says which is which.
