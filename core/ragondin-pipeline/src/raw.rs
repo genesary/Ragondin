@@ -403,7 +403,7 @@ pub struct RawGraph {
     ///
     /// Permissive here, as everything at this level is: absent reads as
     /// empty, and how many a pipeline must declare — exactly one, of kind
-    /// `Query`, for a serving graph — is [`crate::validate`]'s to enforce.
+    /// `Query`, for a serving graph — is [`crate::validate`](crate::validate())'s to enforce.
     #[serde(default)]
     pub inputs: Vec<String>,
     /// The nodes, in the order the configuration lists them.

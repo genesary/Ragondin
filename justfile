@@ -33,6 +33,19 @@ clippy:
 fmt:
     cargo fmt --check
 
+# Build the API documentation with rustdoc's warnings promoted to errors. A
+# broken intra-doc link is the same class of claim `check-doc-links` guards in
+# Markdown — a citation that stops resolving — and `ragondin-contracts`' rustdoc
+# is where an external component author reads the contract, so a doc build that
+# cannot be trusted is a gap in an INV-1 surface. Two configurations for the
+# same reason clippy runs twice: an item behind `#[cfg(feature = ...)]` is
+# documented only by the second run, and a link that resolves only when a
+# feature's dependency is in scope breaks only in the first. `--no-deps`: a
+# dependency's docs are not this repository's to gate.
+doc:
+    RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
+    RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features
+
 # Compile the feature-gated code paths. The default build is lean, so it never
 # sees them: without this, a broken `#[cfg(feature = "...")]` block ships
 # unnoticed. `check` rather than `build` — this proves it compiles, cheaply.
@@ -118,4 +131,4 @@ map *ARGS:
     python3 scripts/gen-map.py {{ARGS}}
 
 # Everything CI runs, in one command. Run this before declaring work done.
-check: fmt build test test-features clippy check-features test-check-invariants check-invariants test-check-doc-links check-doc-links check-adr-index check-deny
+check: fmt build test test-features clippy check-features doc test-check-invariants check-invariants test-check-doc-links check-doc-links check-adr-index check-deny

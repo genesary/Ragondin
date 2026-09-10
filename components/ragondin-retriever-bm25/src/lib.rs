@@ -1,6 +1,6 @@
 //! # ragondin-retriever-bm25
 //!
-//! In-process **BM25 sparse retrieval**, over [`tantivy`]. Sparse retrieval
+//! In-process **BM25 sparse retrieval**, over `tantivy`. Sparse retrieval
 //! without an Elasticsearch sidecar is one of the reasons this platform is
 //! written in Rust at all (`docs/system-architecture.md` §10).
 //!

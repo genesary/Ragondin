@@ -310,7 +310,7 @@ fn lower_node(raw: RawNode) -> Result<LogicalNode, ValidationError> {
 ///
 /// Runs, in order — each presupposes the last:
 ///
-/// 1. lowers every node ([`lower_node`]), rejecting an unknown `component`
+/// 1. lowers every node (`lower_node`), rejecting an unknown `component`
 ///    or a non-finite param;
 /// 2. sorts the node list by [`NodeId`] — the only reordering this function
 ///    ever performs (see the canonicalization contract on
@@ -327,7 +327,7 @@ fn lower_node(raw: RawNode) -> Result<LogicalNode, ValidationError> {
 ///    ([`ValidationError::DanglingInput`]);
 /// 6. checks the graph of data edges is acyclic
 ///    ([`ValidationError::Cycle`]);
-/// 7. checks every edge's value kinds line up ([`check_kinds`], ADR-C16),
+/// 7. checks every edge's value kinds line up (`check_kinds`, ADR-C16),
 ///    skipping an `Extension` node on either side of an edge
 ///    ([`ValidationError::KindMismatch`]).
 pub fn validate(raw: RawPipeline) -> Result<LogicalPipeline, ValidationError> {

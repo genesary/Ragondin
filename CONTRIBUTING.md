@@ -16,8 +16,9 @@ just check                  # everything CI runs, in one command
 ```
 
 `just check` runs build, tests, `clippy` (warnings are errors), `cargo fmt
---check`, the architecture invariant checks, the documentation link check, the
-ADR index staleness check, and the dependency audit. **A change is not done
+--check`, `cargo doc` (rustdoc warnings are errors), the architecture invariant
+checks, the documentation link check, the ADR index staleness check, and the
+dependency audit. **A change is not done
 until `just check` passes.** The toolchain is pinned to stable
 (`rust-toolchain.toml`); never rely on nightly.
 
