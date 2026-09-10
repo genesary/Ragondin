@@ -88,6 +88,25 @@ component is a gRPC service honouring the mirror protobuf in `ragondin-proto`.
   **constructor configuration of the component**, not contract surface: that is
   what keeps this crate agnostic of the model, and it makes a symmetric model a
   configuration with no prefix rather than a special case.
+- **An empty collection argument is a valid call (ADR-C19).** Every method here
+  that takes a collection — `Fusion::fuse`, `Reranker::rerank`,
+  `Embedder::embed`, `VectorStore::upsert` — accepts an empty one and does
+  nothing with it: empty in, empty out, and `Ok(())` where the return carries no
+  data. None of them may answer *the empty collection* with
+  `ComponentError::InvalidRequest` — a call may still be invalid for another
+  reason, and `rerank(&query, vec![], &RerankParams::new(0))` is still rejected
+  for its `top_k`. This is
+  the uniformity clause above applied to behaviour rather than to signatures: a
+  single method with a rejection rule is where a batching caller learns to guard
+  every call, and the guard then spreads to the three methods that never needed
+  it. The `top_k` rule is untouched and is a different rule — a zero `top_k` asks
+  for a result that cannot exist and stays an invalid request.
+
+  This clause is **not yet true of the stub in this crate's own tests**, which
+  still rejects an empty `upsert` and says so at the call site. The decision and
+  the behaviour change are deliberately separate PRs; ADR-C19's Consequences list
+  what the second one owes, and it is tracked as a follow-up implementation issue
+  (#176).
 
 ## Why it is a boundary
 
