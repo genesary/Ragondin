@@ -14,7 +14,10 @@ accident:
   - a broken citation **in a Rust file** is reported — the scan reads `.rs`;
   - a dangling relative link in a Rust file is **not** reported, while the same
     line in a Markdown file is — the relative-link rule is Markdown-only, and
-    that asymmetry is deliberate.
+    that asymmetry is deliberate;
+  - a line-number citation (`validate.rs:357`) **inside `docs/adr/`** is
+    reported, and the same text anywhere else is not — the line-citation rule
+    is scoped to the immutable documents, and that scope is deliberate too.
 
 **Fixtures are built at run time, never committed.** The checker selects its
 inputs with `git ls-files`, so a fixture committed to this repository would be
@@ -370,6 +373,69 @@ def a_link_to_an_adr_with_an_anchor_resolves() -> None:
             ),
         }
     ).exits(0).says("All documentation links resolve.")
+
+
+@case
+def a_line_number_citation_in_an_adr_fails() -> None:
+    """A file with a line, a range, and a bare backticked line: all reported.
+
+    The number is what makes this uncatchable any other way: `validate.rs:357`
+    resolves to *some* line forever, so nothing downstream can report it stale.
+    """
+    run_checker(
+        {
+            **ADR_FILES,
+            "docs/adr/ADR-C16-erased-edge-values.md": (
+                "# ADR-C16 — erased edge values\n"
+                "\n"
+                "The sort at `core/ragondin-pipeline/src/validate.rs:357` is the\n"
+                "canonicalization, and `plan.rs:114-119` says why; the checks\n"
+                "at `:347-407` touch `raw` nowhere.\n"
+            ),
+        }
+    ).exits(1).says("LINE-NUMBER CITATION").says(
+        "docs/adr/ADR-C16-erased-edge-values.md:3: core/ragondin-pipeline/src/validate.rs:357"
+    ).says("docs/adr/ADR-C16-erased-edge-values.md:4: plan.rs:114-119").says(
+        "docs/adr/ADR-C16-erased-edge-values.md:5: `:347-407`"
+    ).says("Documentation link checks FAILED.")
+
+
+@case
+def a_line_number_citation_outside_the_adr_directory_is_not_this_checks_business() -> None:
+    """The same text in a README, a crate's ARCHITECTURE.md and a Rust file passes.
+
+    Those documents are editable, so a stale line number there is an ordinary
+    docs bug that the next edit can fix. Only an accepted ADR cannot follow the
+    line it names.
+    """
+    run_checker(
+        {
+            **ADR_FILES,
+            "README.md": "The sort at `validate.rs:357` is the canonicalization.\n",
+            "core/ARCHITECTURE.md": "See `plan.rs:114-119` for the reasoning.\n",
+            "src/lib.rs": "//! The check at `execute.rs:144` seeds the table.\n",
+        }
+    ).exits(0).is_silent_about("LINE-NUMBER CITATION").says(
+        "All documentation links resolve."
+    )
+
+
+@case
+def a_symbol_citation_in_an_adr_passes() -> None:
+    """A path without a line, and a symbol, are the citations an ADR should carry."""
+    run_checker(
+        {
+            **ADR_FILES,
+            "docs/adr/ADR-C16-erased-edge-values.md": (
+                "# ADR-C16 — erased edge values\n"
+                "\n"
+                "The sort in `validate` (`core/ragondin-pipeline/src/validate.rs`)\n"
+                "is the canonicalization; `check_kinds` and the test\n"
+                "`a_logical_pipeline_serde_round_trip_changes_nothing` pin it.\n"
+                "Version 0.26.2 of tantivy is pinned at the root.\n"
+            ),
+        }
+    ).exits(0).says("ADR line citations OK").says("All documentation links resolve.")
 
 
 @case

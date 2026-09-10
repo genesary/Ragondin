@@ -149,6 +149,27 @@ number alone.
 matches the convention above, and every `ADR-<n>` reference in the repository's
 Markdown resolves to exactly one file. It runs as part of `just check`.
 
+## Citing code from an ADR
+
+An ADR cites code **by symbol, never by line number**. Name the function, the
+type, the variant, the test — `check_kinds`, `PlanError::KindMismatch`,
+`a_logical_pipeline_serde_round_trip_changes_nothing` — and the file it lives
+in if that helps a reader find it. Never a filename followed by a line number,
+and never a bare backticked line number standing in for one.
+
+The reason is process rule 1. An accepted ADR is immutable, so it cannot follow
+the line it names: the next commit to that file leaves the citation pointing at
+unrelated code, and because a line number resolves to *some* line forever, no
+check can ever report it stale. That is a worse defect than a citation naming
+the wrong ADR — `check-doc-links` at least sees whether *that* resolves. A
+symbol name survives every edit that does not rename it, `grep` finds it, and
+`just map <entity>` resolves it.
+
+`scripts/check-doc-links.py` enforces this over every file in this directory,
+as part of `just check`. The rule is scoped here deliberately: a crate's
+`ARCHITECTURE.md` or a doc comment can be corrected when it drifts, so a line
+number there is an ordinary documentation bug rather than a permanent one.
+
 ## The 2026-09-05 rename
 
 The project was renamed to **Ragondin**, and every crate was renamed with it:
