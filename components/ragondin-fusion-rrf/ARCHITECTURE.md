@@ -29,16 +29,33 @@ either.
 - **`k` is constructor configuration, not a per-call parameter.**
   `ragondin-contracts` draws that line: a params struct carries only what varies
   per call, and `FusionParams` is empty. `k` is a `usize`, which makes
-  `k + rank >= 1` for every configuration, and the sum saturates rather than
-  wrapping, which keeps it inside `1..=usize::MAX` at the other end — so the
-  division has no edge case and this component has no failure mode of its own.
-  Every `fuse` call succeeds.
-- **A repeated id within one leg contributes once per occurrence.** The sum is
-  over positions, by construction, and a well-behaved retriever never emits the
-  same id twice in one list, so nothing guards against it: the conformance
-  suite's "no duplicate ids" check reads a `Fusion`'s or a `Reranker`'s output,
-  not a retriever's. Across legs it is different — a chunk seen in several legs
-  is accumulated and returned once.
+  `k + rank >= 1` for every configuration, and `k` is **clamped to `MAX_K`**
+  (`2^32`) at construction, so the divisor cannot leave the range where
+  consecutive ranks still separate — see below. The division has no edge case
+  and this component has no failure mode of its own. Every `fuse` call succeeds.
+- **A repeated id within one leg is counted once for that leg**, at its first
+  position, and the ranks after it are unaffected. Counting both occurrences
+  roughly doubles that chunk's fused score and floats it to the top — invisibly,
+  since the fused output still holds distinct ids and passes every downstream
+  check, so the only symptom is a wrong number.
+
+  The earlier reading was that no guard is needed because a well-behaved
+  retriever never emits a duplicate. The contract does not require that of one:
+  `check_no_duplicate_ids` is called from the `Fusion` and `Reranker` suites
+  only, never from `Retriever` or `VectorStore`, so a fully conformant leg may
+  repeat an id. Across legs it is different — a chunk seen in several legs is
+  accumulated and returned once, which is the whole point of fusing.
+- **`k` is clamped to `2^32`, and the bound is load-bearing.** A rank's
+  contribution is `1 / (k + rank + 1)`, accumulated in `f64`. Consecutive
+  divisors around `k` give reciprocals differing by roughly `1/k` in relative
+  terms, so as `k` grows they converge; once they round together, every rank in
+  a leg scores identically, the ascending-id tiebreak decides an order the ranks
+  were supposed to, and **a single leg comes back sorted by id instead of in the
+  order it arrived** — the one property `check_fusion_conformance` states a
+  fusion must preserve. Setting the bound where they *begin* to collide (`2^53`)
+  is not enough: the gap there is a single ULP and neighbouring ranks round
+  together unpredictably. `2^32` leaves about two million ULPs. For scale, the
+  conventional `k` is 60.
 - **The result is deterministic, including its ties.** Equal fused scores are
   the common case rather than a rarity, so the order among them is pinned: by
   chunk id, ascending. A chunk offered by several legs keeps the copy of the

@@ -18,4 +18,4 @@
 mod rrf;
 
 #[cfg(feature = "rrf")]
-pub use rrf::{ReciprocalRankFusion, DEFAULT_K};
+pub use rrf::{ReciprocalRankFusion, DEFAULT_K, MAX_K};
