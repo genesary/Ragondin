@@ -199,10 +199,11 @@ fn kind_mismatch_expected_clause(expected: &Option<ValueKind>) -> String {
 /// through `List`.
 ///
 /// Rejects non-finite floats (`NaN`, `±∞`) with [`ValidationError::NonFiniteParam`]
-/// and normalizes `-0.0` to `0.0` (settled reading A3): `#9` produces the
-/// canonical form, `#10` only hashes it, and hashing a raw `to_bits()` would
-/// otherwise give two content hashes to two values `ParamValue` calls equal
-/// (INV-8).
+/// and normalizes `-0.0` to `0.0` (settled reading A3): [`validate`], the pass
+/// that lowers a `RawPipeline` into a `LogicalPipeline`, is what produces the
+/// canonical form, and the content-addressed hash still to be written (open
+/// #10) only hashes it. Hashing a raw `to_bits()` would otherwise give two
+/// content hashes to two values `ParamValue` calls equal (INV-8).
 fn lower_param_value(
     node: &NodeId,
     param: &str,
@@ -257,8 +258,10 @@ fn lower_params(
 ///
 /// Per settled reading A2, a node with no `inputs` is not rejected here — a
 /// source node is written exactly this way, and whether an edge is missing is
-/// a later task's question (#16). `inputs` is carried across positionally,
-/// never reordered (ADR-C16).
+/// the executor's question: `ragondin-engine`'s `Engine::execute` reports a
+/// port with no edge as `ExecError::MissingInput` when the node runs, which is
+/// where ADR-C18 leaves it. `inputs` is carried across positionally, never
+/// reordered (ADR-C16).
 fn lower_node(raw: RawNode) -> Result<LogicalNode, ValidationError> {
     let RawNode {
         id,
@@ -1071,9 +1074,10 @@ mod tests {
     #[test]
     fn an_empty_inputs_list_is_not_rejected() {
         // Settled reading A2: a node with no `inputs` is not an error — how
-        // few a variant declares stays unchecked here, and is the executor's
-        // (#16). ADR-C18 did not change that: it gave the query a producer to
-        // be wired to, and did not start enforcing arity.
+        // few a variant declares stays unchecked here, and is the executor's:
+        // `ragondin-engine` raises `ExecError::MissingInput` at run time.
+        // ADR-C18 did not change that: it gave the query a producer to be
+        // wired to, and did not start enforcing arity.
         let raw = pipeline(vec![node("lonely", "retriever", &[])]);
         let logical = validate(raw).expect("an empty inputs list must not be rejected");
         assert_eq!(logical.nodes().len(), 1);
