@@ -73,9 +73,17 @@ prost = "0.13"                                     # protobuf messages for the w
 # here and nowhere else — not because the core may reach it: `tantivy` is on the
 # INV-4 deny-list, and it is an optional, feature-gated dependency of exactly one
 # component crate (ADR-C14). `default-features = false` turns off all five of
-# tantivy's default features: `mmap`, `lz4-compression` and
-# `columnar-zstd-compression` — the on-disk index machinery an in-RAM index does
-# not use — and also `stemmer` and `stopwords`, which are linguistic rather than
-# structural. Dropping those two is a choice about ranking, not a size saving,
-# and it is argued in `components/ragondin-retriever-bm25/ARCHITECTURE.md`.
+# tantivy's default features, and they are not all the same kind of thing:
+#
+#   - `mmap` is the on-disk directory, which an in-RAM index does not use;
+#   - `stemmer` and `stopwords` are linguistic. Dropping them is a choice about
+#     ranking, not a size saving, argued in the crate's `ARCHITECTURE.md`;
+#   - `lz4-compression` and `columnar-zstd-compression` are **not** on-disk-only
+#     machinery, whatever their names suggest. `lz4-compression` selects the
+#     *document store* compressor: `impl Default for Compressor`
+#     (tantivy `src/store/compressors.rs`) returns `Compressor::Lz4` only under
+#     that feature and `Compressor::None` otherwise. The store lives in the
+#     `RamDirectory` here, so turning it off means the stored text is held
+#     uncompressed in memory. That is a real memory trade, recorded in the
+#     crate's `ARCHITECTURE.md`, not the no-op the grouping above used to imply.
 tantivy = { version = "0.26", default-features = false }

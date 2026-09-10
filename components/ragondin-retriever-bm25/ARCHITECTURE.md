@@ -30,8 +30,9 @@ composition root that puts the two together (`docs/code-architecture.md` §8.1).
   `cargo build --workspace` compiles none of it. With the feature off the crate
   exports nothing — a BM25 retriever without tantivy would be a different
   component, not a degraded one — so the tests are behind the same `cfg` and
-  `just test-bm25` is what runs them. `just check-features` proves the gated code
-  still compiles.
+  `just test-features` is what runs them — whole-workspace and naming no crate,
+  so a component inherits it rather than adding a recipe. `just check-features`
+  proves the gated code still compiles.
 - **No privilege for built-ins (INV-7).** This crate is reachable only through
   the `Retriever` trait and its own public constructor. It has no entry point
   into the engine that a third-party crate could not also call, and adding one
@@ -105,6 +106,18 @@ composition root that puts the two together (`docs/code-architecture.md` §8.1).
   same index yields the same ranking. It also sets a ceiling: the text is both
   `STORED` and indexed, so a corpus is held roughly twice over with no spill to
   disk, and a corpus that does not fit in memory does not fit this component.
+
+  **And the stored half is uncompressed.** `default-features = false` turns off
+  `lz4-compression`, which despite the name is not on-disk-only machinery: it
+  selects the *document store* compressor, and without it
+  `Compressor::default()` is `Compressor::None` (tantivy
+  `src/store/compressors.rs`). The store is in the `RamDirectory` here, so the
+  stored copy of the text sits in memory verbatim. On ordinary text lz4 roughly
+  halves it, so the real ceiling is above what "twice over" suggests. Turning
+  the feature back on is a defensible trade — memory against one more
+  dependency and its compile time — and it is a decision to take deliberately
+  rather than to inherit from a `default-features = false` written for other
+  reasons.
 - **Typed errors (ADR-C13).** `IndexError` for construction, `ComponentError`
   for the call. A library never imposes `anyhow` on its consumers.
 

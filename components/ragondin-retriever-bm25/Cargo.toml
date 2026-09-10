@@ -26,7 +26,8 @@ tokio = { workspace = true }
 # compiles tantivy — which is what "the default build is minimal and compiles
 # fast" means for a workspace member. Everything this crate offers lives behind
 # it; with the feature off the crate is an empty shell that still compiles.
-# `just test-bm25` is what runs the tests below.
+# `just test-features` is what runs the tests below: it is whole-workspace and
+# names no crate, so this one is covered without adding a recipe of its own.
 [features]
 default = []
 bm25 = ["dep:tantivy"]

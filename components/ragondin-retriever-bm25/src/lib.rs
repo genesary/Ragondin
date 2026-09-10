@@ -23,7 +23,7 @@
 //! degraded one.
 //!
 //! ```text
-//! cargo test -p ragondin-retriever-bm25 --features bm25   # or: just test-bm25
+//! cargo test -p ragondin-retriever-bm25 --features bm25   # or: just test-features
 //! ```
 //!
 //! # Building one

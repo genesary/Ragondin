@@ -13,13 +13,20 @@ build:
 test:
     cargo test --workspace
 
-# Lint with warnings promoted to errors.
+# Lint with warnings promoted to errors, in both feature configurations.
 #
 # `--all-features` is load-bearing, not thoroughness for its own sake: a heavy
 # backend is never a default feature, so without it clippy is `cfg`'d out of
 # every component crate's real code and the gate silently covers nothing where
 # it matters most.
+#
+# The default run is kept alongside it rather than replaced by it. The two cover
+# different code: an item reachable only under `#[cfg(not(feature = ...))]` is
+# compiled away by the all-features run, and no other gate here denies warnings
+# — neither `build` nor `test` does — so dropping this one would leave the
+# default configuration ungated entirely.
 clippy:
+    cargo clippy --workspace --all-targets -- -D warnings
     cargo clippy --workspace --all-targets --all-features -- -D warnings
 
 # Verify formatting (does not modify files).
