@@ -174,8 +174,9 @@ pub enum EmbedderError {
     /// A tensor could not be built, or the model failed to run.
     ///
     /// Not the variant for a model whose output this component cannot pool:
-    /// the three below say what is wrong with such an output, because "the
-    /// model failed to run" is false of a model that ran and answered.
+    /// every variant below says what is wrong with such an output instead,
+    /// because "the model failed to run" is false of a model that ran and
+    /// answered.
     #[error("the model failed to run")]
     Inference(
         /// What ONNX Runtime said about it.

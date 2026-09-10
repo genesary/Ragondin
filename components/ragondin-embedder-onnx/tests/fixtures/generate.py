@@ -6,12 +6,13 @@
 The tests need a real ONNX graph and a real tokenizer, and no model may be
 fetched at build time (the rule this crate was created under, in #20). So the
 fixtures are committed, and this script is how they came to be: the alternative
-is seven opaque binaries nobody can regenerate or explain. Everything here is fixed-seed, so a rerun reproduces the committed
-bytes.
+is seven opaque binaries nobody can regenerate or explain. Everything here is
+fixed-seed, so a rerun reproduces the committed bytes.
 
-The graphs are deliberately trivial -- a token-embedding table and a Gather --
-because what the tests exercise is the component around the model: tokenization,
-prefixes, padding, batching, mean pooling and normalization. A real sentence
+The graphs are deliberately trivial -- a token-embedding table, a Gather, and at
+most one node after it -- because what the tests exercise is the component
+around the model: tokenization, prefixes, padding, batching, mean pooling,
+normalization, and the five ways a model is refused. A real sentence
 transformer would test ONNX Runtime instead, slowly.
 
 Requires `onnx` and `numpy`.

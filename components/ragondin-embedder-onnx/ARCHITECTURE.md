@@ -144,10 +144,12 @@ from a fixed seed. No model is fetched at build time — the rule this crate was
 created under, in #20 — so they are committed; the generator is committed with
 them because seven opaque binaries are not a fixture, they are a liability.
 
-The graphs are deliberately trivial — an embedding table and a `Gather`. What
-the tests exercise is the component *around* the model: prefixes, truncation,
-padding, batching, pooling, normalization, and the six ways a model can be one
-this component cannot drive. A real sentence transformer would test ONNX Runtime
+The graphs are deliberately trivial — an embedding table, a `Gather`, and at
+most one node after it. What the tests exercise is the component *around* the
+model: prefixes, truncation, padding, batching, pooling, normalization, and the
+five ways a model is refused — an input this component cannot fill, no
+`input_ids`, a rank it cannot pool, a sequence axis disagreeing with the batch
+it was fed, and hidden states that are not float32. A real sentence transformer would test ONNX Runtime
 instead, slowly, and a failure would accuse the wrong code.
 
 ## What is deliberately not here
