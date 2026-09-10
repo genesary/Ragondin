@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Project** | RAG evaluation and serving platform (codename pending) |
+| **Project** | Ragondin — a RAG evaluation and serving platform |
 | **Status** | Accepted design, partly built. The design is settled and in force; most of what this document describes is not implemented yet. [`README.md` § Status](../README.md#status) says what exists on `main`. |
 | **Version** | 0.2 |
 | **Audience** | Software architects, technical reviewers, prospective contributors |

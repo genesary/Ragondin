@@ -20,13 +20,14 @@ core.
 
 ## Standalone first
 
-The platform is **usable from a single binary and a configuration file — no
-Kubernetes required**. The default build is lean and compiles fast; heavy
-backends (a sparse index, an ONNX embedder, a vector store) are optional,
-feature-gated, and added only when you want them. Cloud-native operation is a
-later milestone layered on top, never a prerequisite.
+The platform is designed to be driven by **a single binary and a configuration
+file — no Kubernetes required**. Cloud-native operation is a later milestone
+layered on top, never a prerequisite. Heavy backends (a sparse index, an ONNX
+embedder, a vector store) each get their own crate behind a feature flag, so the
+default build stays lean — none of them has been written yet, and `cargo build`
+today pulls in no search engine, no inference runtime and no store client.
 
-One binary, four subcommands:
+One binary, four subcommands — the whole user-facing surface:
 
 ```text
 ragondin bench <config> --benchmark beir/scifact  # evaluate a pipeline against a benchmark
@@ -34,6 +35,9 @@ ragondin compare <run-a> <run-b>                  # compare two runs
 ragondin serve <config>                           # serve the pipeline
 ragondin validate <config>                        # validate a configuration
 ```
+
+**None of the four is implemented yet.** That is the planned surface, not a
+description of today; [§ Status](#status) says what is on `main`.
 
 ## Architecture in one breath
 
