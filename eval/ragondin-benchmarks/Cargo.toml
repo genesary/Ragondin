@@ -7,5 +7,16 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+# This crate reads dataset files from disk, which is correct here: INV-3 (no
+# I/O) names `ragondin-types` and `ragondin-pipeline` only. It stays light in
+# the spirit of INV-4 — a JSON reader and a TSV reader, nothing heavier.
+#
+# It depends on `ragondin-metrics` in NEITHER direction, deliberately: this
+# crate owns the qrels type and hands out a `&BTreeMap<DocId, u8>` that the
+# metrics functions borrow, so the two crates stay independent leaves.
 [dependencies]
+csv = { workspace = true }
 ragondin-types = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }

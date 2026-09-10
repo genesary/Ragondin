@@ -1,0 +1,4 @@
+{"_id": "q-1", "text": "where did the cat sit?", "metadata": {}}
+{"_id": "q-2", "text": "which document has no title?"}
+{"_id": "q-3", "text": "a query judged only in the train split"}
+{"_id": "0042", "text": "a query whose id keeps a leading zero"}
