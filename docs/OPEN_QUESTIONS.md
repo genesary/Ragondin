@@ -43,6 +43,7 @@ Should indexing be expressed in the **same pipeline formalism** as serving?
 
 - **Current leaning: yes** — one formalism, two graphs (a batch indexing graph and an online serving graph). This would make **indexing strategies themselves** (GraphRAG vs RAPTOR vs naive chunking) benchmarkable as experiment variables, on the same footing as retrieval strategies, and would extend the skew-free guarantee to the indexing path.
 - This is the **least-settled part of the architecture** and **must be formally validated before the custom-benchmark milestone (M7).**
+- **Analysis on record:** #111 sketches what an indexing graph would look like if the answer were yes, and names the four frictions that sketch surfaces and what one formalism would buy. It is a record and resolves nothing: read it before settling this question, rather than starting from zero.
 - **Blocks:** the custom-benchmark milestone (M7).
 
 ## 6. Data-plane cache policy
