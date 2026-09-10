@@ -27,7 +27,7 @@ A good decision issue lets a human decide without reconstructing your context. I
 
 ## The outcome
 
-A decision issue resolves into **exactly one new ADR** in `docs/adr/`. The ADR is the durable artifact: an individually citable record of the context, the decision, the alternatives rejected, and the consequences. The issue is where the discussion happens; the ADR is where the conclusion lives, immutable once accepted. Use the `decision.yml` issue template, which mirrors this structure.
+A decision issue about how the system is built resolves into **exactly one new ADR** in `docs/adr/`; one about the repository's own governance resolves by amending the rule where it is stated instead, and `docs/adr/README.md` process rule 3 is where that line is drawn. The ADR is the durable artifact: an individually citable record of the context, the decision, the alternatives rejected, and the consequences. The issue is where the discussion happens; the ADR is where the conclusion lives, immutable once accepted. Use the `decision.yml` issue template, which mirrors this structure.
 
 ## Use the issue template
 
