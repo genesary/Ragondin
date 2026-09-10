@@ -3,13 +3,13 @@
 | | |
 |---|---|
 | **Project** | RAG evaluation and serving platform (codename pending) |
-| **Status** | Architecture proposal — submitted for review |
+| **Status** | Accepted design, partly built. The design is settled and in force; most of what this document describes is not implemented yet. [`README.md` § Status](../README.md#status) says what exists on `main`. |
 | **Version** | 0.2 |
 | **Audience** | Software architects, technical reviewers, prospective contributors |
 | **Document type** | Design document and architecture decision record (ADR) |
 | **Companion document** | *Code Architecture* — the translation of this design into a Rust workspace |
 
-> **How to read this document.** It describes a *target conceptual architecture*. No code has been written. Code excerpts (traits, protobuf, YAML) are **contract illustrations**, intended to make decisions concrete and reviewable — not frozen specifications.
+> **How to read this document.** It describes a *target conceptual architecture*, and most of what it describes is still a destination rather than a description. Part of it is now built: the pipeline representation, the component contracts, the registry, physical planning and the executor exist in the workspace — [`README.md` § Status](../README.md#status) lists what is on `main` and what is not. Code excerpts (traits, protobuf, YAML) remain **contract illustrations**, intended to make decisions concrete and reviewable — not frozen specifications, and not transcriptions of the code as it now stands. Where an excerpt and the code disagree, the code is the fact.
 >
 > For a review, the most important sections are **§11 (decision record)**, **§12 (risks)** and **§13 (open questions)**. They state what was decided, what was deliberately rejected, and what remains intentionally unresolved.
 

@@ -3,13 +3,13 @@
 | | |
 |---|---|
 | **Project** | RAG evaluation and serving platform (codename pending) |
-| **Status** | Architecture proposal — submitted for review |
+| **Status** | Accepted design, partly built. The design is settled and in force; most of what this document describes is not implemented yet. [`README.md` § Status](../README.md#status) says what exists on `main`. |
 | **Version** | 0.2 |
 | **Parent document** | *System Architecture*. This document is its translation into code organization and must be read after it. |
 | **Audience** | Software architects, Rust leads, prospective contributors |
 | **Target language** | Rust (2021 edition or later), multi-crate Cargo workspace |
 
-> **How to read this document.** It describes a *target code architecture*. The Rust and protobuf excerpts are **contract and signature illustrations**, meant to make decisions concrete and reviewable — not production code.
+> **How to read this document.** It describes a *target code architecture*, and most of it is still a destination. Part of it now exists: `ragondin-types`, `ragondin-pipeline`, `ragondin-contracts` and `ragondin-engine` are implemented, and `components/` is still empty — [`README.md` § Status](../README.md#status) lists what is on `main` and what is not. The Rust and protobuf excerpts here remain **contract and signature illustrations**, meant to make decisions concrete and reviewable — not production code, and not a transcription of the crates as they now stand. Where an excerpt and the code disagree, the code is the fact.
 >
 > For a review, the most important sections are **§5 (invariants)**, **§12 (anti-decisions)**, **§13 (decision record)** and **§15 (open questions)**.
 
