@@ -16,9 +16,16 @@
 //!   which no run will ever answer, silently lowering every mean. But some
 //!   qrels files in the wild ship with no header at all, and unconditionally
 //!   dropping the first line would then drop a real judgment instead. So the
-//!   reader inspects the first record itself: it is a header, and is
-//!   dropped, only when its score field does not parse as a `u8` — a real
-//!   judgment always has a numeric score.
+//!   reader inspects the first record itself and drops it only when it
+//!   **says** it is a header: its score field must not parse as a `u8` *and*
+//!   must spell BEIR's own `score`. A non-numeric score alone is not enough —
+//!   a judgment whose score is corrupt looks identical, and calling that a
+//!   header discarded a real row without a word, then the query with it,
+//!   while the same corruption one line later was a hard error. The stricter
+//!   rule costs the file whose third column is spelled otherwise: that is now
+//!   a typed error naming the row, which an operator can see and correct,
+//!   where the silent drop it replaces could only be found by noticing that a
+//!   published metric was wrong.
 //! - **`_id` is a string, not a number.** `MED-10` and `4983` are both ids;
 //!   leading zeros are significant. They map straight onto `DocId`/`QueryId`
 //!   and are never parsed.
@@ -37,7 +44,7 @@
 //! indexing the text alone changes nDCG@10 on most BEIR datasets, which would
 //! make the M2 exit criterion (#33) irreproducible.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
@@ -126,8 +133,34 @@ impl BenchmarkAdapter for BeirAdapter {
             });
         }
 
+        // The same mismatch seen from the document side, and the harder one to
+        // notice without a guard: here the query set is *full*, every query
+        // runs, and the report carries a zero over the whole benchmark with
+        // nothing looking empty. A `qrels/` directory paired with a corpus from
+        // another snapshot produces exactly this. Only the total miss is named,
+        // mirroring the query side — a benchmark may legitimately judge a
+        // document its corpus does not hold.
+        if !qrels.is_empty() && !judges_any_document(&qrels, &corpus) {
+            return Err(BenchmarkError::NoJudgedDocument {
+                path: self.qrels_path(),
+                judged: qrels.judgment_count(),
+            });
+        }
+
         Ok(Benchmark::new(corpus, queries, qrels))
     }
+}
+
+/// Whether any judgment names a document the corpus actually defines.
+///
+/// The corpus ids are collected once and the judgments probed against that set,
+/// rather than the other way round: a BEIR corpus is far larger than its qrels,
+/// so this walks the big collection once and the small one until the first hit.
+fn judges_any_document(qrels: &Qrels, corpus: &[Document]) -> bool {
+    let defined: BTreeSet<&DocId> = corpus.iter().map(|document| &document.id).collect();
+    qrels
+        .iter()
+        .any(|(_, judgments)| judgments.keys().any(|doc| defined.contains(doc)))
 }
 
 /// Reads a JSONL file line by line, applying `parse` to each non-blank line.
@@ -237,10 +270,19 @@ fn read_queries(path: &Path, qrels: &Qrels) -> Result<Vec<Query>, BenchmarkError
 /// invents a judgment for a query nothing will ever answer — but a header row
 /// is not guaranteed: some qrels files in the wild ship without one. So the
 /// first parsed record is inspected by hand: it is a header, and is skipped,
-/// only when its score field does not parse as a `u8` — a real judgment row
-/// always has a numeric score, and BEIR's header row has the literal `score`
-/// there. Columns are taken by position, not by header name, because the
-/// order is fixed across BEIR while the spelling is not.
+/// only when its score field both fails to parse as a `u8` **and** spells
+/// BEIR's own `score`. Failing to parse is not on its own evidence of a
+/// header — a judgment whose score is corrupt fails identically, and skipping
+/// it dropped a real row in silence while the same corruption on any later
+/// line was a hard error.
+///
+/// Note the asymmetry that buys: the header's *spelling* decides whether the
+/// row is a header, while the three columns are still read **by position**,
+/// because across BEIR the order is fixed and only the spelling varies. A
+/// header spelling its third column otherwise is now a typed error rather
+/// than a silent skip, which is the trade: an operator can see and fix an
+/// error, where the drop it replaces could only be found by noticing a
+/// published number was wrong.
 ///
 /// The file is read one physical line at a time — like `read_jsonl` — rather
 /// than handed whole to a single `csv::Reader`. `csv`'s own record positions
@@ -344,9 +386,17 @@ fn read_qrels(path: &Path) -> Result<Qrels, BenchmarkError> {
         // file, not a judgment to guess at.
         let parsed_score: Result<u8, _> = raw_score.trim().parse();
 
-        if is_first_record && parsed_score.is_err() {
-            // The first record's score isn't numeric: this is the header
-            // row (BEIR's literal `score`), not a judgment. Skip it.
+        // A non-numeric score on the first record is not enough to call it a
+        // header: a judgment whose score is *corrupt* looks exactly the same,
+        // and skipping it dropped the judgment, then the query with it via the
+        // qrels filter, and returned `Ok`. The same corruption one line later
+        // was already a hard error, so corruption was tolerated on line 1 and
+        // nowhere else. The score column must therefore say what it is —
+        // BEIR's header spells it `score` — before the row is discarded.
+        if is_first_record
+            && parsed_score.is_err()
+            && raw_score.trim().eq_ignore_ascii_case("score")
+        {
             is_first_record = false;
             continue;
         }

@@ -62,6 +62,30 @@ pub enum BenchmarkError {
         judged: usize,
     },
 
+    /// The qrels hold judgments, but not one of them names a document the
+    /// corpus defines — so no ranked list can ever satisfy one.
+    ///
+    /// The document-side mirror of [`BenchmarkError::NoJudgedQuery`], and the
+    /// harder of the two to diagnose without it: the query set is *full*, every
+    /// query runs, and the report carries nDCG@10 = 0 over the whole benchmark
+    /// with nothing looking empty anywhere. It is the shape a `qrels/`
+    /// directory taken from a different snapshot than `corpus.jsonl` produces,
+    /// or a corpus mirror that prefixes or re-cases its ids.
+    ///
+    /// Only a **total** mismatch is named. A benchmark may legitimately judge a
+    /// document its corpus does not hold — `trec_eval` counts such a judgment
+    /// in the denominator — so a partial mismatch stays a normal load, exactly
+    /// as it does on the query side.
+    ///
+    /// The path is the qrels file, whose ids are the side being compared.
+    #[error("{path}: {judged} judgments, none naming a document this corpus defines")]
+    NoJudgedDocument {
+        /// The qrels file whose corpus-ids matched no document.
+        path: PathBuf,
+        /// How many `(query, document)` judgments it holds.
+        judged: usize,
+    },
+
     /// A delimited record does not have the shape the format requires.
     #[error("{path}:{line}: malformed record: {reason}")]
     MalformedRecord {

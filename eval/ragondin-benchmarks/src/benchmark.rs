@@ -53,6 +53,16 @@ impl Qrels {
         self.by_query.get(query)
     }
 
+    /// Iterates `(query, its judgments)` over every judged query.
+    ///
+    /// The whole judgment set, independent of any query file — which is what
+    /// separates it from [`Benchmark::iter`]: that one walks the queries a run
+    /// will actually execute, while this one walks what the qrels assert. An
+    /// adapter checking its two files against each other needs the latter.
+    pub fn iter(&self) -> impl Iterator<Item = (&QueryId, &BTreeMap<DocId, u8>)> {
+        self.by_query.iter()
+    }
+
     /// How many distinct queries the qrels file names, judged or not.
     ///
     /// This is **not** the count of *evaluable* queries, and must not be used

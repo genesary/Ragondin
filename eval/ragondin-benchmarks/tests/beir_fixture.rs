@@ -688,3 +688,91 @@ fn ids_carrying_the_same_whitespace_in_every_file_still_match() {
 
     let _ = fs::remove_dir_all(&root);
 }
+
+// ---------------------------------------------------------- review findings
+
+/// The header heuristic must not swallow a *corrupt* first data row.
+///
+/// `is_first_record && score.is_err()` cannot tell BEIR's literal `score`
+/// header from a judgment whose score is malformed, so a headerless file
+/// whose first row is corrupt lost that judgment without a word — and the
+/// query with it, via the qrels filter. The identical corruption one line
+/// later was already a hard error, so corruption was tolerated on line 1 and
+/// nowhere else. This is the "judgment lost, query filtered out, `Ok`
+/// returned" state `NoJudgedQuery` exists for, reached past the guard.
+#[test]
+fn a_corrupt_first_qrels_row_is_an_error_not_a_header() {
+    let root = write_qrels_dataset("corrupt-first-row", "q1\td1\tNOT_A_GRADE\nq2\td2\t2\n");
+
+    let (line, reason) = expect_malformed(&root);
+    assert_eq!(line, 1, "the corrupt row is the first physical line");
+    assert!(
+        reason.contains("NOT_A_GRADE"),
+        "the offending value must reach the operator: {reason}"
+    );
+
+    let _ = fs::remove_dir_all(&root);
+}
+
+/// The deviation the header heuristic exists for must survive the fix above:
+/// a genuinely headerless file still loads, keeping its first judgment.
+#[test]
+fn a_headerless_qrels_file_still_keeps_its_first_judgment() {
+    let root = write_qrels_dataset("headerless-still-loads", "q1\td1\t1\nq2\td2\t2\n");
+
+    let benchmark = BeirAdapter::new(&root).load().expect("the dataset loads");
+
+    assert_eq!(
+        benchmark.qrels().judgment_count(),
+        2,
+        "no row of a headerless file may be dropped"
+    );
+
+    let _ = fs::remove_dir_all(&root);
+}
+
+/// `NoJudgedQuery` guards the query side of the corpus/qrels agreement. The
+/// document side had no guard: a `qrels/` directory taken from a different
+/// snapshot than `corpus.jsonl` — or a mirror that re-cases or prefixes doc
+/// ids — loaded `Ok` over a **full** query set and reported nDCG@10 = 0.
+/// Nothing looks empty in that state, which makes it harder to diagnose than
+/// the one the existing guard already names.
+#[test]
+fn qrels_naming_no_document_of_the_corpus_is_a_typed_error() {
+    let root = write_dataset(
+        "qrels-match-no-document",
+        "{\"_id\": \"d1\", \"text\": \"body\"}\n",
+        "{\"_id\": \"q1\", \"text\": \"question\"}\n",
+        "query-id\tcorpus-id\tscore\nq1\tPREFIX-d1\t1\n",
+    );
+
+    let error = BeirAdapter::new(&root)
+        .load()
+        .expect_err("judgments that name no document score nothing");
+
+    match error {
+        BenchmarkError::NoJudgedDocument { judged, .. } => assert_eq!(judged, 1),
+        other => panic!("expected NoJudgedDocument, got {other:?}"),
+    }
+
+    let _ = fs::remove_dir_all(&root);
+}
+
+/// A partial document mismatch stays a normal load, mirroring the query-side
+/// guard: a benchmark may legitimately judge a document its corpus does not
+/// hold, and `trec_eval` counts such a judgment in the denominator. Only the
+/// *total* mismatch is a corrupt dataset.
+#[test]
+fn a_partial_document_mismatch_still_loads() {
+    let root = write_dataset(
+        "partial-document-mismatch",
+        "{\"_id\": \"d1\", \"text\": \"body\"}\n",
+        "{\"_id\": \"q1\", \"text\": \"question\"}\n",
+        "query-id\tcorpus-id\tscore\nq1\td1\t1\nq1\tGONE\t1\n",
+    );
+
+    let benchmark = BeirAdapter::new(&root).load().expect("the dataset loads");
+    assert_eq!(benchmark.qrels().judgment_count(), 2);
+
+    let _ = fs::remove_dir_all(&root);
+}

@@ -88,9 +88,25 @@ answer, quietly lowering every mean. The obvious guard — always skip line one 
 fails the other way round on the qrels files that ship without a header, where
 it discards a real judgment *and*, because `read_queries` filters queries by
 qrels, removes that query from the run entirely. So the first record is a
-header, and is skipped, **only when its score field does not parse as a `u8`**.
-A judgment always has a numeric score; BEIR's header has the literal word
-`score`. Do not replace this with `has_headers(true)`.
+header, and is skipped, **only when its score field both fails to parse as a
+`u8` and spells BEIR's own `score`**. Do not replace this with
+`has_headers(true)`.
+
+Both halves of that condition are load-bearing. Failing to parse is not on its
+own evidence of a header: a judgment whose score is *corrupt* fails identically,
+and treating it as a header dropped a real row without a word — and, via the
+qrels filter, the query with it — while the same corruption on any later line
+was a hard `MalformedRecord`. Corruption was tolerated on line 1 and nowhere
+else, which is the "judgment lost, query filtered out, `Ok` returned" state the
+guard below exists for, reached past the guard.
+
+The spelling therefore decides whether the row is a header, while the three
+columns are still read **by position** — across BEIR the order is fixed and only
+the spelling varies. The cost is that a qrels file whose third column is spelled
+something other than `score` is now a typed error rather than a silent skip.
+That is the right direction to fail in: an operator can see and correct an
+error, whereas the drop it replaces could only be found by noticing that a
+published metric was wrong.
 
 Detecting the header by content is why a **headerless three-column qrels file
 loads while a four-column TREC-style one (`query-id iteration corpus-id score`)
@@ -128,48 +144,13 @@ qrels stays a normal load — a split with nothing judged is useless, not
 corrupt — and a partial mismatch, where some queries still match, is invisible
 to it. The guard is the last line, never the fix.
 
-The same asymmetry principle governs the physical line numbers in
-`BenchmarkError`: they are counted while reading rather than derived from the
-`csv` reader's record positions, which cannot be mapped back to file lines once
-blank lines are skipped or the file is CRLF. Three separate attempts at that
-arithmetic each fixed one file shape and broke another.
-
-## Local constraints
-
-- **I/O here is correct.** INV-3 (value types only, no I/O) names
-  `ragondin-types` and `ragondin-pipeline`; this crate is not covered by it.
-  Reading dataset files from disk is this crate's job. The `Benchmark` it
-  produces is still plain data.
-- **Keep it light (INV-4 in spirit).** A JSON reader (`serde_json`) and a TSV
-  reader (`csv`) are the whole toolkit. No heavy backend, no vector store, no
-  HTTP client — and in particular **no network fetch**: a dataset path comes
-  from configuration and the snapshot is frozen on disk, because a published
-  score is attached to a specific snapshot and benchmarking against a live
-  source is not reproducible (§9.1).
-- **Ids are opaque strings, never parsed as numbers.** BEIR ids look like
-  `MED-10` and `4983`; leading zeros are significant. They map straight onto
-  `DocId` / `QueryId`.
-- **`BenchmarkAdapter::load` is synchronous.** `async_trait` is the frozen
-  decision for *component* traits, which sit on the request hot path. A dataset
-  is read once from local files before a run starts; an async signature would
-  force a runtime into this crate and buy nothing.
-- **The adapter chooses the query set.** BEIR's `queries.jsonl` spans every
-  split, so `BeirAdapter` keeps only the queries judged in the split it loaded.
-  `Benchmark::iter` itself imposes no such rule — it yields an empty relevance
-  map for an unjudged query — because that filtering is a per-format decision,
-  not a property of the structure.
-- **The corpus is fully materialized in memory.** `Benchmark` holds its corpus
-  as a `Vec<Document>` and exposes only `corpus() -> &[Document]`; there is no
-  streaming path. This is adequate for the datasets M2 targets, which are
-  small enough to hold in memory whole. It would not be adequate for a corpus
-  the size of MS MARCO, which runs to many gigabytes. Adding a streaming
-  ingestion path later would change the shape of `Benchmark` and the contract
-  the harness is written against — that is a decision issue when it is
-  needed, not a change to make quietly inside this crate.
-
-## What is deliberately not here
-
-- CRAG, MultiHop-RAG and any end-to-end adapter carrying reference answers:
-  they need generation and a judge, and belong to M3+ (ADR-10).
-- Metric computation (`ragondin-metrics`) and engine execution
-  (`ragondin-harness`).
+**The same guard exists on the document side**, and it is the harder of the two
+to do without. `BenchmarkError::NoJudgedDocument` fires when the qrels are
+non-empty and not one judgment names a document `corpus.jsonl` defines — the
+shape a `qrels/` directory paired with a corpus from another snapshot produces,
+or a mirror that prefixes or re-cases its ids. Without it the query set is
+*full*, every query runs, and the report carries nDCG@10 = 0 over the whole
+benchmark with nothing looking empty anywhere, which is strictly harder to
+diagnose than the empty query set the first guard names. Both guards fire only
+on a **total** miss: a benchmark may legitimately judge a document its corpus
+does not hold, and `trec_eval` counts such a judgment in the denominator.
