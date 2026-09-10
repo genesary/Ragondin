@@ -1,12 +1,22 @@
 //! `LogicalPipeline`: the validated, canonical value type (#9).
 //!
 //! This is the middle level of the three described in `ARCHITECTURE.md`: it
-//! sits between the permissive [`crate::RawPipeline`] and the
-//! not-yet-built `PhysicalPipeline`. Produced only by
-//! [`crate::validate::validate`], which is what actually establishes the
-//! invariants this type's name promises — unique node ids, exactly one
-//! declared input, no declaration claiming a node's id, no dangling `inputs`,
-//! no cycle in the data-flow graph.
+//! sits between the permissive [`crate::RawPipeline`] and `PhysicalPipeline`.
+//! That last one lives in `ragondin-engine`, not here, and always will: it
+//! holds `Box<dyn Trait>`, which INV-3 forbids this crate, and the dependency
+//! arrow runs from the engine to this crate — so it is named in prose rather
+//! than linked.
+//!
+//! [`crate::validate::validate`] is what establishes the invariants this
+//! type's name promises — unique node ids, exactly one declared input, no
+//! declaration claiming a node's id, no dangling `inputs`, no cycle in the
+//! data-flow graph — and it is the only thing that establishes them. It is
+//! not the only way to obtain the type: `LogicalPipeline` derives
+//! `Deserialize`, which is public and re-runs none of those checks. That is
+//! not a wire path — anything arriving over one goes `RawPipeline` →
+//! `validate` (INV-9) — but a value that did not come through `validate`
+//! carries no guarantee, which is why `ragondin-engine`'s physical planning
+//! checks every edge's kinds again rather than trusting them.
 
 use serde::{Deserialize, Serialize};
 
@@ -68,8 +78,10 @@ impl LogicalPipeline {
     ///
     /// Not exposed outside this crate: [`crate::validate::validate`] is the
     /// only place that establishes referential integrity and acyclicity, so
-    /// it is the only legitimate way to produce a `LogicalPipeline` from a
-    /// `RawPipeline`.
+    /// it is the only path from a `RawPipeline` to a `LogicalPipeline` that
+    /// establishes them. It is not the only way to obtain the type — the
+    /// public `Deserialize` derive produces one and checks nothing, as this
+    /// module's documentation says.
     pub(crate) fn new(inputs: Vec<NodeId>, nodes: Vec<LogicalNode>) -> Self {
         Self { inputs, nodes }
     }
