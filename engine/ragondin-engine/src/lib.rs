@@ -11,8 +11,15 @@
 //! third-party components (INV-7), and `ExecutionTrace` is a **return value of
 //! execution, not a log** (INV-10).
 //!
-//! The registry and physical planning are here. The executor lands in its
-//! own issue. See `ARCHITECTURE.md`.
+//! The registry, physical planning and the executor are all here. The
+//! executor schedules a plan's nodes in a topological order over their
+//! data-flow edges, carries an erased `NodeValue` along each edge (ADR-C16,
+//! which confines that enum to this crate), seeds its value table from the
+//! pipeline's declared inputs (ADR-C18), and returns `(Result<Output,
+//! ExecError>, ExecutionTrace)` — the trace even on failure. `Branch` and
+//! `Loop` are not executed, because no such node variant exists yet.
+//!
+//! See `ARCHITECTURE.md`.
 
 #![warn(missing_docs)]
 
@@ -22,11 +29,15 @@
 // `ragondin_engine::context::EngineContext`.
 mod context;
 mod error;
+mod execute;
 mod plan;
+mod trace;
 
 pub use context::{
     ComponentCtor, EmbedderCtor, EngineContext, FusionCtor, RerankerCtor, RetrieverCtor,
     VectorStoreCtor,
 };
-pub use error::{ComponentFamily, ConstructionError, PlanError};
+pub use error::{ComponentFamily, ConstructionError, ExecError, PlanError};
+pub use execute::{Engine, Output};
 pub use plan::{plan_physical, PhysicalPipeline};
+pub use trace::{ExecutionTrace, NodeTrace, ValueSummary};

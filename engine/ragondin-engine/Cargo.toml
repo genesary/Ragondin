@@ -22,7 +22,7 @@ ragondin-contracts = { workspace = true }
 ragondin-pipeline = { workspace = true }
 ragondin-types = { workspace = true }
 ragondin-remote = { workspace = true, optional = true }
-thiserror = { workspace = true } # typed library errors (PlanError)
+thiserror = { workspace = true } # typed library errors (PlanError, ExecError)
 tokio = { workspace = true }
 
 # Test-only. The stub components the registry tests register are `async_trait`
@@ -30,6 +30,11 @@ tokio = { workspace = true }
 # traits are declared with.
 [dev-dependencies]
 async-trait = { workspace = true }
+# The executor's tests pin that a trace's `duration` measures the component's
+# call, which needs a stub that waits a known time without blocking the
+# runtime. Only the tests need a clock, so the feature is enabled here and not
+# on the runtime dependency above.
+tokio = { workspace = true, features = ["time"] }
 # Planning's kind check is a second layer over a check `validate` already ran,
 # so no pipeline built the legitimate way can reach it. `serde` is the only way
 # to hold a `LogicalPipeline` that did not come through validation, which is

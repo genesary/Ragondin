@@ -29,19 +29,10 @@ use crate::error::PlanError;
 /// built from, so they never appear as a node of a plan.
 pub(crate) enum ResolvedComponent {
     /// A resolved [`LogicalNode::Retriever`].
-    //
-    // The trait object is written by planning and read by the executor (#16),
-    // which lands in its own issue — so in the library build nothing reads it
-    // yet, and `dead_code` fires on the field rather than on the variant. The
-    // `allow` is per variant, and not on the enum, so that a variant added
-    // later does not inherit the exemption unnoticed.
-    #[allow(dead_code)]
     Retriever(Box<dyn Retriever>),
     /// A resolved [`LogicalNode::Fusion`].
-    #[allow(dead_code)]
     Fusion(Box<dyn Fusion>),
     /// A resolved [`LogicalNode::Reranker`].
-    #[allow(dead_code)]
     Reranker(Box<dyn Reranker>),
 }
 
@@ -60,19 +51,11 @@ pub(crate) struct PhysicalNode {
 impl PhysicalNode {
     /// The node's logical form: its id, its inputs in port order, its params,
     /// and the variant every kind derivation reads.
-    //
-    // `allow` rather than `expect`, and per method: the executor (#16) is the
-    // caller and lands in its own issue, so until it does this crate's tests
-    // are what exercises these — while a method added later must not inherit
-    // the exemption unnoticed. In the `cfg(test)` build the tests do use them,
-    // so an `expect` would go unfulfilled and fail `clippy -D warnings`.
-    #[allow(dead_code)]
     pub(crate) fn logical(&self) -> &LogicalNode {
         &self.node
     }
 
     /// The constructed component this node runs.
-    #[allow(dead_code)]
     pub(crate) fn component(&self) -> &ResolvedComponent {
         &self.component
     }
@@ -86,17 +69,29 @@ impl PhysicalNode {
 /// Its payload is private to this crate (INV-2) so that it can evolve as the
 /// executor and later milestones need it to.
 pub struct PhysicalPipeline {
+    inputs: Vec<NodeId>,
     nodes: Vec<PhysicalNode>,
 }
 
 impl PhysicalPipeline {
+    /// The ids of the values this plan receives from its caller (ADR-C18),
+    /// carried through from the [`LogicalPipeline`] verbatim.
+    ///
+    /// The executor seeds its value table from these, which is the whole
+    /// reason they are here: a declared input and a dangling one are
+    /// indistinguishable from the node list alone — both are ids naming no
+    /// node — so an executor without the declaration could not tell the
+    /// pipeline's entry point from a wiring mistake.
+    pub(crate) fn inputs(&self) -> &[NodeId] {
+        &self.inputs
+    }
+
     /// The plan's nodes, in the canonical order [`LogicalPipeline`] holds them
     /// (sorted by [`NodeId`]).
     ///
     /// **That order is not an execution order.** A fusion node sorts before the
     /// retrievers it consumes whenever its id does; scheduling is the
-    /// executor's job, over the data-flow edges (#16).
-    #[allow(dead_code)] // See `PhysicalNode::logical`.
+    /// executor's job, over the data-flow edges.
     pub(crate) fn nodes(&self) -> &[PhysicalNode] {
         &self.nodes
     }
@@ -117,8 +112,9 @@ impl PhysicalPipeline {
 /// A node whose `inputs` names a node that does not exist is **not** refused
 /// here: [`LogicalPipeline`] is validated by construction, so the only way to
 /// hold one with a dangling input is to have bypassed `validate`, and the
-/// executor already owns that failure (#16). Planning skips the edge rather
-/// than growing a second referential-integrity check.
+/// executor owns that failure, and reports it as
+/// [`crate::ExecError::DanglingInput`]. Planning skips the edge rather than
+/// growing a second referential-integrity check.
 pub fn plan_physical(
     logical: &LogicalPipeline,
     ctx: &EngineContext,
@@ -150,7 +146,10 @@ pub fn plan_physical(
         })
         .collect::<Result<Vec<_>, PlanError>>()?;
 
-    Ok(PhysicalPipeline { nodes })
+    Ok(PhysicalPipeline {
+        inputs: logical.inputs().to_vec(),
+        nodes,
+    })
 }
 
 /// The optimization phase between the logical and physical levels: **the
@@ -729,7 +728,7 @@ mod tests {
 
     #[test]
     fn a_dangling_input_is_left_for_the_executor_to_report() {
-        // Referential integrity is `validate`'s (#9) and the executor's (#16).
+        // Referential integrity is `validate`'s and the executor's.
         // Planning must not grow a third copy of it — and must not panic on
         // one either, which is what the lookup's `else { continue }` is for.
         let pipeline = forged(
