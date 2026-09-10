@@ -75,6 +75,15 @@ intra-doc links are `cargo doc`'s business.
 It resolves a citation; it cannot judge whether the citation is **apt**. `ADR-C3`
 cited for `ADR-3`'s decision passes this check. Open an ADR before citing it.
 
+`just test-check-doc-links` (`scripts/test-check-doc-links.py`, also a CI step)
+tests that check. Its failure mode is silence — a scan narrowed back to Markdown,
+or a filename convention no longer enforced, keeps printing `All documentation
+links resolve.` while resolving less — so each decision it makes is pinned by a
+case, the Markdown-only relative-link rule included. The fixtures are built at run
+time in a throwaway repository under the system temporary directory: the checker
+selects tracked files, so a fixture committed here would be scanned by the real
+check. If you change `check-doc-links.py`, change these cases in the same PR.
+
 ### The ADR index
 
 The decision table in [`docs/adr/README.md`](docs/adr/README.md) is **generated**

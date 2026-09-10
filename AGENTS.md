@@ -31,6 +31,10 @@ just check-invariants
 # reference resolves, never that it is apt.
 just check-doc-links
 
+# That check's own tests, over fixtures built in a throwaway repository rather
+# than committed here. A gate whose scan silently narrows fails this first.
+just test-check-doc-links
+
 # The generated ADR index in docs/adr/README.md is current
 just check-adr-index
 
