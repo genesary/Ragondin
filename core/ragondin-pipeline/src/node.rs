@@ -528,8 +528,8 @@ mod tests {
 
     #[test]
     fn non_finite_floats_are_outside_the_documented_contract() {
-        // Pinned rather than hidden: this is the boundary #9 must reject at,
-        // and the reason `ParamValue` cannot derive `Eq`.
+        // Pinned rather than hidden: this is the boundary `validate` must
+        // reject at, and the reason `ParamValue` cannot derive `Eq`.
         let encoded = serde_json::to_string(&ParamValue::Float(f64::NAN)).unwrap();
         assert_eq!(encoded, r#"{"Float":null}"#);
         assert!(

@@ -64,12 +64,13 @@ actually look like is not settled, so neither variant exists yet.
   `expected: Option<ValueKind>`, where `None` means the consumer declares no
   port at that position at all — chosen over inventing a fourth `ValueKind`
   variant for "no kind", which would have put a non-kind into ADR-C16's edge
-  vocabulary that issue #15 reuses. `SchemaVersionPeekError` joins that list on
-  the same terms: it is not `#[non_exhaustive]` either, so a consumer may match
-  its two diagnoses exhaustively and a third would be a visible, deliberate act
-  on this boundary. It carries no `Clone`, `Copy`, `PartialEq` or `Eq`, because
-  no real deserializer error implements them — a derive there would be
-  decoration no caller could use and that could not later be withdrawn.
+  vocabulary that physical planning — `ragondin-engine`'s `plan_physical` —
+  reuses. `SchemaVersionPeekError` joins that list on the same terms: it is not
+  `#[non_exhaustive]` either, so a consumer may match its two diagnoses
+  exhaustively and a third would be a visible, deliberate act on this
+  boundary. It carries no `Clone`, `Copy`, `PartialEq` or `Eq`, because no real
+  deserializer error implements them — a derive there would be decoration no
+  caller could use and that could not later be withdrawn.
 - **The wire format is separate (INV-9).** The serialized (wire) form is
   `RawPipeline` (`src/raw.rs`): hand-maintained, carrying its own
   `SchemaVersion`, and **structurally distinct** from the logical model — a

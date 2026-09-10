@@ -150,8 +150,12 @@ pub enum ValidationError {
     /// `found: ValueKind::Opaque`. An `Extension` node is never a
     /// *consumer* of this check (its `PortSpec` is unknown to the core), and
     /// an `Extension` *producer* is otherwise skipped whenever a port
-    /// genuinely exists (`expected` is `Some`): its real kind is known only
-    /// once physical planning (#15) resolves its registry entry.
+    /// genuinely exists (`expected` is `Some`): its real kind is not something
+    /// the core can state (ADR-C16). Nothing downstream states it either —
+    /// `ragondin-engine`'s `plan_physical` refuses every `Extension` node
+    /// (`PlanError::ExtensionUnsupported`) rather than guess, because there is
+    /// no extension registry to resolve one through and how an extension is
+    /// looked up is open decision #93.
     // `thiserror`'s `#[error(...)]` cannot branch on a field's value, and
     // `expected` renders differently for `Some` and `None` — so the
     // `Some`/`None` clause is built by `kind_mismatch_expected_clause` and
@@ -429,12 +433,14 @@ pub fn validate(raw: RawPipeline) -> Result<LogicalPipeline, ValidationError> {
 /// Only once a port is known to exist (`expected` is `Some`) does an
 /// `Extension` producer's unknowable kind excuse the edge from the
 /// *comparison* that follows: guessing which kind an `Extension` yields is
-/// exactly what ADR-C16 reserves for physical planning (#15), once the
-/// registry is resolved. A missing input — a position [`PortSpec::Fixed`]
-/// declares but `inputs` does not reach — is not checked here (settled
-/// reading A2). An [`LogicalNode::Extension`] *consumer* is skipped
-/// entirely, at the top of the outer loop: its [`PortSpec`] is
-/// [`PortSpec::Unknown`], which ADR-C16 says the core cannot state.
+/// exactly what ADR-C16 reserves for physical planning. No build performs that
+/// guess — `ragondin-engine`'s `plan_physical` refuses every `Extension` node
+/// instead, there being no extension registry to resolve one through (open
+/// decision #93). A missing input — a position [`PortSpec::Fixed`] declares but
+/// `inputs` does not reach — is not checked here (settled reading A2). An
+/// [`LogicalNode::Extension`] *consumer* is skipped entirely, at the top of the
+/// outer loop: its [`PortSpec`] is [`PortSpec::Unknown`], which ADR-C16 says
+/// the core cannot state.
 fn check_kinds(
     nodes: &[LogicalNode],
     index: &HashMap<NodeId, usize>,

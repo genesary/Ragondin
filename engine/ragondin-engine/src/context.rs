@@ -158,11 +158,14 @@ impl EngineContext {
 /// planning is the only caller and `ragondin-engine` is not an API boundary
 /// (INV-2).
 ///
-/// That caller is #15 and lands in its own issue; until it does, this crate's
-/// tests are what exercises these — hence the per-method allows below, which
-/// are about the order two issues land in and not about a method being
-/// unnecessary. Per method rather than on the block, so that a method added
-/// here before #15 lands does not inherit the exemption unnoticed.
+/// That caller is [`crate::plan_physical`], which resolves each node's `impl:`
+/// name through these methods. It does not reach every family the registry
+/// keeps a table for — [`crate::ComponentFamily`] records which, and the open
+/// question behind it — so this crate's tests are what exercises the rest. That
+/// is what the per-method allows below are for: a family planning does not yet
+/// reach, not a method that is unnecessary. Per method rather than on the
+/// block, so that a method added here without a caller does not inherit the
+/// exemption unnoticed.
 ///
 /// `allow` and not `expect`: in the `cfg(test)` build the tests do use these,
 /// so an expectation would go unfulfilled and fail `clippy -D warnings`.
