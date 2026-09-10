@@ -48,7 +48,7 @@ component is a gRPC service honouring the mirror protobuf in `ragondin-proto`.
   the vtable** — constructing one is not enough to prove the property.
 - **Every trait method takes a params struct, and every params struct is
   `#[non_exhaustive]` with a constructor.** One rule, no exceptions — including
-  the structs that are empty today (`FusionParams`, `EmbedParams`). Adding a
+  the structs that are empty today (`FusionParams`). Adding a
   *field* is additive; changing a method's *arity* breaks every implementation
   in and out of the repository, third-party `Remote` services included, which
   is the contribution funnel ADR-C3 exists to protect. The uniformity is the
@@ -65,12 +65,16 @@ component is a gRPC service honouring the mirror protobuf in `ragondin-proto`.
   (E5, BGE, GTE) prefix a query differently from a passage, and getting it wrong
   costs retrieval quality with no error anywhere — a failure no conformance
   check can catch, since the suite does not know the model. The role
-  therefore becomes a mandatory field on `EmbedParams` in #97, stated by the
-  caller, which is the only party that knows the side. What an asymmetric model
-  prepends for each side is **constructor configuration of the component**, not
-  contract surface: that is what keeps this crate agnostic of the model, and it
-  makes a symmetric model a configuration with no prefix rather than a special
-  case.
+  is therefore a mandatory field on `EmbedParams` — `EmbedRole`, stated by the
+  caller, which is the only party that knows the side. It is mandatory in the
+  strong sense: `EmbedParams` has no `Default` and no constructor that omits
+  it, because a defaulted role is exactly the silent failure the decision
+  exists to prevent. `EmbedRole` is **closed**, unlike every params struct
+  here, since a wildcard arm is where a role added later would be mishandled
+  without a word. What an asymmetric model prepends for each side is
+  **constructor configuration of the component**, not contract surface: that is
+  what keeps this crate agnostic of the model, and it makes a symmetric model a
+  configuration with no prefix rather than a special case.
 
 ## Why it is a boundary
 

@@ -19,11 +19,11 @@ use ragondin_conformance::{
     assert_embedder_conformance, assert_fusion_conformance, assert_reranker_conformance,
     assert_retriever_conformance, assert_vector_store_conformance, check_embedder_conformance,
     check_fusion_conformance, check_reranker_conformance, check_retriever_conformance,
-    check_vector_store_conformance,
+    check_vector_store_conformance, RolePrefixes,
 };
 use ragondin_contracts::{
-    ComponentError, EmbedParams, EmbeddedChunk, Embedder, Fusion, FusionParams, RerankParams,
-    Reranker, RetrieveParams, Retriever, SearchParams, VectorStore,
+    ComponentError, EmbedParams, EmbedRole, EmbeddedChunk, Embedder, Fusion, FusionParams,
+    RerankParams, Reranker, RetrieveParams, Retriever, SearchParams, VectorStore,
 };
 use ragondin_types::{Chunk, ChunkId, DocId, Embedding, Query, ScoredChunk};
 
@@ -721,25 +721,122 @@ impl Embedder for NanEmbedder {
     }
 }
 
+/// Prefixes each role distinctly, the way E5 or BGE is configured to: the
+/// shape a fixture declaring `RolePrefixes::Distinct` must have.
+struct RoleAwareEmbedder;
+
+#[async_trait]
+impl Embedder for RoleAwareEmbedder {
+    async fn embed(
+        &self,
+        texts: &[String],
+        params: &EmbedParams,
+    ) -> Result<Vec<Embedding>, ComponentError> {
+        let prefix = match params.role {
+            EmbedRole::Query => 1.0,
+            EmbedRole::Passage => 2.0,
+        };
+        Ok(texts
+            .iter()
+            .map(|t| Embedding::new(vec![t.len() as f32, prefix, 0.0]))
+            .collect())
+    }
+}
+
+/// Accepts the role and drops it — the likeliest bug in an asymmetric
+/// embedder, and the one no other check can see: every vector it returns is
+/// well-formed.
+struct RoleIgnoringEmbedder;
+
+#[async_trait]
+impl Embedder for RoleIgnoringEmbedder {
+    async fn embed(
+        &self,
+        texts: &[String],
+        _params: &EmbedParams,
+    ) -> Result<Vec<Embedding>, ComponentError> {
+        Ok(texts
+            .iter()
+            .map(|t| Embedding::new(vec![t.len() as f32, 1.0, 0.0]))
+            .collect())
+    }
+}
+
+/// Internally consistent under each role and yet unusable: 3 components under
+/// `Query`, 2 under `Passage`. Every per-batch check passes — each batch is
+/// homogeneous and finite — so only a comparison *across* the roles sees it.
+///
+/// This is the shape a real embedder takes when the two roles reach different
+/// model sessions, and it is the one the role-separation check cannot catch:
+/// vectors of unequal dimensionality are trivially unequal, so declaring
+/// `Distinct` would *pass* it. Left `Undeclared` in the test below so the
+/// failure has to come from the dimensionality check itself.
+struct SplitDimensionEmbedder;
+
+#[async_trait]
+impl Embedder for SplitDimensionEmbedder {
+    async fn embed(
+        &self,
+        texts: &[String],
+        params: &EmbedParams,
+    ) -> Result<Vec<Embedding>, ComponentError> {
+        let dim = match params.role {
+            EmbedRole::Query => 3,
+            EmbedRole::Passage => 2,
+        };
+        Ok(texts
+            .iter()
+            .map(|t| Embedding::new(vec![t.len() as f32; dim]))
+            .collect())
+    }
+}
+
+/// Conformant under `Query`, and drops an input under `Passage`. The suite
+/// sees it only because every check runs under **both** roles: an embedder
+/// that takes a different path per role can be broken on one side alone, and
+/// the passage side is the corpus side, where a dropped vector misaligns an
+/// index with no error anywhere.
+struct PassageDroppingEmbedder;
+
+#[async_trait]
+impl Embedder for PassageDroppingEmbedder {
+    async fn embed(
+        &self,
+        texts: &[String],
+        params: &EmbedParams,
+    ) -> Result<Vec<Embedding>, ComponentError> {
+        let dropped = match params.role {
+            EmbedRole::Query => 0,
+            EmbedRole::Passage => 1,
+        };
+        Ok(texts
+            .iter()
+            .skip(dropped)
+            .map(|t| Embedding::new(vec![t.len() as f32, 1.0, 0.0]))
+            .collect())
+    }
+}
+
 #[tokio::test]
 async fn a_conformant_embedder_passes() {
-    check_embedder_conformance(|| Box::new(GoodEmbedder))
+    check_embedder_conformance(|| Box::new(GoodEmbedder), RolePrefixes::Undeclared)
         .await
         .expect("the stub honours the embedder contract");
 }
 
 #[tokio::test]
 async fn an_embedder_dropping_an_input_fails() {
-    let failure = check_embedder_conformance(|| Box::new(DroppingEmbedder))
-        .await
-        .expect_err("one vector per input, or the corpus and the index disagree");
+    let failure =
+        check_embedder_conformance(|| Box::new(DroppingEmbedder), RolePrefixes::Undeclared)
+            .await
+            .expect_err("one vector per input, or the corpus and the index disagree");
     assert_eq!(failure.check(), "one vector per input");
     assert_eq!(failure.component(), "Embedder");
 }
 
 #[tokio::test]
 async fn an_embedder_with_a_ragged_batch_fails() {
-    let failure = check_embedder_conformance(|| Box::new(RaggedEmbedder))
+    let failure = check_embedder_conformance(|| Box::new(RaggedEmbedder), RolePrefixes::Undeclared)
         .await
         .expect_err("a batch has one dimensionality");
     assert_eq!(failure.check(), "constant dimensionality");
@@ -747,16 +844,79 @@ async fn an_embedder_with_a_ragged_batch_fails() {
 
 #[tokio::test]
 async fn an_embedder_emitting_a_nan_component_fails() {
-    let failure = check_embedder_conformance(|| Box::new(NanEmbedder))
+    let failure = check_embedder_conformance(|| Box::new(NanEmbedder), RolePrefixes::Undeclared)
         .await
         .expect_err("a non-finite component cannot be read back");
     assert_eq!(failure.check(), "finite components");
 }
 
 #[tokio::test]
+async fn an_embedder_with_declared_prefixes_may_separate_the_roles() {
+    check_embedder_conformance(|| Box::new(RoleAwareEmbedder), RolePrefixes::Distinct)
+        .await
+        .expect("distinct prefixes produce distinct vectors, as declared");
+}
+
+#[tokio::test]
+async fn an_embedder_ignoring_a_declared_role_fails() {
+    let failure =
+        check_embedder_conformance(|| Box::new(RoleIgnoringEmbedder), RolePrefixes::Distinct)
+            .await
+            .expect_err("a fixture declaring distinct prefixes must not answer both roles alike");
+    assert_eq!(failure.check(), "role changes the vector");
+    assert_eq!(failure.component(), "Embedder");
+}
+
+#[tokio::test]
+async fn an_embedder_broken_only_under_passage_fails() {
+    // The claim `check_embedder_conformance` makes four times over — every
+    // check runs under both roles — is otherwise untested: every other broken
+    // stub here breaks under `Query` too, so the `Passage` pass proves nothing
+    // about them. Reduce the suite's loop to `[EmbedRole::Query]` and this is
+    // the test that goes red. `Undeclared` on purpose: the failure must come
+    // from the ordinary per-role checks, not from the opt-in role-separation
+    // one.
+    let failure = check_embedder_conformance(
+        || Box::new(PassageDroppingEmbedder),
+        RolePrefixes::Undeclared,
+    )
+    .await
+    .expect_err("a contract broken on one side only is still broken");
+    assert_eq!(failure.check(), "one vector per input");
+    assert_eq!(failure.component(), "Embedder");
+}
+
+#[tokio::test]
+async fn an_embedder_whose_dimensionality_depends_on_the_role_fails() {
+    // A query vector is dot-producted against a passage vector by
+    // construction, so one dimensionality per role is one embedding space per
+    // role, and there is no retrieval to be had. Nothing sees it inside a
+    // batch — each is homogeneous — and the role-separation check would pass
+    // it, since unequal dimensionalities are unequal. Only carrying the
+    // dimensionality across the role loop catches it.
+    let failure = check_embedder_conformance(
+        || Box::new(SplitDimensionEmbedder),
+        RolePrefixes::Undeclared,
+    )
+    .await
+    .expect_err("an embedder has one dimensionality, not one per role");
+    assert_eq!(failure.check(), "constant dimensionality");
+    assert_eq!(failure.component(), "Embedder");
+}
+
+#[tokio::test]
+async fn an_embedder_ignoring_an_undeclared_role_conforms() {
+    // A symmetric model is correct, and the suite does not know which it is
+    // holding: without a declaration there is nothing to compare against.
+    check_embedder_conformance(|| Box::new(RoleIgnoringEmbedder), RolePrefixes::Undeclared)
+        .await
+        .expect("an undeclared fixture is never asked to separate the roles");
+}
+
+#[tokio::test]
 #[should_panic(expected = "one vector per input")]
 async fn the_embedder_assert_wrapper_panics_on_a_broken_component() {
-    assert_embedder_conformance(|| Box::new(DroppingEmbedder)).await;
+    assert_embedder_conformance(|| Box::new(DroppingEmbedder), RolePrefixes::Undeclared).await;
 }
 
 // -------------------------------------------------------------- VectorStore

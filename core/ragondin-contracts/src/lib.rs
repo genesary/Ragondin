@@ -140,23 +140,46 @@ impl RerankParams {
     }
 }
 
+/// Which side of a retrieval corpus a text is on.
+///
+/// **Closed** — deliberately not `#[non_exhaustive]` (ADR-C17). A wildcard arm
+/// in an implementation is precisely where a role added later would be
+/// mishandled without a word, which is the failure this type exists to
+/// prevent; adding a variant is therefore a visible breaking act on this
+/// boundary (INV-1), and that is the correct cost for it.
+///
+/// It describes **the text**, not the model, which is why there is no
+/// `Symmetric` variant: a caller that had to choose one would have to know
+/// which model is behind the trait object it holds, and hiding exactly that is
+/// what this contract is for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EmbedRole {
+    /// The text is a query being asked of the corpus.
+    Query,
+    /// The text is a passage of the corpus being indexed.
+    Passage,
+}
+
 /// Per-call parameters of an [`Embedder`].
 ///
-/// Empty today, and no longer an open question: ADR-C17 settles that an
-/// embedder **is** told, per call, which side it is embedding. See
-/// [`Embedder`]'s role contract for what that obliges an implementation to do.
-/// The `role` field carrying it lands here in #97 — this struct exists for
-/// exactly that, so the answer is a field rather than a change to
-/// [`Embedder::embed`]'s arity, which would break every implementation in and
-/// out of the repository.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+/// Carries the [`EmbedRole`] the text is on, and carries it **mandatorily**:
+/// there is no `Default` and no other constructor, so a call site cannot omit
+/// the one fact only the caller knows (ADR-C17). See [`Embedder`]'s role
+/// contract for what the role obliges an implementation to do.
+///
+/// One `EmbedParams` covers a whole batch, so a batch is embedded under
+/// exactly one role.
+#[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
-pub struct EmbedParams {}
+pub struct EmbedParams {
+    /// The side the texts of this call are on.
+    pub role: EmbedRole,
+}
 
 impl EmbedParams {
-    /// The default embedding parameters.
-    pub fn new() -> Self {
-        Self {}
+    /// Embeds under `role`.
+    pub fn new(role: EmbedRole) -> Self {
+        Self { role }
     }
 }
 
@@ -240,15 +263,27 @@ pub trait Reranker: Send + Sync {
 /// query differently from a passage, and a text embedded on the wrong side
 /// simply scores worse — no error is raised anywhere, and a conformance suite
 /// cannot see it either, because it does not know which model it is testing.
-/// ADR-C17 therefore makes the role a **per-call** parameter: a caller must
-/// pass the role that is true of the text it is embedding, and an implementation
-/// must treat that role as significant unless the model it wraps is symmetric.
+/// ADR-C17 therefore makes the role a **per-call** parameter, carried by
+/// [`EmbedParams::role`]: a caller **must** pass the [`EmbedRole`] that is true
+/// of the text it is embedding, and an implementation **must** treat that role
+/// as significant unless the model it wraps is symmetric.
 ///
 /// What an asymmetric model prepends for each role is the implementation's own
 /// **constructor configuration** and never appears on this boundary, which
 /// keeps the contract agnostic of the model: a symmetric model is configured
-/// with no prefix on either side rather than special-cased. The field carrying
-/// the role lands on [`EmbedParams`] in #97.
+/// with no prefix on either side rather than special-cased, and honouring the
+/// role there means prepending the empty string.
+///
+/// # One embedding space
+///
+/// Every vector an implementation returns has **the same dimensionality**,
+/// whatever the [`EmbedRole`] and whatever the batch. A query vector is scored
+/// against a passage vector by construction, so a width that varies with the
+/// role is a second embedding space rather than a second prefix, and there is
+/// no retrieval to be had between the two: the role selects what is prepended,
+/// never which model answers. Stated here because the role is what makes two
+/// widths expressible at all, and because nothing downstream would name the
+/// embedder — a mismatch surfaces as a `VectorStore` rejecting a search vector.
 #[async_trait]
 pub trait Embedder: Send + Sync {
     /// Embeds `texts`, returning one vector per input **in the same order**.
@@ -458,7 +493,10 @@ mod tests {
     async fn an_embedder_is_callable_through_a_trait_object() {
         let component: Box<dyn Embedder> = Box::new(StubEmbedder);
         let out = component
-            .embed(&["ab".to_string(), "abcd".to_string()], &EmbedParams::new())
+            .embed(
+                &["ab".to_string(), "abcd".to_string()],
+                &EmbedParams::new(EmbedRole::Passage),
+            )
             .await
             .unwrap();
         assert_eq!(out.len(), 2);
@@ -527,7 +565,31 @@ mod tests {
         assert_eq!(RerankParams::new(8).top_k, 8);
         assert_eq!(SearchParams::new(50).top_k, 50);
         let _ = FusionParams::new();
-        let _ = EmbedParams::new();
+        let _ = EmbedParams::new(EmbedRole::Query);
+    }
+
+    #[test]
+    fn embed_params_carry_the_role_the_caller_states() {
+        // ADR-C17: the role is mandatory and reaches the implementation
+        // unchanged. `EmbedParams` has no `Default` and no other constructor,
+        // so a call site cannot omit it — which is the whole protection, since
+        // a wrong role costs nDCG without erroring anywhere.
+        assert_eq!(EmbedParams::new(EmbedRole::Query).role, EmbedRole::Query);
+        assert_eq!(
+            EmbedParams::new(EmbedRole::Passage).role,
+            EmbedRole::Passage
+        );
+    }
+
+    #[test]
+    fn embed_role_is_copied_and_compared_rather_than_borrowed() {
+        // An implementation matches on the role and carries it into its own
+        // prefix table; making that cost a clone would push implementers
+        // toward stashing it on the component, which is where a stale role
+        // starts.
+        fn assert_bounds<T: Clone + Copy + std::fmt::Debug + PartialEq + Eq>() {}
+        assert_bounds::<EmbedRole>();
+        assert_ne!(EmbedRole::Query, EmbedRole::Passage);
     }
 
     #[test]
