@@ -1,7 +1,8 @@
 //! # ragondin-pipeline
 //!
 //! The pipeline representation, in three levels — `RawPipeline` →
-//! `LogicalPipeline` → `PhysicalPipeline`. Five of them exist today:
+//! `LogicalPipeline` → `PhysicalPipeline`. This crate holds the first two of
+//! those levels, across five modules:
 //!
 //! - [`raw`] — the permissive wire schema a configuration file lands in.
 //!   Hand-maintained and independently versioned (INV-9). Never executed.
