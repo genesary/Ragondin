@@ -36,15 +36,17 @@
 //!
 //! # The title rule
 //!
-//! `Document.text` is set to `title`, one space, then `text` — omitting both
-//! the space and the title when the title is empty, absent, or nothing but
-//! whitespace — and the title is additionally kept under `metadata["title"]`,
-//! trimmed the way every id on this reader is.
+//! `Document.text` is `title`, one space, then `text`, with the **whole
+//! result** trimmed — so an empty, absent or whitespace-only title
+//! contributes neither itself nor a separator. The title is additionally kept
+//! under `metadata["title"]`, trimmed.
 //!
 //! This is not a matter of taste. BEIR's own evaluation code indexes the
 //! concatenation, and every published leaderboard figure is computed that way;
 //! indexing the text alone changes nDCG@10 on most BEIR datasets, which would
-//! make the M2 exit criterion (#33) irreproducible.
+//! make the M2 exit criterion (#33) irreproducible. `combined_text` therefore
+//! mirrors the reference's expression rather than paraphrasing it — see its
+//! documentation for the source and for what a paraphrase would cost.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
@@ -236,18 +238,18 @@ fn claim_id(
 fn read_corpus(path: &Path) -> Result<Vec<Document>, BenchmarkError> {
     let mut seen = BTreeSet::new();
     read_jsonl(path, |record: CorpusRecord, line| {
-        // Trimmed for the same reason every id on this reader is: a title of
-        // only whitespace is the *absence* of a title, and testing the raw
-        // string made `"   "` count as one — welding a separator plus its
-        // padding onto the indexed text, and storing blanks under
-        // `metadata["title"]`.
-        let title = record.title.unwrap_or_default().trim().to_string();
+        // The raw title goes into the concatenation, because that is the
+        // string BEIR builds; the trimmed one goes into the metadata, because
+        // that is ours to define. See `combined_text`.
+        let raw_title = record.title.unwrap_or_default();
+        let title = raw_title.trim();
         let mut metadata = BTreeMap::new();
-        // Only when non-empty: an empty title is the *absence* of a title, and
-        // storing "" would make absent and empty indistinguishable downstream
-        // while preserving nothing.
+        // Only when non-empty *after trimming*: an empty title is the absence
+        // of a title, storing "" would make absent and empty indistinguishable
+        // while preserving nothing, and a title of only whitespace is
+        // semantically absent — the same all-or-nothing rule the ids follow.
         if !title.is_empty() {
-            metadata.insert("title".to_string(), title.clone());
+            metadata.insert("title".to_string(), title.to_string());
         }
         // Trimmed for the same reason `read_qrels` trims: an id must be
         // treated identically wherever it appears, or a corpus id and the
@@ -258,19 +260,33 @@ fn read_corpus(path: &Path) -> Result<Vec<Document>, BenchmarkError> {
 
         Ok(Document {
             id: DocId::new(id),
-            text: combined_text(&title, &record.text),
+            text: combined_text(&raw_title, &record.text),
             metadata,
         })
     })
 }
 
 /// The title rule, in one place so it can be pinned by one test.
+///
+/// This mirrors the reference implementation's expression rather than
+/// paraphrasing it. BEIR concatenates in
+/// `beir/retrieval/models/util.py::extract_corpus_sentences`:
+///
+/// ```python
+/// (doc["title"] + sep + doc["text"]).strip()   # sep defaults to " "
+/// ```
+///
+/// So: join with one space unconditionally, then trim the whole result — do
+/// **not** special-case the empty title, and do not trim the parts. The join
+/// contributes the separator that the trim then removes when the title is
+/// empty, absent, or nothing but whitespace, which is why no branch is needed.
+///
+/// Written this way so that `Document.text` is byte-identical to the string
+/// BEIR indexes, rather than merely equivalent once a tokenizer has collapsed
+/// the whitespace. #33 compares against published figures; a claim that can be
+/// checked is worth more there than one that has to be argued.
 fn combined_text(title: &str, text: &str) -> String {
-    if title.is_empty() {
-        text.to_string()
-    } else {
-        format!("{title} {text}")
-    }
+    format!("{title} {text}").trim().to_string()
 }
 
 /// Reads the query set, keeping only the queries judged in the loaded split.

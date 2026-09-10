@@ -47,9 +47,32 @@ it discards the distinction the dataset went to the trouble of recording.
 `ragondin_types::Document` is `{ id, text, metadata }` and has no title field.
 BEIR datasets have one, and:
 
-> `Document.text` is set to **title, one space, then text**, omitting both the
-> space and the title when the title is empty, absent, or nothing but
-> whitespace. The title is additionally kept under `metadata["title"]`, trimmed.
+> `Document.text` is **title, one space, then text, with the whole result
+> trimmed** — so an empty, absent or whitespace-only title contributes neither
+> itself nor a separator. The title is additionally kept under
+> `metadata["title"]`, trimmed.
+
+`combined_text` **mirrors the reference implementation's expression rather than
+paraphrasing it**. BEIR concatenates in
+`beir/retrieval/models/util.py::extract_corpus_sentences`:
+
+```python
+(doc["title"] + sep + doc["text"]).strip()   # sep defaults to " "
+```
+
+Join with one space unconditionally, then trim the whole thing. Do not
+special-case the empty title and do not trim the parts: the separator the join
+always contributes is exactly what the trim then removes, which is why no
+branch is needed.
+
+The difference is not cosmetic even though no tokenizer can see it. Trimming
+the *title* first — the obvious reading of the rule as prose — collapses an
+interior whitespace run that BEIR preserves, so `Document.text` would stop being
+byte-identical to the string BEIR indexes and become merely equivalent.
+`document_text_matches_the_string_beir_would_index` pins the padded case for
+that reason. #33 compares against published figures, and a property that can be
+checked is worth more there than one that has to be argued from tokenizer
+behaviour.
 
 BEIR's own evaluation code indexes the concatenation, and **every published
 BEIR leaderboard number is computed that way**. Indexing the text alone changes
@@ -65,10 +88,10 @@ cases.
 is the absence of a title, and storing `""` would make the two
 indistinguishable while preserving nothing. Emptiness is judged **after
 trimming**, for the same reason ids are trimmed everywhere below: a title of
-nothing but whitespace is semantically absent, and testing the raw string made
-`"   "` count as a title — welding a separator plus its padding onto the text
-that gets indexed, which is the one string in this crate that moves the
-headline number.
+nothing but whitespace is semantically absent. This is our own decision, not a
+mirrored one — BEIR has no notion of per-document metadata to preserve a title
+in — which is why the raw title goes into the concatenation while the trimmed
+one goes here.
 
 ## BEIR's own `metadata` object is deliberately dropped
 

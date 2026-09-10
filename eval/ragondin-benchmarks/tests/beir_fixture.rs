@@ -858,10 +858,26 @@ fn a_whitespace_only_title_is_treated_as_absent() {
     let _ = fs::remove_dir_all(&root);
 }
 
-/// A title with surrounding whitespace keeps its content and loses the
-/// padding, so the concatenation has exactly one separating space.
+/// `Document.text` is byte-identical to the string BEIR indexes, padding and
+/// all — not merely equivalent once a tokenizer has collapsed the whitespace.
+///
+/// The reference builds it in `beir/retrieval/models/util.py`:
+///
+/// ```python
+/// (doc["title"] + sep + doc["text"]).strip()   # sep defaults to " "
+/// ```
+///
+/// A padded title is exactly where a paraphrase of that expression and the
+/// expression itself part company: BEIR strips only the ends of the joined
+/// string, so an interior run survives. Trimming the title first — the obvious
+/// reading of "title, one space, then text" — collapses it and quietly stops
+/// matching the reference, and nothing else in this suite would notice, since
+/// no tokenizer distinguishes the two. Hence this case.
+///
+/// `metadata["title"]` is a separate question: BEIR has no such concept, so it
+/// is ours to define, and it holds the title trimmed.
 #[test]
-fn a_padded_title_is_trimmed_before_the_concatenation() {
+fn document_text_matches_the_string_beir_would_index() {
     let root = write_dataset(
         "padded-title",
         "{\"_id\": \"d1\", \"title\": \"  The Title  \", \"text\": \"body\"}\n",
@@ -872,11 +888,33 @@ fn a_padded_title_is_trimmed_before_the_concatenation() {
     let benchmark = BeirAdapter::new(&root).load().expect("the dataset loads");
     let document = &benchmark.corpus()[0];
 
-    assert_eq!(document.text, "The Title body");
+    // ("  The Title  " + " " + "body").strip() == "The Title   body"
+    assert_eq!(document.text, "The Title   body");
     assert_eq!(
         document.metadata.get("title").map(String::as_str),
         Some("The Title")
     );
+
+    let _ = fs::remove_dir_all(&root);
+}
+
+/// The other half of the same expression: BEIR strips the whole concatenation,
+/// not just the title's side of it, so padding on the *text* goes too. This is
+/// also why `combined_text` needs no empty-title branch — the separator the
+/// join always contributes is precisely what the trim then removes.
+#[test]
+fn a_padded_text_is_stripped_the_way_beir_strips_it() {
+    let root = write_dataset(
+        "padded-text",
+        "{\"_id\": \"d1\", \"text\": \"  body  \"}\n",
+        "{\"_id\": \"q1\", \"text\": \"question\"}\n",
+        "query-id\tcorpus-id\tscore\nq1\td1\t1\n",
+    );
+
+    let benchmark = BeirAdapter::new(&root).load().expect("the dataset loads");
+
+    // ("" + " " + "  body  ").strip() == "body"
+    assert_eq!(benchmark.corpus()[0].text, "body");
 
     let _ = fs::remove_dir_all(&root);
 }
