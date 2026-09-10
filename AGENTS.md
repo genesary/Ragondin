@@ -35,6 +35,11 @@ just check-adr-index
 # Regenerate that index after changing an ADR's front-matter
 just gen-adr-index
 
+# The dependency graph: RustSec advisories, licences, duplicate versions, source
+# registries. Policy in deny.toml. Needs the version CI runs:
+# `cargo install cargo-deny --locked --version 0.20.2`
+just check-deny
+
 # The cross-reference map: one entity's neighbourhood, and every claim the code
 # contradicts. Advisory, and deliberately not part of `just check` (#102).
 just map <entity>
