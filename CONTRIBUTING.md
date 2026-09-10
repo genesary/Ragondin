@@ -176,6 +176,38 @@ work. That is a real gain in reviewability, and it carries a cost worth knowing
 
 - **Out of order, issues close silently wrong or not at all.** After merging any
   stacked PR, check that its issue actually closed, and close it by hand if not.
+- **Merging the parent closes the child.** On 2026-09-10, merging #124 deleted the
+  base branch of #126. GitHub retargeted #126 to `main` at `07:35:47Z` and closed
+  it **in the same second** — the timeline records
+  `automatic_base_change_succeeded` and `closed` one after the other. Withholding
+  `--delete-branch` is not the remedy: this repository merges with
+  `delete_branch_on_merge` set (`gh api repos/genesary/Ragondin --jq
+  '.delete_branch_on_merge'` returns `true`), so the base branch dies on merge
+  whatever the client passed. **Retarget the child yourself before merging the
+  parent** — `gh pr edit <child> --base main`, then merge. A child already based on
+  `main` cannot be caught by its base being deleted. Failing that, expect to
+  reopen the child straight away.
+- **Before merging any pull request, confirm nothing is based on its branch.**
+  `gh pr list --base <branch> --state open` must come back empty. The branch is
+  deleted on merge, so a non-empty result is the list of pull requests you are
+  about to close. That is the whole precaution, and it takes a second.
+- **A `mergeable` of `UNKNOWN` that never resolves means the PR is closed**, not
+  that GitHub is lagging: it does not compute mergeability for a closed pull
+  request, so `gh pr view <n> --json mergeable` will sit there forever. Query
+  `state` before you conclude anything from `mergeable`.
+- **Never force-push a branch whose pull request is closed.** Reopening is refused
+  permanently afterwards:
+
+  ```
+  gh pr reopen 126
+    GraphQL: Could not open the pull request. (reopenPullRequest)
+
+  gh api -X PATCH repos/genesary/Ragondin/pulls/126 -f state=open
+    HTTP 422: state cannot be changed. The ci/44-cargo-deny branch was force-pushed or recreated.
+  ```
+
+  The branch and the work on it are intact; the pull request number is not
+  recoverable. #126's work was re-filed as #127.
 
 A stack is still the right shape when two PRs genuinely build on each other. Just
 budget for the rebase and the body touch.
