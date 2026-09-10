@@ -23,8 +23,12 @@
 //! so the `serde` derives on the latter are for internal round-tripping, not
 //! for the wire.
 //!
-//! Not here yet, each owned by its own issue: content hashing,
-//! `PhysicalPipeline`, and the `Branch`/`Loop` control-flow nodes.
+//! Not here yet, each owned by its own issue: content hashing and the
+//! `Branch`/`Loop` control-flow nodes.
+//!
+//! `PhysicalPipeline` is not among them: it is not pending here, it will
+//! never be here. It holds `Box<dyn Trait>`, which INV-3 forbids this crate
+//! ("value types only"), so it lives downstream in `ragondin-engine`.
 //!
 //! See `ARCHITECTURE.md`.
 
