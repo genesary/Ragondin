@@ -206,13 +206,13 @@ fn kind_mismatch_expected_clause(expected: &Option<ValueKind>) -> String {
 /// when a variant arrives is the intended signal that a new refusal needs
 /// reporting.
 ///
-/// Three of these variants report a **defect upstream** rather than a
-/// condition to absorb — [`ExecError::KindMismatch`], [`ExecError::Cycle`] and
-/// [`ExecError::DanglingInput`] — and their messages say so.
-/// `ragondin_pipeline::validate` and [`plan_physical`] refuse the wiring each
-/// of them names, so a plan that came through both cannot raise them; a
-/// `LogicalPipeline` deserialized straight from a store or a wire is the shape
-/// that can.
+/// Four of these variants report a **defect upstream** rather than a
+/// condition to absorb — [`ExecError::KindMismatch`], [`ExecError::Cycle`],
+/// [`ExecError::DanglingInput`] and [`ExecError::DuplicateNodeIds`] — and
+/// their messages say so. `ragondin_pipeline::validate` refuses the shape each
+/// of them names, and [`plan_physical`] refuses the first as well, so a plan
+/// that came through both cannot raise them; a `LogicalPipeline` deserialized
+/// straight from a store or a wire is the shape that can.
 ///
 /// [`plan_physical`]: crate::plan_physical
 #[derive(Debug, thiserror::Error)]
@@ -318,7 +318,8 @@ pub enum ExecError {
         nodes: Vec<NodeId>,
     },
 
-    /// A per-call parameter is absent, or not of the kind the executor reads.
+    /// A per-call parameter is absent, of another kind than the executor
+    /// reads, or negative.
     ///
     /// The executor reads a node's per-call keys from its `Params` (§6.3) and
     /// **invents no default**: what a component does in the absence of a
@@ -329,7 +330,7 @@ pub enum ExecError {
         node.as_str(),
         param_found_clause(found)
     )]
-    MissingParam {
+    InvalidParam {
         /// The node whose parameter is missing or unusable.
         node: NodeId,
         /// The parameter's key.
@@ -352,6 +353,24 @@ pub enum ExecError {
         /// The nodes that never became ready, in the plan's canonical order.
         nodes: Vec<NodeId>,
     },
+
+    /// Several nodes of this plan share an id, so the scheduler can never
+    /// account for all of them.
+    ///
+    /// A defect upstream: `validate` rejects a duplicate id. The scheduler
+    /// tracks the ids it has run, and a plan holding more nodes than ids
+    /// stalls with every remaining node already counted as done — a stall
+    /// that is not a cycle, and is reported as what it is rather than as a
+    /// cycle over no nodes.
+    #[error(
+        "the ids {} each name more than one node of this plan — validation rejects a duplicate id, so a plan holding one did not come through it",
+        node_list(nodes)
+    )]
+    DuplicateNodeIds {
+        /// Each id that names more than one node, once, in the plan's
+        /// canonical order.
+        nodes: Vec<NodeId>,
+    },
 }
 
 /// Renders a node list for a message: `` `a`, `b`, `c` ``.
@@ -363,7 +382,7 @@ fn node_list(nodes: &[NodeId]) -> String {
         .join(", ")
 }
 
-/// The part of [`ExecError::MissingParam`]'s message that says what the node
+/// The part of [`ExecError::InvalidParam`]'s message that says what the node
 /// declared instead. A wrong *value* is named (a `top_k` of `-1` is worth
 /// reading back); a wrong *kind* is named by kind, since printing a whole
 /// list into an error message helps nobody.

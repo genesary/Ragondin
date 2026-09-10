@@ -40,7 +40,7 @@
 //! that configures the implementation, and the executor reads the half that
 //! varies per call. In M2 that half is one key — `top_k`, on a retriever and
 //! on a reranker — read as a [`ParamValue::Int`] and refused as
-//! [`ExecError::MissingParam`] when it is absent, of another kind, or
+//! [`ExecError::InvalidParam`] when it is absent, of another kind, or
 //! negative. **No default is invented here**: what a component does without a
 //! parameter is the component's to decide (§8.1), and a default applied here
 //! could only be a second, disagreeing copy of it. A fusion's `FusionParams`
@@ -236,6 +236,11 @@ fn is_ready(node: &PhysicalNode, table: &Table) -> bool {
 /// fault, while "not ready" is the shape a cycle shares with a node merely
 /// waiting behind one. Reporting the cycle first would misname a plan whose
 /// only defect is a typo in an id.
+///
+/// A stall with **no node remaining** is neither: `done` is a set of ids, so a
+/// plan whose nodes outnumber its ids can never reach its node count, and
+/// every node it holds is already counted. That is a duplicate id, reported
+/// as one rather than as a cycle over an empty list.
 fn stalled(plan: &PhysicalPipeline, table: &Table, done: &HashSet<&NodeId>) -> ExecError {
     let known: HashSet<&NodeId> = plan
         .nodes()
@@ -247,6 +252,12 @@ fn stalled(plan: &PhysicalPipeline, table: &Table, done: &HashSet<&NodeId>) -> E
         .iter()
         .filter(|node| !done.contains(node.logical().id()))
         .collect();
+
+    if remaining.is_empty() {
+        return ExecError::DuplicateNodeIds {
+            nodes: duplicate_ids(plan),
+        };
+    }
 
     for node in &remaining {
         for (port, input) in node.logical().inputs().iter().enumerate() {
@@ -268,6 +279,18 @@ fn stalled(plan: &PhysicalPipeline, table: &Table, done: &HashSet<&NodeId>) -> E
     }
 }
 
+/// Each id that names more than one node of `plan`, once, in canonical order.
+fn duplicate_ids(plan: &PhysicalPipeline) -> Vec<NodeId> {
+    let mut seen: HashSet<&NodeId> = HashSet::new();
+    let mut duplicates: Vec<NodeId> = Vec::new();
+    for id in plan.nodes().iter().map(|node| node.logical().id()) {
+        if !seen.insert(id) && !duplicates.contains(id) {
+            duplicates.push(id.clone());
+        }
+    }
+    duplicates
+}
+
 /// What this node is about to receive, in port order.
 ///
 /// Read before the call rather than after: a node that fails still records
@@ -287,9 +310,20 @@ fn summarize_inputs(node: &PhysicalNode, table: &Table) -> Vec<ValueSummary> {
 /// params from the node's own `Params`, and re-wraps the typed result. The
 /// match is on the node's **variant** and never on its implementation name
 /// (INV-7).
+///
+/// **Exhaustive over [`LogicalNode`], on purpose.** ADR-C16 chose a closed
+/// enum so that a kind added later turns every site that does not handle it
+/// into a compiler error; a match over the `(node, component)` pair with a
+/// catch-all arm would turn it into a runtime panic instead. So the variant is
+/// matched first and without a wildcard — a `LogicalNode` variant added in M3
+/// (#93) fails to compile here — and the component is destructured inside
+/// each arm, where the only other pairing is the one planning rules out.
 async fn call(node: &PhysicalNode, table: &Table) -> Result<NodeValue, ExecError> {
-    match (node.logical(), node.component()) {
-        (LogicalNode::Retriever(logical), ResolvedComponent::Retriever(component)) => {
+    match node.logical() {
+        LogicalNode::Retriever(logical) => {
+            let ResolvedComponent::Retriever(component) = node.component() else {
+                unreachable!("planning resolves a Retriever node through the retriever registry")
+            };
             let query = query_at(&logical.id, &logical.inputs, 0, table)?;
             let params = RetrieveParams::new(per_call_top_k(&logical.id, &logical.params)?);
             let chunks = component
@@ -298,7 +332,10 @@ async fn call(node: &PhysicalNode, table: &Table) -> Result<NodeValue, ExecError
                 .map_err(|source| component_failed(&logical.id, source))?;
             Ok(NodeValue::Chunks(chunks))
         }
-        (LogicalNode::Fusion(logical), ResolvedComponent::Fusion(component)) => {
+        LogicalNode::Fusion(logical) => {
+            let ResolvedComponent::Fusion(component) = node.component() else {
+                unreachable!("planning resolves a Fusion node through the fusion registry")
+            };
             // Variadic: every port is a leg, and the legs reach the component
             // in the order the pipeline wires them, which `Fusion::fuse`'s
             // contract requires.
@@ -312,7 +349,10 @@ async fn call(node: &PhysicalNode, table: &Table) -> Result<NodeValue, ExecError
                 .map_err(|source| component_failed(&logical.id, source))?;
             Ok(NodeValue::Chunks(chunks))
         }
-        (LogicalNode::Reranker(logical), ResolvedComponent::Reranker(component)) => {
+        LogicalNode::Reranker(logical) => {
+            let ResolvedComponent::Reranker(component) = node.component() else {
+                unreachable!("planning resolves a Reranker node through the reranker registry")
+            };
             let query = query_at(&logical.id, &logical.inputs, 0, table)?;
             let chunks = chunks_at(&logical.id, &logical.inputs, 1, table)?.to_vec();
             let params = RerankParams::new(per_call_top_k(&logical.id, &logical.params)?);
@@ -322,10 +362,12 @@ async fn call(node: &PhysicalNode, table: &Table) -> Result<NodeValue, ExecError
                 .map_err(|source| component_failed(&logical.id, source))?;
             Ok(NodeValue::Chunks(reranked))
         }
-        // `PhysicalNode` is built in one place, which pairs each node with a
-        // component resolved from that node's own variant, and every
-        // `Extension` is refused before that. No other pairing exists.
-        _ => unreachable!("planning pairs every node with a component of its own family"),
+        // `PhysicalNode` is built in one place, and `plan_physical` refuses
+        // every `Extension` before it builds any — so no plan holds one, and
+        // `ResolvedComponent` has no variant it could carry.
+        LogicalNode::Extension(_) => {
+            unreachable!("`plan_physical` refuses every Extension node, so no plan holds one")
+        }
     }
 }
 
@@ -403,7 +445,7 @@ fn value_of<'t>(producer: &NodeId, table: &'t Table) -> &'t NodeValue {
 /// rule, including why no default is applied here.
 fn per_call_top_k(node: &NodeId, params: &Params) -> Result<usize, ExecError> {
     let found = params.get(TOP_K);
-    let refuse = || ExecError::MissingParam {
+    let refuse = || ExecError::InvalidParam {
         node: node.clone(),
         key: TOP_K,
         found: found.cloned(),
@@ -416,6 +458,20 @@ fn per_call_top_k(node: &NodeId, params: &Params) -> Result<usize, ExecError> {
         _ => Err(refuse()),
     }
 }
+
+// D-11, as `context.rs` applies it to `EngineContext`: the harness (#29) runs
+// two plans from one context across tasks, so what `execute` takes and returns
+// must cross a `tokio::spawn` boundary. Asserted next to what it constrains
+// rather than in a test whose deletion would remove it silently. A
+// `PhysicalPipeline` is `Send + Sync` because every contract trait is; an
+// `ExecError` because `ComponentError` is.
+const _: fn() = || {
+    fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<Engine>();
+    assert_send_sync::<PhysicalPipeline>();
+    assert_send_sync::<ExecutionTrace>();
+    assert_send_sync::<ExecError>();
+};
 
 #[cfg(test)]
 mod tests {
@@ -1083,6 +1139,65 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_plan_with_two_nodes_under_one_id_is_refused_as_a_duplicate() {
+        // `validate` rejects a duplicate id, so only the forged door reaches
+        // this. The scheduler counts *ids* it has run, and a plan with more
+        // nodes than ids can never reach its node count — the shape a cycle
+        // report would misname, with nothing left to list. `leg` is consumed
+        // so that the plan has one terminal and the stall is reached at all.
+        let plan = plan_forged(
+            r#"{"inputs":["question"],"nodes":[
+                {"Fusion":{"id":"fuse","implementation":"rrf","inputs":["leg"],"params":{}}},
+                {"Retriever":{"id":"leg","implementation":"counting","inputs":["question"],"params":{"top_k":{"Int":1}}}},
+                {"Retriever":{"id":"leg","implementation":"counting","inputs":["question"],"params":{"top_k":{"Int":1}}}}
+            ]}"#,
+        );
+
+        let (output, trace) = Engine::new().execute(&plan, query()).await;
+
+        let Err(err) = output else {
+            panic!("two nodes share the id `leg`")
+        };
+        assert!(
+            matches!(
+                &err,
+                ExecError::DuplicateNodeIds { nodes } if nodes.len() == 1 && nodes[0].as_str() == "leg"
+            ),
+            "expected DuplicateNodeIds naming `leg` once, got {err:?}"
+        );
+        assert!(
+            err.to_string().contains("`leg`") && !err.to_string().contains("  "),
+            "the message names the id and renders cleanly: {err}"
+        );
+        assert_eq!(
+            traced(&trace),
+            vec!["leg", "fuse"],
+            "the nodes that ran before the stall are still inspectable"
+        );
+    }
+
+    #[test]
+    fn the_execute_future_is_send() {
+        // The harness (#29) drives two runs from one context across tasks, so
+        // the future `execute` returns must cross a `tokio::spawn` boundary.
+        // Checked here rather than at that boundary in another crate, the way
+        // `context.rs` checks `EngineContext` (D-11).
+        fn assert_send<F: std::future::Future + Send>(_: &F) {}
+        let engine = Engine::new();
+        let plan = plan(vec![raw_top_k(
+            "leg",
+            "retriever",
+            "counting",
+            &["question"],
+            RawParamValue::Int(1),
+        )]);
+
+        let future = engine.execute(&plan, query());
+
+        assert_send(&future);
+    }
+
+    #[tokio::test]
     async fn a_node_with_too_few_inputs_is_refused_with_the_port_it_lacks() {
         // Arity is deliberately unchecked at validation (ADR-C18) and left
         // here: a retriever declaring no input validates and plans today.
@@ -1155,10 +1270,10 @@ mod tests {
         assert!(
             matches!(
                 &err,
-                ExecError::MissingParam { node, key: "top_k", found: None }
+                ExecError::InvalidParam { node, key: "top_k", found: None }
                     if node.as_str() == "leg"
             ),
-            "expected MissingParam, got {err:?}"
+            "expected InvalidParam, got {err:?}"
         );
     }
 
@@ -1180,10 +1295,10 @@ mod tests {
         assert!(
             matches!(
                 &err,
-                ExecError::MissingParam { node, key: "top_k", found: Some(_) }
+                ExecError::InvalidParam { node, key: "top_k", found: Some(_) }
                     if node.as_str() == "leg"
             ),
-            "expected MissingParam naming what it found, got {err:?}"
+            "expected InvalidParam naming what it found, got {err:?}"
         );
         assert!(
             err.to_string().contains("a string"),
@@ -1209,8 +1324,8 @@ mod tests {
             panic!("a negative top_k is not a count")
         };
         assert!(
-            matches!(&err, ExecError::MissingParam { key: "top_k", .. }),
-            "expected MissingParam, got {err:?}"
+            matches!(&err, ExecError::InvalidParam { key: "top_k", .. }),
+            "expected InvalidParam, got {err:?}"
         );
     }
 
