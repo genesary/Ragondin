@@ -1,0 +1,278 @@
+#!/usr/bin/env python3
+"""Regenerate the fixtures in this directory.
+
+    python3 components/ragondin-embedder-onnx/tests/fixtures/generate.py
+
+The tests need a real ONNX graph and a real tokenizer, and #20 forbids fetching
+a model at build time. So the fixtures are committed, and this script is how
+they came to be: the alternative is five opaque binaries nobody can regenerate
+or explain. Everything here is fixed-seed, so a rerun reproduces the committed
+bytes.
+
+The graphs are deliberately trivial -- a token-embedding table and a Gather --
+because what the tests exercise is the component around the model: tokenization,
+prefixes, padding, batching, mean pooling and normalization. A real sentence
+transformer would test ONNX Runtime instead, slowly.
+
+Requires `onnx` and `numpy`.
+"""
+
+import json
+from pathlib import Path
+
+import numpy as np
+import onnx
+from onnx import TensorProto, helper, numpy_helper
+
+HERE = Path(__file__).parent
+
+HIDDEN = 8
+OPSET = 13
+
+# `[UNK]` first so that an out-of-vocabulary word still embeds rather than
+# failing, and `[PAD]` second so that the component's default pad id of 0 is
+# *not* silently the same token as `[UNK]`.
+VOCAB = [
+    "[UNK]",
+    "[PAD]",
+    ":",
+    "query",
+    "passage",
+    "a",
+    "an",
+    "the",
+    "short",
+    "long",
+    "of",
+    "rather",
+    "more",
+    "words",
+    "than",
+    "first",
+    "second",
+    "one",
+    "another",
+    "entirely",
+    "text",
+    "both",
+    "roles",
+    "are",
+    "asked",
+    "about",
+    "cat",
+    "sat",
+    "on",
+    "mat",
+    "dog",
+    "alpha",
+    "beta",
+    "gamma",
+    "delta",
+    "epsilon",
+    "zeta",
+    "eta",
+]
+
+
+def token_embeddings() -> np.ndarray:
+    """The token embedding table, `[vocab, hidden]`.
+
+    Fixed seed, and deliberately not centred on zero: a table symmetric about
+    the origin makes mean pooling of a long sequence tend to the zero vector,
+    which would turn the normalization guard into the common case rather than
+    the edge case it is.
+    """
+    rng = np.random.RandomState(20)
+    return (rng.rand(len(VOCAB), HIDDEN).astype(np.float32) + 0.25) * 0.5
+
+
+def write(model: onnx.ModelProto, name: str) -> None:
+    onnx.checker.check_model(model)
+    path = HERE / name
+    path.write_bytes(model.SerializeToString())
+    print(f"wrote {path.relative_to(Path.cwd()) if path.is_relative_to(Path.cwd()) else path}")
+
+
+def tensor(name: str, elem_type: int, shape: list) -> onnx.ValueInfoProto:
+    return helper.make_tensor_value_info(name, elem_type, shape)
+
+
+def ids_input(name: str) -> onnx.ValueInfoProto:
+    return tensor(name, TensorProto.INT64, ["batch", "sequence"])
+
+
+def hidden_output(name: str) -> onnx.ValueInfoProto:
+    return tensor(name, TensorProto.FLOAT, ["batch", "sequence", HIDDEN])
+
+
+def model_of(graph: onnx.GraphProto) -> onnx.ModelProto:
+    return helper.make_model(graph, opset_imports=[helper.make_opsetid("", OPSET)])
+
+
+def tiny_embedder() -> onnx.ModelProto:
+    """The ordinary case: two inputs, one `[batch, sequence, hidden]` output.
+
+    `attention_mask` is declared and unused. That is on purpose -- the mask is
+    what the component pools with, not something this stand-in model needs --
+    and it also pins that a declared-but-unconsumed input is still fed.
+    """
+    weights = numpy_helper.from_array(token_embeddings(), name="token_embeddings")
+    gather = helper.make_node(
+        "Gather", ["token_embeddings", "input_ids"], ["last_hidden_state"], axis=0
+    )
+    graph = helper.make_graph(
+        [gather],
+        "tiny_embedder",
+        [ids_input("input_ids"), ids_input("attention_mask")],
+        [hidden_output("last_hidden_state")],
+        [weights],
+    )
+    return model_of(graph)
+
+
+def tiny_embedder_token_types() -> onnx.ModelProto:
+    """A model that also demands `token_type_ids`, as a BERT export does.
+
+    Segment 0 contributes the zero vector and segment 1 contributes a large
+    one, so this model answers *identically to* `tiny-embedder.onnx` exactly
+    when the component supplies zeros -- which is what the test asserts.
+    """
+    segments = np.zeros((2, HIDDEN), dtype=np.float32)
+    segments[1, :] = 100.0
+
+    weights = numpy_helper.from_array(token_embeddings(), name="token_embeddings")
+    segment_weights = numpy_helper.from_array(segments, name="segment_embeddings")
+    nodes = [
+        helper.make_node("Gather", ["token_embeddings", "input_ids"], ["tokens"], axis=0),
+        helper.make_node(
+            "Gather", ["segment_embeddings", "token_type_ids"], ["segments"], axis=0
+        ),
+        helper.make_node("Add", ["tokens", "segments"], ["last_hidden_state"]),
+    ]
+    graph = helper.make_graph(
+        nodes,
+        "tiny_embedder_token_types",
+        [ids_input("input_ids"), ids_input("attention_mask"), ids_input("token_type_ids")],
+        [hidden_output("last_hidden_state")],
+        [weights, segment_weights],
+    )
+    return model_of(graph)
+
+
+def tiny_embedder_unknown_input() -> onnx.ModelProto:
+    """A model demanding an input the component has no value for."""
+    weights = numpy_helper.from_array(token_embeddings(), name="token_embeddings")
+    gather = helper.make_node(
+        "Gather", ["token_embeddings", "input_ids"], ["gathered"], axis=0
+    )
+    scale = helper.make_node("Mul", ["gathered", "temperature"], ["last_hidden_state"])
+    graph = helper.make_graph(
+        [gather, scale],
+        "tiny_embedder_unknown_input",
+        [
+            ids_input("input_ids"),
+            ids_input("attention_mask"),
+            tensor("temperature", TensorProto.FLOAT, [1]),
+        ],
+        [hidden_output("last_hidden_state")],
+        [weights],
+    )
+    return model_of(graph)
+
+
+def tiny_embedder_no_ids() -> onnx.ModelProto:
+    """A model that never asks for `input_ids`, and so encodes no text.
+
+    Rejected at construction: every input it declares is one the component can
+    fill, so the unknown-input check above passes it, and without this second
+    check it would load happily and return one constant vector per call.
+    """
+    weights = numpy_helper.from_array(token_embeddings(), name="token_embeddings")
+    gather = helper.make_node(
+        "Gather", ["token_embeddings", "attention_mask"], ["last_hidden_state"], axis=0
+    )
+    graph = helper.make_graph(
+        [gather],
+        "tiny_embedder_no_ids",
+        [ids_input("attention_mask")],
+        [hidden_output("last_hidden_state")],
+        [weights],
+    )
+    return model_of(graph)
+
+
+def tiny_embedder_pooled() -> onnx.ModelProto:
+    """A model that pools for itself, so its output is `[batch, hidden]`.
+
+    Rejected by the component, which pools with the attention mask and so needs
+    per-token hidden states. This fixture is what makes that rejection a test
+    rather than a claim.
+    """
+    weights = numpy_helper.from_array(token_embeddings(), name="token_embeddings")
+    nodes = [
+        helper.make_node("Gather", ["token_embeddings", "input_ids"], ["tokens"], axis=0),
+        helper.make_node("ReduceMean", ["tokens"], ["pooled"], axes=[1], keepdims=0),
+    ]
+    graph = helper.make_graph(
+        nodes,
+        "tiny_embedder_pooled",
+        [ids_input("input_ids"), ids_input("attention_mask")],
+        [tensor("pooled", TensorProto.FLOAT, ["batch", HIDDEN])],
+        [weights],
+    )
+    return model_of(graph)
+
+
+def tokenizer() -> dict:
+    """A WordPiece tokenizer over `VOCAB`, serialized as `tokenizer.json`.
+
+    Lowercasing and whitespace/punctuation splitting, and **no post-processor**:
+    nothing here adds `[CLS]` or `[SEP]`, so a text of no words tokenizes to no
+    tokens. That is the empty-sequence case the component has to survive, and a
+    fixture that quietly injected special tokens would hide it.
+    """
+    return {
+        "version": "1.0",
+        "truncation": None,
+        "padding": None,
+        "added_tokens": [
+            {
+                "id": index,
+                "content": token,
+                "single_word": False,
+                "lstrip": False,
+                "rstrip": False,
+                "normalized": False,
+                "special": True,
+            }
+            for index, token in enumerate(VOCAB)
+            if token.startswith("[")
+        ],
+        "normalizer": {"type": "Lowercase"},
+        "pre_tokenizer": {"type": "Whitespace"},
+        "post_processor": None,
+        "decoder": None,
+        "model": {
+            "type": "WordPiece",
+            "unk_token": "[UNK]",
+            "continuing_subword_prefix": "##",
+            "max_input_chars_per_word": 100,
+            "vocab": {token: index for index, token in enumerate(VOCAB)},
+        },
+    }
+
+
+def main() -> None:
+    write(tiny_embedder(), "tiny-embedder.onnx")
+    write(tiny_embedder_token_types(), "tiny-embedder-token-types.onnx")
+    write(tiny_embedder_unknown_input(), "tiny-embedder-unknown-input.onnx")
+    write(tiny_embedder_no_ids(), "tiny-embedder-no-ids.onnx")
+    write(tiny_embedder_pooled(), "tiny-embedder-pooled.onnx")
+
+    path = HERE / "tokenizer.json"
+    path.write_text(json.dumps(tokenizer(), indent=1, ensure_ascii=False) + "\n")
+    print(f"wrote {path}")
+
+
+if __name__ == "__main__":
+    main()
