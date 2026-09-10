@@ -47,13 +47,25 @@ component is a gRPC service honouring the mirror protobuf in `ragondin-proto`.
   concurrent queries, and it cannot tell `Local` from `Remote`. Each trait
   therefore has a test coercing a stub to `Box<dyn _>` and calling **through
   the vtable** — constructing one is not enough to prove the property.
-- **Every trait method takes a params struct, and every params struct is
-  `#[non_exhaustive]` with a constructor.** One rule, no exceptions — including
-  the structs that are empty today (`FusionParams`). Adding a
-  *field* is additive; changing a method's *arity* breaks every implementation
-  in and out of the repository, third-party `Remote` services included, which
-  is the contribution funnel ADR-3 exists to protect. The uniformity is the
-  point: an exception is where the next knob will land.
+- **Every trait method takes a params struct, with one exception, and every
+  params struct is `#[non_exhaustive]` with a constructor.** One rule, and one
+  exception. Every trait method takes a params struct — including where it is
+  empty today (`FusionParams`) — except `VectorStore::upsert`, which takes
+  `entries` and no params struct at all. Adding a *field* is additive; changing
+  a method's *arity* breaks every implementation in and out of the repository,
+  third-party `Remote` services included, which is the contribution funnel
+  ADR-3 exists to protect. The uniformity is the point: an exception is where
+  the next knob will land.
+
+  That is what this exception costs. The first per-call knob `upsert` needs — a
+  namespace, a consistency level, a write hint — cannot arrive as a field:
+  there is no *params* struct to put it in, and `EmbeddedChunk` is not
+  `#[non_exhaustive]` (below) nor per-call. It arrives as a new argument, which
+  is the arity break the rule exists to prevent; a second, defaulted method
+  would avoid the break only by letting every implementation ignore the knob in
+  silence. Nothing forces that today, and closing the gap pre-emptively *is*
+  that break, on an INV-1 boundary: `upsert` gains an `UpsertParams` as a
+  deliberate, versioned decision, or not at all.
 
   This is the *opposite* of `ragondin-pipeline`'s recorded choice, deliberately.
   There, an exhaustive `match` that stops compiling is the intended signal that
