@@ -9,8 +9,10 @@ rust-version.workspace = true
 
 # A component is a leaf of the dependency graph (INV-5): the contract it
 # implements and the value types it moves, and nothing else in the workspace.
-# In particular neither the embedder (#20) nor the store (#22, #24) it is built
-# from: both arrive as trait objects, chosen by the composition root.
+# In particular neither the embedder nor the store it is built from — naming
+# `ragondin-store-memory` here, or `ragondin-embedder-onnx` when it lands, would
+# make one component depend on another: both arrive as trait objects, chosen by
+# the composition root.
 [dependencies]
 ragondin-contracts = { workspace = true }
 ragondin-types = { workspace = true }
