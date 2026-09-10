@@ -1,8 +1,9 @@
 # components/
 
 One crate per component implementation. `ragondin-retriever-bm25` (in-process
-BM25 over tantivy) is here; `ragondin-embedder-onnx`, `ragondin-store-qdrant` and
-the rest arrive in later issues.
+BM25 over tantivy) and `ragondin-store-memory` (an exact brute-force vector
+store) are here; `ragondin-embedder-onnx`, `ragondin-store-qdrant` and the rest
+arrive in later issues.
 
 ## What a component crate is
 

@@ -7,6 +7,7 @@ members = [
     "wire/ragondin-proto",
     "wire/ragondin-remote",
     "engine/ragondin-engine",
+    "components/ragondin-store-memory",
     "eval/ragondin-metrics",
     "eval/ragondin-benchmarks",
     "eval/ragondin-harness",
@@ -41,6 +42,7 @@ ragondin-proto = { path = "wire/ragondin-proto" }
 ragondin-remote = { path = "wire/ragondin-remote" }
 ragondin-engine = { path = "engine/ragondin-engine" }
 ragondin-retriever-bm25 = { path = "components/ragondin-retriever-bm25" }
+ragondin-store-memory = { path = "components/ragondin-store-memory" }
 ragondin-metrics = { path = "eval/ragondin-metrics" }
 ragondin-benchmarks = { path = "eval/ragondin-benchmarks" }
 ragondin-harness = { path = "eval/ragondin-harness" }
