@@ -46,10 +46,10 @@ A scan for `derive(Serialize)` on the IR types would NOT be that check: the
 logical node types carry those derives deliberately, for internal round-tripping
 rather than for the wire, as `node.rs` and `ARCHITECTURE.md` both state.
 
-The dependency checks are written so they are correct BOTH now (while
-`components/` is empty) and
-the day a component crate appears: it discovers component crates from the
-workspace manifest rather than hard-coding a list.
+The dependency checks were written before the first component crate existed, so
+they discover component crates from the workspace manifest rather than
+hard-coding a list. `components/` now holds real crates, and the same code walks
+them.
 
 Run via `just check-invariants`. Exit code 0 = all invariants hold; 1 = a
 violation (the message names the invariant and explains why the build failed).
@@ -260,9 +260,9 @@ def check_inv6(md: dict, pkgs_by_id: dict, edges: dict):
 
 
 # --- INV-11 source scan ----------------------------------------------------
-# `components/` is empty today, so this scan is written to be correct the day the
-# first component lands rather than to describe what is there now — the same
-# property `check_inv5` was written for.
+# Written before the first component landed, and so written to describe no
+# particular crate — the same property `check_inv5` was written for. It now walks
+# the real crates under `components/`.
 
 COMMENTS = re.compile(r"//[^\n]*|/\*.*?\*/", re.S)
 # An `impl … for` header. Bounded and non-greedy so a stray `impl` cannot swallow
