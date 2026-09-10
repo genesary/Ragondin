@@ -78,6 +78,28 @@ impl NodeId {
 /// in sorted order regardless of insertion order. Canonicalizing the *values*
 /// is a separate obligation, discharged as follows.
 ///
+/// # The grammar
+///
+/// A parameter value is `String | Int | Float | Bool | List`, and those five
+/// are the whole grammar (ADR-C22). Two shapes a configuration might reach for
+/// are rejected, for different reasons and with different lifetimes:
+///
+/// - A **nested map** — a metadata filter, say — is rejected *for now*, not
+///   forever. This enum is extensible by design, so the `Map` variant a real
+///   configuration eventually demands is additive on this boundary rather than
+///   breaking, and it waits for that demand rather than being guessed at here.
+///   Additive here only: the wire counterpart still bumps its schema version,
+///   and the content hash still owes a nested value a canonical ordering.
+/// - A **null** is rejected permanently. It means *absent*, which [`Params`]
+///   already expresses by omitting the key, and two spellings of one
+///   configuration on a content-addressed boundary (INV-8) is a trap rather
+///   than a convenience.
+///
+/// This enum carries no `#[non_exhaustive]` today. ADR-C22 decides that it
+/// should — the attribute, and the diagnostic that names a refused parameter's
+/// key, land with that decision's implementation.
+/// Tracked as #178.
+///
 /// # The float contract
 ///
 /// [`ParamValue::Float`] holds an IEEE-754 double, and **only finite values are
