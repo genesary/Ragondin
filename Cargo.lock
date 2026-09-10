@@ -569,7 +569,6 @@ name = "ragondin-contracts"
 version = "0.0.0"
 dependencies = [
  "async-trait",
- "ragondin-pipeline",
  "ragondin-types",
  "thiserror",
  "tokio",
