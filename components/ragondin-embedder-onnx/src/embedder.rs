@@ -172,6 +172,10 @@ pub enum EmbedderError {
     ),
 
     /// A tensor could not be built, or the model failed to run.
+    ///
+    /// Not the variant for a model whose output this component cannot pool:
+    /// the three below say what is wrong with such an output, because "the
+    /// model failed to run" is false of a model that ran and answered.
     #[error("the model failed to run")]
     Inference(
         /// What ONNX Runtime said about it.
@@ -179,15 +183,30 @@ pub enum EmbedderError {
         ort::Error,
     ),
 
-    /// The model returned something other than `[batch, sequence, hidden]`
-    /// float32.
+    /// The model produced no output at all.
+    #[error("the model returned no output to pool")]
+    NoOutput,
+
+    /// The model's first output is not float32.
+    ///
+    /// A quantized export shipping float16 hidden states is the ordinary way
+    /// to arrive here, and it is a different fact from the model failing: it
+    /// loaded, it ran, and what it returned is not what this component pools.
+    #[error("the model's first output is not float32, which is what mask pooling reads")]
+    OutputNotFloat32(
+        /// What ONNX Runtime said when the extraction was attempted.
+        #[source]
+        ort::Error,
+    ),
+
+    /// The model's first output is not `[batch, sequence, hidden]`.
     ///
     /// Pooling is over the sequence axis with the attention mask, so a model
     /// that pools for itself — returning `[batch, hidden]` — cannot be driven
     /// by this component even though it loads.
     #[error(
         "the model's first output is {shape:?}, where mask pooling needs \
-         [batch, sequence, hidden] float32"
+         [batch, sequence, hidden]"
     )]
     UnexpectedOutput {
         /// The shape that came back.
@@ -200,6 +219,22 @@ pub enum EmbedderError {
         /// How many texts went in.
         rows: usize,
         /// How many rows came back.
+        returned: usize,
+    },
+
+    /// The model answered a padded batch of one width with a sequence axis of
+    /// another.
+    ///
+    /// Pooling reads position `n` of the output against position `n` of the
+    /// mask that was fed, so the two axes have to be the same length. A graph
+    /// that strips a `[CLS]` for itself is the ordinary way they differ, and
+    /// pooling one against the other reads either out of bounds or into the
+    /// next row.
+    #[error("the model answered a batch {width} wide with a sequence axis of {returned}")]
+    SequenceMismatch {
+        /// How wide the padded batch that was fed is.
+        width: usize,
+        /// How long the sequence axis that came back is.
         returned: usize,
     },
 
@@ -358,20 +393,33 @@ impl OnnxEmbedder {
 
         let mut session = self.session.lock().map_err(|_| EmbedderError::Poisoned)?;
         let outputs = session.run(inputs).map_err(EmbedderError::Inference)?;
-        let (dims, hidden_states) = outputs[0]
+        // The first output, by position rather than by name: `last_hidden_state`
+        // is the convention, not a rule, and a model free to name it otherwise
+        // is not free to reorder it.
+        let mut values = outputs.values();
+        let first = values.next().ok_or(EmbedderError::NoOutput)?;
+        let (dims, hidden_states) = first
             .try_extract_tensor::<f32>()
-            .map_err(EmbedderError::Inference)?;
+            .map_err(EmbedderError::OutputNotFloat32)?;
 
-        let [returned, _, dim] = dims[..] else {
+        // Every axis pooling indexes by is checked here, and none is taken on
+        // trust. The two mismatches below are what a shape *declaration* cannot
+        // settle: both axes are dynamic in the graph, so they are knowable only
+        // from the tensor in hand.
+        let [batch, sequence, hidden] = dims[..] else {
             return Err(EmbedderError::UnexpectedOutput {
                 shape: dims.to_vec(),
             });
         };
-        let returned = returned.max(0) as usize;
+        let returned = batch.max(0) as usize;
         if returned != rows {
             return Err(EmbedderError::BatchMismatch { rows, returned });
         }
-        let dim = dim.max(0) as usize;
+        let returned = sequence.max(0) as usize;
+        if returned != width {
+            return Err(EmbedderError::SequenceMismatch { width, returned });
+        }
+        let dim = hidden.max(0) as usize;
 
         Ok((0..rows)
             .map(|row| {

@@ -83,6 +83,22 @@ the whole of the crate.
   to arise here. `EmbedderError` is boxed inside that variant, and its
   in-process fidelity is what lets a `Local` caller walk `source` back to the
   model or the tokenizer.
+- **Determinism is claimed per machine, and the suite proves less than that.**
+  The same text embeds to the same vector bit for bit — that is what
+  `run_id`'s `model_hashes` (`docs/system-architecture.md` §7.1) needs of an
+  embedder, and it is tested repeatedly and across a fresh model load. Two
+  limits are worth stating rather than discovering. The fixture graph is a
+  `Gather`, so it performs **no floating-point reduction**: every float
+  operation the suite exercises is this crate's own arithmetic, and ONNX
+  Runtime's determinism is assumed, not tested. And the session is built with
+  ONNX Runtime's default intra-op threading, which follows the host's core
+  count, so a real model's reduction order — and its last bits — can differ
+  between a CI runner and a workstation. Pinning the thread count would fix
+  that, and would also cap throughput for a corpus-embedding run; it is not
+  configurable here because nothing has yet needed to choose, and inventing the
+  knob before a bench asks for it would be configuration nobody sets. What is
+  *not* left implicit is the claim: reproducible on one machine, not asserted
+  across two.
 - **What can be checked at construction is.** That both files load, that the
   model declares no input this component cannot supply, and that it declares
   `input_ids` at all. ONNX Runtime reports a missing input per call, which would
@@ -98,23 +114,39 @@ exported from. A model declaring anything else is refused rather than fed a
 guess — a position id it does not derive itself, a cached key, a temperature —
 because the guess would run and return numbers.
 
-The output taken is the **first** one, and it must be `[batch, sequence,
-hidden]` float32. A model that pools for itself returns `[batch, hidden]` and is
-refused: it loads, and the rank is only knowable from a real tensor, so that
-refusal is a call-time failure. Supporting it would mean trusting *its* pooling,
-which is a different component's behaviour under one component's name.
+The output taken is the **first** one — by position, since
+`last_hidden_state` is a convention rather than a rule — and it must be `[batch,
+sequence, hidden]` float32.
+
+**Every axis pooling indexes by is checked, and none is taken on trust**, because
+the graph's declaration cannot settle any of them: batch and sequence are dynamic
+axes, so they are knowable only from the tensor in hand, and a mismatch is
+therefore a call-time failure rather than something the load could have caught.
+
+- **Rank.** A model that pools for itself returns `[batch, hidden]` and is
+  refused. Supporting it would mean trusting *its* pooling, which is a different
+  component's behaviour under one component's name.
+- **The batch axis**, against the number of texts fed.
+- **The sequence axis**, against the width the padded batch was built to.
+  Pooling reads position `n` of the output against position `n` of the mask, so
+  a graph that strips its own `[CLS]` — one token shorter out than in — must be
+  refused rather than pooled: indexing the output by the width that was fed
+  reads past the end of a short answer, and into the next row of a long one.
+- **The element type.** A quantized export shipping float16 hidden states is
+  refused *as a dtype*, in its own variant. It loaded and it ran, so reporting
+  it as a failure to run would accuse the wrong thing.
 
 ## The fixtures
 
-`tests/fixtures/` holds five tiny ONNX graphs and one `tokenizer.json`, together
-under 10 kB, and `tests/fixtures/generate.py` regenerates all of them from a
-fixed seed. #20 forbids fetching a model at build time, so they are committed;
-the generator is committed with them because five opaque binaries are not a
-fixture, they are a liability.
+`tests/fixtures/` holds seven tiny ONNX graphs and one `tokenizer.json`,
+together under 12 kB, and `tests/fixtures/generate.py` regenerates all of them
+from a fixed seed. No model is fetched at build time — the rule this crate was
+created under, in #20 — so they are committed; the generator is committed with
+them because seven opaque binaries are not a fixture, they are a liability.
 
 The graphs are deliberately trivial — an embedding table and a `Gather`. What
 the tests exercise is the component *around* the model: prefixes, truncation,
-padding, batching, pooling, normalization, and the four ways a model can be one
+padding, batching, pooling, normalization, and the six ways a model can be one
 this component cannot drive. A real sentence transformer would test ONNX Runtime
 instead, slowly, and a failure would accuse the wrong code.
 

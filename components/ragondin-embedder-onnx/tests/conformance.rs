@@ -87,6 +87,13 @@ async fn a_symmetric_configuration_is_conformant() {
 /// `run_id` is content-addressed over `model_hashes`
 /// (`docs/system-architecture.md` §7.1), so two runs that agree on the model
 /// must agree on its output or the address names two different things.
+///
+/// What this pins is **this crate's** arithmetic — prefixing, padding, pooling,
+/// normalization — and not ONNX Runtime's. The fixture graph is a `Gather`, so
+/// it performs no floating-point reduction at all; every float operation under
+/// test here is one of ours. A real model's determinism is a property of ONNX
+/// Runtime and of the thread count it runs under, recorded in `ARCHITECTURE.md`
+/// rather than claimed by this test.
 #[tokio::test]
 async fn the_same_text_embeds_identically_every_time() {
     let one = embedder();
@@ -344,8 +351,82 @@ async fn a_model_whose_output_is_already_pooled_is_refused() {
         .expect_err("a two-dimensional output cannot be mask-pooled");
 
     assert!(
-        matches!(error, ComponentError::Backend(_)),
-        "expected a backend failure, got {error:?}"
+        matches!(
+            backend_error(&error),
+            EmbedderError::UnexpectedOutput { .. }
+        ),
+        "expected UnexpectedOutput, got {error:?}"
+    );
+}
+
+/// The failure `ComponentError::Backend` is boxed around, recovered by its
+/// concrete type — which is the fidelity that variant documents as existing
+/// in-process and not over the wire.
+fn backend_error(error: &ComponentError) -> &EmbedderError {
+    let ComponentError::Backend(source) = error else {
+        panic!("expected a backend failure, got {error:?}");
+    };
+    source
+        .downcast_ref::<EmbedderError>()
+        .expect("a Local component's error keeps its type")
+}
+
+/// A model whose output sequence axis is shorter than the batch it was fed is
+/// refused rather than indexed.
+///
+/// Pooling reads position `n` of the output against position `n` of the mask,
+/// so the two have to be the same length. The fixture drops its first token,
+/// the way a graph stripping its own `[CLS]` would: the rank is right and the
+/// batch axis is right, so nothing but comparing this axis catches it, and
+/// slicing by the width that was fed reads off the end of the tensor.
+#[tokio::test]
+async fn a_model_whose_sequence_axis_disagrees_is_refused() {
+    let embedder = OnnxEmbedder::new(config_over("tiny-embedder-shrinking.onnx"))
+        .expect("the model itself loads; what it returns is the problem");
+
+    // Three words, so three tokens in and — after the graph drops one — two out.
+    let error = embedder
+        .embed(
+            &["a cat sat".to_string()],
+            &EmbedParams::new(EmbedRole::Passage),
+        )
+        .await
+        .expect_err("a sequence axis of another length cannot be mask-pooled");
+
+    assert!(
+        matches!(
+            backend_error(&error),
+            EmbedderError::SequenceMismatch {
+                width: 3,
+                returned: 2
+            }
+        ),
+        "expected SequenceMismatch {{ width: 3, returned: 2 }}, got {error:?}"
+    );
+}
+
+/// A model whose hidden states are float16 is refused by dtype, and says so.
+///
+/// Its shape is exactly what this component wants, so the failure has to name
+/// the element type. A quantized export is the ordinary way to arrive here, and
+/// reporting it as "the model failed to run" would accuse a model that loaded
+/// and ran.
+#[tokio::test]
+async fn a_model_whose_output_is_not_float32_is_refused_by_dtype() {
+    let embedder = OnnxEmbedder::new(config_over("tiny-embedder-float16.onnx"))
+        .expect("the model itself loads; what it returns is the problem");
+
+    let error = embedder
+        .embed(
+            &["a cat".to_string()],
+            &EmbedParams::new(EmbedRole::Passage),
+        )
+        .await
+        .expect_err("float16 hidden states are not what mask pooling reads");
+
+    assert!(
+        matches!(backend_error(&error), EmbedderError::OutputNotFloat32(_)),
+        "expected OutputNotFloat32, got {error:?}"
     );
 }
 

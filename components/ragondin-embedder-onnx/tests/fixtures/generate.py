@@ -3,10 +3,10 @@
 
     python3 components/ragondin-embedder-onnx/tests/fixtures/generate.py
 
-The tests need a real ONNX graph and a real tokenizer, and #20 forbids fetching
-a model at build time. So the fixtures are committed, and this script is how
-they came to be: the alternative is five opaque binaries nobody can regenerate
-or explain. Everything here is fixed-seed, so a rerun reproduces the committed
+The tests need a real ONNX graph and a real tokenizer, and no model may be
+fetched at build time (the rule this crate was created under, in #20). So the
+fixtures are committed, and this script is how they came to be: the alternative
+is seven opaque binaries nobody can regenerate or explain. Everything here is fixed-seed, so a rerun reproduces the committed
 bytes.
 
 The graphs are deliberately trivial -- a token-embedding table and a Gather --
@@ -201,6 +201,58 @@ def tiny_embedder_no_ids() -> onnx.ModelProto:
     return model_of(graph)
 
 
+def tiny_embedder_shrinking() -> onnx.ModelProto:
+    """A model whose output sequence axis is shorter than its input's.
+
+    It drops the first token, the way a graph that strips a `[CLS]` for itself
+    would. The rank is right and the batch axis is right, so both of the other
+    output checks pass it; only comparing the sequence axis against the width
+    that was fed catches it. Slicing the output by the *input* width instead is
+    an out-of-bounds read on a short answer and a read of the wrong row on a
+    long one.
+    """
+    weights = numpy_helper.from_array(token_embeddings(), name="token_embeddings")
+    starts = numpy_helper.from_array(np.array([1], dtype=np.int64), name="starts")
+    ends = numpy_helper.from_array(np.array([2**31 - 1], dtype=np.int64), name="ends")
+    axes = numpy_helper.from_array(np.array([1], dtype=np.int64), name="axes")
+    nodes = [
+        helper.make_node("Gather", ["token_embeddings", "input_ids"], ["tokens"], axis=0),
+        helper.make_node(
+            "Slice", ["tokens", "starts", "ends", "axes"], ["last_hidden_state"]
+        ),
+    ]
+    graph = helper.make_graph(
+        nodes,
+        "tiny_embedder_shrinking",
+        [ids_input("input_ids"), ids_input("attention_mask")],
+        [hidden_output("last_hidden_state")],
+        [weights, starts, ends, axes],
+    )
+    return model_of(graph)
+
+
+def tiny_embedder_float16() -> onnx.ModelProto:
+    """A model whose hidden states come back as float16.
+
+    The shape is exactly what this component wants; only the element type is
+    not. Quantized exports ship this way routinely, so the failure has to name
+    the dtype rather than report that the model crashed.
+    """
+    weights = numpy_helper.from_array(token_embeddings(), name="token_embeddings")
+    nodes = [
+        helper.make_node("Gather", ["token_embeddings", "input_ids"], ["tokens"], axis=0),
+        helper.make_node("Cast", ["tokens"], ["last_hidden_state"], to=TensorProto.FLOAT16),
+    ]
+    graph = helper.make_graph(
+        nodes,
+        "tiny_embedder_float16",
+        [ids_input("input_ids"), ids_input("attention_mask")],
+        [tensor("last_hidden_state", TensorProto.FLOAT16, ["batch", "sequence", HIDDEN])],
+        [weights],
+    )
+    return model_of(graph)
+
+
 def tiny_embedder_pooled() -> onnx.ModelProto:
     """A model that pools for itself, so its output is `[batch, hidden]`.
 
@@ -268,6 +320,8 @@ def main() -> None:
     write(tiny_embedder_unknown_input(), "tiny-embedder-unknown-input.onnx")
     write(tiny_embedder_no_ids(), "tiny-embedder-no-ids.onnx")
     write(tiny_embedder_pooled(), "tiny-embedder-pooled.onnx")
+    write(tiny_embedder_shrinking(), "tiny-embedder-shrinking.onnx")
+    write(tiny_embedder_float16(), "tiny-embedder-float16.onnx")
 
     path = HERE / "tokenizer.json"
     path.write_text(json.dumps(tokenizer(), indent=1, ensure_ascii=False) + "\n")

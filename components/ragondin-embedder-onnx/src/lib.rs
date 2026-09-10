@@ -38,8 +38,11 @@
 //! use ragondin_contracts::{EmbedParams, EmbedRole, Embedder};
 //! use ragondin_embedder_onnx::{OnnxEmbedder, OnnxEmbedderConfig};
 //!
+//! # // The fixtures this crate's own tests run against, named absolutely: a
+//! # // doctest's working directory is cargo's to choose, not this example's.
+//! # let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures");
 //! let embedder = OnnxEmbedder::new(
-//!     OnnxEmbedderConfig::new("tests/fixtures/tiny-embedder.onnx", "tests/fixtures/tokenizer.json")
+//!     OnnxEmbedderConfig::new(format!("{dir}/tiny-embedder.onnx"), format!("{dir}/tokenizer.json"))
 //!         .with_prefixes("query: ", "passage: "),
 //! )?;
 //!
