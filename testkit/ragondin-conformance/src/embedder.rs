@@ -25,9 +25,11 @@ pub enum RolePrefixes {
 
 /// Checks that `make`'s embedders honour the [`Embedder`] contract.
 ///
-/// Every check below runs under **both** [`EmbedRole`]s, since an embedder may
-/// take a different path per role and a contract broken on one side only is
-/// still broken:
+/// Each of the three checks in the list immediately below is applied under
+/// **both** [`EmbedRole`]s, since an embedder may take a different path per
+/// role and a contract broken on one side only is still broken. Two of them
+/// judge each role on its own; the dimensionality check spans them, because
+/// its subject is the embedder rather than the call:
 ///
 /// - **One vector per input.** A batch that comes back shorter than it went in
 ///   silently misaligns a corpus from its index: every chunk after the dropped
