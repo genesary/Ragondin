@@ -1,0 +1,36 @@
+[package]
+name = "ragondin-store-memory"
+description = "An in-memory, brute-force VectorStore: a Local VectorStore component."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+# A component is a leaf of the dependency graph (INV-5): the contract it
+# implements and the value types it moves, and nothing else in the workspace.
+[dependencies]
+ragondin-contracts = { workspace = true }
+ragondin-types = { workspace = true }
+async-trait = { workspace = true } # dyn-compatible async traits (frozen: async_trait, not RPITIT)
+
+# The suite every implementation passes, built-in or third-party (INV-7), and
+# the runtime that drives it. Both are test-only: neither ships to a user of
+# this component.
+[dev-dependencies]
+ragondin-conformance = { workspace = true }
+tokio = { workspace = true }
+
+# Brute-force cosine over a Vec is `std` arithmetic, so this feature gates no
+# heavy dependency and buys no compile time. It exists so that every component
+# crate names its implementation the same way -- one feature per backend, named
+# after it -- which is what makes the pattern guessable.
+#
+# It *is* in `default`, and `ragondin-retriever-bm25`'s `bm25` is not. That is
+# the rule applied, not an inconsistency: ADR-C14 and `docs/code-architecture.md`
+# §11.6 keep **heavy backends** out of the default build, and there is nothing
+# heavy here to keep out. Turning this one off would cost a workspace build its
+# vector store and save it nothing.
+[features]
+default = ["memory"]
+memory = []

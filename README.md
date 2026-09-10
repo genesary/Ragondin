@@ -71,8 +71,9 @@ exit criterion; the seven issues still open under it are `decision:` and
 
 **There is no usable binary yet.** `ragondin` compiles and prints one line; none
 of the four subcommands is implemented. Everything below is a library crate,
-reachable from Rust or from a test, and nothing composes it end to end —
-`components/` is empty, so the engine has nothing concrete to plan or execute.
+reachable from Rust or from a test, and nothing composes it end to end — no
+composition root registers the components that now exist, so the engine still
+has nothing wired to plan or execute.
 
 On `main` today:
 
@@ -87,10 +88,10 @@ On `main` today:
 
 Still compiling skeletons, each with a doc comment and a link test and no
 behaviour: `ragondin-proto`, `ragondin-remote`, `ragondin-config`,
-`ragondin-server`, `ragondin-harness`, `ragondin-benchmarks`,
-`ragondin-experiments`, and the `ragondin` binary. `components/` holds a
-`.gitkeep` and a README — **no component implementation exists** (BM25, ONNX,
-Qdrant and the rest are M2 issues).
+`ragondin-server`, `ragondin-harness`, `ragondin-experiments`, and the
+`ragondin` binary. `components/` now holds `ragondin-retriever-bm25` (BM25 over
+tantivy) and `ragondin-store-memory` (exact brute-force vector search); ONNX,
+Qdrant and the rest are still M2 issues.
 
 ### What using it will look like
 
