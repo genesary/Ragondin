@@ -24,6 +24,13 @@ repository under the system temporary directory, stages the fixture there, and
 runs the checker with that directory as its working directory. Nothing this file
 creates is inside the repository, and `git ls-files` here never sees a fixture.
 
+A working directory is not on its own enough to say which repository a child
+reads: `GIT_DIR` and its relatives override it, and they are set by any hook or
+wrapper that invokes this suite from inside a git operation. `isolated_environment`
+strips them, and **both** children get it — the suite's own `git init`, and the
+checker, which is the process that actually runs `git rev-parse` and
+`git ls-files`.
+
 Standard library only, and no test framework: the repository's Python tooling
 carries no dependency by decision, and this file is tooling like the rest.
 
@@ -78,12 +85,19 @@ class Result:
         return self
 
 
-def git(cwd: str, *args: str) -> None:
-    """Run git in `cwd`, isolated from the caller's git environment.
+def isolated_environment() -> dict[str, str]:
+    """The caller's environment with every git-locating variable removed.
 
-    `GIT_DIR` and friends leak in from a parent process and would point this at
-    the wrong repository; the config overrides keep a developer's global
-    `core.excludesFile` from deciding what a fixture contains.
+    `GIT_DIR` and its relatives are set by any hook or wrapper that invokes this
+    suite from inside a git operation, and they override the working directory:
+    a child that inherits them reads the *caller's* repository, not the fixture.
+    The config overrides keep a developer's global `core.excludesFile` from
+    deciding what a fixture contains.
+
+    This has to reach **both** children. The suite's own `git init` is the
+    obvious one; the checker is the one that matters, because it is the process
+    that runs `git rev-parse --show-toplevel` and `git ls-files` and so the
+    process an inherited `GIT_DIR` would point at the wrong tree.
     """
     environment = dict(os.environ)
     for name in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR"):
@@ -91,10 +105,15 @@ def git(cwd: str, *args: str) -> None:
     environment["GIT_CONFIG_GLOBAL"] = os.devnull
     environment["GIT_CONFIG_SYSTEM"] = os.devnull
     environment["GIT_CONFIG_NOSYSTEM"] = "1"
+    return environment
+
+
+def git(cwd: str, *args: str) -> None:
+    """Run git in `cwd`, isolated from the caller's git environment."""
     result = subprocess.run(
         ["git", *args],
         cwd=cwd,
-        env=environment,
+        env=isolated_environment(),
         capture_output=True,
         text=True,
     )
@@ -102,26 +121,30 @@ def git(cwd: str, *args: str) -> None:
         raise Failure(f"git {' '.join(args)} failed in the fixture:\n{result.stderr}")
 
 
-def run_checker(files: dict[str, str]) -> Result:
+def run_checker(files: dict[str, str | bytes]) -> Result:
     """Build a throwaway repository holding `files` and run the checker in it.
 
-    `files` maps a repository-relative path to its content. Every file is staged:
-    the checker reads tracked files, and staging is enough for `git ls-files` —
-    no commit, and so no committer identity, is needed.
+    `files` maps a repository-relative path to its content — `str` written as
+    UTF-8, or `bytes` written verbatim, which is how a fixture states that a
+    tracked file need not be valid UTF-8. Every file is staged: the checker reads
+    tracked files, and staging is enough for `git ls-files` — no commit, and so
+    no committer identity, is needed.
     """
     root = tempfile.mkdtemp(prefix="check-doc-links-fixture-")
     try:
         for relative, content in files.items():
             path = os.path.join(root, relative)
             os.makedirs(os.path.dirname(path), exist_ok=True)
-            with open(path, "w", encoding="utf-8") as handle:
-                handle.write(content)
+            payload = content if isinstance(content, bytes) else content.encode("utf-8")
+            with open(path, "wb") as handle:
+                handle.write(payload)
         git(root, "init", "-q")
         # `-f`: a fixture is staged whatever any ignore rule in scope thinks.
         git(root, "add", "-f", "--", *sorted(files))
         completed = subprocess.run(
             [sys.executable, CHECKER],
             cwd=root,
+            env=isolated_environment(),
             capture_output=True,
             text=True,
         )
@@ -142,9 +165,10 @@ def case(function: Callable[[], None]) -> Callable[[], None]:
 def a_resolving_citation_passes_in_markdown_and_in_rust() -> None:
     """The baseline: citations that resolve, in both languages the check reads.
 
-    The count in the success message is asserted too. It is the only place the
-    output says how much was read, so a scan that quietly stopped reading one of
-    the two kinds would still be visible here.
+    The count in the success message is asserted too. It pins what
+    `tracked_files` selected — the two patterns, and nothing narrowing them — and
+    not what was then scanned: those are separate decisions in the checker, and
+    the cases below own the second one.
     """
     run_checker(
         {
@@ -196,21 +220,76 @@ def a_citation_outside_a_doc_comment_is_still_a_citation() -> None:
 
 
 @case
+def a_citation_in_a_rust_file_that_is_not_utf8_is_still_reported() -> None:
+    """A tracked file need not be valid UTF-8, and a gate must not die on one.
+
+    The checker reads with `errors="replace"` for exactly this. Without it the
+    read raises, and the run ends in a traceback that names the file only inside
+    it — a non-zero exit, so the exit code alone would not notice. The message is
+    what this case pins.
+    """
+    run_checker(
+        {
+            **ADR_FILES,
+            "src/lib.rs": b"//! Grounded in ADR-97 \xff\xfe.\n",
+        }
+    ).exits(1).says("src/lib.rs:1: ADR-97 — no such ADR").is_silent_about(
+        "UnicodeDecodeError"
+    )
+
+
+@case
 def an_adr_filename_padded_to_the_wrong_width_fails() -> None:
-    """A file the convention cannot place is a file nothing can cite."""
+    """A file the convention cannot place is a file nothing can cite.
+
+    Asserted as the filename and the two widths rather than as the whole
+    sentence: rewording the message for clarity is not a behaviour change and
+    must not fail a test.
+    """
     run_checker(
         {"docs/adr/ADR-04-one-engine-two-drivers.md": "# One engine, two drivers\n"}
     ).exits(1).says("ADR NAMING VIOLATION").says(
-        "ADR-04-one-engine-two-drivers.md is padded to 2, "
-        "but the system series pads to 3 digits"
-    )
+        "ADR-04-one-engine-two-drivers.md"
+    ).says("padded to 2").says("3 digits")
 
 
 @case
 def an_adr_filename_with_no_slug_fails() -> None:
     run_checker({"docs/adr/ADR-004.md": "# One engine, two drivers\n"}).exits(1).says(
         "ADR NAMING VIOLATION"
-    ).says("ADR-004.md does not match ADR-<number>-<slug>.md")
+    ).says("ADR-004.md").says("does not match ADR-<number>-<slug>.md")
+
+
+@case
+def an_adr_filename_whose_slug_is_not_kebab_case_fails() -> None:
+    """The slug is `[a-z0-9]` words joined by single hyphens, and only that.
+
+    A missing slug and a mis-padded number each have a case above; a slug that is
+    present but malformed is the third way the convention breaks, and the one a
+    widened pattern stops catching without changing any other output.
+    """
+    run_checker(
+        {"docs/adr/ADR-004-One_Engine.md": "# One engine, two drivers\n"}
+    ).exits(1).says("ADR NAMING VIOLATION").says("ADR-004-One_Engine.md").says(
+        "does not match ADR-<number>-<slug>.md"
+    )
+
+
+@case
+def two_adrs_claiming_one_number_fail() -> None:
+    """A citation resolves *by number*, so two files on one number is ambiguous.
+
+    Nothing else in the output moves when this branch goes: both files are
+    well-formed, every citation still resolves, and the check goes green.
+    """
+    run_checker(
+        {
+            "docs/adr/ADR-004-one-engine-two-drivers.md": "# One engine, two drivers\n",
+            "docs/adr/ADR-004-something-else.md": "# Something else\n",
+        }
+    ).exits(1).says("ADR NAMING VIOLATION").says("ADR-004-something-else.md").says(
+        "claim the same ADR number"
+    )
 
 
 @case
@@ -232,6 +311,25 @@ def a_dangling_link_into_the_adr_directory_fails_in_markdown_only() -> None:
     ).exits(1).says("BROKEN ADR REFERENCE").says(
         "src/notes.md:3: ../docs/adr/README.md — no such path"
     ).is_silent_about("src/lib.rs")
+
+
+@case
+def a_link_to_an_adr_with_an_anchor_resolves() -> None:
+    """A `#fragment` names a heading, not a file, so it is stripped before the test.
+
+    Without the strip every anchored link in the repository becomes a failure —
+    loud on the real tree, but silent here until a case says so, because no
+    fixture above appends one.
+    """
+    run_checker(
+        {
+            **ADR_FILES,
+            "README.md": (
+                "The decision is in\n"
+                "[ADR-4](docs/adr/ADR-004-one-engine-two-drivers.md#decision).\n"
+            ),
+        }
+    ).exits(0).says("All documentation links resolve.")
 
 
 @case
@@ -260,6 +358,14 @@ def main() -> int:
             print(f"  FAIL  {function.__name__}")
             for line in str(failure).splitlines():
                 print(f"          {line}")
+        except Exception as error:  # noqa: BLE001 — see below
+            # A broken harness must name itself the way it asks the checker to.
+            # `git` missing, a fixture path that cannot be written: reported as a
+            # named failure rather than escaping as a traceback that stops the
+            # remaining cases from running at all.
+            failed += 1
+            print(f"  ERROR {function.__name__}")
+            print(f"          {type(error).__name__}: {error}")
         else:
             print(f"  ok    {function.__name__}")
 
