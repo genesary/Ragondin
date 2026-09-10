@@ -55,16 +55,26 @@ composition root that puts the two together (`docs/code-architecture.md` §8.1).
     per-segment buffer by the **corpus**, not by the number of matches or by
     `top_k`. That reservation is paid on every call, though it is lazily
     faulted: a query matching one chunk measures flat across corpus sizes
-    (~6 µs at 25k, 50k and 100k chunks), so this shows up as virtual footprint
+    (8.5 µs at 25k, 5.9 µs at 50k, 5.7 µs at 100k — the spread is noise, and
+    the point is that it does not grow), so this shows up as virtual footprint
     rather than as latency;
   - **every match is fully materialized** — `searcher.doc()` decompresses the
     stored document and its text is cloned into a `ScoredChunk` — *before*
     `truncate` runs. This is the dominant cost, and it is linear in the number
     of matches, not in `top_k`.
 
-  Measured, release build, `top_k = 10` throughout: a query matching one chunk
-  takes ~6 µs at any size, while a query on a term every document holds takes
-  **16 ms at 25k chunks, 30 ms at 50k, 67 ms at 100k**.
+  Measured, release build, `top_k = 10` throughout — a query matching one chunk
+  against one matching every document:
+
+  | corpus | selective | a term every document holds |
+  |---|---|---|
+  | 25 000 chunks | 8.5 µs | **16 ms** |
+  | 50 000 chunks | 5.9 µs | **30 ms** |
+  | 100 000 chunks | 5.7 µs | **67 ms** |
+
+  These are one machine's numbers on a synthetic corpus, so read the shape and
+  not the digits: the left column does not grow, the right one doubles when the
+  corpus doubles.
 
   **This is the nominal path, not an edge case.** Stopwords are deliberately
   indexed and scored (below), so every natural-language question contains a term
