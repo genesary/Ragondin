@@ -9,6 +9,7 @@ use tantivy::{
     collector::TopDocs,
     query::{BooleanQuery, Occur, Query as TantivyQuery, TermQuery},
     schema::{Field, IndexRecordOption, Schema, TextFieldIndexing, TextOptions, Value, STORED},
+    tokenizer::TextAnalyzer,
     Index, IndexReader, TantivyDocument, Term,
 };
 
@@ -22,8 +23,16 @@ use tantivy::{
 #[non_exhaustive]
 pub enum IndexError {
     /// tantivy could not build or open the index.
+    ///
+    /// Boxed rather than carrying `tantivy::TantivyError`, which would put the
+    /// backend's own type on this crate's public surface: a consumer wanting
+    /// the cause *by type* would have to depend on tantivy at the same 0.26
+    /// line, and one already on another line could not name it at all. That is
+    /// the leak "the heavy backend is confined here" claims not to have.
+    /// `source()` still walks to the original, which is the fidelity that
+    /// matters — and it is what `ComponentError::Backend` already does.
     #[error("building the BM25 index failed")]
-    Backend(#[source] tantivy::TantivyError),
+    Backend(#[source] Box<dyn std::error::Error + Send + Sync>),
 
     /// Two chunks of the corpus carry the same [`ChunkId`].
     ///
@@ -47,7 +56,7 @@ pub enum IndexError {
 
 impl From<tantivy::TantivyError> for IndexError {
     fn from(error: tantivy::TantivyError) -> Self {
-        Self::Backend(error)
+        Self::Backend(Box::new(error))
     }
 }
 
@@ -71,7 +80,12 @@ impl From<tantivy::TantivyError> for IndexError {
 /// every matching document is sorted and the list is truncated afterwards.
 pub struct Bm25Retriever {
     reader: IndexReader,
-    index: Index,
+    /// Resolved once, at construction. `Index::tokenizer_for_field` reads the
+    /// schema, takes the `TokenizerManager`'s read lock and does a map lookup
+    /// before handing back a clone; doing that per call put a shared lock on
+    /// the path a benchmark harness walks thousands of times, for an answer
+    /// that cannot change once the schema is built.
+    analyzer: TextAnalyzer,
     fields: Fields,
 }
 
@@ -146,9 +160,10 @@ impl Bm25Retriever {
         writer.commit()?;
 
         let reader = index.reader()?;
+        let analyzer = index.tokenizer_for_field(text)?;
         Ok(Self {
             reader,
-            index,
+            analyzer,
             fields: Fields {
                 chunk_id,
                 document_id,
@@ -164,11 +179,11 @@ impl Bm25Retriever {
     /// in one as syntax — failing the call, or silently changing what was
     /// asked. Running the field's own analyzer instead means the query is
     /// tokenized exactly as the corpus was.
-    fn analyze(&self, text: &str) -> Result<BooleanQuery, ComponentError> {
-        let mut analyzer = self
-            .index
-            .tokenizer_for_field(self.fields.text)
-            .map_err(backend)?;
+    fn analyze(&self, text: &str) -> BooleanQuery {
+        // Cloned rather than locked: `token_stream` needs `&mut`, and cloning
+        // the resolved analyzer is what `tokenizer_for_field` would have done
+        // at the end of a schema read and a lock acquisition anyway.
+        let mut analyzer = self.analyzer.clone();
         let mut stream = analyzer.token_stream(text);
 
         let mut clauses: Vec<(Occur, Box<dyn TantivyQuery>)> = Vec::new();
@@ -178,7 +193,7 @@ impl Bm25Retriever {
             clauses.push((Occur::Should, Box::new(query)));
         });
 
-        Ok(BooleanQuery::new(clauses))
+        BooleanQuery::new(clauses)
     }
 
     /// Rebuilds the [`Chunk`] a hit stands for from the stored fields.
@@ -235,7 +250,7 @@ impl Retriever for Bm25Retriever {
             ));
         }
 
-        let analyzed = self.analyze(&query.text)?;
+        let analyzed = self.analyze(&query.text);
         let searcher = self.reader.searcher();
         // Every matching document, not the first `top_k` of them. `TopDocs`
         // selects at its own limit by document address, so truncating there
