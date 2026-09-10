@@ -776,3 +776,107 @@ fn a_partial_document_mismatch_still_loads() {
 
     let _ = fs::remove_dir_all(&root);
 }
+
+/// A repeated `_id` double-weights a query in the macro-average *and* inflates
+/// the denominator `Benchmark::queries().len()` is documented to be. Contrast
+/// `Qrels::insert`, where the repeated-pair case is explicitly last-wins: the
+/// JSONL readers had no equivalent rule.
+#[test]
+fn a_duplicate_query_id_is_a_typed_error() {
+    let root = write_dataset(
+        "duplicate-query-id",
+        "{\"_id\": \"d1\", \"text\": \"body\"}\n",
+        "{\"_id\": \"q1\", \"text\": \"one\"}\n{\"_id\": \"q1\", \"text\": \"again\"}\n",
+        "query-id\tcorpus-id\tscore\nq1\td1\t1\n",
+    );
+
+    let error = BeirAdapter::new(&root)
+        .load()
+        .expect_err("one id names one query");
+
+    match error {
+        BenchmarkError::DuplicateId { id, line, .. } => {
+            assert_eq!(id, "q1");
+            assert_eq!(line, 2, "the second occurrence is the offending line");
+        }
+        other => panic!("expected DuplicateId, got {other:?}"),
+    }
+
+    let _ = fs::remove_dir_all(&root);
+}
+
+/// The corpus side of the same rule: two documents under one `DocId` let a
+/// single judgment be satisfied twice in one ranked list.
+#[test]
+fn a_duplicate_document_id_is_a_typed_error() {
+    let root = write_dataset(
+        "duplicate-document-id",
+        "{\"_id\": \"d1\", \"text\": \"one\"}\n{\"_id\": \"d1\", \"text\": \"again\"}\n",
+        "{\"_id\": \"q1\", \"text\": \"question\"}\n",
+        "query-id\tcorpus-id\tscore\nq1\td1\t1\n",
+    );
+
+    let error = BeirAdapter::new(&root)
+        .load()
+        .expect_err("one id names one document");
+
+    match error {
+        BenchmarkError::DuplicateId { id, .. } => assert_eq!(id, "d1"),
+        other => panic!("expected DuplicateId, got {other:?}"),
+    }
+
+    let _ = fs::remove_dir_all(&root);
+}
+
+/// A whitespace-only title is semantically absent, so it must contribute
+/// neither itself nor a separating space — the rule the module documents.
+/// `title.is_empty()` tested the untrimmed string, so `"   "` counted as a
+/// title and welded four leading spaces onto the indexed text, and stored
+/// whitespace under `metadata["title"]`. Ids on this branch are trimmed
+/// everywhere for exactly this reason.
+#[test]
+fn a_whitespace_only_title_is_treated_as_absent() {
+    let root = write_dataset(
+        "whitespace-only-title",
+        "{\"_id\": \"d1\", \"title\": \"   \", \"text\": \"body\"}\n",
+        "{\"_id\": \"q1\", \"text\": \"question\"}\n",
+        "query-id\tcorpus-id\tscore\nq1\td1\t1\n",
+    );
+
+    let benchmark = BeirAdapter::new(&root).load().expect("the dataset loads");
+    let document = &benchmark.corpus()[0];
+
+    assert_eq!(
+        document.text, "body",
+        "no title, and so no separating space"
+    );
+    assert!(
+        !document.metadata.contains_key("title"),
+        "whitespace is not a title worth preserving"
+    );
+
+    let _ = fs::remove_dir_all(&root);
+}
+
+/// A title with surrounding whitespace keeps its content and loses the
+/// padding, so the concatenation has exactly one separating space.
+#[test]
+fn a_padded_title_is_trimmed_before_the_concatenation() {
+    let root = write_dataset(
+        "padded-title",
+        "{\"_id\": \"d1\", \"title\": \"  The Title  \", \"text\": \"body\"}\n",
+        "{\"_id\": \"q1\", \"text\": \"question\"}\n",
+        "query-id\tcorpus-id\tscore\nq1\td1\t1\n",
+    );
+
+    let benchmark = BeirAdapter::new(&root).load().expect("the dataset loads");
+    let document = &benchmark.corpus()[0];
+
+    assert_eq!(document.text, "The Title body");
+    assert_eq!(
+        document.metadata.get("title").map(String::as_str),
+        Some("The Title")
+    );
+
+    let _ = fs::remove_dir_all(&root);
+}

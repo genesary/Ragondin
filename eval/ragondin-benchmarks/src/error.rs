@@ -86,6 +86,29 @@ pub enum BenchmarkError {
         judged: usize,
     },
 
+    /// One `_id` names two records in the same JSONL file.
+    ///
+    /// A repeated query id double-weights that query in a macro-average *and*
+    /// inflates `Benchmark::queries().len()`, which is documented as the
+    /// correct denominator of a mean over a run — so one duplicate moves the
+    /// headline number twice over, in the same direction, silently. A repeated
+    /// corpus id lets one judgment be satisfied twice within a single ranked
+    /// list.
+    ///
+    /// Rejected rather than deduplicated: two records under one id disagree
+    /// about what that id *is*, and picking one is a guess. This is unlike a
+    /// repeated `(query, document)` pair in the qrels, which restates a
+    /// judgment and is resolved last-wins.
+    #[error("{path}:{line}: duplicate id {id:?}")]
+    DuplicateId {
+        /// The file holding both records.
+        path: PathBuf,
+        /// The 1-based line of the second occurrence.
+        line: usize,
+        /// The id that appeared twice.
+        id: String,
+    },
+
     /// A delimited record does not have the shape the format requires.
     #[error("{path}:{line}: malformed record: {reason}")]
     MalformedRecord {

@@ -48,8 +48,8 @@ it discards the distinction the dataset went to the trouble of recording.
 BEIR datasets have one, and:
 
 > `Document.text` is set to **title, one space, then text**, omitting both the
-> space and the title when the title is empty or absent. The raw title is
-> additionally kept under `metadata["title"]`.
+> space and the title when the title is empty, absent, or nothing but
+> whitespace. The title is additionally kept under `metadata["title"]`, trimmed.
 
 BEIR's own evaluation code indexes the concatenation, and **every published
 BEIR leaderboard number is computed that way**. Indexing the text alone changes
@@ -63,7 +63,12 @@ cases.
 
 `metadata["title"]` is written only when the title is non-empty: an empty title
 is the absence of a title, and storing `""` would make the two
-indistinguishable while preserving nothing.
+indistinguishable while preserving nothing. Emptiness is judged **after
+trimming**, for the same reason ids are trimmed everywhere below: a title of
+nothing but whitespace is semantically absent, and testing the raw string made
+`"   "` count as a title — welding a separator plus its padding onto the text
+that gets indexed, which is the one string in this crate that moves the
+headline number.
 
 ## BEIR's own `metadata` object is deliberately dropped
 
@@ -154,3 +159,67 @@ benchmark with nothing looking empty anywhere, which is strictly harder to
 diagnose than the empty query set the first guard names. Both guards fire only
 on a **total** miss: a benchmark may legitimately judge a document its corpus
 does not hold, and `trec_eval` counts such a judgment in the denominator.
+
+## One `_id` names one record
+
+A repeated `_id` in `corpus.jsonl` or `queries.jsonl` is
+`BenchmarkError::DuplicateId`, naming the file, the id, and the line of the
+second occurrence. Two records under one id disagree about what that id *is*,
+so either choice is a guess — which is why this rejects rather than
+deduplicating.
+
+Note that this is the opposite resolution from a repeated `(query, document)`
+pair in the qrels, which `Qrels::insert` resolves last-wins. The two are not
+inconsistent: a repeated judgment *restates* a fact about a pair that exists
+either way, while a repeated id asserts two different records. The cost of
+getting the query side wrong is specific and doubled — a duplicated query id
+both double-weights that query in a macro-average and inflates
+`Benchmark::queries().len()`, which this crate documents as the correct
+denominator of a mean over a run — so one duplicate moves the headline number
+twice, in the same direction, in silence.
+
+The same asymmetry principle governs the physical line numbers in
+`BenchmarkError`: they are counted while reading rather than derived from the
+`csv` reader's record positions, which cannot be mapped back to file lines once
+blank lines are skipped or the file is CRLF. Three separate attempts at that
+arithmetic each fixed one file shape and broke another.
+
+## Local constraints
+
+- **I/O here is correct.** INV-3 (value types only, no I/O) names
+  `ragondin-types` and `ragondin-pipeline`; this crate is not covered by it.
+  Reading dataset files from disk is this crate's job. The `Benchmark` it
+  produces is still plain data.
+- **Keep it light (INV-4 in spirit).** A JSON reader (`serde_json`) and a TSV
+  reader (`csv`) are the whole toolkit. No heavy backend, no vector store, no
+  HTTP client — and in particular **no network fetch**: a dataset path comes
+  from configuration and the snapshot is frozen on disk, because a published
+  score is attached to a specific snapshot and benchmarking against a live
+  source is not reproducible (§9.1).
+- **Ids are opaque strings, never parsed as numbers.** BEIR ids look like
+  `MED-10` and `4983`; leading zeros are significant. They map straight onto
+  `DocId` / `QueryId`.
+- **`BenchmarkAdapter::load` is synchronous.** `async_trait` is the frozen
+  decision for *component* traits, which sit on the request hot path. A dataset
+  is read once from local files before a run starts; an async signature would
+  force a runtime into this crate and buy nothing.
+- **The adapter chooses the query set.** BEIR's `queries.jsonl` spans every
+  split, so `BeirAdapter` keeps only the queries judged in the split it loaded.
+  `Benchmark::iter` itself imposes no such rule — it yields an empty relevance
+  map for an unjudged query — because that filtering is a per-format decision,
+  not a property of the structure.
+- **The corpus is fully materialized in memory.** `Benchmark` holds its corpus
+  as a `Vec<Document>` and exposes only `corpus() -> &[Document]`; there is no
+  streaming path. This is adequate for the datasets M2 targets, which are
+  small enough to hold in memory whole. It would not be adequate for a corpus
+  the size of MS MARCO, which runs to many gigabytes. Adding a streaming
+  ingestion path later would change the shape of `Benchmark` and the contract
+  the harness is written against — that is a decision issue when it is
+  needed, not a change to make quietly inside this crate.
+
+## What is deliberately not here
+
+- CRAG, MultiHop-RAG and any end-to-end adapter carrying reference answers:
+  they need generation and a judge, and belong to M3+ (ADR-10).
+- Metric computation (`ragondin-metrics`) and engine execution
+  (`ragondin-harness`).

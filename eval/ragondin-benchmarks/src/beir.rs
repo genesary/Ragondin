@@ -28,16 +28,18 @@
 //!   published metric was wrong.
 //! - **`_id` is a string, not a number.** `MED-10` and `4983` are both ids;
 //!   leading zeros are significant. They map straight onto `DocId`/`QueryId`
-//!   and are never parsed.
+//!   and are never parsed. One `_id` names one record: a repeat in either
+//!   JSONL file is a typed error, not a silent second entry.
 //! - **`title` may be present, empty, `null`, or absent** — see the title
-//!   rule below. `null` and absent both deserialize to `None`, and both are
-//!   then treated exactly like an empty title.
+//!   rule below. `null` and absent both deserialize to `None`, and all of
+//!   them, plus a title of nothing but whitespace, are treated as no title.
 //!
 //! # The title rule
 //!
 //! `Document.text` is set to `title`, one space, then `text` — omitting both
-//! the space and the title when the title is empty or absent — and the raw
-//! title is additionally kept under `metadata["title"]`.
+//! the space and the title when the title is empty, absent, or nothing but
+//! whitespace — and the title is additionally kept under `metadata["title"]`,
+//! trimmed the way every id on this reader is.
 //!
 //! This is not a matter of taste. BEIR's own evaluation code indexes the
 //! concatenation, and every published leaderboard figure is computed that way;
@@ -168,7 +170,10 @@ fn judges_any_document(qrels: &Qrels, corpus: &[Document]) -> bool {
 /// Line-by-line rather than whole-file: a BEIR corpus runs to millions of
 /// records, and holding the parsed file *and* its text in memory at once is
 /// avoidable. Blank lines are skipped — a trailing newline is not a record.
-fn read_jsonl<T, R>(path: &Path, mut parse: impl FnMut(T) -> R) -> Result<Vec<R>, BenchmarkError>
+fn read_jsonl<T, R>(
+    path: &Path,
+    mut parse: impl FnMut(T, usize) -> Result<R, BenchmarkError>,
+) -> Result<Vec<R>, BenchmarkError>
 where
     T: for<'de> Deserialize<'de>,
 {
@@ -200,15 +205,43 @@ where
                 line: index + 1,
                 source,
             })?;
-        parsed.push(parse(record));
+        parsed.push(parse(record, index + 1)?);
     }
 
     Ok(parsed)
 }
 
+/// Records `id` as seen, or reports it as a duplicate naming `line`.
+///
+/// One id names one record. Two records under one id disagree about what that
+/// id is, and either choice is a guess — so this rejects rather than
+/// deduplicating, unlike a repeated `(query, document)` pair in the qrels,
+/// which merely restates a judgment.
+fn claim_id(
+    seen: &mut BTreeSet<String>,
+    id: &str,
+    path: &Path,
+    line: usize,
+) -> Result<(), BenchmarkError> {
+    if seen.insert(id.to_string()) {
+        return Ok(());
+    }
+    Err(BenchmarkError::DuplicateId {
+        path: path.to_path_buf(),
+        line,
+        id: id.to_string(),
+    })
+}
+
 fn read_corpus(path: &Path) -> Result<Vec<Document>, BenchmarkError> {
-    read_jsonl(path, |record: CorpusRecord| {
-        let title = record.title.unwrap_or_default();
+    let mut seen = BTreeSet::new();
+    read_jsonl(path, |record: CorpusRecord, line| {
+        // Trimmed for the same reason every id on this reader is: a title of
+        // only whitespace is the *absence* of a title, and testing the raw
+        // string made `"   "` count as one — welding a separator plus its
+        // padding onto the indexed text, and storing blanks under
+        // `metadata["title"]`.
+        let title = record.title.unwrap_or_default().trim().to_string();
         let mut metadata = BTreeMap::new();
         // Only when non-empty: an empty title is the *absence* of a title, and
         // storing "" would make absent and empty indistinguishable downstream
@@ -216,15 +249,18 @@ fn read_corpus(path: &Path) -> Result<Vec<Document>, BenchmarkError> {
         if !title.is_empty() {
             metadata.insert("title".to_string(), title.clone());
         }
-        Document {
-            // Trimmed for the same reason `read_qrels` trims: an id must be
-            // treated identically wherever it appears, or a corpus id and the
-            // qrels corpus-id naming the same document stop matching and every
-            // judgment silently misses.
-            id: DocId::new(record.id.trim()),
+        // Trimmed for the same reason `read_qrels` trims: an id must be
+        // treated identically wherever it appears, or a corpus id and the
+        // qrels corpus-id naming the same document stop matching and every
+        // judgment silently misses.
+        let id = record.id.trim();
+        claim_id(&mut seen, id, path, line)?;
+
+        Ok(Document {
+            id: DocId::new(id),
             text: combined_text(&title, &record.text),
             metadata,
-        }
+        })
     })
 }
 
@@ -249,13 +285,23 @@ fn combined_text(title: &str, text: &str) -> String {
 /// returns an empty `Vec` and `load` decides, since only `load` knows whether
 /// the qrels held anything to match in the first place.
 fn read_queries(path: &Path, qrels: &Qrels) -> Result<Vec<Query>, BenchmarkError> {
-    let all = read_jsonl(path, |record: QueryRecord| Query {
+    let mut seen = BTreeSet::new();
+    let all = read_jsonl(path, |record: QueryRecord, line| {
         // Trimmed to match `read_qrels`. Trimming one side only is worse than
         // trimming neither: it turns a dataset whose ids carry the same
         // whitespace everywhere — which used to match itself — into one whose
         // queries are all filtered out below.
-        id: QueryId::new(record.id.trim()),
-        text: record.text,
+        let id = record.id.trim();
+        // Checked before the qrels filter below, so a duplicate is reported
+        // whether or not that id happens to be judged in this split: the file
+        // is malformed either way, and a rule that only fires on some splits
+        // is a rule nobody can rely on.
+        claim_id(&mut seen, id, path, line)?;
+
+        Ok(Query {
+            id: QueryId::new(id),
+            text: record.text,
+        })
     })?;
 
     Ok(all
