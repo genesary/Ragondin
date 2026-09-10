@@ -113,9 +113,15 @@ pub struct Query {
 /// a non-finite value serializes without error and cannot be read back.
 ///
 /// An empty embedding is *representable* and reports a dimensionality of zero.
-/// Rejecting it would require a fallible constructor and an error type in a
-/// crate that deliberately has none; a dimensionality disagreement is caught
-/// where it is meaningful — by the vector store being searched.
+/// Rejecting it here would require a fallible constructor and an error type in
+/// a crate that deliberately has none.
+///
+/// Representable is not the same as valid. An `Embedder` that *returns* an
+/// empty embedding breaks its contract (ADR-C20); `ragondin-contracts` states
+/// that on the trait, which is where a component's obligations live. What this
+/// type stays silent on is a dimensionality *disagreement* between an embedder
+/// and a store, which is caught where it is meaningful — by the vector store
+/// being searched.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct Embedding(Vec<f32>);

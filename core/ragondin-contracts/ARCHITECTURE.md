@@ -108,6 +108,15 @@ component is a gRPC service honouring the mirror protobuf in `ragondin-proto`.
   what the second one owes, and it is tracked as a follow-up implementation issue
   (#176).
 
+- **An [`Embedder`] returns vectors of at least one component (ADR-C20).**
+  `ragondin-types` can *represent* an empty [`Embedding`] — a value type with no
+  error type rejects nothing — but a vector of width zero has no direction, and
+  an embedder emitting one would otherwise pass every conformance check while
+  indexing a corpus that can answer no search. The rule is stated on the trait,
+  so the failure is attributed to the component that produced the vector rather
+  than to the store that later refuses it. It constrains a returned vector, not
+  a batch: an empty batch embeds to no vectors.
+
 ## Why it is a boundary
 
 If this contract were unstable, every component in and out of the repository
