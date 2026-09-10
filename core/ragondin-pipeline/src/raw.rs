@@ -57,7 +57,9 @@
 //! models out of step. A **null** is refused permanently — it means *absent*,
 //! which omitting the key already says. A **nested map** is refused only until
 //! a configuration demands one: both enums are extensible by design, so the
-//! variant is additive when that day comes. A metadata filter
+//! variant is additive *on the Rust boundary* when that day comes — it still
+//! bumps [`SchemaVersion`] under INV-9, and still owes the content hash a
+//! canonicalization one level deeper. A metadata filter
 //! (`params: { filters: { lang: fr } }`) is the shape that will ask for it,
 //! and it is not expressible today.
 //!
@@ -65,7 +67,7 @@
 //! `#[non_exhaustive]`, and a refusal still surfaces as serde's opaque
 //! untagged-enum message, which names neither the offending key nor what was
 //! expected — the one place this level does the thing it exists to prevent.
-//! Both land with ADR-C22's implementation.
+//! Both land with ADR-C22's implementation. Tracked as #178.
 //!
 //! Nothing here is executed, and nothing here is hashed.
 

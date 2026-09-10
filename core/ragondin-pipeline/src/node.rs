@@ -86,8 +86,10 @@ impl NodeId {
 ///
 /// - A **nested map** — a metadata filter, say — is rejected *for now*, not
 ///   forever. This enum is extensible by design, so the `Map` variant a real
-///   configuration eventually demands is additive rather than breaking, and it
-///   waits for that demand rather than being guessed at here.
+///   configuration eventually demands is additive on this boundary rather than
+///   breaking, and it waits for that demand rather than being guessed at here.
+///   Additive here only: the wire counterpart still bumps its schema version,
+///   and the content hash still owes a nested value a canonical ordering.
 /// - A **null** is rejected permanently. It means *absent*, which [`Params`]
 ///   already expresses by omitting the key, and two spellings of one
 ///   configuration on a content-addressed boundary (INV-8) is a trap rather
@@ -96,6 +98,7 @@ impl NodeId {
 /// This enum carries no `#[non_exhaustive]` today. ADR-C22 decides that it
 /// should — the attribute, and the diagnostic that names a refused parameter's
 /// key, land with that decision's implementation.
+/// Tracked as #178.
 ///
 /// # The float contract
 ///

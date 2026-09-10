@@ -52,16 +52,20 @@ actually look like is not settled, so neither variant exists yet.
   A parameter value is `String | Int | Float | Bool | List` in both models. A
   **nested map is rejected** — not forever, but until a configuration actually
   demands one, because with the two enums extensible a `Map` variant added
-  later is additive rather than breaking. A **null is rejected permanently**: a
+  later is additive **on the Rust boundary** rather than breaking. Only there:
+  such a variant still bumps `SchemaVersion` under INV-9, and still owes the
+  content hash a canonicalization one level deeper. A
+  **null is rejected permanently**: a
   null parameter means *absent*, which the grammar already expresses by
   omitting the key, and two spellings of one configuration on a
   content-addressed boundary (INV-8) is a trap, not a convenience. A refused
   value must be diagnosed by **key**, naming what was expected; serde's
   untagged-enum message names neither. Two pieces of that decision are not in
   the code yet — the `#[non_exhaustive]` attribute below, and the diagnostic —
-  and land together in its implementation.
+  and land together in its implementation. Tracked as #178.
 - **The public enums are not `#[non_exhaustive]`, deliberately — except the two
-  parameter enums, which ADR-C22 makes extensible.** `LogicalNode` is closed to
+  parameter enums, which ADR-C22 rules extensible (the attribute lands with its
+  implementation).** `LogicalNode` is closed to
   outside crates only by convention, so a consumer may `match` it exhaustively
   and a new variant breaks that `match`. That is the intended signal while
   nothing is published: adding a primitive node kind **should** be a visible,
@@ -75,7 +79,8 @@ actually look like is not settled, so neither variant exists yet.
   cannot read, so ADR-C22 makes them extensible instead. Neither carries the
   attribute *today* — it lands with that ADR's implementation, together with
   the correction to `AGENTS.md`'s INV-1 row, whose "none of these types is
-  `#[non_exhaustive]`" is still true until it does. `ValueKind`, `PortSpec` and
+  `#[non_exhaustive]`" is still true until it does. Tracked as #178.
+  `ValueKind`, `PortSpec` and
   `ValidationError` join the same stable surface under `LogicalNode`'s stance
   and not the parameter enums': an added `ValueKind` variant, a
   new `PortSpec` shape, or a new `ValidationError` variant is a visible,
