@@ -65,7 +65,7 @@ just check             # build + test + clippy + fmt + architecture invariants
 ## Status
 
 **Pre-alpha. Milestone M1 — *Core contracts & engine skeleton* — is in
-progress** (13 of its 17 issues are closed). M0 — *Foundations* — has met its
+progress** (14 of its 17 issues are closed). M0 — *Foundations* — has met its
 exit criterion; the seven issues still open under it are `decision:` and
 `record:` issues, not implementation work.
 
@@ -90,9 +90,10 @@ Still compiling skeletons, each with a doc comment and a link test and no
 behaviour: `ragondin-proto`, `ragondin-remote`, `ragondin-config`,
 `ragondin-server`, `ragondin-harness`, `ragondin-experiments`, and the
 `ragondin` binary. `components/` now holds `ragondin-retriever-bm25` (BM25 over
-tantivy), `ragondin-store-memory` (exact brute-force vector search) and
-`ragondin-fusion-rrf` (Reciprocal Rank Fusion); ONNX,
-Qdrant and the rest are still M2 issues.
+tantivy), `ragondin-store-memory` (exact brute-force vector search),
+`ragondin-fusion-rrf` (Reciprocal Rank Fusion) and `ragondin-retriever-dense`
+(a query embedded and searched through a `VectorStore`); ONNX, Qdrant and the
+rest are still M2 issues.
 
 ### What using it will look like
 

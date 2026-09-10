@@ -65,7 +65,9 @@ impl fmt::Display for ValueKind {
 pub enum PortSpec {
     /// Exactly these kinds, in this order. An input beyond the last kind
     /// listed is a `KindMismatch`; a missing input is not this derivation's
-    /// concern (that question belongs to #16).
+    /// concern — `ragondin-engine`'s executor reports it as
+    /// `ExecError::MissingInput` when the node runs, which is where ADR-C18
+    /// leaves it.
     Fixed(Vec<ValueKind>),
     /// Any number of ports, all of the given kind.
     Variadic(ValueKind),

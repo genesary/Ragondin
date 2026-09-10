@@ -172,6 +172,7 @@ Rationale for each decision: `docs/adr/`, where every decision is a numbered, in
 
 - **Test-driven, strictly.** Write a failing test first; implement the minimum to make it pass; then refactor. A test that passes without exercising the behavior is worse than no test.
 - Every acceptance criterion must be satisfied **mechanically** — by a command or a test, never by a judgment call.
+- **A criterion written as a command is a test of the diff, so run it before you start.** If it already passes on the unchanged tree, the criterion is wrong: say so in the pull request and fix the criterion rather than working to it. A criterion that cannot fail is worse than a judgment call, because a judgment call at least announces that someone must think.
 - Comments explain **why**, not what.
 
 ### What you write about the code is checked against the code
@@ -180,7 +181,7 @@ Three defects landed in one week, all of them in **prose**, and **not one could 
 
 - **A citation that resolves is not a citation that is apt.** `ADR-C3` was cited six times for the two-faced contract, which is **ADR-3**'s decision. `check-doc-links.py` caught none of them, and for two different reasons. Five were in `core/ragondin-contracts/src/lib.rs`, and the check then selected its inputs with `git ls-files -- '*.md'`, so it never opened that file: those five were outside its **scope**. The sixth, in `core/ragondin-contracts/ARCHITECTURE.md`, it did read — and passed, because it checks that a reference *resolves* and cannot judge what it *means*. The check now reads tracked Rust as well, which closes the scope gap for Rust; nothing closes the other, because a citation naming the wrong decision still resolves. **Open an ADR before citing it** — including, and especially, when you are copying the citation from a neighbouring file. That is how these six spread — a copy of the sixth reached ADR-C17, which was a review away from being immutable.
 - **A doc comment that describes a mechanism is a claim the code can contradict.** `ComponentFamily`'s comment said a retriever's constructor reaches the registry; `ComponentCtor` receives `&Params` and never an `EngineContext`. **Describe what the code does**, not what it is expected to do once another issue lands.
-- **An issue reference goes stale when the issue closes.** `#9`, `#15` and `#17` are still cited in code as work to come. If you write one, write what it is *for*, so a reader can tell a live pointer from a finished one.
+- **An issue reference goes stale when the issue closes.** `#9`, `#15` and `#17` were cited as work still to come long after all three closed — in doc comments, test comments and crate prose, none of it readable by a build. Each now names the pass, the type or the function instead. If you write one, write what it is *for*, so a reader can tell a live pointer from a finished one.
 
 `just map --conflicts` reports all three shapes. **Run it when your diff contains prose that asserts how something works.** Its findings are advisory, and it is not part of `just check`: a build gate over unverified prose would assert more than it knows. That makes running it your job rather than CI's.
 
