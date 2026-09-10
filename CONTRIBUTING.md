@@ -59,11 +59,21 @@ issue rather than weakening the check.
 ### The documentation link check
 
 `just check-doc-links` (`scripts/check-doc-links.py`) verifies that every
-`ADR-<n>` citation in the repository's Markdown resolves to a file under
-`docs/adr/`, and that ADR filenames follow the convention documented in
-[`docs/adr/README.md`](docs/adr/README.md). A citation that does not resolve does
-not read as a typo — it reads as a missing decision, and whoever was sent to read
-it derives their own instead.
+`ADR-<n>` citation in the repository's tracked Markdown **and Rust** sources
+resolves to a file under `docs/adr/`, and that ADR filenames follow the convention
+documented in [`docs/adr/README.md`](docs/adr/README.md). A citation that does not
+resolve does not read as a typo — it reads as a missing decision, and whoever was
+sent to read it derives their own instead.
+
+Rust is read because that is where citations live: five of the six wrong `ADR-C3`
+citations corrected in #100 were in `core/ragondin-contracts/src/lib.rs`, which the
+check could not see. The scan is line-based, so a citation counts wherever in a
+`.rs` file it is written. The **relative-link** half of the check stays
+Markdown-only — a `](path)` link has no meaning in a doc comment, and rustdoc's
+intra-doc links are `cargo doc`'s business.
+
+It resolves a citation; it cannot judge whether the citation is **apt**. `ADR-C3`
+cited for `ADR-3`'s decision passes this check. Open an ADR before citing it.
 
 ### The ADR index
 

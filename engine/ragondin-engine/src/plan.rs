@@ -1,5 +1,5 @@
-//! Physical planning: `LogicalPipeline` + `EngineContext` → `PhysicalPipeline`
-//! (#15).
+//! Physical planning: `LogicalPipeline` + `EngineContext` → `PhysicalPipeline`,
+//! the only form [`crate::Engine::execute`] runs.
 //!
 //! The logical-to-physical seam (`docs/code-architecture.md` §6.3, ADR-C2):
 //! planning resolves each node's `impl:` name to a **constructed component**
