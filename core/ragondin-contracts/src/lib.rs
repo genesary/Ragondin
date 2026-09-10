@@ -32,6 +32,23 @@
 //! call**. The reference pipeline in `docs/system-architecture.md` §5.1 shows
 //! the split: `top_k` on a retriever and on a reranker, nothing on the fusion.
 //!
+//! # Empty collections
+//!
+//! Four methods below take a collection — [`Fusion::fuse`], [`Reranker::rerank`],
+//! [`Embedder::embed`] and [`VectorStore::upsert`]. **An empty collection is a
+//! valid call on every one of them, and the component does nothing with it**
+//! (ADR-C19): empty in, empty out, and for `upsert`, whose return carries no
+//! data, empty in, nothing done, `Ok(())`. An implementation must not return
+//! [`ComponentError::InvalidRequest`] for it, so a caller batching over a corpus
+//! never has to guard a batch that came out empty.
+//!
+//! This is **not** the `top_k` rule and does not weaken it: a `top_k` of zero
+//! stays an invalid request wherever it is taken. A zero `top_k` asks for a
+//! *result* that cannot exist, and answering it with an empty list makes a
+//! caller's arithmetic bug look like an empty corpus; an empty collection asks
+//! for a state change, or a transformation, that is trivially satisfiable and
+//! returns nothing that could be mistaken for anything else.
+//!
 //! See `ARCHITECTURE.md`.
 
 #![warn(missing_docs)]
@@ -309,6 +326,9 @@ pub trait Embedder: Send + Sync {
 pub trait VectorStore: Send + Sync {
     /// Inserts or replaces `entries`, keyed by their chunk ids.
     ///
+    /// An **empty `entries` succeeds and changes nothing** — see the crate's
+    /// *Empty collections* rule (ADR-C19). It is not an invalid request.
+    ///
     /// Takes `&self`, not `&mut self`: a `Box<dyn VectorStore>` is shared
     /// across concurrent queries, so **an implementation that holds mutable
     /// state must provide its own interior mutability** — a lock, a channel, or
@@ -427,6 +447,12 @@ mod tests {
     #[async_trait]
     impl VectorStore for StubStore {
         async fn upsert(&self, entries: Vec<EmbeddedChunk>) -> Result<(), ComponentError> {
+            // Contradicts the *Empty collections* rule at the top of this file
+            // (ADR-C19, accepted 2026-09-10), deliberately and temporarily: the
+            // decision and the behaviour change are separate PRs, so that
+            // neither is a side effect of the other. **This is not the worked
+            // example to copy.** A conformant store returns `Ok(())` here.
+            // ADR-C19's Consequences list what the change owes.
             if entries.is_empty() {
                 return Err(ComponentError::InvalidRequest("nothing to upsert".into()));
             }
