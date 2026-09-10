@@ -1,7 +1,7 @@
 //! # ragondin-contracts
 //!
 //! The **component contract**: the traits an external contributor implements.
-//! This crate is **face 1** of the two-faced contract (ADR-C3) — the Rust
+//! This crate is **face 1** of the two-faced contract (ADR-3) — the Rust
 //! trait, implemented in-process by a `Local` component. Face 2 is the
 //! protobuf mirror in `ragondin-proto`, spoken by a `Remote` component over gRPC.
 //! The engine calls the trait either way and cannot tell them apart, which is
@@ -41,7 +41,7 @@ use thiserror::Error;
 
 /// The error every component boundary returns.
 ///
-/// One type for both faces (ADR-C3): the engine cannot tell a `Local` call
+/// One type for both faces (ADR-3): the engine cannot tell a `Local` call
 /// from a `Remote` one, so a failure must arrive in the same shape whichever
 /// produced it. `#[non_exhaustive]` so that adding a variant is not a breaking
 /// change to this stable API boundary.
@@ -75,7 +75,7 @@ pub enum ComponentError {
     /// arrives as a gRPC status, so `ragondin-remote` can only reconstruct a message,
     /// not the original error type. Do not build logic on the concrete type
     /// behind this box: it is present in-process and absent over the network,
-    /// and the engine cannot tell which face it called (ADR-C3).
+    /// and the engine cannot tell which face it called (ADR-3).
     #[error("backend failure: {0}")]
     Backend(#[source] Box<dyn std::error::Error + Send + Sync>),
 }
@@ -112,7 +112,7 @@ impl RetrieveParams {
 /// constants (RRF's `k`) are constructor configuration. It exists so that a
 /// future knob is a field rather than a change to the trait's signature, which
 /// would break every implementation in and out of the repository — including
-/// every third-party `Remote` service, which is the contribution funnel ADR-C3
+/// every third-party `Remote` service, which is the contribution funnel ADR-3
 /// exists to protect.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 #[non_exhaustive]
@@ -523,7 +523,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_component_error_crosses_the_trait_object_boundary() {
-        // The engine cannot tell `Local` from `Remote` (ADR-C3), so a failure
+        // The engine cannot tell `Local` from `Remote` (ADR-3), so a failure
         // has to arrive as this one shared type whichever face produced it.
         let component: Box<dyn VectorStore> = Box::new(StubStore);
         let err = component
