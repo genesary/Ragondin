@@ -442,7 +442,7 @@ impl EngineContext {
 }
 ```
 
-**Five families, two ways in.** The context keeps one table per component family, and all five are populated by the same `register_*` call — that is INV-7 in the API. What differs is what *reads* a table. `Retriever`, `Fusion` and `Reranker` are pipeline node variants, so physical planning looks each one up from the node's `impl:` name. `Embedder` and `VectorStore` are **not** node variants: a dense retriever is built *from* them, so nothing in planning looks them up, and a `ComponentCtor` is handed the node's `Params` and never the `EngineContext`. That asymmetry is drawn below because it is invisible in the struct, where all five tables look alike.
+**Five families, two ways a component reaches a plan.** The context keeps one table per component family, and all five are populated by the same `register_*` call — that is INV-7 in the API. What differs is what *reads* a table. `Retriever`, `Fusion` and `Reranker` are pipeline node variants, so physical planning looks each one up from the node's `impl:` name. `Embedder` and `VectorStore` are **not** node variants: a dense retriever is built *from* them, so nothing in planning looks them up, and a `ComponentCtor` is handed the node's `Params` and never the `EngineContext`. That asymmetry is drawn below because it is invisible in the struct, where all five tables look alike.
 
 ```mermaid
 flowchart TB
