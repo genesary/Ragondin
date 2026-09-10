@@ -181,13 +181,18 @@ async fn check_roles_are_separated(embedder: &dyn Embedder) -> Result<(), Confor
     }
 
     if vectors[0] == vectors[1] {
+        // Reported by shape, not by content, as every other failure here is:
+        // the real fixture this check exists for is an E5- or BGE-class
+        // embedder, and printing its vectors would put a thousand floats in a
+        // panic message that has already said the only thing that matters —
+        // the two are identical.
+        let dim = vectors[0].first().map_or(0, |vector| vector.dim());
         return Err(ConformanceFailure::new(
             COMPONENT,
             "role changes the vector",
             format!(
                 "distinct per-role prefixes were declared, yet one text embeds \
-                 identically under Query and Passage: {:?}",
-                vectors[0]
+                 identically under Query and Passage ({dim} components)"
             ),
         ));
     }
