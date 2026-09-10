@@ -26,6 +26,22 @@
 //! a version bump says the grammar itself may have changed. Continuing there
 //! is not leniency, it is misinterpretation.
 //!
+//! That refusal reaches a caller two ways, and only one of them keeps its
+//! type. Through `Deserialize`, [`SchemaVersion`] routes to
+//! [`SchemaVersion::new`] and hands the error to `serde::de::Error::custom`,
+//! which keeps the message and erases the type — so a caller could only tell
+//! "this configuration needs a newer build" from "this file is malformed" by
+//! matching on text. [`peek_schema_version`] reads the `version` field alone,
+//! without the rest of the document being interpreted, and returns
+//! [`UnsupportedSchemaVersion`] as a type the caller can match on. It is the
+//! surface `ragondin-config` (#27) is meant to load a file through.
+//!
+//! Uninterpreted is not unread: the deserializer still walks the whole
+//! document, so a syntax error anywhere in it outranks the version verdict and
+//! comes back as [`SchemaVersionPeekError::Unreadable`]. The peek skips the
+//! meaning of the rest of the text, not its bytes — which is all the refusal
+//! needs, since what a version bump puts in doubt is meaning.
+//!
 //! An **absent** version reads as the version this build writes: nothing has
 //! ever been serialized in an earlier one, so there is no older document for
 //! a default to be wrong about, and a configuration that says nothing is
@@ -43,6 +59,7 @@
 //! Nothing here is executed, and nothing here is hashed.
 
 use std::collections::BTreeMap;
+use std::fmt;
 
 use serde::{Deserialize, Deserializer, Serialize};
 
@@ -110,6 +127,185 @@ impl<'de> Deserialize<'de> for SchemaVersion {
         let found = u32::deserialize(deserializer)?;
         Self::new(found).map_err(serde::de::Error::custom)
     }
+}
+
+/// Reads **only** the `version` field of a configuration, and refuses an
+/// unsupported one as a typed [`UnsupportedSchemaVersion`].
+///
+/// [`SchemaVersion`]'s own `Deserialize` also refuses an unreadable version,
+/// but through `serde::de::Error::custom`, which takes an `impl Display` and
+/// keeps the string: by the time the error reaches a caller, the type is gone
+/// and "this configuration needs a newer build" is indistinguishable from
+/// "this file is malformed" except by matching on the message text. Peeking
+/// first is what makes the distinction a type rather than a substring.
+///
+/// Generic over the deserializer, so the **caller supplies the format** —
+/// `serde_yaml::Deserializer::from_str(text)`, `&mut
+/// serde_json::Deserializer::from_str(text)`, or any other. This crate carries
+/// no format implementation of its own (INV-4), and reading files is
+/// `ragondin-config`'s job (#27), not this crate's (INV-3).
+///
+/// Every key but `version` is stepped over, so a document this build could not
+/// parse as a [`RawPipeline`] still yields its version — which is the point: a
+/// version bump says the grammar itself may have changed, and the refusal must
+/// land before the rest of the document is **interpreted** under a grammar
+/// that may no longer apply.
+///
+/// Uninterpreted is not unread. The deserializer still walks the whole
+/// document, so a syntax error anywhere in it — including well after the
+/// `version` line — comes back as [`SchemaVersionPeekError::Unreadable`]
+/// rather than as a version verdict. What the peek skips is meaning, not
+/// bytes.
+///
+/// Only a mapping is accepted. `serde`'s derive would also read a struct out
+/// of a sequence positionally, which would make the JSON `[7]` an unsupported
+/// version 7 — a confident wrong diagnosis about a document that is not a
+/// configuration at all.
+///
+/// An absent version reads as [`SchemaVersion::CURRENT`], exactly as it does
+/// in a full parse. An explicit null does not: it is a `version` that is not a
+/// number, which the full parse refuses too.
+///
+/// ```
+/// use ragondin_pipeline::{peek_schema_version, SchemaVersionPeekError};
+///
+/// let text = "version: 7\npipeline:\n  nodes: []\n";
+/// let err = peek_schema_version(serde_yaml::Deserializer::from_str(text)).unwrap_err();
+/// assert!(matches!(err, SchemaVersionPeekError::Unsupported(_)));
+/// ```
+pub fn peek_schema_version<'de, D>(
+    deserializer: D,
+) -> Result<SchemaVersion, SchemaVersionPeekError<D::Error>>
+where
+    D: Deserializer<'de>,
+{
+    match deserializer
+        .deserialize_map(VersionProbe)
+        .map_err(SchemaVersionPeekError::Unreadable)?
+    {
+        Some(found) => Ok(SchemaVersion::new(found)?),
+        None => Ok(SchemaVersion::CURRENT),
+    }
+}
+
+/// The one key [`peek_schema_version`] is looking for.
+const VERSION_KEY: &str = "version";
+
+/// Reads a configuration document's `version`, and steps over everything else.
+///
+/// Hand-written rather than derived, for two things a derive cannot give.
+/// `deserialize_map` refuses a sequence outright, where a derived struct reads
+/// one positionally and takes `[7]` for version 7. And `expecting` names the
+/// document rather than this type, so a private name never reaches a message a
+/// user reads.
+struct VersionProbe;
+
+impl<'de> serde::de::Visitor<'de> for VersionProbe {
+    type Value = Option<u32>;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        formatter.write_str("a configuration document")
+    }
+
+    fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+    where
+        A: serde::de::MapAccess<'de>,
+    {
+        let mut version = None;
+        while let Some(key) = map.next_key::<ProbeKey>()? {
+            match key {
+                ProbeKey::Version if version.is_some() => {
+                    return Err(serde::de::Error::duplicate_field(VERSION_KEY));
+                }
+                ProbeKey::Version => version = Some(map.next_value::<u32>()?),
+                ProbeKey::Other => {
+                    map.next_value::<serde::de::IgnoredAny>()?;
+                }
+            }
+        }
+        Ok(version)
+    }
+}
+
+/// `version`, or one of the keys the probe steps over.
+enum ProbeKey {
+    Version,
+    Other,
+}
+
+impl<'de> Deserialize<'de> for ProbeKey {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct KeyVisitor;
+
+        impl serde::de::Visitor<'_> for KeyVisitor {
+            type Value = ProbeKey;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("a configuration key")
+            }
+
+            fn visit_str<E: serde::de::Error>(self, key: &str) -> Result<ProbeKey, E> {
+                Ok(ProbeKey::of(key.as_bytes()))
+            }
+
+            // A format that hands keys over as bytes rather than as text. Any
+            // other shape of key — a number, say — is left to fail, and a
+            // failure here reads as `Unreadable`, which sends the caller to the
+            // full parse rather than to a guess about the version.
+            fn visit_bytes<E: serde::de::Error>(self, key: &[u8]) -> Result<ProbeKey, E> {
+                Ok(ProbeKey::of(key))
+            }
+        }
+
+        deserializer.deserialize_identifier(KeyVisitor)
+    }
+}
+
+impl ProbeKey {
+    /// Which key this is, by name.
+    fn of(key: &[u8]) -> Self {
+        if key == VERSION_KEY.as_bytes() {
+            Self::Version
+        } else {
+            Self::Other
+        }
+    }
+}
+
+/// Why [`peek_schema_version`] could not hand back a supported version.
+///
+/// The two variants are the two diagnoses that must not be confused: a
+/// configuration this build is too old to read, and text that does not parse.
+/// Only the first is actionable by the person who wrote the file, and only by
+/// upgrading rather than by hunting for a syntax error.
+///
+/// Deliberately carries no `Clone`, `Copy`, `PartialEq` or `Eq`: no real
+/// deserializer error implements them, so on a stable boundary (INV-1) they
+/// would be decoration that no caller could ever use and that could not be
+/// withdrawn.
+#[derive(Debug, thiserror::Error)]
+pub enum SchemaVersionPeekError<E> {
+    /// The configuration stated a version this build cannot read.
+    #[error(transparent)]
+    Unsupported(#[from] UnsupportedSchemaVersion),
+    /// The text could not be read far enough to trust a version — a syntax
+    /// error anywhere in the document, a `version` that is not a number, or a
+    /// top-level shape that is not a mapping.
+    ///
+    /// The deserializer's own error, with whatever location it carries, is
+    /// this variant's [`source`](std::error::Error::source). `thiserror` puts
+    /// the `E: Error` bound on the generated `Error` impl and not on this
+    /// type, so `SchemaVersionPeekError<E>` exists for any `E` and *is* an
+    /// `Error` for every `'static` deserializer error — which is every real
+    /// one.
+    ///
+    /// A caller that peeks before parsing can simply fall through to the full
+    /// parse here: it will fail too, and with the better-located message.
+    #[error("the configuration's schema version could not be read")]
+    Unreadable(#[source] E),
 }
 
 /// A configuration states a schema version this build cannot read.
@@ -294,14 +490,218 @@ mod tests {
     }
 
     #[test]
-    fn the_version_error_wording_is_pinned() {
-        // #27 has no better way to tell "this config needs a newer build" from
-        // "this YAML is broken": `serde::de::Error::custom` erases the type
-        // into a string. Until that is addressed, the wording is the contract,
-        // so a reword has to break a test rather than break `ragondin-config`.
-        assert_eq!(
-            SchemaVersion::new(3).unwrap_err().to_string(),
-            "unsupported pipeline schema version 3: this build reads version 2"
+    fn peeking_an_unsupported_version_is_a_typed_error_in_json() {
+        // The contract this surface exists for: the caller matches on the
+        // *type*, not on a substring of a message.
+        let text = r#"{"version":7,"pipeline":{"nodes":[]}}"#;
+        let err = peek_schema_version(&mut serde_json::Deserializer::from_str(text))
+            .expect_err("a version this build cannot read must be refused");
+        match err {
+            SchemaVersionPeekError::Unsupported(unsupported) => {
+                assert_eq!(unsupported.found(), 7);
+            }
+            other => panic!("an unsupported version must not read as unreadable text: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn peeking_an_unsupported_version_is_a_typed_error_in_yaml() {
+        // The same refusal in a different syntax: the peek is generic over the
+        // deserializer, so the caller chooses the format and the typed error is
+        // the same one.
+        let text = "version: 7\npipeline:\n  nodes: []\n";
+        let err = peek_schema_version(serde_yaml::Deserializer::from_str(text))
+            .expect_err("a version this build cannot read must be refused");
+        match err {
+            SchemaVersionPeekError::Unsupported(unsupported) => {
+                assert_eq!(unsupported.found(), 7);
+            }
+            other => panic!("an unsupported version must not read as unreadable text: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn text_that_does_not_parse_peeks_as_unreadable_rather_than_unsupported() {
+        // The whole point of the peek: "this configuration needs a newer build"
+        // and "this file is malformed" are different diagnoses, and sending a
+        // user looking for a syntax error that does not exist is the failure
+        // this surface exists to stop. It has to hold in the other direction
+        // too, or the peek just relabels every parse error.
+        let json = peek_schema_version(&mut serde_json::Deserializer::from_str(r#"{"version":"#))
+            .expect_err("truncated JSON states no version this build could act on");
+        assert!(
+            matches!(json, SchemaVersionPeekError::Unreadable(_)),
+            "malformed text is not an unsupported version: {json:?}"
+        );
+
+        let yaml = peek_schema_version(serde_yaml::Deserializer::from_str(
+            "version: 2\n\tnodes: []\n",
+        ))
+        .expect_err("a tab where YAML expects indentation is a syntax error");
+        assert!(
+            matches!(yaml, SchemaVersionPeekError::Unreadable(_)),
+            "malformed text is not an unsupported version: {yaml:?}"
+        );
+    }
+
+    #[test]
+    fn a_syntax_error_after_the_version_still_reads_as_unreadable() {
+        // The peek skips the *meaning* of the rest of the document, not its
+        // bytes: the deserializer still walks to the end, so a syntax error
+        // anywhere wins over the version verdict. Pinned because the docs
+        // claim exactly this, and the opposite is the easy thing to assume.
+        let err = peek_schema_version(serde_yaml::Deserializer::from_str(
+            "version: 7\npipeline:\n\tnodes: []\n",
+        ))
+        .expect_err("text that does not parse cannot yield a version verdict");
+        assert!(
+            matches!(err, SchemaVersionPeekError::Unreadable(_)),
+            "a broken document is unreadable even when its version line is fine: {err:?}"
+        );
+    }
+
+    #[test]
+    fn a_sequence_is_not_a_configuration_document() {
+        // `serde`'s derive reads a struct from a sequence positionally, so a
+        // derived probe takes `[7]` for version 7 — an unsupported-version
+        // verdict on something that is not a configuration at all, which is
+        // precisely the wrong diagnosis this surface exists to prevent. Only a
+        // mapping is a configuration document.
+        let json = peek_schema_version(&mut serde_json::Deserializer::from_str("[7]"))
+            .expect_err("a JSON array is not a configuration document");
+        assert!(
+            matches!(json, SchemaVersionPeekError::Unreadable(_)),
+            "a sequence must not read as a version: {json:?}"
+        );
+
+        let yaml = peek_schema_version(serde_yaml::Deserializer::from_str("- 7\n"))
+            .expect_err("a YAML sequence is not a configuration document");
+        assert!(
+            matches!(yaml, SchemaVersionPeekError::Unreadable(_)),
+            "a sequence must not read as a version: {yaml:?}"
+        );
+        let message = std::error::Error::source(&yaml)
+            .expect("the deserializer's error is the source")
+            .to_string();
+        assert!(
+            message.contains("a configuration document"),
+            "the refusal must say what was expected, in the user's vocabulary: {message}"
+        );
+        assert!(
+            !message.contains("Probe"),
+            "no private type name may reach a user-facing message: {message}"
+        );
+    }
+
+    #[test]
+    fn the_deserializers_error_is_the_source_of_an_unreadable_peek() {
+        // The caller reaches the format's own diagnosis — file, line, column —
+        // through `source`, so the peek adds a verdict without swallowing the
+        // detail underneath it.
+        let err = peek_schema_version(&mut serde_json::Deserializer::from_str(r#"{"version":"#))
+            .expect_err("truncated JSON does not parse");
+        let SchemaVersionPeekError::Unreadable(ref inner) = err else {
+            panic!("truncated text is unreadable, not an unsupported version: {err:?}");
+        };
+        let source =
+            std::error::Error::source(&err).expect("the deserializer's error is the source");
+        assert_eq!(source.to_string(), inner.to_string());
+        assert!(
+            !source.to_string().is_empty(),
+            "a source that says nothing is not a diagnosis"
+        );
+    }
+
+    #[test]
+    fn the_peek_error_type_is_not_bounded_by_the_deserializers_error_type() {
+        // `Unreadable` holds its `E` as a `#[source]`, which needs `E: Error`
+        // — but `thiserror` puts that bound on the generated `Error` impl and
+        // not on the type, so the type itself stays open. The doc comment says
+        // so, and this is that claim compiled rather than asserted: `Opaque`
+        // implements nothing at all, and the error still exists over it. If
+        // this ever stops compiling, the doc comment has gone wrong.
+        struct Opaque;
+        let err: SchemaVersionPeekError<Opaque> = SchemaVersionPeekError::Unreadable(Opaque);
+        assert!(matches!(err, SchemaVersionPeekError::Unreadable(_)));
+    }
+
+    #[test]
+    fn the_version_is_peeked_without_the_rest_of_the_document_being_interpreted() {
+        // The refusal has to land before the rest of the document is given
+        // meaning, or a document written in a grammar this build does not know
+        // is interpreted on the way to being refused. Here the body is not a
+        // `RawGraph` at all, and the peek still reaches its verdict.
+        let body = r#""pipeline":{"not-a-graph":true}"#;
+        let unsupported = format!(r#"{{"version":7,{body}}}"#);
+        let supported = format!(r#"{{"version":{},{body}}}"#, SchemaVersion::SUPPORTED);
+        assert!(
+            serde_json::from_str::<RawPipeline>(&supported).is_err(),
+            "the body must be what a full parse chokes on, not the version, or this \
+             test would prove nothing about the body"
+        );
+
+        let err = peek_schema_version(&mut serde_json::Deserializer::from_str(&unsupported))
+            .expect_err("a version this build cannot read must be refused");
+        assert!(
+            matches!(err, SchemaVersionPeekError::Unsupported(_)),
+            "the version is the verdict, whatever the rest of the document means: {err:?}"
+        );
+
+        // The complement: a body the full parse refuses does not stop a
+        // supported version from peeking, which is what "uninterpreted" means.
+        let peeked = peek_schema_version(&mut serde_json::Deserializer::from_str(&supported))
+            .expect("a supported version peeks whatever the body means");
+        assert_eq!(peeked, SchemaVersion::CURRENT);
+    }
+
+    #[test]
+    fn peeking_agrees_with_the_full_parse_on_versions_this_build_reads() {
+        // A peek that disagreed with `Deserialize` would refuse documents the
+        // parser accepts, or wave through ones it refuses.
+        let stated = peek_schema_version(&mut serde_json::Deserializer::from_str(
+            r#"{"version":2,"pipeline":{"nodes":[]}}"#,
+        ))
+        .expect("the supported version must peek");
+        assert_eq!(stated, SchemaVersion::CURRENT);
+
+        let absent = peek_schema_version(serde_yaml::Deserializer::from_str(
+            "pipeline:\n  nodes: []\n",
+        ))
+        .expect("an absent version must peek as the version this build writes");
+        assert_eq!(absent, SchemaVersion::CURRENT);
+
+        // An explicit null is not an absent version. The full parse refuses it,
+        // so the peek must too — a peek that waved it through would report a
+        // document readable that the parser then rejects, which is the
+        // disagreement this test exists to forbid.
+        let null = "version: null\npipeline:\n  nodes: []\n";
+        assert!(
+            serde_yaml::from_str::<RawPipeline>(null).is_err(),
+            "the full parse refuses an explicit null version"
+        );
+        let err = peek_schema_version(serde_yaml::Deserializer::from_str(null))
+            .expect_err("and so must the peek");
+        assert!(
+            matches!(err, SchemaVersionPeekError::Unreadable(_)),
+            "a version that is not a number is unreadable, not unsupported: {err:?}"
+        );
+    }
+
+    #[test]
+    fn the_version_error_names_the_version_found_and_the_version_supported() {
+        // The type is what a caller matches on; the message is what a human
+        // reads, and it is useless unless it says both which version the
+        // configuration states and which one this build reads. 7 is chosen so
+        // that the two numbers are distinguishable in the text.
+        let found = 7;
+        let message = SchemaVersion::new(found).unwrap_err().to_string();
+        assert!(
+            message.contains(&found.to_string()),
+            "the message must name the version found: {message}"
+        );
+        assert!(
+            message.contains(&SchemaVersion::SUPPORTED.to_string()),
+            "the message must name the version supported: {message}"
         );
     }
 

@@ -57,7 +57,12 @@ mandatory termination guard), and the open `Extension` variant.
   `expected: Option<ValueKind>`, where `None` means the consumer declares no
   port at that position at all — chosen over inventing a fourth `ValueKind`
   variant for "no kind", which would have put a non-kind into ADR-C16's edge
-  vocabulary that issue #15 reuses.
+  vocabulary that issue #15 reuses. `SchemaVersionPeekError` joins that list on
+  the same terms: it is not `#[non_exhaustive]` either, so a consumer may match
+  its two diagnoses exhaustively and a third would be a visible, deliberate act
+  on this boundary. It carries no `Clone`, `Copy`, `PartialEq` or `Eq`, because
+  no real deserializer error implements them — a derive there would be
+  decoration no caller could use and that could not later be withdrawn.
 - **The wire format is separate (INV-9).** The serialized (wire) form is
   `RawPipeline` (`src/raw.rs`): hand-maintained, carrying its own
   `SchemaVersion`, and **structurally distinct** from the logical model — a
@@ -66,3 +71,18 @@ mandatory termination guard), and the open `Extension` variant.
   `#[derive(Serialize)]` the internal types to produce the wire format, and
   never lower one into the other implicitly. `ragondin-proto` holds the protobuf
   mirror of the same schema; `ragondin-config` reads files into it.
+- **A version this build cannot read is a type, not a message.**
+  `SchemaVersion`'s `Deserialize` refuses one through
+  `serde::de::Error::custom`, which keeps the wording and erases the type, so
+  `peek_schema_version` reads the `version` field alone — without the rest of
+  the document being interpreted — and returns `UnsupportedSchemaVersion`
+  unwrapped. It is generic over the deserializer: the caller supplies the
+  format, because this crate carries no format implementation (INV-4) and does
+  no I/O (INV-3). `ragondin-config` (#27) is the caller it exists for.
+  Uninterpreted is not unread: the deserializer walks the whole document, so a
+  syntax error anywhere outranks the version verdict and reads as
+  `Unreadable` — which is correct, since what a version bump puts in doubt is
+  meaning, not bytes. Its probe accepts only a mapping, hand-written rather
+  than derived: `serde`'s derive also reads a struct positionally out of a
+  sequence, which would take the JSON `[7]` for version 7 and answer a
+  document that is not a configuration with a confident wrong diagnosis.

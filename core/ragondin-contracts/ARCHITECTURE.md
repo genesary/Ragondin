@@ -34,13 +34,6 @@ component is a gRPC service honouring the mirror protobuf in `ragondin-proto`.
   not the engine, not `tantivy`, not `tonic`. **No heavy dependency may appear
   here.** If one seems necessary, the abstraction is leaking through the
   contract: stop and raise it, do not add the dependency.
-
-  This crate also *declares* `ragondin-pipeline` and never references it, which drags
-  `sha2` and its eight transitive crates into a contributor's build. The
-  documented dependency graph sanctions the edge (`engine → contracts → ir →
-  types`), so it is pre-declared rather than stray, and CI stays silent because
-  none of those crates is heavy. It is still weight nobody asked for; tracked
-  separately rather than removed in passing.
 - **Async traits use `async_trait`** (frozen decision): `dyn`-compatible async,
   not RPITIT. Dynamic dispatch is mandatory — the engine cannot tell `Local`
   from `Remote` at compile time.
