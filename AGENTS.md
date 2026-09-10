@@ -23,6 +23,9 @@ cargo clippy --workspace --all-targets -- -D warnings
 # Format
 cargo fmt --check
 
+# API documentation, rustdoc warnings as errors, both feature configurations
+just doc
+
 # Architecture invariant checks (see "Invariants"), over the `--all-features`
 # dependency graph — every heavy backend sits behind a feature by rule, so the
 # lean graph holds no component crate's real dependencies at all.
@@ -197,7 +200,7 @@ Three defects landed in one week, all of them in **prose**, and **not one could 
 ### Definition of done
 
 - [ ] Every acceptance criterion in the issue is met.
-- [ ] `just check` passes (build, test, clippy with `-D warnings`, fmt, invariant checks).
+- [ ] `just check` passes (build, test, clippy with `-D warnings`, fmt, rustdoc with `-D warnings`, invariant checks).
 - [ ] New behavior is covered by tests written **before** the implementation.
 - [ ] No frozen decision was reopened; no architectural decision was made implicitly.
 - [ ] If the diff asserts in prose how something works — a doc comment describing a mechanism, an ADR citation, an issue reference — `just map --conflicts` reports nothing new about it. It is advisory and not part of `just check`, so nothing runs it for you.

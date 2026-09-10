@@ -84,6 +84,22 @@ jobs:
       - name: Architecture invariant check behaves as documented
         run: python3 scripts/test-check-invariants.py
 
+      # rustdoc's warnings are errors, in both feature configurations, for the
+      # reasons the clippy pair above gives. A broken intra-doc link is the
+      # same class of defect the documentation link check below guards in
+      # Markdown, and `ragondin-contracts`' rustdoc is an INV-1 surface an
+      # external component author reads. `--no-deps`: only this repository's
+      # documentation is gated.
+      - name: Documentation builds (rustdoc warnings are errors)
+        run: cargo doc --workspace --no-deps
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+      - name: Documentation builds, feature-gated paths (rustdoc warnings are errors)
+        run: cargo doc --workspace --no-deps --all-features
+        env:
+          RUSTDOCFLAGS: -D warnings
+
       # The most important gate: the architecture invariants (INV-3, INV-4,
       # INV-5, INV-6, INV-11). Python 3 is preinstalled on ubuntu runners; the
       # check has no third-party dependency. It resolves the `--all-features`
