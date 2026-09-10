@@ -427,6 +427,7 @@ mod tests {
     };
     use ragondin_types::{Chunk, ChunkId, DocId, QueryId};
     use std::collections::BTreeMap;
+    use std::time::Duration;
 
     use crate::context::EngineContext;
     use crate::plan::plan_physical;
@@ -503,6 +504,47 @@ mod tests {
             _params: &RetrieveParams,
         ) -> Result<Vec<ScoredChunk>, ComponentError> {
             Err(ComponentError::Unavailable("the index is offline".into()))
+        }
+    }
+
+    /// Answers after a delay, the way a `Remote` component waits on the wire.
+    ///
+    /// What a trace's `duration` measures is only observable through a
+    /// component that takes measurable time: every other stub here answers
+    /// in microseconds, and a zeroed duration would pass beside them.
+    struct SlowRetriever;
+
+    #[async_trait]
+    impl Retriever for SlowRetriever {
+        async fn retrieve(
+            &self,
+            _query: &Query,
+            _params: &RetrieveParams,
+        ) -> Result<Vec<ScoredChunk>, ComponentError> {
+            tokio::time::sleep(SLOW_RETRIEVER_DELAY).await;
+            Ok(vec![scored("c1", 1.0)])
+        }
+    }
+
+    const SLOW_RETRIEVER_DELAY: Duration = Duration::from_millis(20);
+
+    /// Concatenates its legs in the order they arrive.
+    ///
+    /// **Order-sensitive on purpose**: `RrfFusion` below scores each chunk by
+    /// its rank within a leg and never by which leg it came from, so `[a, b]`
+    /// and `[b, a]` fuse identically through it. Only a fusion whose output
+    /// depends on leg order can observe that the adapter hands the legs over
+    /// in wiring order, which `Fusion::fuse`'s contract requires.
+    struct ConcatFusion;
+
+    #[async_trait]
+    impl Fusion for ConcatFusion {
+        async fn fuse(
+            &self,
+            inputs: Vec<Vec<ScoredChunk>>,
+            _params: &FusionParams,
+        ) -> Result<Vec<ScoredChunk>, ComponentError> {
+            Ok(inputs.into_iter().flatten().collect())
         }
     }
 
@@ -584,7 +626,9 @@ mod tests {
         );
         ctx.register_retriever("counting", Box::new(|_| Ok(Box::new(CountingRetriever))));
         ctx.register_retriever("offline", Box::new(|_| Ok(Box::new(OfflineRetriever))));
+        ctx.register_retriever("slow", Box::new(|_| Ok(Box::new(SlowRetriever))));
         ctx.register_fusion("rrf", Box::new(|_| Ok(Box::new(RrfFusion))));
+        ctx.register_fusion("concat", Box::new(|_| Ok(Box::new(ConcatFusion))));
         ctx.register_reranker("by_id", Box::new(|_| Ok(Box::new(ByIdReranker))));
         ctx
     }
@@ -690,6 +734,81 @@ mod tests {
         let mut traced_ids = traced(&trace);
         traced_ids.sort_unstable();
         assert_eq!(traced_ids, vec!["bm25_leg", "dense_leg", "fuse"]);
+    }
+
+    #[tokio::test]
+    async fn a_fusion_receives_its_legs_in_wiring_order() {
+        // `Fusion::fuse`'s contract: the legs arrive in the order the node
+        // wires them. `RrfFusion` cannot tell `[a, b]` from `[b, a]`, so the
+        // acceptance test above passes with the legs reversed; `concat` can,
+        // and two plans that differ only in wiring order must fuse differently.
+        let legs = |first: &str, second: &str| {
+            plan(vec![
+                raw_top_k(
+                    "bm25_leg",
+                    "retriever",
+                    "bm25",
+                    &["question"],
+                    RawParamValue::Int(3),
+                ),
+                raw_top_k(
+                    "dense_leg",
+                    "retriever",
+                    "dense",
+                    &["question"],
+                    RawParamValue::Int(3),
+                ),
+                raw("fuse", "fusion", "concat", &[first, second]),
+            ])
+        };
+        let engine = Engine::new();
+
+        let (bm25_first, _) = engine
+            .execute(&legs("bm25_leg", "dense_leg"), query())
+            .await;
+        let (dense_first, _) = engine
+            .execute(&legs("dense_leg", "bm25_leg"), query())
+            .await;
+
+        assert_eq!(
+            ids(&bm25_first.expect("every node of this plan can run")),
+            vec!["c1", "c2", "c3", "c3", "c1", "c4"],
+            "port 0 is `bm25_leg`, so its chunks come first"
+        );
+        assert_eq!(
+            ids(&dense_first.expect("every node of this plan can run")),
+            vec!["c3", "c1", "c4", "c1", "c2", "c3"],
+            "port 0 is `dense_leg` here, so the order must flip with the wiring"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_trace_measures_how_long_each_nodes_component_took() {
+        // ADR-C9 lists duration among what per-node replay reads. `slow`
+        // waits a known time before answering, so the trace must show at
+        // least that much — `> ZERO` would also be satisfied by the adapter's
+        // own overhead, and would not prove the component's call is what is
+        // measured.
+        let plan = plan(vec![
+            raw_top_k(
+                "leg",
+                "retriever",
+                "slow",
+                &["question"],
+                RawParamValue::Int(1),
+            ),
+            raw("fuse", "fusion", "rrf", &["leg"]),
+        ]);
+
+        let (output, trace) = Engine::new().execute(&plan, query()).await;
+
+        output.expect("every node of this plan can run");
+        assert_eq!(traced(&trace), vec!["leg", "fuse"]);
+        assert!(
+            trace.nodes[0].duration >= SLOW_RETRIEVER_DELAY,
+            "the slow leg waited {SLOW_RETRIEVER_DELAY:?}, but its trace records {:?}",
+            trace.nodes[0].duration
+        );
     }
 
     #[tokio::test]
