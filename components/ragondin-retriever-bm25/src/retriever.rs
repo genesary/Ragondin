@@ -1,5 +1,7 @@
 //! The BM25 [`Retriever`], and the in-memory tantivy index behind it.
 
+use std::collections::BTreeSet;
+
 use async_trait::async_trait;
 use ragondin_contracts::{ComponentError, RetrieveParams, Retriever};
 use ragondin_types::{Chunk, ChunkId, DocId, Query, ScoredChunk};
@@ -22,6 +24,25 @@ pub enum IndexError {
     /// tantivy could not build or open the index.
     #[error("building the BM25 index failed")]
     Backend(#[source] tantivy::TantivyError),
+
+    /// Two chunks of the corpus carry the same [`ChunkId`].
+    ///
+    /// Refused rather than tolerated, because the ranking guarantee rests on
+    /// it. Ties break by chunk id; with the score *and* the id equal, a stable
+    /// sort leaves the order to tantivy's document address — insertion order —
+    /// so the same corpus, permuted, would rank two ways, which is exactly what
+    /// this component promises cannot happen.
+    ///
+    /// A positional tie-break would not restore the promise: it makes the order
+    /// stable for one insertion order while leaving a permuted corpus to
+    /// differ, and independence from insertion order *is* the claim. Beyond
+    /// ranking, two chunks under one id disagree about what that id denotes, so
+    /// keeping either is a guess.
+    #[error("two chunks carry the id {id:?}: one id names one chunk")]
+    DuplicateChunkId {
+        /// The id that appeared more than once.
+        id: String,
+    },
 }
 
 impl From<tantivy::TantivyError> for IndexError {
@@ -96,6 +117,19 @@ impl Bm25Retriever {
         let chunk_id = schema.add_text_field("chunk_id", STORED);
         let document_id = schema.add_text_field("document_id", STORED);
         let schema = schema.build();
+
+        // Before anything is indexed: a corpus naming one chunk twice cannot be
+        // ranked reproducibly (see `IndexError::DuplicateChunkId`), and finding
+        // that out after building the index would waste the build and report it
+        // from further away.
+        let mut seen = BTreeSet::new();
+        for chunk in &chunks {
+            if !seen.insert(chunk.id.as_str()) {
+                return Err(IndexError::DuplicateChunkId {
+                    id: chunk.id.as_str().to_string(),
+                });
+            }
+        }
 
         let index = Index::create_in_ram(schema);
         // One writer thread: the segment layout, and therefore tantivy's own

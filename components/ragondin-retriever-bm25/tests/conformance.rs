@@ -8,7 +8,7 @@
 
 use ragondin_conformance::assert_retriever_conformance;
 use ragondin_contracts::{ComponentError, RetrieveParams, Retriever};
-use ragondin_retriever_bm25::Bm25Retriever;
+use ragondin_retriever_bm25::{Bm25Retriever, IndexError};
 use ragondin_types::{Chunk, ChunkId, DocId, Query, QueryId};
 
 /// A corpus small enough that the expected ranking can be read off it.
@@ -297,4 +297,51 @@ async fn a_token_of_forty_bytes_or_more_is_dropped() {
         .await
         .unwrap();
     assert_eq!(ids(&kept), vec!["t-1"], "39 bytes is under the limit");
+}
+
+/// A corpus naming one chunk twice is refused, so that the ranking guarantee
+/// above is true rather than nearly true.
+///
+/// `sort_by` is stable, so with the score *and* the chunk id equal the order
+/// fell back to tantivy's document address — insertion order. The same corpus,
+/// permuted, then ranked two ways, which is exactly what
+/// `ranking_is_deterministic` and `ties_are_broken_before_top_k_truncates`
+/// promise cannot happen; neither could see it, because both use distinct ids.
+///
+/// A positional tie-break would not have fixed it. It makes the order stable
+/// *for one insertion order* while leaving a permuted corpus to rank
+/// differently, which is the property being claimed. Only refusing the corpus
+/// makes the claim true — and two chunks under one `ChunkId` disagree about
+/// what that id denotes, so keeping either is a guess.
+#[test]
+fn a_corpus_naming_one_chunk_twice_is_refused() {
+    // `let Err(...) else` rather than `expect_err`, which would require
+    // `Debug` on the success type and so a derive on the public component for
+    // a test's convenience.
+    let Err(error) = Bm25Retriever::new(vec![
+        chunk("dup", "docA", "alpha"),
+        chunk("other", "docC", "alpha"),
+        chunk("dup", "docB", "alpha"),
+    ]) else {
+        panic!("one id names one chunk");
+    };
+
+    match error {
+        IndexError::DuplicateChunkId { id } => assert_eq!(id, "dup"),
+        other => panic!("expected DuplicateChunkId, got {other:?}"),
+    }
+}
+
+/// The corpus the check accepts is unaffected: distinct ids, including two
+/// chunks of the same document, still index.
+#[test]
+fn distinct_ids_within_one_document_are_not_a_duplicate() {
+    assert!(
+        Bm25Retriever::new(vec![
+            chunk("c-1", "docA", "alpha"),
+            chunk("c-2", "docA", "alpha"),
+        ])
+        .is_ok(),
+        "two chunks of one document are two chunks"
+    );
 }
