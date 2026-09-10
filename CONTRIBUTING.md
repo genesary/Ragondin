@@ -45,9 +45,12 @@ Five invariants are enforced as blocking CI checks, not just documented:
 - **INV-3 — value types only.** `ragondin-types` and `ragondin-pipeline` carry no
   I/O dependency (async runtime, transport, store client). The "no interner" and
   "no global context" clauses of INV-3 name no crate and stay review-enforced.
-- **INV-6 — no global state.** `inventory` and `linkme` appear nowhere in the
-  workspace. "Or equivalent" is a judgment a reviewer makes; these two are the
-  part a build can decide.
+- **INV-6 — no global state.** No crate in this repository declares `inventory`
+  or `linkme` as a **direct** dependency. Reaching one transitively, through the
+  internals of a third-party crate, is not a violation — `tantivy` does exactly
+  that through `typetag`, and it is neither a component registry nor an obstacle
+  to two `EngineContext`s in one process — decided in #146. "Or equivalent" is a
+  judgment a reviewer makes; these two are the part a build can decide.
 - **INV-11 — Tower governs the network envelope only.** No `impl tower::Service`
   under `components/`.
 

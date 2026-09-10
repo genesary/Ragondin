@@ -24,9 +24,34 @@ dependency, works on any runner with Python 3) and enforces:
           death of a contribution-driven project.
 
   INV-6 — no global state.
-          `inventory` and `linkme` appear nowhere in the workspace. A static
-          global registry makes two `EngineContext`s in one process impossible,
-          which is exactly what the evaluation harness needs.
+          No first-party crate declares `inventory` or `linkme` as a **direct**
+          dependency. A static global registry makes two `EngineContext`s in one
+          process impossible, which is exactly what the evaluation harness
+          needs.
+
+          Directly, and not anywhere in the closure: the deny-list is a proxy
+          for "*we* reached for a global registry", so it is scoped to what this
+          repository itself declares. `tantivy` pulls `inventory` in through
+          `typetag`, which registers serde trait objects inside tantivy — it is
+          not a component registry, it does not stop this process from holding
+          two `EngineContext`s, and no API this workspace exposes reaches it.
+          Failing on it would leave no exit but dropping the backend or
+          vendoring a fork, which is not proportionate to what INV-6 protects.
+
+          "First-party" is decided by where a crate's manifest lives, never by
+          whether it is listed as a workspace member — see `first_party_ids`.
+          Membership is one `exclude = [...]` line away from being false of code
+          sitting in this repository, and scoping the rule to members would make
+          that line a bypass of the invariant. So a first-party wrapper is not a
+          hole here: wherever in the repository it is parked, it carries the
+          direct edge and is named.
+
+          What the rule does not catch is a *third-party* crate taken as a
+          direct dependency that wraps `inventory` in its own internals. That is
+          the one gap, and it is accepted: adding a direct dependency is visible
+          in review, which is where "or equivalent" is judged anyway, and what
+          such a crate registers inside itself is not our registry. Decided
+          in #146.
 
   INV-11 — Tower governs the network envelope only.
           No `impl tower::Service` under `components/`. Domain components are
@@ -125,7 +150,9 @@ DENY_IO = {
 # --- INV-6 deny-list -------------------------------------------------------
 # Named by the invariant itself: "Never use a static global registry
 # (`inventory`, `linkme`, or equivalent)". "Or equivalent" is a judgment a
-# reviewer makes; these two are the part a build can decide.
+# reviewer makes; these two are the part a build can decide — and it decides
+# them over the workspace's own direct dependencies, not over the whole closure
+# (#146; the reasoning is in this file's header, under INV-6).
 DENY_GLOBAL_REGISTRY = {"inventory", "linkme"}
 
 # The crates INV-3 protects. INV-3 names exactly these two — `ragondin-contracts`
@@ -144,8 +171,31 @@ def is_heavy(name: str) -> bool:
 
 
 def load_metadata() -> dict:
+    """`cargo metadata` over the **feature-gated** graph.
+
+    `--all-features` is load-bearing, not thoroughness for its own sake. Every
+    heavy backend sits behind a feature by rule (ADR-C14), so the lean graph
+    structurally excludes every component crate's real dependencies: without the
+    flag, the checks below resolve a graph that contains none of the code they
+    most need to see, and that is the shape of every component to come rather
+    than an edge case. Clippy, `cargo test` and `deny.toml` (`all-features =
+    true`) already resolve this graph; this was the last gate that did not,
+    which is what #146 decided to close.
+
+    It has a cost worth knowing before believing a red build. On a virtual
+    workspace, `--all-features` resolves the **union** of every member's
+    features, so a core crate's closure can now include a feature some *other*
+    member turned on — a shared dependency that `ragondin-types` takes with
+    `default-features = false` is resolved with whatever the rest of the
+    workspace asks of it. A future INV-3 or INV-4 failure should therefore be
+    checked against the named crate's own manifest first: if that crate does not
+    ask for the offending feature, the property those invariants protect (build
+    the core alone and get nothing heavy) is intact and the report is an
+    artifact of the union. Nothing in the workspace triggers this today — the
+    core closures are identical under both resolves.
+    """
     result = subprocess.run(
-        ["cargo", "metadata", "--format-version", "1"],
+        ["cargo", "metadata", "--format-version", "1", "--all-features"],
         capture_output=True,
         text=True,
     )
@@ -200,8 +250,11 @@ def check_inv4(md: dict, pkgs_by_id: dict, edges: dict):
     failures = []
     for crate in CORE_CRATES:
         cid = member_id(md, pkgs_by_id, crate)
-        # Directly declared deps (catches even an optional/feature-gated heavy
-        # dep, which a default-features resolve would miss); dev-deps excluded.
+        # Directly declared deps. The graph is resolved with `--all-features`,
+        # so this is belt and braces rather than the only sighting of a
+        # feature-gated heavy dep: a manifest lists an optional dependency
+        # whatever features are on, so one stays visible here even if a future
+        # feature graph stops resolving it. Dev-deps excluded.
         direct = {
             d["name"]
             for d in pkgs_by_id[cid]["dependencies"]
@@ -237,23 +290,80 @@ def check_inv3(md: dict, pkgs_by_id: dict, edges: dict):
     return failures
 
 
-def check_inv6(md: dict, pkgs_by_id: dict, edges: dict):
-    """Return [(workspace crate, [registry crates it pulls]), …].
+def first_party_ids(md: dict, pkgs_by_id: dict) -> set:
+    """Every package in this repository, member of the workspace or not.
 
-    INV-6 is about the whole workspace, not about the core: a global registry
-    anywhere in the process defeats the reason the registry lives on an explicit
+    "Ours" cannot mean "a workspace member". One `exclude = [...]` line — or a
+    nested `[workspace]` table in a sub-crate — takes a crate out of
+    `workspace_members` while leaving it in the repository, in the dependency
+    graph, and compiled into the same process. A thin wrapper parked there is
+    first-party code reaching for a global registry, which is precisely the case
+    INV-6 exists for, so a membership-based rule would hand anyone a one-line
+    bypass of it.
+
+    So membership is where the walk starts, not what it means: from each member
+    this follows **declared path dependencies whose target is inside the
+    workspace root**, and everything it reaches is ours too. A crate whose
+    manifest lives in this repository is this repository's, wherever it sits and
+    whoever originally wrote it — a fork vendored under the root counts, and
+    counting it is the conservative direction.
+
+    Declared rather than resolved, for the same reason `check_inv6` reads
+    manifests: a path dependency behind a feature nobody enabled is still a crate
+    this repository ships.
+
+    Dev-edges are deliberately *not* filtered here, and that is not an oversight:
+    this function answers "whose code is this", which the kind of the edge that
+    reached it does not change. Which *edges* count is `check_inv6`'s question,
+    and it answers it separately.
+    """
+    root = md["workspace_root"] + os.sep
+    by_manifest_dir = {
+        os.path.dirname(p["manifest_path"]): p["id"] for p in md["packages"]
+    }
+    ours = set(md["workspace_members"])
+    stack = list(ours)
+    while stack:
+        for dep in pkgs_by_id[stack.pop()]["dependencies"]:
+            path = dep.get("path")
+            if not path or not (path + os.sep).startswith(root):
+                continue
+            dep_id = by_manifest_dir.get(path)
+            if dep_id is not None and dep_id not in ours:
+                ours.add(dep_id)
+                stack.append(dep_id)
+    return ours
+
+
+def check_inv6(md: dict, pkgs_by_id: dict):
+    """Return [(first-party crate, [registry crates it declares]), …].
+
+    INV-6 is about the whole repository, not about the core: a global registry
+    *we* reach for defeats the reason the registry lives on an explicit
     `EngineContext` at all — two contexts in one process, which the evaluation
-    harness needs.
+    harness needs. So every first-party crate is checked, not just `core/`, and
+    not just the ones listed as workspace members (see `first_party_ids`).
+
+    A violation is a **direct** dependency edge from a first-party crate to a
+    deny-listed crate. A transitive-only path through a third-party crate's own
+    internals is not one; the header's INV-6 paragraph says why, and #146 is the
+    decision.
+
+    Declared dependencies rather than resolved ones: a manifest lists an
+    optional dependency whatever features are on, so this stays complete over the
+    deny-list — a direct edge cannot be hidden behind a feature nobody enabled.
+    Dev-dependencies are excluded here as they are everywhere else in this file:
+    they are not compiled into anything this workspace ships, so they cannot put
+    a global registry in a process beside two `EngineContext`s.
     """
     failures = []
-    for mid in md["workspace_members"]:
+    for mid in sorted(first_party_ids(md, pkgs_by_id)):
         direct = {
             d["name"]
             for d in pkgs_by_id[mid]["dependencies"]
             if d.get("kind") != "dev"
         }
-        transitive = {pkgs_by_id[i]["name"] for i in closure(mid, edges)}
-        offenders = sorted((direct | transitive) & DENY_GLOBAL_REGISTRY)
+        offenders = sorted(direct & DENY_GLOBAL_REGISTRY)
         if offenders:
             failures.append((pkgs_by_id[mid]["name"], offenders))
     return sorted(failures)
@@ -394,7 +504,7 @@ def main() -> int:
             "component crate(s) under components/."
         )
 
-    inv6 = check_inv6(md, pkgs_by_id, edges)
+    inv6 = check_inv6(md, pkgs_by_id)
     if inv6:
         ok = False
         print("INV-6 VIOLATION — no global state.")
@@ -404,11 +514,15 @@ def main() -> int:
         print("  needs, and what lets a benchmark and a served pipeline coexist.")
         print("  Register on the EngineContext instead.")
         for crate, offenders in inv6:
-            print(f"    {crate} pulls in global-registry crate: {', '.join(offenders)}")
+            print(
+                f"    {crate} declares global-registry crate as a direct "
+                f"dependency: {', '.join(offenders)}"
+            )
     else:
         print(
-            f"INV-6 OK — none of the {len(md['workspace_members'])} workspace crate(s) "
-            "pulls in inventory or linkme."
+            f"INV-6 OK — none of the {len(first_party_ids(md, pkgs_by_id))} "
+            "first-party crate(s) declares inventory or linkme as a direct "
+            "dependency."
         )
 
     inv11 = check_inv11(root)

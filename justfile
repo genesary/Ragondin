@@ -52,9 +52,24 @@ test-features:
     cargo test --workspace --all-features
 
 # Enforce the CI-guarded architecture invariants (INV-3, INV-4, INV-5, INV-6,
-# INV-11).
+# INV-11). Resolves the `--all-features` graph, as clippy, the tests and
+# deny.toml do: every heavy backend sits behind a feature by rule, so the lean
+# graph contains no component crate's real dependencies at all.
 check-invariants:
     python3 scripts/check-invariants.py
+
+# Test that check itself. It is the gate CI calls the most important one, and
+# its failure mode is silence: a check resolving a narrower graph, or no longer
+# looking at the edge it is supposed to look at, keeps printing `All
+# architecture invariants hold.` while holding less. That is not hypothetical —
+# it is how the check came to walk a graph with no component crate in it.
+#
+# The fixtures are throwaway cargo workspaces built at run time under the system
+# temporary directory. Their stand-ins for third-party crates are path
+# dependencies outside the fixture workspace, so nothing is fetched and nothing
+# is committed.
+test-check-invariants:
+    python3 scripts/test-check-invariants.py
 
 # Verify that every ADR citation in the documentation resolves to a real file.
 # A broken citation reads as a missing decision, not as a typo, so it is checked
@@ -103,4 +118,4 @@ map *ARGS:
     python3 scripts/gen-map.py {{ARGS}}
 
 # Everything CI runs, in one command. Run this before declaring work done.
-check: fmt build test test-features clippy check-features check-invariants test-check-doc-links check-doc-links check-adr-index check-deny
+check: fmt build test test-features clippy check-features test-check-invariants check-invariants test-check-doc-links check-doc-links check-adr-index check-deny
