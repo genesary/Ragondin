@@ -9,10 +9,10 @@ The **component contract** — the domain traits a contributor implements, plus
 the shared `ComponentError` each boundary returns and the per-call params
 structs each trait takes.
 
-Defined today, the families the M2 retrieval bench exercises: `Retriever`,
-`Fusion`, `Reranker`, `Embedder`, `VectorStore`. Arriving with M3/M4:
-`Chunker`, `Indexer`, `ContextBuilder`, `Generator`, `Grader`. Adding a trait
-is additive on this boundary, so defining one before anything implements it
+Five families are defined: `Retriever`, `Fusion`, `Reranker`, `Embedder`,
+`VectorStore`. `Chunker`, `Indexer`, `ContextBuilder`, `Generator` and `Grader`
+are not. Adding a trait is additive on this boundary, so each of those arrives
+with the work that first consumes it; defining one before anything needs it
 would be dead API.
 
 **Where parameters come from.** A pipeline node carries an untyped parameter
@@ -20,8 +20,9 @@ map (`ragondin-pipeline`); each trait here takes a typed params struct. Physical
 planning bridges the two (`docs/code-architecture.md` §6.3): it resolves an
 `impl:` name into a *constructed* component, so implementation-specific
 configuration — BM25's `k1`/`b`, a model path — goes to the constructor, and
-the params structs carry only what varies per call. §5.1's reference pipeline
-shows the split: `top_k` on a retriever and a reranker, nothing on the fusion.
+the params structs carry only what varies per call. The reference pipeline in
+`docs/system-architecture.md` §5.1 shows the split: `top_k` on a retriever and
+a reranker, nothing on the fusion.
 
 **This is the crate an external contributor implements.** A `Local` component is
 a crate under `components/` that implements one of these traits; a `Remote`
