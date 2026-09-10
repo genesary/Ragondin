@@ -193,10 +193,11 @@ flowchart TB
   subgraph ENGINE["engine/"]
     ENG[ragondin-engine]
   end
+  subgraph TESTKIT["testkit/"]
+    CNF[ragondin-conformance]
+  end
   subgraph COMP["components/ (Local — leaves)"]
-    C1[ragondin-retriever-bm25]
-    C2[ragondin-reranker-onnx]
-    C3[ragondin-store-qdrant]
+    CX["one crate per implementation.<br/>Reserved: components/ holds none today."]
   end
   subgraph WIRE["wire/"]
     PRO[ragondin-proto]
@@ -208,19 +209,22 @@ flowchart TB
     TYP[ragondin-types]
   end
 
-  RAG --> SRV & HAR & EXP & CFG & ENG
-  RAG --> C1 & C2 & C3
+  RAG --> SRV & HAR & EXP & CFG & ENG & MET & BEN
   SRV --> ENG
   HAR --> ENG & MET & BEN
   EXP --> TYP
-  ENG --> CON & PIP & TYP & REM
-  C1 & C2 & C3 --> CON & TYP
+  ENG --> CON & PIP & TYP
+  ENG -->|"optional, feature = remote"| REM
+  CNF --> CON & TYP
   REM --> CON & TYP & PRO
   MET --> TYP
   BEN --> TYP
   CFG --> PIP & PRO
   CON -.->|"sanctioned, unused today"| PIP
   PIP --> TYP
+
+  classDef reserved stroke-dasharray:5 4,color:#8a8a8a
+  class CX reserved
 ```
 
 **Normative reading of the graph:**
@@ -230,6 +234,8 @@ flowchart TB
 - Only the **binary** knows both the engine and the concrete components. It is the **composition root**.
 - `ragondin-types` is the ultimate leaf: everything depends on it; it depends on almost nothing.
 - A **dashed** arrow is an edge the architecture sanctions but that no `Cargo.toml` declares today. `ragondin-contracts → ragondin-pipeline` is the only one: a component receives values, not graphs, so no contract references a `ragondin-pipeline` type yet. The arrow stays because the day one does, adding the dependency needs no architectural argument. Solid arrows are edges that exist.
+- A **dotted-outlined** box is a crate the architecture **reserves** and the workspace does not yet have; every other box is a member listed in the root `Cargo.toml`. `components/` is the only one: it holds a `README.md` and a `.gitkeep` and no crate, so the box stands for the crates that will land there and it has **no edge to draw**. What those edges will be is §4.1's rule — `ragondin-contracts` and `ragondin-types`, and nothing else in the workspace — not something this graph can yet claim.
+- One solid edge carries a condition. `ragondin-engine → ragondin-remote` is declared `optional = true` in `engine/ragondin-engine/Cargo.toml` and pulled in by the `remote` feature, so it is a real Cargo edge that the default build does not walk. It is drawn solid because the manifest declares it, and labelled because `cargo tree -p ragondin-engine -e normal --depth 1` does not show it without `--features remote`.
 
 ---
 
@@ -294,14 +300,39 @@ pub enum LogicalNode {
 
 **Physical planning** takes a `LogicalPipeline` plus an `EngineContext` (the registry) and produces a `PhysicalPipeline`: it resolves each `impl: "bm25"` into a constructed component (`Local` or `Remote`), applies default parameters, and verifies end-to-end type compatibility.
 
+The whole path, from a configuration file to a trace, is below. It is one diagram rather than three because the two things worth seeing only exist *between* the stages: ADR-C16's two kind checks are **two call sites of one derivation**, and the trace is returned by the same call that returns the failure.
+
 ```mermaid
-flowchart LR
-  YAML[YAML / custom resource] -->|serde| RAW[RawPipeline]
-  RAW -->|validate + canonicalize| LOG[LogicalPipeline]
-  LOG -->|hash| H[(content hash — run identity)]
-  LOG -->|plan_physical + registry| PHY[PhysicalPipeline]
-  PHY -->|execute| OUT[Output + ExecutionTrace]
+flowchart TB
+  DERIV["ragondin-pipeline::kind — ONE derivation (ADR-C16)<br/>produced_kind(node) · consumed_kinds(node)<br/>read off the LogicalNode variant; never written in a configuration,<br/>so no port kind enters the canonical form or the hash (INV-8)"]
+
+  YML["YAML / custom resource"] -->|serde| RAW["RawPipeline<br/>permissive · may be malformed · never executed"]
+  RAW -->|"ragondin_pipeline::validate — no registry needed"| VS["structural passes, in order<br/>lower each node · sort by id · duplicate id ·<br/>input arity · input/node collision · dangling input · cycle"]
+  VS --> VK["kind check, LAYER 1 — every edge between primitives"]
+  VK --> LOG["LogicalPipeline<br/>canonical · content-addressed · a value type"]
+  VS -.->|"Err"| VERR["ValidationError<br/>UnknownComponent · NonFiniteParam · DuplicateId · InputArity ·<br/>InputCollidesWithNode · DanglingInput · Cycle · KindMismatch"]
+  VK -.->|"Err: KindMismatch"| VERR
+
+  LOG -->|hash| H[("content hash — run identity")]
+  LOG -->|"ragondin_engine::plan_physical(logical, ctx)"| PX["refuse every Extension node (#93)"]
+  PX --> PK["kind check, LAYER 2 — with the registry in hand"]
+  PK --> RES["resolve: match the node's VARIANT to its family's registry,<br/>never the impl name (INV-7) · ctor(Params) constructs the component"]
+  RES --> PHY["PhysicalPipeline<br/>components constructed · holds Box#60;dyn Trait#62; · not serializable"]
+  PX -.->|"Err: ExtensionUnsupported"| PERR["PlanError"]
+  PK -.->|"Err: KindMismatch"| PERR
+  RES -.->|"Err: UnknownImpl · Construction"| PERR
+
+  DERIV -.- VK
+  DERIV -.- PK
+  CTX["EngineContext — the registry (§8.1)"] --> RES
+
+  PHY -->|"Engine::execute(plan, query)"| EX["executor<br/>topological schedule over the data-flow edges ·<br/>an erased NodeValue on each edge · one adapter per node variant"]
+  EX --> PAIR["the return type is a PAIR, not a Result of one:<br/>(Result#60;Output, ExecError#62;, ExecutionTrace)"]
+  PAIR --> OKP["Ok(Output) — the terminal node's chunks,<br/>beside the full trace"]
+  PAIR --> ERP["Err(ExecError) — Component · MissingInput · DanglingInput ·<br/>KindMismatch · No/MultipleTerminalNodes · InvalidParam ·<br/>Cycle · DuplicateNodeIds — beside the trace of what ran,<br/>failing node last. The trace is a return value, not a log (INV-10)."]
 ```
+
+**How to read it.** `DERIV` is joined to both kind checks by a plain line and to nothing else: it is not a stage of the path but the pair of functions both stages call, which is what ADR-C16's "one derivation, two call sites" means. Layer 1 needs no registry, which is what lets `ragondin validate` and the configuration service's NACK (ADR-6) reject an incompatible wiring before anything is constructed; layer 2 is the same derivation run where the registry is available, and the `EngineContext` is consulted only at `resolve`, one step later. The comparison *loop* around the derivation is written twice, once per crate, and each raises its own error type — deliberately, and word for word the same message.
 
 **Where a node's parameters go.** A *component* node — one that resolves to an implementation, as `Branch` and `Loop` do not — carries a single untyped parameter map (`Params`). Planning splits it in two, and the halves reach the component by different routes. The keys that configure the *implementation* — a model path, a device, BM25's `k1` and `b` — are consumed by the **constructor** and are fixed for the component's lifetime. The keys that vary *per call* — a retriever's or a reranker's `top_k` — become the typed params struct the trait method takes (§7.1), and ride in every request on the `Remote` face. That split is why `build_reranker` (§8.1) receives configuration and not a `RerankParams`: `RerankParams` is per-call by construction, so a constructor given only that could build nothing.
 
@@ -409,6 +440,40 @@ impl EngineContext {
     pub(crate) fn build_reranker(&self, name: &str, config: &Params)
         -> Result<Box<dyn Reranker>, PlanError> { /* … */ }
 }
+```
+
+**Five families, two ways in.** The context keeps one table per component family, and all five are populated by the same `register_*` call — that is INV-7 in the API. What differs is what *reads* a table. `Retriever`, `Fusion` and `Reranker` are pipeline node variants, so physical planning looks each one up from the node's `impl:` name. `Embedder` and `VectorStore` are **not** node variants: a dense retriever is built *from* them, so nothing in planning looks them up, and a `ComponentCtor` is handed the node's `Params` and never the `EngineContext`. That asymmetry is drawn below because it is invisible in the struct, where all five tables look alike.
+
+```mermaid
+flowchart TB
+  ROOT["bin/ragondin — the composition root<br/>register_retriever · register_fusion · register_reranker ·<br/>register_embedder · register_vector_store<br/>ONE way in: a built-in and a third-party crate call the same fn (INV-7)"]
+
+  subgraph CTX["EngineContext — one table per family, impl name → ComponentCtor(Params)"]
+    RT["Registry#60;dyn Retriever#62;"]
+    FU["Registry#60;dyn Fusion#62;"]
+    RR["Registry#60;dyn Reranker#62;"]
+    EM["Registry#60;dyn Embedder#62;"]
+    VC["Registry#60;dyn VectorStore#62;"]
+  end
+
+  ROOT --> RT & FU & RR & EM & VC
+
+  NODE["a node of the LogicalPipeline<br/>Retriever · Fusion · Reranker, each carrying an impl name"]
+  NODE -->|"plan_physical matches the node VARIANT to pick the table"| RT
+  NODE --> FU
+  NODE --> RR
+  RT --> PN["a PhysicalNode of the plan,<br/>holding the constructed Box#60;dyn Trait#62;"]
+  FU --> PN
+  RR --> PN
+
+  EM -.->|"no node variant, so no lookup"| INJ
+  VC -.->|"no node variant, so no lookup"| INJ
+  INJ["reserved (#31): a dense retriever is built from an embedder and a<br/>vector store, and the retriever's own registration closure at the<br/>composition root is what would hold them"]
+  INJ -.-> RT
+
+  OQ["OPEN DECISION #101 — how a Remote embedder or vector store is built.<br/>Until it is answered, build_embedder and build_vector_store<br/>have no caller in planning, and these two tables have no reader."]
+  EM -.- OQ
+  VC -.- OQ
 ```
 
 A constructor receives the node's **configuration** — `ragondin-pipeline`'s untyped `Params` (`BTreeMap<String, ParamValue>`), or the subset of it planning resolves — and never a per-call params struct. `RerankParams` is per-call (§7.1) and carries only `top_k` (`ragondin-contracts`), which is not enough to construct anything: what a reranker needs at construction is a model path and a device, from which it builds the ONNX session it then reranks with. The two kinds of parameter travel by different routes, and §6.3 is where they part.
