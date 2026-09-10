@@ -23,9 +23,14 @@ tokio = { workspace = true }
 
 # Brute-force cosine over a Vec is `std` arithmetic, so this feature gates no
 # heavy dependency and buys no compile time. It exists so that every component
-# crate is entered the same way -- `--features memory` here reads like
-# `--features bm25` there -- and uniformity is what makes the pattern
-# guessable. ADR-C14 is the rule it follows.
+# crate names its implementation the same way -- one feature per backend, named
+# after it -- which is what makes the pattern guessable.
+#
+# It *is* in `default`, and `ragondin-retriever-bm25`'s `bm25` is not. That is
+# the rule applied, not an inconsistency: ADR-C14 and `docs/code-architecture.md`
+# §11.6 keep **heavy backends** out of the default build, and there is nothing
+# heavy here to keep out. Turning this one off would cost a workspace build its
+# vector store and save it nothing.
 [features]
 default = ["memory"]
 memory = []

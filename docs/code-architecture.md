@@ -127,6 +127,7 @@ workspace/
 │   ├── ragondin-retriever-dense    # dense retrieval through a VectorStore
 │   ├── ragondin-embedder-onnx      # in-process embeddings (ONNX Runtime)
 │   ├── ragondin-reranker-onnx      # in-process cross-encoder
+│   ├── ragondin-store-memory       # exact brute-force VectorStore, no external service
 │   ├── ragondin-store-qdrant       # VectorStore implementation
 │   └── …                      # each: ragondin-contracts + ragondin-types + its own heavy dependency
 │
