@@ -150,8 +150,15 @@ pub async fn check_embedder_conformance(
         }
     }
 
-    if prefixes == RolePrefixes::Distinct {
-        check_roles_are_separated(embedder.as_ref()).await?;
+    // Matched exhaustively rather than compared: `RolePrefixes` is open to a
+    // variant this crate has not thought of yet — the doc on `Undeclared`
+    // already fuses two distinct facts, a symmetric model and an unknown one —
+    // and an `== Distinct` would silently skip the check for it. That is the
+    // wildcard failure `EmbedRole` is closed to prevent; the rule is worth no
+    // less applied to the enum this suite owns.
+    match prefixes {
+        RolePrefixes::Distinct => check_roles_are_separated(embedder.as_ref()).await?,
+        RolePrefixes::Undeclared => {}
     }
 
     Ok(())
