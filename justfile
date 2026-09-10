@@ -62,6 +62,18 @@ check-invariants:
 check-doc-links:
     python3 scripts/check-doc-links.py
 
+# Test the documentation link check itself. That check is a blocking gate whose
+# failure mode is silence: a scan reverted to Markdown-only, or a filename
+# convention no longer enforced, would keep printing `All documentation links
+# resolve.` while resolving less. This pins the decisions it makes.
+#
+# The fixtures are built at run time in a throwaway git repository under the
+# system temporary directory, never committed — the checker selects tracked
+# files, so a committed fixture would be scanned by the real check and a
+# deliberately broken citation would fail it for real.
+test-check-doc-links:
+    python3 scripts/test-check-doc-links.py
+
 # Regenerate the ADR index in docs/adr/README.md from each ADR's front-matter.
 gen-adr-index:
     python3 scripts/gen-adr-index.py
@@ -91,4 +103,4 @@ map *ARGS:
     python3 scripts/gen-map.py {{ARGS}}
 
 # Everything CI runs, in one command. Run this before declaring work done.
-check: fmt build test test-features clippy check-features check-invariants check-doc-links check-adr-index check-deny
+check: fmt build test test-features clippy check-features check-invariants test-check-doc-links check-doc-links check-adr-index check-deny

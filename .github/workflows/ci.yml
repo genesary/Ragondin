@@ -81,6 +81,14 @@ jobs:
       - name: Architecture invariants (INV-3, INV-4, INV-5, INV-6, INV-11)
         run: python3 scripts/check-invariants.py
 
+      # The gate below is only worth its green tick if it still scans what it
+      # claims to. This runs first so that a check which quietly stopped gating
+      # is reported as a broken check rather than as a clean repository. Its
+      # fixtures are built at run time in a throwaway repository, so nothing it
+      # exercises is tracked here.
+      - name: Documentation link check behaves as documented
+        run: python3 scripts/test-check-doc-links.py
+
       # An ADR citation that does not resolve reads as a missing decision, and an
       # agent that cannot find the record re-derives it. Same reasoning as above,
       # applied to the documentation.

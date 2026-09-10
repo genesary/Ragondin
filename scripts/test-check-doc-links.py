@@ -1,0 +1,424 @@
+#!/usr/bin/env python3
+"""Tests for `scripts/check-doc-links.py` — proof that the gate still gates.
+
+`check-doc-links.py` is a blocking CI step, and the only thing between a broken
+ADR citation and `main`. Its failure mode is silence: a refactor that reverted the
+scan to Markdown-only, or that stopped enforcing the ADR filename convention,
+would keep printing `All documentation links resolve.` while resolving less. A
+gate that cannot fail its own test is a gate nobody finds out has stopped gating.
+
+So each case here pins a decision the checker makes, not merely the fact that it
+runs. The two that matter most are the ones a refactor is most likely to undo by
+accident:
+
+  - a broken citation **in a Rust file** is reported — the scan reads `.rs`;
+  - a dangling relative link in a Rust file is **not** reported, while the same
+    line in a Markdown file is — the relative-link rule is Markdown-only, and
+    that asymmetry is deliberate.
+
+**Fixtures are built at run time, never committed.** The checker selects its
+inputs with `git ls-files`, so a fixture committed to this repository would be
+scanned by the real check — a deliberately broken citation would fail `just
+check-doc-links` for real. Each case therefore initialises a throwaway git
+repository under the system temporary directory, stages the fixture there, and
+runs the checker with that directory as its working directory. Nothing this file
+creates is inside the repository, and `git ls-files` here never sees a fixture.
+
+A working directory is not on its own enough to say which repository a child
+reads: `GIT_DIR` and its relatives override it, and they are set by any hook or
+wrapper that invokes this suite from inside a git operation. `isolated_environment`
+strips them, and **both** children get it — the suite's own `git init`, and the
+checker, which is the process that actually runs `git rev-parse` and
+`git ls-files`.
+
+Standard library only, and no test framework: the repository's Python tooling
+carries no dependency by decision, and this file is tooling like the rest.
+
+Run via `just test-check-doc-links`. Exit code 0 = every case passed; 1 = at least
+one did not (the report names the case, what was expected and what was produced).
+"""
+
+from __future__ import annotations
+
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+from collections.abc import Callable
+
+SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
+CHECKER = os.path.join(SCRIPTS_DIR, "check-doc-links.py")
+
+# One real ADR from each series, so a fixture exercises both padding widths. The
+# body carries the unpadded ID the way an ADR's own heading does.
+ADR_SYSTEM = "docs/adr/ADR-004-one-engine-two-drivers.md"
+ADR_CODE = "docs/adr/ADR-C03-closed-enum-plus-open-extension-variant.md"
+ADR_FILES = {
+    ADR_SYSTEM: "# ADR-4 — one engine, two drivers\n",
+    ADR_CODE: "# ADR-C3 — closed enum plus open extension variant\n",
+}
+
+
+class Failure(Exception):
+    """One expectation a case did not meet."""
+
+
+class Result:
+    def __init__(self, returncode: int, output: str) -> None:
+        self.returncode = returncode
+        self.output = output
+
+    def exits(self, expected: int) -> "Result":
+        if self.returncode != expected:
+            raise Failure(f"expected exit code {expected}, got {self.returncode}")
+        return self
+
+    def says(self, expected: str) -> "Result":
+        if expected not in self.output:
+            raise Failure(f"expected {expected!r} in the output")
+        return self
+
+    def is_silent_about(self, unexpected: str) -> "Result":
+        if unexpected in self.output:
+            raise Failure(f"expected no mention of {unexpected!r} in the output")
+        return self
+
+
+def isolated_environment() -> dict[str, str]:
+    """The caller's environment with every git-locating variable removed.
+
+    `GIT_DIR` and its relatives are set by any hook or wrapper that invokes this
+    suite from inside a git operation, and they override the working directory:
+    a child that inherits them reads the *caller's* repository, not the fixture.
+    The config overrides keep a developer's global `core.excludesFile` from
+    deciding what a fixture contains.
+
+    This has to reach **both** children. The suite's own `git init` is the
+    obvious one; the checker is the one that matters, because it is the process
+    that runs `git rev-parse --show-toplevel` and `git ls-files` and so the
+    process an inherited `GIT_DIR` would point at the wrong tree.
+    """
+    environment = dict(os.environ)
+    for name in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR"):
+        environment.pop(name, None)
+    environment["GIT_CONFIG_GLOBAL"] = os.devnull
+    environment["GIT_CONFIG_SYSTEM"] = os.devnull
+    environment["GIT_CONFIG_NOSYSTEM"] = "1"
+    return environment
+
+
+def git(cwd: str, *args: str) -> None:
+    """Run git in `cwd`, isolated from the caller's git environment."""
+    result = subprocess.run(
+        ["git", *args],
+        cwd=cwd,
+        env=isolated_environment(),
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise Failure(f"git {' '.join(args)} failed in the fixture:\n{result.stderr}")
+
+
+def run_checker(files: dict[str, str | bytes]) -> Result:
+    """Build a throwaway repository holding `files` and run the checker in it.
+
+    `files` maps a repository-relative path to its content — `str` written as
+    UTF-8, or `bytes` written verbatim, which is how a fixture states that a
+    tracked file need not be valid UTF-8. Every file is staged: the checker reads
+    tracked files, and staging is enough for `git ls-files` — no commit, and so
+    no committer identity, is needed.
+    """
+    root = tempfile.mkdtemp(prefix="check-doc-links-fixture-")
+    try:
+        for relative, content in files.items():
+            path = os.path.join(root, relative)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            payload = content if isinstance(content, bytes) else content.encode("utf-8")
+            with open(path, "wb") as handle:
+                handle.write(payload)
+        git(root, "init", "-q")
+        # `-f`: a fixture is staged whatever any ignore rule in scope thinks.
+        git(root, "add", "-f", "--", *sorted(files))
+        completed = subprocess.run(
+            [sys.executable, CHECKER],
+            cwd=root,
+            env=isolated_environment(),
+            capture_output=True,
+            text=True,
+        )
+        return Result(completed.returncode, completed.stdout + completed.stderr)
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+CASES: list[Callable[[], None]] = []
+
+
+def case(function: Callable[[], None]) -> Callable[[], None]:
+    CASES.append(function)
+    return function
+
+
+@case
+def a_resolving_citation_passes_in_markdown_and_in_rust() -> None:
+    """The baseline: citations that resolve, in both languages the check reads.
+
+    The count in the success message is asserted too. It pins what
+    `tracked_files` selected — the two patterns, and nothing narrowing them — and
+    not what was then scanned: those are separate decisions in the checker, and
+    the cases below own the second one.
+    """
+    run_checker(
+        {
+            **ADR_FILES,
+            "README.md": (
+                "One engine, two drivers:\n"
+                "[ADR-4](docs/adr/ADR-004-one-engine-two-drivers.md).\n"
+            ),
+            "src/lib.rs": "//! The extension variant is ADR-C3's decision.\n",
+        }
+    ).exits(0).says("ADR naming OK — 2 ADR file(s)").says(
+        "every citation in 3 Markdown and 1 Rust file(s) resolves"
+    ).says("All documentation links resolve.")
+
+
+@case
+def a_citation_naming_no_adr_fails_in_markdown() -> None:
+    """The file, the line and the reference are all in the message."""
+    run_checker(
+        {
+            **ADR_FILES,
+            "README.md": "# Notes\n\nThe two-faced contract is ADR-C99's decision.\n",
+        }
+    ).exits(1).says("BROKEN ADR REFERENCE").says(
+        "README.md:3: ADR-C99 — no such ADR"
+    ).says("Documentation link checks FAILED.")
+
+
+@case
+def a_citation_naming_no_adr_fails_in_rust() -> None:
+    """The Rust half of the scan, which is the half a refactor drops silently."""
+    run_checker(
+        {
+            **ADR_FILES,
+            "src/lib.rs": "//! Retrieval.\n\n//! Grounded in ADR-C99.\n",
+        }
+    ).exits(1).says("BROKEN ADR REFERENCE").says("src/lib.rs:3: ADR-C99 — no such ADR")
+
+
+@case
+def a_citation_outside_a_doc_comment_is_still_a_citation() -> None:
+    """The Rust scan is line-based on purpose: a citation is one wherever it sits."""
+    run_checker(
+        {
+            **ADR_FILES,
+            "src/lib.rs": 'const GROUNDS: &str = "ADR-98";\n',
+        }
+    ).exits(1).says("src/lib.rs:1: ADR-98 — no such ADR")
+
+
+@case
+def a_citation_in_a_rust_file_that_is_not_utf8_is_still_reported() -> None:
+    """A tracked file need not be valid UTF-8, and a gate must not die on one.
+
+    The checker reads with `errors="replace"` for exactly this. Without it the
+    read raises, and the run ends in a traceback that names the file only inside
+    it — a non-zero exit, so the exit code alone would not notice. The message is
+    what this case pins.
+    """
+    run_checker(
+        {
+            **ADR_FILES,
+            "src/lib.rs": b"//! Grounded in ADR-97 \xff\xfe.\n",
+        }
+    ).exits(1).says("src/lib.rs:1: ADR-97 — no such ADR").is_silent_about(
+        "UnicodeDecodeError"
+    )
+
+
+@case
+def a_citation_inside_an_adr_file_is_checked() -> None:
+    """`docs/adr/` is scanned like anywhere else — it is not the check's blind spot.
+
+    It is the densest concentration of ADR citations in the repository, and the
+    one place a reader is most certain a reference was verified. Excluding it
+    changes no message and no exit code: the check goes on reporting that every
+    citation resolves, over a corpus quietly missing 33 ADRs and their index.
+    """
+    run_checker(
+        {
+            "docs/adr/ADR-004-one-engine-two-drivers.md": (
+                "# ADR-4 — one engine, two drivers\n\nSupersedes ADR-C99.\n"
+            )
+        }
+    ).exits(1).says("BROKEN ADR REFERENCE").says(
+        "docs/adr/ADR-004-one-engine-two-drivers.md:3: ADR-C99 — no such ADR"
+    )
+
+
+@case
+def an_adr_filename_padded_to_the_wrong_width_fails() -> None:
+    """A file the convention cannot place is a file nothing can cite.
+
+    Asserted as the filename and the two widths rather than as the whole
+    sentence: rewording the message for clarity is not a behaviour change and
+    must not fail a test.
+    """
+    run_checker(
+        {"docs/adr/ADR-04-one-engine-two-drivers.md": "# One engine, two drivers\n"}
+    ).exits(1).says("ADR NAMING VIOLATION").says(
+        "ADR-04-one-engine-two-drivers.md"
+    ).says("padded to 2").says("3 digits")
+
+
+@case
+def an_adr_filename_in_the_code_series_padded_to_the_wrong_width_fails() -> None:
+    """The padding rule names **two** widths, and each needs its own fixture.
+
+    A check gated on the system series alone leaves the whole code series
+    unenforced while every message and every exit code stays exactly as it was.
+    The case above cannot see that: `ADR-04-…` is a system-series filename.
+    """
+    run_checker(
+        {
+            "docs/adr/ADR-C003-closed-enum-plus-open-extension-variant.md": (
+                "# Closed enum plus open extension variant\n"
+            )
+        }
+    ).exits(1).says("ADR NAMING VIOLATION").says(
+        "ADR-C003-closed-enum-plus-open-extension-variant.md"
+    ).says("padded to 3").says("2 digits")
+
+
+@case
+def an_adr_filename_with_no_slug_fails() -> None:
+    run_checker({"docs/adr/ADR-004.md": "# One engine, two drivers\n"}).exits(1).says(
+        "ADR NAMING VIOLATION"
+    ).says("ADR-004.md").says("does not match ADR-<number>-<slug>.md")
+
+
+@case
+def an_adr_filename_whose_slug_is_not_kebab_case_fails() -> None:
+    """The slug is `[a-z0-9]` words joined by single hyphens, and only that.
+
+    A missing slug and a mis-padded number each have a case above; a slug that is
+    present but malformed is the third way the convention breaks, and the one a
+    widened pattern stops catching without changing any other output.
+    """
+    run_checker(
+        {"docs/adr/ADR-004-One_Engine.md": "# One engine, two drivers\n"}
+    ).exits(1).says("ADR NAMING VIOLATION").says("ADR-004-One_Engine.md").says(
+        "does not match ADR-<number>-<slug>.md"
+    )
+
+
+@case
+def two_adrs_claiming_one_number_fail() -> None:
+    """A citation resolves *by number*, so two files on one number is ambiguous.
+
+    Nothing else in the output moves when this branch goes: both files are
+    well-formed, every citation still resolves, and the check goes green.
+    """
+    run_checker(
+        {
+            "docs/adr/ADR-004-one-engine-two-drivers.md": "# One engine, two drivers\n",
+            "docs/adr/ADR-004-something-else.md": "# Something else\n",
+        }
+    ).exits(1).says("ADR NAMING VIOLATION").says("ADR-004-something-else.md").says(
+        "claim the same ADR number"
+    )
+
+
+@case
+def a_dangling_link_into_the_adr_directory_fails_in_markdown_only() -> None:
+    """The deliberate asymmetry, and the one most likely to be undone by accident.
+
+    The same line sits in a Markdown file and in a Rust file, in the same
+    directory, so the link resolves to the same missing path from both. Only the
+    Markdown one is a failure: a `](path)` link has no meaning in a doc comment,
+    and rustdoc's intra-doc links are `cargo doc`'s business.
+    """
+    link = "The index lives at [the ADR index](../docs/adr/README.md).\n"
+    run_checker(
+        {
+            **ADR_FILES,
+            "src/notes.md": f"# Notes\n\n{link}",
+            "src/lib.rs": f"//! Retrieval.\n\n//! {link}",
+        }
+    ).exits(1).says("BROKEN ADR REFERENCE").says(
+        "src/notes.md:3: ../docs/adr/README.md — no such path"
+    ).is_silent_about("src/lib.rs")
+
+
+@case
+def a_link_to_an_adr_with_an_anchor_resolves() -> None:
+    """A `#fragment` names a heading, not a file, so it is stripped before the test.
+
+    Without the strip every anchored link becomes a failure — and silently, on
+    this tree as much as in these fixtures: of the tracked Markdown links that
+    resolve into `docs/adr/`, not one carries an anchor, and no fixture above
+    appends one. Only this case holds the rule.
+    """
+    run_checker(
+        {
+            **ADR_FILES,
+            "README.md": (
+                "The decision is in\n"
+                "[ADR-4](docs/adr/ADR-004-one-engine-two-drivers.md#decision).\n"
+            ),
+        }
+    ).exits(0).says("All documentation links resolve.")
+
+
+@case
+def a_dangling_link_outside_the_adr_directory_is_not_this_checks_business() -> None:
+    """Only links landing in `docs/adr/` are checked, however broken the rest are."""
+    run_checker(
+        {
+            **ADR_FILES,
+            "README.md": "See [the contributing guide](CONTRIBUTING.md).\n",
+        }
+    ).exits(0).says("All documentation links resolve.")
+
+
+def main() -> int:
+    if not os.path.exists(CHECKER):
+        print(f"cannot find the checker at {CHECKER}", file=sys.stderr)
+        return 1
+
+    failed = 0
+    print(f"check-doc-links — {len(CASES)} case(s)")
+    for function in CASES:
+        try:
+            function()
+        except Failure as failure:
+            failed += 1
+            print(f"  FAIL  {function.__name__}")
+            for line in str(failure).splitlines():
+                print(f"          {line}")
+        except Exception as error:  # noqa: BLE001 — see below
+            # A broken harness must name itself the way it asks the checker to.
+            # `git` missing, a fixture path that cannot be written: reported as a
+            # named failure rather than escaping as a traceback that stops the
+            # remaining cases from running at all.
+            failed += 1
+            print(f"  ERROR {function.__name__}")
+            print(f"          {type(error).__name__}: {error}")
+        else:
+            print(f"  ok    {function.__name__}")
+
+    if failed:
+        print(
+            f"\n{failed} of {len(CASES)} case(s) FAILED — check-doc-links.py no "
+            "longer behaves as documented.",
+            file=sys.stderr,
+        )
+        return 1
+    print(f"\ncheck-doc-links.py behaves as documented — {len(CASES)} case(s) passed.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
