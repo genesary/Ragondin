@@ -13,9 +13,21 @@ build:
 test:
     cargo test --workspace
 
-# Lint with warnings promoted to errors.
+# Lint with warnings promoted to errors, in both feature configurations.
+#
+# `--all-features` is load-bearing, not thoroughness for its own sake: a heavy
+# backend is never a default feature, so without it clippy is `cfg`'d out of
+# every component crate's real code and the gate silently covers nothing where
+# it matters most.
+#
+# The default run is kept alongside it rather than replaced by it. The two cover
+# different code: an item reachable only under `#[cfg(not(feature = ...))]` is
+# compiled away by the all-features run, and no other gate here denies warnings
+# — neither `build` nor `test` does — so dropping this one would leave the
+# default configuration ungated entirely.
 clippy:
     cargo clippy --workspace --all-targets -- -D warnings
+    cargo clippy --workspace --all-targets --all-features -- -D warnings
 
 # Verify formatting (does not modify files).
 fmt:
@@ -26,6 +38,18 @@ fmt:
 # unnoticed. `check` rather than `build` — this proves it compiles, cheaply.
 check-features:
     cargo check --workspace --all-features --all-targets
+
+# Run the tests that live behind a feature. `just test` builds the workspace
+# with default features, which by rule enable no heavy backend, so it compiles
+# those tests away rather than running them; `check-features` proves they
+# compile but runs nothing. This is where they actually execute.
+#
+# Whole-workspace and feature-blind on purpose. Naming a crate and a feature
+# here would mean every future component has to remember to add itself, and
+# forgetting is silent — the tests simply never run, which is the failure this
+# recipe exists to prevent. Not `--all-targets`: that would switch doctests off.
+test-features:
+    cargo test --workspace --all-features
 
 # Enforce the CI-guarded architecture invariants (INV-3, INV-4, INV-5, INV-6,
 # INV-11).
@@ -68,4 +92,4 @@ map *ARGS:
     python3 scripts/gen-map.py {{ARGS}}
 
 # Everything CI runs, in one command. Run this before declaring work done.
-check: fmt build test clippy check-features check-invariants check-doc-links check-adr-index check-deny
+check: fmt build test test-features clippy check-features check-invariants check-doc-links check-adr-index check-deny

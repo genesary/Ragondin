@@ -7,12 +7,14 @@ members = [
     "wire/ragondin-proto",
     "wire/ragondin-remote",
     "engine/ragondin-engine",
+    "components/ragondin-store-memory",
     "eval/ragondin-metrics",
     "eval/ragondin-benchmarks",
     "eval/ragondin-harness",
     "runtime/ragondin-config",
     "runtime/ragondin-server",
     "runtime/ragondin-experiments",
+    "components/ragondin-retriever-bm25",
     "testkit/ragondin-conformance",
     "bin/ragondin",
 ]
@@ -39,6 +41,8 @@ ragondin-contracts = { path = "core/ragondin-contracts" }
 ragondin-proto = { path = "wire/ragondin-proto" }
 ragondin-remote = { path = "wire/ragondin-remote" }
 ragondin-engine = { path = "engine/ragondin-engine" }
+ragondin-retriever-bm25 = { path = "components/ragondin-retriever-bm25" }
+ragondin-store-memory = { path = "components/ragondin-store-memory" }
 ragondin-metrics = { path = "eval/ragondin-metrics" }
 ragondin-benchmarks = { path = "eval/ragondin-benchmarks" }
 ragondin-harness = { path = "eval/ragondin-harness" }
@@ -48,11 +52,12 @@ ragondin-experiments = { path = "runtime/ragondin-experiments" }
 ragondin-conformance = { path = "testkit/ragondin-conformance" }
 
 # --- third-party dependencies ---
-# Kept deliberately small. Heavy backends (tantivy, candle, ort, vector-store
-# and LLM clients) are NOT listed here yet: they arrive with the components
-# that need them, each behind a feature flag (INV-4, and the lean-default-build
-# rule). `serde` is the only dependency the core (`ragondin-types`) is permitted to
-# ship; a test-only dev-dependency is outside INV-4 and outside that rule.
+# Kept deliberately small. A heavy backend (candle, ort, a vector-store or LLM
+# client) is listed here only once the component that needs it exists, and it
+# reaches that component optional and feature-gated (INV-4, and the
+# lean-default-build rule). `tantivy`, below, is the first to arrive. `serde` is
+# the only dependency the core (`ragondin-types`) is permitted to ship; a
+# test-only dev-dependency is outside INV-4 and outside that rule.
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"                                 # JSONL datasets (ragondin-benchmarks); serde round-trip assertions in tests
 serde_yaml = "0.9"                                 # test-only: golden YAML fixtures (dev-dependency)
@@ -65,3 +70,22 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 tower = "0.5"                                      # serving envelope only (INV-11)
 tonic = "0.12"                                     # gRPC transport for the wire layer
 prost = "0.13"                                     # protobuf messages for the wire layer
+
+# The first heavy backend. It is listed here because versions are centralized
+# here and nowhere else — not because the core may reach it: `tantivy` is on the
+# INV-4 deny-list, and it is an optional, feature-gated dependency of exactly one
+# component crate (ADR-C14). `default-features = false` turns off all five of
+# tantivy's default features, and they are not all the same kind of thing:
+#
+#   - `mmap` is the on-disk directory, which an in-RAM index does not use;
+#   - `stemmer` and `stopwords` are linguistic. Dropping them is a choice about
+#     ranking, not a size saving, argued in the crate's `ARCHITECTURE.md`;
+#   - `lz4-compression` and `columnar-zstd-compression` are **not** on-disk-only
+#     machinery, whatever their names suggest. `lz4-compression` selects the
+#     *document store* compressor: `impl Default for Compressor`
+#     (tantivy `src/store/compressors.rs`) returns `Compressor::Lz4` only under
+#     that feature and `Compressor::None` otherwise. The store lives in the
+#     `RamDirectory` here, so turning it off means the stored text is held
+#     uncompressed in memory. That is a real memory trade, recorded in the
+#     crate's `ARCHITECTURE.md`, not the no-op the grouping above used to imply.
+tantivy = { version = "0.26", default-features = false }
