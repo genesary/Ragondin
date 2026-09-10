@@ -4,8 +4,8 @@
 //! consuming/producing node's [`LogicalNode`] variant alone, so no port
 //! declaration ever appears in a configuration and nothing enters the
 //! canonical form or the content hash (INV-8). This module is that
-//! derivation, written once: `LogicalPipeline` validation and #15's physical
-//! planning both call the same functions.
+//! derivation, written once: `LogicalPipeline` validation here and
+//! `ragondin-engine`'s physical planning both call the same functions.
 //!
 //! **One edge is not derived from a variant.** Since ADR-C18 a pipeline
 //! declares its inputs, and a declared input produces [`ValueKind::Query`] —

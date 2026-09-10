@@ -476,8 +476,8 @@ mod tests {
 
     #[test]
     fn node_ids_serve_as_map_keys_and_sort() {
-        // #9 checks referential integrity with a map keyed by id, and any
-        // `BTreeMap`-keyed adjacency needs the ordering.
+        // `validate` checks referential integrity with a `HashMap` keyed by
+        // id, and any `BTreeMap`-keyed adjacency needs the ordering.
         let mut seen = HashMap::new();
         seen.insert(NodeId::new("rrf"), 1);
         assert_eq!(seen.get(&NodeId::new("rrf")), Some(&1));
