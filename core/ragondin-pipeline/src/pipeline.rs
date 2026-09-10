@@ -1,4 +1,5 @@
-//! `LogicalPipeline`: the validated, canonical value type (#9).
+//! `LogicalPipeline`: the validated, canonical value type that
+//! [`crate::validate::validate`] returns.
 //!
 //! This is the middle level of the three described in `ARCHITECTURE.md`: it
 //! sits between the permissive [`crate::RawPipeline`] and `PhysicalPipeline`.

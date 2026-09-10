@@ -26,9 +26,14 @@
 //! wire format is hand-maintained and versioned separately, in
 //! `ragondin-config`/`ragondin-proto`.
 //!
-//! `Branch` and `Loop` (§6.2) are deliberately absent. A `Loop`'s mandatory
-//! termination guard and a `Branch`'s predicate have no settled representation,
-//! and inventing one here would be a design decision this issue does not own.
+//! `Branch` and `Loop` (§6.2) are deliberately absent: [`LogicalNode`] reserves
+//! no variant for either today. Control flow in the representation is settled
+//! in principle — ADR-2 decides that the representation is a graph with
+//! first-class branches and bounded loops — but a `Loop`'s mandatory
+//! termination guard and a `Branch`'s predicate have no settled *shape*, and
+//! inventing one here would decide it by accident. Adding either variant is a
+//! deliberate act on a stable boundary (INV-1), so it waits for the issue that
+//! owns that decision.
 
 use std::collections::BTreeMap;
 
@@ -81,13 +86,16 @@ impl NodeId {
 /// - **Non-finite values (`NaN`, `±∞`) are out of contract.** They do not round
 ///   trip — JSON encodes them as `null` and then refuses to read them back —
 ///   and `NaN` costs `PartialEq` its reflexivity, so a pipeline holding one
-///   stops comparing equal to itself. Rejecting them is validation, hence #9's
-///   job, not this crate's: `ParamValue` is a value type with public variants
-///   (INV-3) and so has no constructor to guard.
-/// - **`-0.0` must be canonicalized to `0.0` before hashing (#10).**
+///   stops comparing equal to itself. `ParamValue` is a value type with public
+///   variants (INV-3) and so has no constructor to guard; the rejection
+///   therefore sits one level up, in this crate's own lowering pass, where
+///   [`validate`](mod@crate::validate) refuses a non-finite float with
+///   [`crate::ValidationError::NonFiniteParam`].
+/// - **`-0.0` is canonicalized to `0.0`**, by that same lowering pass.
 ///   `Float(0.0) == Float(-0.0)` here, but their bit patterns differ, so
 ///   hashing a raw `to_bits()` would give two content hashes to two values this
-///   crate calls equal — precisely INV-8's failure mode.
+///   crate calls equal — precisely INV-8's failure mode, which is why the
+///   normalization happens before the hash (#10) rather than inside it.
 /// - **`Int` and `Float` are distinct**, deliberately: `k: 60` and `k: 60.0`
 ///   are different configurations and hash differently.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -476,8 +484,8 @@ mod tests {
 
     #[test]
     fn node_ids_serve_as_map_keys_and_sort() {
-        // #9 checks referential integrity with a map keyed by id, and any
-        // `BTreeMap`-keyed adjacency needs the ordering.
+        // `validate` checks referential integrity with a `HashMap` keyed by
+        // id, and any `BTreeMap`-keyed adjacency needs the ordering.
         let mut seen = HashMap::new();
         seen.insert(NodeId::new("rrf"), 1);
         assert_eq!(seen.get(&NodeId::new("rrf")), Some(&1));
