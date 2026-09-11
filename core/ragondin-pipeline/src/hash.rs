@@ -4,9 +4,9 @@
 //! The hash is computed from a [`LogicalPipeline`]'s fields directly — never
 //! from source text, and never from a re-serialization of it. Two
 //! configurations that differ only in formatting canonicalize to one
-//! [`LogicalPipeline`] ([`crate::validate::validate`] sorts the node list; the
-//! rest is canonical by construction), and one `LogicalPipeline` has one
-//! digest. That chain is what makes INV-8 true, and every link of it is
+//! [`LogicalPipeline`] ([`crate::validate::validate`] sorts the node list and
+//! folds `-0.0`; param key order alone is canonical by construction), and one
+//! `LogicalPipeline` has one digest. That chain is what makes INV-8 true, and every link of it is
 //! tested: the encoder's framing here, the whole path from YAML in
 //! `tests/content_hash.rs`.
 //!
@@ -22,8 +22,9 @@
 //! a float by a shortest-round-trip rule, orders a map by whatever the map
 //! orders by, and would put this crate's identity at the mercy of a dependency
 //! whose output is documented as readable, not as stable. The encoding below
-//! is instead a property of this file, which is what the pinned digest in
-//! `tests/content_hash.rs` guards.
+//! is instead a property of this file, which is what the two pinned digests in
+//! `tests/content_hash.rs` guard — one over a realistic pipeline, one over the
+//! whole grammar, because no single fixture reaches every tag byte.
 //!
 //! # The encoding
 //!
@@ -81,9 +82,11 @@
 //! **So the encoder folds `-0.0` itself**, above, rather than trusting a door
 //! it does not control. That is the whole of the exposure: the other
 //! lowering-only property, finiteness, cannot separate two equal values. What
-//! remains for #179 is a narrower and non-hashing question — whether a
-//! deserialized `LogicalPipeline` should be allowed to hold a non-finite float
-//! at all — and it is raised there.
+//! remains is a narrower and non-hashing question — whether a deserialized
+//! `LogicalPipeline` should be allowed to hold a non-finite float at all.
+//! ADR-C23 records that `NonFiniteParam` is unreachable from its path without
+//! asking what should follow; the question is raised in a comment on #179,
+//! that decision's implementation issue, not in its body.
 
 use std::fmt;
 
@@ -490,8 +493,11 @@ mod tests {
         // eight little-endian zeroes are `Float(0.0)`'s `to_bits`, are the
         // `u64` length prefix of the empty string, and are the length prefix
         // of the empty list; `Bool(false)` is the one short encoding and
-        // collides with the others' first byte. So the tag is the only thing
-        // that can decide this assertion — which is the point.
+        // is one byte where the others are eight. So for four of the five the
+        // tag is the only thing that can decide this assertion — `Bool` is
+        // separated by its length as well, and a `TAG_BOOL` collision alone is
+        // caught by `the_digest_of_the_whole_grammar_is_pinned` rather than
+        // here.
         //
         // A set of *plausible* values instead (`Int(1)`, `Float(1.0)`,
         // `String("1")`) would pass with every tag collapsed to one byte,

@@ -53,9 +53,14 @@ use crate::node::{LogicalNode, NodeId};
 /// - **Param key order.** Already canonical before this type exists —
 ///   [`crate::Params`] is a `BTreeMap`, which iterates in sorted key order
 ///   independent of insertion order.
-/// - **`-0.0`.** Normalized to `0.0` during lowering (not here, see
-///   [`crate::validate::validate`]), so `Float(-0.0)` never reaches this
-///   type.
+/// - **`-0.0`.** Normalized to `0.0` in **two** places, and the duplication is
+///   deliberate. During lowering ([`crate::validate::validate`]), which is
+///   where a *configuration*'s `-0.0` stops existing; and again inside
+///   [`LogicalPipeline::content_hash`], because ADR-C23 routes `Deserialize`
+///   through the structural checks and not through lowering. So a value
+///   obtained through that second door **may** hold `Float(-0.0)` — the
+///   digest is the same either way, which is the point, since
+///   `Float(0.0) == Float(-0.0)` while their bits differ.
 /// - **The wire `SchemaVersion`.** Discarded during lowering and never
 ///   carried into this type. Deliberate, not an oversight: the schema version
 ///   says only what this crate can *read*, not what pipeline it produces, so

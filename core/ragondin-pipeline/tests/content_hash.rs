@@ -188,6 +188,29 @@ fn a_nodes_inputs_are_positional_and_never_reordered() {
 }
 
 #[test]
+fn a_nodes_inputs_are_never_deduplicated() {
+    // The other half of INV-8's sign in a diff. AGENTS.md names it as one
+    // clause — "a canonicalization step that sorts **or deduplicates** a
+    // node's `inputs`" — and until this test existed only the sorting half
+    // was held: deduplicating a node's inputs left the whole suite green.
+    //
+    // A repeated leg is a legal, distinct configuration. `Fusion` consumes
+    // `Variadic(Chunks)`, so nothing rejects `[dense, dense]`, and a fusion
+    // handed the same leg twice is not the fusion handed it once — whatever
+    // an implementation might do about it, that is the implementation's
+    // business and not the canonical form's.
+    let doubled = REFERENCE.replace("inputs: [dense, sparse]", "inputs: [dense, dense]");
+    let single = REFERENCE.replace("inputs: [dense, sparse]", "inputs: [dense]");
+    assert_ne!(doubled, REFERENCE, "the substitution must have applied");
+    assert_ne!(single, REFERENCE, "the substitution must have applied");
+    assert_ne!(
+        hash_of(&doubled),
+        hash_of(&single),
+        "a repeated leg is a different pipeline: inputs are never deduplicated"
+    );
+}
+
+#[test]
 fn a_node_id_changes_the_hash() {
     // `fuse` deliberately, because nothing references it: renaming a node any
     // other node consumes would have to rewrite that consumer's `inputs` too,
@@ -335,6 +358,12 @@ fn the_two_zeroes_agree_whichever_door_the_pipeline_came_through() {
 /// no `List`, so four of the nine tag bytes never reach its hasher. Renumbering
 /// any of those four would silently invalidate every stored digest for a
 /// pipeline that used them, and the reference digest would not move.
+///
+/// Two legal shapes it deliberately omits, both held by unit tests instead: a
+/// node with empty `params` and a node with no `inputs` at all (ADR-C19, and
+/// settled reading A2). It also carries no `-0.0` — that value folds to `0.0`
+/// before it reaches the hasher, so pinning it here would assert nothing; the
+/// two dedicated tests own that rule.
 const EVERY_SHAPE: &str = r#"
 pipeline:
   inputs: [question]

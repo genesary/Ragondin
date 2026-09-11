@@ -45,8 +45,12 @@ actually look like is not settled, so neither variant exists yet.
   distinct canonical logical forms must produce two distinct byte streams,
   which is what the length prefixes and the per-enum tag bytes buy. Changing
   the framing, a tag's value, or the domain separator invalidates every digest
-  ever written to a run store; `tests/content_hash.rs` pins one so the change
-  cannot be silent. The encoder **folds `-0.0` into `0.0` itself**, as lowering
+  ever written to a run store; `tests/content_hash.rs` pins **two** so the
+  change cannot be silent — the reference pipeline, and a fixture covering
+  every node variant and every parameter shape. Two because one cannot reach
+  every tag byte: a realistic pipeline has no reranker, no extension node, no
+  `Bool` and no `List`, so four of the nine tags could be renumbered in
+  silence while the reference digest sat still. The encoder **folds `-0.0` into `0.0` itself**, as lowering
   already does: the two compare equal and their bits differ, so a raw
   `to_bits()` would give one value two digests, and ADR-C23 gives
   `Deserialize` a path to a `LogicalPipeline` that never ran lowering. It

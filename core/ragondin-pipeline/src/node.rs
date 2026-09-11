@@ -570,7 +570,9 @@ mod tests {
         // equal to itself.
         assert_ne!(ParamValue::Float(f64::NAN), ParamValue::Float(f64::NAN));
         // And these two compare equal while their bit patterns differ, which is
-        // why `validate` canonicalizes `-0.0` before the hash sees it (INV-8).
+        // why `-0.0` is folded twice before any digest exists — by `validate`,
+        // and again inside `content_hash` for the paths that never run
+        // lowering. See the float contract above (INV-8).
         assert_eq!(ParamValue::Float(0.0), ParamValue::Float(-0.0));
         assert_ne!(0.0f64.to_bits(), (-0.0f64).to_bits());
     }
