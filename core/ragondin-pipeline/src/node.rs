@@ -115,12 +115,17 @@ impl NodeId {
 ///   therefore sits one level up, in this crate's own lowering pass, where
 ///   [`validate`](mod@crate::validate) refuses a non-finite float with
 ///   [`crate::ValidationError::NonFiniteParam`].
-/// - **`-0.0` is canonicalized to `0.0`**, by that same lowering pass.
-///   `Float(0.0) == Float(-0.0)` here, but their bit patterns differ, so
-///   hashing a raw `to_bits()` would give two content hashes to two values this
-///   crate calls equal — precisely INV-8's failure mode, which is why the
-///   normalization happens in that pass, before
-///   [`crate::LogicalPipeline::content_hash`], rather than inside it.
+/// - **`-0.0` is canonicalized to `0.0`** — twice, deliberately. By the
+///   lowering pass, which is where a configuration's `-0.0` stops existing;
+///   and again inside [`crate::LogicalPipeline::content_hash`], which folds it
+///   before hashing. `Float(0.0) == Float(-0.0)` here while their bit patterns
+///   differ, so hashing a raw `to_bits()` would give two content hashes to two
+///   values this crate calls equal — precisely INV-8's failure mode. Lowering
+///   alone would close that only for values obtained through
+///   [`validate`](mod@crate::validate), and ADR-C23 makes `Deserialize` a
+///   second door that runs the structural checks without lowering. The
+///   duplication is the point: the hash cannot depend on which door a value
+///   came through.
 /// - **`Int` and `Float` are distinct**, deliberately: `k: 60` and `k: 60.0`
 ///   are different configurations and hash differently.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

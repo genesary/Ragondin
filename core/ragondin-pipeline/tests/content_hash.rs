@@ -214,11 +214,14 @@ fn an_int_and_a_float_of_equal_value_hash_differently() {
 }
 
 #[test]
-fn negative_zero_reaches_the_hasher_already_normalized() {
-    // `validate` folds `-0.0` into `0.0` during lowering, which is why the
-    // encoder hashes `f64::to_bits` directly. If that normalization were
-    // ever moved or dropped, two values this crate calls equal would get two
-    // hashes — INV-8's failure mode — and this is the test that reports it.
+fn negative_zero_is_one_value_through_the_public_path() {
+    // `-0.0` and `0.0` are one configuration, and must be one digest. Two
+    // layers make that true and this test cannot tell them apart: `validate`
+    // folds `-0.0` during lowering, and `content_hash` folds it again before
+    // hashing. Deliberate duplication, because lowering is not on every path
+    // to a `LogicalPipeline` — see
+    // `a_deserialized_pipeline_hashes_the_same_as_a_validated_one`, which is
+    // the test that isolates the encoder's half.
     let positive = REFERENCE.replace("k: 60.0", "bias: 0.0");
     let negative = REFERENCE.replace("k: 60.0", "bias: -0.0");
     assert_ne!(positive, negative, "the substitutions must differ");
@@ -279,4 +282,46 @@ fn a_malformed_hex_string_is_a_typed_error_not_a_panic() {
             "{bad} must not read back as a hash"
         );
     }
+}
+
+#[test]
+fn a_deserialized_pipeline_hashes_the_same_as_a_validated_one() {
+    // The second door. ADR-C23 routes `Deserialize` through the structural
+    // checks and explicitly *not* through lowering — its Consequences name
+    // `NonFiniteParam` as unreachable from that path — so a `LogicalPipeline`
+    // obtained this way never met the `-0.0` fold that `validate` performs.
+    //
+    // Before the encoder folded it too, these two compared equal and carried
+    // two content hashes: INV-8's failure mode through a public path, with no
+    // test helper and no `unsafe`. This is the test that fails if the fold in
+    // `feed_param_value` is ever removed as redundant with lowering — which it
+    // is not, because lowering is not on this path.
+    let doc = |float: &str| {
+        format!(
+            r#"{{"inputs":["question"],"nodes":[{{"Retriever":{{"id":"dense","implementation":"qdrant_dense","inputs":["question"],"params":{{"bias":{{"Float":{float}}}}}}}}}]}}"#
+        )
+    };
+    let positive: LogicalPipeline =
+        serde_json::from_str(&doc("0.0")).expect("the fixture must deserialize");
+    let negative: LogicalPipeline =
+        serde_json::from_str(&doc("-0.0")).expect("the fixture must deserialize");
+
+    // The premise: these really are the two bit patterns, and this crate
+    // really does call them one value. Without this the test could pass on a
+    // deserializer that had already erased the sign.
+    assert_eq!(
+        positive, negative,
+        "node.rs's float contract makes these one value"
+    );
+    assert_ne!(
+        serde_json::to_string(&positive).unwrap(),
+        serde_json::to_string(&negative).unwrap(),
+        "and the serialized forms really do differ, or this proves nothing"
+    );
+
+    assert_eq!(
+        positive.content_hash(),
+        negative.content_hash(),
+        "one value must have one content address, whichever door it came through"
+    );
 }

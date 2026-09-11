@@ -46,17 +46,26 @@
 //! Injectivity is the whole requirement. Two distinct canonical logical forms
 //! must produce two distinct byte streams; SHA-256 supplies the rest.
 //!
-//! # What the encoder relies on, and does not re-check
+//! # What the encoder enforces, and what it relies on
 //!
-//! It hashes what [`crate::validate::validate`] returns. Two properties of the
-//! canonical form are therefore assumed rather than enforced here:
+//! The two are not the same, and the line between them is drawn by one
+//! question: *can this property fail to hold for two values the crate calls
+//! equal?* If it can, the encoder must handle it, because INV-8 is a statement
+//! about equal values. If it cannot, relying on lowering is enough.
 //!
-//! - **Every [`ParamValue::Float`] is finite**, rejected otherwise during
-//!   lowering ([`crate::ValidationError::NonFiniteParam`]).
-//! - **`-0.0` has already been folded into `0.0`**, also during lowering. The
-//!   encoder hashes `f64::to_bits` verbatim, which distinguishes the two bit
-//!   patterns; `node.rs` states that the normalization belongs before the hash
-//!   rather than inside it, and that is where it is.
+//! - **`-0.0` is folded into `0.0` here**, and not only in lowering.
+//!   `Float(0.0) == Float(-0.0)` while their bit patterns differ, so hashing
+//!   the bits raw gives two digests to one value. `validate` folds it too, so
+//!   this changes no digest a validated pipeline produces — but `validate` is
+//!   not the only door (see ADR-C23 below), and a canonical form that depended
+//!   on which door a value came through would not be canonical.
+//! - **Every [`ParamValue::Float`] being finite is relied on**, not enforced.
+//!   Lowering rejects `NaN` and `±∞`
+//!   ([`crate::ValidationError::NonFiniteParam`]) and this encoder passes them
+//!   through untouched. That is sound for the reason above: `NaN` costs
+//!   equality its reflexivity, so a pipeline holding one does not compare
+//!   equal even to itself, and no pair of *equal* values is at stake. There is
+//!   nothing for a canonicalization to do.
 //!
 //! **ADR-C23 does not close this, and it says so.** It routes `Deserialize`
 //! through the *structural* checks — the node sort and the six graph checks —
@@ -69,14 +78,12 @@
 //! `Float(-0.0)`, and two such values that this crate calls equal
 //! (`Float(0.0) == Float(-0.0)`) then carry two digests.
 //!
-//! That is INV-8's failure mode, reachable through a public path, and it is
-//! named here rather than papered over. It is not reachable through
-//! [`crate::validate::validate`], which is the only door today and the one
-//! this method is specified against; normalizing inside the encoder instead
-//! would contradict `node.rs`, which places the normalization before the hash
-//! deliberately, so moving it is a decision this issue does not own. The
-//! residual gap belongs to ADR-C23's implementation (#179), and is raised
-//! there.
+//! **So the encoder folds `-0.0` itself**, above, rather than trusting a door
+//! it does not control. That is the whole of the exposure: the other
+//! lowering-only property, finiteness, cannot separate two equal values. What
+//! remains for #179 is a narrower and non-hashing question — whether a
+//! deserialized `LogicalPipeline` should be allowed to hold a non-finite float
+//! at all — and it is raised there.
 
 use std::fmt;
 
@@ -331,11 +338,27 @@ fn feed_param_value(hasher: &mut Sha256, value: &ParamValue) {
         }
         ParamValue::Float(value) => {
             hasher.update([TAG_FLOAT]);
-            // `to_bits` verbatim: finite and sign-normalized is established by
-            // lowering, per this module's documentation. A `Float` and an
-            // `Int` of equal value differ in their tag, which is the point of
-            // having one.
-            hasher.update(value.to_bits().to_le_bytes());
+            // `-0.0` folded into `0.0` before `to_bits`, because `node.rs`'s
+            // float contract makes them one value — `Float(0.0) ==
+            // Float(-0.0)` — while their bit patterns differ. Hashing the bits
+            // raw would hand two digests to two values this crate calls equal,
+            // which is precisely INV-8's failure mode.
+            //
+            // `validate` already performs this fold during lowering, so this
+            // is not the first line of defence and does not move any digest a
+            // validated pipeline produces. It is the *last* one, and it is
+            // here because `validate` is not the only door: ADR-C23 routes
+            // `Deserialize` through the structural checks and explicitly not
+            // through lowering, so a deserialized value can carry a `-0.0`
+            // that never met the fold. A canonical form that depends on how
+            // the value was obtained is not canonical.
+            //
+            // `value == 0.0` holds for both zeroes and for neither non-finite,
+            // so `NaN` and `±∞` pass through untouched — they are out of
+            // contract, rejected by lowering, and `NaN` costs equality its
+            // reflexivity anyway, so no pair of *equal* values is at stake.
+            let canonical = if *value == 0.0 { 0.0 } else { *value };
+            hasher.update(canonical.to_bits().to_le_bytes());
         }
         ParamValue::Bool(value) => {
             hasher.update([TAG_BOOL]);

@@ -46,8 +46,13 @@ actually look like is not settled, so neither variant exists yet.
   which is what the length prefixes and the per-enum tag bytes buy. Changing
   the framing, a tag's value, or the domain separator invalidates every digest
   ever written to a run store; `tests/content_hash.rs` pins one so the change
-  cannot be silent. The encoder **relies on** lowering having already rejected
-  non-finite floats and folded `-0.0` into `0.0`, and re-checks neither.
+  cannot be silent. The encoder **folds `-0.0` into `0.0` itself**, as lowering
+  already does: the two compare equal and their bits differ, so a raw
+  `to_bits()` would give one value two digests, and ADR-C23 gives
+  `Deserialize` a path to a `LogicalPipeline` that never ran lowering. It
+  **relies on** lowering for non-finite floats and does not re-check them —
+  sound because `NaN` is not equal to itself, so no pair of equal values can
+  differ that way.
 - **The node enum is closed for primitives, open through `Extension`.** A
   genuinely new node type is expressed through `Extension` **without changing
   the core**. Repeated use of `Extension` for the same shape is the signal to
