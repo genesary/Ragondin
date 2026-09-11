@@ -135,6 +135,23 @@ const TAG_LIST: u8 = 0x05;
 pub struct PipelineHash([u8; 32]);
 
 impl PipelineHash {
+    /// Names a digest this crate produced earlier.
+    ///
+    /// The inverse of [`as_bytes`](Self::as_bytes), and it exists for the same
+    /// reason that one does: a digest leaves this crate as 32 bytes — folded
+    /// into run identity (`docs/system-architecture.md` §7.1), carried beside
+    /// a stored run — and a caller that holds those bytes needs a way to say
+    /// what they are without routing them through the serialized form.
+    ///
+    /// It **asserts** rather than computes: the bytes are taken to be the
+    /// content hash of some canonical logical form, and nothing here can check
+    /// that. The one function that *computes* one is
+    /// [`LogicalPipeline::content_hash`], and a caller with a pipeline in hand
+    /// should use it.
+    pub fn from_digest(digest: [u8; 32]) -> Self {
+        Self(digest)
+    }
+
     /// The raw digest.
     ///
     /// This is what a *composite* hash folds in — run identity (§7.1) hashes
@@ -431,6 +448,19 @@ mod tests {
             right.content_hash(),
             "sequence lengths must be part of the encoding"
         );
+    }
+
+    #[test]
+    fn a_digest_names_the_same_hash_it_came_out_of() {
+        // `as_bytes` and `from_digest` are one pair: the bytes a composite
+        // hash folds in are the bytes that name this digest again, so a
+        // consumer holding 32 bytes need not reach for the serialized form to
+        // say what they are.
+        let hash =
+            pipeline(&["q"], vec![retriever("r", "bm25", &["q"], Params::new())]).content_hash();
+
+        assert_eq!(PipelineHash::from_digest(*hash.as_bytes()), hash);
+        assert_ne!(PipelineHash::from_digest([0u8; 32]), hash);
     }
 
     #[test]
