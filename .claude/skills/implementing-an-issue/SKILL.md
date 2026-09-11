@@ -32,4 +32,4 @@ One box carries a step nothing runs for you: if your diff asserts in prose how s
 
 ## A note on scope creep
 
-If an issue turns out to require touching more than two crates (outside explicit scaffolding issues), it is mis-scoped. **Say so rather than sprawling.** Surfacing a mis-scoped issue is a contribution; quietly growing the change to cover it is how a two-crate task becomes an un-reviewable ten-crate diff.
+If your diff is about to exceed the crate limit in `AGENTS.md` § Scope — and the issue is not an explicit scaffolding issue as that section defines it — the issue is mis-scoped. **Say so rather than sprawling.** Surfacing a mis-scoped issue is a contribution; quietly growing the change to cover it is how a two-crate task becomes an un-reviewable ten-crate diff.
