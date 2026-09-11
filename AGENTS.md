@@ -182,6 +182,7 @@ Rationale for each decision: `docs/adr/`, where every decision is a numbered, in
 - Honor the issue's **Scope — OUT**. It prevents collisions with other agents working in parallel on disjoint crates.
 - No opportunistic refactors. No speculative abstraction. Apply YAGNI.
 - If an issue turns out to require touching more than two crates, it is mis-scoped. **Say so rather than sprawling.** The one exception is an **explicit scaffolding issue**: an issue whose **Scope — IN** lists, one by one, every crate the diff may touch, so that the crossing was declared before implementation began rather than discovered during it. A pattern or a family ("all of `components/`", "the core") is not a list. The list is checked against the diff, and you may not extend it: a crate the issue did not name is the same mis-scoping as before — stop and say so. Nor do you write that list for yourself mid-task: the issue that carries it is the one a human launched you on (`docs/AGENT_WORKFLOW.md`). The `type:scaffolding` label is neither necessary nor sufficient; the list is the whole test. The root `Cargo.toml` and `Cargo.lock` are not crates and do not count toward the limit. There is no `tracer` label and no third category — *decided in #64*: an issue that lists its crates already carries everything a label would, and the first vertical slice fit inside two crates without one.
+- Documentation the diff makes necessary or false is **in scope by rule**, whatever **Scope — IN** says. See § *Documentation ships with the code it describes*.
 
 ### Engineering
 
@@ -200,6 +201,21 @@ Three defects landed in one week, all of them in **prose**, and **not one could 
 
 `just map --conflicts` reports all three shapes. **Run it when your diff contains prose that asserts how something works.** Its findings are advisory, and it is not part of `just check`: a build gate over unverified prose would assert more than it knows. That makes running it your job rather than CI's.
 
+### Documentation ships with the code it describes
+
+Documentation belongs in the **same pull request as the code that makes it true** — never in a follow-up issue. A crate's `ARCHITECTURE.md`, a doc comment, a count or a list in prose: each lands with the diff that creates the obligation, where the reviewer is someone reading the code it claims to describe.
+
+**This rule overrides the issue's Scope — IN.** Prose the diff makes necessary or false is in scope by virtue of the diff, and it is not an opportunistic refactor: the alternative to correcting it is not *unchanged*, it is *false*. The issue's scope still governs everything else, and the two-crate limit is untouched — whatever that limit is, this rule does not lift it.
+
+The trigger is the diff, not the file. This creates no obligation to document what you did not touch.
+
+Two obligations follow, and they are not the same one:
+
+- **A new load-bearing crate carries its `ARCHITECTURE.md` in the PR that makes it load-bearing** — not the next one. That file exists to be read *before* the crate is modified, so a crate that ships without one has already spent the interval it was meant to cover.
+- **A diff that falsifies standing prose corrects it in the same diff.** The three habits in § *What you write about the code is checked against the code* all produce prose that was true when it was written. This is the rule that stops the fourth from being produced knowingly.
+
+**Do not open a `type:docs` issue for documentation that belongs to code in flight.** That issue is the defect, not the remedy. Deferred prose is written from memory rather than from the diff, so it records what the author meant rather than what landed; and it arrives in a pull request whose subject is documentation, where nobody is reading the code to check it against — which is how prose that no build can fail gets merged unexamined. A `type:docs` issue is for prose whose code has already shipped, and it is a defect report rather than planned work.
+
 ### Definition of done
 
 - [ ] Every acceptance criterion in the issue is met.
@@ -207,6 +223,7 @@ Three defects landed in one week, all of them in **prose**, and **not one could 
 - [ ] New behavior is covered by tests written **before** the implementation.
 - [ ] No frozen decision was reopened; no architectural decision was made implicitly.
 - [ ] If the diff asserts in prose how something works — a doc comment describing a mechanism, an ADR citation, an issue reference — `just map --conflicts` reports nothing new about it. It is advisory and not part of `just check`, so nothing runs it for you.
+- [ ] Documentation the diff makes necessary or false is **in this PR** — a new load-bearing crate's `ARCHITECTURE.md`, a doc comment, a count or a list in prose — and not deferred to a follow-up issue.
 - [ ] The PR description names the issue it closes and any invariants it touches.
 
 ---
