@@ -12,7 +12,11 @@
 //! ```
 //!
 //! The subcommands, argument parsing, and component wiring land in later issues;
-//! this is the compiling skeleton.
+//! `main` itself is still the compiling skeleton. The crate is not empty,
+//! though: `tests/vertical_slice.rs` assembles the composition root for real —
+//! a configuration file read from disk, stub components registered on an
+//! `EngineContext` through the ordinary API, a plan, and the trace the executor
+//! returns. It is where the wiring this binary will do is exercised first.
 
 use anyhow::Result;
 

@@ -43,7 +43,7 @@ impl Fusion for StubFusion {
         // a merged list ordered by the incoming numbers would be ordered by
         // whichever leg happens to score higher. Position is the only thing
         // this fusion decides, so position is the only thing it reports — and
-        // `1 / (position + 1)` is strictly descending, which is the ranking
+        // `1 / (position + 1)` is descending and finite, which is the ranking
         // contract the merge order has already fixed.
         for (position, hit) in fused.iter_mut().enumerate() {
             hit.score = 1.0 / (position + 1) as f32;

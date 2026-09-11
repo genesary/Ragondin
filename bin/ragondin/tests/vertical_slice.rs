@@ -125,9 +125,12 @@ async fn the_slice_executes_and_returns_the_interleaved_output() {
         ids(&output),
         ["left-0", "right-0", "left-1", "right-1", "left-2"]
     );
+    // Stronger than the ranking contract, which refuses only a rise: five
+    // positions scored `1 / (position + 1)` separate in `f32`, so this pins the
+    // scores the fusion actually assigns and not merely a legal ordering.
     assert!(
         output.windows(2).all(|pair| pair[0].score > pair[1].score),
-        "the fused list honours the ranking contract: {:?}",
+        "the fused scores descend without a tie: {:?}",
         output.iter().map(|hit| hit.score).collect::<Vec<_>>()
     );
 }
