@@ -1,0 +1,32 @@
+# The fixture the first end-to-end vertical slice runs: two stub retrieval legs
+# and the stub fusion that interleaves them. It wires `ragondin-stub`, whose
+# components fabricate their answers, so this pipeline needs no corpus, no
+# index and no model — which is what lets the slice run in plain CI.
+#
+# It is a *wiring* fixture. Nothing here says anything about retrieval quality.
+#
+# No `version:` key: an absent version reads as the one this build writes, so a
+# configuration states one only to pin it deliberately.
+pipeline:
+  inputs: [question]              # the graph's signature (ADR-C18)
+  nodes:
+    # The node ids are deliberately not in the order the graph runs them: sorted
+    # by id, `combined` comes first, and the executor still runs it last,
+    # because readiness over the data-flow edges is what decides. The trace the
+    # test asserts on is what shows the difference.
+    - id: combined
+      component: fusion
+      impl: stub_interleave
+      inputs: [left, right]       # positional, and never reordered (ADR-C16)
+
+    - id: left
+      component: retriever
+      impl: stub_retriever
+      inputs: [question]
+      params: { top_k: 3, label: left }
+
+    - id: right
+      component: retriever
+      impl: stub_retriever
+      inputs: [question]
+      params: { top_k: 2, label: right }

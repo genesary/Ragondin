@@ -9,7 +9,7 @@
 | **Audience** | Software architects, Rust leads, prospective contributors |
 | **Target language** | Rust (2021 edition or later), multi-crate Cargo workspace |
 
-> **How to read this document.** It describes a *target code architecture*, and most of it is still a destination. Part of it now exists: `ragondin-types`, `ragondin-pipeline`, `ragondin-contracts` and `ragondin-engine` are implemented, and `components/` holds four crates — [`README.md` § Status](../README.md#status) lists what is on `main` and what is not. The Rust and protobuf excerpts here remain **contract and signature illustrations**, meant to make decisions concrete and reviewable — not production code, and not a transcription of the crates as they now stand. Where an excerpt and the code disagree, the code is the fact.
+> **How to read this document.** It describes a *target code architecture*, and most of it is still a destination. Part of it now exists: `ragondin-types`, `ragondin-pipeline`, `ragondin-contracts` and `ragondin-engine` are implemented, and `components/` holds five crates — [`README.md` § Status](../README.md#status) lists what is on `main` and what is not. The Rust and protobuf excerpts here remain **contract and signature illustrations**, meant to make decisions concrete and reviewable — not production code, and not a transcription of the crates as they now stand. Where an excerpt and the code disagree, the code is the fact.
 >
 > For a review, the most important sections are **§5 (invariants)**, **§12 (anti-decisions)**, **§13 (decision record)** and **§15 (open questions)**.
 
@@ -199,7 +199,7 @@ flowchart TB
     CNF[ragondin-conformance]
   end
   subgraph COMP["components/ (Local — leaves)"]
-    CX["one crate per implementation:<br/>ragondin-retriever-bm25 · ragondin-retriever-dense<br/>ragondin-store-memory · ragondin-fusion-rrf"]
+    CX["one crate per implementation:<br/>ragondin-retriever-bm25 · ragondin-retriever-dense<br/>ragondin-store-memory · ragondin-fusion-rrf<br/>ragondin-stub (the test fixture)"]
   end
   subgraph WIRE["wire/"]
     PRO[ragondin-proto]
@@ -236,7 +236,7 @@ flowchart TB
 - Only the **binary** knows both the engine and the concrete components. It is the **composition root**.
 - `ragondin-types` is the ultimate leaf: everything depends on it; it depends on almost nothing.
 - A **dashed** arrow is an edge the architecture sanctions but that no `Cargo.toml` declares today. `ragondin-contracts → ragondin-pipeline` is the only one: a component receives values, not graphs, so no contract references a `ragondin-pipeline` type yet. The arrow stays because the day one does, adding the dependency needs no architectural argument. Solid arrows are edges that exist.
-- Every box names a member listed in the root `Cargo.toml`, except `components/`, which stands for four; nothing here is reserved any more. That box covers — `ragondin-retriever-bm25`, `ragondin-retriever-dense`, `ragondin-store-memory` and `ragondin-fusion-rrf` — and they are drawn as one box because their edges are identical. §4.1's rule is now a fact and not a forecast: `cargo metadata` gives each of the four exactly `ragondin-contracts` and `ragondin-types` as normal dependencies, and nothing else in the workspace. Each also carries `ragondin-conformance` as a **dev**-dependency, which is how a component proves it satisfies its contract; the graph draws normal dependencies only, so that edge is deliberately absent.
+- Every box names a member listed in the root `Cargo.toml`, except `components/`, which stands for five; nothing here is reserved any more. That box covers — `ragondin-retriever-bm25`, `ragondin-retriever-dense`, `ragondin-store-memory`, `ragondin-fusion-rrf` and `ragondin-stub`, the deterministic fixture the end-to-end tests are wired with — and they are drawn as one box because their edges are identical. §4.1's rule is now a fact and not a forecast: `cargo metadata` gives each of the five exactly `ragondin-contracts` and `ragondin-types` as normal dependencies, and nothing else in the workspace. Each also carries `ragondin-conformance` as a **dev**-dependency, which is how a component proves it satisfies its contract; the graph draws normal dependencies only, so that edge is deliberately absent.
 - One solid edge carries a condition. `ragondin-engine → ragondin-remote` is declared `optional = true` in `engine/ragondin-engine/Cargo.toml` and pulled in by the `remote` feature, so it is a real Cargo edge that the default build does not walk. It is drawn solid because the manifest declares it, and labelled because `cargo tree -p ragondin-engine -e normal --depth 1` does not show it without `--features remote`.
 
 ---
