@@ -956,6 +956,8 @@ version = "0.0.0"
 dependencies = [
  "ragondin-pipeline",
  "ragondin-proto",
+ "serde_yaml",
+ "thiserror",
 ]
 
 [[package]]

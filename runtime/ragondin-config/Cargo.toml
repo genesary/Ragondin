@@ -10,8 +10,13 @@ rust-version.workspace = true
 # Compiles a configuration into a `LogicalPipeline` (`ragondin-pipeline`) and speaks
 # the configuration-delivery service (`ragondin-proto::config`). The wire/config
 # format is separate from the in-memory IR and versioned independently (INV-9).
-# A YAML parser is added when parsing is implemented (a later issue), not before
-# there is anything to parse.
+#
+# `serde_yaml` is this crate's, and only this crate's: `ragondin-pipeline`
+# carries no format implementation (INV-4) and does no I/O (INV-3), so the
+# format is supplied at this edge. `runtime/` is not `core/`, and a YAML parser
+# is not a heavy backend, so no feature gate applies.
 [dependencies]
 ragondin-pipeline = { workspace = true }
 ragondin-proto = { workspace = true }
+serde_yaml = { workspace = true }
+thiserror = { workspace = true }
