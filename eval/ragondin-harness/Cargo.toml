@@ -10,7 +10,27 @@ rust-version.workspace = true
 # One of the two thin drivers over the SAME `ragondin-engine` (the other is
 # `ragondin-server`). Depending on the same engine crate is what makes
 # evaluation/serving skew structurally impossible (P1).
+#
+# No crate under `components/` appears here, and none ever will: the harness is
+# handed a ready `EngineContext` and never constructs a component, which is what
+# keeps the composition root the only place that knows both (INV-7).
 [dependencies]
 ragondin-engine = { workspace = true }
 ragondin-metrics = { workspace = true }
 ragondin-benchmarks = { workspace = true }
+ragondin-experiments = { workspace = true } # the `Run` record this driver assembles
+ragondin-pipeline = { workspace = true }    # `LogicalPipeline`, and the hash that opens run identity
+ragondin-types = { workspace = true }       # `Chunk`, `DocId`, `Query`
+sha2 = { workspace = true }                 # the run-identity digest (§7.1)
+serde_json = { workspace = true }           # the rendering of a trace into a `TraceDocument`
+thiserror = { workspace = true }            # typed library errors (frozen: never `anyhow` here)
+
+# Test-only. The end-to-end test is the composition root of its own run: it
+# wires `ragondin-stub` onto an `EngineContext` through the public `register_*`
+# API, and reads its pipeline off disk through `ragondin-config` the way
+# `ragondin bench` will. Neither belongs in the library — a driver receives a
+# context, it does not build one.
+[dev-dependencies]
+ragondin-stub = { workspace = true }
+ragondin-config = { workspace = true }
+tokio = { workspace = true }
