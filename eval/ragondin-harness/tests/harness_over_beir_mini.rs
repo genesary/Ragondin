@@ -190,10 +190,20 @@ async fn the_run_is_named_by_the_tuple_of_its_inputs() {
 #[tokio::test]
 async fn two_runs_over_identical_inputs_agree_on_the_id_and_on_every_metric() {
     // P4: the run is content-addressed, so identical inputs are one run.
-    let benchmark = benchmark();
-    let first = run_the_harness(&benchmark).await;
-    let second = run_the_harness(&benchmark).await;
+    //
+    // The benchmark is **loaded twice, from disk**, rather than shared between
+    // the two runs. `dataset_version` is a digest over the *loaded* benchmark,
+    // so a loader that turned one directory into two unequal values — a map
+    // whose iteration order varies leaking into the corpus metadata, say —
+    // would give one dataset two versions, and a shared value would never see
+    // it.
+    let first = run_the_harness(&benchmark()).await;
+    let second = run_the_harness(&benchmark()).await;
 
+    assert_eq!(
+        first.inputs.dataset_version, second.inputs.dataset_version,
+        "one directory, loaded twice, is one dataset version"
+    );
     assert_eq!(first.id, second.id);
     assert_eq!(first.inputs, second.inputs);
     assert_eq!(
@@ -256,7 +266,8 @@ async fn a_query_the_pipeline_cannot_answer_stops_the_run_and_reports_its_trace(
     assert_eq!(
         query,
         QueryId::new("q-1"),
-        "the run stops at the first query it executes, in the benchmark's own          order — which is file order, not the sorted order the traces are filed in"
+        "the run stops at the first query it executes, in the benchmark's own \
+         order — file order, not the sorted order the traces are filed in"
     );
     assert_eq!(
         trace.as_value()["nodes"][0]["node"],

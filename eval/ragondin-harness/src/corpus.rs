@@ -72,6 +72,15 @@ impl CorpusIndex {
 
     /// The `index_version` component of run identity: the content address of
     /// [`chunks`](Self::chunks).
+    ///
+    /// **It addresses *a* chunk set, not provably the one that was retrieved
+    /// from.** The components a run executes are constructed before the harness
+    /// sees them, over a set only the composition root knows, and no contract
+    /// lets a driver ask a retriever what it indexed — so a caller that
+    /// registers a retriever over one corpus and evaluates against another
+    /// records a version that names neither. Reading this field as evidence of
+    /// what was searched is therefore only as sound as the composition root
+    /// that built both: it must construct its components from these chunks.
     pub fn version(&self) -> &str {
         &self.version
     }
