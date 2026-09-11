@@ -7,5 +7,19 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+# The experiment plane's own state. It depends on `ragondin-pipeline` for the
+# `PipelineHash` that is the first component of run identity
+# (`docs/system-architecture.md` §7.1), and on `ragondin-types` for the
+# `QueryId` a per-query trace is filed under. It does **not** depend on
+# `ragondin-engine`: the harness is the driver that holds both, and it renders
+# the engine's `ExecutionTrace` into the document this crate stores.
+#
+# ADR-13: the run store is native. No experiment-tracker client appears here,
+# now or later — an export adapter writes *to* such a tracker and is still a
+# separate, additive piece of the plane.
 [dependencies]
+ragondin-pipeline = { workspace = true }
 ragondin-types = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true } # the on-disk format of a run record
+thiserror = { workspace = true }

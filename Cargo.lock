@@ -1001,7 +1001,11 @@ dependencies = [
 name = "ragondin-experiments"
 version = "0.0.0"
 dependencies = [
+ "ragondin-pipeline",
  "ragondin-types",
+ "serde",
+ "serde_json",
+ "thiserror",
 ]
 
 [[package]]
