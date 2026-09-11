@@ -58,8 +58,8 @@ async fn formatting_is_not_configuration() {
     // §8.3: the YAML run locally *is* the custom resource. Two spellings of
     // one configuration must reach one `LogicalPipeline` — the canonical value
     // INV-8's content hash is taken over, so this is the property the load
-    // path exists to deliver to `ragondin validate` (#30) and the run cache
-    // (#29).
+    // path exists to deliver to `ragondin validate` (#30) and to run
+    // identity (#29), which folds the pipeline hash into a run's id.
     //
     // The perturbations are chosen to reach past the YAML lexer. Stripping
     // comments alone would only prove that a parser discards comments, which
@@ -106,13 +106,31 @@ pipeline:
 ";
 
     let source = fs::read_to_string(fixture()).expect("the fixture must be readable");
-    assert!(
-        source.contains("- id: dense\n"),
-        "the fixture must still list `dense` first, or this test compares nothing"
+    // Both orders read out of the two texts and compared. An earlier version
+    // of this guard inspected only `restyled`, so reordering the fixture to
+    // match it made the perturbation evaporate with nothing firing.
+    let ids_in = |text: &str| -> Vec<String> {
+        text.lines()
+            .filter_map(|line| line.split("id:").nth(1))
+            .map(|id| id.trim().to_string())
+            .collect()
+    };
+    let (source_ids, restyled_ids) = (ids_in(&source), ids_in(restyled));
+    assert_eq!(
+        source_ids.len(),
+        3,
+        "the fixture must still declare three nodes, got {source_ids:?}"
     );
-    assert!(
-        restyled.find("id: dense").unwrap() > restyled.find("id: fuse").unwrap(),
+    assert_ne!(
+        source_ids, restyled_ids,
         "the copy must list its nodes in a different order from the fixture"
+    );
+    let (mut a, mut b) = (source_ids.clone(), restyled_ids.clone());
+    a.sort();
+    b.sort();
+    assert_eq!(
+        a, b,
+        "and must list the same nodes, or it is a different graph"
     );
     assert!(
         source.contains("params: { top_k: 50 }"),
@@ -247,12 +265,24 @@ async fn an_unsupported_schema_version_is_reported_as_its_own_diagnosis() {
 }
 
 #[tokio::test]
-async fn an_unparseable_file_that_also_states_a_version_reports_the_parse_fault() {
-    // The peek walks the whole document, so a syntax error anywhere makes the
-    // version verdict untrustworthy. `ragondin-pipeline` states what a caller
-    // should then do — fall through to the full parse, which fails too and
-    // with the better-located message — and this pins that `LocalFile` does,
-    // rather than reporting the peek's own vaguer complaint.
+async fn an_unreadable_peek_falls_through_to_the_full_parse() {
+    // The peek walks the whole document, so a syntax error anywhere makes its
+    // version verdict untrustworthy: `ragondin-pipeline` answers `Unreadable`
+    // and prescribes falling through to the full parse. `LocalFile` does.
+    //
+    // Asserting the *variant* alone would pin almost nothing — reporting the
+    // peek's own error would also produce `Malformed`, so the test would pass
+    // with the fall-through deleted. The message is what separates them, and
+    // what it says here is worth knowing rather than guessing: `SchemaVersion`
+    // deserializes before the malformed region is reached, so the full parse
+    // fails on the *version*, not on the syntax, and `SchemaVersion` refuses
+    // through `Error::custom`, which erases the type. The fall-through
+    // therefore yields `Malformed` carrying a version complaint.
+    //
+    // That mismatch between variant and message is a real wart, and it is
+    // pinned rather than hidden so that a change to it is deliberate. It is
+    // not this crate's to fix: the type that would let `load` tell the two
+    // apart is erased upstream, by design (`raw.rs` says so).
     let path = scratch(
         "future-and-broken",
         "version: 7\npipeline:\n  inputs: [question\n  nodes: - - -\n",
@@ -262,9 +292,40 @@ async fn an_unparseable_file_that_also_states_a_version_reports_the_parse_fault(
         .await
         .expect_err("malformed text must not load");
 
+    let ConfigError::Malformed { source, .. } = &error else {
+        panic!("a syntax error outranks the version verdict, got {error:?}");
+    };
     assert!(
-        matches!(error, ConfigError::Malformed { .. }),
-        "a syntax error outranks the version verdict, got {error:?}"
+        source.to_string().contains("schema version 7"),
+        "this must be the full parse's verdict, not the peek's: {source}"
+    );
+}
+
+#[tokio::test]
+async fn a_syntax_error_alone_is_reported_where_it_occurs() {
+    // The case `ragondin-pipeline`'s prescription is actually about: no
+    // version key, so nothing outranks the syntax fault and the reader gets a
+    // located message. Pinned because it is the outcome the fall-through
+    // exists to produce, and the test above pins the exception to it.
+    let path = scratch(
+        "broken-only",
+        "pipeline:\n  inputs: [question\n  nodes: - - -\n",
+    );
+    let error = LocalFile::new(&path)
+        .load()
+        .await
+        .expect_err("malformed text must not load");
+
+    let ConfigError::Malformed { source, .. } = &error else {
+        panic!("expected Malformed, got {error:?}");
+    };
+    let location = source
+        .location()
+        .expect("a syntax fault carries a location");
+    assert_eq!(
+        (location.line(), location.column()),
+        (3, 8),
+        "the message must point at the fault, not at the top of the file: {source}"
     );
 }
 
@@ -287,8 +348,12 @@ async fn every_error_variant_keeps_its_cause_reachable() {
     // `anyhow` in the binary (#30) prints an error chain; a wrapper that
     // swallowed its cause would make the file's actual fault invisible there —
     // and `Invalid` is the one that matters most, since `ValidationError`
-    // carries the offending node id. One instance of each variant that has a
-    // cause, so dropping any single `#[source]` fails this.
+    // carries the offending node id. One instance of each variant, so a
+    // variant that stopped carrying a cause at all fails this. Note it does
+    // not pin the `#[source]` attributes themselves: `thiserror` also infers
+    // the source from a field named `source`, so deleting one attribute
+    // changes nothing here — which is a reason the chain is hard to break by
+    // accident, not a gap in the test.
     use std::error::Error;
 
     let missing = Path::new(env!("CARGO_TARGET_TMPDIR")).join("chain-absent.yaml");

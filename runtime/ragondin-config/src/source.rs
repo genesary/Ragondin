@@ -106,11 +106,11 @@ impl ConfigSource for LocalFile {
     /// `docs/code-architecture.md` §11.2 — *the runtime is selected at the
     /// binary level; libraries stay as runtime-agnostic as practical* — and
     /// taking `tokio::fs` would spend this crate's runtime-agnosticism on a
-    /// single file read. The two crates here that do hold `tokio` as a normal
-    /// dependency, `ragondin-engine` and `ragondin-server`, are the engine and
-    /// a driver rather than a library a third party compiles against; this
-    /// crate keeps `tokio` to a dev-dependency, as `ragondin-contracts` and
-    /// `ragondin-conformance` do.
+    /// single file read. The crates here that do hold `tokio` as a normal
+    /// dependency — the engine, the server driver, the binary — are an engine,
+    /// a driver and the composition root, not libraries a third party compiles
+    /// against; this crate keeps `tokio` to a dev-dependency, as
+    /// `ragondin-contracts` and `ragondin-conformance` do.
     ///
     /// Whether that is the right general answer is **not settled here**. It is
     /// the open question in #198 — may a `Local` component block the calling
@@ -173,8 +173,10 @@ const _: fn() = || {
 /// The four variants are four different things for the person who wrote the
 /// file to do, which is the only reason to have four:
 ///
-/// - [`Unreadable`](ConfigError::Unreadable) — check the path or the
-///   permissions. Nothing was parsed.
+/// - [`Unreadable`](ConfigError::Unreadable) — check the path, the
+///   permissions, or the file's encoding: `read_to_string` also lands here on
+///   bytes that are not UTF-8, and only the wrapped cause says which it was.
+///   Nothing was parsed.
 /// - [`UnsupportedSchemaVersion`](ConfigError::UnsupportedSchemaVersion) —
 ///   upgrade the binary. The file may be perfectly correct, and editing it
 ///   will not help.
