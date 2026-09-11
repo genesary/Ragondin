@@ -1,10 +1,10 @@
 ---
 id: ADR-C07
 title: Domain types are the source of truth; protobuf is generated; round-trip tested
-status: accepted
+status: superseded
 invariants: []
 supersedes: []
-superseded_by: null
+superseded_by: ADR-C24
 ---
 
 # ADR-C7: Domain types are the source of truth; protobuf is generated; round-trip tested
@@ -27,4 +27,4 @@ Rust ergonomics in the domain types, plus a **mechanical guarantee the two faces
 
 ## Status
 
-Accepted.
+Superseded by [ADR-C24](ADR-C24-proto-hand-maintained-rust-stubs-generated.md). The decision — domain types are the source of truth, round-trip tested — is carried forward there unchanged; the Decision sentence *"The protobuf is **generated** by `tonic-build`"* described a direction the tool does not have, and is the reason for the supersession (#199).
