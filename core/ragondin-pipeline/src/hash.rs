@@ -58,17 +58,34 @@
 //!   patterns; `node.rs` states that the normalization belongs before the hash
 //!   rather than inside it, and that is where it is.
 //!
-//! ADR-C23 makes those properties hold of every `LogicalPipeline` a default
-//! build can obtain, by routing `Deserialize` through the same checks. Its
-//! implementation has not landed, so today the guarantee is the narrower one:
-//! it holds of what `validate` returns.
+//! **ADR-C23 does not close this, and it says so.** It routes `Deserialize`
+//! through the *structural* checks — the node sort and the six graph checks —
+//! and its Consequences state that the lowering-only variants of
+//! [`crate::ValidationError`] (`UnknownComponent`, `NonFiniteParam`) are
+//! unreachable from that second path. Lowering is where both float properties
+//! are established, so after that decision lands they remain a convention
+//! about provenance rather than a property of the type: a `LogicalPipeline`
+//! obtained by deserializing a logical-shaped document may still hold
+//! `Float(-0.0)`, and two such values that this crate calls equal
+//! (`Float(0.0) == Float(-0.0)`) then carry two digests.
+//!
+//! That is INV-8's failure mode, reachable through a public path, and it is
+//! named here rather than papered over. It is not reachable through
+//! [`crate::validate::validate`], which is the only door today and the one
+//! this method is specified against; normalizing inside the encoder instead
+//! would contradict `node.rs`, which places the normalization before the hash
+//! deliberately, so moving it is a decision this issue does not own. The
+//! residual gap belongs to ADR-C23's implementation (#179), and is raised
+//! there.
 
 use std::fmt;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use sha2::{Digest, Sha256};
 
-use crate::node::{LogicalNode, NodeId, ParamValue, Params};
+use crate::node::{
+    ExtensionNode, FusionNode, LogicalNode, NodeId, ParamValue, Params, RerankerNode, RetrieverNode,
+};
 use crate::pipeline::LogicalPipeline;
 
 /// The domain separator opening every encoding.
@@ -160,9 +177,12 @@ impl<'de> Deserialize<'de> for PipelineHash {
         let hex = String::deserialize(deserializer)?;
         let bytes = hex.as_bytes();
         if bytes.len() != 64 {
+            // Reported in bytes, because bytes is what was checked: `é` is one
+            // character and two bytes, and a message that called a rejected
+            // string the right length would be worse than no message.
             return Err(D::Error::custom(format!(
-                "a pipeline hash is 64 lowercase hex digits, found {} characters",
-                hex.chars().count()
+                "a pipeline hash is 64 lowercase hex digits, found {} bytes",
+                bytes.len()
             )));
         }
 
@@ -248,35 +268,36 @@ fn feed_ids(hasher: &mut Sha256, ids: &[NodeId]) {
 /// because the tag already fixed which one it is — an `Extension` named `hyde`
 /// and a `Retriever` whose `impl` is `hyde` differ in their first byte.
 fn feed_node(hasher: &mut Sha256, node: &LogicalNode) {
+    // Destructured rather than bound whole, and that is load-bearing: a field
+    // added to any of these structs is then a compile error here, at the one
+    // place that must account for it. Bound whole, it would compile, warn
+    // nothing, and silently stay out of the content hash — which no test could
+    // catch, since the pinned digest does not move for a field never encoded.
     let (tag, id, name, inputs, params) = match node {
-        LogicalNode::Retriever(node) => (
-            TAG_RETRIEVER,
-            &node.id,
-            &node.implementation,
-            &node.inputs,
-            &node.params,
-        ),
-        LogicalNode::Fusion(node) => (
-            TAG_FUSION,
-            &node.id,
-            &node.implementation,
-            &node.inputs,
-            &node.params,
-        ),
-        LogicalNode::Reranker(node) => (
-            TAG_RERANKER,
-            &node.id,
-            &node.implementation,
-            &node.inputs,
-            &node.params,
-        ),
-        LogicalNode::Extension(node) => (
-            TAG_EXTENSION,
-            &node.id,
-            &node.kind,
-            &node.inputs,
-            &node.params,
-        ),
+        LogicalNode::Retriever(RetrieverNode {
+            id,
+            implementation,
+            inputs,
+            params,
+        }) => (TAG_RETRIEVER, id, implementation, inputs, params),
+        LogicalNode::Fusion(FusionNode {
+            id,
+            implementation,
+            inputs,
+            params,
+        }) => (TAG_FUSION, id, implementation, inputs, params),
+        LogicalNode::Reranker(RerankerNode {
+            id,
+            implementation,
+            inputs,
+            params,
+        }) => (TAG_RERANKER, id, implementation, inputs, params),
+        LogicalNode::Extension(ExtensionNode {
+            id,
+            kind,
+            inputs,
+            params,
+        }) => (TAG_EXTENSION, id, kind, inputs, params),
     };
 
     hasher.update([tag]);
@@ -334,7 +355,6 @@ fn feed_param_value(hasher: &mut Sha256, value: &ParamValue) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::node::{ExtensionNode, FusionNode, RetrieverNode};
 
     fn retriever(id: &str, implementation: &str, inputs: &[&str], params: Params) -> LogicalNode {
         LogicalNode::Retriever(RetrieverNode {

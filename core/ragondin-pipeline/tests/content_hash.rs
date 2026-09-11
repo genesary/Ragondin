@@ -187,9 +187,11 @@ fn a_nodes_inputs_are_positional_and_never_reordered() {
 
 #[test]
 fn a_node_id_changes_the_hash() {
-    let renamed = REFERENCE
-        .replace("id: sparse", "id: lexical")
-        .replace("inputs: [dense, sparse]", "inputs: [dense, lexical]");
+    // `fuse` deliberately, because nothing references it: renaming a node any
+    // other node consumes would have to rewrite that consumer's `inputs` too,
+    // and the test would then fail for either of two reasons. This one fails
+    // for exactly one.
+    let renamed = REFERENCE.replace("id: fuse", "id: combine");
     assert_ne!(renamed, REFERENCE, "the substitution must have applied");
     assert_ne!(
         hash_of(REFERENCE),

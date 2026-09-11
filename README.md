@@ -65,7 +65,7 @@ just check             # build + test + clippy + fmt + architecture invariants
 ## Status
 
 **Pre-alpha. Milestone M1 — *Core contracts & engine skeleton* — is in
-progress** (14 of its 17 issues are closed). M0 — *Foundations* — has met its
+progress** (15 of its 17 issues are closed). M0 — *Foundations* — has met its
 exit criterion; the seven issues still open under it are `decision:` and
 `record:` issues, not implementation work.
 
