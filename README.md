@@ -71,9 +71,13 @@ exit criterion; the five issues still open under it are `decision:` and
 
 **There is no usable binary yet.** `ragondin` compiles and prints one line; none
 of the four subcommands is implemented. Everything below is a library crate,
-reachable from Rust or from a test, and nothing composes it end to end — no
-composition root registers the components that now exist, so the engine still
-has nothing wired to plan or execute.
+reachable from Rust or from a test. What is composed end to end is the
+**wiring**, and it is reached from a test rather than from a subcommand:
+`bin/ragondin/tests/vertical_slice.rs` reads a configuration file from disk,
+registers components on an `EngineContext` at the composition root, plans, and
+executes — asserting the output and the trace the executor returns. The
+components it registers are the deterministic stubs, so what that proves is that
+the path holds together, not that anything retrieves well.
 
 On `main` today:
 
@@ -88,9 +92,11 @@ On `main` today:
 | `ragondin-config` | The `ConfigSource` abstraction and its `LocalFile` implementation: a YAML file read into `RawPipeline` and compiled to a `LogicalPipeline`, with a typed error that keeps an unreadable file, an unsupported schema version, a parse fault and an invalid graph apart. No `Stream` source — that is M6. |
 
 Still compiling skeletons, each with a doc comment and a link test and no
-behaviour: `ragondin-proto`, `ragondin-remote`,
-`ragondin-server`, `ragondin-harness`, `ragondin-experiments`, and the
-`ragondin` binary. `components/` now holds `ragondin-retriever-bm25` (BM25 over
+behaviour: `ragondin-proto`, `ragondin-remote`, `ragondin-server`,
+`ragondin-harness` and `ragondin-experiments`. The `ragondin` binary's `main` is
+one too — it prints one line — but it is no longer only that: the end-to-end
+test above lives alongside it, because the binary is the composition root.
+`components/` now holds `ragondin-retriever-bm25` (BM25 over
 tantivy), `ragondin-store-memory` (exact brute-force vector search),
 `ragondin-fusion-rrf` (Reciprocal Rank Fusion), `ragondin-retriever-dense`
 (a query embedded and searched through a `VectorStore`) and `ragondin-stub`
@@ -115,7 +121,7 @@ flowchart TB
         BEN --> RUNS --> CMP
     end
 
-    subgraph LIB["On main — library crates only, nothing composes them yet"]
+    subgraph LIB["On main — library crates, composed end to end only by a test"]
         direction LR
         PIPE["ragondin-pipeline<br/>validate + canonicalize"]
         ENG["ragondin-engine<br/>registry → plan → executor → ExecutionTrace"]
@@ -129,8 +135,10 @@ flowchart TB
     CLI -.->|"will be built on"| LIB
 ```
 
-The dashed arrow is the work that has not happened: the crates exist, the
-binary that wires them to a configuration file and a benchmark does not.
+The dashed arrow is the work that has not happened. The crates exist, and
+`bin/ragondin/tests/vertical_slice.rs` already wires them to a configuration
+file — but from a test; no subcommand does, and nothing wires them to a
+benchmark.
 
 ## License
 
