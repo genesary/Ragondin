@@ -48,7 +48,8 @@ harness.
   ran. A store that also decided identity would be two things at once, and the
   fold would then live where four of its five inputs are not. So this crate
   takes a `RunId` and never computes one. `RunId::from_digest` is the whole of
-  the door.
+  the door for a computed digest; `FromStr` is the other one, for an id a person
+  typed or a directory name carries.
 - **`RunId` is a digest, not a string.** One run has one spelling — the parse
   refuses uppercase rather than folding it — and a value that can only be 64
   hex digits cannot name a path outside the store's root. Path safety is a
@@ -74,14 +75,21 @@ harness.
 - **The staging name is per writer, not per process.** `.<id>.<pid>-<n>.partial`
   — the process id separates two programs, a counter separates two calls within
   one, *including two threads*: the store is `Clone` and `Sync`, so concurrent
-  saves are ordinary. Nothing clears a staging directory on the way in, and
-  nothing may: a unique name has nothing to clear, and clearing a shared one
-  reaches into a directory another live writer owns. Whoever renames first wins,
-  and the others find the run already there and report success.
-- **A leading dot under the store root means "not a run".** A `.partial`
-  directory is removed when its `save` returns, success or failure, but a crash
-  inside one leaves it, nothing sweeps them, and they **accumulate** until
-  someone deletes them. Anything that lists the root — a future `ragondin runs`,
+  saves are ordinary. It is unique among *live* writers rather than for all
+  time — a recycled pid restarts the counter at zero and may name what a crashed
+  process left — which is harmless, because creating the directory is
+  idempotent, all four files are written before the rename, and no other name is
+  ever written there. Nothing clears a staging directory on the way in, and
+  nothing may: a name no live writer shares has nothing to clear, and clearing a
+  shared one reaches into a directory another live writer owns. Whoever renames
+  first wins, and the others find the run already there and report success.
+- **A leading dot under the store root means "not a run".** A failing `save`
+  asks for its `.partial` directory to be removed, and the removal is best
+  effort: the fault that broke the write can be the one that denies the removal
+  (a directory that cannot be written to usually cannot be emptied either), and
+  a process that dies inside a `save` asks for nothing. Nothing sweeps what is
+  left, so they **accumulate** until someone deletes them. Anything that lists
+  the root — a future `ragondin runs`,
   the comparison view — must skip entries whose name begins with `.`: a run id
   is 64 hex digits, so parsing one of these as an id fails rather than
   misreading, but only if the lister expects the convention.

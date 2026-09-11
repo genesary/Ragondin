@@ -56,20 +56,29 @@
 //! run; rewriting it could only replace it with itself, and `fs::write`
 //! truncates, so a crash mid-rewrite would destroy a run that was complete.
 //!
-//! **Every writer stages into a directory no other writer names.** The staging
-//! name carries the writing process *and* a counter drawn once per call, so two
-//! threads of one process — this store is `Clone` and `Sync`, so that is an
-//! ordinary thing to do — never meet in it. Nothing clears a staging directory
-//! on the way in: a name that is unique has nothing to clear, and a `save` that
-//! began by emptying a shared path would be reaching into a directory another
-//! live writer owns. Concurrent savers of one run therefore each write the same
-//! bytes into a place of their own, and the first to rename is the one that
-//! stays; the others find the run already there and report success.
+//! **Every writer stages into a directory no other *live* writer names.** The
+//! staging name carries the writing process *and* a counter drawn once per
+//! call, so two threads of one process — this store is `Clone` and `Sync`, so
+//! that is an ordinary thing to do — never meet in it. It is not unique for all
+//! time: a process the operating system gives a recycled pid starts its counter
+//! at zero again and may name a directory a crashed one left. That is harmless
+//! rather than merely unlikely — creating the directory is idempotent, all four
+//! files are written before the rename, and no other name is ever written there
+//! — so what is left of an abandoned run is overwritten rather than mixed with.
+//! Nothing clears a staging directory on the way in: a name no live writer
+//! shares has nothing to clear, and a `save` that began by emptying a shared
+//! path would be reaching into a directory another live writer owns.
+//! Concurrent savers of one run therefore each write the same bytes into a
+//! place of their own, and the first to rename is the one that stays; the
+//! others find the run already there and report success.
 //!
-//! A staging directory outlives its `save` only if the process dies inside one:
-//! an error on the way out removes it. Nothing sweeps the ones a crash leaves,
-//! so they accumulate until someone deletes them. They are inert — no run is
-//! read from one — and they are marked for a reader as well as for a person:
+//! A `save` that fails asks for its staging directory to be removed, and the
+//! removal is best effort: the fault that broke the write can be the one that
+//! denies the removal — a directory that cannot be written to usually cannot be
+//! emptied either — and a process that dies inside a `save` asks for nothing at
+//! all. Nothing sweeps what is left over, so those accumulate until someone
+//! deletes them. They are inert — no run is read from one — and they are marked
+//! for a reader as well as for a person:
 //! **an entry under the store root whose name begins with `.` is not a run**,
 //! which is the convention anything that lists the root must honour. A run id
 //! is 64 hex digits, so `.<id>.<pid>-<n>.partial` cannot be parsed as one.
