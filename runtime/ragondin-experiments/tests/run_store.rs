@@ -37,12 +37,12 @@ fn run_id(byte: u8) -> RunId {
     RunId::from_digest([byte; 32])
 }
 
-/// A pipeline's content hash, built the one way a caller outside
-/// `ragondin-pipeline` can build one without a pipeline: through its
-/// `Deserialize`. The harness gets its own from `LogicalPipeline::content_hash`.
+/// A pipeline's content hash, asserted rather than computed: this crate stores
+/// the digest and never takes one, so a test needs a digest-shaped value and
+/// not a pipeline. The harness gets its own from
+/// `LogicalPipeline::content_hash`.
 fn pipeline_hash() -> PipelineHash {
-    serde_json::from_str("\"bed7a3e04d0eae5efbcd4dbd0d1d1ff1d4c2b0e7e2a2d3f4a5b6c7d8e9f00112\"")
-        .expect("64 lowercase hex digits are a pipeline hash")
+    PipelineHash::from_digest([0xbe; 32])
 }
 
 /// A run whose metrics are the ones given, and whose other fields are fixed —
