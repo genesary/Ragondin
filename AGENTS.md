@@ -178,7 +178,7 @@ Rationale for each decision: `docs/adr/`, where every decision is a numbered, in
 - One issue, one branch, one PR. Stay strictly within the issue's **Scope — IN**.
 - Honor the issue's **Scope — OUT**. It prevents collisions with other agents working in parallel on disjoint crates.
 - No opportunistic refactors. No speculative abstraction. Apply YAGNI.
-- If an issue turns out to require touching more than two crates (outside explicit scaffolding issues), it is mis-scoped. **Say so rather than sprawling.**
+- If an issue turns out to require touching more than two crates, it is mis-scoped. **Say so rather than sprawling.** The one exception is an **explicit scaffolding issue**: an issue whose *Scope — IN* names every crate it touches, so that the crossing was authorized by whoever wrote the issue rather than discovered by whoever implements it. You may not add a crate to that list — one the issue did not name is the same mis-scoping as before. The root `Cargo.toml` and `Cargo.lock` are not crates and never count. There is no `tracer` label and no third category — *decided in #64*: an issue that names its crates already carries everything a label would, and the first vertical slice fit inside two crates without one.
 
 ### Engineering
 
