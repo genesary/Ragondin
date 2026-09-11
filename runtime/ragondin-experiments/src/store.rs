@@ -55,19 +55,40 @@
 //! id is the digest of its inputs, so a second save of the same id is the same
 //! run; rewriting it could only replace it with itself, and `fs::write`
 //! truncates, so a crash mid-rewrite would destroy a run that was complete.
-//! That is also what makes two processes saving one run safe: they write the
-//! same bytes, each into a staging directory of its own, and the first to
-//! arrive is the one that stays.
+//!
+//! **Every writer stages into a directory no other writer names.** The staging
+//! name carries the writing process *and* a counter drawn once per call, so two
+//! threads of one process — this store is `Clone` and `Sync`, so that is an
+//! ordinary thing to do — never meet in it. Nothing clears a staging directory
+//! on the way in: a name that is unique has nothing to clear, and a `save` that
+//! began by emptying a shared path would be reaching into a directory another
+//! live writer owns. Concurrent savers of one run therefore each write the same
+//! bytes into a place of their own, and the first to rename is the one that
+//! stays; the others find the run already there and report success.
+//!
+//! A staging directory outlives its `save` only if the process dies inside one:
+//! an error on the way out removes it. Nothing sweeps the ones a crash leaves,
+//! so they accumulate until someone deletes them. They are inert — no run is
+//! read from one — and they are marked for a reader as well as for a person:
+//! **an entry under the store root whose name begins with `.` is not a run**,
+//! which is the convention anything that lists the root must honour. A run id
+//! is 64 hex digits, so `.<id>.<pid>-<n>.partial` cannot be parsed as one.
 //!
 //! An incomplete directory can still be *made* — by a hand that deletes a file
 //! under the store root, or by a writer that predates this scheme — so it has
 //! a name: [`RunStoreError::Incomplete`], distinct from the [`RunStoreError::Io`]
-//! a permission failure produces.
+//! a permission failure produces. [`FileSystemRunStore::save`] reports it too,
+//! rather than treating any directory under the id as a stored run: a torn
+//! directory is not repaired, because a run's metrics and traces are *not*
+//! determined by its id — a judge's scores are not reproducible — so deleting
+//! one to write another would destroy the only copy of something. Naming the
+//! fault leaves the choice with whoever can make it.
 
 use std::collections::BTreeMap;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use ragondin_types::QueryId;
 use serde::de::DeserializeOwned;
@@ -102,7 +123,13 @@ impl FileSystemRunStore {
     /// Writes a run, and does nothing if that run is already stored.
     ///
     /// The run appears under its id whole or not at all — see the module's
-    /// *A run directory appears whole or not at all*.
+    /// *A run directory appears whole or not at all*. `Ok(())` therefore means
+    /// *this run is in the store, with all four of its files*; a directory
+    /// under the id that is missing one is reported as
+    /// [`Incomplete`](RunStoreError::Incomplete) rather than passed over as
+    /// stored. Present is as far as that check goes: a file corrupted in place
+    /// still reads as a fault at [`load`](Self::load), which is where a record
+    /// is parsed.
     pub fn save(&self, run: &Run) -> Result<(), RunStoreError> {
         // Before anything is created, because this is the one fault that would
         // otherwise be discovered on the far side of a durable write: JSON has
@@ -117,37 +144,21 @@ impl FileSystemRunStore {
 
         let destination = self.run_dir(&run.id);
         if destination.is_dir() {
-            return Ok(());
+            return complete(&destination);
         }
 
-        let staging = self.staging_dir(&run.id);
-        // A staging directory left by a crash of this same process id carries
-        // an unfinished run; it is not evidence about this one.
-        let _ = fs::remove_dir_all(&staging);
-        fs::create_dir_all(&staging).map_err(|source| RunStoreError::Io {
-            path: staging.clone(),
-            source,
-        })?;
+        // Named for this call alone, so that two writers of one run never meet
+        // in it — and therefore never has to be cleared, which would mean
+        // emptying a directory another live writer may own.
+        let staging = Staging::create(self.staging_dir(&run.id))?;
+        let dir = staging.path();
 
-        write_json(&staging.join(INPUTS_FILE), &run.inputs)?;
-        write_json(&staging.join(METRICS_FILE), &run.metrics)?;
-        write_text(&staging.join(CONFIG_FILE), run.config.as_str())?;
-        write_json(&staging.join(TRACES_FILE), &run.traces)?;
+        write_json(&dir.join(INPUTS_FILE), &run.inputs)?;
+        write_json(&dir.join(METRICS_FILE), &run.metrics)?;
+        write_text(&dir.join(CONFIG_FILE), run.config.as_str())?;
+        write_json(&dir.join(TRACES_FILE), &run.traces)?;
 
-        if let Err(source) = fs::rename(&staging, &destination) {
-            if destination.is_dir() {
-                // Another writer stored this same run while this one was
-                // staging it. Its bytes are ours.
-                let _ = fs::remove_dir_all(&staging);
-                return Ok(());
-            }
-            return Err(RunStoreError::Io {
-                path: destination,
-                source,
-            });
-        }
-
-        Ok(())
+        publish(staging, &destination)
     }
 
     /// Reads the run named by `id`.
@@ -184,13 +195,97 @@ impl FileSystemRunStore {
         self.root.join(id.to_string())
     }
 
-    /// Where a run is assembled before it is renamed into place. Named after
-    /// the writing process as well as the run, so two processes saving one run
-    /// stage it independently rather than into each other.
+    /// Where one call assembles a run before renaming it into place.
+    ///
+    /// Unique per *writer*, not per process: the process id separates two
+    /// programs, and the counter separates two calls within one program —
+    /// including two threads, since this store is `Clone` and `Sync` and
+    /// saving from several at once is an ordinary thing to do. A name nobody
+    /// else can compute is what lets `save` create it without first clearing
+    /// it.
     fn staging_dir(&self, id: &RunId) -> PathBuf {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+
+        let ticket = NEXT.fetch_add(1, Ordering::Relaxed);
         self.root
-            .join(format!(".{id}.{}.partial", std::process::id()))
+            .join(format!(".{id}.{}-{ticket}.partial", std::process::id()))
     }
+}
+
+/// A staging directory, removed when it is dropped without being published.
+///
+/// The four writes below return early on failure, and each of those paths used
+/// to leave the directory behind for ever — nothing sweeps the store root. A
+/// guard puts the cleanup on the one path that cannot be forgotten.
+struct Staging {
+    path: PathBuf,
+    published: bool,
+}
+
+impl Staging {
+    fn create(path: PathBuf) -> Result<Self, RunStoreError> {
+        fs::create_dir_all(&path).map_err(|source| RunStoreError::Io {
+            path: path.clone(),
+            source,
+        })?;
+        Ok(Self {
+            path,
+            published: false,
+        })
+    }
+
+    fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for Staging {
+    fn drop(&mut self) {
+        if !self.published {
+            // Best effort: this runs on a failure path, where a second failure
+            // has nothing to add to the one being reported.
+            let _ = fs::remove_dir_all(&self.path);
+        }
+    }
+}
+
+/// Renames a staged run into its place under the store root.
+///
+/// Two ways this does not simply succeed, and they are different. The
+/// destination may have appeared since `save` looked — another writer stored
+/// the same run — and then the rename fails against a non-empty directory
+/// whose content is the content this writer staged, so the run is stored and
+/// the staged copy is dropped. Anything else is the filesystem refusing, and
+/// is reported.
+fn publish(mut staging: Staging, destination: &Path) -> Result<(), RunStoreError> {
+    match fs::rename(staging.path(), destination) {
+        Ok(()) => {
+            staging.published = true;
+            Ok(())
+        }
+        Err(source) => {
+            if destination.is_dir() {
+                Ok(())
+            } else {
+                Err(RunStoreError::Io {
+                    path: destination.to_path_buf(),
+                    source,
+                })
+            }
+        }
+    }
+}
+
+/// `Ok(())` if every file of a run is present under `dir`, and which one is
+/// missing otherwise.
+fn complete(dir: &Path) -> Result<(), RunStoreError> {
+    for member in [INPUTS_FILE, METRICS_FILE, CONFIG_FILE, TRACES_FILE] {
+        let path = dir.join(member);
+        if !path.is_file() {
+            return Err(RunStoreError::Incomplete { path });
+        }
+    }
+    Ok(())
 }
 
 /// Why a run could not be written or read.
@@ -284,4 +379,83 @@ fn read_text(path: &Path) -> Result<String, RunStoreError> {
             }
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A directory of this test's own. `save`'s behaviour is covered from
+    /// outside, in `tests/run_store.rs`; what is here is the pair of branches
+    /// reachable only when the destination changes underneath a writer, which
+    /// no caller of `save` can arrange on purpose.
+    /// `CARGO_TARGET_TMPDIR` is given to an integration test and not to this
+    /// one, so the directory is named after the process and the test instead —
+    /// the same idea, and no `tempfile` dependency for it.
+    fn scratch(test_name: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "ragondin-experiments-publish-{}-{test_name}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&path);
+        fs::create_dir_all(&path).expect("the scratch directory must be creatable");
+        path
+    }
+
+    fn staged(root: &Path, name: &str) -> Staging {
+        let staging = Staging::create(root.join(name)).expect("staging must be creatable");
+        fs::write(staging.path().join(INPUTS_FILE), "{}").expect("a staged file must be writable");
+        staging
+    }
+
+    #[test]
+    fn losing_the_race_to_a_destination_that_now_exists_is_success() {
+        let root = scratch("race_lost");
+        let staging = staged(&root, "staged");
+        let staging_path = staging.path().to_path_buf();
+
+        // What the winner of the race left: a directory under the id, not
+        // empty — which is what makes the rename fail rather than succeed.
+        let destination = root.join("destination");
+        fs::create_dir_all(&destination).expect("the destination must be creatable");
+        fs::write(destination.join(INPUTS_FILE), "{}").expect("the winner's file must be writable");
+
+        publish(staging, &destination).expect("the run is stored, whoever stored it");
+
+        assert!(
+            !staging_path.exists(),
+            "the staged copy is dropped, not left beside the run"
+        );
+        assert!(destination.join(INPUTS_FILE).is_file());
+    }
+
+    #[test]
+    fn a_rename_that_fails_for_any_other_reason_is_reported() {
+        let root = scratch("rename_refused");
+        let staging = staged(&root, "staged");
+        let staging_path = staging.path().to_path_buf();
+
+        // No directory to rename into, and none appears: the filesystem is
+        // refusing, and a refusal is not a run that someone else stored.
+        let destination = root.join("absent-parent").join("destination");
+
+        match publish(staging, &destination) {
+            Err(RunStoreError::Io { path, .. }) => assert_eq!(path, destination),
+            other => panic!("a refused rename must be reported, got {other:?}"),
+        }
+        assert!(
+            !staging_path.exists(),
+            "a failed publish leaves no staging directory behind"
+        );
+    }
+
+    #[test]
+    fn a_staging_directory_is_removed_unless_it_was_published() {
+        let root = scratch("staging_guard");
+        let path = {
+            let staging = staged(&root, "staged");
+            staging.path().to_path_buf()
+        };
+        assert!(!path.exists(), "dropping a staging directory removes it");
+    }
 }

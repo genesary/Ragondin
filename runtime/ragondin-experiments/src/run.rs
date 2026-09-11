@@ -117,8 +117,10 @@ pub enum RunIdParseError {
 /// This is the run store's own record, and it is not the pipeline's wire
 /// format: the configuration itself is kept verbatim as a [`ConfigDocument`]
 /// rather than re-serialized out of an in-memory pipeline type, so that what
-/// the store holds is the text the [`pipeline`](Self::pipeline) hash was taken
-/// over and not a second spelling of it.
+/// the store holds is the text whose canonical logical form hashes to the
+/// [`pipeline`](Self::pipeline) digest, and not a second spelling of it. The
+/// digest is taken over that canonical form and never over the text (INV-8);
+/// the text is kept because it is what a person reads and re-runs.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunInputs {
     /// The content hash of the canonical logical pipeline that was run.
@@ -246,6 +248,12 @@ impl TraceDocument {
     }
 
     /// The rendered trace.
+    ///
+    /// Nothing in this crate calls it — the store moves a trace through serde
+    /// rather than through this accessor — but a wrapper whose content cannot
+    /// be read back is not a record of anything, and the reader is downstream:
+    /// the comparison view renders a stored trace, and an export adapter would
+    /// translate one.
     pub fn as_value(&self) -> &serde_json::Value {
         &self.value
     }

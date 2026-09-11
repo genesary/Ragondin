@@ -290,11 +290,15 @@ fn a_metric_that_json_cannot_write_is_refused_before_anything_is_stored() {
 fn metrics_are_written_in_name_order_whatever_order_they_were_recorded_in() {
     let store = store("metrics_bytes");
     let mut metrics = Metrics::default();
-    // Four of them, recorded in reverse name order: recording order and name
+    // Six of them, recorded in reverse name order: recording order and name
     // order cannot be mistaken for each other, and an unordered map would have
-    // to guess one arrangement out of twenty-four to look like this one.
+    // to guess one arrangement out of seven hundred and twenty to look like
+    // this one. Four left that at one in twenty-four, which a reseeded hash
+    // order reaches about once in five runs of a mutation.
     metrics.insert("recall@10", 0.75);
+    metrics.insert("precision@10", 0.5);
     metrics.insert("ndcg@10", 0.42);
+    metrics.insert("mrr@10", 0.6);
     metrics.insert("latency_p50_ms", 31.0);
     metrics.insert("cost_usd", 0.004);
 
@@ -310,7 +314,9 @@ fn metrics_are_written_in_name_order_whatever_order_they_were_recorded_in() {
             "{\n",
             "  \"cost_usd\": 0.004,\n",
             "  \"latency_p50_ms\": 31.0,\n",
+            "  \"mrr@10\": 0.6,\n",
             "  \"ndcg@10\": 0.42,\n",
+            "  \"precision@10\": 0.5,\n",
             "  \"recall@10\": 0.75\n",
             "}\n"
         ),
@@ -390,4 +396,65 @@ fn staged_entries(store: &FileSystemRunStore) -> Vec<String> {
         .map(|name| name.to_string_lossy().into_owned())
         .filter(|name| name.starts_with('.'))
         .collect()
+}
+
+#[test]
+fn many_threads_saving_one_run_all_report_success_and_the_run_loads() {
+    let store = store("concurrent");
+    let run = a_run(run_id(0x18), &[("ndcg@10", 0.42)]);
+
+    // The store is `Clone` and `Sync`, so saving from several threads is an
+    // ordinary thing to do — and every one of them stages the *same run id*,
+    // which is the collision a staging path keyed by process alone would have.
+    // A failure here is a caller told its save failed for a run that is in
+    // fact stored, which invites re-running an expensive benchmark.
+    std::thread::scope(|scope| {
+        for _ in 0..8 {
+            let store = store.clone();
+            let run = run.clone();
+            scope.spawn(move || {
+                for _ in 0..50 {
+                    store
+                        .save(&run)
+                        .expect("every concurrent save reports success");
+                }
+            });
+        }
+    });
+
+    assert_eq!(
+        store.load(&run.id).expect("the run must read back"),
+        run,
+        "whichever writer won, what is stored is the run"
+    );
+    assert_eq!(
+        staged_entries(&store),
+        Vec::<String>::new(),
+        "no staging directory survives its save"
+    );
+}
+
+#[test]
+fn saving_over_a_torn_directory_reports_it_rather_than_claiming_success() {
+    let store = store("torn_destination");
+    let run = a_run(run_id(0x19), &[("ndcg@10", 0.42)]);
+    store.save(&run).expect("the run must be writable");
+
+    let dir = store.root().join(run.id.to_string());
+    let metrics_file = dir.join("metrics.json");
+    fs::remove_file(&metrics_file).expect("the file must be removable");
+
+    // The alternative would be to answer `Ok(())` for a directory that does
+    // not load, or to delete it and write this run over it — and a run's
+    // metrics and traces are not determined by its id, so the deletion could
+    // destroy the only copy of a judge's scores.
+    match store.save(&run) {
+        Err(RunStoreError::Incomplete { path }) => assert_eq!(path, metrics_file),
+        other => panic!("a torn destination must be named, got {other:?}"),
+    }
+    assert!(
+        dir.join("traces.json").is_file(),
+        "the files that are there are left where they are"
+    );
+    assert_eq!(staged_entries(&store), Vec::<String>::new());
 }

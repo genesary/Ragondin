@@ -64,15 +64,35 @@ harness.
   does it should not treat it as an architectural act, and should not be made
   to argue for it as one.
 - **A run directory appears whole or not at all.** `save` assembles the run in
-  `<root>/.<id>.<pid>.partial` and renames it into place. A crash therefore
-  leaves an inert `.partial` directory and no run, so *the directory exists*
-  means *the run loads* — which is exactly the question the harness asks before
-  deciding to execute. A run already stored is **left alone** rather than
-  rewritten: its id is the digest of its inputs, so a rewrite could only
+  a staging directory and renames it into place. A crash therefore leaves an
+  inert `.partial` directory and no run, so *a directory under an id that `save`
+  accepted* is *a run that loads* — which is exactly the question the harness
+  asks before deciding to execute. A run already stored is **left alone** rather
+  than rewritten: its id is the digest of its inputs, so a rewrite could only
   replace it with itself, and `fs::write` truncates, so a crash mid-rewrite
-  would destroy a run that was complete. The staging name carries the writing
-  process, so two processes saving one run stage independently and the first to
-  land wins.
+  would destroy a run that was complete.
+- **The staging name is per writer, not per process.** `.<id>.<pid>-<n>.partial`
+  — the process id separates two programs, a counter separates two calls within
+  one, *including two threads*: the store is `Clone` and `Sync`, so concurrent
+  saves are ordinary. Nothing clears a staging directory on the way in, and
+  nothing may: a unique name has nothing to clear, and clearing a shared one
+  reaches into a directory another live writer owns. Whoever renames first wins,
+  and the others find the run already there and report success.
+- **A leading dot under the store root means "not a run".** A `.partial`
+  directory is removed when its `save` returns, success or failure, but a crash
+  inside one leaves it, nothing sweeps them, and they **accumulate** until
+  someone deletes them. Anything that lists the root — a future `ragondin runs`,
+  the comparison view — must skip entries whose name begins with `.`: a run id
+  is 64 hex digits, so parsing one of these as an id fails rather than
+  misreading, but only if the lister expects the convention.
+- **A torn directory is reported, never repaired.** `save` checks that a
+  destination already under the id holds all four files, and reports
+  `Incomplete` if it does not, rather than answering `Ok(())` for something
+  `load` cannot read. It does not delete and rewrite: a run's metrics and traces
+  are **not** determined by its id — a judge's scores are not reproducible — so
+  discarding a torn directory could destroy the only copy of something. Whoever
+  can decide that is a person, and the error names the file. Present is as far
+  as the check goes: a file corrupted in place is a fault `load` finds.
 - **What that does *not* guarantee.** The rename is atomic **within one
   filesystem** — a store root that spans one, which a directory tree does by
   construction, but not a layout someone points across a mount. Nothing is
