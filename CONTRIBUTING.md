@@ -159,6 +159,10 @@ equivalent by assertion.
   issue stays open when the PR merges. A task-list item is fine — the nesting is
   not the problem, the extra word is.
 - **Errors:** `thiserror` (typed) in libraries; `anyhow` in binaries only.
+- **Agent skills:** `.claude/skills/` holds only skills written for this
+  repository. An external skill may be adapted — rewritten so that it cites
+  this repository's rules, with its source and licence in the front-matter —
+  never copied; `AGENTS.md` § Conventions has the conditions.
 
 ### Stacked pull requests
 
