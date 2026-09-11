@@ -1,0 +1,29 @@
+# The hybrid retrieval pipeline of `docs/system-architecture.md` §5.1, trimmed to
+# the node families this build has a `LogicalNode` variant for: the two retrieval
+# legs and their fusion. The §5.1 document's `transform` node names the
+# `query_transform` family, which parses at the raw level and is refused by
+# validation — correct, and not what this fixture is for.
+#
+# §8.3: this file *is* the Kubernetes custom resource, modulo the wire format.
+# No `version:` key: an absent version reads as the one this build writes, so a
+# configuration states one only to pin it deliberately.
+pipeline:
+  inputs: [question]              # the graph's signature (ADR-C18)
+  nodes:
+    - id: dense
+      component: retriever
+      impl: qdrant_dense
+      inputs: [question]
+      params: { top_k: 50 }
+
+    - id: sparse
+      component: retriever
+      impl: bm25                  # in-process sparse retrieval (§10)
+      inputs: [question]
+      params: { top_k: 50 }
+
+    - id: fuse
+      component: fusion
+      impl: rrf                   # Reciprocal Rank Fusion
+      inputs: [dense, sparse]     # positional, and never reordered (ADR-C16)
+      params: { k: 60.0 }

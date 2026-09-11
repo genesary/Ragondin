@@ -954,8 +954,12 @@ dependencies = [
 name = "ragondin-config"
 version = "0.0.0"
 dependencies = [
+ "async-trait",
  "ragondin-pipeline",
  "ragondin-proto",
+ "serde_yaml",
+ "thiserror",
+ "tokio",
 ]
 
 [[package]]

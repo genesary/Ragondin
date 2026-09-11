@@ -7,11 +7,33 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
-# Compiles a configuration into a `LogicalPipeline` (`ragondin-pipeline`) and speaks
-# the configuration-delivery service (`ragondin-proto::config`). The wire/config
-# format is separate from the in-memory IR and versioned independently (INV-9).
-# A YAML parser is added when parsing is implemented (a later issue), not before
-# there is anything to parse.
+# Compiles a configuration into a `LogicalPipeline` (`ragondin-pipeline`). The
+# wire/config format is separate from the in-memory IR and versioned
+# independently (INV-9).
+#
+# `ragondin-proto` is declared and not yet used: the `Stream` source speaks the
+# configuration-delivery service (`ragondin-proto::config`), and that is M6.
+# The edge is the one `docs/code-architecture.md` §4.3 draws, kept so the M6
+# work adds a source rather than a dependency.
+#
+# `serde_yaml` is supplied at this edge because `ragondin-pipeline` carries no
+# format implementation (INV-4) and does no I/O (INV-3) — which is why its
+# `peek_schema_version` is generic over the deserializer. It is a normal
+# dependency here and a dev-dependency there, for that crate's doctest.
+# `runtime/` is not `core/`, and a YAML parser is not a heavy backend, so no
+# feature gate applies.
 [dependencies]
 ragondin-pipeline = { workspace = true }
 ragondin-proto = { workspace = true }
+async-trait = { workspace = true } # dyn-compatible async traits (frozen: async_trait, not RPITIT)
+serde_yaml = { workspace = true }
+thiserror = { workspace = true }
+
+# Test-only. `ConfigSource::load` is async, so calling it needs an executor —
+# but only a caller needs one. Keeping `tokio` out of `[dependencies]` is what
+# leaves the runtime selected at the binary level (`docs/code-architecture.md`
+# §11.2); `ragondin-contracts` and `ragondin-conformance` make the same split.
+# The engine and the server driver do hold `tokio` outright, being the engine
+# and a driver rather than a library a third party compiles against.
+[dev-dependencies]
+tokio = { workspace = true }
