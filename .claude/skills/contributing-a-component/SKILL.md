@@ -21,7 +21,7 @@ Use this for the performance-critical path (BM25, an ONNX reranker, a dense retr
 
 ### Which choices are yours
 
-Adding a component always meets a choice the documents do not settle — a tokenizer, how `k1`/`b` are exposed, which of two backends to gate. `AGENTS.md` § Rules of engagement decides who makes it by where it lands: inside your crate, it is yours, argued in the crate's `ARCHITECTURE.md` and named in the PR; on a shared surface (that section lists them), it is a `decision` issue first — load `opening-a-decision-issue`. The conformance suite gates behaviour, not design, so passing it does not stand in for the record.
+Adding a component always meets a choice the documents do not settle — a tokenizer, how `k1`/`b` are exposed, which of two backends to gate. `AGENTS.md` § Rules of engagement decides who makes it by where it lands: it lists the shared surfaces that escalate to a `decision` issue (load `opening-a-decision-issue` for those), and states the recording obligation for a choice that does not.
 
 ## Remote — a gRPC service in any language
 

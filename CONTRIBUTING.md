@@ -125,9 +125,8 @@ A new crate under `components/` that implements a trait from `ragondin-contracts
   `ragondin-store-qdrant`.
 - A choice the documents do not settle and that stays inside your crate is
   yours to make: argue it in the crate's `ARCHITECTURE.md` and name it in the
-  PR. One that reaches `ragondin-contracts`, the wire format, a workspace
-  dependency or a new node kind is a `decision` issue first
-  (`AGENTS.md` § Rules of engagement).
+  PR. One that reaches a shared surface — `AGENTS.md` § Rules of engagement
+  lists them — is a `decision` issue first.
 
 See [`components/README.md`](components/README.md).
 

@@ -1,6 +1,6 @@
 ---
 name: opening-a-decision-issue
-description: Load this the moment an implementation task appears to require an architectural choice that AGENTS.md and docs/ do not already settle — a new trade-off, an unlisted option, an open question you'd have to resolve to proceed, or any temptation to reopen a frozen decision. Instead of guessing, you open a decision issue. This skill tells you how to write one that a human can act on: the question, why the existing docs don't settle it, the alternatives and their trade-offs, which issues it blocks, and what you deliberately left unimplemented while waiting. Reach for it especially when you catch yourself about to "just pick something reasonable" — that instinct is the failure mode this exists to catch.
+description: Load this the moment an implementation task appears to require an architectural choice that AGENTS.md and docs/ do not already settle and that AGENTS.md § Rules of engagement says escalates — a change to a shared surface, an open question you'd have to resolve to proceed, or any temptation to reopen a frozen decision. Instead of guessing, you open a decision issue. This skill tells you how to write one that a human can act on: the question, why the existing docs don't settle it, the alternatives and their trade-offs, which issues it blocks, and what you deliberately left unimplemented while waiting. Reach for it especially when you catch yourself about to "just pick something reasonable" — that instinct is the failure mode this exists to catch.
 ---
 
 # Opening a decision issue
@@ -9,7 +9,7 @@ Some choices are above the pay grade of a single implementation PR: anything tha
 
 ## When to open one
 
-- The task requires an architectural choice **not already settled** in `AGENTS.md` or `docs/`, **and it reaches a shared surface** — `AGENTS.md` § Rules of engagement lists them, and says what to do instead with a choice that stays inside your own crate: make it, argue it in the crate's `ARCHITECTURE.md`, and name it in the PR. Where the choice lands is the test; how reversible it looks is not.
+- The task requires an architectural choice **not already settled** in `AGENTS.md` or `docs/`, **and `AGENTS.md` § Rules of engagement says it escalates** — that section lists the shared surfaces that do, and states what a choice that does not escalate owes instead.
 - You are tempted to **reopen a frozen decision** (see the `frozen-decisions` skill) because you think it is wrong.
 - You would otherwise **resolve an entry in `docs/OPEN_QUESTIONS.md`** in passing. Those are deliberately unresolved; never answer one as a side effect.
 
