@@ -201,8 +201,10 @@ fn kind_mismatch_expected_clause(expected: &Option<ValueKind>) -> String {
 /// Rejects non-finite floats (`NaN`, `±∞`) with [`ValidationError::NonFiniteParam`]
 /// and normalizes `-0.0` to `0.0` (settled reading A3): [`validate`], the pass
 /// that lowers a `RawPipeline` into a `LogicalPipeline`, is what produces the
-/// canonical form, and the content-addressed hash still to be written (open
-/// #10) only hashes it. Hashing a raw `to_bits()` would otherwise give two
+/// canonical form. [`crate::LogicalPipeline::content_hash`] folds `-0.0`
+/// again before hashing, because ADR-C23 gives `Deserialize` a path to a
+/// `LogicalPipeline` that never runs this pass; here is where a
+/// *configuration*'s `-0.0` stops existing. Hashing a raw `to_bits()` would otherwise give two
 /// content hashes to two values `ParamValue` calls equal (INV-8).
 fn lower_param_value(
     node: &NodeId,
@@ -1467,7 +1469,7 @@ pipeline:
         // The executable form of "canonicalization is idempotent" (Ruling
         // R5): `validate` cannot be handed a `LogicalPipeline` back, but
         // serializing and re-deriving one must reproduce it exactly, which is
-        // exactly what #10 needs from this type.
+        // exactly what `LogicalPipeline::content_hash` needs from this type.
         let raw = pipeline(vec![
             node("bm25_leg", "retriever", &[]),
             node("dense_leg", "retriever", &[]),

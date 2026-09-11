@@ -35,6 +35,28 @@ actually look like is not settled, so neither variant exists yet.
 - **The hash is over the canonical logical form (INV-8).** Two semantically
   equivalent configurations formatted differently **must** hash identically, or
   reproducibility is an illusion. Never hash source text.
+- **The canonical encoding is this crate's own, and is part of its identity.**
+  `LogicalPipeline::content_hash` feeds SHA-256 a tagged, length-prefixed byte
+  stream written by hand in `src/hash.rs`, not a re-serialization. A
+  general-purpose serializer canonicalizes nothing it was not asked to — its
+  float rendering and map ordering are documented as readable, not as stable —
+  so routing the digest through one would put this crate's identity in a
+  dependency's hands. The framing has one requirement, **injectivity**: two
+  distinct canonical logical forms must produce two distinct byte streams,
+  which is what the length prefixes and the per-enum tag bytes buy. Changing
+  the framing, a tag's value, or the domain separator invalidates every digest
+  ever written to a run store; `tests/content_hash.rs` pins **two** so the
+  change cannot be silent — the reference pipeline, and a fixture covering
+  every node variant and every parameter shape. Two because one cannot reach
+  every tag byte: a realistic pipeline has no reranker, no extension node, no
+  `Bool` and no `List`, so four of the nine tags could be renumbered in
+  silence while the reference digest sat still. The encoder **folds `-0.0` into `0.0` itself**, as lowering
+  already does: the two compare equal and their bits differ, so a raw
+  `to_bits()` would give one value two digests, and ADR-C23 gives
+  `Deserialize` a path to a `LogicalPipeline` that never ran lowering. It
+  **relies on** lowering for non-finite floats and does not re-check them —
+  sound because `NaN` is not equal to itself, so no pair of equal values can
+  differ that way.
 - **The node enum is closed for primitives, open through `Extension`.** A
   genuinely new node type is expressed through `Extension` **without changing
   the core**. Repeated use of `Extension` for the same shape is the signal to

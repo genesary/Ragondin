@@ -65,8 +65,8 @@ just check             # build + test + clippy + fmt + architecture invariants
 ## Status
 
 **Pre-alpha. Milestone M1 — *Core contracts & engine skeleton* — is in
-progress** (14 of its 17 issues are closed). M0 — *Foundations* — has met its
-exit criterion; the seven issues still open under it are `decision:` and
+progress** (15 of its 17 issues are closed). M0 — *Foundations* — has met its
+exit criterion; the five issues still open under it are `decision:` and
 `record:` issues, not implementation work.
 
 **There is no usable binary yet.** `ragondin` compiles and prints one line; none
@@ -80,7 +80,7 @@ On `main` today:
 | Crate | What is there |
 |---|---|
 | `ragondin-types` | The core value types: `DocId`, `ChunkId`, `QueryId`, `Document`, `Chunk`, `Query`, `Embedding`, `ScoredChunk`. |
-| `ragondin-pipeline` | The versioned `RawPipeline` wire schema, the `LogicalNode` model with its `Extension` variant, the port/`ValueKind` check, and the `RawPipeline → LogicalPipeline` validation and canonicalization pass. Content-addressed hashing over the canonical form (INV-8) is **not** written yet — it is issue #10, still open. |
+| `ragondin-pipeline` | The versioned `RawPipeline` wire schema, the `LogicalNode` model with its `Extension` variant, the port/`ValueKind` check, and the `RawPipeline → LogicalPipeline` validation and canonicalization pass. Content-addressed hashing over the canonical form (INV-8), as `LogicalPipeline::content_hash`. |
 | `ragondin-contracts` | Five component traits — `Retriever`, `Fusion`, `Reranker`, `Embedder`, `VectorStore` — with their params and `ComponentError`. |
 | `ragondin-engine` | `EngineContext` and the explicit component registry, physical planning (`LogicalPipeline` + registry → `PhysicalPipeline`), and an executor that returns its `ExecutionTrace` — on failure as well as on success. No `Branch` or `Loop`: no such node variant exists yet. |
 | `ragondin-conformance` | The behavioural suite every implementation of a contract must pass. |

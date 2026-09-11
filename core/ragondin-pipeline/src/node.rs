@@ -10,7 +10,8 @@
 //! **`inputs` is positional and order-significant.** ADR-C16 derives a node's
 //! consumed kinds from its variant, and a variant with heterogeneous ports — a
 //! reranker consumes a query *and* a chunk list — can only address them by
-//! position. Canonicalization (#10) must therefore **never reorder `inputs`**:
+//! position. Canonicalization must therefore **never reorder `inputs`** —
+//! neither the `validate` pass nor `LogicalPipeline::content_hash`:
 //! two orderings of the same legs are two configurations, even where the
 //! component itself is commutative.
 //!
@@ -71,7 +72,8 @@ impl NodeId {
 ///
 /// Deliberately a small owned enum rather than `serde_json::Value`: the latter's
 /// float and map ordering is not canonical, which would undermine the content
-/// hash (INV-8) that #10 computes over the canonical logical form.
+/// hash (INV-8) that [`crate::LogicalPipeline::content_hash`] computes over
+/// the canonical logical form.
 ///
 /// `ParamValue` implements no total order, because `f64` admits none. Canonical
 /// ordering of *keys* comes from the [`Params`] `BTreeMap`, whose keys iterate
@@ -113,11 +115,17 @@ impl NodeId {
 ///   therefore sits one level up, in this crate's own lowering pass, where
 ///   [`validate`](mod@crate::validate) refuses a non-finite float with
 ///   [`crate::ValidationError::NonFiniteParam`].
-/// - **`-0.0` is canonicalized to `0.0`**, by that same lowering pass.
-///   `Float(0.0) == Float(-0.0)` here, but their bit patterns differ, so
-///   hashing a raw `to_bits()` would give two content hashes to two values this
-///   crate calls equal — precisely INV-8's failure mode, which is why the
-///   normalization happens before the hash (#10) rather than inside it.
+/// - **`-0.0` is canonicalized to `0.0`** — twice, deliberately. By the
+///   lowering pass, which is where a configuration's `-0.0` stops existing;
+///   and again inside [`crate::LogicalPipeline::content_hash`], which folds it
+///   before hashing. `Float(0.0) == Float(-0.0)` here while their bit patterns
+///   differ, so hashing a raw `to_bits()` would give two content hashes to two
+///   values this crate calls equal — precisely INV-8's failure mode. Lowering
+///   alone would close that only for values obtained through
+///   [`validate`](mod@crate::validate), and ADR-C23 makes `Deserialize` a
+///   second door that runs the structural checks without lowering. The
+///   duplication is the point: the hash cannot depend on which door a value
+///   came through.
 /// - **`Int` and `Float` are distinct**, deliberately: `k: 60` and `k: 60.0`
 ///   are different configurations and hash differently.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -299,7 +307,7 @@ mod tests {
 
     #[test]
     fn params_iterate_in_canonical_key_order() {
-        // #10 hashes the canonical logical form (INV-8): the same params
+        // The content hash is over the canonical logical form (INV-8): the same params
         // inserted in a different order must iterate identically.
         let forward = params(&[
             ("alpha", ParamValue::Int(1)),
@@ -562,7 +570,9 @@ mod tests {
         // equal to itself.
         assert_ne!(ParamValue::Float(f64::NAN), ParamValue::Float(f64::NAN));
         // And these two compare equal while their bit patterns differ, which is
-        // why #10 must canonicalize `-0.0` before hashing (INV-8).
+        // why `-0.0` is folded twice before any digest exists — by `validate`,
+        // and again inside `content_hash` for the paths that never run
+        // lowering. See the float contract above (INV-8).
         assert_eq!(ParamValue::Float(0.0), ParamValue::Float(-0.0));
         assert_ne!(0.0f64.to_bits(), (-0.0f64).to_bits());
     }

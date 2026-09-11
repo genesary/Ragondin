@@ -91,8 +91,10 @@ fn a_pipelines_declared_inputs_are_reachable_from_the_crate_root() {
     // field, and `Default for SchemaVersion` was removed. Each is sanctioned
     // by ADR-C18 and by nothing else.
     //
-    // Reached through `validate`, the only door to a `LogicalPipeline` there
-    // is.
+    // Reached through `validate`, which is the door that establishes these
+    // invariants. It is not the only door: the derived `Deserialize` is a
+    // second one, which ADR-C23 will route through the structural checks and
+    // which runs no lowering either way.
     let doc = RawPipeline {
         version: SchemaVersion::CURRENT,
         pipeline: RawGraph {
