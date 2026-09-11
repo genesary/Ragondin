@@ -63,6 +63,15 @@ pub async fn run(config: &Path) -> Result<()> {
 /// position at all — an edge that should not exist rather than a kind that does
 /// not fit — so that case is worded as the absence of a port and not as an
 /// absent kind.
+///
+/// **The two ends are named in the opposite order to the error's own
+/// `Display`.** `ValidationError::KindMismatch` renders the consumer first
+/// ("node `ranked` port 0 (fed by `legs`)"); this renders the producer first
+/// ("`legs` feeds `ranked` at port 0"), which is the direction the value
+/// travels. Deliberate, and worth knowing before comparing the two: a reader
+/// who meets both renderings of one fault — a library message in a log, this
+/// report on a terminal — will otherwise read the swap as a second fault. The
+/// library's wording is not touched; this is a second rendering beside it.
 fn incompatible_wiring_report(
     path: &Path,
     consumer: &NodeId,
@@ -93,7 +102,6 @@ fn incompatible_wiring_report(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ragondin_pipeline::{NodeId, ValueKind};
 
     #[test]
     fn the_wiring_report_names_the_edge_the_expected_kind_and_the_kind_found() {

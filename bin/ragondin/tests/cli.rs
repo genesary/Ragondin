@@ -37,6 +37,27 @@ fn stderr(output: &Output) -> String {
     String::from_utf8(output.stderr.clone()).expect("stderr is UTF-8")
 }
 
+/// The names in the `Commands:` block of a help screen — the first word of each
+/// of its lines.
+///
+/// Reading the block, rather than searching the whole help for a word, is the
+/// difference between testing the declared subcommand set and testing the
+/// prose: `--help` renders the root `long_about`, and that paragraph mentions
+/// `validate` by name. A `Validate` variant renamed out of existence leaves
+/// that sentence — and every other free-text mention — untouched.
+fn declared_subcommands(help: &str) -> Vec<&str> {
+    let after = help
+        .split_once("Commands:")
+        .expect("the root help renders a `Commands:` block")
+        .1;
+    let block = after.split_once("\n\n").map_or(after, |(block, _)| block);
+
+    block
+        .lines()
+        .filter_map(|line| line.split_whitespace().next())
+        .collect()
+}
+
 #[tokio::test]
 async fn validate_prints_the_content_hash_of_a_valid_configuration_and_exits_zero() {
     // The expected hash is computed the way any other consumer would compute
@@ -116,11 +137,19 @@ fn validate_refuses_a_malformed_configuration_readably_rather_than_panicking() {
         report.contains("malformed.yaml"),
         "the report must name the file it is about, got:\n{report}"
     );
-    // The deserializer's own message, kept under the diagnosis: it carries the
-    // line and column, which nothing written in this crate could reconstruct.
+    // The deserializer's own message, kept under the diagnosis: it locates the
+    // fault in the file, which nothing written in this crate could reconstruct
+    // from a `ConfigError` alone. Asserting the location and not merely that
+    // *a* cause is attached is the point — a cause chain that had been
+    // flattened to `ConfigError`'s own wording would still carry `caused by:`,
+    // and would have lost exactly the part a reader needs.
+    //
+    // Which line and column is the fixture's business and would move with any
+    // edit to its comment header; that the report names one is the property,
+    // and it is the one a flattened chain loses.
     assert!(
-        report.contains("caused by:"),
-        "the report must keep the parser's own message, got:\n{report}"
+        report.contains(" at line ") && report.contains(" column "),
+        "the report must locate the fault in the file, got:\n{report}"
     );
 }
 
@@ -151,10 +180,12 @@ fn every_subcommand_of_the_documented_surface_is_declared() {
         "`--help` exits 0: {}",
         stderr(&output)
     );
+
+    let declared = declared_subcommands(&help);
     for subcommand in ["bench", "compare", "serve", "validate"] {
         assert!(
-            help.contains(subcommand),
-            "`{subcommand}` must appear in the help, got:\n{help}"
+            declared.contains(&subcommand),
+            "`{subcommand}` must be a declared subcommand, found {declared:?} in:\n{help}"
         );
     }
 }

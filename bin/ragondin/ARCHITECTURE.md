@@ -55,7 +55,10 @@ each release.
   core, so an edge at one is not kind-checked — though an edge arriving at a
   position where the consuming node declares no port at all is refused whatever
   produced it, extension included. `validate --help` states both, rather than
-  implying full coverage.
+  implying full coverage. The report names the producer first and the error
+  type's own `Display` names the consumer first; the divergence is deliberate —
+  the report follows the direction the value travels — and is argued where the
+  renderer is defined.
 - **A bad configuration is a diagnosis, never a crash.** Every load-path failure
   reaches the user as an exit status and a message naming the file. There is no
   `unwrap` on the load path, and `tests/cli.rs` asserts the absence of a panic
