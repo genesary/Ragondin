@@ -1,6 +1,6 @@
 [package]
 name = "ragondin-experiments"
-description = "Native run store, registry, and the API the UI consumes."
+description = "Native run store and run comparison: the experiment plane's state."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

@@ -46,11 +46,6 @@ impl RunId {
     pub fn from_digest(digest: [u8; 32]) -> Self {
         Self(digest)
     }
-
-    /// The raw digest.
-    pub fn as_bytes(&self) -> &[u8; 32] {
-        &self.0
-    }
 }
 
 impl fmt::Display for RunId {
@@ -119,9 +114,11 @@ pub enum RunIdParseError {
 /// The digest alone says two runs differ; these say *how*, which is what a
 /// comparison view needs and what makes a run reproducible from the store.
 ///
-/// This is the run store's own record, not the pipeline's wire format: the
-/// configuration itself is kept verbatim as a [`ConfigDocument`], never
-/// re-serialized from an in-memory pipeline type (INV-9).
+/// This is the run store's own record, and it is not the pipeline's wire
+/// format: the configuration itself is kept verbatim as a [`ConfigDocument`]
+/// rather than re-serialized out of an in-memory pipeline type, so that what
+/// the store holds is the text the [`pipeline`](Self::pipeline) hash was taken
+/// over and not a second spelling of it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunInputs {
     /// The content hash of the canonical logical pipeline that was run.
@@ -157,12 +154,14 @@ pub struct Metrics {
 }
 
 impl Metrics {
-    /// An empty set.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     /// Records `value` under `name`, returning the value it replaced.
+    ///
+    /// A non-finite value is accepted here and refused by the store, which is
+    /// the boundary that cannot represent it
+    /// ([`NotFinite`](crate::RunStoreError::NotFinite)).
+    /// This type is a plain record, and a metric that is `NaN` on the way to a
+    /// comparison is a fact about the computation, not an error to raise at
+    /// the point it is written down.
     pub fn insert(&mut self, name: impl Into<String>, value: f64) -> Option<f64> {
         self.values.insert(name.into(), value)
     }

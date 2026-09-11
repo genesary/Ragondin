@@ -99,8 +99,10 @@ impl MetricComparison {
     /// numbers read back from a store, not two computations of one number, and
     /// a store that smoothed a difference away would hide the thing it is
     /// being asked about. A metric recorded as `NaN` is therefore never
-    /// identical to itself — but a `NaN` metric never reaches a store anyway,
-    /// having no JSON form.
+    /// identical to itself, which is IEEE 754 and not a decision taken here;
+    /// two runs *read back from a store* cannot hit it, because the store
+    /// refuses a non-finite metric on the way in
+    /// ([`NotFinite`](crate::RunStoreError::NotFinite)).
     pub fn is_identical(&self) -> bool {
         matches!((self.left, self.right), (Some(left), Some(right)) if left == right)
     }

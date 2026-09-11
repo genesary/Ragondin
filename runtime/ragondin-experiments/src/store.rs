@@ -40,6 +40,29 @@
 //! `config.yaml` is named for the one configuration format this build reads
 //! (`ragondin-config` parses YAML). The store never parses the document, so
 //! the suffix is for whoever opens the directory, not for the store.
+//!
+//! # A run directory appears whole or not at all
+//!
+//! [`FileSystemRunStore::save`] writes the four files into a staging directory
+//! beside the destination and then renames it into place, which is atomic
+//! within one filesystem. That is not tidiness: a caller asks *is this run
+//! already stored* to decide whether to execute it at all, and a directory
+//! that exists but is half-written would answer that question wrongly. A crash
+//! mid-write therefore leaves a `.partial` directory, which is inert — nothing
+//! reads one, and the run simply is not in the store.
+//!
+//! A run already in the store is **left untouched** rather than rewritten. Its
+//! id is the digest of its inputs, so a second save of the same id is the same
+//! run; rewriting it could only replace it with itself, and `fs::write`
+//! truncates, so a crash mid-rewrite would destroy a run that was complete.
+//! That is also what makes two processes saving one run safe: they write the
+//! same bytes, each into a staging directory of its own, and the first to
+//! arrive is the one that stays.
+//!
+//! An incomplete directory can still be *made* — by a hand that deletes a file
+//! under the store root, or by a writer that predates this scheme — so it has
+//! a name: [`RunStoreError::Incomplete`], distinct from the [`RunStoreError::Io`]
+//! a permission failure produces.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -59,9 +82,6 @@ const CONFIG_FILE: &str = "config.yaml";
 const TRACES_FILE: &str = "traces.json";
 
 /// A run store backed by a directory tree.
-///
-/// Writing a run twice is not an error: a run is named by the digest of its
-/// inputs, so the second write is the same run and overwrites itself.
 #[derive(Clone, Debug)]
 pub struct FileSystemRunStore {
     root: PathBuf,
@@ -79,18 +99,55 @@ impl FileSystemRunStore {
         &self.root
     }
 
-    /// Writes a run, creating its directory.
+    /// Writes a run, and does nothing if that run is already stored.
+    ///
+    /// The run appears under its id whole or not at all — see the module's
+    /// *A run directory appears whole or not at all*.
     pub fn save(&self, run: &Run) -> Result<(), RunStoreError> {
-        let dir = self.run_dir(&run.id);
-        fs::create_dir_all(&dir).map_err(|source| RunStoreError::Io {
-            path: dir.clone(),
+        // Before anything is created, because this is the one fault that would
+        // otherwise be discovered on the far side of a durable write: JSON has
+        // no non-finite number, `serde_json` writes one as `null`, and `null`
+        // does not read back as an `f64`. A run stored that way would be
+        // unreadable for good, under an id a caller already believes is done.
+        if let Some((metric, _)) = run.metrics.iter().find(|(_, value)| !value.is_finite()) {
+            return Err(RunStoreError::NotFinite {
+                metric: metric.to_owned(),
+            });
+        }
+
+        let destination = self.run_dir(&run.id);
+        if destination.is_dir() {
+            return Ok(());
+        }
+
+        let staging = self.staging_dir(&run.id);
+        // A staging directory left by a crash of this same process id carries
+        // an unfinished run; it is not evidence about this one.
+        let _ = fs::remove_dir_all(&staging);
+        fs::create_dir_all(&staging).map_err(|source| RunStoreError::Io {
+            path: staging.clone(),
             source,
         })?;
 
-        write_json(&dir.join(INPUTS_FILE), &run.inputs)?;
-        write_json(&dir.join(METRICS_FILE), &run.metrics)?;
-        write_text(&dir.join(CONFIG_FILE), run.config.as_str())?;
-        write_json(&dir.join(TRACES_FILE), &run.traces)
+        write_json(&staging.join(INPUTS_FILE), &run.inputs)?;
+        write_json(&staging.join(METRICS_FILE), &run.metrics)?;
+        write_text(&staging.join(CONFIG_FILE), run.config.as_str())?;
+        write_json(&staging.join(TRACES_FILE), &run.traces)?;
+
+        if let Err(source) = fs::rename(&staging, &destination) {
+            if destination.is_dir() {
+                // Another writer stored this same run while this one was
+                // staging it. Its bytes are ours.
+                let _ = fs::remove_dir_all(&staging);
+                return Ok(());
+            }
+            return Err(RunStoreError::Io {
+                path: destination,
+                source,
+            });
+        }
+
+        Ok(())
     }
 
     /// Reads the run named by `id`.
@@ -126,6 +183,14 @@ impl FileSystemRunStore {
     fn run_dir(&self, id: &RunId) -> PathBuf {
         self.root.join(id.to_string())
     }
+
+    /// Where a run is assembled before it is renamed into place. Named after
+    /// the writing process as well as the run, so two processes saving one run
+    /// stage it independently rather than into each other.
+    fn staging_dir(&self, id: &RunId) -> PathBuf {
+        self.root
+            .join(format!(".{id}.{}.partial", std::process::id()))
+    }
 }
 
 /// Why a run could not be written or read.
@@ -137,6 +202,24 @@ pub enum RunStoreError {
         /// The id that named nothing.
         id: RunId,
     },
+    /// A metric is not a finite number, and JSON has no way to write one.
+    ///
+    /// Refused on the way in rather than on the way out: `serde_json` writes a
+    /// non-finite float as `null`, which does not read back, so a run stored
+    /// with one would be permanently unreadable under an id whose existence
+    /// says it is done. `NaN` is not exotic here — nDCG over a query with no
+    /// relevant document, or a mean over an empty query set, is one.
+    #[error("the metric {metric} is not a finite number, and cannot be stored")]
+    NotFinite {
+        /// The metric whose value could not be written.
+        metric: String,
+    },
+    /// A run's directory exists but a file of the run is missing.
+    #[error("{}: this run is incomplete", path.display())]
+    Incomplete {
+        /// The file that is not there.
+        path: PathBuf,
+    },
     /// A file could not be read or written.
     #[error("{}: {source}", path.display())]
     Io {
@@ -145,10 +228,7 @@ pub enum RunStoreError {
         /// What the filesystem reported.
         source: io::Error,
     },
-    /// A record could not be written as JSON, or a file is not the record the
-    /// store writes there. Both directions, because both are the same fault:
-    /// the bytes on disk and the record in memory do not correspond. A metric
-    /// of `NaN` is the writing side of it — JSON has no such number.
+    /// A file of the run is not the record the store writes there.
     #[error("{}: not a well-formed run record: {source}", path.display())]
     Malformed {
         /// The file the failure is about.
@@ -184,9 +264,22 @@ fn read_json<T: DeserializeOwned>(path: &Path) -> Result<T, RunStoreError> {
     })
 }
 
+/// Reads one file of a run. A file that is not there is reported as an
+/// incomplete run rather than as an I/O failure: the caller reached a run
+/// directory, so *absent* says something about the run, and a caller should
+/// not have to read an `io::ErrorKind` to tell a torn run from a permission
+/// problem.
 fn read_text(path: &Path) -> Result<String, RunStoreError> {
-    fs::read_to_string(path).map_err(|source| RunStoreError::Io {
-        path: path.to_path_buf(),
-        source,
+    fs::read_to_string(path).map_err(|source| {
+        if source.kind() == io::ErrorKind::NotFound {
+            RunStoreError::Incomplete {
+                path: path.to_path_buf(),
+            }
+        } else {
+            RunStoreError::Io {
+                path: path.to_path_buf(),
+                source,
+            }
+        }
     })
 }

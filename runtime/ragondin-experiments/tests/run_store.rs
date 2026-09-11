@@ -14,8 +14,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use ragondin_experiments::{
-    compare, ConfigDocument, FileSystemRunStore, Run, RunId, RunInputs, RunStoreError,
-    TraceDocument,
+    compare, ConfigDocument, FileSystemRunStore, Metrics, Run, RunId, RunIdParseError, RunInputs,
+    RunStoreError, TraceDocument,
 };
 use ragondin_pipeline::PipelineHash;
 use ragondin_types::QueryId;
@@ -79,6 +79,9 @@ fn a_saved_run_reads_back_by_its_id() {
     store.save(&written).expect("the run must be writable");
     let read = store.load(&written.id).expect("the run must read back");
 
+    // Every field but `id` is a real assertion: the id is the directory name
+    // the run was looked up by, so `load` puts it back from the argument and
+    // it cannot disagree. What round-trips here is the rest.
     assert_eq!(read, written, "a run read back is the run written");
 }
 
@@ -92,12 +95,6 @@ fn the_run_directory_is_named_by_the_run_id_and_is_readable_by_a_person() {
     // from a shell and what lets `load` find a run without an index.
     let dir: PathBuf = store.root().join(run.id.to_string());
     assert!(dir.is_dir(), "one directory per run id: {}", dir.display());
-
-    let metrics = fs::read_to_string(dir.join("metrics.json")).expect("metrics.json must exist");
-    assert!(
-        metrics.contains("\"ndcg@10\""),
-        "metrics.json holds the metrics by name: {metrics}"
-    );
 
     let config = fs::read_to_string(dir.join("config.yaml")).expect("the config must be kept");
     assert_eq!(
@@ -184,6 +181,12 @@ fn a_metric_only_one_run_recorded_is_reported_on_its_own_side() {
 
     let comparison = compare(&left, &right);
 
+    // Name order, not the order the two runs happened to record them in —
+    // these two fixtures disagree about it, which is the point of the pair.
+    // This is the order `ragondin compare` renders its rows from.
+    let names: Vec<&str> = comparison.metrics.iter().map(|m| m.name.as_str()).collect();
+    assert_eq!(names, vec!["latency_p50_ms", "ndcg@10"]);
+
     let latency = comparison
         .metrics
         .iter()
@@ -217,14 +220,174 @@ fn the_store_compares_two_runs_by_their_ids() {
 }
 
 #[test]
+fn two_runs_with_no_metrics_at_all_are_vacuously_identical() {
+    let comparison = compare(&a_run(run_id(0xcc), &[]), &a_run(run_id(0xdd), &[]));
+
+    assert!(comparison.metrics.is_empty());
+    assert!(
+        comparison.is_identical(),
+        "two runs that scored nothing disagree about nothing"
+    );
+}
+
+#[test]
 fn a_run_id_round_trips_through_its_hex_form() {
     let id = run_id(0x0f);
     let hex = id.to_string();
 
     assert_eq!(hex.len(), 64, "a run id renders as 64 hex digits: {hex}");
     assert_eq!(hex.parse::<RunId>().expect("its own rendering parses"), id);
-    assert!(
-        "../../etc".parse::<RunId>().is_err(),
+
+    // One digest, one spelling. The uppercase form of a valid id is the near
+    // miss that matters: it names the same 32 bytes, and accepting it would
+    // put one run in the store under two names.
+    assert_eq!(
+        hex.to_uppercase().parse::<RunId>(),
+        Err(RunIdParseError::NotHex),
+        "uppercase is refused rather than folded"
+    );
+    assert_eq!(
+        "abc".parse::<RunId>(),
+        Err(RunIdParseError::Length { bytes: 3 })
+    );
+    assert_eq!(
+        "../../etc".parse::<RunId>(),
+        Err(RunIdParseError::Length { bytes: 9 }),
         "only a digest is a run id — a store keyed by one cannot be walked out of"
     );
+}
+
+#[test]
+fn a_metric_that_json_cannot_write_is_refused_before_anything_is_stored() {
+    let store = store("not_finite");
+    let run = a_run(run_id(0x13), &[("ndcg@10", f64::NAN), ("recall@10", 0.75)]);
+
+    match store.save(&run) {
+        Err(RunStoreError::NotFinite { metric }) => assert_eq!(metric, "ndcg@10"),
+        other => panic!("a NaN metric must be refused, got {other:?}"),
+    }
+
+    // The whole point of refusing on the way in: `serde_json` would have
+    // written `null`, `save` would have reported success, and the run would
+    // never have read back — under an id whose existence says it is done.
+    assert!(
+        !store.root().join(run.id.to_string()).exists(),
+        "a refused run leaves nothing under its id"
+    );
+    assert!(matches!(
+        store.load(&run.id),
+        Err(RunStoreError::NotFound { .. })
+    ));
+
+    let infinite = a_run(run_id(0x14), &[("latency_p50_ms", f64::INFINITY)]);
+    assert!(
+        matches!(store.save(&infinite), Err(RunStoreError::NotFinite { .. })),
+        "an infinity has no JSON form either"
+    );
+}
+
+#[test]
+fn metrics_are_written_in_name_order_whatever_order_they_were_recorded_in() {
+    let store = store("metrics_bytes");
+    let mut metrics = Metrics::default();
+    // Four of them, recorded in reverse name order: recording order and name
+    // order cannot be mistaken for each other, and an unordered map would have
+    // to guess one arrangement out of twenty-four to look like this one.
+    metrics.insert("recall@10", 0.75);
+    metrics.insert("ndcg@10", 0.42);
+    metrics.insert("latency_p50_ms", 31.0);
+    metrics.insert("cost_usd", 0.004);
+
+    let mut run = a_run(run_id(0x12), &[]);
+    run.metrics = metrics;
+    store.save(&run).expect("the run must be writable");
+
+    let written = fs::read_to_string(store.root().join(run.id.to_string()).join("metrics.json"))
+        .expect("metrics.json must exist");
+    assert_eq!(
+        written,
+        concat!(
+            "{\n",
+            "  \"cost_usd\": 0.004,\n",
+            "  \"latency_p50_ms\": 31.0,\n",
+            "  \"ndcg@10\": 0.42,\n",
+            "  \"recall@10\": 0.75\n",
+            "}\n"
+        ),
+        "two runs of one shape diff cleanly only if their key order is fixed"
+    );
+}
+
+#[test]
+fn a_corrupted_file_in_a_run_directory_is_reported_with_its_path() {
+    let store = store("malformed");
+    let run = a_run(run_id(0x15), &[("ndcg@10", 0.42)]);
+    store.save(&run).expect("the run must be writable");
+
+    let metrics_file = store.root().join(run.id.to_string()).join("metrics.json");
+    fs::write(&metrics_file, "{ not json").expect("the file must be writable");
+
+    match store.load(&run.id) {
+        Err(RunStoreError::Malformed { path, .. }) => assert_eq!(path, metrics_file),
+        other => panic!("a corrupt record is malformed, not empty, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_run_directory_missing_one_of_its_files_is_incomplete_rather_than_absent() {
+    let store = store("incomplete");
+    let run = a_run(run_id(0x16), &[("ndcg@10", 0.42)]);
+    store.save(&run).expect("the run must be writable");
+
+    let traces = store.root().join(run.id.to_string()).join("traces.json");
+    fs::remove_file(&traces).expect("the file must be removable");
+
+    // A torn run is nameable: a caller asking "is this run stored" gets an
+    // answer it can act on, without reading an `io::ErrorKind`, and a run with
+    // no traces is never silently handed back as a run.
+    match store.load(&run.id) {
+        Err(RunStoreError::Incomplete { path }) => assert_eq!(path, traces),
+        other => panic!("a torn run must be named as one, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_run_already_stored_is_left_as_it_is_and_nothing_is_staged_beside_it() {
+    let store = store("resave");
+    let run = a_run(run_id(0x17), &[("ndcg@10", 0.42)]);
+    store.save(&run).expect("the run must be writable");
+
+    assert_eq!(
+        staged_entries(&store),
+        Vec::<String>::new(),
+        "a finished save leaves no staging directory behind"
+    );
+
+    // A marker a second save would destroy if it rewrote the directory in
+    // place. It stands in for the run itself: the id is the digest of the
+    // inputs, so a rewrite could only replace the run with itself, while a
+    // crash halfway through one would lose it.
+    let config_file = store.root().join(run.id.to_string()).join("config.yaml");
+    fs::write(&config_file, "touched by hand\n").expect("the file must be writable");
+
+    store
+        .save(&run)
+        .expect("saving a stored run is not an error");
+
+    assert_eq!(
+        fs::read_to_string(&config_file).expect("the file must still be there"),
+        "touched by hand\n",
+        "a run under an id is that run; the second save rewrites nothing"
+    );
+    assert_eq!(staged_entries(&store), Vec::<String>::new());
+}
+
+/// The staging directories under the store root, if any are left.
+fn staged_entries(store: &FileSystemRunStore) -> Vec<String> {
+    fs::read_dir(store.root())
+        .expect("the store root must exist")
+        .map(|entry| entry.expect("a readable entry").file_name())
+        .map(|name| name.to_string_lossy().into_owned())
+        .filter(|name| name.starts_with('.'))
+        .collect()
 }
