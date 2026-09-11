@@ -56,19 +56,59 @@ yanked = "deny"
 # that removes it again.
 ignore = []
 
-# One thing deliberately NOT ignored, recorded here because #44 asks the
-# question directly and the answer is easy to re-derive wrongly:
+# One thing deliberately NOT ignored, and one decision recorded rather than
+# deferred again. Both are easy to re-derive wrongly, which is why they are
+# written down here instead of left to whoever next reads a lockfile diff.
 #
-# `serde_yaml 0.9.34+deprecated` (a dev-dependency, golden YAML fixtures) needs
-# no allowance. Its version string announces that its author stopped maintaining
-# it, but RustSec carries no unmaintained advisory for it, so this check has
-# nothing to say about it -- neither for `serde_yaml` nor for the
-# `unsafe-libyaml` it pulls. The two advisories that do exist for that pair
-# (RUSTSEC-2018-0005, RUSTSEC-2023-0075) are both fixed in the versions the
-# lockfile already resolves. Choosing a replacement is #27's call, since that is
-# the issue where this crate stops being test-only and starts parsing
-# configuration for real; nothing needs doing here either before or after.
-
+# `serde_yaml 0.9.34+deprecated` needs no allowance. Its version string
+# announces that its author stopped maintaining it, but RustSec carries no
+# unmaintained advisory for it, so this check has nothing to say about it --
+# neither for `serde_yaml` nor for the `unsafe-libyaml` it pulls. The two
+# advisories that do exist for that pair (RUSTSEC-2018-0005, RUSTSEC-2023-0075)
+# are both fixed in the versions the lockfile already resolves. Note that #44
+# attributes RUSTSEC-2024-0370 to `serde_yaml`; that identifier belongs to
+# `proc-macro-error`, and the claim is wrong. `cargo deny check advisories`
+# passing under `unmaintained = "all"`, across the whole graph, is the evidence
+# that settles it either way.
+#
+# It is no longer a dev-dependency. #27 made it a normal dependency of
+# `ragondin-config`, which is where a configuration file is parsed for real,
+# and that is the issue this file asked to choose a replacement. The choice:
+#
+# **Keep `serde_yaml`.** Not a deferral -- the alternatives were measured, and
+# none of them buys what it appears to buy.
+#
+#  - `serde_yaml_ng 0.10` depends on the *same* archived `unsafe-libyaml
+#    0.2.11`. It forks the thin serde adapter and leaves the parser where it
+#    was. Last release May 2024.
+#  - `serde_norway 0.9.42` moves to `unsafe-libyaml-norway`, a maintained fork
+#    of that same c2rust transpilation of libyaml -- machine-translated C,
+#    `unsafe` throughout. Last release December 2024.
+#
+# Both are single-maintainer and neither has shipped in well over a year. So
+# the trade on offer is: replace a crate with no maintainer by a fork with one
+# volunteer, add a publisher to the trust chain, and keep the identical unsafe
+# parser. That is a change that looks like remediation without being one, and
+# the cost is not nil -- it renames roughly two dozen sites, half of them in
+# `ragondin-pipeline`, which #27 puts out of scope.
+#
+# The threat model is what makes keeping it defensible rather than merely
+# convenient. This parser reads a local configuration file supplied by the
+# operator, once, at startup. It is not exposed to untrusted input: a YAML
+# parser bug here is reachable by someone who already writes the configuration
+# file, and M6's `Stream` source carries protobuf over gRPC, not YAML.
+#
+# Revisit on either trigger, and not before:
+#
+#  1. Untrusted YAML enters the system -- multi-tenant configuration, or a
+#     configuration accepted from a source the operator does not control.
+#  2. A RustSec advisory lands on `serde_yaml` or `unsafe-libyaml`. This check
+#     fails the build on its own when that happens, which is the point of it.
+#
+# On either trigger the answer is probably not a fork. `saphyr` is pure safe
+# Rust and actively released, but carries no serde adapter, so adopting it
+# means writing one -- a piece of work to size deliberately, not a one-line
+# swap to reach for in a hurry.
 # ---------------------------------------------------------------------------
 # licences -- what this workspace is allowed to redistribute.
 # ---------------------------------------------------------------------------
