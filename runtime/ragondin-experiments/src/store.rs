@@ -207,8 +207,10 @@ pub enum RunStoreError {
     /// Refused on the way in rather than on the way out: `serde_json` writes a
     /// non-finite float as `null`, which does not read back, so a run stored
     /// with one would be permanently unreadable under an id whose existence
-    /// says it is done. `NaN` is not exotic here — nDCG over a query with no
-    /// relevant document, or a mean over an empty query set, is one.
+    /// says it is done. The per-query metrics do not produce one —
+    /// `ragondin-metrics` guards its zero denominators — but the aggregate a
+    /// run records has denominators of its own, and a mean over an empty query
+    /// set is `0.0 / 0.0`.
     #[error("the metric {metric} is not a finite number, and cannot be stored")]
     NotFinite {
         /// The metric whose value could not be written.
