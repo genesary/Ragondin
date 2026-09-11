@@ -18,5 +18,13 @@ rust-version.workspace = true
 [dependencies]
 ragondin-pipeline = { workspace = true }
 ragondin-proto = { workspace = true }
+async-trait = { workspace = true } # dyn-compatible async traits (frozen: async_trait, not RPITIT)
 serde_yaml = { workspace = true }
 thiserror = { workspace = true }
+
+# Test-only. `ConfigSource::load` is async, so calling it needs an executor —
+# but only a caller needs one. Keeping `tokio` out of `[dependencies]` is what
+# leaves the runtime selected at the binary level (`docs/code-architecture.md`
+# §11.2), and is the same split every other library crate here uses.
+[dev-dependencies]
+tokio = { workspace = true }

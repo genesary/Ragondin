@@ -10,6 +10,10 @@
 //! are written to a temporary directory: a file the whole point of which is to
 //! be broken does not belong in the tree, where a future reader would take it
 //! for an example.
+//!
+//! Every test is a `#[tokio::test]` because [`ConfigSource::load`] is async —
+//! `tokio` is a dev-dependency of this crate and not a dependency, which is
+//! the split that leaves the runtime selected at the binary level.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -34,10 +38,11 @@ fn scratch(name: &str, text: &str) -> PathBuf {
     path
 }
 
-#[test]
-fn a_valid_configuration_file_loads_as_a_logical_pipeline() {
+#[tokio::test]
+async fn a_valid_configuration_file_loads_as_a_logical_pipeline() {
     let pipeline = LocalFile::new(fixture())
         .load()
+        .await
         .expect("the checked-in fixture must load");
 
     // The graph's signature (ADR-C18), then the nodes in canonical order —
@@ -48,8 +53,8 @@ fn a_valid_configuration_file_loads_as_a_logical_pipeline() {
     assert_eq!(ids, vec!["dense", "fuse", "sparse"]);
 }
 
-#[test]
-fn formatting_is_not_configuration() {
+#[tokio::test]
+async fn formatting_is_not_configuration() {
     // §8.3: the YAML run locally *is* the custom resource. Two spellings of
     // one configuration must reach one `LogicalPipeline` — the canonical value
     // that INV-8's content hash is taken over, so this is the property that
@@ -59,7 +64,10 @@ fn formatting_is_not_configuration() {
     // Stated as equality of the canonical value rather than of its digest:
     // `LogicalPipeline::content_hash` belongs to another branch, and a test
     // here that reached for it would make this crate's work wait on that one.
-    let original = LocalFile::new(fixture()).load().expect("the fixture loads");
+    let original = LocalFile::new(fixture())
+        .load()
+        .await
+        .expect("the fixture loads");
 
     let text = fs::read_to_string(fixture()).expect("the fixture must be readable");
     let stripped: String = text
@@ -84,6 +92,7 @@ fn formatting_is_not_configuration() {
 
     let reformatted = LocalFile::new(scratch("reformatted", &stripped))
         .load()
+        .await
         .expect("stripping comments must not break the configuration");
     assert_eq!(
         original, reformatted,
@@ -91,11 +100,12 @@ fn formatting_is_not_configuration() {
     );
 }
 
-#[test]
-fn a_path_that_does_not_exist_is_a_typed_error_naming_it() {
+#[tokio::test]
+async fn a_path_that_does_not_exist_is_a_typed_error_naming_it() {
     let path = Path::new(env!("CARGO_TARGET_TMPDIR")).join("no-such-configuration.yaml");
     let error = LocalFile::new(&path)
         .load()
+        .await
         .expect_err("a missing file must not load");
 
     assert!(
@@ -108,8 +118,8 @@ fn a_path_that_does_not_exist_is_a_typed_error_naming_it() {
     );
 }
 
-#[test]
-fn text_that_does_not_parse_is_a_parse_error_not_a_validation_error() {
+#[tokio::test]
+async fn text_that_does_not_parse_is_a_parse_error_not_a_validation_error() {
     // The #8 half of the load path: this never reaches `validate`, so
     // reporting it as invalid would send the reader hunting for a graph fault
     // in a file that is not YAML.
@@ -119,6 +129,7 @@ fn text_that_does_not_parse_is_a_parse_error_not_a_validation_error() {
     );
     let error = LocalFile::new(&path)
         .load()
+        .await
         .expect_err("malformed text must not load");
 
     assert!(
@@ -131,8 +142,8 @@ fn text_that_does_not_parse_is_a_parse_error_not_a_validation_error() {
     );
 }
 
-#[test]
-fn a_parameter_shape_outside_the_grammar_is_a_parse_error() {
+#[tokio::test]
+async fn a_parameter_shape_outside_the_grammar_is_a_parse_error() {
     // ADR-C22 keeps the parameter grammar flat, and a nested map is refused at
     // the *raw* level — so it is a parse fault, not a validation one. Pinned
     // because it is the one place the two halves are easy to confuse: the file
@@ -144,6 +155,7 @@ fn a_parameter_shape_outside_the_grammar_is_a_parse_error() {
     );
     let error = LocalFile::new(&path)
         .load()
+        .await
         .expect_err("a nested parameter must not load");
 
     assert!(
@@ -152,8 +164,8 @@ fn a_parameter_shape_outside_the_grammar_is_a_parse_error() {
     );
 }
 
-#[test]
-fn a_graph_the_pass_refuses_is_a_validation_error_not_a_parse_error() {
+#[tokio::test]
+async fn a_graph_the_pass_refuses_is_a_validation_error_not_a_parse_error() {
     // The #9 half: well-formed YAML, well-formed wire schema, and a graph
     // `validate` refuses — here a node consuming an id that names neither a
     // node nor a declared input.
@@ -163,6 +175,7 @@ fn a_graph_the_pass_refuses_is_a_validation_error_not_a_parse_error() {
     );
     let error = LocalFile::new(&path)
         .load()
+        .await
         .expect_err("a dangling input must not load");
 
     let ConfigError::Invalid { source, .. } = &error else {
@@ -178,8 +191,8 @@ fn a_graph_the_pass_refuses_is_a_validation_error_not_a_parse_error() {
     );
 }
 
-#[test]
-fn an_unreadable_schema_version_is_reported_as_its_own_diagnosis() {
+#[tokio::test]
+async fn an_unreadable_schema_version_is_reported_as_its_own_diagnosis() {
     // `ragondin-pipeline` refuses an unsupported version through
     // `serde::de::Error::custom`, which erases the type — so a plain parse
     // would report "this build is too old" as a syntax error. `LocalFile`
@@ -191,6 +204,7 @@ fn an_unreadable_schema_version_is_reported_as_its_own_diagnosis() {
     );
     let error = LocalFile::new(&path)
         .load()
+        .await
         .expect_err("a future schema version must not load");
 
     let ConfigError::UnsupportedSchemaVersion { source, .. } = &error else {
@@ -203,8 +217,8 @@ fn an_unreadable_schema_version_is_reported_as_its_own_diagnosis() {
     );
 }
 
-#[test]
-fn an_unparseable_file_that_also_states_a_version_reports_the_parse_fault() {
+#[tokio::test]
+async fn an_unparseable_file_that_also_states_a_version_reports_the_parse_fault() {
     // The peek walks the whole document, so a syntax error anywhere makes the
     // version verdict untrustworthy. `ragondin-pipeline` states what a caller
     // should then do — fall through to the full parse, which fails too and
@@ -216,6 +230,7 @@ fn an_unparseable_file_that_also_states_a_version_reports_the_parse_fault() {
     );
     let error = LocalFile::new(&path)
         .load()
+        .await
         .expect_err("malformed text must not load");
 
     assert!(
@@ -224,19 +239,22 @@ fn an_unparseable_file_that_also_states_a_version_reports_the_parse_fault() {
     );
 }
 
-#[test]
-fn a_config_source_is_usable_behind_a_trait_object() {
+#[tokio::test]
+async fn a_config_source_is_usable_behind_a_trait_object() {
     // §8.2: "the data plane does not know who configures it." The binary
     // (#30/#31) holds whichever source it was given, so the trait has to be
     // dyn-compatible — a signature that was not would make the abstraction
     // decorative.
     let source: Box<dyn ConfigSource> = Box::new(LocalFile::new(fixture()));
-    let pipeline = source.load().expect("the fixture must load through dyn");
+    let pipeline = source
+        .load()
+        .await
+        .expect("the fixture must load through dyn");
     assert_eq!(pipeline.nodes().len(), 3);
 }
 
-#[test]
-fn the_error_type_exposes_the_underlying_cause_as_a_source() {
+#[tokio::test]
+async fn the_error_type_exposes_the_underlying_cause_as_a_source() {
     // `anyhow` in the binary (#30) prints an error chain; a wrapper that
     // swallowed its cause would make the file's actual fault invisible there.
     use std::error::Error;
@@ -245,7 +263,7 @@ fn the_error_type_exposes_the_underlying_cause_as_a_source() {
         "sourced",
         "pipeline:\n  inputs: [question\n  nodes: - - -\n",
     );
-    let error = LocalFile::new(&path).load().unwrap_err();
+    let error = LocalFile::new(&path).load().await.unwrap_err();
     assert!(
         error.source().is_some(),
         "the parse fault must remain reachable as a source: {error}"

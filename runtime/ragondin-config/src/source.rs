@@ -33,6 +33,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use async_trait::async_trait;
 use ragondin_pipeline::{
     peek_schema_version, validate, LogicalPipeline, RawPipeline, SchemaVersionPeekError,
     UnsupportedSchemaVersion, ValidationError,
@@ -44,16 +45,19 @@ use ragondin_pipeline::{
 /// here, and `Stream` — pushed from the controller over the configuration
 /// service — which is M6 and does not exist yet.
 ///
-/// The method is **synchronous**, which is a choice about today rather than a
-/// claim about `Stream`. `ragondin-config` is not an API boundary (INV-1 lists
-/// the three that are, and this is not among them), so the day a pushed
-/// configuration needs a different shape, changing this one costs a refactor
-/// and no more. Committing now to an async signature would be the opposite
-/// trade: designing around a protocol whose shape is not settled, in order to
-/// avoid a refactor that INV-2's reasoning says is cheap.
+/// The method is **async**, and it is the trait — not [`LocalFile`] — that
+/// the signature is for. `Stream` reads a pushed configuration off a gRPC
+/// stream, which is async in a way no amount of local cleverness makes
+/// synchronous; a trait both implementations satisfy therefore has to be async
+/// from the start, or `Stream` arrives as a breaking change to every caller
+/// rather than as a second implementation.
 ///
-/// Dyn-compatible on purpose: a binary holds whichever source it was
-/// configured with, so `Box<dyn ConfigSource>` has to work.
+/// Declared with `async_trait`, which is frozen (`AGENTS.md` § Frozen
+/// decisions): not RPITIT, not a native `async fn` in a trait. That is also
+/// what keeps this dyn-compatible, and dyn-compatibility is the point — §8.2's
+/// rule is that the data plane does not know who configures it, so a binary
+/// holds a `Box<dyn ConfigSource>` and never a concrete source.
+#[async_trait]
 pub trait ConfigSource {
     /// Produces the validated, canonical pipeline this source describes.
     ///
@@ -61,7 +65,7 @@ pub trait ConfigSource {
     /// is physical planning, which needs an `EngineContext` and belongs to the
     /// engine — which is exactly why `ragondin validate` can check and
     /// content-address a configuration with no registry at all (ADR-C2).
-    fn load(&self) -> Result<LogicalPipeline, ConfigError>;
+    async fn load(&self) -> Result<LogicalPipeline, ConfigError>;
 }
 
 /// A configuration read from a YAML file on disk — standalone mode (P2).
@@ -87,8 +91,27 @@ impl LocalFile {
     }
 }
 
+#[async_trait]
 impl ConfigSource for LocalFile {
-    fn load(&self) -> Result<LogicalPipeline, ConfigError> {
+    /// # The read is synchronous inside an `async fn`
+    ///
+    /// `std::fs`, not `tokio::fs`: every library crate in this workspace takes
+    /// `async-trait` as a dependency and `tokio` only as a dev-dependency, so
+    /// reaching for `tokio::fs` here would make this the one library that
+    /// picks the runtime — which `docs/code-architecture.md` §11.2 puts at the
+    /// binary level, keeping libraries runtime-agnostic as far as is
+    /// practical.
+    ///
+    /// Whether that is the right general answer is **not settled here**. It is
+    /// the open question in #198 — may a `Local` component block the calling
+    /// thread inside an `async fn` of a contract, and if not, whose job is the
+    /// hop. That issue's subject is the *component* contract and not this one,
+    /// so nothing below presupposes an answer to it; if it lands on "the
+    /// callee hops", this method hops too, and the change is one line. What
+    /// makes the gap tolerable meanwhile is narrow and worth stating rather
+    /// than assuming: a configuration is read once, at startup, off a local
+    /// file — never per request on a serving path.
+    async fn load(&self) -> Result<LogicalPipeline, ConfigError> {
         let text = fs::read_to_string(&self.path).map_err(|source| ConfigError::Unreadable {
             path: self.path.clone(),
             source,
