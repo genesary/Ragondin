@@ -40,7 +40,8 @@ use crate::node::{LogicalNode, NodeId};
 /// # The canonicalization contract
 ///
 /// This is exactly what [`crate::validate::validate`] normalizes, and exactly
-/// what it leaves alone — #10 hashes this value directly, so this statement
+/// what it leaves alone — [`LogicalPipeline::content_hash`] hashes this value
+/// directly, so this statement
 /// is what makes INV-8 ("two semantically equivalent configurations
 /// formatted differently must hash identically") true.
 ///
@@ -66,14 +67,16 @@ use crate::node::{LogicalNode, NodeId};
 ///   pipelines, never sorted or deduplicated into one.
 /// - **The pipeline's own `inputs`.** The same rule, for the same reason
 ///   (ADR-C18): the declared inputs are the graph's signature, positional
-///   like a node's, and #10 hashes this value directly. A serving pipeline
+///   like a node's, and [`LogicalPipeline::content_hash`] hashes this value
+///   directly. A serving pipeline
 ///   declares exactly one today, so the ordering is not yet observable —
 ///   which is precisely why the rule is written down now rather than
 ///   discovered later.
 /// - **A node's `params` values**, e.g. the elements of a `List` — order
 ///   within a list is part of the value.
 ///
-/// Carries no hash (content hashing is #10) and no port kinds: a node's
+/// Carries no *stored* hash — [`LogicalPipeline::content_hash`] computes one
+/// on demand from these fields — and no port kinds: a node's
 /// `ValueKind`s are derived from its [`LogicalNode`] variant
 /// ([`crate::produced_kind`], [`crate::consumed_kinds`]) and never stored
 /// here, never serialized, never hashed.
@@ -135,7 +138,7 @@ mod tests {
         // so that rule is unobservable through it — and a "tidy up the
         // canonical form" refactor that sorted them would pass every other
         // test in this crate. This pins the constructor instead, which is
-        // where #10 hashes the value, so the rule is mechanical now rather
+        // where `content_hash` reads the value, so the rule is mechanical now rather
         // than the day arity relaxes.
         let pipeline = LogicalPipeline::new(
             vec![NodeId::new("b"), NodeId::new("a"), NodeId::new("b")],

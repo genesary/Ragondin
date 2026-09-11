@@ -10,7 +10,8 @@
 //! **`inputs` is positional and order-significant.** ADR-C16 derives a node's
 //! consumed kinds from its variant, and a variant with heterogeneous ports — a
 //! reranker consumes a query *and* a chunk list — can only address them by
-//! position. Canonicalization (#10) must therefore **never reorder `inputs`**:
+//! position. Canonicalization must therefore **never reorder `inputs`** —
+//! neither the `validate` pass nor `LogicalPipeline::content_hash`:
 //! two orderings of the same legs are two configurations, even where the
 //! component itself is commutative.
 //!
@@ -71,7 +72,8 @@ impl NodeId {
 ///
 /// Deliberately a small owned enum rather than `serde_json::Value`: the latter's
 /// float and map ordering is not canonical, which would undermine the content
-/// hash (INV-8) that #10 computes over the canonical logical form.
+/// hash (INV-8) that [`crate::LogicalPipeline::content_hash`] computes over
+/// the canonical logical form.
 ///
 /// `ParamValue` implements no total order, because `f64` admits none. Canonical
 /// ordering of *keys* comes from the [`Params`] `BTreeMap`, whose keys iterate
@@ -117,7 +119,8 @@ impl NodeId {
 ///   `Float(0.0) == Float(-0.0)` here, but their bit patterns differ, so
 ///   hashing a raw `to_bits()` would give two content hashes to two values this
 ///   crate calls equal — precisely INV-8's failure mode, which is why the
-///   normalization happens before the hash (#10) rather than inside it.
+///   normalization happens in that pass, before
+///   [`crate::LogicalPipeline::content_hash`], rather than inside it.
 /// - **`Int` and `Float` are distinct**, deliberately: `k: 60` and `k: 60.0`
 ///   are different configurations and hash differently.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -299,7 +302,7 @@ mod tests {
 
     #[test]
     fn params_iterate_in_canonical_key_order() {
-        // #10 hashes the canonical logical form (INV-8): the same params
+        // The content hash is over the canonical logical form (INV-8): the same params
         // inserted in a different order must iterate identically.
         let forward = params(&[
             ("alpha", ParamValue::Int(1)),
@@ -562,7 +565,7 @@ mod tests {
         // equal to itself.
         assert_ne!(ParamValue::Float(f64::NAN), ParamValue::Float(f64::NAN));
         // And these two compare equal while their bit patterns differ, which is
-        // why #10 must canonicalize `-0.0` before hashing (INV-8).
+        // why `validate` canonicalizes `-0.0` before the hash sees it (INV-8).
         assert_eq!(ParamValue::Float(0.0), ParamValue::Float(-0.0));
         assert_ne!(0.0f64.to_bits(), (-0.0f64).to_bits());
     }

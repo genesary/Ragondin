@@ -35,6 +35,19 @@ actually look like is not settled, so neither variant exists yet.
 - **The hash is over the canonical logical form (INV-8).** Two semantically
   equivalent configurations formatted differently **must** hash identically, or
   reproducibility is an illusion. Never hash source text.
+- **The canonical encoding is this crate's own, and is part of its identity.**
+  `LogicalPipeline::content_hash` feeds SHA-256 a tagged, length-prefixed byte
+  stream written by hand in `src/hash.rs`, not a re-serialization. A
+  general-purpose serializer canonicalizes nothing it was not asked to — its
+  float rendering and map ordering are documented as readable, not as stable —
+  so routing the digest through one would put this crate's identity in a
+  dependency's hands. The framing has one requirement, **injectivity**: two
+  distinct canonical logical forms must produce two distinct byte streams,
+  which is what the length prefixes and the per-enum tag bytes buy. Changing
+  the framing, a tag's value, or the domain separator invalidates every digest
+  ever written to a run store; `tests/content_hash.rs` pins one so the change
+  cannot be silent. The encoder **relies on** lowering having already rejected
+  non-finite floats and folded `-0.0` into `0.0`, and re-checks neither.
 - **The node enum is closed for primitives, open through `Extension`.** A
   genuinely new node type is expressed through `Extension` **without changing
   the core**. Repeated use of `Extension` for the same shape is the signal to

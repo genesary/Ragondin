@@ -2,7 +2,7 @@
 //!
 //! The pipeline representation, in three levels — `RawPipeline` →
 //! `LogicalPipeline` → `PhysicalPipeline`. This crate holds the first two of
-//! those levels, across five modules:
+//! those levels, across six modules:
 //!
 //! - [`raw`] — the permissive wire schema a configuration file lands in.
 //!   Hand-maintained and independently versioned (INV-9). Never executed.
@@ -16,16 +16,19 @@
 //!   and sorting the node list into canonical order.
 //! - [`pipeline`] — [`pipeline::LogicalPipeline`] itself, the validated,
 //!   canonical value type this pass produces.
+//! - [`hash`] — [`hash::PipelineHash`] and
+//!   [`pipeline::LogicalPipeline::content_hash`]: the content address of that
+//!   canonical form (INV-8).
 //!
 //! This crate is a **stable API boundary** (INV-1) and holds **value types
-//! only** (INV-3). The content hash will be computed over the **canonical
+//! only** (INV-3). The content hash is computed over the **canonical
 //! logical form**, never over source text (INV-8), and the wire schema in
 //! [`raw`] is kept **separate** from the in-memory model in [`node`] (INV-9) —
 //! so the `serde` derives on the latter are for internal round-tripping, not
 //! for the wire.
 //!
-//! Not here yet, each owned by its own issue: content hashing and the
-//! `Branch`/`Loop` control-flow nodes.
+//! Not here yet, owned by its own issue: the `Branch`/`Loop` control-flow
+//! nodes.
 //!
 //! `PhysicalPipeline` is not among them: it is not pending here, it will
 //! never be here. It holds `Box<dyn Trait>`, which INV-3 forbids this crate
@@ -35,12 +38,14 @@
 
 #![warn(missing_docs)]
 
+pub mod hash;
 pub mod kind;
 pub mod node;
 pub mod pipeline;
 pub mod raw;
 pub mod validate;
 
+pub use hash::PipelineHash;
 pub use kind::{consumed_kinds, produced_kind, PortSpec, ValueKind};
 pub use node::{
     ExtensionNode, FusionNode, LogicalNode, NodeId, ParamValue, Params, RerankerNode, RetrieverNode,
