@@ -29,19 +29,13 @@ impl StubRetriever {
             label: label.into(),
         }
     }
-
-    /// The label this retriever names its chunks after.
-    pub fn label(&self) -> &str {
-        &self.label
-    }
 }
 
 /// The score at `rank`: `1 / (rank + 1)`.
 ///
-/// Strictly descending and finite for every rank, which is the ranking
-/// contract, and a function of the position and nothing else — a stub has no
-/// relevance to express, and a score that looked like one would invite being
-/// read as a measurement.
+/// Descending and finite, which is the ranking contract, and a function of the
+/// position and nothing else — a stub has no relevance to express, and a score
+/// that looked like one would invite being read as a measurement.
 fn reciprocal_rank(rank: usize) -> f32 {
     1.0 / (rank + 1) as f32
 }
@@ -102,6 +96,17 @@ mod tests {
                 .all(|hit| hit.chunk.document_id.as_str() == "leg"),
             "every chunk is attributed to the leg that fabricated it"
         );
+        assert_eq!(
+            hits.iter()
+                .map(|hit| hit.chunk.text.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "stub chunk 0 of `leg` for `a question`",
+                "stub chunk 1 of `leg` for `a question`",
+                "stub chunk 2 of `leg` for `a question`",
+            ],
+            "the query reaches the chunk text, which is the only place it reaches"
+        );
     }
 
     #[tokio::test]
@@ -133,6 +138,10 @@ mod tests {
                 .iter()
                 .map(|hit| (hit.chunk.id.clone(), hit.score))
                 .collect::<Vec<_>>()
+        );
+        assert_ne!(
+            first[0].chunk.text, second[0].chunk.text,
+            "the other half of the claim: the query does reach the text, and only the text"
         );
     }
 
