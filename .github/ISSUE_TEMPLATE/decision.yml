@@ -6,7 +6,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Open a decision issue when an implementation task requires an architectural choice that `AGENTS.md` and `docs/` do not already settle — or when you believe a frozen decision is wrong. Do **not** guess and do **not** implement anything that presupposes an answer. See the `opening-a-decision-issue` skill.
+        Open a decision issue when an implementation task requires an architectural choice that `AGENTS.md` and `docs/` do not already settle and that `AGENTS.md` § Rules of engagement says escalates — a shared surface, an open question, or a frozen decision you believe is wrong. Do **not** guess and do **not** implement anything that presupposes an answer. See the `opening-a-decision-issue` skill.
 
   - type: textarea
     id: question

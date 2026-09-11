@@ -12,7 +12,7 @@ Branch naming follows `<type>/<issue-number>-<slug>`, e.g. `feat/12-logical-pipe
 
 Use this framing, verbatim:
 
-> *"Here is issue #N. The design is settled. Your specification is the issue, plus `AGENTS.md` and `docs/`. Apply test-driven development. Do not reopen any frozen decision. If an architectural choice is required that is not already settled, stop and open a `decision` issue."*
+> *"Here is issue #N. The design is settled. Your specification is the issue, plus `AGENTS.md` and `docs/`. Apply test-driven development. Do not reopen any frozen decision. If an architectural choice is required that `AGENTS.md` says escalates, stop and open a `decision` issue."*
 
 The point of the wording is to switch off the design half of a general-purpose agent framework while keeping its execution half. The design is done; the agent's job is to implement it, test-first.
 
