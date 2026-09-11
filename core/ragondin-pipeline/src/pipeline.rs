@@ -39,11 +39,13 @@ use crate::node::{LogicalNode, NodeId};
 ///
 /// # The canonicalization contract
 ///
-/// This is exactly what [`crate::validate::validate`] normalizes, and exactly
-/// what it leaves alone — [`LogicalPipeline::content_hash`] hashes this value
-/// directly, so this statement
-/// is what makes INV-8 ("two semantically equivalent configurations
-/// formatted differently must hash identically") true.
+/// This is what [`crate::validate::validate`] normalizes, and what it leaves
+/// alone. Together with the one normalization
+/// [`LogicalPipeline::content_hash`] performs for itself — the `-0.0` fold
+/// below, which covers the paths that do not run lowering — it is what makes
+/// INV-8 ("two semantically equivalent configurations formatted differently
+/// must hash identically") true. The hash reads this value directly, so a
+/// change to either half is a change to identity.
 ///
 /// **Normalized:**
 /// - **Node order.** The node list is sorted by [`crate::NodeId`], regardless

@@ -11,7 +11,9 @@
 //! `serde_yaml` is a dev-dependency, so the source text here is the same
 //! format a user writes.
 
-use ragondin_pipeline::{validate, LogicalPipeline, PipelineHash, RawPipeline};
+use ragondin_pipeline::{
+    validate, LogicalNode, LogicalPipeline, ParamValue, PipelineHash, RawPipeline,
+};
 
 /// Parses a YAML configuration and canonicalizes it, panicking with the
 /// document on either failure — a golden test that silently skipped its
@@ -220,8 +222,8 @@ fn negative_zero_is_one_value_through_the_public_path() {
     // folds `-0.0` during lowering, and `content_hash` folds it again before
     // hashing. Deliberate duplication, because lowering is not on every path
     // to a `LogicalPipeline` — see
-    // `a_deserialized_pipeline_hashes_the_same_as_a_validated_one`, which is
-    // the test that isolates the encoder's half.
+    // `the_two_zeroes_agree_whichever_door_the_pipeline_came_through`, which
+    // is the test that isolates the encoder's half.
     let positive = REFERENCE.replace("k: 60.0", "bias: 0.0");
     let negative = REFERENCE.replace("k: 60.0", "bias: -0.0");
     assert_ne!(positive, negative, "the substitutions must differ");
@@ -285,7 +287,7 @@ fn a_malformed_hex_string_is_a_typed_error_not_a_panic() {
 }
 
 #[test]
-fn a_deserialized_pipeline_hashes_the_same_as_a_validated_one() {
+fn the_two_zeroes_agree_whichever_door_the_pipeline_came_through() {
     // The second door. ADR-C23 routes `Deserialize` through the structural
     // checks and explicitly *not* through lowering — its Consequences name
     // `NonFiniteParam` as unreachable from that path — so a `LogicalPipeline`
@@ -323,5 +325,123 @@ fn a_deserialized_pipeline_hashes_the_same_as_a_validated_one() {
         positive.content_hash(),
         negative.content_hash(),
         "one value must have one content address, whichever door it came through"
+    );
+}
+
+/// Every node variant and every parameter shape in one document.
+///
+/// [`REFERENCE`] is the realistic pipeline, and it is the wrong thing to pin
+/// the grammar against: it contains no reranker, no extension, no `Bool` and
+/// no `List`, so four of the nine tag bytes never reach its hasher. Renumbering
+/// any of those four would silently invalidate every stored digest for a
+/// pipeline that used them, and the reference digest would not move.
+const EVERY_SHAPE: &str = r#"
+pipeline:
+  inputs: [question]
+  nodes:
+    - id: dense
+      component: retriever
+      impl: qdrant_dense
+      inputs: [question]
+      params: { top_k: 50, metric: cosine, rerank: false }
+    - id: fuse
+      component: fusion
+      impl: rrf
+      inputs: [dense]
+      params: { k: 60.0, weights: [1, 2.5, -3], empty: [] }
+    - id: rerank
+      component: reranker
+      impl: bge_reranker
+      inputs: [question, fuse]
+      params: { top_n: 5, cascade: [[1, 2], [3]] }
+    - id: hyde
+      component: extension
+      impl: hyde
+      inputs: [rerank]
+      params: { enabled: true, prompt: "" }
+"#;
+
+#[test]
+fn the_digest_of_the_whole_grammar_is_pinned() {
+    // The second tripwire, and the one that guards the tag bytes the
+    // reference pipeline cannot reach. Both literals must be updated together
+    // when the canonical form deliberately changes — and if only one of them
+    // moves, the encoding has become inconsistent across the grammar rather
+    // than versioned.
+    assert_eq!(
+        hash_of(EVERY_SHAPE).to_string(),
+        "ea280050c4438aeba2f23cbb039847f5de9ebf5f8668a77c7203cac8c09a42fd",
+        "the canonical encoding changed; update this literal only deliberately"
+    );
+}
+
+#[test]
+fn the_whole_grammar_fixture_really_does_exercise_every_shape() {
+    // The guard on the fixture above. A pin over a document that quietly
+    // stopped covering a variant would be a tripwire with nothing under it,
+    // and nothing else in this file would notice.
+    let pipeline = canonicalize(EVERY_SHAPE);
+    let mut seen = std::collections::BTreeSet::new();
+    for node in pipeline.nodes() {
+        seen.insert(match node {
+            LogicalNode::Retriever(_) => "retriever",
+            LogicalNode::Fusion(_) => "fusion",
+            LogicalNode::Reranker(_) => "reranker",
+            LogicalNode::Extension(_) => "extension",
+        });
+    }
+    assert_eq!(
+        seen.into_iter().collect::<Vec<_>>(),
+        vec!["extension", "fusion", "reranker", "retriever"],
+        "the fixture must cover all four node variants"
+    );
+
+    let mut kinds = std::collections::BTreeSet::new();
+    fn note(value: &ParamValue, kinds: &mut std::collections::BTreeSet<&'static str>) {
+        let kind = match value {
+            ParamValue::String(_) => "string",
+            ParamValue::Int(_) => "int",
+            ParamValue::Float(_) => "float",
+            ParamValue::Bool(_) => "bool",
+            ParamValue::List(values) => {
+                for value in values {
+                    note(value, kinds);
+                }
+                "list"
+            }
+        };
+        kinds.insert(kind);
+    }
+    for node in pipeline.nodes() {
+        let params = match node {
+            LogicalNode::Retriever(n) => &n.params,
+            LogicalNode::Fusion(n) => &n.params,
+            LogicalNode::Reranker(n) => &n.params,
+            LogicalNode::Extension(n) => &n.params,
+        };
+        for value in params.values() {
+            note(value, &mut kinds);
+        }
+    }
+    assert_eq!(
+        kinds.into_iter().collect::<Vec<_>>(),
+        vec!["bool", "float", "int", "list", "string"],
+        "the fixture must cover all five parameter variants"
+    );
+}
+
+#[test]
+fn a_list_nested_in_a_list_is_hashed_through() {
+    // `feed_param_value` recurses, and `cascade: [[1, 2], [3]]` in the fixture
+    // above is the only nesting in the suite. Regrouping its elements without
+    // changing their order or count must still change the digest — the
+    // recursion's own framing, one level down from the one the field tests
+    // cover.
+    let regrouped = EVERY_SHAPE.replace("cascade: [[1, 2], [3]]", "cascade: [[1], [2, 3]]");
+    assert_ne!(regrouped, EVERY_SHAPE, "the substitution must have applied");
+    assert_ne!(
+        hash_of(EVERY_SHAPE),
+        hash_of(&regrouped),
+        "a nested list's grouping is part of the value"
     );
 }

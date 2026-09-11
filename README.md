@@ -66,7 +66,7 @@ just check             # build + test + clippy + fmt + architecture invariants
 
 **Pre-alpha. Milestone M1 — *Core contracts & engine skeleton* — is in
 progress** (15 of its 17 issues are closed). M0 — *Foundations* — has met its
-exit criterion; the seven issues still open under it are `decision:` and
+exit criterion; the five issues still open under it are `decision:` and
 `record:` issues, not implementation work.
 
 **There is no usable binary yet.** `ragondin` compiles and prints one line; none

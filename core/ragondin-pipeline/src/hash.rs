@@ -485,14 +485,24 @@ mod tests {
 
     #[test]
     fn every_param_variant_is_distinguished_by_its_tag() {
-        // A tag collision would make two grammars one. `String("1")`,
-        // `Int(1)`, `Float(1.0)` and `Bool(true)` are four configurations.
+        // Deliberately the *degenerate* values, not representative ones. With
+        // their tags removed these five encode to the same bytes: `Int(0)`'s
+        // eight little-endian zeroes are `Float(0.0)`'s `to_bits`, are the
+        // `u64` length prefix of the empty string, and are the length prefix
+        // of the empty list; `Bool(false)` is the one short encoding and
+        // collides with the others' first byte. So the tag is the only thing
+        // that can decide this assertion — which is the point.
+        //
+        // A set of *plausible* values instead (`Int(1)`, `Float(1.0)`,
+        // `String("1")`) would pass with every tag collapsed to one byte,
+        // because their payloads already differ. That is a test that cannot
+        // fail for the reason it is named after.
         let values = [
-            ParamValue::String("1".to_string()),
-            ParamValue::Int(1),
-            ParamValue::Float(1.0),
-            ParamValue::Bool(true),
-            ParamValue::List(vec![ParamValue::Int(1)]),
+            ParamValue::String(String::new()),
+            ParamValue::Int(0),
+            ParamValue::Float(0.0),
+            ParamValue::Bool(false),
+            ParamValue::List(Vec::new()),
         ];
         let hashes: Vec<PipelineHash> = values
             .iter()
