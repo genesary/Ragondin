@@ -8,10 +8,11 @@
 //! - the **configuration-delivery service** (the [`config`] module): a
 //!   purpose-built, versioned gRPC service with ACK/NACK.
 //!
-//! The domain types in `ragondin-types` are the **source of truth** (INV-9); the
-//! protobuf here is generated to mirror them, and `ragondin-remote` supplies the
+//! The domain types in `ragondin-types` are the **source of truth** (ADR-C24);
+//! the `.proto` files here are hand-maintained to mirror them, `tonic-build`
+//! generates the Rust stubs from those files, and `ragondin-remote` supplies the
 //! conversions. The wire format is deliberately **separate** from the in-memory
-//! representation and versioned independently.
+//! representation and versioned independently (INV-9).
 //!
 //! Message and service definitions land in a later issue; this is the compiling
 //! skeleton.
