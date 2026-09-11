@@ -170,7 +170,10 @@ Rationale for each decision: `docs/adr/`, where every decision is a numbered, in
 ### You implement; you do not decide
 
 - **The design is settled.** Your specification is the issue, plus this file and `docs/`. Do **not** run a brainstorming or design phase to re-derive decisions that are already made.
-- If a task requires an architectural choice that is **not** already settled here or in `docs/`: **stop, open a `decision` issue, and do not proceed.**
+- If a task requires an architectural choice that is **not** already settled here or in `docs/`, what you do is decided by **where the choice lands**, never by how reversible you judge it to be — *decided in #63 and #65*:
+  - **It escalates — stop, open a `decision` issue, and do not proceed — when it reaches a shared surface**: the public API of `ragondin-types`, `ragondin-pipeline` or `ragondin-contracts` (INV-1); the wire format (INV-9); an entry in `[workspace.dependencies]`; a new node kind through the `Extension` variant ([ADR-C3](docs/adr/ADR-C03-closed-enum-plus-open-extension-variant.md)); a frozen decision; or an entry in `docs/OPEN_QUESTIONS.md`. That list is the whole boundary. It is read off the diff, not off a judgment about blast radius, and it is the same line `docs/adr/README.md` process rule 3 draws between an ADR and a rule amendment.
+  - **It is yours to make when it stays inside your own crate** and touches none of the above — which tokenizer, how a knob is exposed, which of two similar backends to gate. A choice made this way is **recorded, never silent**: argued in the crate's `ARCHITECTURE.md`, and named in the PR description under its own heading so the reviewer sees it. A choice made in a leaf is still a precedent, and a reviewer can only object to one that was named.
+  - **Reversibility is not the test**, in either direction. An agent is a poor judge of its own blast radius, and a file path is checkable where a forecast is not. A reversible choice on a shared surface still escalates; an irreversible-looking one inside a leaf is still yours, and the record is what lets the next reader disagree with it.
 - Questions listed in `docs/OPEN_QUESTIONS.md` are **deliberately unresolved**. Never resolve one in passing.
 
 ### Scope

@@ -123,6 +123,11 @@ A new crate under `components/` that implements a trait from `ragondin-contracts
   third-party component would use.
 - Naming: `ragondin-<role>-<implementation>`, e.g. `ragondin-reranker-onnx`,
   `ragondin-store-qdrant`.
+- A choice the documents do not settle and that stays inside your crate is
+  yours to make: argue it in the crate's `ARCHITECTURE.md` and name it in the
+  PR. One that reaches `ragondin-contracts`, the wire format, a workspace
+  dependency or a new node kind is a `decision` issue first
+  (`AGENTS.md` § Rules of engagement).
 
 See [`components/README.md`](components/README.md).
 

@@ -19,6 +19,10 @@ Use this for the performance-critical path (BM25, an ONNX reranker, a dense retr
 4. **Confine your heavy dependency to this crate and feature-gate it.** `tantivy`, `ort`, `candle`, a vector-store client — each stays inside its component crate and behind a feature, so the default build stays lean and a researcher benchmarking on a laptop does not compile the world (INV-4 keeps that weight out of the core).
 5. **Register on the `EngineContext`.** The binary (the composition root) constructs and registers the component explicitly. Never register through a static global (INV-6).
 
+### Which choices are yours
+
+Adding a component always meets a choice the documents do not settle — a tokenizer, how `k1`/`b` are exposed, which of two backends to gate. `AGENTS.md` § Rules of engagement decides who makes it by where it lands: inside your crate, it is yours, argued in the crate's `ARCHITECTURE.md` and named in the PR; on a shared surface (that section lists them), it is a `decision` issue first — load `opening-a-decision-issue`. The conformance suite gates behaviour, not design, so passing it does not stand in for the record.
+
 ## Remote — a gRPC service in any language
 
 Use this so contributors who write Python (or anything else) are first-class. This is deliberate: if contributing required performant Rust, the contribution funnel would be a trickle.

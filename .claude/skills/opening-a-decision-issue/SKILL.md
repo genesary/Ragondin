@@ -9,7 +9,7 @@ Some choices are above the pay grade of a single implementation PR: anything tha
 
 ## When to open one
 
-- The task requires an architectural choice **not already settled** in `AGENTS.md` or `docs/`.
+- The task requires an architectural choice **not already settled** in `AGENTS.md` or `docs/`, **and it reaches a shared surface** — `AGENTS.md` § Rules of engagement lists them, and says what to do instead with a choice that stays inside your own crate: make it, argue it in the crate's `ARCHITECTURE.md`, and name it in the PR. Where the choice lands is the test; how reversible it looks is not.
 - You are tempted to **reopen a frozen decision** (see the `frozen-decisions` skill) because you think it is wrong.
 - You would otherwise **resolve an entry in `docs/OPEN_QUESTIONS.md`** in passing. Those are deliberately unresolved; never answer one as a side effect.
 
