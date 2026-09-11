@@ -85,7 +85,7 @@ On `main` today:
 | `ragondin-engine` | `EngineContext` and the explicit component registry, physical planning (`LogicalPipeline` + registry → `PhysicalPipeline`), and an executor that returns its `ExecutionTrace` — on failure as well as on success. No `Branch` or `Loop`: no such node variant exists yet. |
 | `ragondin-conformance` | The behavioural suite every implementation of a contract must pass. |
 | `ragondin-metrics` | The deterministic retrieval metrics: nDCG@k, recall@k, precision@k, MRR, MAP@k. |
-| `ragondin-config` | The `ConfigSource` abstraction and its `LocalFile` implementation: a YAML file read into `RawPipeline` and compiled to a `LogicalPipeline`, with a typed error that keeps a parse fault, an unreadable schema version and an invalid graph apart. No `Stream` source — that is M6. |
+| `ragondin-config` | The `ConfigSource` abstraction and its `LocalFile` implementation: a YAML file read into `RawPipeline` and compiled to a `LogicalPipeline`, with a typed error that keeps an unreadable file, an unsupported schema version, a parse fault and an invalid graph apart. No `Stream` source — that is M6. |
 
 Still compiling skeletons, each with a doc comment and a link test and no
 behaviour: `ragondin-proto`, `ragondin-remote`,

@@ -57,8 +57,15 @@ use ragondin_pipeline::{
 /// what keeps this dyn-compatible, and dyn-compatibility is the point — §8.2's
 /// rule is that the data plane does not know who configures it, so a binary
 /// holds a `Box<dyn ConfigSource>` and never a concrete source.
+///
+/// `Send + Sync` for the same reason every trait in `ragondin-contracts`
+/// carries it: a `Box<dyn ConfigSource>` crosses a `tokio::spawn` in the
+/// serving driver, and without the bound the error lands there — in another
+/// crate, at the spawn, rather than here at the definition. Adding it later
+/// would break any out-of-tree implementer, so it is here from the first
+/// version.
 #[async_trait]
-pub trait ConfigSource {
+pub trait ConfigSource: Send + Sync {
     /// Produces the validated, canonical pipeline this source describes.
     ///
     /// Stops at [`LogicalPipeline`]. Resolving implementations to components
@@ -95,12 +102,15 @@ impl LocalFile {
 impl ConfigSource for LocalFile {
     /// # The read is synchronous inside an `async fn`
     ///
-    /// `std::fs`, not `tokio::fs`: every library crate in this workspace takes
-    /// `async-trait` as a dependency and `tokio` only as a dev-dependency, so
-    /// reaching for `tokio::fs` here would make this the one library that
-    /// picks the runtime — which `docs/code-architecture.md` §11.2 puts at the
-    /// binary level, keeping libraries runtime-agnostic as far as is
-    /// practical.
+    /// `std::fs`, not `tokio::fs`. The authority is
+    /// `docs/code-architecture.md` §11.2 — *the runtime is selected at the
+    /// binary level; libraries stay as runtime-agnostic as practical* — and
+    /// taking `tokio::fs` would spend this crate's runtime-agnosticism on a
+    /// single file read. The two crates here that do hold `tokio` as a normal
+    /// dependency, `ragondin-engine` and `ragondin-server`, are the engine and
+    /// a driver rather than a library a third party compiles against; this
+    /// crate keeps `tokio` to a dev-dependency, as `ragondin-contracts` and
+    /// `ragondin-conformance` do.
     ///
     /// Whether that is the right general answer is **not settled here**. It is
     /// the open question in #198 — may a `Local` component block the calling
@@ -145,6 +155,14 @@ impl ConfigSource for LocalFile {
         })
     }
 }
+
+// The `Send + Sync` bounds live next to what they constrain, not only in a
+// test whose deletion would remove the guarantee silently.
+const _: fn() = || {
+    fn assert_send_sync<T: Send + Sync + ?Sized>() {}
+    assert_send_sync::<dyn ConfigSource>();
+    assert_send_sync::<LocalFile>();
+};
 
 /// Why a configuration could not be turned into a [`LogicalPipeline`].
 ///

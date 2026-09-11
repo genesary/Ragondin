@@ -28,8 +28,8 @@ fn fixture() -> PathBuf {
 }
 
 /// Writes `text` to a uniquely named file under the target directory and hands
-/// back its path. No `tempfile` dependency for four test files: the name
-/// carries the test's own name, so two tests cannot collide.
+/// back its path. No `tempfile` dependency for this: each call names its own
+/// file after the test that makes it, so two tests cannot collide.
 fn scratch(name: &str, text: &str) -> PathBuf {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("local_file");
     fs::create_dir_all(&dir).expect("the test scratch directory must be creatable");
@@ -57,9 +57,16 @@ async fn a_valid_configuration_file_loads_as_a_logical_pipeline() {
 async fn formatting_is_not_configuration() {
     // §8.3: the YAML run locally *is* the custom resource. Two spellings of
     // one configuration must reach one `LogicalPipeline` — the canonical value
-    // that INV-8's content hash is taken over, so this is the property that
-    // load path exists to deliver to `ragondin validate` (#30) and to the run
-    // cache (#29).
+    // INV-8's content hash is taken over, so this is the property the load
+    // path exists to deliver to `ragondin validate` (#30) and the run cache
+    // (#29).
+    //
+    // The perturbations are chosen to reach past the YAML lexer. Stripping
+    // comments alone would only prove that a parser discards comments, which
+    // is `serde_yaml`'s property and not this crate's. Node order is the one
+    // thing `validate` actually normalizes, and flow versus block style is the
+    // one that changes the text without changing the tree — so the two
+    // together exercise both halves of "formatted differently".
     //
     // Stated as equality of the canonical value rather than of its digest:
     // `LogicalPipeline::content_hash` belongs to another branch, and a test
@@ -69,34 +76,56 @@ async fn formatting_is_not_configuration() {
         .await
         .expect("the fixture loads");
 
-    let text = fs::read_to_string(fixture()).expect("the fixture must be readable");
-    let stripped: String = text
-        .lines()
-        .map(|line| match line.find('#') {
-            // Crude, and sound for this fixture: no `#` of its own appears
-            // inside a value here.
-            Some(at) => line[..at].trim_end(),
-            None => line.trim_end(),
-        })
-        .filter(|line| !line.is_empty())
-        .collect::<Vec<_>>()
-        .join("\n");
+    let restyled = "\
+pipeline:
+    nodes:
+        -   id: fuse
+            component: fusion
+            impl: rrf
+            inputs:
+                - dense
+                - sparse
+            params:
+                k: 60.0
+        -   id: sparse
+            component: retriever
+            impl: bm25
+            inputs:
+                - question
+            params:
+                top_k: 50
+        -   id: dense
+            component: retriever
+            impl: qdrant_dense
+            inputs:
+                - question
+            params:
+                top_k: 50
+    inputs:
+        - question
+";
+
+    let source = fs::read_to_string(fixture()).expect("the fixture must be readable");
     assert!(
-        !stripped.contains('#'),
-        "the comments must have been removed"
+        source.contains("- id: dense\n"),
+        "the fixture must still list `dense` first, or this test compares nothing"
     );
-    assert_ne!(
-        stripped, text,
-        "the copy must actually differ from the file"
+    assert!(
+        restyled.find("id: dense").unwrap() > restyled.find("id: fuse").unwrap(),
+        "the copy must list its nodes in a different order from the fixture"
+    );
+    assert!(
+        source.contains("params: { top_k: 50 }"),
+        "the fixture must still use flow style, or the restyling proves nothing"
     );
 
-    let reformatted = LocalFile::new(scratch("reformatted", &stripped))
+    let reformatted = LocalFile::new(scratch("reformatted", restyled))
         .load()
         .await
-        .expect("stripping comments must not break the configuration");
+        .expect("reformatting must not break the configuration");
     assert_eq!(
         original, reformatted,
-        "comments and blank lines are formatting, not configuration"
+        "node order, YAML style and comments are formatting, not configuration"
     );
 }
 
@@ -120,7 +149,7 @@ async fn a_path_that_does_not_exist_is_a_typed_error_naming_it() {
 
 #[tokio::test]
 async fn text_that_does_not_parse_is_a_parse_error_not_a_validation_error() {
-    // The #8 half of the load path: this never reaches `validate`, so
+    // The wire-schema half of the load path: this never reaches `validate`, so
     // reporting it as invalid would send the reader hunting for a graph fault
     // in a file that is not YAML.
     let path = scratch(
@@ -166,7 +195,7 @@ async fn a_parameter_shape_outside_the_grammar_is_a_parse_error() {
 
 #[tokio::test]
 async fn a_graph_the_pass_refuses_is_a_validation_error_not_a_parse_error() {
-    // The #9 half: well-formed YAML, well-formed wire schema, and a graph
+    // The `validate` half: well-formed YAML, well-formed wire schema, and a graph
     // `validate` refuses — here a node consuming an id that names neither a
     // node nor a declared input.
     let path = scratch(
@@ -192,7 +221,7 @@ async fn a_graph_the_pass_refuses_is_a_validation_error_not_a_parse_error() {
 }
 
 #[tokio::test]
-async fn an_unreadable_schema_version_is_reported_as_its_own_diagnosis() {
+async fn an_unsupported_schema_version_is_reported_as_its_own_diagnosis() {
     // `ragondin-pipeline` refuses an unsupported version through
     // `serde::de::Error::custom`, which erases the type — so a plain parse
     // would report "this build is too old" as a syntax error. `LocalFile`
@@ -254,18 +283,48 @@ async fn a_config_source_is_usable_behind_a_trait_object() {
 }
 
 #[tokio::test]
-async fn the_error_type_exposes_the_underlying_cause_as_a_source() {
+async fn every_error_variant_keeps_its_cause_reachable() {
     // `anyhow` in the binary (#30) prints an error chain; a wrapper that
-    // swallowed its cause would make the file's actual fault invisible there.
+    // swallowed its cause would make the file's actual fault invisible there —
+    // and `Invalid` is the one that matters most, since `ValidationError`
+    // carries the offending node id. One instance of each variant that has a
+    // cause, so dropping any single `#[source]` fails this.
     use std::error::Error;
 
-    let path = scratch(
-        "sourced",
-        "pipeline:\n  inputs: [question\n  nodes: - - -\n",
-    );
-    let error = LocalFile::new(&path).load().await.unwrap_err();
+    let missing = Path::new(env!("CARGO_TARGET_TMPDIR")).join("chain-absent.yaml");
+    let cases = [
+        LocalFile::new(&missing).load().await.unwrap_err(),
+        LocalFile::new(scratch("chain-malformed", "pipeline:\n  inputs: [q\n  nodes: - - -\n"))
+            .load()
+            .await
+            .unwrap_err(),
+        LocalFile::new(scratch(
+            "chain-version",
+            "version: 7\npipeline:\n  inputs: [question]\n  nodes: []\n",
+        ))
+        .load()
+        .await
+        .unwrap_err(),
+        LocalFile::new(scratch(
+            "chain-invalid",
+            "pipeline:\n  inputs: [question]\n  nodes:\n    - id: fuse\n      component: fusion\n      impl: rrf\n      inputs: [absent]\n",
+        ))
+        .load()
+        .await
+        .unwrap_err(),
+    ];
+
     assert!(
-        error.source().is_some(),
-        "the parse fault must remain reachable as a source: {error}"
+        matches!(cases[0], ConfigError::Unreadable { .. })
+            && matches!(cases[1], ConfigError::Malformed { .. })
+            && matches!(cases[2], ConfigError::UnsupportedSchemaVersion { .. })
+            && matches!(cases[3], ConfigError::Invalid { .. }),
+        "the four fixtures must cover the four variants, got {cases:?}"
     );
+    for error in &cases {
+        assert!(
+            error.source().is_some(),
+            "the cause must stay reachable through the chain: {error}"
+        );
+    }
 }
