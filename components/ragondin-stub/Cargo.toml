@@ -1,0 +1,33 @@
+[package]
+name = "ragondin-stub"
+description = "Deterministic stub components: the fixture the end-to-end tests wire."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+# A component is a leaf of the dependency graph (INV-5): the contract it
+# implements and the value types it moves, and nothing else in the workspace.
+# A stub has no reason to reach further than a real component does, and being
+# held to the same edges is what makes it a usable rehearsal of one.
+[dependencies]
+ragondin-contracts = { workspace = true }
+ragondin-types = { workspace = true }
+async-trait = { workspace = true } # dyn-compatible async traits (frozen: async_trait, not RPITIT)
+
+# The suite every implementation passes, built-in or third-party (INV-7), and
+# the runtime that drives it. Both are test-only: neither ships to a user of
+# this component.
+[dev-dependencies]
+ragondin-conformance = { workspace = true }
+tokio = { workspace = true }
+
+# These stubs are arithmetic over ranks, so this feature gates no heavy
+# dependency and buys no compile time. It exists so that every component crate
+# names its implementation the same way, and a feature gating nothing is on by
+# default where one gating a heavy backend is off — the rule `ragondin-fusion-rrf`
+# and `ragondin-store-memory` follow, argued in ADR-C14.
+[features]
+default = ["stub"]
+stub = []

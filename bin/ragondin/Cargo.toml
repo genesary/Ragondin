@@ -25,6 +25,18 @@ ragondin-benchmarks = { workspace = true }
 anyhow = { workspace = true }
 tokio = { workspace = true }
 
+# Test-only, and deliberately so: the vertical slice in `tests/` is what
+# composes a pipeline out of concrete components today, while no subcommand
+# does yet. `ragondin-stub` is the fixture component crate the slice wires;
+# `ragondin-pipeline` and `ragondin-types` are what a registration closure and a
+# query are written in — the composition root is the crate that bridges the
+# untyped node configuration to a typed constructor, because a component crate
+# is a leaf and never sees `Params`.
+[dev-dependencies]
+ragondin-stub = { workspace = true }
+ragondin-pipeline = { workspace = true }
+ragondin-types = { workspace = true }
+
 # The feature-gating pattern, established now with no backends to gate yet: heavy
 # backends (tantivy/bm25, candle, ort, qdrant, the remote client) will each be
 # added as an optional dependency behind a feature, and wired in here. The

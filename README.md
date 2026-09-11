@@ -92,9 +92,10 @@ behaviour: `ragondin-proto`, `ragondin-remote`,
 `ragondin-server`, `ragondin-harness`, `ragondin-experiments`, and the
 `ragondin` binary. `components/` now holds `ragondin-retriever-bm25` (BM25 over
 tantivy), `ragondin-store-memory` (exact brute-force vector search),
-`ragondin-fusion-rrf` (Reciprocal Rank Fusion) and `ragondin-retriever-dense`
-(a query embedded and searched through a `VectorStore`); ONNX, Qdrant and the
-rest are still M2 issues.
+`ragondin-fusion-rrf` (Reciprocal Rank Fusion), `ragondin-retriever-dense`
+(a query embedded and searched through a `VectorStore`) and `ragondin-stub`
+(deterministic stubs, the fixture the end-to-end tests are wired with); ONNX,
+Qdrant and the rest are still M2 issues.
 
 ### What using it will look like
 

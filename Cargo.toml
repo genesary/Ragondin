@@ -17,6 +17,7 @@ members = [
     "runtime/ragondin-experiments",
     "components/ragondin-retriever-bm25",
     "components/ragondin-retriever-dense",
+    "components/ragondin-stub",
     "testkit/ragondin-conformance",
     "bin/ragondin",
 ]
@@ -47,6 +48,7 @@ ragondin-fusion-rrf = { path = "components/ragondin-fusion-rrf" }
 ragondin-retriever-bm25 = { path = "components/ragondin-retriever-bm25" }
 ragondin-retriever-dense = { path = "components/ragondin-retriever-dense" }
 ragondin-store-memory = { path = "components/ragondin-store-memory" }
+ragondin-stub = { path = "components/ragondin-stub" }
 ragondin-metrics = { path = "eval/ragondin-metrics" }
 ragondin-benchmarks = { path = "eval/ragondin-benchmarks" }
 ragondin-harness = { path = "eval/ragondin-harness" }

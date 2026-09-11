@@ -935,7 +935,10 @@ dependencies = [
  "ragondin-experiments",
  "ragondin-harness",
  "ragondin-metrics",
+ "ragondin-pipeline",
  "ragondin-server",
+ "ragondin-stub",
+ "ragondin-types",
  "tokio",
 ]
 
@@ -1098,6 +1101,17 @@ dependencies = [
 
 [[package]]
 name = "ragondin-store-memory"
+version = "0.0.0"
+dependencies = [
+ "async-trait",
+ "ragondin-conformance",
+ "ragondin-contracts",
+ "ragondin-types",
+ "tokio",
+]
+
+[[package]]
+name = "ragondin-stub"
 version = "0.0.0"
 dependencies = [
  "async-trait",
