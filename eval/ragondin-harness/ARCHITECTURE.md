@@ -66,6 +66,13 @@ content-addresses. Making a component instance reachable from a driver would be
 a change to the engine's public surface, which `AGENTS.md` § Rules of
 engagement escalates; it is not done here.
 
+That escalation is **open**, as decision issue
+[#212](https://github.com/genesary/Ragondin/issues/212) — *how does a driver get
+a corpus into the index it will retrieve from?* It is the decision this section
+is waiting on, and the place its alternatives are argued: until it is settled,
+what this crate does about a backend index is what is written above, and a
+change here that presumes an answer is presuming one.
+
 ## Run identity
 
 `run_id = hash(pipeline_config, dataset_version, index_version, model_hashes,

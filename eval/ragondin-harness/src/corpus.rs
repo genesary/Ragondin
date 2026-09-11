@@ -81,6 +81,8 @@ impl CorpusIndex {
     /// records a version that names neither. Reading this field as evidence of
     /// what was searched is therefore only as sound as the composition root
     /// that built both: it must construct its components from these chunks.
+    /// Whether a driver should be able to close that gap itself, and how, is
+    /// the open decision this caveat waits on (#212).
     pub fn version(&self) -> &str {
         &self.version
     }
