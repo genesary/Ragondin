@@ -21,7 +21,7 @@ An **Architecture Decision Record (ADR)** captures one architectural decision: i
 
 - **`000-template.md`** — the template every ADR follows: Context / Decision / Alternatives rejected / Consequences / Status, plus an optional Amendments section (process rule 2).
 - **`ADR-001-*.md` … `ADR-015-*.md`** — the frozen decisions of the *system* architecture, one file per decision, cited as `ADR-1` … `ADR-15`.
-- **`ADR-C01-*.md` … `ADR-C23-*.md`** — the frozen decisions of the *code* architecture, one file per decision, cited as `ADR-C1` … `ADR-C23`.
+- **`ADR-C01-*.md` … `ADR-C27-*.md`** — the frozen decisions of the *code* architecture, one file per decision, cited as `ADR-C1` … `ADR-C27`.
 
 Each file is self-contained: it should be understandable and actionable on its own, without first reading `AGENTS.md` or the architecture documents. If an ADR only makes sense after reading something else, it is under-specified and should be fixed.
 
@@ -79,6 +79,7 @@ index of citable decisions is worse than none — `just check` fails when it dri
 | [`ADR-C24`](ADR-C24-proto-hand-maintained-rust-stubs-generated.md) | The .proto is hand-maintained to mirror the domain types; tonic-build generates the Rust stubs | INV-9 | accepted |
 | [`ADR-C25`](ADR-C25-a-component-does-not-block-the-caller.md) | A Local component does not block the calling thread | INV-4 | accepted |
 | [`ADR-C26`](ADR-C26-corpus-ingestion-in-the-composition-root.md) | Corpus ingestion belongs to the composition root; a driver receives the chunk set | INV-1 | accepted |
+| [`ADR-C27`](ADR-C27-onnx-runtime-obtained-by-download-binaries.md) | ONNX Runtime is obtained by `download-binaries` over `rustls`, declared once for the workspace | INV-4 | accepted |
 
 <!-- END GENERATED ADR INDEX -->
 
@@ -129,7 +130,7 @@ stated here canonically.
 number is **never padded**:
 
 - System-architecture decisions use the bare prefix: `ADR-1` … `ADR-15`.
-- Code-architecture decisions use the `C` prefix: `ADR-C1` … `ADR-C23`.
+- Code-architecture decisions use the `C` prefix: `ADR-C1` … `ADR-C27`.
 - New decisions (from `decision` issues) continue the appropriate sequence and are added, never inserted retroactively.
 
 **The filename** is `ADR-<number>-<slug>.md`, where the number **is** padded — to

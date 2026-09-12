@@ -28,12 +28,16 @@ jobs:
           cargo --version
           rustc --version
 
+      # `~/.cache/ort.pyke.io` is where `ort-sys` extracts the prebuilt ONNX
+      # Runtime that every `--all-features` step below links (ADR-C27). It sits
+      # outside `target/`, so without this line each run downloaded it again.
       - name: Cache cargo registry and build
         uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
+            ~/.cache/ort.pyke.io
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
           restore-keys: ${{ runner.os }}-cargo-
