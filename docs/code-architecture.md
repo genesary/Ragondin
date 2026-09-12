@@ -164,7 +164,7 @@ A single binary, `ragondin`, is the composition root and the entire user-facing 
 
 ```
 ragondin bench <config> --benchmark beir/scifact  # evaluate a pipeline against a benchmark
-ragondin compare <run-a> <run-b>                  # compare two runs
+ragondin compare <run-a> <run-b> --store <path>   # compare two runs
 ragondin serve <config>                           # serve the pipeline
 ragondin validate <config>                        # validate a configuration
 ```
