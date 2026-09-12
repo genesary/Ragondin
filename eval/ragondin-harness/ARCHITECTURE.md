@@ -66,12 +66,15 @@ content-addresses. Making a component instance reachable from a driver would be
 a change to the engine's public surface, which `AGENTS.md` § Rules of
 engagement escalates; it is not done here.
 
-That escalation is **open**, as decision issue
-[#212](https://github.com/genesary/Ragondin/issues/212) — *how does a driver get
-a corpus into the index it will retrieve from?* It is the decision this section
-is waiting on, and the place its alternatives are argued: until it is settled,
-what this crate does about a backend index is what is written above, and a
-change here that presumes an answer is presuming one.
+That escalation is **settled**, and it settled this way: **corpus ingestion is
+the composition root's job** (ADR-C26). A driver was deliberately not given a
+way to reach a constructed component, and no trait grew a post-construction
+ingest method — both alternatives are argued and rejected there. What the
+decision adds to what is written above is the other half of the exchange: the
+composition root hands this crate the `CorpusIndex` it built its components
+from, rather than the crate deriving one of its own, so that one value travels
+where two could disagree. Until that parameter lands, `index_version` carries
+the caveat `CorpusIndex::version` states.
 
 ## Run identity
 
