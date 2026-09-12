@@ -49,6 +49,22 @@
 //! for a state change, or a transformation, that is trivially satisfiable and
 //! returns nothing that could be mistaken for anything else.
 //!
+//! # A component does not block the thread that called it
+//!
+//! Every method here is an `async fn`, and the engine cannot tell a `Local`
+//! implementation from a `Remote` one. **Work that blocks — a model forward
+//! pass, a synchronous disk read, a lock held across either — is moved off the
+//! caller's thread by the component itself** (ADR-C25), so that the future
+//! this contract hands back yields like any other.
+//!
+//! The obligation is stated here; the means is the implementation's own.
+//! `tokio::task::spawn_blocking`, a dedicated thread with a channel, and a
+//! backend that never blocks are all conformant, and no runtime is named by
+//! this crate or reachable through it (INV-4). Nothing in the conformance
+//! suite checks this: detecting a blocked executor means watching the runtime,
+//! which is timing-dependent and cannot be told from a component that is
+//! simply fast. It is a review item, and a green suite says nothing about it.
+//!
 //! See `ARCHITECTURE.md`.
 
 #![warn(missing_docs)]

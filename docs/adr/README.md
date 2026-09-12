@@ -77,6 +77,7 @@ index of citable decisions is worse than none — `just check` fails when it dri
 | [`ADR-C22`](ADR-C22-flat-parameter-grammar-extensible-param-enums.md) | The parameter grammar stays flat; the two parameter enums become extensible | INV-1, INV-8, INV-9 | accepted |
 | [`ADR-C23`](ADR-C23-logical-pipeline-validates-on-deserialization.md) | A LogicalPipeline validates on the way in | INV-1, INV-3, INV-8, INV-9 | accepted |
 | [`ADR-C24`](ADR-C24-proto-hand-maintained-rust-stubs-generated.md) | The .proto is hand-maintained to mirror the domain types; tonic-build generates the Rust stubs | INV-9 | accepted |
+| [`ADR-C25`](ADR-C25-a-component-does-not-block-the-caller.md) | A Local component does not block the calling thread | INV-4 | accepted |
 
 <!-- END GENERATED ADR INDEX -->
 
