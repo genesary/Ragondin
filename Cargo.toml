@@ -115,6 +115,8 @@ tantivy = { version = "0.26", default-features = false }
 #     `tls-rustls` rather than the default `tls-native`, so that the fetch needs
 #     no system OpenSSL: `ureq` ships its own root store either way, so the
 #     platform TLS stack buys nothing here and costs a build-host dependency.
+#     This feature list is the workspace's, decided once in ADR-C27; a member
+#     crate references the entry and adds no `ort` feature of its own.
 #     `ndarray` and `tracing` are dropped: tensors are built and read through
 #     `ort`'s own shape-and-slice API, and this crate emits no telemetry.
 #   - `tokenizers`: the default set is `progressbar`, `onig` and `esaxx_fast`,

@@ -222,15 +222,21 @@ a runtime upgrade a visible, deliberate edit to the workspace manifest.
 ### What is fetched, and when
 
 **No model is ever fetched.** `ort`'s `fetch-models` feature is off and
-`tokenizers`' `hf-hub` feature is off, so nothing in this crate can reach the
+`tokenizers`' `http` feature is off, so nothing in this crate can reach the
 network for a model or a tokenizer: both arrive as paths the caller supplies.
 
 **The ONNX Runtime *binary* is fetched at build time**, by `ort`'s
 `download-binaries` feature — a prebuilt runtime for the host, not a model, and
 the price of not requiring every contributor to install ONNX Runtime themselves.
-The alternative, `load-dynamic`, moves that cost to every developer and every CI
-image and turns a build-time failure into a run-time one. `download-binaries`
-stays.
+That trade is the workspace's rather than this crate's:
+[ADR-C27](../../docs/adr/ADR-C27-onnx-runtime-obtained-by-download-binaries.md)
+decides `download-binaries` over `tls-rustls`, declared once in
+`[workspace.dependencies]` and inherited unchanged by every `ort`-backed
+component, and this crate adds no `ort` feature of its own. The alternative,
+`load-dynamic`, is rejected there: it moves the cost to every developer and
+every CI image and turns a build-time failure into a run-time one — the only
+run-time failure there is, since what `download-binaries` fetches is a static
+archive linked into the executable.
 
 **It is once per machine per target, not once per build.** `ort-sys` extracts
 into the *user cache directory* — `cache_dir()/dfbin/<target>/<hash>`, in its
