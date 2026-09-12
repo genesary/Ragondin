@@ -11,7 +11,9 @@ use ort::value::Tensor;
 use ragondin_contracts::{ComponentError, RerankParams, Reranker};
 use ragondin_types::{Query, ScoredChunk};
 use thiserror::Error;
-use tokenizers::tokenizer::{Tokenizer, TruncationDirection, TruncationParams, TruncationStrategy};
+use tokenizers::tokenizer::{
+    PostProcessor, Tokenizer, TruncationDirection, TruncationParams, TruncationStrategy,
+};
 
 /// The tensors this component can build, in the order a pair encoder produces
 /// them. A model that asks for anything else is rejected at construction
@@ -55,6 +57,12 @@ pub struct OnnxRerankerConfig {
     /// cross-encoder's own preprocessing does. The default is BERT's limit;
     /// a model with a shorter positional table needs this lowered, and will
     /// otherwise fail inside ONNX Runtime rather than silently.
+    ///
+    /// It counts the special tokens too, so it must leave room for them:
+    /// [`OnnxReranker::new`] returns
+    /// [`ModelError::MaxSequenceLengthTooSmall`] for a value at or below what
+    /// the tokenizer's post-processor adds to a pair — three, for the `[CLS]`
+    /// and two `[SEP]`s of a BERT one.
     pub max_sequence_length: NonZeroUsize,
     /// How many threads ONNX Runtime may use inside a single operator.
     ///
@@ -126,6 +134,23 @@ pub enum ModelError {
     #[error("the model produced a score that is not finite")]
     NonFiniteScore,
 
+    /// [`OnnxRerankerConfig::max_sequence_length`] leaves no room for the
+    /// tokenizer's own special tokens.
+    ///
+    /// A pair encoding spends part of its budget on `[CLS]` and two `[SEP]`s
+    /// before any text is encoded. Below that, there is no sequence length to
+    /// ask for.
+    #[error(
+        "a max_sequence_length of {max_sequence_length} leaves no room for text: \
+         the tokenizer adds {added_tokens} special tokens to a pair"
+    )]
+    MaxSequenceLengthTooSmall {
+        /// The configured limit.
+        max_sequence_length: usize,
+        /// What this tokenizer's post-processor adds to a pair.
+        added_tokens: usize,
+    },
+
     /// A previous call panicked while holding the session.
     ///
     /// The session's state after a panic inside ONNX Runtime is not this
@@ -166,6 +191,26 @@ impl OnnxReranker {
     pub fn new(config: OnnxRerankerConfig) -> Result<Self, ModelError> {
         let mut tokenizer =
             Tokenizer::from_file(&config.tokenizer_path).map_err(ModelError::Tokenizer)?;
+
+        // Checked here because `tokenizers` does not check it. It subtracts the
+        // post-processor's special-token count from `max_length` with unchecked
+        // `usize` arithmetic, twice: in `with_truncation` (for a single
+        // sequence) and again in `encode` (for a pair, three tokens with a BERT
+        // post-processor). Under that count a debug build panics and a release
+        // build wraps to `usize::MAX`, which switches truncation *off* — the
+        // opposite of what lowering this knob asks for, and it would then pad
+        // every batch to an unbounded width. A limit that leaves no room for
+        // text is rejected instead, and the same way in both profiles.
+        let added_tokens = tokenizer
+            .get_post_processor()
+            .map_or(0, |processor| processor.added_tokens(true));
+        if config.max_sequence_length.get() <= added_tokens {
+            return Err(ModelError::MaxSequenceLengthTooSmall {
+                max_sequence_length: config.max_sequence_length.get(),
+                added_tokens,
+            });
+        }
+
         // Imposed rather than inherited from the file: the tensors are padded
         // to the longest pair in a batch, so a pair the file would let run long
         // sets the width of every pair beside it.
@@ -300,9 +345,12 @@ impl CrossEncoder {
             let data = match name.as_str() {
                 "input_ids" => &input_ids,
                 "attention_mask" => &attention_mask,
-                // The only name left: `new` rejected any input outside
-                // `PAIR_INPUTS`, so nothing else can reach here.
-                _ => &token_type_ids,
+                "token_type_ids" => &token_type_ids,
+                // `new` rejects any other input, so this is unreachable — and
+                // it says so as a typed error rather than as a comment,
+                // because the invariant that makes it unreachable lives in
+                // another function and a comment is not a compiler.
+                other => return Err(ModelError::UnsupportedInput(other.to_string())),
             };
             let tensor = Tensor::from_array((shape.clone(), data.clone()))?;
             values.push((Cow::from(name.clone()), SessionInputValue::from(tensor)));

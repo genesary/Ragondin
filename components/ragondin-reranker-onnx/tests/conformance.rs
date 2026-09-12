@@ -15,7 +15,7 @@ use std::num::NonZeroUsize;
 
 use ragondin_conformance::assert_reranker_conformance;
 use ragondin_contracts::{ComponentError, RerankParams, Reranker};
-use ragondin_reranker_onnx::{OnnxReranker, OnnxRerankerConfig};
+use ragondin_reranker_onnx::{ModelError, OnnxReranker, OnnxRerankerConfig};
 use ragondin_types::{Chunk, ChunkId, DocId, Query, QueryId, ScoredChunk};
 
 fn config() -> OnnxRerankerConfig {
@@ -181,6 +181,94 @@ async fn a_model_with_two_scores_per_pair_is_refused() {
         error.to_string(),
         "backend failure: the model returned 6 scores for 3 pairs"
     );
+}
+
+/// Twenty in-vocabulary words the query does not contain, then the four it
+/// does. The fixture cross-encoder scores lexical overlap, so where the tail
+/// survives truncation is readable straight off the score: 4 matches plus the
+/// one `[SEP]` both segments share, against that `[SEP]` alone.
+fn a_long_passage_answering_at_the_end() -> &'static str {
+    "tin price sonnet lines rhyme quarter fell sharply fixed fourteen \
+     has and of a the tin price sonnet lines rhyme \
+     ragondins build their burrows"
+}
+
+async fn score_of_the_long_passage(max_sequence_length: usize) -> f32 {
+    let mut config = config();
+    config.max_sequence_length = NonZeroUsize::new(max_sequence_length).unwrap();
+    let reranker = OnnxReranker::new(config).expect("the fixture cross-encoder loads");
+
+    let reordered = reranker
+        .rerank(
+            &query(),
+            vec![scored("c-long", a_long_passage_answering_at_the_end(), 0.5)],
+            &RerankParams::new(1),
+        )
+        .await
+        .unwrap();
+    reordered[0].score
+}
+
+#[tokio::test]
+async fn a_pair_longer_than_max_sequence_length_loses_its_tail() {
+    // Nothing else exercises the truncation direction. `LongestFirst` trims the
+    // passage, which is the longer segment here, and `Right` takes it off the
+    // end — so the four query words parked at the end are what goes, and the
+    // score falls to the `[SEP]` both segments share.
+    //
+    // 20 is the query's six tokens, plus eleven of the passage's twenty-four,
+    // plus the three special tokens of a pair.
+    assert_eq!(score_of_the_long_passage(512).await, 5.0);
+    assert_eq!(score_of_the_long_passage(20).await, 1.0);
+}
+
+#[tokio::test]
+async fn the_smallest_max_sequence_length_that_leaves_room_for_text_is_accepted() {
+    // Four: the `[CLS]` and two `[SEP]`s of a BERT pair, and one token of text.
+    // The boundary is worth a test in both directions, because one token either
+    // side of it is the difference between a working component and a panic.
+    let mut config = config();
+    config.max_sequence_length = NonZeroUsize::new(4).unwrap();
+    let reranker = OnnxReranker::new(config).expect("four leaves room for one token of text");
+
+    let reordered = reranker
+        .rerank(&query(), candidates(), &RerankParams::new(3))
+        .await
+        .unwrap();
+
+    assert_eq!(reordered.len(), 3);
+    assert!(reordered.iter().all(|hit| hit.score.is_finite()));
+}
+
+#[tokio::test]
+async fn a_max_sequence_length_with_no_room_for_text_is_refused() {
+    // `tokenizers` subtracts the special-token count from `max_length` without
+    // checking it, in two places. At 1 that underflows: a debug build panics
+    // ("attempt to subtract with overflow", tokenizers' `tokenizer/mod.rs`) and
+    // a release build wraps to `usize::MAX`, which switches truncation off
+    // instead of tightening it. At 3 it does not underflow but leaves no token
+    // for text at all. Both are configuration errors, and both must fail the
+    // same way in both profiles: here, and at construction.
+    for max_sequence_length in [1, 2, 3] {
+        let mut config = config();
+        config.max_sequence_length = NonZeroUsize::new(max_sequence_length).unwrap();
+
+        let error = OnnxReranker::new(config)
+            .err()
+            .expect("a limit with no room for text must not build a component");
+
+        assert!(
+            matches!(error, ModelError::MaxSequenceLengthTooSmall { .. }),
+            "a limit with no room for text is a configuration error: {error}"
+        );
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "a max_sequence_length of {max_sequence_length} leaves no room for text: \
+                 the tokenizer adds 3 special tokens to a pair"
+            )
+        );
+    }
 }
 
 #[tokio::test]

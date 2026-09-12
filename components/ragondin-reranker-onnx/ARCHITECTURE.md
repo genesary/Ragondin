@@ -90,7 +90,22 @@ tensors of a batch are padded to the longest pair in it, so one long pair sets
 the width of every pair beside it; `max_sequence_length` therefore has to be a
 knob here, and it overrides whatever the `tokenizer.json` declares. The strategy
 is `LongestFirst`, which is what a cross-encoder's own preprocessing does: it
-trims the passage before it trims the query.
+trims the passage before it trims the query, and `Right` takes the trim off the
+end.
+
+**The floor under that knob is checked here, because `tokenizers` does not check
+it.** A pair's budget pays for `[CLS]` and two `[SEP]`s before any text, and
+`tokenizers 0.23.2` subtracts that count from `max_length` with unchecked `usize`
+arithmetic — in `with_truncation` for a single sequence, and again in `encode`
+for a pair. Under the count a debug build panics and a release build wraps to
+`usize::MAX`, which switches truncation **off** and pads every batch to an
+unbounded width: the opposite of what lowering the knob asks for, arrived at
+silently, and differently in the two profiles. `OnnxReranker::new` therefore
+rejects a `max_sequence_length` at or below what the tokenizer's own
+post-processor adds to a pair, with
+`ModelError::MaxSequenceLengthTooSmall`. The count is read from that
+post-processor rather than assumed to be three, so a tokenizer that wraps a pair
+differently is measured rather than guessed at.
 
 ### How the knobs are exposed: a config struct with public fields
 
@@ -126,6 +141,15 @@ has to be stable across runs. Two things make it so here:
   one removes that variable, at a real cost in throughput. Raising it is a
   deliberate trade a caller can make, which is why it is a knob and not a
   constant.
+- **The inter-op pool is not a second variable, but only because of a default
+  this crate does not set.** ONNX Runtime runs a graph's nodes sequentially
+  unless parallel execution is switched on — `ort`'s
+  `SessionBuilder::with_parallel_execution` is documented as disabled by default
+  — and `with_inter_threads` "has no effect when the session execution mode is
+  set to `Sequential`". So there is no inter-op scheduling to vary. This crate
+  calls neither method, which means the property is inherited rather than
+  asserted: a future change that enables parallel execution would reopen the
+  question `intra_threads` closes, and this paragraph with it.
 
 **What is claimed, exactly.** The same candidate list, reranked by a session
 built from the same configuration, produces the same scores in the same order.
@@ -205,8 +229,31 @@ network for a model or a tokenizer: both arrive as paths the caller supplies.
 `download-binaries` feature — a prebuilt runtime for the host, not a model, and
 the price of not requiring every contributor to install ONNX Runtime themselves.
 The alternative, `load-dynamic`, moves that cost to every developer and every CI
-image, and `ort` would then find a runtime at run time or fail. This is the
-choice to revisit if a build has to run offline.
+image and turns a build-time failure into a run-time one. `download-binaries`
+stays.
+
+**It is once per machine per target, not once per build.** `ort-sys` extracts
+into the *user cache directory* — `cache_dir()/dfbin/<target>/<hash>`, in its
+`build/main.rs` — and skips the download when that directory exists. The cache
+is outside `target/`, so it survives `cargo clean`.
+
+**And there is an offline route today.** `ort-sys`' build script reads
+`ORT_LIB_PATH`/`ORT_LIB_LOCATION` to link a runtime already on the machine, and
+skips the download entirely on `ORT_SKIP_DOWNLOAD`, on `ORT_OFFLINE`, or on
+Cargo's own `CARGO_NET_OFFLINE` (`build/vars.rs`). An air-gapped build supplies
+the library and sets one of those; it does not need this crate to change.
+
+**What `check-deny` does not cover, stated because the rest of this file might
+imply otherwise.** `deny.toml` audits the *crate graph*, and the entry there
+traces `webpki-roots` to this build script. The script then downloads a
+**binary payload that is not in the crate graph at all**: a prebuilt ONNX
+Runtime from `cdn.pyke.io`, the `ort` maintainer's CDN. It is pinned — `ort-sys`
+ships a `build/download/dist.tsv` of `target`, `url` and `sha256_hash`, and
+verifies the hash of what it extracted against that table — so it is not
+unverified, but it carries its own licence and its own advisory surface, and
+`cargo deny` sees neither. Trusting `download-binaries` is trusting that
+publisher, and that is a separate act from the licence and advisory entries in
+`deny.toml`.
 
 ## Conformance
 
