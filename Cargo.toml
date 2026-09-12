@@ -121,8 +121,9 @@ tantivy = { version = "0.26", default-features = false }
 #     which pull `indicatif` and two C/C++ builds. `fancy-regex` replaces
 #     `onig` — the crate requires one of the two and refuses to compile with
 #     neither — and it is pure Rust, so nothing here needs a C toolchain.
-#     `hf-hub`, the feature that would fetch a tokenizer over the network, is
-#     not a default and stays off.
+#     `http`, the feature that would fetch a tokenizer over the network — it is
+#     what enables the optional `hf-hub` dependency, which is not a feature name
+#     — is not a default and stays off.
 ort = { version = "=2.0.0-rc.13", default-features = false, features = [
     "std",
     "api-27",
