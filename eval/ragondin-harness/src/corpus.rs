@@ -18,7 +18,9 @@
 //! upsert into is not reachable from a context at all. So the backend index is
 //! built where the components are constructed, which is the composition root,
 //! from exactly [`CorpusIndex::chunks`] — the set [`CorpusIndex::version`]
-//! names.
+//! names. That split is decided rather than incidental (ADR-C26): the
+//! alternatives — a driver reaching a constructed component, or a trait
+//! growing an ingest method — were weighed and rejected.
 //!
 //! # One chunk per document
 //!
@@ -81,8 +83,12 @@ impl CorpusIndex {
     /// records a version that names neither. Reading this field as evidence of
     /// what was searched is therefore only as sound as the composition root
     /// that built both: it must construct its components from these chunks.
-    /// Whether a driver should be able to close that gap itself, and how, is
-    /// the open decision this caveat waits on (#212).
+    ///
+    /// That obligation is where it stays: **corpus ingestion is the
+    /// composition root's job** (ADR-C26), which is the one place that holds
+    /// both the engine and the concrete components. A driver was deliberately
+    /// not given a way to reach a constructed component to close the gap
+    /// itself.
     pub fn version(&self) -> &str {
         &self.version
     }
