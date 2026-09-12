@@ -25,6 +25,12 @@ thiserror = { workspace = true }   # typed library errors (ADR-C13: never anyhow
 ort = { workspace = true, optional = true }
 tokenizers = { workspace = true, optional = true }
 
+# The off-thread hop ADR-C25 requires of a `Local` component, by way of
+# `spawn_blocking`. A component-level dependency, behind this crate's own
+# feature, exactly where ADR-C25 puts it -- `ragondin-contracts` names no
+# runtime and gains nothing (INV-4).
+tokio = { workspace = true, optional = true }
+
 [dev-dependencies]
 ragondin-conformance = { workspace = true }
 tokio = { workspace = true }
@@ -40,4 +46,4 @@ tokio = { workspace = true }
 # and names no crate, so this one is covered without adding a recipe of its own.
 [features]
 default = []
-onnx = ["dep:ort", "dep:tokenizers"]
+onnx = ["dep:ort", "dep:tokenizers", "dep:tokio"]

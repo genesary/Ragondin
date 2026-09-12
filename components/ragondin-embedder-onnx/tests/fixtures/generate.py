@@ -6,13 +6,13 @@
 The tests need a real ONNX graph and a real tokenizer, and no model may be
 fetched at build time (the rule this crate was created under, in #20). So the
 fixtures are committed, and this script is how they came to be: the alternative
-is seven opaque binaries nobody can regenerate or explain. Everything here is
+is eight opaque binaries nobody can regenerate or explain. Everything here is
 fixed-seed, so a rerun reproduces the committed bytes.
 
 The graphs are deliberately trivial -- a token-embedding table, a Gather, and at
 most one node after it -- because what the tests exercise is the component
 around the model: tokenization, prefixes, padding, batching, mean pooling,
-normalization, and the five ways a model is refused. A real sentence
+normalization, and the six ways a model is refused. A real sentence
 transformer would test ONNX Runtime instead, slowly.
 
 Requires `onnx` and `numpy`.
@@ -276,13 +276,44 @@ def tiny_embedder_pooled() -> onnx.ModelProto:
     return model_of(graph)
 
 
-def tokenizer() -> dict:
-    """A WordPiece tokenizer over `VOCAB`, serialized as `tokenizer.json`.
+def tiny_embedder_nan() -> onnx.ModelProto:
+    """A model whose hidden states are `NaN` everywhere.
 
-    Lowercasing and whitespace/punctuation splitting, and **no post-processor**:
-    nothing here adds `[CLS]` or `[SEP]`, so a text of no words tokenizes to no
-    tokens. That is the empty-sequence case the component has to survive, and a
-    fixture that quietly injected special tokens would hide it.
+    A constant `NaN` bias is broadcast onto the gathered tokens, which is the
+    cheapest way to reproduce what a real model does when a quantized weight
+    overflows or a normalization divides by zero. The shape and the dtype are
+    both what the component wants, so nothing before pooling rejects it: only
+    checking the pooled components does.
+    """
+    weights = numpy_helper.from_array(token_embeddings(), name="token_embeddings")
+    bias = numpy_helper.from_array(
+        np.full((1, 1, HIDDEN), np.nan, dtype=np.float32), name="nan_bias"
+    )
+    nodes = [
+        helper.make_node("Gather", ["token_embeddings", "input_ids"], ["tokens"], axis=0),
+        helper.make_node("Add", ["tokens", "nan_bias"], ["last_hidden_state"]),
+    ]
+    graph = helper.make_graph(
+        nodes,
+        "tiny_embedder_nan",
+        [ids_input("input_ids"), ids_input("attention_mask")],
+        [hidden_output("last_hidden_state")],
+        [weights, bias],
+    )
+    return model_of(graph)
+
+
+# The special tokens a BERT post-processor wraps a sequence in, appended rather
+# than mixed into `VOCAB`: every graph above is generated from a table sized and
+# seeded by `VOCAB`, so inserting a token would move every fixture's bytes.
+BERT_VOCAB = VOCAB + ["[CLS]", "[SEP]"]
+
+
+def tokenizer(vocab: list, post_processor: dict | None) -> dict:
+    """A WordPiece tokenizer over `vocab`, in `tokenizer.json` form.
+
+    Lowercasing and whitespace/punctuation splitting throughout; the
+    post-processor is what the two fixtures differ by.
     """
     return {
         "version": "1.0",
@@ -298,21 +329,54 @@ def tokenizer() -> dict:
                 "normalized": False,
                 "special": True,
             }
-            for index, token in enumerate(VOCAB)
+            for index, token in enumerate(vocab)
             if token.startswith("[")
         ],
         "normalizer": {"type": "Lowercase"},
         "pre_tokenizer": {"type": "Whitespace"},
-        "post_processor": None,
+        "post_processor": post_processor,
         "decoder": None,
         "model": {
             "type": "WordPiece",
             "unk_token": "[UNK]",
             "continuing_subword_prefix": "##",
             "max_input_chars_per_word": 100,
-            "vocab": {token: index for index, token in enumerate(VOCAB)},
+            "vocab": {token: index for index, token in enumerate(vocab)},
         },
     }
+
+
+def plain_tokenizer() -> dict:
+    """The tokenizer every embedding test runs against: **no post-processor**.
+
+    Nothing here adds `[CLS]` or `[SEP]`, so a text of no words tokenizes to no
+    tokens. That is the empty-sequence case the component has to survive, and a
+    fixture that quietly injected special tokens would hide it.
+    """
+    return tokenizer(VOCAB, None)
+
+
+def bert_tokenizer() -> dict:
+    """A tokenizer that *does* wrap a sequence, as a BERT export's does.
+
+    It exists for one reason: `tokenizers` subtracts a post-processor's
+    special-token count from the truncation limit without checking that
+    anything is left, so the component refuses a `max_sequence_length` at or
+    below that count. Proving the refusal needs a tokenizer whose count is not
+    zero, and the plain fixture's is.
+
+    Used at **construction only**. Its two special ids sit past the end of the
+    38-row embedding table every graph here is built from, so it is never fed
+    to one.
+    """
+    return tokenizer(
+        BERT_VOCAB,
+        {
+            "type": "BertProcessing",
+            "sep": ["[SEP]", BERT_VOCAB.index("[SEP]")],
+            "cls": ["[CLS]", BERT_VOCAB.index("[CLS]")],
+        },
+    )
 
 
 def main() -> None:
@@ -323,10 +387,15 @@ def main() -> None:
     write(tiny_embedder_pooled(), "tiny-embedder-pooled.onnx")
     write(tiny_embedder_shrinking(), "tiny-embedder-shrinking.onnx")
     write(tiny_embedder_float16(), "tiny-embedder-float16.onnx")
+    write(tiny_embedder_nan(), "tiny-embedder-nan.onnx")
 
-    path = HERE / "tokenizer.json"
-    path.write_text(json.dumps(tokenizer(), indent=1, ensure_ascii=False) + "\n")
-    print(f"wrote {path}")
+    for name, content in [
+        ("tokenizer.json", plain_tokenizer()),
+        ("tokenizer-bert.json", bert_tokenizer()),
+    ]:
+        path = HERE / name
+        path.write_text(json.dumps(content, indent=1, ensure_ascii=False) + "\n")
+        print(f"wrote {path}")
 
 
 if __name__ == "__main__":

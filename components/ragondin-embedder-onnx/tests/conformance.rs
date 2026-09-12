@@ -24,6 +24,10 @@ use ragondin_types::Embedding;
 /// every vector below has.
 const HIDDEN: usize = 8;
 
+/// What `tokenizer-bert.json`'s post-processor adds to a single sequence:
+/// `[CLS]` and `[SEP]`.
+const BERT_ADDED_TOKENS: usize = 2;
+
 fn fixture(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests")
@@ -430,6 +434,101 @@ async fn a_model_whose_output_is_not_float32_is_refused_by_dtype() {
     );
 }
 
+/// A `max_sequence_length` with no room left for text is refused when the
+/// component is built.
+///
+/// `tokenizers` subtracts a post-processor's special-token count from the
+/// truncation limit with unchecked arithmetic. A limit equal to that count
+/// leaves zero tokens for the text, so every vector would be the special
+/// tokens' own; a limit below it underflows, which panics in a debug build and
+/// wraps to `usize::MAX` in a release one — switching truncation off, the
+/// opposite of what the knob was lowered to ask for. The BERT-style fixture is
+/// the one with a post-processor: the plain tokenizer adds nothing, so its
+/// floor is zero and a `NonZeroUsize` cannot reach it.
+#[test]
+fn a_max_sequence_length_with_no_room_for_text_is_refused() {
+    let bert = OnnxEmbedderConfig::new(
+        fixture("tiny-embedder.onnx"),
+        fixture("tokenizer-bert.json"),
+    );
+
+    // `[CLS]` and `[SEP]` around one sequence: two tokens, and a limit of two
+    // leaves none for the text itself.
+    let Err(error) = OnnxEmbedder::new(
+        bert.clone()
+            .with_max_sequence_length(nonzero(BERT_ADDED_TOKENS)),
+    ) else {
+        panic!("a limit with no room for text must not build an embedder");
+    };
+    assert!(
+        matches!(
+            error,
+            EmbedderError::MaxSequenceLengthTooSmall {
+                max_sequence_length: BERT_ADDED_TOKENS,
+                added_tokens: BERT_ADDED_TOKENS,
+            }
+        ),
+        "expected MaxSequenceLengthTooSmall, got {error:?}"
+    );
+
+    // One token of room is enough to be a limit rather than an error. The
+    // other side of the boundary, so the check is a floor and not a ban.
+    assert!(
+        OnnxEmbedder::new(bert.with_max_sequence_length(nonzero(BERT_ADDED_TOKENS + 1))).is_ok(),
+        "a limit that leaves one token for text is a truncation, not a refusal"
+    );
+}
+
+/// A model whose hidden states are not finite is refused rather than pooled
+/// into a vector of `NaN`.
+///
+/// Mean pooling propagates a `NaN` and L2 normalization does not remove it:
+/// the norm of such a vector is itself `NaN`, so the zero-norm guard is taken
+/// as though the vector were the zero one, and what comes back looks
+/// well-formed. `Embedder` requires finite components and `ragondin-types`
+/// cannot read such a vector back once serialized, so the model is accused
+/// here rather than downstream.
+#[tokio::test]
+async fn a_model_whose_hidden_states_are_not_finite_is_refused() {
+    let embedder = OnnxEmbedder::new(config_over("tiny-embedder-nan.onnx"))
+        .expect("the model itself loads; what it returns is the problem");
+
+    let error = embedder
+        .embed(
+            &["a cat".to_string()],
+            &EmbedParams::new(EmbedRole::Passage),
+        )
+        .await
+        .expect_err("hidden states of NaN cannot pool to a finite vector");
+
+    assert!(
+        matches!(backend_error(&error), EmbedderError::NonFiniteVector),
+        "expected NonFiniteVector, got {error:?}"
+    );
+}
+
+/// The intra-op thread count is a knob, and raising it does not change what a
+/// vector is for this fixture.
+///
+/// It is pinned to one by default so that a reduction happens in one order.
+/// The fixture graph is a `Gather` and performs no reduction at all, so this
+/// test proves the knob is wired and accepted — not that a real model's last
+/// bits survive it, which is a property of ONNX Runtime and recorded in
+/// `ARCHITECTURE.md` rather than claimed here.
+#[tokio::test]
+async fn the_intra_thread_count_is_configurable() {
+    let one = embedder();
+    let four = OnnxEmbedder::new(asymmetric().with_intra_threads(nonzero(4)))
+        .expect("a session must build with four intra-op threads");
+
+    let texts = ["a cat", "another text entirely"];
+    assert_eq!(
+        embed(&one, &texts, EmbedRole::Passage).await,
+        embed(&four, &texts, EmbedRole::Passage).await,
+        "this fixture reduces nothing, so the thread count cannot move a vector"
+    );
+}
+
 /// A path that names no file fails when the component is built. Both halves are
 /// configuration, and neither is worth discovering on the first query.
 #[test]
@@ -457,6 +556,12 @@ fn a_path_that_names_no_file_is_refused_at_construction() {
 /// trait is `Send + Sync`, while an ONNX Runtime session is not safe to run
 /// concurrently — so the component serializes its own calls, and the vectors
 /// are the same ones a sequential caller would get.
+///
+/// **This proves serialization and nothing else.** It is not evidence about
+/// ADR-C25: whether the forward pass ran on the caller's thread or on a
+/// blocking one is not observable from outside the call, which is why ADR-C25
+/// is review-enforced and why its own alternatives section rejects
+/// mechanizing it. The sign to look for is in the diff, not here.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn concurrent_calls_answer_as_sequential_ones_do() {
     let embedder = std::sync::Arc::new(embedder());

@@ -65,6 +65,14 @@
 //! E5's, a symmetric model takes neither, and the configuration is where that
 //! is said.
 //!
+//! # It does not block the thread that called it
+//!
+//! A forward pass is CPU-bound, and a `Local` component moves that work off the
+//! caller's thread itself (ADR-C25). This one does it with
+//! `tokio::task::spawn_blocking`, so **it requires its caller to be running
+//! under a `tokio` runtime** — a property of this component and not of the
+//! contract, which names no runtime. `ARCHITECTURE.md` argues the choice.
+//!
 //! See `ARCHITECTURE.md`.
 
 #![warn(missing_docs)]

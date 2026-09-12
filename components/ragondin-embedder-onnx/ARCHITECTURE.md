@@ -22,10 +22,10 @@ the whole of the crate.
 
 - **It is a leaf ([INV-5](../../AGENTS.md)).** It depends on
   `ragondin-contracts`, `ragondin-types`, `async-trait`, `thiserror` and — behind
-  the `onnx` feature — `ort` and `tokenizers`. Never on `ragondin-engine`, and
-  never on a sibling component: `ragondin-retriever-dense` is built *from* an
-  `Embedder` and reaches this one as a trait object chosen by the composition
-  root
+  the `onnx` feature — `ort`, `tokenizers` and `tokio`. Never on
+  `ragondin-engine`, and never on a sibling component:
+  `ragondin-retriever-dense` is built *from* an `Embedder` and reaches this one
+  as a trait object chosen by the composition root
   ([ADR-C5](../../docs/adr/ADR-C05-engine-depends-only-on-traits-components-are-leaves.md)).
 - **`ort` is confined here and feature-gated
   ([ADR-C14](../../docs/adr/ADR-C14-heavy-backends-feature-gated-lean-default-build.md)).**
@@ -54,8 +54,14 @@ the whole of the crate.
   the tokenizer are paths, read once at construction. `tokenizers`' `http`
   feature is off, which is what makes that structural rather than a habit. The
   one thing a build *does* fetch is ONNX Runtime itself: `ort`'s
-  `download-binaries` pulls a prebuilt shared library for the host target and
-  caches it, which is a runtime, not a model.
+  `download-binaries` pulls a prebuilt runtime for the host target and caches
+  it — a static archive for this release, linked into the binaries under test,
+  so nothing has to be found on a library path afterwards. It is a runtime, not
+  a model, and how it arrives is the workspace's decision rather than this
+  crate's:
+  [ADR-C27](../../docs/adr/ADR-C27-onnx-runtime-obtained-by-download-binaries.md)
+  fixes `download-binaries` over `tls-rustls`, declared once in
+  `[workspace.dependencies]`, and this crate adds no `ort` feature of its own.
 - **The model is behind a `Mutex`, because the contract asks for `&self` and
   ONNX Runtime asks for `&mut`.** `Embedder` is `Send + Sync` and takes `&self`,
   so one embedder answers concurrent calls; an `ort` session is not safe to run
@@ -63,10 +69,14 @@ the whole of the crate.
   mutability the contract requires of an implementation holding mutable state,
   and calls queue rather than race. A caller that needs real inference
   parallelism builds a second embedder, which is `ort`'s own advice.
-- **Inference runs synchronously inside the `async fn`.** No `spawn_blocking`:
-  that would pick a runtime for a library, and the runtime is selected at the
-  binary (`docs/code-architecture.md` §11.2). A caller embedding a whole corpus
-  knows which runtime it is on and can wrap the call; this crate does not.
+- **A call does not block the thread that made it
+  ([ADR-C25](../../docs/adr/ADR-C25-a-component-does-not-block-the-caller.md),
+  review-enforced).** Tokenization, tensor building, the forward pass and the
+  session lock held across them run inside `tokio::task::spawn_blocking`, so
+  nothing CPU-bound happens on the caller's thread and the future `embed`
+  returns yields like any other. ADR-C25 states the obligation and leaves the
+  *means* to the component; the means is argued below, and it asks something of
+  the caller.
 - **Batching is internal and cannot be read off the answer.** `batch_size` is a
   performance knob, and the tests pin the consequence: the same texts embed
   identically at batch sizes 1, 2, 5 and 512, and one text embeds identically
@@ -83,27 +93,91 @@ the whole of the crate.
   to arise here. `EmbedderError` is boxed inside that variant, and its
   in-process fidelity is what lets a `Local` caller walk `source` back to the
   model or the tokenizer.
+- **A `max_sequence_length` that leaves no room for text is refused at
+  construction.** A post-processor wraps a sequence in special tokens, and
+  `tokenizers` subtracts their count from the truncation limit unchecked. At
+  the count the effective limit is zero and every vector would be the special
+  tokens' own; below it the subtraction underflows — a debug build panics, a
+  release build wraps to `usize::MAX` and truncation is off, which is the
+  opposite of what lowering the knob asked for and pads every batch to an
+  unbounded width. The floor is the single-sequence count, because this
+  component never encodes a pair.
+- **A pooled vector whose components are not finite is refused, not returned.**
+  Mean pooling propagates a `NaN` out of a hidden state, and normalization does
+  not remove it: the norm of such a vector is itself `NaN`, so the zero-norm
+  guard below is taken as though the vector were the zero one and the result
+  comes back looking well-formed. `Embedder` requires finite components and
+  `ragondin-types` cannot read such a vector back once serialized, so the model
+  is accused where it can still be named.
 - **Determinism is claimed per machine, and the suite proves less than that.**
   The same text embeds to the same vector bit for bit — that is what
   `run_id`'s `model_hashes` (`docs/system-architecture.md` §7.1) needs of an
   embedder, and it is tested repeatedly and across a fresh model load. Two
-  limits are worth stating rather than discovering. The fixture graph is a
-  `Gather`, so it performs **no floating-point reduction**: every float
+  things make it so here, and one limit is worth stating rather than
+  discovering. **Batch composition is fixed by the input, never by arrival
+  time**: texts are batched in the order they arrive, in consecutive runs of
+  `batch_size`, so the same list produces the same batches whatever else the
+  process is doing. **`intra_threads` defaults to one**: ONNX Runtime
+  partitions an operator's work across the intra-op threads fixed at session
+  creation, so a session built with a different count can reduce in a different
+  order and move a vector's last bits. Pinning it to one removes that variable
+  at a real cost in throughput, which is why it is a knob a corpus-embedding
+  caller can raise rather than a constant. The limit: the fixture graph is a
+  `Gather`, so it performs **no floating-point reduction** at all — every float
   operation the suite exercises is this crate's own arithmetic, and ONNX
-  Runtime's determinism is assumed, not tested. And the session is built with
-  ONNX Runtime's default intra-op threading, which follows the host's core
-  count, so a real model's reduction order — and its last bits — can differ
-  between a CI runner and a workstation. Pinning the thread count would fix
-  that, and would also cap throughput for a corpus-embedding run; it is not
-  configurable here because nothing has yet needed to choose, and inventing the
-  knob before a bench asks for it would be configuration nobody sets. What is
-  *not* left implicit is the claim: reproducible on one machine, not asserted
-  across two.
+  Runtime's determinism is assumed, not tested. What is *not* left implicit is
+  the claim: reproducible on one machine, not asserted across two.
+- **The inter-op pool is not a second variable, but only because of a default
+  this crate does not set.** ONNX Runtime runs a graph's nodes sequentially
+  unless parallel execution is switched on — `ort`'s
+  `SessionBuilder::with_parallel_execution` is documented as disabled by
+  default — and `with_inter_threads` has no effect while the execution mode is
+  sequential. This crate calls neither method, so the property is inherited
+  rather than asserted: a change that enabled parallel execution would reopen
+  the question `intra_threads` closes, and this paragraph with it.
 - **What can be checked at construction is.** That both files load, that the
   model declares no input this component cannot supply, and that it declares
   `input_ids` at all. ONNX Runtime reports a missing input per call, which would
   make a wiring mistake look like an intermittent backend failure; the model's
   input names are readable once, at load, so the comparison happens once.
+
+## The off-thread hop: `spawn_blocking`, and what that asks of the caller
+
+[ADR-C25](../../docs/adr/ADR-C25-a-component-does-not-block-the-caller.md)
+states the obligation — a `Local` component does not block the thread that
+called it — and leaves the means to the component. This one uses
+`tokio::task::spawn_blocking`, which is the smallest thing that works given that
+`tokio` is already the runtime both drivers select
+([`docs/code-architecture.md`](../../docs/code-architecture.md) §11.2) and the
+one the conformance suite runs on. `tokio` is therefore a dependency of this
+crate, behind the same `onnx` feature as the rest of the backend; it reaches
+`ragondin-contracts` nowhere, which is what INV-4 asks.
+
+**The consequence is a requirement on the caller, and it is stated rather than
+assumed: `spawn_blocking` needs an ambient `tokio` runtime and panics without
+one.** A component that had to be callable under any runtime would take
+ADR-C25's other route — its own thread and a channel, which depends on no
+runtime at all. This one does not, and a caller outside `tokio` is out of its
+range.
+
+The prefixed texts travel into the blocking task and the vectors come back out
+of it. Prefixing happens before the hop, on the caller's thread: it is a string
+copy, not the CPU-bound work the rule is about, and doing it there is what lets
+the task own its input instead of borrowing across an `await`.
+
+**An empty batch never hops.** It returns no vectors from the caller's thread,
+without locking the session — there is nothing to run and nothing to stall.
+
+**Moving the work off-thread is not the same as making it concurrent.** The
+session stays behind a `Mutex`, so calls queue; ADR-C25 is explicit that this is
+a separate question and leaves it open. A pool of sessions, or the continuous
+batching §11.2 places inside the component, is a change to this paragraph and to
+nothing above it.
+
+**Nothing in the test suite proves this.** ADR-C25 rejects mechanizing the rule
+because the property is not observable from outside the call, and says so in its
+own alternatives. `concurrent_calls_answer_as_sequential_ones_do` proves
+serialization, not the hop. The sign is in the diff.
 
 ## Which inputs the model gets
 
@@ -138,19 +212,27 @@ therefore a call-time failure rather than something the load could have caught.
 
 ## The fixtures
 
-`tests/fixtures/` holds seven tiny ONNX graphs and one `tokenizer.json`,
-together under 12 kB, and `tests/fixtures/generate.py` regenerates all of them
-from a fixed seed. No model is fetched at build time — the rule this crate was
-created under, in #20 — so they are committed; the generator is committed with
-them because seven opaque binaries are not a fixture, they are a liability.
+`tests/fixtures/` holds eight tiny ONNX graphs and two tokenizers, together
+under 16 kB, and `tests/fixtures/generate.py` regenerates all of them from a
+fixed seed. No model is fetched at build time — the rule this crate was created
+under, in #20 — so they are committed; the generator is committed with them
+because eight opaque binaries are not a fixture, they are a liability.
 
 The graphs are deliberately trivial — an embedding table, a `Gather`, and at
 most one node after it. What the tests exercise is the component *around* the
 model: prefixes, truncation, padding, batching, pooling, normalization, and the
-five ways a model is refused — an input this component cannot fill, no
+six ways a model is refused — an input this component cannot fill, no
 `input_ids`, a rank it cannot pool, a sequence axis disagreeing with the batch
-it was fed, and hidden states that are not float32. A real sentence transformer would test ONNX Runtime
+it was fed, hidden states that are not float32, and hidden states that pool to
+something not finite. A real sentence transformer would test ONNX Runtime
 instead, slowly, and a failure would accuse the wrong code.
+
+The two tokenizers differ by one thing. `tokenizer.json` has **no
+post-processor**, which is what makes the empty-sequence case reachable at all;
+`tokenizer-bert.json` has a BERT one, which is what gives the truncation floor
+a non-zero count to refuse against. The second is used at construction only —
+its two special ids sit past the end of the 38-row embedding table every graph
+here is built from, so it is never fed to one.
 
 ## What is deliberately not here
 
