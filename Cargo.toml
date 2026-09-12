@@ -17,6 +17,7 @@ members = [
     "runtime/ragondin-experiments",
     "components/ragondin-retriever-bm25",
     "components/ragondin-retriever-dense",
+    "components/ragondin-reranker-onnx",
     "components/ragondin-stub",
     "testkit/ragondin-conformance",
     "bin/ragondin",
@@ -47,6 +48,7 @@ ragondin-engine = { path = "engine/ragondin-engine" }
 ragondin-fusion-rrf = { path = "components/ragondin-fusion-rrf" }
 ragondin-retriever-bm25 = { path = "components/ragondin-retriever-bm25" }
 ragondin-retriever-dense = { path = "components/ragondin-retriever-dense" }
+ragondin-reranker-onnx = { path = "components/ragondin-reranker-onnx" }
 ragondin-store-memory = { path = "components/ragondin-store-memory" }
 ragondin-stub = { path = "components/ragondin-stub" }
 ragondin-metrics = { path = "eval/ragondin-metrics" }
@@ -97,3 +99,37 @@ prost = "0.13"                                     # protobuf messages for the w
 #     uncompressed in memory. That is a real memory trade, recorded in the
 #     crate's `ARCHITECTURE.md`, not the no-op the grouping above used to imply.
 tantivy = { version = "0.26", default-features = false }
+
+# The ONNX Runtime binding and the tokenizer that feeds it. Listed here for the
+# same reason `tantivy` is — versions are centralized here and nowhere else —
+# and reaching exactly one component crate, `ragondin-reranker-onnx`, optional
+# and behind its `onnx` feature (ADR-C14). `ort` is on the INV-4 deny-list, so
+# the core cannot reach either of them.
+#
+# `default-features = false` on both, and what each re-enabled feature buys:
+#
+#   - `ort`: `std`, `copy-dylibs` and `api-27` are what the default set carries
+#     beyond the two below. `download-binaries` fetches a prebuilt ONNX Runtime
+#     for the host at *build* time; it is the runtime, never a model, and
+#     `fetch-models` — the feature that would download a model — stays off.
+#     `tls-rustls` rather than the default `tls-native`, so that the fetch needs
+#     no system OpenSSL: `ureq` ships its own root store either way, so the
+#     platform TLS stack buys nothing here and costs a build-host dependency.
+#     `ndarray` and `tracing` are dropped: tensors are built and read through
+#     `ort`'s own shape-and-slice API, and this crate emits no telemetry.
+#   - `tokenizers`: the default set is `progressbar`, `onig` and `esaxx_fast`,
+#     which pull `indicatif` and two C/C++ builds. `fancy-regex` replaces
+#     `onig` — the crate requires one of the two and refuses to compile with
+#     neither — and it is pure Rust, so nothing here needs a C toolchain.
+#     `hf-hub`, the feature that would fetch a tokenizer over the network, is
+#     not a default and stays off.
+ort = { version = "=2.0.0-rc.13", default-features = false, features = [
+    "std",
+    "api-27",
+    "copy-dylibs",
+    "download-binaries",
+    "tls-rustls",
+] }
+tokenizers = { version = "0.23", default-features = false, features = [
+    "fancy-regex",
+] }
