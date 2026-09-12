@@ -117,6 +117,23 @@ component is a gRPC service honouring the mirror protobuf in `ragondin-proto`.
   than to the store that later refuses it. It constrains a returned vector, not
   a batch: an empty batch embeds to no vectors.
 
+- **A component does not block the thread that called it (ADR-C25).** Every
+  method here is `async`, and the engine cannot tell a `Local` implementation
+  from a `Remote` one — so blocking work inside one of them stalls futures that
+  have nothing to do with the component doing it. An implementation whose work
+  is CPU-bound moves it off the caller's thread itself; the obligation is the
+  contract's and the means is the component's, argued in its own
+  `ARCHITECTURE.md`. No runtime is named here, and no dependency is added to
+  this crate for it (INV-4) — though `spawn_blocking`, one of the conformant
+  means, requires an ambient `tokio` runtime of whoever calls the component,
+  which is the component's property to record rather than this contract's to
+  promise. The rule governs the calls and **not construction**: a component is
+  built by a synchronous constructor at physical planning, and what that
+  constructor blocks on is outside it. This one is **review-enforced**: detecting a
+  blocked executor means watching the runtime, which is timing-dependent and
+  indistinguishable from a component that is simply fast, so the conformance
+  suite is silent about it by design rather than by omission.
+
 ## Why it is a boundary
 
 If this contract were unstable, every component in and out of the repository
