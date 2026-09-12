@@ -52,7 +52,8 @@ yanked = "deny"
 # limit, reached through tonic -> hyper -> h2 -- and it was fixed by updating h2
 # rather than allowed here. An allowance is a standing exception that outlives
 # whoever wrote it, so it should cost more than a lockfile bump does, not less.
-# Anything added here needs a date, the reason, and what removes it again.
+# Anything added here needs a date, the reason, and the issue that removes it
+# again.
 #
 # RUSTSEC-2024-0436 -- `paste 1.0.15`, unmaintained; its author archived the
 # repository. Added 2026-09-12 with `tokenizers`, which `ragondin-reranker-onnx`
@@ -70,9 +71,9 @@ yanked = "deny"
 #    definition of what the model was trained on. That trade is argued in
 #    `components/ragondin-reranker-onnx/ARCHITECTURE.md`.
 #
-# It goes away when `tokenizers` drops `paste`, or when this workspace stops
-# depending on `tokenizers`. Neither is tracked by an issue today: this entry is
-# the record, and the check reports the crate again the moment either happens.
+# Removed by #195, which tracks exactly this exception: it goes when
+# `tokenizers` drops `paste`, or when this workspace stops depending on
+# `tokenizers`. The check reports the crate again the moment either happens.
 ignore = ["RUSTSEC-2024-0436"]
 
 # One thing deliberately NOT ignored, and one decision recorded rather than
@@ -148,7 +149,7 @@ ignore = ["RUSTSEC-2024-0436"]
 # A fifth arrived with `ragondin-reranker-onnx`:
 #
 #   CDLA-Permissive-2.0
-#                  webpki-root-certs, the Mozilla CA root store `ureq` carries,
+#                  webpki-roots, the Mozilla CA root store `ureq` carries,
 #                  reached as a *build* dependency of `ort-sys`: the build
 #                  script downloads a prebuilt ONNX Runtime over HTTPS. It
 #                  licenses certificate *data*, not code, and it is permissive
