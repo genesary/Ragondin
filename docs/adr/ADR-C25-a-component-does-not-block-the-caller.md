@@ -71,6 +71,19 @@ documentation of `ragondin-contracts` and its `ARCHITECTURE.md` local
 invariants. It is **review-enforced**. No conformance test checks it, and the
 suite must not be read as though it did.
 
+**This governs the contract's `async fn`s, and not construction.** A component
+is built by a `ComponentCtor`, which is a synchronous
+`Fn(&Params) -> Result<Box<T>, ConstructionError>` called at physical planning
+— and loading an ONNX model or building a tantivy index there blocks whatever
+thread planned. That is deliberately left outside this decision, for two
+reasons: a constructor runs once per plan rather than once per call, so it
+cannot stall a thread repeatedly; and a synchronous function cannot move its
+own work off-thread and hand back a value, so the fix is not the component's to
+make and would have to change how a driver plans. It becomes observable when a
+serving driver plans on a worker thread, and it belongs to the driver that has
+that problem — with the plan-time surface it would touch, that is an escalation
+of its own rather than a clause here.
+
 ## Alternatives rejected
 
 - **The contract permits blocking; the caller hops.** The executor or the
@@ -113,6 +126,15 @@ suite must not be read as though it did.
   is the component's own, and `tokio` is already declared in
   `[workspace.dependencies]`. A component that prefers its own thread and a
   channel is equally conformant, and depends on neither.
+- **`spawn_blocking` is conformant and not free of consequence: it requires an
+  ambient `tokio` runtime and panics without one.** A component that chooses it
+  therefore requires its *caller* to be running under `tokio`, which this
+  contract does not say and the engine cannot check. That is acceptable — §11.2
+  selects `tokio` at the binary, both drivers use it, and the conformance suite
+  runs on it — but it is a property of the component, not of the contract, so
+  it is stated in that component's `ARCHITECTURE.md` alongside the choice. A
+  component that must be callable under any runtime picks the other means: its
+  own thread and a channel, which depend on no runtime at all.
 - **The engine stays runtime-agnostic**, and a serving driver's concurrency
   limit means what it says: the futures it schedules yield, so a limit of *n*
   is *n* calls in flight rather than *n* claims on a worker pool that one

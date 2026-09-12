@@ -60,10 +60,18 @@
 //! The obligation is stated here; the means is the implementation's own.
 //! `tokio::task::spawn_blocking`, a dedicated thread with a channel, and a
 //! backend that never blocks are all conformant, and no runtime is named by
-//! this crate or reachable through it (INV-4). Nothing in the conformance
-//! suite checks this: detecting a blocked executor means watching the runtime,
-//! which is timing-dependent and cannot be told from a component that is
-//! simply fast. It is a review item, and a green suite says nothing about it.
+//! this crate or reachable through it (INV-4). `spawn_blocking` needs an
+//! ambient `tokio` runtime and panics without one, so a component that picks
+//! it requires that of its caller and says so in its own `ARCHITECTURE.md`;
+//! a component that must run under any runtime picks its own thread instead.
+//!
+//! This governs the calls, not construction: a component is built by a
+//! synchronous constructor at physical planning, and what that constructor
+//! does — loading a model, building an index — is outside this rule
+//! (ADR-C25). Nothing in the conformance suite checks either: detecting a
+//! blocked executor means watching the runtime, which is timing-dependent and
+//! cannot be told from a component that is simply fast. It is a review item,
+//! and a green suite says nothing about it.
 //!
 //! See `ARCHITECTURE.md`.
 
