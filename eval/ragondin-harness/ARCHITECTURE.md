@@ -73,8 +73,11 @@ ingest method — both alternatives are argued and rejected there. What the
 decision adds to what is written above is the other half of the exchange: the
 composition root hands this crate the `CorpusIndex` it built its components
 from, rather than the crate deriving one of its own, so that one value travels
-where two could disagree. Until that parameter lands, `index_version` carries
-the caveat `CorpusIndex::version` states.
+where two could disagree. `Evaluation::index` is that parameter: `evaluate`
+records its `index_version` and builds no `CorpusIndex` of its own. The caveat
+`CorpusIndex::version` states still applies — the guarantee is structural, not
+enforced, and nothing here stops a caller from passing an index that does not
+match the components it registered.
 
 ## Run identity
 

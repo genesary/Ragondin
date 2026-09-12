@@ -15,11 +15,14 @@
 //! # What a run is made of
 //!
 //! - [`Evaluation`] — the request: a validated pipeline and its verbatim
-//!   configuration text, a loaded benchmark, the rank cutoff, and the model
-//!   hashes the caller knows.
+//!   configuration text, a loaded benchmark, the [`CorpusIndex`] the caller's
+//!   components were constructed from, the rank cutoff, and the model hashes
+//!   the caller knows.
 //! - [`CorpusIndex`] — the corpus prepared for retrieval. **Ad hoc, and not a
 //!   pipeline**: question 5 of `docs/OPEN_QUESTIONS.md` is unresolved, and this
-//!   crate does not resolve it.
+//!   crate does not resolve it. Built by the caller, not by this crate
+//!   (ADR-C26): the composition root is the one place that holds both the
+//!   engine and the concrete components it constructs from these chunks.
 //! - The `Run` — the record, named by `hash(pipeline_config, dataset_version,
 //!   index_version, model_hashes, engine_version)` (§7.1). Identical inputs
 //!   yield an identical `run_id` and identical metrics (P4).
