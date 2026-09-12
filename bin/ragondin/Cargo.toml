@@ -22,20 +22,27 @@ ragondin-experiments = { workspace = true }
 ragondin-config = { workspace = true }
 ragondin-metrics = { workspace = true }
 ragondin-benchmarks = { workspace = true }
+# `validate` matches on `ValidationError::KindMismatch` to render the wiring
+# report ADR-C16 calls for, so the error type is a normal dependency here and
+# no longer test-only.
+ragondin-pipeline = { workspace = true }
 anyhow = { workspace = true }
+clap = { workspace = true }
 tokio = { workspace = true }
 
 # Test-only, and deliberately so: the vertical slice in `tests/` is what
 # composes a pipeline out of concrete components today, while no subcommand
-# does yet. `ragondin-stub` is the fixture component crate the slice wires;
-# `ragondin-pipeline` and `ragondin-types` are what a registration closure and a
-# query are written in — the composition root is the crate that bridges the
-# untyped node configuration to a typed constructor, because a component crate
-# is a leaf and never sees `Params`.
+# registers one. `ragondin-stub` is the fixture component crate the slice
+# wires; `ragondin-types` is what a query is written in — the composition root
+# is the crate that bridges the untyped node configuration to a typed
+# constructor, because a component crate is a leaf and never sees `Params`.
+# `assert_cmd` spawns the built binary for the CLI tests in `tests/cli.rs`:
+# `validate`'s contract is an exit status and what lands on stdout and stderr,
+# and only a test that runs the process observes those.
 [dev-dependencies]
 ragondin-stub = { workspace = true }
-ragondin-pipeline = { workspace = true }
 ragondin-types = { workspace = true }
+assert_cmd = { workspace = true }
 
 # The feature-gating pattern, established now with no backends to gate yet: heavy
 # backends (tantivy/bm25, candle, ort, qdrant, the remote client) will each be
