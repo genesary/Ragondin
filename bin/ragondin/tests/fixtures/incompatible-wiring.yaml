@@ -1,0 +1,29 @@
+# A configuration that parses, and whose wiring is wrong.
+#
+# `ranked` is a reranker, and a reranker's ports are the positional pair
+# (query, chunks) in that order. This file feeds it (chunks, query): `legs`
+# produces chunks and arrives at port 0, where the query belongs. Writing the
+# two inputs the wrong way round is the mistake this fixture is here for —
+# `inputs` is positional and is never reordered to fit (ADR-C16), so nothing
+# downstream quietly repairs it.
+#
+# Structurally the graph is sound: the ids are unique, the pipeline declares one
+# input, every input resolves and there is no cycle. Only the kind check refuses
+# it, which is what makes this the fixture for that report and not another.
+#
+# `impl: some_reranker` names no registered implementation, and deliberately so:
+# `validate` resolves nothing, so a configuration is checked and hashed without
+# a registry (ADR-C2).
+pipeline:
+  inputs: [question]
+  nodes:
+    - id: legs
+      component: retriever
+      impl: stub_retriever
+      inputs: [question]
+      params: { top_k: 3, label: left }
+
+    - id: ranked
+      component: reranker
+      impl: some_reranker
+      inputs: [legs, question]

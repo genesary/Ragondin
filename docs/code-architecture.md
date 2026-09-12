@@ -211,7 +211,7 @@ flowchart TB
     TYP[ragondin-types]
   end
 
-  RAG --> SRV & HAR & EXP & CFG & ENG & MET & BEN
+  RAG --> SRV & HAR & EXP & CFG & ENG & MET & BEN & PIP
   SRV --> ENG
   HAR --> ENG & MET & BEN & EXP & PIP & TYP
   EXP --> TYP

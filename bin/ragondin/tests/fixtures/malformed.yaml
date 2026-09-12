@@ -1,0 +1,17 @@
+# Not YAML: the flow sequence opened on `inputs` is never closed, so the
+# document cannot be read into the wire schema at all and the graph is never
+# looked at.
+#
+# The fixture is here so that a CLI test can hold `ragondin validate` to a
+# readable refusal — an exit status and a message naming the file — rather than
+# a panic, which is what an unwrap on the load path would produce.
+#
+# `tests/cli.rs` asserts that the report locates the fault — that it names a
+# line and a column at all — and not which ones, so that editing the comment
+# above does not move a test.
+pipeline:
+  inputs: [question
+  nodes:
+    - id: legs
+      component: retriever
+      impl: stub_retriever

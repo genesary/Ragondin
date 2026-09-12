@@ -74,6 +74,8 @@ thiserror = "2"                                    # typed library errors
 anyhow = "1"                                       # error aggregation, binaries only
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 tower = "0.5"                                      # serving envelope only (INV-11)
+clap = { version = "4", features = ["derive"] }    # the CLI parser, in `bin/ragondin` and nowhere else
+assert_cmd = "2"                                   # dev-only: spawns the built binary in `bin/ragondin`'s CLI tests
 tonic = "0.12"                                     # gRPC transport for the wire layer
 prost = "0.13"                                     # protobuf messages for the wire layer
 
