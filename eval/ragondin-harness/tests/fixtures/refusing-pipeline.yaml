@@ -1,0 +1,12 @@
+# A pipeline the stub retriever refuses: `top_k: 0` asks for a result that
+# cannot exist, so the component returns an error and the executor stops at
+# that node. The harness test uses it to pin what a run does when a query
+# fails — it stops, and it reports the trace of the failure.
+pipeline:
+  inputs: [question]
+  nodes:
+    - id: leg
+      component: retriever
+      impl: stub_retriever
+      inputs: [question]
+      params: { top_k: 0, label: MED-10 }

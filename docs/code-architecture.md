@@ -213,7 +213,7 @@ flowchart TB
 
   RAG --> SRV & HAR & EXP & CFG & ENG & MET & BEN & PIP
   SRV --> ENG
-  HAR --> ENG & MET & BEN
+  HAR --> ENG & MET & BEN & EXP & PIP & TYP
   EXP --> TYP
   ENG --> CON & PIP & TYP
   ENG -->|"optional, feature = remote"| REM

@@ -1,0 +1,30 @@
+# The pipeline the harness end-to-end test drives over the miniature BEIR
+# fixture: two stub retrieval legs and the stub fusion that interleaves them.
+#
+# `ragondin-stub` fabricates its answers from the node's `label`, and attributes
+# every chunk it invents to a document named after that label. The labels here
+# are therefore **corpus document ids of the fixture** — which is what puts the
+# fabricated ranking on judged documents and makes the metric arithmetic
+# checkable by hand in the test. It says nothing whatever about retrieval
+# quality: a stub answers every query identically.
+pipeline:
+  inputs: [question]
+  nodes:
+    - id: fused
+      component: fusion
+      impl: stub_interleave
+      inputs: [leg_a, leg_b]      # positional, and never reordered (ADR-C16)
+
+    - id: leg_a
+      component: retriever
+      impl: stub_retriever
+      inputs: [question]
+      params: { top_k: 2, label: MED-10 }
+
+    - id: leg_b
+      component: retriever
+      impl: stub_retriever
+      inputs: [question]
+      # Quoted: a BEIR `_id` is a string, and this one would otherwise read as
+      # an integer and reach the constructor as the wrong `ParamValue`.
+      params: { top_k: 1, label: "4983" }
