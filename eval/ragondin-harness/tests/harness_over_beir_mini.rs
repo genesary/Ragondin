@@ -21,10 +21,10 @@ use ragondin_benchmarks::{BeirAdapter, Benchmark, BenchmarkAdapter};
 use ragondin_config::{ConfigSource, LocalFile};
 use ragondin_engine::EngineContext;
 use ragondin_experiments::{ConfigDocument, FileSystemRunStore, Run};
-use ragondin_harness::{evaluate, Evaluation, HarnessError};
+use ragondin_harness::{evaluate, CorpusIndex, Evaluation, HarnessError};
 use ragondin_pipeline::{LogicalPipeline, ParamValue};
 use ragondin_stub::{StubFusion, StubRetriever};
-use ragondin_types::QueryId;
+use ragondin_types::{DocId, Document, QueryId};
 
 /// The `ragondin-benchmarks` fixture, reached from this crate's manifest
 /// directory. It is that crate's test data and stays there: a second copy would
@@ -80,13 +80,20 @@ async fn logical() -> (LogicalPipeline, ConfigDocument) {
 }
 
 /// Runs the whole driver once.
+///
+/// Builds the `CorpusIndex` from `benchmark`'s own corpus, exactly as a
+/// composition root that constructs its components from the same benchmark
+/// would: this is the ordinary case, not the mismatched one under test in
+/// [`the_recorded_index_version_follows_the_index_argument_not_the_benchmark`].
 async fn run_the_harness(benchmark: &Benchmark) -> Run {
     let (pipeline, config) = logical().await;
+    let index = CorpusIndex::build(benchmark.corpus());
     evaluate(
         &Evaluation {
             pipeline: &pipeline,
             config: &config,
             benchmark,
+            index: &index,
             cutoff: 10,
             model_hashes: Default::default(),
         },
@@ -246,12 +253,14 @@ async fn a_query_the_pipeline_cannot_answer_stops_the_run_and_reports_its_trace(
         .expect("the fixture is a valid configuration");
     let config = ConfigDocument::new(std::fs::read_to_string(&path).expect("readable"));
     let benchmark = benchmark();
+    let index = CorpusIndex::build(benchmark.corpus());
 
     let failed = evaluate(
         &Evaluation {
             pipeline: &pipeline,
             config: &config,
             benchmark: &benchmark,
+            index: &index,
             cutoff: 10,
             model_hashes: Default::default(),
         },
@@ -293,12 +302,14 @@ async fn a_benchmark_with_nothing_judged_is_refused_rather_than_scored() {
         }],
         ragondin_benchmarks::Qrels::new(),
     );
+    let index = CorpusIndex::build(unjudged.corpus());
 
     let refused = evaluate(
         &Evaluation {
             pipeline: &pipeline,
             config: &config,
             benchmark: &unjudged,
+            index: &index,
             cutoff: 10,
             model_hashes: Default::default(),
         },
@@ -308,4 +319,46 @@ async fn a_benchmark_with_nothing_judged_is_refused_rather_than_scored() {
     .expect_err("nothing is judged, so nothing can be scored");
 
     assert!(matches!(refused, HarnessError::NothingToScore));
+}
+
+#[tokio::test]
+async fn the_recorded_index_version_follows_the_index_argument_not_the_benchmark() {
+    // ADR-C26: `index_version` names the `CorpusIndex` the caller passed, not
+    // one `evaluate` derives from the benchmark itself. A composition root
+    // that built its components from a chunk set other than the benchmark's
+    // own — the mismatch the decision cannot prevent, only make visible — must
+    // still see *that* chunk set's version recorded, not the benchmark's.
+    let (pipeline, config) = logical().await;
+    let benchmark = benchmark();
+    let foreign_index = CorpusIndex::build(&[Document {
+        id: DocId::new("foreign-doc"),
+        text: "a chunk set the benchmark never named".to_string(),
+        metadata: Default::default(),
+    }]);
+    assert_ne!(
+        foreign_index.version(),
+        CorpusIndex::build(benchmark.corpus()).version(),
+        "the fixture setup is meaningless unless the two chunk sets differ"
+    );
+
+    let run = evaluate(
+        &Evaluation {
+            pipeline: &pipeline,
+            config: &config,
+            benchmark: &benchmark,
+            index: &foreign_index,
+            cutoff: 10,
+            model_hashes: Default::default(),
+        },
+        &stub_context(),
+    )
+    .await
+    .expect("the stub pipeline cannot fail on this benchmark");
+
+    assert_eq!(
+        run.inputs.index_version,
+        foreign_index.version(),
+        "index_version follows the index the caller passed, not one `evaluate` \
+         derives from the benchmark"
+    );
 }

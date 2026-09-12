@@ -6,16 +6,19 @@
 //!
 //! ```text
 //! ragondin bench <config> --benchmark beir/scifact  # evaluate a pipeline
-//! ragondin compare <run-a> <run-b>                  # compare two runs
+//! ragondin compare <run-a> <run-b> --store <path>   # compare two runs
 //! ragondin serve <config>                           # serve the pipeline
 //! ragondin validate <config>                        # validate a configuration
 //! ```
 //!
-//! All four are **declared**; one is implemented. `validate` loads a
+//! All four are **declared**; two are implemented. `validate` loads a
 //! configuration through `ragondin-config`, stops at the `LogicalPipeline`, and
 //! prints its content hash — the config→logical→hash path end to end, with no
-//! registry and no execution. `bench`, `compare` and `serve` parse their
-//! arguments and then report that this build does not implement them.
+//! registry and no execution. `compare` reads two runs already recorded in a
+//! run store (`ragondin-experiments`) and prints their metric-by-metric diff —
+//! no re-execution and no new metric, a packaging-only handler over that
+//! crate's comparison (ADR-C15). `bench` and `serve` parse their arguments and
+//! then report that this build does not implement them.
 //!
 //! Component wiring is therefore still absent from `main`. There is more here
 //! than `main`, though: `tests/vertical_slice.rs` assembles the composition root
@@ -30,6 +33,7 @@ use std::process::ExitCode;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
+mod compare;
 mod validate;
 
 /// The command line, as `clap` parses it.
@@ -65,11 +69,19 @@ enum Command {
         benchmark: String,
     },
     /// Compare two runs.
+    #[command(long_about = "Compare two runs already recorded in a run store.\n\n\
+        Both are read by their `run_id` and never re-executed: the diff is \
+        metric by metric, over whatever either run recorded, and names which \
+        side scored higher on each one. No default run store location is \
+        settled yet, so `--store` names it explicitly.")]
     Compare {
         /// The first run's identity.
         run_a: String,
         /// The second run's identity.
         run_b: String,
+        /// Root directory of the run store both runs are read from.
+        #[arg(long)]
+        store: PathBuf,
     },
     /// Serve a pipeline over the network.
     Serve {
@@ -101,8 +113,12 @@ enum Command {
 async fn dispatch(cli: Cli) -> Result<()> {
     match cli.command {
         Command::Validate { config } => validate::run(&config).await,
+        Command::Compare {
+            run_a,
+            run_b,
+            store,
+        } => compare::run(&store, &run_a, &run_b),
         Command::Bench { .. } => anyhow::bail!("`bench` is not implemented in this build"),
-        Command::Compare { .. } => anyhow::bail!("`compare` is not implemented in this build"),
         Command::Serve { .. } => anyhow::bail!("serving is not available in v0"),
     }
 }

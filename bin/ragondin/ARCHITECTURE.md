@@ -17,16 +17,18 @@ charter.
 | Piece | Role |
 |---|---|
 | `src/main.rs` | The `clap` definition of the four subcommands, and the dispatch |
-| `src/validate.rs` | The one implemented subcommand |
-| `tests/cli.rs` | The command line exercised as a process |
+| `src/validate.rs` | Loads a configuration and prints its content hash |
+| `src/compare.rs` | Reads two stored runs and prints their metric-by-metric diff |
+| `tests/cli.rs` | `validate` and the rest of the command line, exercised as a process |
+| `tests/compare.rs` | `compare`, exercised as a process, against runs written straight into a store |
 | `tests/vertical_slice.rs` | The composition root assembled for real, end to end |
 
-**Four subcommands are declared; one is implemented.** `validate` loads a
-configuration and prints its content hash. `bench`, `compare` and `serve` parse
-their arguments and refuse. Declaring all four is deliberate rather than
-premature: ADR-C15 makes the set of subcommands the product's surface, and a
-surface discovered one subcommand at a time is one a user has to rediscover at
-each release.
+**Four subcommands are declared; two are implemented.** `validate` loads a
+configuration and prints its content hash. `compare` reads two runs already in
+a run store and prints their diff. `bench` and `serve` parse their arguments
+and refuse. Declaring all four is deliberate rather than premature: ADR-C15
+makes the set of subcommands the product's surface, and a surface discovered
+one subcommand at a time is one a user has to rediscover at each release.
 
 ## Local invariants
 
@@ -66,6 +68,17 @@ each release.
 - **Heavy backends arrive optional and feature-gated (ADR-C14).** The
   `[features]` table is empty today and is the place a backend is switched on
   when the component that needs it lands. The default build stays lean.
+- **`compare` reads; it never executes (ADR-C15).** It loads two runs by
+  `run_id` from `ragondin-experiments`' `FileSystemRunStore` and hands them to
+  that crate's own `compare()`; the diff it prints is that function's result,
+  rendered. No metric is computed here and the engine is never touched.
+- **`compare --store` is a required flag, not a default path.** No default run
+  store location is settled anywhere in `docs/` yet — `bench` and `serve` do
+  not exist to need one either — so this crate does not invent one. This is
+  the kind of choice `AGENTS.md` § Rules of engagement leaves to the crate
+  ("how a knob is exposed"): recorded here rather than escalated, and open to
+  revisiting once a subcommand that writes to the store exists and a shared
+  default becomes worth settling.
 
 ## Dependency choices made here
 
