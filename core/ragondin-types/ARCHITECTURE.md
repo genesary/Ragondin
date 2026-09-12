@@ -36,7 +36,7 @@ on a stable boundary.
 
 ## Why it is a boundary
 
-The domain types are the **source of truth** for the whole system (the protobuf
-wire types in `ragondin-proto` are generated to mirror them). Stability here is what
+The domain types are the **source of truth** for the whole system (the `.proto`
+files in `ragondin-proto` are hand-maintained to mirror them, ADR-C24). Stability here is what
 lets a contributor implement a component against `ragondin-contracts` + `ragondin-types`
 alone, without compiling the engine.

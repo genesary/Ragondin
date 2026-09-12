@@ -59,7 +59,7 @@ index of citable decisions is worse than none — `just check` fails when it dri
 | [`ADR-C04`](ADR-C04-engine-as-embeddable-library-with-explicit-context.md) | Engine as an embeddable library with an explicit EngineContext | — | accepted |
 | [`ADR-C05`](ADR-C05-engine-depends-only-on-traits-components-are-leaves.md) | The engine depends only on traits; components are leaves | — | accepted |
 | [`ADR-C06`](ADR-C06-identical-api-plus-conformance-suite.md) | Built-ins and third parties share one API, backed by a conformance suite | — | accepted |
-| [`ADR-C07`](ADR-C07-domain-types-source-of-truth-protobuf-generated.md) | Domain types are the source of truth; protobuf is generated; round-trip tested | — | accepted |
+| [`ADR-C07`](ADR-C07-domain-types-source-of-truth-protobuf-generated.md) | Domain types are the source of truth; protobuf is generated; round-trip tested | — | superseded |
 | [`ADR-C08`](ADR-C08-async-trait-in-v0.md) | async_trait in v0 | — | accepted |
 | [`ADR-C09`](ADR-C09-traces-are-the-executors-return-value.md) | Execution traces are the executor's return value | — | accepted |
 | [`ADR-C10`](ADR-C10-tower-for-serving-envelope-only.md) | Tower for the serving envelope only | — | accepted |
@@ -76,6 +76,7 @@ index of citable decisions is worse than none — `just check` fails when it dri
 | [`ADR-C21`](ADR-C21-stable-api-boundaries-and-the-internal-engine.md) | Three core crates are stable API boundaries; the engine is deliberately internal | INV-1, INV-2, INV-3, INV-4, INV-7, INV-8, INV-9 | accepted |
 | [`ADR-C22`](ADR-C22-flat-parameter-grammar-extensible-param-enums.md) | The parameter grammar stays flat; the two parameter enums become extensible | INV-1, INV-8, INV-9 | accepted |
 | [`ADR-C23`](ADR-C23-logical-pipeline-validates-on-deserialization.md) | A LogicalPipeline validates on the way in | INV-1, INV-3, INV-8, INV-9 | accepted |
+| [`ADR-C24`](ADR-C24-proto-hand-maintained-rust-stubs-generated.md) | The .proto is hand-maintained to mirror the domain types; tonic-build generates the Rust stubs | INV-9 | accepted |
 
 <!-- END GENERATED ADR INDEX -->
 
