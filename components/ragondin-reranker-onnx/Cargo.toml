@@ -1,0 +1,39 @@
+[package]
+name = "ragondin-reranker-onnx"
+description = "In-process cross-encoder reranking over ONNX Runtime. No Python sidecar."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+# A component is a leaf of the dependency graph (INV-5): the contract it
+# implements and the value types it moves, and nothing else in the workspace.
+# Never `ragondin-engine`, never a sibling component.
+[dependencies]
+ragondin-contracts = { workspace = true }
+ragondin-types = { workspace = true }
+async-trait = { workspace = true } # dyn-compatible async traits (frozen: async_trait, not RPITIT)
+thiserror = { workspace = true }   # typed library errors (ModelError)
+ort = { workspace = true, optional = true }        # the heavy backend, confined here and feature-gated
+tokenizers = { workspace = true, optional = true } # the pair encoder that feeds it
+# The off-thread hop ADR-C25 requires of a `Local` component, by way of
+# `spawn_blocking`. A component-level dependency, behind this crate's own
+# feature, exactly where ADR-C25 puts it — `ragondin-contracts` names no
+# runtime and gains nothing (INV-4).
+tokio = { workspace = true, optional = true }
+
+[dev-dependencies]
+ragondin-conformance = { workspace = true }
+tokio = { workspace = true }
+
+# ADR-C14: every heavy backend sits behind a feature, and the default build
+# stays lean. `onnx` is NOT in `default`, so `cargo build --workspace` never
+# compiles ONNX Runtime — which is what "the default build is minimal and
+# compiles fast" means for a workspace member. Everything this crate offers
+# lives behind it; with the feature off the crate is an empty shell that still
+# compiles. `just test-features` is what runs the tests: it is whole-workspace
+# and names no crate, so this one is covered without adding a recipe of its own.
+[features]
+default = []
+onnx = ["dep:ort", "dep:tokenizers", "dep:tokio"]

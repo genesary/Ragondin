@@ -47,14 +47,34 @@ unmaintained = "all"
 # the lockfile installable; the tool's default is only a warning.
 yanked = "deny"
 
-# Empty, and worth keeping that way. This check found exactly one advisory on
-# its first run -- RUSTSEC-2026-0258, h2 queueing empty HTTP/2 DATA frames
-# without limit, reached through tonic -> hyper -> h2 -- and it was fixed by
-# updating h2 rather than allowed here. An allowance is a standing exception
-# that outlives whoever wrote it, so it should cost more than a lockfile bump
-# does, not less. Anything added here needs a date, the reason, and the issue
-# that removes it again.
-ignore = []
+# Kept as short as it can be. This check found exactly one advisory on its
+# first run -- RUSTSEC-2026-0258, h2 queueing empty HTTP/2 DATA frames without
+# limit, reached through tonic -> hyper -> h2 -- and it was fixed by updating h2
+# rather than allowed here. An allowance is a standing exception that outlives
+# whoever wrote it, so it should cost more than a lockfile bump does, not less.
+# Anything added here needs a date, the reason, and the issue that removes it
+# again.
+#
+# RUSTSEC-2024-0436 -- `paste 1.0.15`, unmaintained; its author archived the
+# repository. Added 2026-09-12 with `tokenizers`, which `ragondin-reranker-onnx`
+# needs to read a cross-encoder's own `tokenizer.json`. Three things make this
+# an allowance rather than a fix:
+#
+#  - It is **unmaintained, not vulnerable.** `paste` is a proc-macro that
+#    concatenates identifiers at compile time. It produces no code at run time
+#    and reaches no input; there is nothing here for an attacker to reach.
+#  - It is **not ours to drop.** `tokenizers` declares it unconditionally, so no
+#    feature of ours turns it off. The advisory's suggested replacement,
+#    `pastey`, is a decision for `tokenizers`, not for this workspace.
+#  - The alternative is **not using `tokenizers`**, which would mean
+#    reimplementing a model's own tokenizer -- a second, silently divergent
+#    definition of what the model was trained on. That trade is argued in
+#    `components/ragondin-reranker-onnx/ARCHITECTURE.md`.
+#
+# Removed by #195, which tracks exactly this exception: it goes when
+# `tokenizers` drops `paste`, or when this workspace stops depending on
+# `tokenizers`. The check reports the crate again the moment either happens.
+ignore = ["RUSTSEC-2024-0436"]
 
 # One thing deliberately NOT ignored, and one decision recorded rather than
 # deferred again. Both are easy to re-derive wrongly, which is why they are
@@ -126,6 +146,17 @@ ignore = []
 #                  Apache-2.0) AND Unicode-3.0" -- so this one is not optional
 #   BSD-3-Clause   matchit, likewise an AND: "MIT AND BSD-3-Clause"
 #
+# A fifth arrived with `ragondin-reranker-onnx`:
+#
+#   CDLA-Permissive-2.0
+#                  webpki-roots, the Mozilla CA root store `ureq` carries,
+#                  reached as a *build* dependency of `ort-sys`: the build
+#                  script downloads a prebuilt ONNX Runtime over HTTPS. It
+#                  licenses certificate *data*, not code, and it is permissive
+#                  with no reciprocal obligation -- the 2.0 revision dropped the
+#                  1.0 share-alike clause entirely. Nothing it covers is
+#                  redistributed by this workspace.
+#
 # The rest are on the list ahead of need, so that an ordinary permissive
 # dependency does not fail CI at the moment it is added. They are not there
 # because something uses them.
@@ -138,6 +169,7 @@ allow = [
     "MIT",
     "BSD-2-Clause",
     "BSD-3-Clause",
+    "CDLA-Permissive-2.0",
     "ISC",
     "Unicode-3.0",
     "Unicode-DFS-2016",
