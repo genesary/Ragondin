@@ -100,10 +100,10 @@ test above lives alongside it, because the binary is the composition root.
 tantivy), `ragondin-store-memory` (exact brute-force vector search),
 `ragondin-fusion-rrf` (Reciprocal Rank Fusion), `ragondin-retriever-dense`
 (a query embedded and searched through a `VectorStore`),
-`ragondin-reranker-onnx` (an in-process cross-encoder over ONNX Runtime, behind
-the `onnx` feature) and `ragondin-stub` (deterministic stubs, the fixture the
-end-to-end tests are wired with); the ONNX embedder, Qdrant and the rest are
-still M2 issues.
+`ragondin-embedder-onnx` (in-process embeddings over ONNX Runtime) and
+`ragondin-reranker-onnx` (an in-process cross-encoder over it), each behind its
+own `onnx` feature, and `ragondin-stub` (deterministic stubs, the fixture the
+end-to-end tests are wired with); Qdrant and the rest are still M2 issues.
 
 ### What using it will look like
 

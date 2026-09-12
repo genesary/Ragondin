@@ -56,9 +56,10 @@ yanked = "deny"
 # again.
 #
 # RUSTSEC-2024-0436 -- `paste 1.0.15`, unmaintained; its author archived the
-# repository. Added 2026-09-12 with `tokenizers`, which `ragondin-reranker-onnx`
-# needs to read a cross-encoder's own `tokenizer.json`. Three things make this
-# an allowance rather than a fix:
+# repository. Added 2026-09-12 with `tokenizers`, which `ragondin-embedder-onnx`
+# and `ragondin-reranker-onnx` need to read a model's own `tokenizer.json`, each
+# behind its own `onnx` feature. Three things make this an allowance rather than
+# a fix:
 #
 #  - It is **unmaintained, not vulnerable.** `paste` is a proc-macro that
 #    concatenates identifiers at compile time. It produces no code at run time
@@ -68,8 +69,8 @@ yanked = "deny"
 #    `pastey`, is a decision for `tokenizers`, not for this workspace.
 #  - The alternative is **not using `tokenizers`**, which would mean
 #    reimplementing a model's own tokenizer -- a second, silently divergent
-#    definition of what the model was trained on. That trade is argued in
-#    `components/ragondin-reranker-onnx/ARCHITECTURE.md`.
+#    definition of what the model was trained on. That trade is argued in each
+#    crate's ARCHITECTURE.md.
 #
 # Removed by #195, which tracks exactly this exception: it goes when
 # `tokenizers` drops `paste`, or when this workspace stops depending on
