@@ -116,6 +116,18 @@ to the role that is already defined as knowing both halves.
   `CorpusIndex` from the loaded benchmark, constructs every registered
   component from those chunks, and passes the same value to the harness. That
   sequence is the shape of the M2 composition root.
+- **The dense path needs work this decision does not do, and it is a leaf's.**
+  A `ComponentCtor` is synchronous — `Fn(&Params) -> Result<Box<T>, ConstructionError>`
+  — so a constructor can build a BM25 index from chunks (`Bm25Retriever::new`
+  already does) but cannot populate a vector store, which takes
+  `Embedder::embed` and `VectorStore::upsert`, both `async`. The composition
+  root's `main` is where the `await` can happen, so it embeds the corpus before
+  registering, and the store reaches its constructor already populated — by a
+  synchronous constructor over pre-embedded entries, or by a registered closure
+  capturing what was prepared. Which of the two is a choice inside the store
+  component and the binary, recorded where it lands; neither reaches a shared
+  surface, and neither reopens this decision. It is named here because it is
+  the first thing an implementer meets, not because the ADR settles it.
 - **`CorpusIndex::version`'s caveat survives this decision, narrowed.** It
   still addresses *a* chunk set rather than provably the one searched, because
   the guarantee is structural rather than enforced. What changes is that the
