@@ -11,11 +11,13 @@
 //!
 //! 1. **Plan once.** Physical planning constructs the components, so planning
 //!    per query would rebuild them per query — and a run in which two queries
-//!    could meet two different sets of components is not one run.
-//! 2. **Prepare the corpus** ([`crate::CorpusIndex`]) — ad hoc, not a pipeline.
-//! 3. **Execute every query**, keeping the trace the executor returns.
-//! 4. **Score the judged ones** and average, in benchmark order.
-//! 5. **Assemble the identity tuple** and name the run by its digest.
+//!    could meet two different sets of components is not one run. The corpus
+//!    ([`crate::CorpusIndex`]) arrives already prepared, on [`Evaluation`]:
+//!    the composition root built it and constructed those same components
+//!    from it (ADR-C26), so this module does not prepare one of its own.
+//! 2. **Execute every query**, keeping the trace the executor returns.
+//! 3. **Score the judged ones** and average, in benchmark order.
+//! 4. **Assemble the identity tuple** and name the run by its digest.
 
 use std::collections::BTreeMap;
 
@@ -44,6 +46,15 @@ pub struct Evaluation<'a> {
     pub config: &'a ConfigDocument,
     /// The benchmark to evaluate it over.
     pub benchmark: &'a Benchmark,
+    /// The corpus index the caller's components were constructed from.
+    ///
+    /// Supplied by the caller, never derived here (ADR-C26): the composition
+    /// root is the one place that holds both the engine and the concrete
+    /// components, so it is the one place that can build a `CorpusIndex` and
+    /// know its components agree with it. `evaluate` records this value's
+    /// [`CorpusIndex::version`] as `index_version` rather than computing one
+    /// of its own from `benchmark`.
+    pub index: &'a CorpusIndex,
     /// The rank cutoff `k` of the metrics — the `10` of nDCG@10.
     pub cutoff: usize,
     /// The model hashes of the run, by the role each model played.
@@ -75,7 +86,6 @@ pub async fn evaluate(
     // Once, before the loop: planning resolves every `impl:` name and
     // constructs the components a plan holds.
     let plan = plan_physical(evaluation.pipeline, ctx)?;
-    let index = CorpusIndex::build(evaluation.benchmark.corpus());
     let engine = Engine::new();
 
     let mut traces = BTreeMap::new();
@@ -111,7 +121,7 @@ pub async fn evaluate(
     let inputs = RunInputs {
         pipeline: evaluation.pipeline.content_hash(),
         dataset_version: dataset_version(evaluation.benchmark),
-        index_version: index.version().to_string(),
+        index_version: evaluation.index.version().to_string(),
         model_hashes: evaluation.model_hashes.clone(),
         // The workspace shares one version, so this crate's own is the version
         // of the engine it was compiled against.
