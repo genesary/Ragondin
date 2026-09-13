@@ -99,9 +99,9 @@ fn material() -> (PathBuf, PathBuf) {
     let read = |var: &str, holds: &str| {
         std::env::var_os(var).map(PathBuf::from).unwrap_or_else(|| {
             panic!(
-                "{var} is not set: it names the directory holding {holds}. \
-                 `bin/ragondin/ARCHITECTURE.md` § Calibration against a published \
-                 leaderboard says how that material is obtained."
+                "{var} is not set: it names the directory holding {holds}. How that \
+                 material is obtained is recorded in `bin/ragondin/ARCHITECTURE.md` \
+                 § Calibration against a published leaderboard."
             )
         })
     };
