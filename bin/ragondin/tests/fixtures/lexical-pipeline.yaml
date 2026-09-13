@@ -4,7 +4,8 @@
 #
 # It is a *wiring* fixture, like the vertical slice's. The numbers it produces
 # are real — BM25 over six documents — but six documents say nothing about
-# retrieval quality, and the milestone's quality claim is its own test.
+# retrieval quality, and the milestone's exit criterion is its own test,
+# `tests/exit_criterion.rs`, over a fixture built for it.
 pipeline:
   inputs: [question]
   nodes:

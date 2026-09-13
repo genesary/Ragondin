@@ -1,0 +1,12 @@
+# Ablation: the lexical leg alone. Loses `q-river`, where BM25's length
+# normalization prefers the short distractor, and `q-wren`, whose answer its
+# `top_k` cuts. `tests/exit_criterion.rs` runs it from `..`, like the two
+# configurations it is compared against.
+pipeline:
+  inputs: [question]
+  nodes:
+    - id: lexical
+      component: retriever
+      impl: bm25
+      inputs: [question]
+      params: { top_k: 3 }

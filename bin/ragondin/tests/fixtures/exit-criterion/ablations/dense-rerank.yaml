@@ -1,0 +1,22 @@
+# Ablation: the dense leg reranked, no lexical leg. Loses `q-greek`, whose
+# answer the dense leg never surfaces, so the reranker never sees it.
+# `tests/exit_criterion.rs` runs it from `..`, where the model paths resolve.
+pipeline:
+  inputs: [question]
+  nodes:
+    - id: vectors
+      component: retriever
+      impl: dense
+      inputs: [question]
+      params:
+        top_k: 3
+        model: models/embedder.onnx
+        tokenizer: models/tokenizer.json
+    - id: reranked
+      component: reranker
+      impl: cross_encoder
+      inputs: [question, vectors]
+      params:
+        top_k: 10
+        model: models/cross-encoder.onnx
+        tokenizer: models/tokenizer.json

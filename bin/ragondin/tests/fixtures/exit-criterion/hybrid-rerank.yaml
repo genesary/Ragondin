@@ -1,0 +1,38 @@
+# Hybrid retrieval with reranking: the configuration the M2 exit criterion says
+# must win.
+#
+# Two legs — BM25 and the same dense retriever `dense-only.yaml` runs alone —
+# fused by Reciprocal Rank Fusion, then reordered by the ONNX cross-encoder.
+# Every node is one of the real components the binary registers; the model
+# paths are relative to this directory for the reason `dense-only.yaml` gives.
+# Both legs keep `top_k` below the corpus size, and below what one query
+# matches lexically, so that each leg surfaces something the other cuts.
+pipeline:
+  inputs: [question]
+  nodes:
+    - id: lexical
+      component: retriever
+      impl: bm25
+      inputs: [question]
+      params: { top_k: 3 }
+    - id: vectors
+      component: retriever
+      impl: dense
+      inputs: [question]
+      params:
+        top_k: 3
+        model: models/embedder.onnx
+        tokenizer: models/tokenizer.json
+    - id: fused
+      component: fusion
+      impl: rrf
+      inputs: [lexical, vectors]
+      params: { k: 60 }
+    - id: reranked
+      component: reranker
+      impl: cross_encoder
+      inputs: [question, fused]
+      params:
+        top_k: 10
+        model: models/cross-encoder.onnx
+        tokenizer: models/tokenizer.json
