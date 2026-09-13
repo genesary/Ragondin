@@ -46,6 +46,12 @@ pub(crate) fn render(trace: &ExecutionTrace) -> TraceDocument {
 /// of the field does not have to know which side it is looking at; on an
 /// output it is the length of `ranked`, which is where the ranking a per-query
 /// fixture, a graded-relevance calibration or a replay view reads lives.
+///
+/// A score is rendered as the JSON number of its `f32`, widened to `f64` on
+/// the way — lossless, and the reason a stored score shows more digits than
+/// the component returned. A non-finite score would render as `null`: the
+/// ranking contract makes one unreachable from a conforming component, and
+/// this document is opaque to the store, so nothing here refuses it.
 fn summary(value: &ValueSummary) -> Value {
     match value {
         ValueSummary::Query { id } => json!({"query": {"id": id.as_str()}}),

@@ -540,7 +540,9 @@ mod tests {
 
     /// The list [`PermutedRetriever`] answers with: chunk id, document id,
     /// score. Scores descend, as the ranking contract requires, while the
-    /// chunk ids and the document ids are each in an order of their own.
+    /// chunk ids and the document ids are each in an order of their own. A
+    /// re-sort by score would leave this list as it is — by contract that
+    /// order is the returned order, so the two cannot be told apart here.
     const PERMUTATION: [(&str, &str, f32); 3] = [
         ("c3", "doc-b", 0.9),
         ("c1", "doc-c", 0.5),
