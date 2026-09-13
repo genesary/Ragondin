@@ -3,11 +3,12 @@
 One crate per component implementation. `ragondin-retriever-bm25` (in-process
 BM25 over tantivy), `ragondin-retriever-dense` (dense retrieval through a
 `VectorStore`), `ragondin-store-memory` (an exact brute-force vector store),
-`ragondin-fusion-rrf` (Reciprocal Rank Fusion) and `ragondin-reranker-onnx`
-(an in-process cross-encoder over ONNX Runtime) are here, alongside
+`ragondin-fusion-rrf` (Reciprocal Rank Fusion), `ragondin-embedder-onnx`
+(in-process embeddings over ONNX Runtime) and `ragondin-reranker-onnx` (an
+in-process cross-encoder over ONNX Runtime) are here, alongside
 `ragondin-stub` — deterministic stubs, the fixture the end-to-end tests are
-wired with rather than a production component. `ragondin-embedder-onnx`,
-`ragondin-store-qdrant` and the rest arrive in later issues.
+wired with rather than a production component. `ragondin-store-qdrant` and
+the rest arrive in later issues.
 
 ## What a component crate is
 
@@ -40,9 +41,10 @@ anything new:
   default build is minimal, and a component's `default` is where its author
   keeps or loses that — provided no workspace member depends on the component
   with the heavy feature turned on, which puts the backend in the build whatever
-  the component's own default says. `ragondin-retriever-bm25` and
-  `ragondin-reranker-onnx` both have `default = []`, so no default workspace
-  build compiles tantivy or ONNX Runtime.
+  the component's own default says. `ragondin-retriever-bm25`,
+  `ragondin-embedder-onnx` and `ragondin-reranker-onnx` all have
+  `default = []`, so no default workspace build compiles tantivy or ONNX
+  Runtime.
 - **A feature that gates nothing is on by default.** There is no compile cost to
   defer, so turning it off would cost a workspace build the component and save
   it nothing. `ragondin-fusion-rrf` has `default = ["rrf"]`,
@@ -54,7 +56,7 @@ anything new:
   Such a crate still names its feature after its implementation — the uniformity
   is in the **naming, not the invocation**.
 
-A third-party component crate follows the same rule as the six here.
+A third-party component crate follows the same rule as the seven here.
 
 The rule has one mechanical consequence worth knowing before you pick a default.
 `cargo test --workspace` builds with default features, so a crate behind an

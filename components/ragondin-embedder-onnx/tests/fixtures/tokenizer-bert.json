@@ -1,0 +1,109 @@
+{
+ "version": "1.0",
+ "truncation": null,
+ "padding": null,
+ "added_tokens": [
+  {
+   "id": 0,
+   "content": "[UNK]",
+   "single_word": false,
+   "lstrip": false,
+   "rstrip": false,
+   "normalized": false,
+   "special": true
+  },
+  {
+   "id": 1,
+   "content": "[PAD]",
+   "single_word": false,
+   "lstrip": false,
+   "rstrip": false,
+   "normalized": false,
+   "special": true
+  },
+  {
+   "id": 38,
+   "content": "[CLS]",
+   "single_word": false,
+   "lstrip": false,
+   "rstrip": false,
+   "normalized": false,
+   "special": true
+  },
+  {
+   "id": 39,
+   "content": "[SEP]",
+   "single_word": false,
+   "lstrip": false,
+   "rstrip": false,
+   "normalized": false,
+   "special": true
+  }
+ ],
+ "normalizer": {
+  "type": "Lowercase"
+ },
+ "pre_tokenizer": {
+  "type": "Whitespace"
+ },
+ "post_processor": {
+  "type": "BertProcessing",
+  "sep": [
+   "[SEP]",
+   39
+  ],
+  "cls": [
+   "[CLS]",
+   38
+  ]
+ },
+ "decoder": null,
+ "model": {
+  "type": "WordPiece",
+  "unk_token": "[UNK]",
+  "continuing_subword_prefix": "##",
+  "max_input_chars_per_word": 100,
+  "vocab": {
+   "[UNK]": 0,
+   "[PAD]": 1,
+   ":": 2,
+   "query": 3,
+   "passage": 4,
+   "a": 5,
+   "an": 6,
+   "the": 7,
+   "short": 8,
+   "long": 9,
+   "of": 10,
+   "rather": 11,
+   "more": 12,
+   "words": 13,
+   "than": 14,
+   "first": 15,
+   "second": 16,
+   "one": 17,
+   "another": 18,
+   "entirely": 19,
+   "text": 20,
+   "both": 21,
+   "roles": 22,
+   "are": 23,
+   "asked": 24,
+   "about": 25,
+   "cat": 26,
+   "sat": 27,
+   "on": 28,
+   "mat": 29,
+   "dog": 30,
+   "alpha": 31,
+   "beta": 32,
+   "gamma": 33,
+   "delta": 34,
+   "epsilon": 35,
+   "zeta": 36,
+   "eta": 37,
+   "[CLS]": 38,
+   "[SEP]": 39
+  }
+ }
+}
