@@ -435,10 +435,12 @@ impl Encoder {
             .map_err(EmbedderError::Tokenize)?;
 
         let rows = encodings.len();
-        // The batch is padded to its own longest member rather than to the
+        // The batch is squared off to its longest *encoding* rather than to the
         // configured maximum: a batch of short texts is then a small tensor.
-        // Which member is longest cannot change a vector, because pooling reads
-        // the mask.
+        // That longest encoding is the tokenizer's own padded width when the
+        // tokenizer pads for itself, and the longest real sequence when it does
+        // not. Either way the width cannot change a vector, because pooling
+        // reads the mask below rather than the width.
         let width = encodings
             .iter()
             .map(|encoding| encoding.get_ids().len())
@@ -450,10 +452,16 @@ impl Encoder {
         for (row, encoding) in encodings.iter().enumerate() {
             for (column, id) in encoding.get_ids().iter().enumerate() {
                 ids[row * width + column] = i64::from(*id);
-                // Padding keeps the id 0 it was initialized with, and its mask
-                // stays 0. The id itself is immaterial twice over: the model's
-                // own attention masks it, and the pooling below skips it.
-                mask[row * width + column] = 1;
+            }
+            // Read off the encoding, never inferred from how many ids it holds.
+            // A tokenizer configured to pad — which a real export's
+            // `tokenizer.json` is — returns its padded width, and a `[PAD]` is
+            // an id like any other; the mask it carries is the only thing that
+            // separates those positions from text. The columns *this* function
+            // adds to square the batch off keep the zero they were initialized
+            // with, so both kinds of padding are excluded by the same array.
+            for (column, attended) in encoding.get_attention_mask().iter().enumerate() {
+                mask[row * width + column] = i64::from(*attended);
             }
         }
 

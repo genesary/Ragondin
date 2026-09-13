@@ -169,6 +169,41 @@ async fn a_text_embeds_the_same_alone_as_in_a_padded_batch() {
     );
 }
 
+/// The same text under a tokenizer that pads for itself and one that does not.
+///
+/// The test above covers the padding *this crate* adds when it squares a batch
+/// off, which it can recognize because it wrote it. This one covers padding
+/// that arrives already applied: a real export's `tokenizer.json` carries a
+/// padding strategy — sentence-transformers ships one, and
+/// `optimum-cli export onnx` copies it across — so `Encoding::get_ids` hands
+/// back the padded width with `[PAD]` filling the tail, and a mask inferred
+/// from that width marks every pad as attended. The mean then averages padding
+/// in as though it were text. Nothing about the batch is malformed, no error
+/// is raised, and the only visible effect is that the vector is wrong.
+///
+/// The two other tokenizer fixtures pad not at all, so under them an inferred
+/// mask and the real one coincide; this fixture is what separates them.
+#[tokio::test]
+async fn a_tokenizer_that_pads_for_itself_embeds_as_one_that_does_not() {
+    let plain = OnnxEmbedder::new(config_over("tiny-embedder.onnx"))
+        .expect("the fixture model and tokenizer must load");
+    let padding = OnnxEmbedder::new(OnnxEmbedderConfig::new(
+        fixture("tiny-embedder.onnx"),
+        fixture("tokenizer-padding.json"),
+    ))
+    .expect("the fixture model and tokenizer must load");
+
+    // Short enough that the fixture's fixed width is mostly padding, which is
+    // what makes the difference large rather than marginal.
+    let texts = ["a cat", "the dog sat on the mat"];
+
+    assert_eq!(
+        embed(&plain, &texts, EmbedRole::Passage).await,
+        embed(&padding, &texts, EmbedRole::Passage).await,
+        "a pad the tokenizer wrote must be pooled out exactly as one this crate wrote"
+    );
+}
+
 /// What the role does, stated as an equality rather than as a difference.
 ///
 /// The conformance suite can only require that the two roles differ; it does
