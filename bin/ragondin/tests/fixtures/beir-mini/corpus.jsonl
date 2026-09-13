@@ -1,0 +1,6 @@
+{"_id": "d-cat", "title": "The cat", "text": "the cat sat on the mat"}
+{"_id": "d-dog", "title": "The dog", "text": "the dog sat on the mat"}
+{"_id": "d-alpha", "title": "Greek, first", "text": "alpha beta gamma"}
+{"_id": "d-delta", "title": "Greek, second", "text": "delta epsilon zeta eta"}
+{"_id": "d-long", "title": "A long one", "text": "a long text of more words than the first one"}
+{"_id": "d-short", "title": "A short one", "text": "a short text"}

@@ -1,0 +1,17 @@
+# A configuration v0 refuses: an extension node is how a judge, a generator or
+# a control-flow construct would arrive today (ADR-C3), and M2 evaluates
+# retrieval only.
+pipeline:
+  inputs: [question]
+  nodes:
+    - id: lexical
+      component: retriever
+      impl: bm25
+      inputs: [question]
+      params: { top_k: 10 }
+
+    - id: judged
+      component: extension
+      kind: grader
+      impl: llm_grader
+      inputs: [lexical]

@@ -1,0 +1,15 @@
+# What `bench` evaluates in the CLI test: one lexical leg over the miniature
+# BEIR fixture beside it. Nothing here reads a model, so this configuration
+# runs in a build carrying `bm25` and no other backend.
+#
+# It is a *wiring* fixture, like the vertical slice's. The numbers it produces
+# are real — BM25 over six documents — but six documents say nothing about
+# retrieval quality, and the milestone's quality claim is its own test.
+pipeline:
+  inputs: [question]
+  nodes:
+    - id: lexical
+      component: retriever
+      impl: bm25
+      inputs: [question]
+      params: { top_k: 10 }

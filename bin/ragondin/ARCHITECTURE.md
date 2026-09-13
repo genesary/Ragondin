@@ -19,16 +19,21 @@ charter.
 | `src/main.rs` | The `clap` definition of the four subcommands, and the dispatch |
 | `src/validate.rs` | Loads a configuration and prints its content hash |
 | `src/compare.rs` | Reads two stored runs and prints their metric-by-metric diff |
+| `src/bench.rs` | Evaluates a configuration against a benchmark and records the run |
+| `src/wiring.rs` | A node's `Params` on one side, a constructed component on the other |
 | `tests/cli.rs` | `validate` and the rest of the command line, exercised as a process |
 | `tests/compare.rs` | `compare`, exercised as a process, against runs written straight into a store |
+| `tests/bench.rs` | `bench`, exercised as a process, over a miniature BEIR fixture |
 | `tests/vertical_slice.rs` | The composition root assembled for real, end to end |
 
-**Four subcommands are declared; two are implemented.** `validate` loads a
+**Four subcommands are declared; three are implemented.** `validate` loads a
 configuration and prints its content hash. `compare` reads two runs already in
-a run store and prints their diff. `bench` and `serve` parse their arguments
-and refuse. Declaring all four is deliberate rather than premature: ADR-C15
-makes the set of subcommands the product's surface, and a surface discovered
-one subcommand at a time is one a user has to rediscover at each release.
+a run store and prints their diff. `bench` evaluates a configuration against a
+benchmark, records the run and prints what it scored. `serve` parses its
+arguments and refuses. Declaring all four is deliberate rather than premature:
+ADR-C15 makes the set of subcommands the product's surface, and a surface
+discovered one subcommand at a time is one a user has to rediscover at each
+release.
 
 ## Local invariants
 
@@ -65,20 +70,64 @@ one subcommand at a time is one a user has to rediscover at each release.
   reaches the user as an exit status and a message naming the file. There is no
   `unwrap` on the load path, and `tests/cli.rs` asserts the absence of a panic
   rather than trusting it.
-- **Heavy backends arrive optional and feature-gated (ADR-C14).** The
-  `[features]` table is empty today and is the place a backend is switched on
-  when the component that needs it lands. The default build stays lean.
+- **Heavy backends arrive optional and feature-gated (ADR-C14).** Two features
+  carry them: `bm25` (tantivy) and `onnx` (ONNX Runtime and `tokenizers`, and
+  the dense retriever and in-memory store that compose with it). The default
+  build enables neither and stays lean — and it still loads, validates, hashes
+  and plans a configuration naming a component it does not carry, refusing it
+  with the unknown `impl:` that planning reports against the node. `tests/bench.rs`
+  asserts that refusal in the lean build, so "lean" is a tested claim rather
+  than an intention. RRF is a normal dependency rather than a feature: it is
+  rank arithmetic with no backend behind it, so gating it would buy no compile
+  time.
 - **`compare` reads; it never executes (ADR-C15).** It loads two runs by
   `run_id` from `ragondin-experiments`' `FileSystemRunStore` and hands them to
   that crate's own `compare()`; the diff it prints is that function's result,
   rendered. No metric is computed here and the engine is never touched.
-- **`compare --store` is a required flag, not a default path.** No default run
-  store location is settled anywhere in `docs/` yet — `bench` and `serve` do
-  not exist to need one either — so this crate does not invent one. This is
-  the kind of choice `AGENTS.md` § Rules of engagement leaves to the crate
-  ("how a knob is exposed"): recorded here rather than escalated, and open to
-  revisiting once a subcommand that writes to the store exists and a shared
-  default becomes worth settling.
+- **`--store` and `--datasets` are required flags, not default paths.** No
+  default run store location is settled anywhere in `docs/` yet, and no dataset
+  location either, so this crate invents neither: `compare` names its store and
+  `bench` names both. This is the kind of choice `AGENTS.md` § Rules of
+  engagement leaves to the crate ("how a knob is exposed"): recorded here
+  rather than escalated, and open to revisiting once a shared default becomes
+  worth settling. `bench` now writes to a store, which is the condition that
+  makes settling one worth doing — it is still not this issue's to settle.
+- **`bench` registers; nothing else does.** It is the subcommand that needs an
+  `EngineContext`, so it is where the components this build carries are
+  registered — through the ordinary `register_*` call, one per component, with
+  no shortcut for a first-party one (INV-7). The engine depends on no component
+  crate and this one depends on all of them, which is §4.3's rule made
+  mechanical: break it and the arrow in `Cargo.toml` is what a reviewer sees.
+- **The corpus is prepared here, and the components are constructed from it**
+  (ADR-C26). `bench` builds one `CorpusIndex`, constructs every component from
+  its chunks, and hands the harness that same value. A second `CorpusIndex` in
+  this crate, or a component built from a separately loaded benchmark, would
+  make the `index_version` the run records name a set nothing searched.
+- **The asynchrony a constructor cannot do happens before construction.** A
+  `ComponentCtor` is synchronous; `Embedder::embed` and `VectorStore::upsert`
+  are not. So `bench` embeds the corpus in `main` and the store reaches its
+  constructor already holding the vectors, through
+  `MemoryVectorStore::seeded` — a synchronous door that shares `upsert`'s
+  validation, recorded in that crate's own `ARCHITECTURE.md`. The alternative
+  weighed was a shared store behind an `Arc`, wrapped here in a `VectorStore`
+  of this crate's own: that puts a contract implementation in the composition
+  root, and a second one beside it for the embedder. ADR-C26 names the
+  constraint and deliberately picks neither, so the choice is recorded rather
+  than silent.
+- **One model per role, and one embedder per pipeline, in v0.** A run records
+  its model hashes by the role each model played (§7.1), and the corpus is
+  embedded once — so two nodes on one role naming different models, or two
+  `dense` nodes configured differently, are refused with a message saying to
+  evaluate them as two pipelines. Embedding twice instead would leave one
+  `index_version` naming neither index.
+- **The metrics' cutoff is a constant, not a flag.** `10` is what every BEIR
+  leaderboard reports, and the milestone's claim is a comparison against
+  published numbers; a flag would only offer a way to produce an incomparable
+  one. It becomes a flag the day a benchmark reports at another cutoff.
+- **A model file is hashed here.** Only the composition root sees every node's
+  configuration at once, so it is what can record which model a run read. A
+  digest is over the file's bytes: not its path, which moves between machines,
+  and not its timestamp, which a checkout resets.
 
 ## Dependency choices made here
 
@@ -105,14 +154,29 @@ both are reachable only from it.
 Neither duplicates a role `[workspace.dependencies]` already fills: the table
 held no CLI parser and no CLI test harness before this crate needed one.
 
+Two more entries are *used* here without being added by it, so neither is a new
+utility role and neither escalates: **`sha2`**, the crate the canonical
+logical-form hash and run identity already use, because `bench` digests the
+model files a run read; and **`serde_yaml`** as a dev-dependency, because
+`src/wiring.rs` reads a node's parameters out of a validated pipeline and its
+tests need pipelines built the way the product builds them — the door
+`ragondin-config` puts in front of that lowering takes a path and a runtime,
+which a unit test wants neither of, so the tests parse the same YAML into the
+same `RawPipeline` and run the same `validate`.
+
 ## Not here
 
-- **No `EngineContext`, and no component registration.** The registration the
-  binary will do lives, today, in `tests/vertical_slice.rs` — the composition
-  root assembled for real, with stub components, through the ordinary public
-  `register_*` API. It arrives in `main` with the subcommand that first needs to
-  execute a pipeline.
+- **No component logic.** Every constructor in `src/wiring.rs` reads a node's
+  parameters and calls the component crate's own constructor; none of them
+  computes anything. The concrete test is the one the handlers are held to: a
+  body that a component crate could have contained is in the wrong place.
 - **No serving.** `ragondin-server` is a declared dependency and an unbuilt
   driver; `serve` refuses. The Tower envelope is out of M0–M2 entirely.
 - **No metric, no benchmark adapter, no run store.** Those live in `eval/` and
-  `runtime/`, and a subcommand reaches them rather than restating them.
+  `runtime/`, and a subcommand reaches them rather than restating them. `bench`
+  computes no metric of its own: it hands the harness a context and a prepared
+  index, and prints what comes back.
+- **No judge, no generation, no control flow.** M2 evaluates retrieval, and
+  today those would arrive as an `extension` node (ADR-C3), so `bench` refuses
+  one by name. It is the whole of that check, and it grows a case the day one
+  of them becomes a primitive.

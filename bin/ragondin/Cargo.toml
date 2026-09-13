@@ -26,27 +26,75 @@ ragondin-benchmarks = { workspace = true }
 # report ADR-C16 calls for, so the error type is a normal dependency here and
 # no longer test-only.
 ragondin-pipeline = { workspace = true }
+# `bench` is the composition root: it writes the constructors the registry
+# stores, so it names the traits they return and the values they move. A
+# component crate never sees `Params`, so this crate is where a node's
+# configuration becomes a typed constructor argument (§6.3).
+ragondin-contracts = { workspace = true }
+ragondin-types = { workspace = true }
 anyhow = { workspace = true }
 clap = { workspace = true }
 tokio = { workspace = true }
+# `bench` records the hash of every model a run read, by the role it played
+# (`docs/system-architecture.md` §7.1). The composition root is the only place
+# that sees every node's configuration at once, so it is where a model file is
+# read and digested. Same crate the canonical logical-form hash already uses.
+sha2 = { workspace = true }
 
-# Test-only, and deliberately so: the vertical slice in `tests/` is what
-# composes a pipeline out of concrete components today, while no subcommand
-# registers one. `ragondin-stub` is the fixture component crate the slice
-# wires; `ragondin-types` is what a query is written in — the composition root
-# is the crate that bridges the untyped node configuration to a typed
-# constructor, because a component crate is a leaf and never sees `Params`.
-# `assert_cmd` spawns the built binary for the CLI tests in `tests/cli.rs`:
-# `validate`'s contract is an exit status and what lands on stdout and stderr,
-# and only a test that runs the process observes those.
+# The components this build carries. Optional to a crate, not optional to the
+# product: a lean build still parses, validates and hashes a configuration
+# naming any of them, and refuses to *run* it with the unknown `impl:` that
+# planning reports.
+#
+# Not optional, and not an exception to ADR-C14: RRF is rank arithmetic with no
+# backend behind it, so gating it would buy no compile time and would leave the
+# lean build unable to fuse two legs it can otherwise retrieve.
+ragondin-fusion-rrf = { workspace = true }
+ragondin-retriever-bm25 = { workspace = true, optional = true }
+ragondin-retriever-dense = { workspace = true, optional = true }
+ragondin-store-memory = { workspace = true, optional = true }
+ragondin-embedder-onnx = { workspace = true, optional = true }
+ragondin-reranker-onnx = { workspace = true, optional = true }
+
+# Test-only, and deliberately so. `ragondin-stub` is the fixture component
+# crate the vertical slice in `tests/` wires: `bench` registers the real
+# components now, and the slice keeps registering stubs, because what it exists
+# to show is the wiring rather than a retrieval result — components that
+# fabricate their answers are what make the trace it asserts on predictable.
+# `assert_cmd` spawns the built binary for the CLI tests: a subcommand's
+# contract is an exit status and what lands on stdout and stderr, and only a
+# test that runs the process observes those.
 [dev-dependencies]
 ragondin-stub = { workspace = true }
-ragondin-types = { workspace = true }
 assert_cmd = { workspace = true }
+# `src/wiring.rs` reads a node's `params` out of a validated pipeline, so its
+# tests need pipelines built the way the product builds them. The door
+# `ragondin-config` puts in front of that lowering takes a path and a runtime;
+# these tests want neither, so they parse the same YAML into the same
+# `RawPipeline` and run the same `validate`. It is the format's own parser, not
+# a second spelling of the configuration.
+serde_yaml = { workspace = true }
 
-# The feature-gating pattern, established now with no backends to gate yet: heavy
-# backends (tantivy/bm25, candle, ort, qdrant, the remote client) will each be
-# added as an optional dependency behind a feature, and wired in here. The
-# default build stays lean and compiles fast.
+# Heavy backends are optional and off by default (ADR-C14): the default build
+# stays lean and compiles fast. Two features rather than one per component,
+# because a component is only useful with what it composes — a dense retriever
+# with no embedder and no store retrieves nothing, and the only embedder this
+# build has is the ONNX one.
 [features]
 default = []
+# In-process sparse retrieval. Pulls tantivy.
+bm25 = ["dep:ragondin-retriever-bm25", "ragondin-retriever-bm25/bm25"]
+# In-process embeddings and cross-encoder reranking, and the dense retriever and
+# in-memory store they compose into. One feature rather than four, because the
+# three that are lean on their own have nothing to do without the one that is
+# not: the only embedder this build carries is the ONNX one, a dense retriever
+# with no embedder retrieves nothing, and the store exists to be filled by one.
+# Pulls ONNX Runtime and `tokenizers`.
+onnx = [
+    "dep:ragondin-embedder-onnx",
+    "ragondin-embedder-onnx/onnx",
+    "dep:ragondin-reranker-onnx",
+    "ragondin-reranker-onnx/onnx",
+    "dep:ragondin-retriever-dense",
+    "dep:ragondin-store-memory",
+]
