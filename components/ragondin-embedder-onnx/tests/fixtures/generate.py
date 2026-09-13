@@ -309,16 +309,18 @@ def tiny_embedder_nan() -> onnx.ModelProto:
 BERT_VOCAB = VOCAB + ["[CLS]", "[SEP]"]
 
 
-def tokenizer(vocab: list, post_processor: dict | None) -> dict:
+def tokenizer(
+    vocab: list, post_processor: dict | None, padding: dict | None = None
+) -> dict:
     """A WordPiece tokenizer over `vocab`, in `tokenizer.json` form.
 
     Lowercasing and whitespace/punctuation splitting throughout; the
-    post-processor is what the two fixtures differ by.
+    post-processor and the padding are what the three fixtures differ by.
     """
     return {
         "version": "1.0",
         "truncation": None,
-        "padding": None,
+        "padding": padding,
         "added_tokens": [
             {
                 "id": index,
@@ -379,6 +381,37 @@ def bert_tokenizer() -> dict:
     )
 
 
+PADDED_WIDTH = 16
+
+
+def padding_tokenizer() -> dict:
+    """A tokenizer that pads **for itself**, as a real export's does.
+
+    `tokenizer.json` as sentence-transformers ships it — and as
+    `optimum-cli export onnx` copies it — carries a fixed padding strategy, so
+    `Encoding::get_ids` returns the padded width and the pad positions are part
+    of it. The component reads the mask the encoding carries rather than
+    inferring one from that width, and this fixture is what holds it to that:
+    the two other tokenizers here pad not at all, so under them an inferred
+    mask and the real one coincide and the distinction is invisible.
+
+    `[PAD]` is id 1 of `VOCAB`, which is inside the embedding table every graph
+    here is built from, so a padded row can be fed to one.
+    """
+    return tokenizer(
+        VOCAB,
+        None,
+        {
+            "strategy": {"Fixed": PADDED_WIDTH},
+            "direction": "Right",
+            "pad_to_multiple_of": None,
+            "pad_id": VOCAB.index("[PAD]"),
+            "pad_type_id": 0,
+            "pad_token": "[PAD]",
+        },
+    )
+
+
 def main() -> None:
     write(tiny_embedder(), "tiny-embedder.onnx")
     write(tiny_embedder_token_types(), "tiny-embedder-token-types.onnx")
@@ -392,6 +425,7 @@ def main() -> None:
     for name, content in [
         ("tokenizer.json", plain_tokenizer()),
         ("tokenizer-bert.json", bert_tokenizer()),
+        ("tokenizer-padding.json", padding_tokenizer()),
     ]:
         path = HERE / name
         path.write_text(json.dumps(content, indent=1, ensure_ascii=False) + "\n")

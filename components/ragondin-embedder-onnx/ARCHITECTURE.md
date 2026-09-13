@@ -13,8 +13,9 @@ platform is written in Rust at all
 ([`docs/system-architecture.md`](../../docs/system-architecture.md) §10).
 
 What it does to a text, in order: prepend the role's prefix, tokenize with
-truncation, pad the batch to its own longest member, run the model, **mean-pool
-the per-token output over the attention mask**, **L2-normalize**. That pipeline
+truncation, square the batch off to its longest encoding, run the model,
+**mean-pool the per-token output over the attention mask the tokenizer
+returned**, **L2-normalize**. That pipeline
 is the sentence-transformers convention rather than an invention here, and it is
 the whole of the crate.
 
@@ -81,8 +82,17 @@ the whole of the crate.
   performance knob, and the tests pin the consequence: the same texts embed
   identically at batch sizes 1, 2, 5 and 512, and one text embeds identically
   alone and beside a much longer one. The second is the mask check — a batch is
-  padded to its longest member, and pooling padding *in* would make a vector
-  depend on what happened to be embedded next to it.
+  squared off to its longest member, and pooling padding *in* would make a
+  vector depend on what happened to be embedded next to it.
+- **Padding is whatever the mask says it is, and the tokenizer may have written
+  some already.** A real export's `tokenizer.json` carries a padding strategy of
+  its own, so an encoding arrives at its padded width with `[PAD]` among its
+  ids; the mask the encoding carries is the only thing that tells those
+  positions from text, and a mask inferred from the id count would call every
+  one of them text. The third tokenizer fixture pads for itself precisely so
+  that a test separates the two — under the other two an inferred mask and the
+  real one coincide, which is how #237 stayed invisible until a real model's
+  tokenizer met this crate.
 - **A text that tokenizes to no tokens embeds to the zero vector.** The mean of
   nothing is `0/0`; unguarded, that is `NaN`, which the contract forbids and
   which `ragondin-types` says cannot be read back once serialized. Normalization
@@ -212,8 +222,8 @@ therefore a call-time failure rather than something the load could have caught.
 
 ## The fixtures
 
-`tests/fixtures/` holds eight tiny ONNX graphs and two tokenizers, together
-under 16 kB, and `tests/fixtures/generate.py` regenerates all of them from a
+`tests/fixtures/` holds eight tiny ONNX graphs and three tokenizers, together
+under 20 kB, and `tests/fixtures/generate.py` regenerates all of them from a
 fixed seed. No model is fetched at build time — the rule this crate was created
 under, in #20 — so they are committed; the generator is committed with them
 because eight opaque binaries are not a fixture, they are a liability.
@@ -227,12 +237,17 @@ it was fed, hidden states that are not float32, and hidden states that pool to
 something not finite. A real sentence transformer would test ONNX Runtime
 instead, slowly, and a failure would accuse the wrong code.
 
-The two tokenizers differ by one thing. `tokenizer.json` has **no
+The three tokenizers differ by one thing each. `tokenizer.json` has **no
 post-processor**, which is what makes the empty-sequence case reachable at all;
 `tokenizer-bert.json` has a BERT one, which is what gives the truncation floor
-a non-zero count to refuse against. The second is used at construction only —
+a non-zero count to refuse against; `tokenizer-padding.json` has a **fixed
+padding strategy**, which is what a real export's tokenizer has and what makes
+an encoding arrive already padded. The BERT one is used at construction only —
 its two special ids sit past the end of the 38-row embedding table every graph
-here is built from, so it is never fed to one.
+here is built from, so it is never fed to one. The padding one is fed to a
+graph, and must be: its `[PAD]` is id 1, inside that table, precisely so that
+a padded row can be run and the pooled result compared against the unpadded
+tokenizer's.
 
 ## What is deliberately not here
 
