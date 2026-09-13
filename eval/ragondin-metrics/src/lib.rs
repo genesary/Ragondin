@@ -43,8 +43,10 @@
 //!
 //! **Only the gain function actually matters.** The alternative exponential
 //! gain (`2^rel - 1`) gives different numbers on graded qrels and would make
-//! the M2 leaderboard-reproduction milestone (#33) incomparable to the
-//! literature — so if a published BEIR figure ever
+//! the leaderboard calibration incomparable to the literature — a published
+//! BEIR figure reproduced through this crate's nDCG, described in
+//! `docs/system-architecture.md` § 9.8 Calibrating the harness against a published leaderboard
+//! — so if a published BEIR figure ever
 //! fails to reproduce, that is the line to suspect. The *discount base* is not
 //! a real choice: nDCG is a ratio, and changing the base scales `DCG` and
 //! `IDCG` by the same constant, so it cancels. `log2` is written because it is

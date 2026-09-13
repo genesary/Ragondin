@@ -84,9 +84,12 @@ composition root that puts the two together (`docs/code-architecture.md` §8.1).
   documents, 3.5 k queries) into the hours — for a component that answers a
   selective query in microseconds.
 
-  It is nonetheless left as is here. #33 targets SciFact, ~5 k documents, where
-  the broad path costs single-digit milliseconds; the fix is a design change,
-  not a tweak. The route is the fast-field comparator: index the chunk id as a
+  It is nonetheless left as is here. The largest corpus anything in this
+  repository runs this component over is SciFact, ~5 k documents — the
+  leaderboard calibration of
+  `bin/ragondin/ARCHITECTURE.md` § Calibration against a published leaderboard
+  — where the broad path costs single-digit milliseconds; the fix is a design
+  change, not a tweak. The route is the fast-field comparator: index the chunk id as a
   fast field so tantivy breaks the tie inside the collector, which lets the limit
   drop back to `top_k` and materializes only the survivors. Both properties then
   hold at once. Until then, treat a corpus beyond the low hundreds of thousands
