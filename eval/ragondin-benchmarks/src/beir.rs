@@ -44,9 +44,13 @@
 //! This is not a matter of taste. BEIR's own evaluation code indexes the
 //! concatenation, and every published leaderboard figure is computed that way;
 //! indexing the text alone changes nDCG@10 on most BEIR datasets, which would
-//! make the M2 exit criterion (#33) irreproducible. `combined_text` therefore
-//! mirrors the reference's expression rather than paraphrasing it — see its
-//! documentation for the source and for what a paraphrase would cost.
+//! put the leaderboard calibration — a published SciFact figure reproduced
+//! through this adapter — out of reach, and with it the M2 exit criterion
+//! measured beside it on the same real corpus. The record is
+//! `bin/ragondin/ARCHITECTURE.md` § Calibration against a published leaderboard.
+//! `combined_text` therefore mirrors the reference's expression rather than
+//! paraphrasing it — see its documentation for the source and for what a
+//! paraphrase would cost.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
@@ -283,8 +287,11 @@ fn read_corpus(path: &Path) -> Result<Vec<Document>, BenchmarkError> {
 ///
 /// Written this way so that `Document.text` is byte-identical to the string
 /// BEIR indexes, rather than merely equivalent once a tokenizer has collapsed
-/// the whitespace. #33 compares against published figures; a claim that can be
-/// checked is worth more there than one that has to be argued.
+/// the whitespace. What compares against published figures is the leaderboard
+/// calibration —
+/// `bin/ragondin/ARCHITECTURE.md` § Calibration against a published leaderboard
+/// — and a claim that can be checked is worth more there than one that has to be
+/// argued.
 fn combined_text(title: &str, text: &str) -> String {
     format!("{title} {text}").trim().to_string()
 }

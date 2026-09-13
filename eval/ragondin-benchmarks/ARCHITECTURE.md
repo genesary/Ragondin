@@ -70,16 +70,20 @@ the *title* first — the obvious reading of the rule as prose — collapses an
 interior whitespace run that BEIR preserves, so `Document.text` would stop being
 byte-identical to the string BEIR indexes and become merely equivalent.
 `document_text_matches_the_string_beir_would_index` pins the padded case for
-that reason. #33 compares against published figures, and a property that can be
-checked is worth more there than one that has to be argued from tokenizer
-behaviour.
+that reason. What compares against published figures is the leaderboard
+calibration —
+`bin/ragondin/ARCHITECTURE.md` § Calibration against a published leaderboard
+— and a property that can be checked is worth more there than one that has to be
+argued from tokenizer behaviour.
 
 BEIR's own evaluation code indexes the concatenation, and **every published
 BEIR leaderboard number is computed that way**. Indexing the text alone changes
-nDCG@10 on most BEIR datasets, which would make the M2 exit criterion —
-"hybrid retrieval beats dense-only on BEIR, reproducibly" (#33) — irreproducible
-against the published figures. This is not a matter of taste, and it is the
-decision in this crate most likely to be undone by a well-meaning
+nDCG@10 on most BEIR datasets, which would put that calibration out of reach,
+and with it the M2 exit criterion — "hybrid retrieval beats dense-only on BEIR,
+reproducibly" — as `bin/ragondin/tests/calibration.rs` measures it on the same
+real corpus; `bin/ragondin/tests/exit_criterion.rs` asserts that criterion over
+a fixture. This is not a matter of taste,
+and it is the decision in this crate most likely to be undone by a well-meaning
 simplification. `combined_text` is the single place it is implemented, and
 `tests/beir_fixture.rs` pins it, including the empty-title and absent-title
 cases.
