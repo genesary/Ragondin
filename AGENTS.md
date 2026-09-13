@@ -36,8 +36,9 @@ just check-invariants
 # supposed to look at, fails this first.
 just test-check-invariants
 
-# Every ADR citation resolves to a real file, in tracked Markdown and Rust alike
-# — every line of a tracked .rs file, doc comment or not. It checks that a
+# Every ADR citation resolves to a real file, and every `<document> § <Heading>`
+# reference names a heading that exists — in tracked Markdown and Rust alike,
+# every line of a tracked .rs file, doc comment or not. It checks that a
 # reference resolves, never that it is apt. And no ADR cites code by line
 # number: an immutable document cannot follow the line it names.
 just check-doc-links

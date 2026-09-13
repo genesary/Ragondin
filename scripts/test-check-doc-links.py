@@ -449,6 +449,201 @@ def a_dangling_link_outside_the_adr_directory_is_not_this_checks_business() -> N
     ).exits(0).says("All documentation links resolve.")
 
 
+# --- Section references ----------------------------------------------------
+# `AGENTS.md § <Heading>` is the primary citation form for the binding rules
+# (#66), and until #190 nothing resolved one. The cases below pin the four
+# decisions the resolver makes, each of which a refactor could quietly undo:
+# what counts as naming a document, where the heading text ends, which
+# references are deliberately not this check's business, and that `.rs` is read
+# here for the same reason it is read for ADR citations.
+
+AGENTS = {
+    "AGENTS.md": (
+        "# AGENTS.md\n"
+        "\n"
+        "## Invariants\n"
+        "\n"
+        "### Documentation ships with the code it describes\n"
+        "\n"
+        "### Rules here, procedures in the skills\n"
+    )
+}
+
+
+@case
+def a_resolving_section_reference_passes() -> None:
+    """The baseline, in both the backticked and the bare form of the document."""
+    run_checker(
+        {
+            **ADR_FILES,
+            **AGENTS,
+            "README.md": (
+                "The rules are in `AGENTS.md` § Invariants, which holds them.\n"
+                "\n"
+                "AGENTS.md § Rules here, procedures in the skills says where.\n"
+            ),
+        }
+    ).exits(0).says("Section references OK").says("All documentation links resolve.")
+
+
+@case
+def a_section_reference_to_a_missing_heading_fails() -> None:
+    """The file, the line, the document and the heading are all in the message."""
+    run_checker(
+        {
+            **ADR_FILES,
+            **AGENTS,
+            "README.md": "# Notes\n\nThe list is in `AGENTS.md` § Frozen decisions.\n",
+        }
+    ).exits(1).says("BROKEN SECTION REFERENCE").says(
+        "README.md:3: AGENTS.md § Frozen decisions — no such heading"
+    ).says("Documentation link checks FAILED.")
+
+
+@case
+def a_heading_wrapped_across_lines_resolves() -> None:
+    """Prose wraps; a citation that wraps with it still names one heading.
+
+    The form this repository actually writes — `AGENTS.md` at the end of one
+    line and the heading continuing on the next. A line-at-a-time resolver sees
+    `§ Documentation ships with` and reports a heading that exists.
+    """
+    run_checker(
+        {
+            **ADR_FILES,
+            **AGENTS,
+            "README.md": (
+                "# Notes\n"
+                "\n"
+                "Prose the diff makes false is corrected in it — `AGENTS.md` §\n"
+                "Documentation ships with the code it describes says so.\n"
+            ),
+        }
+    ).exits(0).says("Section references OK")
+
+
+@case
+def emphasis_around_a_heading_does_not_break_resolution() -> None:
+    """`§ *Heading*` is the same citation as `§ Heading`."""
+    run_checker(
+        {
+            **ADR_FILES,
+            **AGENTS,
+            "README.md": "See `AGENTS.md` § *Rules here, procedures in the skills*.\n",
+        }
+    ).exits(0).says("Section references OK")
+
+
+@case
+def a_section_reference_in_a_rust_file_is_checked() -> None:
+    """`.rs` is read here for the reason it is read for ADR citations (#100).
+
+    The document named by an ADR id rather than by a path, which is the form a
+    doc comment uses: `ADR-C3 § Amendments`.
+    """
+    run_checker(
+        {
+            **ADR_FILES,
+            **AGENTS,
+            "src/lib.rs": "//! The hash covers the impl name (ADR-C3 § Amendments).\n",
+        }
+    ).exits(1).says("BROKEN SECTION REFERENCE").says(
+        "src/lib.rs:1: ADR-C3 § Amendments — no such heading"
+    )
+
+
+@case
+def a_heading_wrapped_inside_a_doc_comment_resolves() -> None:
+    """A wrapped doc comment resumes with `///`, which is not part of the heading.
+
+    The exact false positive this check produced on the repository the first
+    time it ran: `§ Frozen` at the end of one line and `/// decisions` at the
+    start of the next, reported as a heading named `Frozen /// decisions`. A
+    gate that fails a build over correct prose is worse than no gate.
+    """
+    run_checker(
+        {
+            **ADR_FILES,
+            **AGENTS,
+            "src/lib.rs": (
+                "//! Declared with `async_trait`, which is frozen (`AGENTS.md` § Rules\n"
+                "//! here, procedures in the skills): not RPITIT.\n"
+            ),
+        }
+    ).exits(0).says("Section references OK")
+
+
+@case
+def a_numbered_section_reference_is_ignored() -> None:
+    """`§4.3` names a section by number, which is a different citation form.
+
+    The architecture documents are numbered and cite themselves that way
+    throughout. Resolving those is not this rule, and treating one as a heading
+    would fail the build over prose that is correct.
+    """
+    run_checker(
+        {
+            **ADR_FILES,
+            **AGENTS,
+            "README.md": "The dependency graph is in `AGENTS.md` §4.3 and is drawn there.\n",
+        }
+    ).exits(0).says("Section references OK").is_silent_about("4.3")
+
+
+@case
+def a_section_reference_naming_no_document_is_ignored() -> None:
+    """A bare `§ Heading` is a reference inside its own document.
+
+    `AGENTS.md` cites its own sections that way. Resolving it would mean
+    guessing which document is meant, and the rule this check enforces is about
+    a reference that names one.
+    """
+    run_checker(
+        {
+            **ADR_FILES,
+            **AGENTS,
+            "README.md": "See § Frozen decisions, which this file does not have.\n",
+        }
+    ).exits(0).says("Section references OK").is_silent_about("Frozen decisions")
+
+
+@case
+def a_section_reference_naming_an_unknown_document_fails() -> None:
+    """A heading cannot resolve in a document that is not there.
+
+    Reported as its own reason, because the fix is a different one: the path is
+    wrong, not the heading.
+    """
+    run_checker(
+        {
+            **ADR_FILES,
+            **AGENTS,
+            "README.md": "The rules are in `CONVENTIONS.md` § Invariants.\n",
+        }
+    ).exits(1).says("BROKEN SECTION REFERENCE").says(
+        "CONVENTIONS.md § Invariants — no such document"
+    )
+
+
+@case
+def a_document_named_relative_to_the_citing_file_resolves() -> None:
+    """A crate's `ARCHITECTURE.md` is cited from inside the crate.
+
+    Resolved against the citing file's directory as well as the repository
+    root, because that is how the reference reads to someone holding the file.
+    """
+    run_checker(
+        {
+            **ADR_FILES,
+            **AGENTS,
+            "core/ragondin-types/ARCHITECTURE.md": "# Types\n\n## Local constraints\n",
+            "core/ragondin-types/src/lib.rs": (
+                "//! The constraints are in `ARCHITECTURE.md` § Local constraints.\n"
+            ),
+        }
+    ).exits(0).says("Section references OK")
+
+
 def main() -> int:
     if not os.path.exists(CHECKER):
         print(f"cannot find the checker at {CHECKER}", file=sys.stderr)
