@@ -11,7 +11,7 @@
 
 > **How to read this document.** It describes a *target code architecture*, and most of it is still a destination. Part of it now exists: `ragondin-types`, `ragondin-pipeline`, `ragondin-contracts` and `ragondin-engine` are implemented, and `components/` holds five crates — [`README.md` § Status](../README.md#status) lists what is on `main` and what is not. The Rust and protobuf excerpts here remain **contract and signature illustrations**, meant to make decisions concrete and reviewable — not production code, and not a transcription of the crates as they now stand. Where an excerpt and the code disagree, the code is the fact.
 >
-> For a review, the most important sections are **§5 (invariants)**, **§12 (anti-decisions)**, **§13 (decision record)** and **§15 (open questions)**.
+> For a review, the most important sections are **§5 (invariants)**, **§12 (anti-decisions)** and **§15 (open questions)**, together with the decision record itself — `docs/adr/`, which **§13** points at.
 
 ---
 
@@ -244,6 +244,8 @@ flowchart TB
 ## 5. Architecture invariants
 
 Following rust-analyzer's practice, each load-bearing crate documents its invariants in an `ARCHITECTURE.md`, and the status of every boundary is stated explicitly. These invariants are **normative**: violating one violates the architecture.
+
+**Where the grounds are.** `AGENTS.md` § Invariants is the citation home: it states each rule in its binding form, says how each is enforced, and ends every row with the ADR that argues it. The *Precedent* column below names the system an invariant was learned from, which is a different thing — this table cites no ADR and is not where to look for one.
 
 | # | Invariant | Crates | Precedent |
 |---|---|---|---|
@@ -617,24 +619,11 @@ Recording the temptations rejected is as important as recording the decisions ta
 
 ## 13. Decision record
 
-| # | Decision | Alternatives rejected | Rationale |
-|---|---|---|---|
-| **ADR-C1** | **Multi-crate workspace; load-bearing boundaries are crate boundaries** | Single crate with modules | Cargo forbids cycles: the boundary becomes compiled, not conventional |
-| **ADR-C2** | **Three-level representation** (Raw / Logical / Physical) | Two levels (raw / validated) | Separates validation from resolution; the executable level holds `Box<dyn>` and cannot be hashed |
-| **ADR-C3** | **Closed enum plus an open `Extension` variant** | Fully closed enum; trait objects everywhere | Extension without modifying the core |
-| **ADR-C4** | **Engine as an embeddable library with an explicit `EngineContext`** | Application-style engine with global state | Embeddability, testability, multiple contexts per process |
-| **ADR-C5** | **The engine depends only on traits; components are leaves** | Engine wiring in built-in implementations | Decoupling; external contribution (INV-5) |
-| **ADR-C6** | **Built-ins and third parties: identical API, plus a conformance suite** | A privileged API for built-ins | Avoids a two-tier system |
-| **ADR-C7** | *Superseded by ADR-C24* — Domain types are the source of truth; round-trip tested | Protobuf-first; trait generated from protobuf | Rust ergonomics plus a guarantee the two faces never diverge; its Decision said the `.proto` is generated, which `tonic-build` does not do |
-| **ADR-C24** | **The `.proto` is hand-maintained to mirror the domain types; `tonic-build` generates the Rust stubs; round-trip plus negative decode tests** | Generating the `.proto` from Rust; reading ADR-C7's "generated" loosely | The `.proto` is the contract a `Remote` author reads, and no maintained tool generates one from `prost` types |
-| **ADR-C8** | **`async_trait` in v0** | Native RPITIT; hand-boxed futures | Simplicity and `dyn`-compatibility; boxing cost negligible next to real work |
-| **ADR-C9** | **Traces are the executor's return value** | Traces via `tracing` / logs | Per-node UI replay is otherwise impossible |
-| **ADR-C10** | **Tower for the serving envelope only** | Components as `tower::Service` | Each abstraction at its own layer |
-| **ADR-C11** | **The wire format is separate and versioned** | `serde` derived on the internal representation | Stability of stored configurations |
-| **ADR-C12** | **The controller may live outside the workspace** (Go or Rust) | Controller mandatorily in-workspace | Clean network boundary; isolated decision |
-| **ADR-C13** | **Typed errors (`thiserror`) in libraries, `anyhow` in the binary** | `anyhow` everywhere | A library does not impose its error type |
-| **ADR-C14** | **Heavy backends feature-gated; lean default build** | Everything compiled by default | Standalone-first; compile times |
-| **ADR-C15** | **One binary with subcommands** | Separate data-plane and CLI binaries | Adoption: one binary, one file, it runs. Packaging only — the drivers stay distinct crates |
+The record is `docs/adr/`: one file per decision, each stating its context, the decision, the alternatives it rejected, its consequences and its status. [`docs/adr/README.md`](adr/README.md) holds the index — every ADR of both series with its title, the invariants its front-matter names, and whether it is accepted or superseded (ADR-C7, for one, reads `superseded` there).
+
+That index is **generated** from the ADRs' own front-matter by `scripts/gen-adr-index.py`, and `just check-adr-index` fails the build when it is out of date. This section points at it rather than holding a copy for exactly that reason.
+
+What stood here was a hand-written table of the code-architecture decisions, one row each with the alternatives it rejected and a one-line rationale. Twelve decisions landed after ADR-C15, and eleven of them never reached the table — one late insertion aside, it had stopped there. Nothing announced the gap, because no build can fail over a table inside a design document. That is the reason `docs/adr/README.md` gives for generating its own index rather than writing it: *a hand-maintained index of immutable documents rots silently, and a stale index of citable decisions is worse than none*. The material this table compressed into a cell — what each decision rejected, and why — is in every ADR under those headings, at the length it needs.
 
 ---
 
@@ -732,4 +721,4 @@ Every code decision serves a system decision. This table guarantees none is orph
 
 ---
 
-*End of document. Sections §5 (invariants), §12 (anti-decisions), §13 (decision record) and §15 (open questions) constitute the core of the review: they set out what is made inviolable, what is deliberately rejected, and what remains open. Section §16 guarantees that every code choice serves a system decision.*
+*End of document. Sections §5 (invariants), §12 (anti-decisions) and §15 (open questions), with the decision record §13 points at (`docs/adr/`), constitute the core of the review: they set out what is made inviolable, what is deliberately rejected, and what remains open. Section §16 guarantees that every code choice serves a system decision.*
