@@ -25,6 +25,7 @@ charter.
 | `tests/compare.rs` | `compare`, exercised as a process, against runs written straight into a store |
 | `tests/bench.rs` | `bench`, exercised as a process, over a miniature BEIR fixture |
 | `tests/vertical_slice.rs` | The composition root assembled for real, end to end |
+| `tests/exit_criterion.rs` | The M2 exit criterion: hybrid retrieval with reranking beats dense-only, reproducibly, and `compare` says so |
 
 **Four subcommands are declared; three are implemented.** `validate` loads a
 configuration and prints its content hash. `compare` reads two runs already in
@@ -134,6 +135,41 @@ release.
   leaderboard reports, and the milestone's claim is a comparison against
   published numbers; a flag would only offer a way to produce an incomparable
   one. It becomes a flag the day a benchmark reports at another cutoff.
+- **The M2 exit criterion is a test in this crate, over a fixture built for
+  it.** `tests/exit_criterion.rs` drives `bench` and `compare` as processes over
+  `tests/fixtures/exit-criterion/` and asserts the milestone's three claims:
+  hybrid retrieval with reranking beats dense-only on nDCG@10, the same
+  configuration evaluated twice is one run (P4), and `compare` reports the
+  win. It is the end-to-end row of `docs/code-architecture.md` § 11.4 Testing
+  strategy. Three choices are recorded here:
+  - *The dataset is curated, and the gap is by construction.* Eight documents,
+    four queries and two models, designed together so that dense retrieval
+    ranks a distractor above the judged answer on two queries while lexical
+    overlap — BM25 and the fixture cross-encoder — puts the answer first. A
+    real subset under real models would make the gap a fact about two trained
+    models, and neither is fast, offline or deterministic. What stays real is
+    the path and the numbers: the same engine, planner, executor and harness,
+    over the real components, scoring what each pipeline returned. So the test
+    proves that the composition comes out the right way, and it is not the
+    quality claim — the leaderboard calibration in the same table is, and it
+    is not a test.
+  - *The models are committed, with the source that reproduces them beside
+    them.* `models/generate.py` writes the embedder, the cross-encoder and the
+    tokenizer, byte for byte — the convention `ragondin-embedder-onnx`'s
+    fixtures set. `ragondin-reranker-onnx` chose the other one, emitting its
+    model inside the test binary, because its tests hold the model in-process;
+    here the model must be a file the spawned binary reads, and a committed
+    file with its generator is the form a reader can inspect without running
+    anything. The cross-encoder graph is that crate's lexical-overlap graph
+    written once more: a crate's test fixture is not a library another crate
+    can import, and making it one would be a shared surface this test does
+    not own.
+  - *The configurations are committed with relative model paths, and the test
+    runs the binary from the fixture directory.* A path in a configuration
+    resolves against the working directory; the alternative — writing the file
+    at test time around an absolute path, as `tests/bench.rs` does for its
+    hybrid case — leaves nothing reviewable in the tree. Relative paths also
+    keep the pipeline hash, and with it the run id, the same on every machine.
 - **A model file is hashed here.** Only the composition root sees every node's
   configuration at once, so it is what can record which model a run read. A
   digest is over the file's bytes: not its path, which moves between machines,

@@ -1,0 +1,106 @@
+{
+ "version": "1.0",
+ "truncation": null,
+ "padding": null,
+ "added_tokens": [
+  {
+   "id": 0,
+   "content": "[PAD]",
+   "single_word": false,
+   "lstrip": false,
+   "rstrip": false,
+   "normalized": false,
+   "special": true
+  },
+  {
+   "id": 1,
+   "content": "[UNK]",
+   "single_word": false,
+   "lstrip": false,
+   "rstrip": false,
+   "normalized": false,
+   "special": true
+  },
+  {
+   "id": 2,
+   "content": "[CLS]",
+   "single_word": false,
+   "lstrip": false,
+   "rstrip": false,
+   "normalized": false,
+   "special": true
+  },
+  {
+   "id": 3,
+   "content": "[SEP]",
+   "single_word": false,
+   "lstrip": false,
+   "rstrip": false,
+   "normalized": false,
+   "special": true
+  }
+ ],
+ "normalizer": {
+  "type": "BertNormalizer",
+  "clean_text": true,
+  "handle_chinese_chars": true,
+  "strip_accents": null,
+  "lowercase": true
+ },
+ "pre_tokenizer": {
+  "type": "BertPreTokenizer"
+ },
+ "post_processor": {
+  "type": "BertProcessing",
+  "sep": [
+   "[SEP]",
+   3
+  ],
+  "cls": [
+   "[CLS]",
+   2
+  ]
+ },
+ "decoder": null,
+ "model": {
+  "type": "WordPiece",
+  "unk_token": "[UNK]",
+  "continuing_subword_prefix": "##",
+  "max_input_chars_per_word": 100,
+  "vocab": {
+   "[PAD]": 0,
+   "[UNK]": 1,
+   "[CLS]": 2,
+   "[SEP]": 3,
+   "the": 4,
+   "cat": 5,
+   "sat": 6,
+   "on": 7,
+   "mat": 8,
+   "dog": 9,
+   "alpha": 10,
+   "beta": 11,
+   "gamma": 12,
+   "delta": 13,
+   "eta": 14,
+   "a": 15,
+   "short": 16,
+   "text": 17,
+   "long": 18,
+   "of": 19,
+   "more": 20,
+   "words": 21,
+   "than": 22,
+   "first": 23,
+   "one": 24,
+   "river": 25,
+   "banks": 26,
+   "build": 27,
+   "price": 28,
+   "tin": 29,
+   "fell": 30,
+   "last": 31,
+   "quarter": 32
+  }
+ }
+}

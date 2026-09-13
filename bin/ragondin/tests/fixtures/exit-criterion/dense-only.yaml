@@ -1,0 +1,18 @@
+# Dense-only retrieval: the baseline the M2 exit criterion is measured against.
+#
+# One node — the ONNX embedder over the in-memory vector store — so what this
+# pipeline scores is what the fixture embedder alone can find. The model paths
+# are relative to this directory: `tests/exit_criterion.rs` runs the binary
+# from here, which is what lets the configuration be committed instead of
+# written at test time around an absolute path.
+pipeline:
+  inputs: [question]
+  nodes:
+    - id: vectors
+      component: retriever
+      impl: dense
+      inputs: [question]
+      params:
+        top_k: 10
+        model: models/embedder.onnx
+        tokenizer: models/tokenizer.json
