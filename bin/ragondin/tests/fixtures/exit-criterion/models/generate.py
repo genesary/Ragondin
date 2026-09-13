@@ -35,34 +35,48 @@ together, and the gap is a property of the design:
   binary and this test needs a file.
 
 Each query has one judged answer, and each is built to defeat a different
-stage, so that removing any stage of the hybrid pipeline loses a query — which
-is what makes the test a tripwire rather than a formality:
+stage, so that removing either leg or the reranker loses a query — which is
+what makes the test a tripwire rather than a formality:
 
 - `q-cat` (`cat mat`): `dog` sits on the cat-and-mat direction, so dense
   retrieval ranks `d-dog` above `d-cat`. BM25 ranks them the other way, and
   RRF then scores the two **exactly equal** — one first place and one second
   place each — so the fused order is decided by chunk id alone. The
-  cross-encoder breaks the tie on content: `d-cat` overlaps the query at two
-  positions, `d-dog` at one.
+  cross-encoder breaks the tie on content: `d-cat` matches the query at two
+  positions and `d-dog` at one, plus the `[SEP]` every passage shares with
+  the query, so the logits are 3 and 2.
 - `q-greek` (`alpha gamma`): `delta` sits on the alpha-and-gamma direction at
   twice the weight, and three passages carry it, so `d-alpha` falls out of the
   dense leg's `top_k` of 3 altogether. BM25 is what surfaces it; RRF ties it
   with the leading distractor, as above; the cross-encoder puts it first.
 - `q-river` (`river banks`): `d-bank` says the query in three words, `d-river`
-  says it twice in ten. BM25's length normalization prefers the short one, and
-  so does the embedder, whose generic words dilute the long one — both legs
-  and the fused list put the distractor first. The cross-encoder counts
-  matching positions, and two mentions overlap more than one: it alone ranks
-  `d-river` first.
+  says it twice in ten. BM25's length normalization prefers the short one —
+  while the corpus stays short: the two cross at an average document length
+  of twelve tokens, and this corpus averages five — and so does the embedder,
+  whose generic words dilute the long one. Both legs and the fused list put
+  the distractor first. The cross-encoder counts matching positions, and two
+  mentions overlap more than one: it alone ranks `d-river` first.
+- `q-wren` (`wren nest`): three passages say the query in three words, each
+  padded with `moss`, which sits alone on an axis of its own at three times a
+  query word's weight; `d-wren` says it twice in eleven. BM25's `top_k` of 3
+  is filled by the three short ones and `d-wren` is cut. The embedder ranks
+  `d-wren` first — `moss` pulls the short passages away from the query — so
+  the dense leg is what surfaces it. The fused list still places it third,
+  behind the two passages both legs ranked, and the cross-encoder puts it
+  first on overlap.
 - `q-short` (`short text`): no distractor. Every stage gets it right, which
   keeps the baseline a working retriever rather than a broken one.
 
-So dense-only loses three of the four; BM25 alone loses `q-river`; the fused
-list without the reranker loses `q-river`, and holds `q-cat` and `q-greek`
-only by chunk-id order; dense with the reranker and no lexical leg never sees
-`d-alpha`. Only the whole pipeline scores full marks. The numbers the test
-compares are still real — nDCG over what each pipeline returned through the
-real engine — and that is the condition the issue sets for a curated fixture.
+So dense-only loses `q-cat`, `q-greek` and `q-river`; BM25 alone loses
+`q-river` and `q-wren`; BM25 reranked without the dense leg never sees
+`d-wren`; the dense leg reranked without BM25 never sees `d-alpha`; both legs
+fused without the reranker lose `q-river` and `q-wren`, and hold `q-cat` and
+`q-greek` only by chunk-id order. What RRF contributes is the union of the two
+legs — a candidate either leg surfaces reaches the reranker — and not its
+order, which the reranker replaces. Only the whole pipeline scores full marks.
+The numbers the test compares are still real — nDCG over what each pipeline
+returned through the real engine — and that is the condition the issue sets
+for a curated fixture.
 """
 
 import json
@@ -75,7 +89,7 @@ from onnx import TensorProto, helper, numpy_helper
 HERE = Path(__file__).parent
 
 OPSET = 13
-HIDDEN = 8
+HIDDEN = 11
 
 # `[PAD]` first: the embedder pads with id 0, and the pad row below is zero.
 SPECIALS = ["[PAD]", "[UNK]", "[CLS]", "[SEP]"]
@@ -85,11 +99,12 @@ WORDS = [
     "a", "short", "text", "long", "of", "more", "words", "than", "first", "one",
     "river", "banks", "build",
     "price", "tin", "fell", "last", "quarter",
+    "wren", "nest", "moss", "builds", "and", "keeps",
 ]
 VOCAB = SPECIALS + WORDS
 
 # The axes of the embedding space, by what sits on them.
-CAT, MAT, ALPHA, GAMMA, GENERIC, TEXT, RIVER, BANKS = range(HIDDEN)
+CAT, MAT, ALPHA, GAMMA, GENERIC, TEXT, RIVER, BANKS, WREN, NEST, MOSS = range(HIDDEN)
 
 
 def axis(*weights: tuple[int, float]) -> np.ndarray:
@@ -116,6 +131,11 @@ PLACED = {
     "text": axis((TEXT, 1.0)),
     "river": axis((RIVER, 1.0)),
     "banks": axis((BANKS, 1.0)),
+    "wren": axis((WREN, 1.0)),
+    "nest": axis((NEST, 1.0)),
+    # The padding of `q-wren`'s short distractors: heavy, and on no query's
+    # direction, so it pulls a passage away from every query.
+    "moss": axis((MOSS, 3.0)),
 }
 
 

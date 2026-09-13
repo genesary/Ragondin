@@ -18,10 +18,11 @@
 //! models were built together — `fixtures/exit-criterion/models/generate.py`
 //! walks through the design. Each query defeats a different stage: a
 //! distractor the embedder conflates with the answer, a short passage BM25's
-//! length normalization prefers, a fused list that ties and would otherwise be
-//! ordered by chunk id. Removing any one stage of the hybrid pipeline loses a
-//! query, and the last test here asserts exactly that, so the criterion cannot
-//! be met by a pipeline in which some stage does nothing. The *numbers* are
+//! length normalization prefers, an answer only one leg surfaces, a fused list
+//! that ties and would otherwise be ordered by chunk id. Removing either leg
+//! or the reranker loses a query, and one test here asserts exactly that, so
+//! the criterion cannot be met by a pipeline in which a stage does nothing.
+//! The *numbers* are
 //! real — nDCG over what each pipeline actually returned — and so is the path;
 //! only the models are toys. The issue that defines this test allows exactly
 //! that, on the condition that the pipeline path is the real one, and that
@@ -47,13 +48,17 @@ const DENSE_ONLY: &str = "dense-only.yaml";
 const HYBRID_RERANK: &str = "hybrid-rerank.yaml";
 /// The metric the criterion is stated in: nDCG at the cutoff `bench` reports.
 const NDCG: &str = "ndcg@10";
-/// The hybrid pipeline with one stage removed, each. Beside the two
-/// configurations rather than in them, because none is a configuration the
-/// criterion names: they exist to show that every stage it does name is needed.
-const ABLATIONS: [&str; 3] = [
+/// The hybrid pipeline with one stage removed, each: a leg, or the reranker.
+/// The fusion cannot be removed on its own — a reranker takes one list — and
+/// what it contributes, the union of what either leg surfaced, is what the
+/// two leg ablations show. Beside the two configurations rather than in them,
+/// because none is a configuration the criterion names: they exist to show
+/// that every stage it does name is needed.
+const ABLATIONS: [&str; 4] = [
     "ablations/bm25-only.yaml",
-    "ablations/fused-no-rerank.yaml",
+    "ablations/bm25-rerank.yaml",
     "ablations/dense-rerank.yaml",
+    "ablations/fused-no-rerank.yaml",
 ];
 
 /// The fixture directory: the two configurations, the dataset, the models.
@@ -179,7 +184,8 @@ fn every_stage_of_the_hybrid_pipeline_is_load_bearing() {
     // dense leg reranked alone already scored full marks would meet the
     // criterion while proving nothing about the stage it left out — an
     // identity reranker, or a fusion that dropped a leg, would not trip it.
-    // So each stage is removed in turn, and each removal has to cost a query.
+    // So each leg and the reranker are removed in turn, and each removal has
+    // to cost a query.
     let store = store("ablations");
     let hybrid = bench(HYBRID_RERANK, &store);
 

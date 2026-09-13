@@ -1,6 +1,8 @@
 # Ablation: both legs fused, no reranker. Loses `q-river`, where both legs
-# rank the short distractor first; holds `q-cat` and `q-greek` only because
-# RRF ties them and the tie-break is chunk-id order. Run from `..`.
+# rank the short distractor first, and `q-wren`, whose answer only the dense
+# leg ranks and so sits third in the fused list; holds `q-cat` and `q-greek`
+# only because RRF ties them and the tie-break is chunk-id order.
+# `tests/exit_criterion.rs` runs it from `..`, where the model paths resolve.
 pipeline:
   inputs: [question]
   nodes:
@@ -8,7 +10,7 @@ pipeline:
       component: retriever
       impl: bm25
       inputs: [question]
-      params: { top_k: 10 }
+      params: { top_k: 3 }
     - id: vectors
       component: retriever
       impl: dense

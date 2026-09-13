@@ -142,24 +142,27 @@ release.
   configuration evaluated twice is one run (P4), and `compare` reports the
   win. It is an instance of the end-to-end row of `docs/code-architecture.md`
   § 11.4 Testing strategy. Three choices are recorded here:
-  - *The dataset is curated, and the gap is by construction.* Eleven
-    documents, four queries and two models, designed together so that each
+  - *The dataset is curated, and the gap is by construction.* Fifteen
+    documents, five queries and two models, designed together so that each
     query defeats a different stage: the embedder ranks a distractor above the
     answer, or crowds the answer out of the dense leg's `top_k`; BM25's length
-    normalization prefers a short distractor; and the fused list ties on two
-    queries, where only the cross-encoder separates answer from distractor on
-    content rather than by chunk id. `models/generate.py` walks through each.
-    A fourth test removes one stage at a time and asserts each removal costs
-    a query, so the criterion cannot be met by a pipeline in which some stage
-    does nothing — the ablation configurations sit in `ablations/`, and the
-    fixture is what keeps them below the whole. A real subset under real
+    normalization prefers a short distractor, or cuts the answer from its
+    `top_k` so that only the dense leg surfaces it; and the fused list ties on
+    two queries, where only the cross-encoder separates answer from distractor
+    on content rather than by chunk id. `models/generate.py` walks through
+    each. A fourth test removes each leg and the reranker in turn — four
+    ablation configurations in `ablations/` — and asserts each removal costs
+    a query, so the criterion cannot be met by a pipeline in which a stage
+    does nothing; what the fusion contributes is the union of the legs, which
+    the two leg ablations show, and not an order the reranker keeps. A real
+    subset under real
     models would make the gap a fact about two trained models, and neither is
     fast, offline or deterministic. What stays real is the path and the
     numbers: the same engine, planner, executor and harness, over the real
     components, scoring what each pipeline returned. So the test proves that
-    the composition comes out the right way and that every stage of it
-    matters, and it is not the quality claim — the leaderboard calibration in
-    the same table is, and it is not a test.
+    the composition comes out the right way and that each leg and the
+    reranker matter, and it is not the quality claim — the leaderboard
+    calibration in the same table is, and it is not a test.
   - *The models are committed, with the source that reproduces them beside
     them.* `models/generate.py` writes the embedder, the cross-encoder and the
     tokenizer, byte for byte — the convention `ragondin-embedder-onnx`'s
