@@ -1,0 +1,7 @@
+query-id	corpus-id	score
+q-cat	d-cat	2
+q-cat	d-dog	1
+q-greek	d-alpha	2
+q-greek	d-delta	0
+q-short	d-short	2
+q-short	d-long	0

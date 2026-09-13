@@ -5,27 +5,32 @@
 //! file, it runs). One binary, four subcommands:
 //!
 //! ```text
-//! ragondin bench <config> --benchmark beir/scifact  # evaluate a pipeline
+//! ragondin bench <config> --benchmark beir/scifact --datasets <dir> --store <dir>
 //! ragondin compare <run-a> <run-b> --store <path>   # compare two runs
 //! ragondin serve <config>                           # serve the pipeline
 //! ragondin validate <config>                        # validate a configuration
 //! ```
 //!
-//! All four are **declared**; two are implemented. `validate` loads a
+//! All four are **declared**; three are implemented. `validate` loads a
 //! configuration through `ragondin-config`, stops at the `LogicalPipeline`, and
 //! prints its content hash — the config→logical→hash path end to end, with no
 //! registry and no execution. `compare` reads two runs already recorded in a
 //! run store (`ragondin-experiments`) and prints their metric-by-metric diff —
 //! no re-execution and no new metric, a packaging-only handler over that
-//! crate's comparison (ADR-C15). `bench` and `serve` parse their arguments and
-//! then report that this build does not implement them.
+//! crate's comparison (ADR-C15). `bench` evaluates a configuration against a
+//! benchmark and records the run. `serve` parses its arguments and then
+//! reports that this build does not implement it.
 //!
-//! Component wiring is therefore still absent from `main`. There is more here
-//! than `main`, though: `tests/vertical_slice.rs` assembles the composition root
-//! for real — a configuration file read from disk, stub components registered on
-//! an `EngineContext` through the ordinary API, a plan, and the trace the
-//! executor returns. It is where the wiring this binary will do is exercised
-//! first.
+//! **`bench` is where the composition root does its job** (§4.3): it is the one
+//! subcommand that registers concrete components on an `EngineContext`, which
+//! is why this crate — and no crate under it — depends on them (INV-5). The
+//! registration itself lives in [`wiring`], the corpus preparation and the
+//! order of the steps in [`mod@bench`].
+//!
+//! `tests/vertical_slice.rs` assembles the same root over `ragondin-stub`
+//! instead: components that fabricate their answers, so that what the test
+//! asserts on is the wiring — a plan, and the trace the executor returns —
+//! rather than a retrieval result.
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -33,8 +38,10 @@ use std::process::ExitCode;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
+mod bench;
 mod compare;
 mod validate;
+mod wiring;
 
 /// The command line, as `clap` parses it.
 #[derive(Debug, Parser)]
@@ -61,12 +68,27 @@ struct Cli {
 #[derive(Debug, Subcommand)]
 enum Command {
     /// Evaluate a pipeline against a benchmark.
+    #[command(long_about = "Evaluate a pipeline against a benchmark.\n\n\
+        The configuration is loaded, the dataset is read from disk, the corpus \
+        is prepared once, and the components this build carries are \
+        constructed from it. Every query of the benchmark is executed and the \
+        judged ones are scored; the run is written to the store and its \
+        identity and metrics are printed.\n\n\
+        v0 evaluates retrieval only: a configuration holding an extension node \
+        is refused. Neither `--datasets` nor `--store` has a default, because \
+        no location for either is settled yet.")]
     Bench {
         /// The pipeline configuration to evaluate.
         config: PathBuf,
         /// The benchmark to evaluate it against, e.g. `beir/scifact`.
         #[arg(long)]
         benchmark: String,
+        /// Root directory the named dataset sits under.
+        #[arg(long)]
+        datasets: PathBuf,
+        /// Root directory of the run store the run is written to.
+        #[arg(long)]
+        store: PathBuf,
     },
     /// Compare two runs.
     #[command(long_about = "Compare two runs already recorded in a run store.\n\n\
@@ -118,7 +140,20 @@ async fn dispatch(cli: Cli) -> Result<()> {
             run_b,
             store,
         } => compare::run(&store, &run_a, &run_b),
-        Command::Bench { .. } => anyhow::bail!("`bench` is not implemented in this build"),
+        Command::Bench {
+            config,
+            benchmark,
+            datasets,
+            store,
+        } => {
+            bench::run(&bench::Request {
+                config: &config,
+                benchmark: &benchmark,
+                datasets: &datasets,
+                store: &store,
+            })
+            .await
+        }
         Command::Serve { .. } => anyhow::bail!("serving is not available in v0"),
     }
 }

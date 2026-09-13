@@ -163,10 +163,10 @@ workspace/
 A single binary, `ragondin`, is the composition root and the entire user-facing surface:
 
 ```
-ragondin bench <config> --benchmark beir/scifact  # evaluate a pipeline against a benchmark
-ragondin compare <run-a> <run-b> --store <path>   # compare two runs
-ragondin serve <config>                           # serve the pipeline
-ragondin validate <config>                        # validate a configuration
+ragondin bench <config> --benchmark beir/scifact --datasets <dir> --store <dir>  # evaluate a pipeline against a benchmark
+ragondin compare <run-a> <run-b> --store <dir>                                   # compare two runs
+ragondin serve <config>                                                          # serve the pipeline
+ragondin validate <config>                                                       # validate a configuration
 ```
 
 **Rationale.** Separate binaries for the data plane and the command-line workflow would force a user to understand the internal architecture before running anything. One subcommanded binary makes the standalone-first promise (P2) real: **one binary, one configuration file, it runs.**

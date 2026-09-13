@@ -30,10 +30,10 @@ today pulls in no search engine, no inference runtime and no store client.
 One binary, four subcommands — the whole user-facing surface:
 
 ```text
-ragondin bench <config> --benchmark beir/scifact  # evaluate a pipeline against a benchmark
-ragondin compare <run-a> <run-b>                  # compare two runs
-ragondin serve <config>                           # serve the pipeline
-ragondin validate <config>                        # validate a configuration
+ragondin bench <config> --benchmark beir/scifact --datasets <dir> --store <dir>  # evaluate a pipeline against a benchmark
+ragondin compare <run-a> <run-b> --store <dir>                                   # compare two runs
+ragondin serve <config>                                                          # serve the pipeline
+ragondin validate <config>                                                       # validate a configuration
 ```
 
 **None of the four is implemented yet.** That is the planned surface, not a

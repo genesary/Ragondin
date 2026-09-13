@@ -52,7 +52,7 @@ for that, and the one that proves the trait against a real service.
   belongs: an empty embedding is representable, and "a dimensionality
   disagreement is caught where it is meaningful — by the vector store being
   searched." **That width is never zero**: an embedding with no components is
-  refused on `upsert`, because a width-zero opening batch would otherwise fix
+  refused at either door, because a width-zero opening batch would otherwise fix
   the store at a width no later vector and no query can match — every search
   over it an `InvalidRequest`, with no way left to correct it.
 - **A vector with no direction is answered differently on the two sides,
@@ -82,6 +82,20 @@ for that, and the one that proves the trait against a real service.
   batch rather than a torn value, and `into_inner` serves it instead of
   poisoning every later call. No lock is held across an `await`: every critical
   section is plain arithmetic.
+- **Two doors, one ingestion path.** A store can be filled at construction
+  (`MemoryVectorStore::seeded`) or afterwards (`VectorStore::upsert`), and both
+  call the same private `insert`: a batch one refuses is exactly a batch the
+  other refuses, with the same message. The synchronous door exists because a
+  component is built by a `ComponentCtor`, which cannot await — so a store
+  reachable only through the `async` `upsert` could not be filled inside one,
+  and corpus ingestion happens before construction
+  ([ADR-C26](../../docs/adr/ADR-C26-corpus-ingestion-in-the-composition-root.md)).
+  The caller embeds the corpus and hands it over; this crate still computes no
+  vector. What was weighed against it — the binary wrapping a shared store in a
+  `VectorStore` of its own — would have put a contract implementation in the
+  composition root, and a second one beside it for the embedder; ADR-C26 names
+  the constraint and deliberately picks neither, so this is this crate's own
+  choice and it is recorded here.
 - **`upsert` is linear in the corpus, per entry.** It finds an existing chunk id
   by scanning what is held, so a batch of *m* entries into a store of *n* costs
   *O(mn)* — the same brute-force trade the search side makes, and affordable for

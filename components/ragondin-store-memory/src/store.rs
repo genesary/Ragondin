@@ -33,6 +33,98 @@ impl MemoryVectorStore {
         Self::default()
     }
 
+    /// A store that already holds `entries`, built without awaiting anything.
+    ///
+    /// The door a **synchronous constructor** needs. A component is built by a
+    /// `ComponentCtor`, which cannot await, so a store reachable only through
+    /// the `async` [`VectorStore::upsert`] cannot be filled inside one — and
+    /// corpus ingestion is the composition root's job, done before the
+    /// components are constructed (ADR-C26). The caller embeds the corpus, and
+    /// the store arrives at its constructor already holding it.
+    ///
+    /// It is **the same ingestion path** as [`VectorStore::upsert`] and not a
+    /// second, weaker one: both call the same private insertion, so a batch
+    /// this refuses is exactly a batch `upsert` refuses, with the same message.
+    ///
+    /// # Errors
+    ///
+    /// [`ComponentError::InvalidRequest`] for the batches `upsert` refuses: a
+    /// vector with no components, or a batch whose widths disagree.
+    pub fn seeded(entries: Vec<EmbeddedChunk>) -> Result<Self, ComponentError> {
+        let store = Self::new();
+        store.insert(entries)?;
+        Ok(store)
+    }
+
+    /// Inserts or replaces `entries`, keyed by chunk id.
+    ///
+    /// The whole of what this store does with a batch, reached by both doors —
+    /// [`seeded`](Self::seeded) at construction and [`VectorStore::upsert`]
+    /// afterwards. It takes `&self` for the reason the field documents, and it
+    /// is synchronous because none of it ever needed to await: every critical
+    /// section is plain arithmetic over what the caller already prepared.
+    ///
+    /// An **empty batch is a no-op that succeeds**, which is the behaviour
+    /// [`VectorStore::upsert`] documents and the one the code below is written
+    /// around.
+    fn insert(&self, entries: Vec<EmbeddedChunk>) -> Result<(), ComponentError> {
+        // Checked before the held width, because a width-zero opening batch is
+        // otherwise accepted and fixes the store at a width no query and no
+        // later vector can match: every search over it is then an
+        // `InvalidRequest` and the store can never be corrected.
+        if let Some(odd) = entries.iter().find(|entry| entry.embedding.dim() == 0) {
+            return Err(ComponentError::InvalidRequest(format!(
+                "`{}` has no components, and a store of vectors of width zero can answer no search",
+                odd.chunk.id.as_str()
+            )));
+        }
+
+        let mut held = self
+            .entries
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+        // Read once, before the branch. Indexing `entries[0]` inside the
+        // predicate below was safe only because `find` never calls it on an
+        // empty iterator -- and an empty batch is a supported input, a no-op
+        // by the rule stated just above. A refactor that resolved the reference width
+        // eagerly would have panicked on `upsert(vec![])`, so the safety is
+        // taken out of the reader's hands rather than left to that detail.
+        let opening = entries.first().map(|entry| entry.embedding.dim());
+
+        if let Some(width) = held.first().map(|entry| entry.embedding.dim()) {
+            if let Some(odd) = entries.iter().find(|entry| entry.embedding.dim() != width) {
+                return Err(ComponentError::InvalidRequest(format!(
+                    "`{}` has {} components, but this store holds vectors of {width}",
+                    odd.chunk.id.as_str(),
+                    odd.embedding.dim()
+                )));
+            }
+        } else if let Some(width) = opening {
+            // The store is empty, so the batch itself fixes the width -- and it
+            // can only do that if it agrees with itself.
+            if let Some(odd) = entries.iter().find(|entry| entry.embedding.dim() != width) {
+                return Err(ComponentError::InvalidRequest(format!(
+                    "`{}` has {} components, but this batch opens the store at {width}",
+                    odd.chunk.id.as_str(),
+                    odd.embedding.dim()
+                )));
+            }
+        }
+
+        for entry in entries {
+            match held
+                .iter_mut()
+                .find(|existing| existing.chunk.id == entry.chunk.id)
+            {
+                Some(existing) => *existing = entry,
+                None => held.push(entry),
+            }
+        }
+
+        Ok(())
+    }
+
     /// How many entries the store holds.
     pub fn len(&self) -> usize {
         self.read().len()
@@ -99,61 +191,7 @@ impl VectorStore for MemoryVectorStore {
     /// choice about this store and not an answer to #90, which asks what an
     /// `Embedder` may legitimately return.
     async fn upsert(&self, entries: Vec<EmbeddedChunk>) -> Result<(), ComponentError> {
-        // Checked before the held width, because a width-zero opening batch is
-        // otherwise accepted and fixes the store at a width no query and no
-        // later vector can match: every search over it is then an
-        // `InvalidRequest` and the store can never be corrected.
-        if let Some(odd) = entries.iter().find(|entry| entry.embedding.dim() == 0) {
-            return Err(ComponentError::InvalidRequest(format!(
-                "`{}` has no components, and a store of vectors of width zero can answer no search",
-                odd.chunk.id.as_str()
-            )));
-        }
-
-        let mut held = self
-            .entries
-            .write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-
-        // Read once, before the branch. Indexing `entries[0]` inside the
-        // predicate below was safe only because `find` never calls it on an
-        // empty iterator -- and an empty batch is a supported input, documented
-        // as a no-op just above. A refactor that resolved the reference width
-        // eagerly would have panicked on `upsert(vec![])`, so the safety is
-        // taken out of the reader's hands rather than left to that detail.
-        let opening = entries.first().map(|entry| entry.embedding.dim());
-
-        if let Some(width) = held.first().map(|entry| entry.embedding.dim()) {
-            if let Some(odd) = entries.iter().find(|entry| entry.embedding.dim() != width) {
-                return Err(ComponentError::InvalidRequest(format!(
-                    "`{}` has {} components, but this store holds vectors of {width}",
-                    odd.chunk.id.as_str(),
-                    odd.embedding.dim()
-                )));
-            }
-        } else if let Some(width) = opening {
-            // The store is empty, so the batch itself fixes the width -- and it
-            // can only do that if it agrees with itself.
-            if let Some(odd) = entries.iter().find(|entry| entry.embedding.dim() != width) {
-                return Err(ComponentError::InvalidRequest(format!(
-                    "`{}` has {} components, but this batch opens the store at {width}",
-                    odd.chunk.id.as_str(),
-                    odd.embedding.dim()
-                )));
-            }
-        }
-
-        for entry in entries {
-            match held
-                .iter_mut()
-                .find(|existing| existing.chunk.id == entry.chunk.id)
-            {
-                Some(existing) => *existing = entry,
-                None => held.push(entry),
-            }
-        }
-
-        Ok(())
+        self.insert(entries)
     }
 
     /// Returns the `top_k` nearest chunks by cosine similarity, sorted by
@@ -701,5 +739,73 @@ mod tests {
         }
 
         assert_eq!(store.len(), WRITERS * PER_WRITER);
+    }
+
+    #[tokio::test]
+    async fn a_seeded_store_answers_from_what_it_was_built_with() {
+        // The door a synchronous constructor needs: a `ComponentCtor` cannot
+        // await, so a store that can only be filled by `upsert` cannot be
+        // built inside one (ADR-C26).
+        let store = MemoryVectorStore::seeded(vec![
+            entry("far", vec![0.0, 1.0]),
+            entry("near", vec![1.0, 0.1]),
+        ])
+        .expect("well-formed entries");
+
+        let hits = store
+            .search(&Embedding::new(vec![1.0, 0.0]), &SearchParams::new(2))
+            .await
+            .expect("a well-formed search succeeds");
+
+        assert_eq!(store.len(), 2);
+        assert_eq!(ids(&hits), ["near", "far"]);
+    }
+
+    #[tokio::test]
+    async fn seeding_and_upserting_leave_the_same_store() {
+        // One ingestion path, two doors: the guarantee that makes `seeded`
+        // safe to prefer is that it is not a second, weaker way in.
+        let entries = vec![entry("a", vec![1.0, 0.0]), entry("b", vec![0.0, 1.0])];
+        let upserted = store_of(entries.clone()).await;
+        let seeded = MemoryVectorStore::seeded(entries).expect("well-formed entries");
+
+        let query = Embedding::new(vec![1.0, 1.0]);
+        let params = SearchParams::new(2);
+        assert_eq!(
+            seeded.search(&query, &params).await.expect("a search"),
+            upserted.search(&query, &params).await.expect("a search")
+        );
+    }
+
+    #[test]
+    fn seeding_refuses_a_vector_with_no_components() {
+        let error = MemoryVectorStore::seeded(vec![entry("empty", vec![])])
+            .expect_err("a store of width zero can answer no search");
+
+        assert!(
+            matches!(error, ComponentError::InvalidRequest(ref message) if message.contains("empty")),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn seeding_refuses_a_batch_that_disagrees_with_itself() {
+        let error = MemoryVectorStore::seeded(vec![
+            entry("two", vec![1.0, 0.0]),
+            entry("three", vec![1.0, 0.0, 0.0]),
+        ])
+        .expect_err("one batch opens the store at one width");
+
+        assert!(
+            matches!(error, ComponentError::InvalidRequest(ref message) if message.contains("three")),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn seeding_with_nothing_is_an_empty_store() {
+        let store = MemoryVectorStore::seeded(vec![]).expect("an empty batch is a no-op");
+
+        assert!(store.is_empty());
     }
 }
