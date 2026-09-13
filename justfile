@@ -132,5 +132,17 @@ check-deny:
 map *ARGS:
     python3 scripts/gen-map.py {{ARGS}}
 
+# The harness calibrated against a published leaderboard figure (ADR-10,
+# system-architecture § 9.8): `ragondin bench` over BEIR SciFact with a
+# reference sentence encoder, within half a point of the published nDCG@10, and
+# the M2 exit criterion — hybrid+rerank beats dense-only — on the same corpus.
+# Needs the dataset and two exported models on disk, named by
+# RAGONDIN_CALIBRATION_DATASETS and RAGONDIN_CALIBRATION_MODELS; the record in
+# bin/ragondin/ARCHITECTURE.md says how they are obtained. Half an hour of CPU, and
+# material the tree never fetches (ADR-C27), so it is ignored by default and
+# deliberately not part of `check`.
+calibrate:
+    cargo test -p ragondin --features bm25,onnx --test calibration -- --ignored --nocapture
+
 # Everything CI runs, in one command. Run this before declaring work done.
 check: fmt build test test-features clippy check-features doc test-check-invariants check-invariants test-check-doc-links check-doc-links check-adr-index check-deny
