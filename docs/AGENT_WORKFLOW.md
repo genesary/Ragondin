@@ -31,6 +31,18 @@ Two issues may run **in parallel** when they touch **disjoint crates** — for e
 - **Any `decision` issue.** These are architectural questions an agent must not answer alone; a human owns the call and the resulting ADR.
 - **Any PR touching `ragondin-pipeline`, `ragondin-contracts`, or `ragondin-engine`.** The core deserves heavier review than the periphery — a mistake there propagates everywhere, whereas a mistake in a leaf component is contained.
 
+**This list is not the other two, and the three are not meant to coincide.** Three lists in this repository name crates and look alike; each answers a different question, and reading one as another is the mistake this note exists to prevent:
+
+| The question | Where it is answered | What it names |
+|---|---|---|
+| Which PR does a human read closely? | the bullet above | `ragondin-pipeline`, `ragondin-contracts`, `ragondin-engine` |
+| Which choice may an agent not make alone? | `AGENTS.md` § Rules of engagement | shared surfaces, several of which are not crates |
+| What may an outside consumer depend on? | INV-1, `AGENTS.md` § Invariants | `ragondin-types`, `ragondin-pipeline`, `ragondin-contracts` |
+
+The two differences that follow are deliberate. **`ragondin-engine` is reviewed heavily and is not an API boundary** — INV-2 says it never will be; it is here for its in-workspace blast radius, which is a different and equally good reason. **`ragondin-types` is an API boundary and is not on the review list** — a change to its public API is already governed by the second row, which escalates the *choice* before a PR exists, and by INV-1's sign in a diff, which a reviewer applies wherever the diff lands.
+
+`ragondin-conformance` and `ragondin-proto` appear on none of the three, although [ADR-C21](adr/ADR-C21-stable-api-boundaries-and-the-internal-engine.md) places both as outsider-facing with compatibility rules of their own. That is recorded here rather than fixed: putting a crate on one of these lists changes a rule, which is not what a note clarifying what the lists mean may do.
+
 ## Tooling note
 
 A **Rust language-server integration is strongly recommended**, so that agents *see* types rather than inferring them. On a multi-crate workspace built around trait objects and generics, this is the difference between code that compiles and code that is merely plausible. It is the highest-leverage piece of agent tooling for this repository.
