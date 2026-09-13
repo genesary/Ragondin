@@ -16,14 +16,16 @@
 //! gap a property of two trained models, and neither fits a test that has to be
 //! fast, offline and deterministic. So the corpus, the queries and the two
 //! models were built together — `fixtures/exit-criterion/models/generate.py`
-//! says how. The fixture embedder places one distractor per query on the
-//! query's own direction, so dense retrieval ranks it above the judged answer;
-//! BM25 and the fixture cross-encoder score lexical overlap, and the answer is
-//! what overlaps. The *numbers* are real — nDCG over what each pipeline
-//! actually returned — and so is the path; only the models are toys. The issue
-//! that defines this test allows exactly that, on the condition that the
-//! pipeline path is the real one, and that condition is what every test below
-//! drives.
+//! walks through the design. Each query defeats a different stage: a
+//! distractor the embedder conflates with the answer, a short passage BM25's
+//! length normalization prefers, a fused list that ties and would otherwise be
+//! ordered by chunk id. Removing any one stage of the hybrid pipeline loses a
+//! query, and the last test here asserts exactly that, so the criterion cannot
+//! be met by a pipeline in which some stage does nothing. The *numbers* are
+//! real — nDCG over what each pipeline actually returned — and so is the path;
+//! only the models are toys. The issue that defines this test allows exactly
+//! that, on the condition that the pipeline path is the real one, and that
+//! condition is what every test below drives.
 //!
 //! # What runs when
 //!
@@ -45,6 +47,14 @@ const DENSE_ONLY: &str = "dense-only.yaml";
 const HYBRID_RERANK: &str = "hybrid-rerank.yaml";
 /// The metric the criterion is stated in: nDCG at the cutoff `bench` reports.
 const NDCG: &str = "ndcg@10";
+/// The hybrid pipeline with one stage removed, each. Beside the two
+/// configurations rather than in them, because none is a configuration the
+/// criterion names: they exist to show that every stage it does name is needed.
+const ABLATIONS: [&str; 3] = [
+    "ablations/bm25-only.yaml",
+    "ablations/fused-no-rerank.yaml",
+    "ablations/dense-rerank.yaml",
+];
 
 /// The fixture directory: the two configurations, the dataset, the models.
 fn fixtures() -> PathBuf {
@@ -159,6 +169,29 @@ fn the_same_configuration_evaluated_twice_is_the_same_run() {
         assert_eq!(first.id, second.id, "{config}: two run ids for one input");
         assert_eq!(first.inputs, second.inputs, "{config}");
         assert_eq!(first.metrics, second.metrics, "{config}");
+    }
+}
+
+#[test]
+fn every_stage_of_the_hybrid_pipeline_is_load_bearing() {
+    // The issue calls this test the tripwire for the whole architecture. A
+    // fixture on which the lexical leg alone, or the fused legs alone, or the
+    // dense leg reranked alone already scored full marks would meet the
+    // criterion while proving nothing about the stage it left out — an
+    // identity reranker, or a fusion that dropped a leg, would not trip it.
+    // So each stage is removed in turn, and each removal has to cost a query.
+    let store = store("ablations");
+    let hybrid = bench(HYBRID_RERANK, &store);
+
+    for ablation in ABLATIONS {
+        let without = bench(ablation, &store);
+        assert!(
+            ndcg(&without) < ndcg(&hybrid),
+            "{ablation} scored {NDCG} {:.4}, the whole pipeline {:.4}: the stage it \
+             removes is not load-bearing on this fixture",
+            ndcg(&without),
+            ndcg(&hybrid)
+        );
     }
 }
 

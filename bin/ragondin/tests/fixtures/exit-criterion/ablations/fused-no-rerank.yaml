@@ -1,0 +1,24 @@
+# Ablation: both legs fused, no reranker. Loses `q-river`, where both legs
+# rank the short distractor first; holds `q-cat` and `q-greek` only because
+# RRF ties them and the tie-break is chunk-id order. Run from `..`.
+pipeline:
+  inputs: [question]
+  nodes:
+    - id: lexical
+      component: retriever
+      impl: bm25
+      inputs: [question]
+      params: { top_k: 10 }
+    - id: vectors
+      component: retriever
+      impl: dense
+      inputs: [question]
+      params:
+        top_k: 3
+        model: models/embedder.onnx
+        tokenizer: models/tokenizer.json
+    - id: fused
+      component: fusion
+      impl: rrf
+      inputs: [lexical, vectors]
+      params: { k: 60 }

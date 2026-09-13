@@ -1,8 +1,11 @@
 {"_id": "d-cat", "text": "the cat sat on the mat"}
 {"_id": "d-dog", "text": "the dog sat on the mat"}
 {"_id": "d-alpha", "text": "alpha beta gamma"}
-{"_id": "d-delta", "text": "delta eta"}
+{"_id": "d-delta", "text": "delta"}
+{"_id": "d-delta-beta", "text": "delta beta"}
+{"_id": "d-delta-eta", "text": "delta eta"}
 {"_id": "d-short", "text": "a short text"}
 {"_id": "d-long", "text": "a long text of more words than the first one"}
-{"_id": "d-river", "text": "the river banks build"}
+{"_id": "d-river", "text": "the river banks build the river banks fell last quarter"}
+{"_id": "d-bank", "text": "river banks build"}
 {"_id": "d-tin", "text": "the price of tin fell last quarter"}

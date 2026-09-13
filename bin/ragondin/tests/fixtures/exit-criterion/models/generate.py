@@ -24,26 +24,45 @@ together, and the gap is a property of the design:
 - **The embedder** is a token-embedding table, gathered by `input_ids`; the
   component mean-pools the rows over the attention mask and L2-normalizes
   (`ragondin-embedder-onnx`'s convention). Each query's two words sit on two
-  axes of their own, generic words all sit on one shared axis, and **one
-  distractor token per query sits on the query's own direction with more
-  weight than either query word** — the shape a near-synonym a model has
-  over-learned takes. After pooling over the same generic words, the passage
-  holding the distractor is the closer one, so dense retrieval ranks it above
-  the judged answer for `q-cat` (`dog`) and `q-greek` (`delta`). The other two
-  queries have no distractor and dense retrieval gets them right, which keeps
-  the baseline a working retriever rather than a broken one.
+  axes of their own, generic words all sit on one shared axis, and a
+  distractor token sits on a query's own direction with more weight than
+  either query word — the shape a near-synonym a model has over-learned takes.
 - **The cross-encoder** scores a pair by **lexical overlap**: how many (query
   position, passage position) pairs hold the same token id, with the two
   segments told apart by `token_type_ids` and padding excluded by
   `attention_mask`. It is the graph `ragondin-reranker-onnx` builds for its own
   tests, written once more here because that crate's is emitted inside its test
-  binary and this test needs a file. The judged answer is what overlaps.
+  binary and this test needs a file.
 
-BM25 scores lexical overlap too, so the hybrid pipeline's lexical leg and its
-reranker both put the answer first, and RRF cannot lose it. The numbers the
-test compares are still real — nDCG over what each pipeline returned through
-the real engine — and that is the condition the issue sets for a curated
-fixture.
+Each query has one judged answer, and each is built to defeat a different
+stage, so that removing any stage of the hybrid pipeline loses a query — which
+is what makes the test a tripwire rather than a formality:
+
+- `q-cat` (`cat mat`): `dog` sits on the cat-and-mat direction, so dense
+  retrieval ranks `d-dog` above `d-cat`. BM25 ranks them the other way, and
+  RRF then scores the two **exactly equal** — one first place and one second
+  place each — so the fused order is decided by chunk id alone. The
+  cross-encoder breaks the tie on content: `d-cat` overlaps the query at two
+  positions, `d-dog` at one.
+- `q-greek` (`alpha gamma`): `delta` sits on the alpha-and-gamma direction at
+  twice the weight, and three passages carry it, so `d-alpha` falls out of the
+  dense leg's `top_k` of 3 altogether. BM25 is what surfaces it; RRF ties it
+  with the leading distractor, as above; the cross-encoder puts it first.
+- `q-river` (`river banks`): `d-bank` says the query in three words, `d-river`
+  says it twice in ten. BM25's length normalization prefers the short one, and
+  so does the embedder, whose generic words dilute the long one — both legs
+  and the fused list put the distractor first. The cross-encoder counts
+  matching positions, and two mentions overlap more than one: it alone ranks
+  `d-river` first.
+- `q-short` (`short text`): no distractor. Every stage gets it right, which
+  keeps the baseline a working retriever rather than a broken one.
+
+So dense-only loses three of the four; BM25 alone loses `q-river`; the fused
+list without the reranker loses `q-river`, and holds `q-cat` and `q-greek`
+only by chunk-id order; dense with the reranker and no lexical leg never sees
+`d-alpha`. Only the whole pipeline scores full marks. The numbers the test
+compares are still real — nDCG over what each pipeline returned through the
+real engine — and that is the condition the issue sets for a curated fixture.
 """
 
 import json
@@ -90,7 +109,8 @@ PLACED = {
     "dog": axis((CAT, 1.0), (MAT, 1.0)),
     "alpha": axis((ALPHA, 1.0)),
     "gamma": axis((GAMMA, 1.0)),
-    # The distractor for `q-greek`, likewise.
+    # The distractor for `q-greek`: heavier still, so that three short
+    # passages carrying it crowd the answer out of a `top_k` of 3.
     "delta": axis((ALPHA, 2.0), (GAMMA, 2.0)),
     "short": axis((TEXT, 1.0)),
     "text": axis((TEXT, 1.0)),
@@ -114,7 +134,11 @@ def ids_input(name: str) -> onnx.ValueInfoProto:
 
 
 def model_of(graph: onnx.GraphProto) -> onnx.ModelProto:
-    model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", OPSET)])
+    model = helper.make_model(
+        graph,
+        opset_imports=[helper.make_opsetid("", OPSET)],
+        producer_name="ragondin exit-criterion fixtures",
+    )
     model.ir_version = 7  # the IR version opset 13 pairs with
     return model
 
@@ -133,7 +157,11 @@ def embedder() -> onnx.ModelProto:
         [gather],
         "exit_criterion_embedder",
         [ids_input("input_ids"), ids_input("attention_mask")],
-        [helper.make_tensor_value_info("last_hidden_state", TensorProto.FLOAT, ["batch", "sequence", HIDDEN])],
+        [
+            helper.make_tensor_value_info(
+                "last_hidden_state", TensorProto.FLOAT, ["batch", "sequence", HIDDEN]
+            )
+        ],
         [weights],
     )
     return model_of(graph)
@@ -152,10 +180,18 @@ def cross_encoder() -> onnx.ModelProto:
     nodes = [
         # Which positions are the passage, and which the query — padding
         # excluded by the attention mask.
-        helper.make_node("Mul", ["token_type_ids", "attention_mask"], ["passage_positions"]),
-        helper.make_node("Sub", ["attention_mask", "passage_positions"], ["query_positions"]),
-        helper.make_node("Cast", ["query_positions"], ["query_weights"], to=TensorProto.FLOAT),
-        helper.make_node("Cast", ["passage_positions"], ["passage_weights"], to=TensorProto.FLOAT),
+        helper.make_node(
+            "Mul", ["token_type_ids", "attention_mask"], ["passage_positions"]
+        ),
+        helper.make_node(
+            "Sub", ["attention_mask", "passage_positions"], ["query_positions"]
+        ),
+        helper.make_node(
+            "Cast", ["query_positions"], ["query_weights"], to=TensorProto.FLOAT
+        ),
+        helper.make_node(
+            "Cast", ["passage_positions"], ["passage_weights"], to=TensorProto.FLOAT
+        ),
         # Every position against every other.
         helper.make_node("Unsqueeze", ["input_ids", "axis_2"], ["ids_rows"]),
         helper.make_node("Unsqueeze", ["input_ids", "axis_1"], ["ids_columns"]),
@@ -163,18 +199,30 @@ def cross_encoder() -> onnx.ModelProto:
         helper.make_node("Cast", ["same"], ["same_weights"], to=TensorProto.FLOAT),
         # Keep only the (query position, passage position) cells.
         helper.make_node("Unsqueeze", ["query_weights", "axis_2"], ["query_rows"]),
-        helper.make_node("Unsqueeze", ["passage_weights", "axis_1"], ["passage_columns"]),
+        helper.make_node(
+            "Unsqueeze", ["passage_weights", "axis_1"], ["passage_columns"]
+        ),
         helper.make_node("Mul", ["same_weights", "query_rows"], ["query_matches"]),
-        helper.make_node("Mul", ["query_matches", "passage_columns"], ["overlap_cells"]),
+        helper.make_node(
+            "Mul", ["query_matches", "passage_columns"], ["overlap_cells"]
+        ),
         # Count them, leaving one score per pair.
-        helper.make_node("ReduceSum", ["overlap_cells", "axis_2"], ["overlap_rows"], keepdims=0),
-        helper.make_node("ReduceSum", ["overlap_rows", "axis_1"], ["pair_score"], keepdims=1),
+        helper.make_node(
+            "ReduceSum", ["overlap_cells", "axis_2"], ["overlap_rows"], keepdims=0
+        ),
+        helper.make_node(
+            "ReduceSum", ["overlap_rows", "axis_1"], ["pair_score"], keepdims=1
+        ),
         helper.make_node("Identity", ["pair_score"], ["logits"]),
     ]
     graph = helper.make_graph(
         nodes,
         "exit_criterion_cross_encoder",
-        [ids_input("input_ids"), ids_input("attention_mask"), ids_input("token_type_ids")],
+        [
+            ids_input("input_ids"),
+            ids_input("attention_mask"),
+            ids_input("token_type_ids"),
+        ],
         [helper.make_tensor_value_info("logits", TensorProto.FLOAT, ["batch", 1])],
         [axis_1, axis_2],
     )
@@ -187,7 +235,9 @@ def tokenizer() -> dict:
     Lowercasing, whitespace splitting, and the `[CLS] a [SEP]` / `[CLS] a [SEP]
     b [SEP]` post-processor a BERT export ships with: the cross-encoder reads
     `token_type_ids` to tell the pair apart, and the embedder, which reads no
-    such thing, pools the two zero rows of `[CLS]` and `[SEP]` into nothing.
+    such thing, pools the zero rows of `[CLS]` and `[SEP]` along with the rest:
+    they count in the mean's denominator and contribute nothing to its
+    direction, which is all cosine similarity sees.
     """
     return {
         "version": "1.0",
