@@ -345,9 +345,11 @@ machine's floating-point summation — and the dataset and model digests, so a r
 over the wrong revision fails by name; and it evaluates the dense configuration
 twice into two stores and requires one run id and equal metrics (P4). The
 per-query freeze ADR-10 asks for — each query's ranking, checked against
-`pytrec_eval`, as a permanent fixture — is not produced: nothing in the
-workspace records a per-query ranking, and every route to one crosses a shared
-surface. That is #239, a decision, and the fixture follows it.
+`pytrec_eval`, as a permanent fixture — is not produced here, but the ranking it
+needs now exists: ADR-C28, deciding #239, has each node's output entry in the
+execution trace name the chunks it produced in rank order, so a stored run's
+`traces.json` holds the ranking of every query. The fixture that freezes one is
+#245, under `eval/ragondin-metrics` beside the metric it guards.
 
 **What this calibration does not claim.** The exit criterion it confirms is the
 one M2 states — hybrid with reranking against dense alone. On SciFact the

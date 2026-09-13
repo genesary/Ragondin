@@ -40,4 +40,4 @@ pub use context::{
 pub use error::{ComponentFamily, ConstructionError, ExecError, PlanError};
 pub use execute::{Engine, Output};
 pub use plan::{plan_physical, PhysicalPipeline};
-pub use trace::{ExecutionTrace, NodeTrace, ValueSummary};
+pub use trace::{ExecutionTrace, NodeTrace, RankedChunk, ValueSummary};

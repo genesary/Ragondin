@@ -169,7 +169,7 @@ async fn run(
                 trace.nodes.push(NodeTrace {
                     node: id.clone(),
                     inputs,
-                    output: Some(ValueSummary::of(&value)),
+                    output: Some(ValueSummary::of_output(&value)),
                     duration,
                     error: None,
                 });
@@ -297,12 +297,15 @@ fn duplicate_ids(plan: &PhysicalPipeline) -> Vec<NodeId> {
 ///
 /// Read before the call rather than after: a node that fails still records
 /// what it was given, which is what makes a failed run diagnosable.
+///
+/// A list of chunks is **counted** here and not named, because it is the
+/// output of the node that produced it and is named there (ADR-C28).
 fn summarize_inputs(node: &PhysicalNode, table: &Table) -> Vec<ValueSummary> {
     node.logical()
         .inputs()
         .iter()
         .filter_map(|input| table.get(input))
-        .map(ValueSummary::of)
+        .map(ValueSummary::of_input)
         .collect()
 }
 
@@ -489,6 +492,7 @@ mod tests {
 
     use crate::context::EngineContext;
     use crate::plan::plan_physical;
+    use crate::trace::RankedChunk;
 
     fn chunk(id: &str) -> Chunk {
         Chunk {
@@ -530,6 +534,47 @@ mod tests {
                 .take(params.top_k)
                 .enumerate()
                 .map(|(rank, id)| scored(id, 1.0 - rank as f32 / 10.0))
+                .collect())
+        }
+    }
+
+    /// The list [`PermutedRetriever`] answers with: chunk id, document id,
+    /// score. Scores descend, as the ranking contract requires, while the
+    /// chunk ids and the document ids are each in an order of their own. A
+    /// re-sort by score would leave this list as it is — by contract that
+    /// order is the returned order, so the two cannot be told apart here.
+    const PERMUTATION: [(&str, &str, f32); 3] = [
+        ("c3", "doc-b", 0.9),
+        ("c1", "doc-c", 0.5),
+        ("c2", "doc-a", 0.1),
+    ];
+
+    /// Returns [`PERMUTATION`], whose order is neither its chunk ids' nor its
+    /// document ids'.
+    ///
+    /// A retriever answering in a sorted order could not distinguish a trace
+    /// that records what the node returned from one that sorts what it
+    /// records, which is the whole of what ADR-C28 promises.
+    struct PermutedRetriever;
+
+    #[async_trait]
+    impl Retriever for PermutedRetriever {
+        async fn retrieve(
+            &self,
+            _query: &Query,
+            params: &RetrieveParams,
+        ) -> Result<Vec<ScoredChunk>, ComponentError> {
+            Ok(PERMUTATION
+                .iter()
+                .take(params.top_k)
+                .map(|(id, document, score)| ScoredChunk {
+                    chunk: Chunk {
+                        id: ChunkId::new(*id),
+                        text: format!("text of {id}"),
+                        document_id: DocId::new(*document),
+                    },
+                    score: *score,
+                })
                 .collect())
         }
     }
@@ -683,6 +728,7 @@ mod tests {
             }),
         );
         ctx.register_retriever("counting", Box::new(|_| Ok(Box::new(CountingRetriever))));
+        ctx.register_retriever("permuted", Box::new(|_| Ok(Box::new(PermutedRetriever))));
         ctx.register_retriever("offline", Box::new(|_| Ok(Box::new(OfflineRetriever))));
         ctx.register_retriever("slow", Box::new(|_| Ok(Box::new(SlowRetriever))));
         ctx.register_fusion("rrf", Box::new(|_| Ok(Box::new(RrfFusion))));
@@ -748,6 +794,16 @@ mod tests {
 
     fn traced(trace: &ExecutionTrace) -> Vec<&str> {
         trace.nodes.iter().map(|node| node.node.as_str()).collect()
+    }
+
+    /// The chunk ids an output entry names, in the order it names them.
+    fn named(output: Option<&ValueSummary>) -> Vec<&str> {
+        match output {
+            Some(ValueSummary::RankedChunks { chunks }) => {
+                chunks.iter().map(|hit| hit.chunk.as_str()).collect()
+            }
+            other => panic!("a node that produced chunks names them: {other:?}"),
+        }
     }
 
     #[tokio::test]
@@ -893,12 +949,59 @@ mod tests {
             }],
             "a retriever's port 0 carries the declared input's query"
         );
-        assert_eq!(leg.output, Some(ValueSummary::Chunks { count: 2 }));
+        assert_eq!(named(leg.output.as_ref()), vec!["hit-0", "hit-1"]);
         assert_eq!(leg.error, None);
 
         let fuse = &trace.nodes[1];
         assert_eq!(fuse.inputs, vec![ValueSummary::Chunks { count: 2 }]);
-        assert_eq!(fuse.output, Some(ValueSummary::Chunks { count: 2 }));
+        assert_eq!(named(fuse.output.as_ref()), vec!["hit-0", "hit-1"]);
+    }
+
+    #[tokio::test]
+    async fn a_trace_names_the_chunks_a_node_produced_in_the_order_it_returned_them() {
+        // ADR-C28's two clauses, on one plan: an output names its chunks — id,
+        // document, score — in the order the node returned them, and an input
+        // stays a count because it is the producer's output, already named
+        // there. `concat` passes its one leg through untouched, so the fusion's
+        // input is the retriever's output and the two entries are comparable.
+        let plan = plan(vec![
+            raw_top_k(
+                "leg",
+                "retriever",
+                "permuted",
+                &["question"],
+                RawParamValue::Int(3),
+            ),
+            raw("fuse", "fusion", "concat", &["leg"]),
+        ]);
+
+        let (_, trace) = Engine::new().execute(&plan, query()).await;
+
+        let named: Vec<RankedChunk> = PERMUTATION
+            .iter()
+            .map(|(chunk, document, score)| RankedChunk {
+                chunk: ChunkId::new(*chunk),
+                document: DocId::new(*document),
+                score: *score,
+            })
+            .collect();
+        assert_eq!(
+            trace.nodes[0].output,
+            Some(ValueSummary::RankedChunks {
+                chunks: named.clone()
+            }),
+            "the retriever's output is named in its own order, not sorted"
+        );
+        assert_eq!(
+            trace.nodes[1].inputs,
+            vec![ValueSummary::Chunks { count: 3 }],
+            "an input is a count, whatever its producer's output named"
+        );
+        assert_eq!(
+            trace.nodes[1].output,
+            Some(ValueSummary::RankedChunks { chunks: named }),
+            "`concat` passes its leg through, so the fusion names the same list"
+        );
     }
 
     #[tokio::test]

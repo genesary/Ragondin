@@ -172,6 +172,45 @@ async fn every_executed_query_leaves_its_own_trace_in_the_run() {
         "execution order, not the canonical order the plan stores"
     );
     assert_eq!(nodes[2]["output"]["chunks"]["count"], 3);
+
+    // ADR-C28, as a stored run holds it: the fusion's output names the chunks
+    // it produced, in its own order, each with the document it came from and
+    // the score it was given.
+    let ranked = nodes[2]["output"]["chunks"]["ranked"]
+        .as_array()
+        .expect("an output names the chunks it produced");
+    assert_eq!(
+        ranked
+            .iter()
+            .map(|hit| (
+                hit["chunk"].as_str().expect("a chunk is named by its id"),
+                hit["document"].as_str().expect("and by its document")
+            ))
+            .collect::<Vec<_>>(),
+        [
+            ("MED-10-0", "MED-10"),
+            ("4983-0", "4983"),
+            ("MED-10-1", "MED-10")
+        ],
+        "the two legs interleaved, rank by rank, in the order the node wires them"
+    );
+    let scores: Vec<f64> = ranked
+        .iter()
+        .map(|hit| hit["score"].as_f64().expect("a chunk carries its score"))
+        .collect();
+    assert!(
+        scores.windows(2).all(|pair| pair[0] > pair[1]),
+        "the fusion's own scores, descending: {scores:?}"
+    );
+
+    // An input is the output of the node that produced it, already named
+    // there, so it stays a count (ADR-C28).
+    assert_eq!(nodes[2]["inputs"][0]["chunks"]["count"], 2);
+    assert_eq!(nodes[2]["inputs"][1]["chunks"]["count"], 1);
+    assert!(
+        nodes[2]["inputs"][0]["chunks"]["ranked"].is_null(),
+        "an input names nothing"
+    );
 }
 
 #[tokio::test]
