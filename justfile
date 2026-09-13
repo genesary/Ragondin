@@ -84,9 +84,11 @@ check-invariants:
 test-check-invariants:
     python3 scripts/test-check-invariants.py
 
-# Verify that every ADR citation in the documentation resolves to a real file.
+# Verify that every ADR citation in the documentation resolves to a real file,
+# and that every `<document> § <Heading>` reference names a heading that exists.
 # A broken citation reads as a missing decision, not as a typo, so it is checked
-# rather than trusted.
+# rather than trusted. Both rules resolve a reference and neither judges that it
+# is apt.
 check-doc-links:
     python3 scripts/check-doc-links.py
 

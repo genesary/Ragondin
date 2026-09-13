@@ -7,7 +7,7 @@ missing record, and the agent re-derives the decision it was sent to read. That 
 the architecture eroding through a broken filename, so the filenames get a wall
 around them the same way the invariants do.
 
-Three rules are enforced:
+Four rules are enforced:
 
   Naming — every ADR file is `ADR-<number>-<slug>.md`, with the number padded to
            three digits in the system series (`ADR-004-…`) and to two digits after
@@ -31,6 +31,16 @@ Three rules are enforced:
            stale line number is an ordinary documentation bug the next edit
            corrects.
 
+  Sections — every `<document> § <Heading>` reference in those same sources
+           names a heading that exists in that document. #66 made a section
+           name the primary citation form for the binding rules — a skill cites
+           `AGENTS.md § Invariants` in place of the text it used to copy — and
+           until then nothing resolved one, while the review of that same
+           branch found three defects of exactly this shape. The document is
+           named by path or by ADR id; a `§` with no document in front of it,
+           and a section cited by *number* (`§4.3`), are deliberately not this
+           rule's business.
+
 A reference resolves **by number**, not by string equality with the filename. The
 ID an ADR carries in its own heading is unpadded (`ADR-4`) and its slug is written
 by hand rather than derived from its title, so the filename cannot be
@@ -48,7 +58,7 @@ a doc comment, and rustdoc's intra-doc links are a different mechanism that
 
 What this check cannot do is judge whether a citation is **apt**. It resolves a
 reference by number and nothing more, so `ADR-C3` cited for `ADR-3`'s decision
-passes here. That one is a human habit — `AGENTS.md` § *What you write about the
+passes here — and so does a section reference naming the wrong existing heading. That one is a human habit — `AGENTS.md` § *What you write about the
 code is checked against the code* — and not a check.
 
 Run via `just check-doc-links`. Exit code 0 = every reference resolves; 1 = at
@@ -85,6 +95,38 @@ MARKDOWN_LINK = re.compile(r"\[[^\]]*\]\(([^)\s]+)\)")
 LINE_CITATION = re.compile(
     r"[\w./-]+\.(?:rs|py|toml|ya?ml|md):\d+(?:-\d+)?\b|`:\d+(?:-\d+)?`"
 )
+
+# A section citation: a document, then the sign, then a heading — `AGENTS.md`
+# § Invariants, AGENTS.md (§ Rules of engagement), ADR-C2 § Amendments. The
+# document is named by path or by ADR id, and only what sits between it and the
+# sign is allowed to vary: a closing backtick, emphasis, a comma, an opening
+# parenthesis. A `§` with no document in front of it belongs to the document it
+# is written in and is not matched — `AGENTS.md` cites its own sections that
+# way, and deciding which file an unqualified reference means would be a guess.
+SECTION_REFERENCE = re.compile(
+    r"(?:(?P<path>[\w./-]+\.md)|ADR-(?P<series>C?)(?P<number>\d+))"
+    r"[`*_]*[,:]?\s*\(?\s*§\s*"
+    r"(?P<heading>.*)"
+)
+
+# Where a citation's heading stops. It has no closing mark, so the sentence runs
+# on after it; the punctuation below ends a clause and appears in no heading of
+# this repository, while an em dash and a comma appear in several and so cannot
+# be used to cut. Used for the message only — resolution reads the whole window.
+CITATION_END = re.compile(r"[.;:)]")
+
+# An ATX heading, with the optional closing hashes Markdown allows.
+ATX_HEADING = re.compile(r"^ {0,3}#{1,6}\s+(.+?)\s*#*\s*$")
+
+# How many lines a citation may run over. Prose wraps, and a heading long enough
+# to be cited is long enough to wrap with it.
+SECTION_WINDOW = 3
+
+# What a wrapped line carries before its prose resumes: a doc-comment marker, a
+# block-comment star, a blockquote arrow. Stripped when the window is joined, or
+# a heading continuing under `///` reads as `Frozen /// decisions` and a citation
+# that is correct fails the build.
+CONTINUATION_MARKER = re.compile(r"^\s*(?://[/!]?|\*|>)\s*")
 
 
 def repo_root() -> str:
@@ -195,6 +237,144 @@ def check_line_citations(root: str, files: list[str]):
     return failures
 
 
+def normalize_prose(text: str) -> str:
+    """Prose as the eye reads it: no emphasis, no backticks, one space between.
+
+    A citation is written `§ *Documentation ships…*` as readily as `§
+    Documentation ships…`, and a heading is written in the document without
+    either. Both sides are normalized the same way so the comparison is about
+    the words.
+    """
+    for mark in ("`", "*", "_"):
+        text = text.replace(mark, "")
+    return " ".join(text.split())
+
+
+def index_headings(root: str, relative: str) -> list[str]:
+    """Every ATX heading in a document, normalized, longest first.
+
+    Longest first because one heading can be a prefix of another: the longer is
+    the one a citation naming it meant.
+    """
+    headings = []
+    with open(os.path.join(root, relative), encoding="utf-8", errors="replace") as handle:
+        for line in handle.read().splitlines():
+            match = ATX_HEADING.match(line)
+            if match is not None:
+                headings.append(normalize_prose(match.group(1)))
+    return sorted(set(headings), key=len, reverse=True)
+
+
+def resolve_heading(candidate: str, headings: list[str]) -> str | None:
+    """The heading `candidate` starts with, if any.
+
+    A citation has no closing mark: the heading is followed by the rest of the
+    sentence, so the reference resolves when the candidate *starts with* a real
+    heading and the next character does not continue a word. Without that last
+    condition `§ Scope` would resolve against a document whose only heading is
+    `Scoped`.
+    """
+    for heading in headings:
+        if not candidate.startswith(heading):
+            continue
+        rest = candidate[len(heading):]
+        if not rest or not rest[0].isalnum():
+            return heading
+    return None
+
+
+def locate_document(root: str, directory: str, path: str) -> str | None:
+    """Where a cited document is, repository-relative, or `None`.
+
+    The repository root first, which is how `AGENTS.md` and
+    `docs/AGENT_WORKFLOW.md` are cited from anywhere; then the citing file's own
+    directory and each directory above it, which is how a crate's
+    `ARCHITECTURE.md` is cited from `src/lib.rs` inside that crate. Nearest
+    first among those, because that is the file the citing crate means.
+    """
+    candidates = [path]
+    while True:
+        candidates.append(os.path.join(directory, path))
+        if not directory:
+            break
+        directory = os.path.dirname(directory)
+    for candidate in candidates:
+        relative = os.path.normpath(candidate)
+        if os.path.isfile(os.path.join(root, relative)):
+            return relative
+    return None
+
+
+def check_section_references(root: str, files: list[str], index: dict):
+    """Return [(file, line number, reference, reason), …].
+
+    #66 made `AGENTS.md § <Heading>` the primary citation form for the binding
+    rules, and nothing resolved one until this check. The review of that same
+    branch found three defects of exactly this shape — a cited box that did not
+    exist among them — each caught by a human read rather than by a build.
+
+    Like the ADR rule, this resolves a reference and cannot judge that it is
+    **apt**: a citation naming the wrong-but-existing section passes. That is
+    the gap that let six wrong `ADR-C3` citations through until #100, and it is
+    a human habit (`AGENTS.md` § What you write about the code is checked
+    against the code), not a check.
+
+    Two references are deliberately out of scope, and each is a decision rather
+    than a limitation. A `§` with no document in front of it is a reference
+    inside its own document. A heading that begins with a digit is a section
+    *number* (`§4.3`) — the architecture documents cite themselves that way
+    throughout, and a number is not a heading to look up.
+    """
+    failures = []
+    headings_by_document: dict[str, list[str]] = {}
+    for relative in files:
+        with open(os.path.join(root, relative), encoding="utf-8", errors="replace") as handle:
+            lines = handle.read().splitlines()
+        directory = os.path.dirname(relative)
+        for position, line in enumerate(lines):
+            window = " ".join(
+                [line]
+                + [
+                    CONTINUATION_MARKER.sub("", following)
+                    for following in lines[position + 1:position + SECTION_WINDOW]
+                ]
+            )
+            for match in SECTION_REFERENCE.finditer(window):
+                # The citation belongs to the line its document sits on; the
+                # window exists only so the heading may wrap onto the next.
+                if match.start() >= len(line):
+                    continue
+                heading = normalize_prose(match.group("heading"))
+                if not heading or heading[0].isdigit():
+                    continue
+                stop = CITATION_END.search(heading)
+                cited = (heading[: stop.start()] if stop else heading)[:60].strip()
+                path = match.group("path")
+                if path is not None:
+                    document = locate_document(root, directory, path)
+                    label = path
+                else:
+                    label = f"ADR-{match.group('series')}{match.group('number')}"
+                    name = index.get((match.group("series"), int(match.group("number"))))
+                    if name is None:
+                        # An ADR that does not exist is the ADR rule's finding,
+                        # reported there with the message that fits it.
+                        continue
+                    document = f"{ADR_DIR}/{name}"
+                if document is None:
+                    failures.append(
+                        (relative, position + 1, f"{label} § {cited}", "no such document")
+                    )
+                    continue
+                if document not in headings_by_document:
+                    headings_by_document[document] = index_headings(root, document)
+                if resolve_heading(heading, headings_by_document[document]) is None:
+                    failures.append(
+                        (relative, position + 1, f"{label} § {cited}", "no such heading")
+                    )
+    return failures
+
+
 def link_into_adr_dir(root: str, directory: str, target: str) -> str | None:
     """The repository-relative path a link points at, if it lands in `docs/adr/`.
 
@@ -257,6 +437,21 @@ def main() -> int:
             print(f"    {path}:{number}: {citation}")
     else:
         print(f"ADR line citations OK — no file under {ADR_DIR}/ cites code by line number.")
+
+    sections = check_section_references(root, markdown + rust, index)
+    if sections:
+        ok = False
+        print("BROKEN SECTION REFERENCE — a § citation does not resolve.")
+        print("  A section name is the citation form the binding rules are cited by,")
+        print("  so a heading that does not exist sends a reader to a rule nobody can")
+        print("  read. Cite a heading by its text as the document writes it.")
+        for path, number, reference, reason in sections:
+            print(f"    {path}:{number}: {reference} — {reason}")
+    else:
+        print(
+            f"Section references OK — every '<document> § <Heading>' citation in "
+            f"{len(markdown)} Markdown and {len(rust)} Rust file(s) resolves."
+        )
 
     if not ok:
         print("\nDocumentation link checks FAILED. See the messages above.", file=sys.stderr)
