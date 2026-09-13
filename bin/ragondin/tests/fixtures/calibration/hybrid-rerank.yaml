@@ -1,0 +1,38 @@
+# The M2 exit criterion on real data: BM25 and the same dense leg
+# `dense-only.yaml` runs alone, fused by RRF, reranked by a cross-encoder.
+#
+# Fifty per leg makes the fused candidate list at most a hundred, the depth
+# BEIR's own reranking baseline reranks; the reranker keeps the ten the metrics
+# are cut at. Paths are relative to `RAGONDIN_CALIBRATION_MODELS`, for the
+# reason `dense-only.yaml` gives.
+pipeline:
+  inputs: [question]
+  nodes:
+    - id: lexical
+      component: retriever
+      impl: bm25
+      inputs: [question]
+      params: { top_k: 50 }
+    - id: vectors
+      component: retriever
+      impl: dense
+      inputs: [question]
+      params:
+        top_k: 50
+        model: all-MiniLM-L6-v2/model.onnx
+        tokenizer: all-MiniLM-L6-v2/tokenizer.json
+        max_sequence_length: 256
+    - id: fused
+      component: fusion
+      impl: rrf
+      inputs: [lexical, vectors]
+      params: { k: 60 }
+    - id: reranked
+      component: reranker
+      impl: cross_encoder
+      inputs: [question, fused]
+      params:
+        top_k: 10
+        model: ms-marco-MiniLM-L6-v2/model.onnx
+        tokenizer: ms-marco-MiniLM-L6-v2/tokenizer.json
+        max_sequence_length: 512

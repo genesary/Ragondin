@@ -23,6 +23,7 @@ charter.
 | `src/wiring.rs` | A node's `Params` on one side, a constructed component on the other |
 | `tests/cli.rs` | `validate` and the rest of the command line, exercised as a process |
 | `tests/compare.rs` | `compare`, exercised as a process, against runs written straight into a store |
+| `tests/calibration.rs` | The harness against a published SciFact figure, and the exit criterion on real data — ignored by default, run by `just calibrate` |
 | `tests/bench.rs` | `bench`, exercised as a process, over a miniature BEIR fixture |
 | `tests/vertical_slice.rs` | The composition root assembled for real, end to end |
 
@@ -204,3 +205,107 @@ anywhere else in the graph.
   today those would arrive as an `extension` node (ADR-C3), so `bench` refuses
   one by name. It is the whole of that check, and it grows a case the day one
   of them becomes a primitive.
+
+## Calibration against a published leaderboard
+
+ADR-10 trusts the harness only once it reproduces a published leaderboard score
+to within half a point through an exact search, so that a discrepancy is the
+metric's or the encoding's and never approximation's;
+`docs/system-architecture.md` § 9.8 Calibrating the harness against a published
+leaderboard gives the procedure and the diagnostic table. `tests/calibration.rs`
+is that reproduction, through `bench`, and beside it the M2 exit criterion —
+hybrid retrieval with reranking against dense-only — on the same real corpus.
+It is `#[ignore]` and run by `just calibrate`: what it needs never enters the
+tree and is never fetched by it (ADR-C27 downloads the runtime, not a model),
+and it costs the better part of half an hour of CPU. Two environment variables
+name the material:
+`RAGONDIN_CALIBRATION_DATASETS`, a directory holding `scifact/` in the layout
+the BEIR adapter reads, and `RAGONDIN_CALIBRATION_MODELS`, a directory holding
+`all-MiniLM-L6-v2/` and `ms-marco-MiniLM-L6-v2/`, each with a `model.onnx` and
+its `tokenizer.json`. The configurations in `tests/fixtures/calibration/` name
+the models by those relative paths and the test runs the binary from the models
+directory, so their content hashes — and the run ids — are the same on every
+machine.
+
+**The reference, so that the reproduction can be redone from this section.**
+
+- *Dataset:* BEIR SciFact, the original `scifact.zip` from the BEIR datasets
+  bucket, SHA-256
+  `536e14446a0ba56ed1398ab1055f39fe852686ecad24a6306c80c490fa8e0165`; the
+  archive carries no revision, hence the hash. Unpacked as is: `corpus.jsonl`,
+  `queries.jsonl`, `qrels/test.tsv`; 5 183 documents, 300 judged queries on
+  `test`. The adapter's `dataset_version` for it is
+  `9a07f80c0d4f1e9e74912d033a8d1fbd52c54b758dafcaa85c19abacfdee5f29`.
+- *Embedder:* `sentence-transformers/all-MiniLM-L6-v2` at revision
+  `8b3219a92973c328a8e22fadcfa821b5dc75636a` — the revision MTEB records against
+  the published figure, not `main`; its weights and tokenizer are byte-identical
+  to `main`'s, but the figure belongs to the pinned one. Mean pooling, L2, no
+  instruction prefix, 256 word pieces: what the card specifies, and what
+  `ragondin-embedder-onnx` applies with no knob. That is what made a
+  mean-pooling model the only choice — a CLS-pooling reference would need a
+  pooling option that crate deliberately does not have.
+- *Reranker:* `cross-encoder/ms-marco-MiniLM-L6-v2` at revision
+  `233902d25c440f23af6f7d6e94d2946bac0bee0a`, single-logit head, 512 word
+  pieces. The repository was renamed from `ms-marco-MiniLM-L-6-v2`; the older
+  name redirects.
+- *Export:* each repository pinned on disk with `huggingface_hub`'s
+  `snapshot_download(repo_id, revision)`, then
+  `optimum-cli export onnx --library-name transformers --task feature-extraction`
+  for the embedder and `--task text-classification` for the reranker.
+  `--library-name transformers` is load-bearing: a `sentence_transformers`
+  export pools inside the graph and returns `[batch, hidden]`, which the
+  embedder crate refuses. The exported files digest to
+  `9348202758f11c56c329d947ae359fea54be1a3d905bfcac4a3521a1eafc0414` (embedder)
+  and `8b0fe5bc3c5ddc752524552d8e081baa7726e389b1d23396e56ad31d69b88d52`
+  (reranker); the test pins both.
+- *Published figure:* SciFact, `test`, nDCG@10 **0.64508** on the MTEB
+  leaderboard for that model and revision, read at reproduction time.
+- *Configurations:* dense-only at `top_k: 10`; hybrid at `top_k: 50` per leg,
+  RRF `k: 60`, reranker `top_k: 10` — a fused list of at most a hundred, the
+  depth BEIR's own reranking baseline reranks.
+
+**What the recorded run scored.**
+
+| | nDCG@10 | recall@10 | MRR |
+|---|---|---|---|
+| Published (MTEB) | 0.64508 | — | — |
+| dense-only, `bench` | 0.6450816521455768 | 0.7833333333333333 | 0.6047248677248677 |
+| hybrid + rerank, `bench` | 0.6886092429213343 | 0.8122222222222222 | 0.6579272486772487 |
+| `pytrec_eval` over the dense-only run | 0.6450816521455776 | 0.7833333333333333 | — |
+
+The gap to the published figure is 0.0002 of a point against a tolerance of
+0.5; the gap to `pytrec_eval` is the last two bits of an `f64`, the summation
+order `ragondin-metrics`' parity fixture already documents. The hybrid gain is
+4.35 points of nDCG@10 and holds on recall and MRR too. Run ids, over the
+committed configurations: `e9f178018e9974f216d6cf81ebd71bd5a7273a281e47e48d016fb1cd265382e7`
+(dense-only) and
+`9b0e2d9419a1b5d84ed384f50ce4a100a983c0525b93636f749ac50928456238`
+(hybrid + rerank); dense-only takes about 105 s on a laptop CPU, the hybrid
+run about 24 minutes, dominated by the cross-encoder over the fused list.
+
+The reproduction was first done by hand, before a line of this test existed,
+and missed by 53 points: `ragondin-embedder-onnx` built its attention mask from
+the id count and pooled every `[PAD]` of a self-padding tokenizer into the mean.
+Replaying the crate's documented procedure in Python landed on the published
+figure and replaying the mask it actually built landed on the miss, which is
+the diagnostic § 9.8 asks for, and it became #237. The number now travels
+through the BEIR adapter, the store's cosine search and `ragondin-metrics`, and
+all three agree with `pytrec_eval` over 300 real queries: that is P1 doing its
+job, and it is what makes this a calibration rather than a second opinion.
+
+**What is frozen, and what is not.** The test pins the aggregates — every
+metric of both runs to the values above, within a tolerance for another
+machine's floating-point summation — and the dataset and model digests, so a run
+over the wrong revision fails by name; and it evaluates the dense configuration
+twice into two stores and requires one run id and equal metrics (P4). The
+per-query freeze ADR-10 asks for — each query's ranking, checked against
+`pytrec_eval`, as a permanent fixture — is not produced: nothing in the
+workspace records a per-query ranking, and every route to one crosses a shared
+surface. That is #239, a decision, and the fixture follows it.
+
+**What this calibration does not claim.** The exit criterion it confirms is the
+one M2 states — hybrid with reranking against dense alone. On SciFact the
+lexical leg is strong, and nothing here says the hybrid beats its best single
+leg. And the equality of run ids holds on every machine by construction, while
+the metrics may move in their last bits across platforms, which is what the
+recorded tolerance is for.
