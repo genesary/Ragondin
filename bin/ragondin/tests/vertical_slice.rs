@@ -88,6 +88,18 @@ fn ids(hits: &Output) -> Vec<&str> {
     hits.iter().map(|hit| hit.chunk.id.as_str()).collect()
 }
 
+/// What a node's output entry names, in the order it names it: each chunk's id,
+/// its document's id and its score (ADR-C28).
+fn produced(output: Option<&ValueSummary>) -> Vec<(&str, &str, f32)> {
+    match output {
+        Some(ValueSummary::RankedChunks { chunks }) => chunks
+            .iter()
+            .map(|hit| (hit.chunk.as_str(), hit.document.as_str(), hit.score))
+            .collect(),
+        other => panic!("a node that produced chunks names them: {other:?}"),
+    }
+}
+
 #[tokio::test]
 async fn the_fixture_on_disk_becomes_a_logical_pipeline() {
     let logical = LocalFile::new(fixture())
@@ -164,17 +176,45 @@ async fn the_returned_trace_holds_one_entry_per_node_in_execution_order() {
         }],
         "a retrieval leg consumes the declared pipeline input"
     );
-    assert_eq!(left.output, Some(ValueSummary::Chunks { count: 3 }));
-    assert_eq!(right.output, Some(ValueSummary::Chunks { count: 2 }));
+    // ADR-C28: an output names its chunks in the order the node returned them.
+    // The stub retriever labelled `left` answers `left-0…left-2` out of a
+    // document of its own name, scoring `1 / (rank + 1)`, so the entry pins an
+    // order the engine could not have invented.
+    assert_eq!(
+        produced(left.output.as_ref()),
+        [
+            ("left-0", "left", 1.0),
+            ("left-1", "left", 0.5),
+            ("left-2", "left", 1.0 / 3.0),
+        ]
+    );
+    assert_eq!(
+        produced(right.output.as_ref()),
+        [("right-0", "right", 1.0), ("right-1", "right", 0.5)]
+    );
     assert_eq!(
         combined.inputs,
         [
             ValueSummary::Chunks { count: 3 },
             ValueSummary::Chunks { count: 2 }
         ],
-        "the fusion's inputs arrive in port order, never reordered (ADR-C16)"
+        "the fusion's inputs arrive in port order, never reordered (ADR-C16), \
+         and stay counts because each is named on the leg that produced it"
     );
-    assert_eq!(combined.output, Some(ValueSummary::Chunks { count: 5 }));
+    // The interleaving, rank by rank, with the fusion's own scores: the ids
+    // alternate between the legs and each chunk keeps the document it came
+    // from, which is what makes this entry a record of the fusion's work and
+    // not of its inputs'.
+    assert_eq!(
+        produced(combined.output.as_ref()),
+        [
+            ("left-0", "left", 1.0),
+            ("right-0", "right", 0.5),
+            ("left-1", "left", 1.0 / 3.0),
+            ("right-1", "right", 0.25),
+            ("left-2", "left", 0.2),
+        ]
+    );
     assert!(
         trace.nodes.iter().all(|node| node.error.is_none()),
         "nothing failed"

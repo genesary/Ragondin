@@ -26,8 +26,31 @@ them.
   Control flow is not executed, because no `Branch` or `Loop` variant exists
   yet; when they arrive they are executed here, as they are not components.
 - **`ExecutionTrace`** — structured, per-node output: for each node that ran,
-  a summary of what it received and produced, how long it took, and what it
-  failed with.
+  what it produced, a summary of what it received, how long it took, and what it
+  failed with. A node's **output** names the chunks it produced — chunk id,
+  document id, score — in the order it returned them; a node's **input** stays a
+  count ([ADR-C28](../../docs/adr/ADR-C28-trace-names-what-each-node-produced.md)).
+
+## How an output's chunks are represented
+
+ADR-C28 fixes *what* a trace promises — ids, document ids and scores, in the
+node's own order, on outputs; a count on inputs — and INV-2 leaves the
+representation to this crate. The choice made here, so that a reader can
+disagree with it:
+
+- **Two `ValueSummary` variants, not one variant with an optional list.**
+  `Chunks { count }` is what an input port records and
+  `RankedChunks { chunks: Vec<RankedChunk> }` what a node produced, and an
+  output's count is the length of its list. The alternative — one `Chunks`
+  variant carrying a count *and* an `Option<Vec<_>>` — stores the same fact
+  twice and admits a count that disagrees with the list beside it; and it lets a
+  producer be written without deciding which side of a node it is summarizing,
+  which is the one thing ADR-C28 asks the code to keep straight. The cost is
+  that a reader who only wants "how many chunks" matches two variants instead
+  of one, and that the enum is exhaustively matched at every such site — which
+  is how a third kind added in M3 becomes a compiler error rather than a
+  silently unnamed output. `RankedChunk` carries no chunk *text*: it is the one
+  field that grows with the corpus and the one no reader of a ranking needs.
 
 ## Two rules the executor fixes
 

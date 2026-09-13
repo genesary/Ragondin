@@ -39,8 +39,11 @@
 //! must be the recorded ones, so a run over the wrong revision fails by name.
 //! A per-query freeze — the ranking each query produced, checked against
 //! `pytrec_eval` — is what ADR-10 asks for as the permanent regression fixture,
-//! and nothing in the workspace exposes a per-query ranking yet; that is a
-//! decision, not this test's to make, and it is filed as such.
+//! and it is not frozen here. The ranking is now recorded: ADR-C28 has each
+//! node's output entry in the execution trace name the chunks it produced, in
+//! rank order, so a stored run's `traces.json` holds every query's ranking.
+//! Freezing one as a fixture is issue #245, under `eval/ragondin-metrics`,
+//! where the metric it guards lives.
 
 #![cfg(all(feature = "bm25", feature = "onnx"))]
 

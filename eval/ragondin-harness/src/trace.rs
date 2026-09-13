@@ -40,10 +40,27 @@ pub(crate) fn render(trace: &ExecutionTrace) -> TraceDocument {
 }
 
 /// Renders one edge value's summary.
+///
+/// An output's chunks are **named**, in the order the node returned them, and
+/// an input's are counted (ADR-C28). `count` is rendered on both, so a reader
+/// of the field does not have to know which side it is looking at; on an
+/// output it is the length of `ranked`, which is where the ranking a per-query
+/// fixture, a graded-relevance calibration or a replay view reads lives.
 fn summary(value: &ValueSummary) -> Value {
     match value {
         ValueSummary::Query { id } => json!({"query": {"id": id.as_str()}}),
         ValueSummary::Chunks { count } => json!({"chunks": {"count": count}}),
+        ValueSummary::RankedChunks { chunks } => json!({"chunks": {
+            "count": chunks.len(),
+            "ranked": chunks
+                .iter()
+                .map(|hit| json!({
+                    "chunk": hit.chunk.as_str(),
+                    "document": hit.document.as_str(),
+                    "score": hit.score,
+                }))
+                .collect::<Vec<_>>(),
+        }}),
     }
 }
 
@@ -51,19 +68,36 @@ fn summary(value: &ValueSummary) -> Value {
 mod tests {
     use std::time::Duration;
 
-    use ragondin_engine::NodeTrace;
+    use ragondin_engine::{NodeTrace, RankedChunk};
     use ragondin_pipeline::NodeId;
-    use ragondin_types::QueryId;
+    use ragondin_types::{ChunkId, DocId, QueryId};
 
     use super::*;
+
+    fn ranked(chunk: &str, document: &str, score: f32) -> RankedChunk {
+        RankedChunk {
+            chunk: ChunkId::new(chunk),
+            document: DocId::new(document),
+            score,
+        }
+    }
 
     fn node(error: Option<&str>) -> NodeTrace {
         NodeTrace {
             node: NodeId::new("leg"),
-            inputs: vec![ValueSummary::Query {
-                id: QueryId::new("q-1"),
-            }],
-            output: error.is_none().then_some(ValueSummary::Chunks { count: 3 }),
+            inputs: vec![
+                ValueSummary::Query {
+                    id: QueryId::new("q-1"),
+                },
+                ValueSummary::Chunks { count: 2 },
+            ],
+            output: error.is_none().then(|| ValueSummary::RankedChunks {
+                chunks: vec![
+                    ranked("c-3", "doc-b", 0.5),
+                    ranked("c-1", "doc-a", 0.25),
+                    ranked("c-2", "doc-a", 0.125),
+                ],
+            }),
             duration: Duration::from_micros(1500),
             error: error.map(str::to_string),
         }
@@ -75,13 +109,19 @@ mod tests {
             nodes: vec![node(None)],
         });
 
+        // ADR-C28: the output names its chunks in the node's own order, each
+        // with its document and score; an input carries a count and no ids.
         assert_eq!(
             document.as_value(),
             &json!({
                 "nodes": [{
                     "node": "leg",
-                    "inputs": [{"query": {"id": "q-1"}}],
-                    "output": {"chunks": {"count": 3}},
+                    "inputs": [{"query": {"id": "q-1"}}, {"chunks": {"count": 2}}],
+                    "output": {"chunks": {"count": 3, "ranked": [
+                        {"chunk": "c-3", "document": "doc-b", "score": 0.5},
+                        {"chunk": "c-1", "document": "doc-a", "score": 0.25},
+                        {"chunk": "c-2", "document": "doc-a", "score": 0.125},
+                    ]}},
                     "duration_nanos": 1_500_000u64,
                     "error": null,
                 }]

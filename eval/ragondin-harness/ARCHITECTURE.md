@@ -35,13 +35,19 @@ a composition root would.
 trace is the executor's return value, never a log (INV-10,
 [ADR-C9](../../docs/adr/ADR-C09-traces-are-the-executors-return-value.md)). The
 harness keeps every one of them, renders it into the `TraceDocument` the run
-store holds, and files it under its query. Two consequences are deliberate:
+store holds, and files it under its query. Three consequences are deliberate:
 
 - **The rendering is hand-written** (`src/trace.rs`) and `ExecutionTrace` is
   not serialized by a derive. The engine is internal and not an API boundary
   (INV-2), so its trace type is meant to move; a derive would make every stored
   run a hostage of that shape. The harness is the crate that knows both the
   engine and the run store, so the translation lives here.
+- **An output names its chunks, an input counts them** (ADR-C28). For each
+  node, the rendered document carries the chunks the node produced in the order
+  it produced them — chunk id, document id, score — and for each input port a
+  count alone. That ordered list is where anything needing a per-query ranking
+  reads it out of a stored run; `Run` gains no per-query field, and the store's
+  file layout is untouched, because the document is opaque to it.
 - **A failed query carries its trace out with the error.**
   `HarnessError::Execute` holds the rendered trace of the run that failed,
   because that is the trace worth reading and an error that dropped it would
