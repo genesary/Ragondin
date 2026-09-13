@@ -6,10 +6,12 @@ use thiserror::Error;
 
 /// What can go wrong while loading a benchmark from disk.
 ///
-/// One type for every adapter, not one per format: the harness (#29) handles a
-/// load failure the same way whichever dataset failed, and a per-adapter error
-/// would make that a match on N types. `#[non_exhaustive]` so a future adapter
-/// can add the variant its format needs without breaking callers.
+/// One type for every adapter, not one per format: every adapter returns it
+/// through the one [`BenchmarkAdapter::load`](crate::BenchmarkAdapter::load)
+/// signature, so the caller that loads a dataset handles a failure the same way
+/// whichever dataset failed, and a per-adapter error would make that a match on
+/// N types. `#[non_exhaustive]` so a future adapter can add the variant its
+/// format needs without breaking callers.
 ///
 /// Every variant carries the offending path, and the line-oriented ones carry
 /// the line number: a dataset is thousands of records long, and an error that
