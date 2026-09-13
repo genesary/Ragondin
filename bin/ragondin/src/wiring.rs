@@ -63,7 +63,7 @@ pub struct ModelSpec {
     /// The longest encoded text the model is given, in tokens. `None` leaves
     /// the component's own default in place — the binary applies none of its
     /// own, because a default filled in here could only be a second copy of
-    /// the component's, free to disagree (`docs/code-architecture.md` §6.4).
+    /// the component's, free to disagree (`docs/code-architecture.md` §6.3).
     pub max_sequence_length: Option<usize>,
 }
 
@@ -265,6 +265,11 @@ pub fn embedder_spec(pipeline: &LogicalPipeline) -> Result<Option<EmbedderSpec>>
 /// once. A role is recorded once, so two nodes on one role must name the same
 /// model — the same v0 rule [`embedder_spec`] states, seen from the identity
 /// side.
+///
+/// Keyed on the `impl:` names that read a model, so a component added to
+/// [`register`] that reads one must be added here in the same change: a run
+/// over it would otherwise record no hash, and two runs over two models would
+/// content-address alike.
 pub fn model_hashes(pipeline: &LogicalPipeline) -> Result<BTreeMap<String, String>> {
     let mut hashes: BTreeMap<String, String> = BTreeMap::new();
 
@@ -302,12 +307,20 @@ pub fn model_hashes(pipeline: &LogicalPipeline) -> Result<BTreeMap<String, Strin
 /// A model is an opaque artifact, so its identity is its content and nothing
 /// else: not its path, which moves between machines, and not its modification
 /// time, which a checkout resets.
+///
+/// Streamed rather than read whole: a real embedder or reranker is hundreds of
+/// megabytes to gigabytes, and a digest over its bytes needs none of them
+/// resident at once. A blocking read on the runtime's thread, deliberately:
+/// `bench` is one task in a CLI, with nothing waiting behind it.
 fn file_digest(path: &Path) -> Result<String> {
     use sha2::{Digest, Sha256};
 
-    let bytes =
-        std::fs::read(path).with_context(|| format!("reading the model at {}", path.display()))?;
-    Ok(format!("{:x}", Sha256::digest(bytes)))
+    let mut file = std::fs::File::open(path)
+        .with_context(|| format!("opening the model at {}", path.display()))?;
+    let mut hasher = Sha256::new();
+    std::io::copy(&mut file, &mut hasher)
+        .with_context(|| format!("reading the model at {}", path.display()))?;
+    Ok(format!("{:x}", hasher.finalize()))
 }
 
 /// The model, tokenizer and token budget a node configures.
@@ -381,6 +394,12 @@ mod tests {
         )
     }
 
+    fn bm25_node() -> String {
+        "    - id: lexical\n      component: retriever\n      impl: bm25\n      \
+         inputs: [question]\n      params: { top_k: 10 }\n"
+            .to_owned()
+    }
+
     fn wrap(nodes: &str) -> String {
         format!("pipeline:\n  inputs: [question]\n  nodes:\n{nodes}")
     }
@@ -400,20 +419,14 @@ mod tests {
 
     #[test]
     fn a_retrieval_only_pipeline_is_supported() {
-        let yaml = wrap(
-            "    - id: lexical\n      component: retriever\n      impl: bm25\n      \
-             inputs: [question]\n      params: { top_k: 10 }\n",
-        );
+        let yaml = wrap(&bm25_node());
 
         refuse_unsupported(&pipeline(&yaml)).expect("bm25 alone is what v0 is for");
     }
 
     #[test]
     fn the_embedder_of_a_pipeline_with_no_dense_node_is_absent() {
-        let yaml = wrap(
-            "    - id: lexical\n      component: retriever\n      impl: bm25\n      \
-             inputs: [question]\n      params: { top_k: 10 }\n",
-        );
+        let yaml = wrap(&bm25_node());
 
         assert_eq!(
             embedder_spec(&pipeline(&yaml)).expect("no dense node"),

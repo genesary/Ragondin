@@ -68,6 +68,9 @@ pub async fn run(request: &Request<'_>) -> Result<()> {
         .with_context(|| format!("reading {}", request.config.display()))?;
     let pipeline = LocalFile::new(request.config).load().await?;
     wiring::refuse_unsupported(&pipeline)?;
+    // Before the benchmark is loaded and the corpus embedded: a model file
+    // that is missing is found now, not after the expensive step.
+    let model_hashes = wiring::model_hashes(&pipeline)?;
 
     let root = benchmark_root(request.benchmark, request.datasets)?;
     let benchmark = BeirAdapter::new(&root)
@@ -91,7 +94,7 @@ pub async fn run(request: &Request<'_>) -> Result<()> {
             benchmark: &benchmark,
             index: &index,
             cutoff: CUTOFF,
-            model_hashes: wiring::model_hashes(&pipeline)?,
+            model_hashes,
         },
         &ctx,
     )

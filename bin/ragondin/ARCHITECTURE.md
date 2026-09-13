@@ -73,11 +73,15 @@ release.
 - **Heavy backends arrive optional and feature-gated (ADR-C14).** Two features
   carry them: `bm25` (tantivy) and `onnx` (ONNX Runtime and `tokenizers`, and
   the dense retriever and in-memory store that compose with it). The default
-  build enables neither and stays lean — and it still loads, validates, hashes
-  and plans a configuration naming a component it does not carry, refusing it
-  with the unknown `impl:` that planning reports against the node. `tests/bench.rs`
-  asserts that refusal in the lean build, so "lean" is a tested claim rather
-  than an intention. RRF is a normal dependency rather than a feature: it is
+  build enables neither and stays lean — and it still loads, validates and
+  hashes a configuration naming a component it does not carry. What refuses it
+  depends on what the node names: a `bm25` node reaches planning, which
+  reports the unknown `impl:` against the node; a `dense` or `cross_encoder`
+  node names a model file, which is digested before anything is planned, so a
+  missing file is what refuses it first, and the unknown `impl:` only once the
+  file exists. `tests/bench.rs` asserts the `bm25` refusal in the lean build,
+  so "lean" is a tested claim rather than an intention. RRF is a normal
+  dependency rather than a feature: it is
   rank arithmetic with no backend behind it, so gating it would buy no compile
   time.
 - **`compare` reads; it never executes (ADR-C15).** It loads two runs by
@@ -113,7 +117,13 @@ release.
   of this crate's own: that puts a contract implementation in the composition
   root, and a second one beside it for the embedder. ADR-C26 names the
   constraint and deliberately picks neither, so the choice is recorded rather
-  than silent.
+  than silent. The seam has a cost, recorded here so nobody rediscovers it as
+  a bug: the embedder is constructed twice per run — once in `prepare`, to
+  embed the corpus, and once inside the `dense` constructor, for the queries —
+  because `DenseRetriever::new` takes a `Box<dyn Embedder>` it owns, and a
+  constructor can capture what was prepared but not await it. Two session
+  loads of one file, in sequence. Sharing one is a change to that leaf's
+  constructor signature, not to this crate.
 - **One model per role, and one embedder per pipeline, in v0.** A run records
   its model hashes by the role each model played (§7.1), and the corpus is
   embedded once — so two nodes on one role naming different models, or two
@@ -127,7 +137,13 @@ release.
 - **A model file is hashed here.** Only the composition root sees every node's
   configuration at once, so it is what can record which model a run read. A
   digest is over the file's bytes: not its path, which moves between machines,
-  and not its timestamp, which a checkout resets.
+  and not its timestamp, which a checkout resets. It is taken before the
+  benchmark is loaded, so a missing file is found before the corpus is
+  embedded; and it is keyed on the `impl:` names that read a model (`dense`,
+  `cross_encoder`), so a component registered later that reads one must be
+  added to `wiring::model_hashes` in the same change — a run over it would
+  otherwise record no hash, and two runs over two models would content-address
+  alike.
 
 ## Dependency choices made here
 
@@ -163,6 +179,14 @@ tests need pipelines built the way the product builds them — the door
 `ragondin-config` puts in front of that lowering takes a path and a runtime,
 which a unit test wants neither of, so the tests parse the same YAML into the
 same `RawPipeline` and run the same `validate`.
+
+Two workspace crates also become normal dependencies of the binary with
+`bench`: **`ragondin-contracts`**, because the constructors `src/wiring.rs`
+registers return its traits and move its `EmbeddedChunk`; and
+**`ragondin-types`**, for the `Chunk` those constructors are built from. Both
+are what the composition root already is — the one crate that names the traits
+and the concrete components together (§4.3) — so neither is a new arrow
+anywhere else in the graph.
 
 ## Not here
 

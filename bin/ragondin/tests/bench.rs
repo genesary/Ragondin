@@ -201,9 +201,9 @@ mod with_components {
     /// fixtures`, from `generate.py` beside it. It is read from there rather
     /// than copied here: a second copy would be an opaque binary with no
     /// generator next to it, which is what that crate's fixtures exist not to
-    /// be. It embeds nothing meaningful, and nothing here reads the number it
-    /// produces — what this test exercises is that the dense leg is
-    /// constructed from the corpus this run prepared, and runs.
+    /// be. It embeds nothing meaningful, and nothing here reads a number the
+    /// dense leg alone produces — what this test exercises is that the dense
+    /// leg is constructed from the corpus this run prepared, and runs.
     #[cfg(feature = "onnx")]
     fn hybrid_config() -> String {
         let embedder = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -259,6 +259,18 @@ mod with_components {
             run.traces.len(),
             3,
             "one trace per query of the benchmark, from the executor's return value"
+        );
+        // A floor, not a discriminating number: BM25 alone already finds this
+        // corpus whole, so the fixture cannot separate the dense leg's
+        // contribution from the lexical one's. What the floor rules out is a
+        // fusion that ranked nothing.
+        let ndcg = run
+            .metrics
+            .get("ndcg@10")
+            .expect("a retrieval run scores nDCG at the cutoff");
+        assert!(
+            ndcg > 0.0,
+            "the fused pipeline retrieved nothing: {summary}"
         );
         // The corpus was embedded by a model, so the run records which one —
         // without it two runs over two models would content-address alike.
