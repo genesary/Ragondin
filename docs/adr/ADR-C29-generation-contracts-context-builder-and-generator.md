@@ -21,9 +21,9 @@ stance is recorded one crate down: `ragondin-types` says its generation-side
 types "arrive with the milestone that uses them, not before". This is that
 milestone, and this decision is what those two sentences were waiting for.
 
-Nothing in the repository settles the shape. `docs/system-architecture.md` §5.2
+Nothing in the repository settles the shape. `docs/system-architecture.md` § 5.2
 lists a context builder and a generator among the component kinds and gives a
-signature for neither. `docs/code-architecture.md` §6.2 sketches a
+signature for neither. `docs/code-architecture.md` § 6.2 sketches a
 `Generator(GeneratorNode)` variant and a `Grader(GraderNode)` variant on
 `LogicalNode` and **no context-builder node at all** — leaving open whether
 building a prompt is a node of the graph, a generator's own private business, or
@@ -106,10 +106,15 @@ the same reason `ScoredChunk` does not. `Answer` and `ModelIdentity` do.
 
 **`Context` does not hold the query.** ADR-C18 rejected bundling the query with a
 value — there, the proposal to let `ValueKind::Chunks` mean "a retrieval result
-and the query that produced it" — and the reason carries over intact: the
-generator may legitimately be handed a different query from the one the builder
-saw, and a context that carried one would make which query a generator answers
-ambiguous.
+and the query that produced it" — and it rejected it on fusion: multi-query
+retrieves with several rewritten queries and fuses the results, so "which query
+the fused value carries has no correct answer". The same objection recurs here in
+a different shape. A context has one producer rather than several legs, so
+nothing merges; what makes the bundled query wrong is instead that the generator
+may legitimately be handed a different query from the one the builder saw, and a
+context carrying the builder's would make which query the generator is answering
+ambiguous. Different mechanism, same defect: a value that carries a query cannot
+say which query it speaks for.
 
 ### 2. Two traits in `ragondin-contracts`
 
@@ -117,15 +122,21 @@ Both are `#[async_trait]` and `Send + Sync`, like every other family (ADR-C8), s
 the engine cannot tell a `Local` implementation from a `Remote` one (ADR-3).
 
 ```rust
-async fn build(&self, query: &Query, chunks: Vec<ScoredChunk>, params: &ContextParams)
-    -> Result<Context, ComponentError>;
-async fn model_identity(&self) -> Result<ModelIdentity, ComponentError>;
+#[async_trait]
+pub trait ContextBuilder: Send + Sync {
+    async fn build(&self, query: &Query, chunks: Vec<ScoredChunk>, params: &ContextParams)
+        -> Result<Context, ComponentError>;
+    async fn model_identity(&self) -> Result<ModelIdentity, ComponentError>;
+}
 ```
 
 ```rust
-async fn generate(&self, query: &Query, context: &Context, params: &GenerateParams)
-    -> Result<Answer, ComponentError>;
-async fn model_identity(&self) -> Result<ModelIdentity, ComponentError>;
+#[async_trait]
+pub trait Generator: Send + Sync {
+    async fn generate(&self, query: &Query, context: &Context, params: &GenerateParams)
+        -> Result<Answer, ComponentError>;
+    async fn model_identity(&self) -> Result<ModelIdentity, ComponentError>;
+}
 ```
 
 `ContextParams { budget: usize }` is `top_k`'s twin: a per-call cap on the size of
@@ -146,11 +157,12 @@ does not know.
 
 `GenerateParams { temperature: Option<f64>, seed: Option<u64>, max_tokens: Option<usize> }`
 is per call and every field is optional. **They are per-call parameters and not
-constructor configuration, because of the `Remote` face.** A `Remote` adapter
-holds a client over a channel and delegates each trait method to the rpc that
-mirrors it, which is the shape `docs/code-architecture.md` § 7.1 lays out: face 2
-carries the trait's calls and nothing else, so there is no configure rpc and
-**constructor configuration never crosses the wire**. For the one family that is
+constructor configuration, because of the `Remote` face.**
+`docs/code-architecture.md` § 7.1 lays out the shape a `Remote` adapter takes: a
+client over a channel, delegating each trait method to the rpc that mirrors it.
+Face 2 therefore carries the trait's calls and nothing else — there is no
+configure rpc — so **constructor configuration never crosses the wire**. For the
+one family that is
 `Remote` by design — the LLM inference server is what
 `docs/system-architecture.md` § 10 names as deliberately not reimplemented and
 called over the network — per-call params are therefore the only path from the
@@ -175,7 +187,7 @@ deliberately". An absent optional key reads as `None` and is passed through as
 for a `Local` component, service-side for a `Remote` one — following the split
 `ragondin-contracts`' documentation already draws between what a constructor
 receives and what a params struct carries. It is therefore covered by
-`model_identity`, not by the params, and §4 below says what that obliges.
+`model_identity`, not by the params, and § 4 below says what that obliges.
 
 **ADR-C19 applies unchanged.** `build` over zero chunks is a valid call, not an
 invalid request: it returns the empty context, meaning `chunks.is_empty()`, with
@@ -211,7 +223,7 @@ The port shapes are derived from the variant and never declared (ADR-C16).
 is an explicit edge on both**, which is ADR-C18's decision applied here: it said
 in as many words that `Generator` and `Grader` would "inherit the answer" when
 they arrived, and the first of the two arrives now. A builder that
-never reads the query ignores the port, as `StubReranker` in
+never reads the query ignores the port, as the test stub `StubReranker` in
 `core/ragondin-contracts/src/lib.rs` ignores its `_query` today; the hashed edge
 nobody reads is the verbosity ADR-C18 accepted deliberately, and accepting it
 again here costs nothing new.
@@ -360,17 +372,21 @@ here moves per-node detail into a `tracing` macro.
   to answer, and a synchronous method leaves it a `block_on` inside the trait,
   which is what ADR-C25 forbids.
 
-- **A counts-only trace, or an answer returned but not traced.** ADR-C28's third
-  alternative again, with the same consequence: the harness scores from the return
+- **A counts-only trace, or an answer returned but not traced.** ADR-C28's
+  *Aggregates only, no per-query record anywhere* again, with the same
+  consequence: the harness scores from the return
   value and drops it, so there is no per-query regression fixture and no replay.
   It was rejected for chunks in ADR-C28, and nothing about text makes it a better
   answer here — the SciFact per-query fixture reads its rankings out of a stored
   run's `traces.json` precisely because they were traced rather than dropped.
 
 - **`Context` holding the query.** ADR-C18 weighed and rejected the same shape for
-  chunks, and its reason holds: the generator may receive a different query from
-  the one the builder saw, and a bundled query makes which one it answers a
-  question with no correct answer.
+  chunks, on fusion: several legs may carry several rewritten queries, so "which
+  query the fused value carries has no correct answer". That ground does not
+  transfer literally — a context has one producer — but the objection recurs in a
+  different shape, and § 1 above states it: the generator may receive a different
+  query from the one the builder saw, so a bundled query leaves which query the
+  answer speaks for undecidable.
 
 ## Consequences
 
