@@ -1,0 +1,29 @@
+# The NFCorpus calibration's dense-only pipeline: the same reference sentence
+# encoder as SciFact's, over the in-memory store, which searches exactly
+# (ADR-10: never an ANN index). NFCorpus is the graded-relevance half of the
+# calibration — its qrels are 0/1/2 where SciFact's are 0/1 — so the figure it
+# reproduces is the one that can tell a linear nDCG gain from an exponential
+# one.
+#
+# Encoded as the model's card specifies — no instruction prefix, 256 word
+# pieces, mean pooling and L2 being what `ragondin-embedder-onnx` applies to
+# every model. The model paths are relative to the directory
+# `RAGONDIN_CALIBRATION_MODELS` names; `tests/calibration.rs` runs the binary
+# from there, so the configuration can be committed with no absolute path and
+# its content hash is the same on every machine.
+#
+# Kept beside `dense-only.yaml` rather than shared with it: the two record
+# different reproductions, and a change made for one dataset's sake must not
+# move the other's run id.
+pipeline:
+  inputs: [question]
+  nodes:
+    - id: vectors
+      component: retriever
+      impl: dense
+      inputs: [question]
+      params:
+        top_k: 10
+        model: all-MiniLM-L6-v2/model.onnx
+        tokenizer: all-MiniLM-L6-v2/tokenizer.json
+        max_sequence_length: 256
