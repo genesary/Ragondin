@@ -1,0 +1,279 @@
+#!/usr/bin/env python3
+"""Regenerate the frozen SciFact calibration fixture (ADR-10).
+
+ADR-10 requires that the reproduction of a published leaderboard score leave
+behind "a run, its qrels, and the expected scores checked against
+`pytrec_eval`" as a permanent CI regression test. This script is the extraction
+that produces those five files from the stores `just calibrate` leaves behind,
+plus the dataset that calibration ran over. `scifact_calibration_fixture.rs`
+beside them is the test that reads them.
+
+The expected values are `pytrec_eval`'s, never `ragondin-metrics`' own: a
+fixture computed by the crate under test would pass whatever that crate did.
+
+What it reads
+-------------
+
+Two runs of `bin/ragondin/tests/calibration.rs`, both left in the store
+`target/tmp/calibration/dense/` of the worktree the calibration ran in:
+
+  * `e9f178018e9974f216d6cf81ebd71bd5a7273a281e47e48d016fb1cd265382e7`
+    — `bin/ragondin/tests/fixtures/calibration/dense-only.yaml`, terminal node
+    `vectors`, `top_k` 10.
+  * `9b0e2d9419a1b5d84ed384f50ce4a100a983c0525b93636f749ac50928456238`
+    — `bin/ragondin/tests/fixtures/calibration/hybrid-rerank.yaml`, terminal
+    node `reranked`, `top_k` 10.
+
+From each run's `traces.json` it takes, per query, that terminal node's
+`output.chunks.ranked` — the list ADR-C28 has the execution trace carry, in the
+order the node produced it — and collapses the chunks to documents by first
+occurrence, the rule `ragondin-harness`'s `ranked_documents` applies. (For these
+two pipelines SciFact has one chunk per document, so nothing is ever collapsed;
+the script asserts that rather than assuming it.)
+
+The qrels and the query order come from the dataset the calibration ran over:
+BEIR SciFact, the original `scifact.zip` from the BEIR datasets bucket, SHA-256
+`536e14446a0ba56ed1398ab1055f39fe852686ecad24a6306c80c490fa8e0165`, unpacked as
+is. `qrels/test.tsv` gives the judgments for the 300 judged queries;
+`queries.jsonl` gives the order the benchmark walks them in, which is file order
+filtered to the judged ones — the order `ragondin-harness` sums its means in,
+and therefore the order these files must preserve for the frozen aggregates to
+reproduce. `bin/ragondin/ARCHITECTURE.md` § Calibration against a published
+leaderboard records the archive hash, the model revisions and those aggregates.
+
+What it writes
+--------------
+
+Five tab-separated files, beside this script, with the same `#` comment header
+convention `pytrec_eval_parity.tsv` uses:
+
+  * `scifact_calibration_qrels.tsv` — `query-id, document-id, grade`; shared by
+    both runs, because the judgments belong to the dataset and not to a run.
+  * `scifact_calibration_<run>.run.tsv` — `query-id, rank, document-id, score`,
+    one line per ranked document, best first, grouped by query in benchmark
+    order. The score is the trace's, widened from the `f32` the component
+    returned; no metric reads it, and it is written so the fixture records what
+    the node produced rather than only the order it produced it in.
+  * `scifact_calibration_<run>.expected.tsv` — `query-id, ndcg_cut_10,
+    recall_10, recip_rank`, in the same order.
+
+The measures are `pytrec_eval`'s `ndcg_cut.10`, `recall.10` and `recip_rank` —
+the three `ragondin-harness` reports, with MRR uncut as `trec_eval` computes it.
+The run handed to `pytrec_eval` is scored by descending rank rather than by the
+pipeline's own scores, so that no tie can make the reference reorder a list this
+crate is handed already ordered; `regenerate.py` beside this script does the
+same, for the same reason.
+
+The output is deterministic: every file is written in a fixed order and every
+float through `repr`, so rerunning without editing this script reproduces all
+five byte for byte. A diff on an existing value is a finding, not a refresh.
+
+How to regenerate
+-----------------
+
+    export RAGONDIN_CALIBRATION_DATASETS=/path/to/datasets   # holds scifact/
+    export RAGONDIN_CALIBRATION_MODELS=/path/to/models
+    just calibrate                                          # ~35 min of CPU
+
+    python3 -m venv .venv && .venv/bin/pip install pytrec_eval
+    .venv/bin/python eval/ragondin-metrics/tests/fixtures/regenerate_scifact_calibration.py \
+        --store target/tmp/calibration/dense
+
+The committed files were produced with `pytrec_eval` 0.5 on CPython 3.14.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import pathlib
+import sys
+
+import pytrec_eval
+
+HERE = pathlib.Path(__file__).resolve().parent
+
+CUTOFF = 10
+JUDGED_QUERIES = 300
+
+# (fixture stem, run id, the terminal node whose output is the ranking).
+RUNS = [
+    (
+        "dense_only",
+        "e9f178018e9974f216d6cf81ebd71bd5a7273a281e47e48d016fb1cd265382e7",
+        "vectors",
+    ),
+    (
+        "hybrid_rerank",
+        "9b0e2d9419a1b5d84ed384f50ce4a100a983c0525b93636f749ac50928456238",
+        "reranked",
+    ),
+]
+
+BANNER = (
+    "# Frozen SciFact calibration fixture (ADR-10) — regenerated by\n"
+    "# regenerate_scifact_calibration.py, which records where every value came\n"
+    "# from. Do not edit a value by hand.\n"
+    "#\n"
+)
+
+
+def read_qrels(path):
+    """`qrels/<split>.tsv` as `{query: {document: grade}}`.
+
+    The three columns are read by position, and BEIR's `query-id/corpus-id/score`
+    header is skipped the way the adapter skips it: only when the score field
+    both fails to parse and spells `score`.
+    """
+    qrels = {}
+    with path.open(encoding="utf-8") as handle:
+        first = True
+        for line in handle:
+            if not line.strip():
+                continue
+            fields = line.rstrip("\n").split("\t")
+            query, document, grade = fields[0].strip(), fields[1].strip(), fields[2]
+            if first:
+                first = False
+                if grade.strip() == "score":
+                    continue
+            qrels.setdefault(query, {})[document] = int(grade)
+    return qrels
+
+
+def read_query_order(path, qrels):
+    """The benchmark's query order: `queries.jsonl` order, judged queries only."""
+    order = []
+    with path.open(encoding="utf-8") as handle:
+        for line in handle:
+            if not line.strip():
+                continue
+            query = json.loads(line)["_id"].strip()
+            if query in qrels:
+                order.append(query)
+    return order
+
+
+def read_rankings(traces, node):
+    """Per query, the documents `node` produced, best first, with their scores.
+
+    Chunks are collapsed to documents by first occurrence — the rule
+    `ragondin-harness`'s `ranked_documents` applies, because a metric scores
+    documents and a pipeline returns chunks.
+    """
+    rankings = {}
+    for query, trace in traces.items():
+        nodes = trace["nodes"]
+        terminal = nodes[-1]
+        if terminal["node"] != node:
+            raise SystemExit(f"{query}: the last node is {terminal['node']}, not {node}")
+        ranked = []
+        seen = set()
+        for hit in terminal["output"]["chunks"]["ranked"]:
+            if hit["document"] in seen:
+                raise SystemExit(
+                    f"{query}: {hit['document']} ranked twice — this dataset has one "
+                    "chunk per document, so a collapse here means the extraction is "
+                    "reading something other than it thinks"
+                )
+            seen.add(hit["document"])
+            ranked.append((hit["document"], hit["score"]))
+        if len(ranked) > CUTOFF:
+            raise SystemExit(f"{query}: {len(ranked)} hits above a top_k of {CUTOFF}")
+        rankings[query] = ranked
+    return rankings
+
+
+def reference(qrels, ranked):
+    """nDCG@10, recall@10 and MRR for one query, straight out of `pytrec_eval`."""
+    measures = {f"ndcg_cut.{CUTOFF}", f"recall.{CUTOFF}", "recip_rank"}
+    evaluator = pytrec_eval.RelevanceEvaluator({"q": qrels}, measures)
+    # Scored by descending rank, never by the pipeline's own score: ties would
+    # otherwise be broken by document id inside `trec_eval`, reordering a list
+    # this crate is handed already ordered.
+    run = {document: float(len(ranked) - i) for i, (document, _) in enumerate(ranked)}
+    scored = evaluator.evaluate({"q": run})["q"]
+    return [
+        scored[f"ndcg_cut_{CUTOFF}"],
+        scored[f"recall_{CUTOFF}"],
+        scored["recip_rank"],
+    ]
+
+
+def write(name, header, lines):
+    path = HERE / name
+    path.write_text(BANNER + header + "\n".join(lines) + "\n", encoding="utf-8")
+    print(f"{path.name}: {len(lines)} lines", file=sys.stderr)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--store",
+        type=pathlib.Path,
+        required=True,
+        help="the run store `just calibrate` left both runs in",
+    )
+    parser.add_argument(
+        "--datasets",
+        type=pathlib.Path,
+        default=os.environ.get("RAGONDIN_CALIBRATION_DATASETS"),
+        help="the directory holding scifact/ (default: $RAGONDIN_CALIBRATION_DATASETS)",
+    )
+    args = parser.parse_args()
+    if args.datasets is None:
+        parser.error("--datasets, or RAGONDIN_CALIBRATION_DATASETS, must name scifact/")
+
+    scifact = pathlib.Path(args.datasets) / "scifact"
+    qrels = read_qrels(scifact / "qrels" / "test.tsv")
+    order = read_query_order(scifact / "queries.jsonl", qrels)
+    if len(order) != JUDGED_QUERIES:
+        raise SystemExit(f"{len(order)} judged queries, not {JUDGED_QUERIES}")
+
+    write(
+        "scifact_calibration_qrels.tsv",
+        "# BEIR SciFact, test split: query-id <TAB> document-id <TAB> grade.\n"
+        "# A grade of 0 means judged and not relevant, which is not the same as\n"
+        "# absent. Queries in benchmark order, documents sorted within a query.\n",
+        [
+            f"{query}\t{document}\t{grade}"
+            for query in order
+            for document, grade in sorted(qrels[query].items())
+        ],
+    )
+
+    for stem, run_id, node in RUNS:
+        traces = json.loads(
+            (args.store / run_id / "traces.json").read_text(encoding="utf-8")
+        )
+        rankings = read_rankings(traces, node)
+        missing = [query for query in order if query not in rankings]
+        if missing:
+            raise SystemExit(f"{run_id}: {len(missing)} judged queries have no trace")
+
+        write(
+            f"scifact_calibration_{stem}.run.tsv",
+            f"# Run {run_id},\n"
+            f"# node `{node}`: query-id <TAB> rank <TAB> document-id <TAB> score.\n"
+            "# Best first, grouped by query, queries in benchmark order.\n",
+            [
+                f"{query}\t{rank}\t{document}\t{score!r}"
+                for query in order
+                for rank, (document, score) in enumerate(rankings[query], start=1)
+            ],
+        )
+        write(
+            f"scifact_calibration_{stem}.expected.tsv",
+            f"# What pytrec_eval scores run {run_id}:\n"
+            "# query-id <TAB> ndcg_cut_10 <TAB> recall_10 <TAB> recip_rank.\n"
+            "# recip_rank is uncut, matching trec_eval and the harness's mrr.\n",
+            [
+                "\t".join([query, *(repr(v) for v in reference(qrels[query], rankings[query]))])
+                for query in order
+            ],
+        )
+
+
+if __name__ == "__main__":
+    main()
