@@ -171,8 +171,7 @@ constructor configuration, because of the `Remote` face.**
 client over a channel, delegating each trait method to the rpc that mirrors it.
 Face 2 therefore carries the trait's calls and nothing else — there is no
 configure rpc — so **constructor configuration never crosses the wire**. For the
-one family that is
-`Remote` by design — the LLM inference server is what
+one family that is `Remote` by design — the LLM inference server is what
 `docs/system-architecture.md` § 10 names as deliberately not reimplemented and
 called over the network — per-call params are therefore the only path from the
 pipeline representation to the service. Knobs left service-side would sit outside
@@ -264,10 +263,16 @@ name.** The bump is what an older build needs: without it, a document naming
 `generator` parses, and the refusal arrives further down as
 `ValidationError::UnknownComponent`, which reads as a misspelt family rather than
 as a configuration written in a schema this build does not have. With it, the
-version gate refuses the document for what it is. `ParamValue` is untouched:
-every parameter these two nodes take is
-a flat scalar, so the grammar ADR-C22 fixed as `String | Int | Float | Bool | List`
-needs nothing added, and no `Map` demander appears here.
+version gate refuses the document for what it is — **for a document that states
+its version**. One that states none still falls through to `UnknownComponent`,
+because an absent `version:` reads as the build's own (`RawPipeline::version`
+defaults to `SchemaVersion::CURRENT`, and a configuration writes the line only to
+pin a version deliberately). The bump is what makes a clean refusal *possible*,
+not what makes it universal.
+
+`ParamValue` is untouched: every parameter these two nodes take is a flat scalar,
+so the grammar ADR-C22 fixed as `String | Int | Float | Bool | List` needs
+nothing added, and no `Map` demander appears here.
 
 These additions are **the deliberate, versioned INV-1 break** on `ragondin-types`,
 `ragondin-contracts` and `ragondin-pipeline`, sanctioned here and nowhere else.
@@ -299,14 +304,15 @@ For a `Local` component the identity is a digest of its own configuration and it
 model file — and **the completeness rule is what binds, not the presence of a
 file**. A `Local` component with no model digests its configuration alone; the
 concatenating context builder of #262 is exactly that case, and its identity is
-its template and its budget handling, not a file it does not have. A constant is
+its template and the unit its budget is counted in, not a file it does not have —
+its configuration, never the per-call value it was handed. A constant is
 conformant for a component with no configuration that decides its output at all.
 What is never conformant is an identity that omits something which does decide
 the output. For a `Remote` component the identity is **what the service reports,
 and that is the whole extent of the guarantee**: a service that answers wrongly
-cannot be checked
-from here. That is not a new concession. ADR-15 promises traceability, not
-verification, and `model_hashes` is already caller-supplied trust —
+cannot be checked from here. That is not a new concession. ADR-15 promises
+traceability, not verification, and `model_hashes` is already caller-supplied
+trust —
 `Evaluation::model_hashes` in `eval/ragondin-harness/src/evaluate.rs` is
 documented as "supplied by the caller rather than discovered here".
 
@@ -336,10 +342,18 @@ rather than a side effect of this one.
 **`VectorStore` is not in the pattern and not in that deferral.** A store holds
 and searches vectors an embedder produced; no model of its own decides what it
 returns, so there is no identity for it to report and nothing here says there
-should be. What varies about a store between two runs is the set of vectors it
-holds, and run identity already covers that through `index_version`, which the
-harness computes over the chunk set. The pattern reaches a family because it is
-model-bearing, never because it is a component.
+should be. It also holds nothing a run's identity does not already derive from
+elsewhere: the vectors are a function of the chunk set, which `index_version`
+names, and of the embedder, which `model_hashes` records. That derivation is
+weaker than it sounds, and this ADR does not overstate it. `index_version` is a
+digest of chunk ids, texts and document ids, and `CorpusIndex::version`'s doc
+comment in `eval/ragondin-harness/src/corpus.rs` is careful that it "addresses
+*a* chunk set, not provably the one that was retrieved from"; and ADR-C17 records
+that an embedder's prefixes — configuration that changes the numbers — reach run
+identity nowhere today, a hole it names and leaves to #31. Neither gap is closed
+here. The claim is only the narrow one: a store adds no **model** of its own to
+the tuple, so the pattern does not reach it. The pattern reaches a family because
+it is model-bearing, never because it is a component.
 
 ### 5. What the trace names
 
@@ -366,9 +380,16 @@ Size is bounded by **the builder's configuration, and never by the corpus** —
 the argument ADR-C28 made for `top_k`, holding here in a slightly weaker form.
 `budget` is the cap, but its unit is the implementation's (§ 2), so a builder
 counting characters bounds the traced text directly while one counting chunks
-bounds it only together with the chunking that feeds it. Either way both are the
-user's configuration: no corpus makes a traced context grow. And the trace is
-**not part of run identity**:
+bounds it only together with the chunking that feeds it. Both are the user's
+configuration, so the corpus never bounds a traced context **directly** — but the
+qualification is real rather than formal: no chunker exists yet, so a document
+becomes one chunk carrying its whole text (`eval/ragondin-harness/src/corpus.rs`
+says so and says why), and a chunk-counting builder's traced text therefore
+tracks document length until a chunker arrives in the pipeline. ADR-C28's bound
+on `top_k` is the tighter one; this is the same argument held to a lower
+standard, and saying so is cheaper than discovering it from a large trace.
+
+And the trace is **not part of run identity**:
 `run_id` in `eval/ragondin-harness/src/identity.rs` digests the five fields of
 `RunInputs` and nothing else, so an answer's text never enters `run_id` and two
 machines whose generators phrase an answer differently still produce the same run
@@ -467,17 +488,17 @@ here moves per-node detail into a `tracing` macro.
 - **The INV-1 break is sanctioned here and covers three crates.**
   `ragondin-types` gains three value types, `ragondin-contracts` two traits and
   two params structs, `ragondin-pipeline` two `LogicalNode` variants and two
-  `ValueKind` variants. **INV-9**: the wire schema's shape changes and
-  `SchemaVersion::SUPPORTED` bumps with it. **INV-2**: `ragondin-engine` changes
+  `ValueKind` variants. **INV-9**: no struct on the wire changes shape — what
+  widens is the vocabulary of `component:` values a configuration may name — and
+  `SchemaVersion::SUPPORTED` bumps for it all the same. **INV-2**: `ragondin-engine` changes
   freely — the registry, the planner, `NodeValue` and `ValueSummary` are its own,
   and the executor's output type becomes an enum over what a terminal node may
   produce, which is engine-internal and stable to nobody: ADR-C21 decided that
   `ragondin-engine` is not an API boundary, and this is that licence being used,
-  not re-argued. **INV-7**: no privilege
-  anywhere — the stub, the concatenating builder and the `Remote` adapters
-  implement the same two traits and pass the same suites, with no path a
-  third-party component could not take. **INV-10**: untouched; the trace is still
-  the executor's return value.
+  not re-argued. **INV-7**: no privilege anywhere — the stub, the concatenating
+  builder and the `Remote` adapters implement the same two traits and pass the
+  same suites, with no path a third-party component could not take. **INV-10**:
+  untouched; the trace is still the executor's return value.
 
 - **Prose this decision falsifies, corrected by the diff that creates the
   obligation.** `ragondin-types`' crate documentation promises `Context` and
