@@ -143,7 +143,7 @@ map *ARGS:
 # material the tree never fetches (ADR-C27), so it is ignored by default and
 # deliberately not part of `check`.
 calibrate:
-    cargo test -p ragondin --features bm25,onnx --test calibration -- --ignored --nocapture
+    cargo test -p ragondin --features bm25,onnx --test calibration -- --ignored --nocapture --test-threads=1
 
 # Everything CI runs, in one command. Run this before declaring work done.
 check: fmt build test test-features clippy check-features doc test-check-invariants check-invariants test-check-doc-links check-doc-links check-adr-index check-deny

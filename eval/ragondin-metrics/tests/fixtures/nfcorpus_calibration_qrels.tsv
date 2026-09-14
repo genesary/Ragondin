@@ -3,8 +3,8 @@
 # from. Do not edit a value by hand.
 #
 # BEIR NFCorpus, test split: query-id <TAB> document-id <TAB> grade.
-# Graded 0/1/2, verbatim from the archive. A grade of 0 means judged and
-# not relevant, which is not the same as absent. Queries in benchmark
+# Graded 1/2 on BEIR's 0-2 scale, verbatim from the archive; no test
+# judgment is 0, and an absent pair reads as 0. Queries in benchmark
 # order, documents sorted within a query.
 PLAIN-2	MED-10	2
 PLAIN-2	MED-14	2

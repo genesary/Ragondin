@@ -1,9 +1,9 @@
 # The NFCorpus calibration's dense-only pipeline: the same reference sentence
 # encoder as SciFact's, over the in-memory store, which searches exactly
 # (ADR-10: never an ANN index). NFCorpus is the graded-relevance half of the
-# calibration — its qrels are 0/1/2 where SciFact's are 0/1 — so the figure it
-# reproduces is the one that can tell a linear nDCG gain from an exponential
-# one.
+# calibration — its qrels carry grades 1 and 2 where SciFact's are all 1 — so
+# the figure it reproduces is the one that can tell a linear nDCG gain from an
+# exponential one.
 #
 # Encoded as the model's card specifies — no instruction prefix, 256 word
 # pieces, mean pooling and L2 being what `ragondin-embedder-onnx` applies to

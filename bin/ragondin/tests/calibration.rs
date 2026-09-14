@@ -335,14 +335,15 @@ fn the_harness_reproduces_the_published_scifact_figure_and_hybrid_beats_dense() 
     println!("{report}");
 }
 
-/// The graded half of the calibration: NFCorpus, whose qrels are 0/1/2, so the
+/// The graded half of the calibration: NFCorpus, whose qrels are graded, so the
 /// figure it reproduces is one a linear-versus-exponential nDCG gain bug would
 /// move (§ 9.8, ADR-10). Dense-only: the exit criterion is SciFact's, and a
 /// hybrid case here would buy nothing this does not already say.
 ///
-/// Sequential with the SciFact test above for the same reason that one is
-/// sequential within itself — each evaluation embeds the corpus once, and two
-/// in parallel would contend for every core.
+/// Sequential with the SciFact test above — `just calibrate` passes
+/// `--test-threads=1` — for the same reason that one is sequential within
+/// itself: each evaluation embeds the corpus once, and two in parallel would
+/// contend for every core and interleave their summaries.
 #[test]
 #[ignore = "needs BEIR NFCorpus and the exported embedder on disk; run with `just calibrate`"]
 fn the_harness_reproduces_the_published_nfcorpus_figure_over_graded_qrels() {

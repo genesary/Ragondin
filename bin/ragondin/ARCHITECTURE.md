@@ -415,8 +415,9 @@ published at. The `pytrec_eval` row is not an independent aggregate — that
 library reports per query — but the 969 per-query values summed the way the
 harness sums them, and every one of them, and all three sums, agree with the
 harness bit for bit. (Summed in a different order they would not: exact
-rounding over the same 323 values lands one ulp away, which is what the
-recorded tolerance exists for.) Run id, over the committed configuration:
+rounding over the same 323 values lands a few ulps away — three on nDCG@10,
+six on recall@10, none on MRR — which is what the recorded tolerance exists
+for.) Run id, over the committed configuration:
 `5df02792921fe418538358a0c8710bfb683b1b852fecf808c666429388d0fe21`; the two
 evaluations the P4 check requires take about 120 s each on a laptop CPU, four
 minutes for the test.
@@ -429,8 +430,9 @@ recorded because the fixture freezes it, not because it corroborates anything.
 and the P4 pair of evaluations into two stores. The per-query freeze is
 `eval/ragondin-metrics/tests/nfcorpus_calibration_fixture.rs`, and on this
 dataset it carries weight the SciFact one cannot. Swapping the linear gain for
-the exponential one moves 80 of the 323 queries — the worst by 12.4 points of
-nDCG@10 — but moves the **mean** only from 0.31667 to 0.31727, six hundredths
+the exponential one moves 80 of the 323 queries by more than the fixture's
+tolerance — the worst by 12.4 points of nDCG@10 — but moves the **mean** only
+from 0.31667 to 0.31727, six hundredths
 of a point. That is inside the half-point tolerance this reproduction is held
 to, and inside the 1e-4 the test allows an aggregate. So the reproduction alone
 would report success with the wrong gain function, and the per-query fixture is

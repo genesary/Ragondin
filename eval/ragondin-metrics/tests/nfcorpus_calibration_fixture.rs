@@ -42,8 +42,9 @@
 //! `recall_at_k` and `reciprocal_rank` score 323 real rankings exactly as
 //! `trec_eval` scores them when the grades are not all 1. The gain convention
 //! is the one ADR-10 pins — linear, `rel`, not `2^rel - 1` — and this is the
-//! fixture that fails if it changes: 80 of the 323 queries score a different
-//! nDCG@10 under the exponential gain, the worst of them by 12.4 points.
+//! fixture that fails if it changes: 80 of the 323 queries score an nDCG@10
+//! under the exponential gain that differs by more than the tolerance below,
+//! the worst of them by 12.4 points.
 //!
 //! **And it is the only thing that would fail.** Swapping the gain formula
 //! moves this run's mean nDCG@10 from 0.31667 to 0.31727 — six hundredths of a

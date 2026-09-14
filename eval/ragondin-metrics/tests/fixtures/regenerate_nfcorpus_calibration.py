@@ -4,9 +4,10 @@
 ADR-10 requires that the reproduction of a published leaderboard score leave
 behind "a run, its qrels, and the expected scores checked against
 `pytrec_eval`" as a permanent CI regression test, and names two cases: SciFact,
-with binary qrels, and then NFCorpus, whose graded 0/1/2 qrels
-`docs/system-architecture.md` § 9.8 Calibrating the harness against a published
-leaderboard says "alone can expose a linear-versus-exponential gain bug". This
+with binary qrels, and then NFCorpus, whose graded qrels (1 and 2 on BEIR's
+0-2 scale) `docs/system-architecture.md` § 9.8 Calibrating the harness against
+a published leaderboard says "alone can expose a linear-versus-exponential gain
+bug". This
 script is the extraction that produces the graded case's three files from the
 store `just calibrate` leaves behind, plus the dataset that calibration ran
 over. `nfcorpus_calibration_fixture.rs` beside them is the test that reads them.
@@ -247,8 +248,8 @@ def main():
     write(
         "nfcorpus_calibration_qrels.tsv",
         "# BEIR NFCorpus, test split: query-id <TAB> document-id <TAB> grade.\n"
-        "# Graded 0/1/2, verbatim from the archive. A grade of 0 means judged and\n"
-        "# not relevant, which is not the same as absent. Queries in benchmark\n"
+        "# Graded 1/2 on BEIR's 0-2 scale, verbatim from the archive; no test\n"
+        "# judgment is 0, and an absent pair reads as 0. Queries in benchmark\n"
         "# order, documents sorted within a query.\n",
         [
             f"{query}\t{document}\t{grade}"
