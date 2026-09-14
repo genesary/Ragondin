@@ -407,13 +407,16 @@ would confirm nothing the one above has not already confirmed.
 |---|---|---|---|
 | Published (MTEB) | 0.31594 | 0.15499 | — |
 | dense-only, `bench` | 0.31667312754717813 | 0.15498797328057862 | 0.5076539387684899 |
-| `pytrec_eval` over that run | 0.31667312754717813 | 0.15498797328057862 | 0.5076539387684899 |
+| `pytrec_eval`, per query, summed in benchmark order | 0.31667312754717813 | 0.15498797328057862 | 0.5076539387684899 |
 
 The gap to the published nDCG@10 is 0.073 of a point against a tolerance of
 0.5, and recall@10 agrees with the published figure to the precision it is
-published at. `pytrec_eval` agrees bit for bit here — not merely within a
-tolerance, as on SciFact — over all 323 queries and all three metrics. Run id,
-over the committed configuration:
+published at. The `pytrec_eval` row is not an independent aggregate — that
+library reports per query — but the 969 per-query values summed the way the
+harness sums them, and every one of them, and all three sums, agree with the
+harness bit for bit. (Summed in a different order they would not: exact
+rounding over the same 323 values lands one ulp away, which is what the
+recorded tolerance exists for.) Run id, over the committed configuration:
 `5df02792921fe418538358a0c8710bfb683b1b852fecf808c666429388d0fe21`; the two
 evaluations the P4 check requires take about 120 s each on a laptop CPU, four
 minutes for the test.
