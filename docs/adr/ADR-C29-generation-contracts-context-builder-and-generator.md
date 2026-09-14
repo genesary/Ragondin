@@ -83,6 +83,15 @@ that grows with the corpus and the one no reader of a ranking needs". `chunks` i
 in **the order the builder placed them**, which is what makes it a ranking rather
 than a set.
 
+**`score` is the score the chunk carried in, on the producing node's scale — a
+builder never assigns one.** A context builder selects, orders and renders; it
+does not judge relevance, so a builder that drops chunks over its budget or
+reorders what it keeps carries each surviving chunk's score through untouched.
+Stated here because § 5 maps `Context.chunks` onto the trace's `RankedChunk`,
+whose doc comment calls its score "the score the node gave it, on the node's own
+scale" — true of a retriever, a fusion and a reranker, and read literally of a
+builder it would invent a scoring step this contract does not have.
+
 `Answer { text: String }` — text and nothing else, **deliberately**. Two further
 fields were named as candidates and refused for M3: token usage, the cost axis on
 which `docs/system-architecture.md` § 7.1 compares one configuration against
@@ -183,11 +192,27 @@ earlier, of physical planning, which "applies no defaults of its own,
 deliberately". An absent optional key reads as `None` and is passed through as
 `None`; no default is substituted anywhere above the component.
 
+**Absence must survive face 2, and that needs saying.** The three fields mirror
+on face 2 with **explicit presence** — proto3 `optional` — so an omitted field
+decodes as `None` and never as a value, and the `Remote` adapter passes that
+`None` through rather than substituting anything. Without the clause a plain
+proto3 `double` that the caller omitted arrives as `0.0`, and a temperature of
+zero is greedy decoding: a materially different generation, chosen by nobody,
+recorded as if it had been asked for. This is ADR-C17's problem in a second
+family. There, a proto3 enum gives an omitted field the number `0` with no notion
+of absence, so `EMBED_ROLE_UNSPECIFIED = 0` is reserved and never valid and the
+adapter rejects it; here the zero is a legitimate value rather than a reserved
+one, so the mirror carries presence instead of reserving a number. Same defect —
+the wire cannot say "absent" — and the same obligation: say which, in the
+Decision, or a `Remote` implementation silently differs from a `Local` one on the
+one axis the two faces promise to agree on.
+
 **The prompt template stays with the implementation** — constructor configuration
-for a `Local` component, service-side for a `Remote` one — following the split
-`ragondin-contracts`' documentation already draws between what a constructor
-receives and what a params struct carries. It is therefore covered by
-`model_identity`, not by the params, and § 4 below says what that obliges.
+for a `Local` component, service-side for a `Remote` one — applying the split
+between what a constructor receives and what a params struct carries that
+`ragondin-contracts`' documentation states and ADR-C17 decided, there for an
+embedder's per-role prefix text. It is therefore covered by `model_identity`, not
+by the params, and § 4 below says what that obliges.
 
 **ADR-C19 applies unchanged.** `build` over zero chunks is a valid call, not an
 invalid request: it returns the empty context, meaning `chunks.is_empty()`, with
@@ -228,10 +253,19 @@ never reads the query ignores the port, as the test stub `StubReranker` in
 nobody reads is the verbosity ADR-C18 accepted deliberately, and accepting it
 again here costs nothing new.
 
-On the wire, `RawNode.component` accepts `context_builder` and `generator`. That
-is a change to the wire schema's shape, so it **bumps `SchemaVersion::SUPPORTED`**
-under INV-9, as ADR-C18's change to the same type did. **This ADR sanctions that
-bump by name.** `ParamValue` is untouched: every parameter these two nodes take is
+On the wire, `RawNode.component` accepts `context_builder` and `generator`. No
+struct changes shape for it: `component` is a `String` and stays one. What widens
+is **the vocabulary of `component:` values a configuration may name**, and that
+is a change to the schema all the same, so it **bumps
+`SchemaVersion::SUPPORTED`** under INV-9 — as ADR-C18's addition of `inputs` to
+`RawGraph` did, which is what `SchemaVersion`'s own doc comment records as the
+reason the supported version is what it is. **This ADR sanctions that bump by
+name.** The bump is what an older build needs: without it, a document naming
+`generator` parses, and the refusal arrives further down as
+`ValidationError::UnknownComponent`, which reads as a misspelt family rather than
+as a configuration written in a schema this build does not have. With it, the
+version gate refuses the document for what it is. `ParamValue` is untouched:
+every parameter these two nodes take is
 a flat scalar, so the grammar ADR-C22 fixed as `String | Int | Float | Bool | List`
 needs nothing added, and no `Map` demander appears here.
 
@@ -262,8 +296,15 @@ either is wrong:
   method exists to prevent.
 
 For a `Local` component the identity is a digest of its own configuration and its
-model file. For a `Remote` one it is **what the service reports, and that is the
-whole extent of the guarantee**: a service that answers wrongly cannot be checked
+model file — and **the completeness rule is what binds, not the presence of a
+file**. A `Local` component with no model digests its configuration alone; the
+concatenating context builder of #262 is exactly that case, and its identity is
+its template and its budget handling, not a file it does not have. A constant is
+conformant for a component with no configuration that decides its output at all.
+What is never conformant is an identity that omits something which does decide
+the output. For a `Remote` component the identity is **what the service reports,
+and that is the whole extent of the guarantee**: a service that answers wrongly
+cannot be checked
 from here. That is not a new concession. ADR-15 promises traceability, not
 verification, and `model_hashes` is already caller-supplied trust —
 `Evaluation::model_hashes` in `eval/ragondin-harness/src/evaluate.rs` is
@@ -282,15 +323,23 @@ component both instances reach one URL, so the two agree unless the service
 changed mid-run, which is the same window every other caller-supplied hash
 already has.
 
-**The pattern, stated for every model-bearing family: any family whose answer
-depends on a model reports its identity through its trait.** This ADR applies the
-pattern to the two new traits **now**, and deliberately does **not** add the
-method to `Embedder`, `Reranker` or `VectorStore`. Neither of the first two has a
-`Remote` implementation today, so neither has the problem the method solves; and
-adding a method to a trait breaks every existing implementation, in and out of
-this workspace. The ADR that resolves #101 — how a node names and constructs a
-`Remote` service — is where those three follow, as a deliberate act of its own
+**The pattern, stated for every model-bearing family: any family whose output
+depends on a model reports that model's identity through its trait.** This ADR
+applies the pattern to the two new traits **now**, and deliberately does **not**
+add the method to `Embedder` or `Reranker`. Neither has a `Remote`
+implementation today, so neither has the problem the method solves; and adding a
+method to a trait breaks every existing implementation, in and out of this
+workspace. The ADR that resolves #101 — how a node names and constructs a
+`Remote` service — is where those two follow, as a deliberate act of its own
 rather than a side effect of this one.
+
+**`VectorStore` is not in the pattern and not in that deferral.** A store holds
+and searches vectors an embedder produced; no model of its own decides what it
+returns, so there is no identity for it to report and nothing here says there
+should be. What varies about a store between two runs is the set of vectors it
+holds, and run identity already covers that through `index_version`, which the
+harness computes over the chunk set. The pattern reaches a family because it is
+model-bearing, never because it is a component.
 
 ### 5. What the trace names
 
@@ -299,14 +348,27 @@ same asymmetry between the two sides of a node.
 
 For what a node **produced**, `ValueSummary` gains
 `Context { chunks: Vec<RankedChunk>, text: String }` and `Answer { text: String }`.
+Those two shapes are pinned here, because what a node produced is what a reader
+of a stored run reads.
+
 For what a node **consumed**, inputs stay summaries, as ADR-C28 decided: a context
 is summarised by its chunk count and its text length, an answer by its text
 length. An input is the output of the node that produced it, already named under
-that node.
+that node. **The input-side shapes are named by #259, inside the engine, and this
+ADR deliberately does not pin them.** `ValueSummary` lives in `ragondin-engine`,
+which INV-2 keeps freely refactorable; what binds is the content above — count
+and text length for a context, text length for an answer — and whether that
+arrives as two new variants, as fields on the produced ones, or as something #259
+finds better is the engine's to choose. The asymmetry between the two sides is
+therefore deliberate, not an omission.
 
-Size is bounded by the context builder's `budget`, which is the user's
-configuration and never the corpus — the argument ADR-C28 made for `top_k`,
-holding here for the same reason. And the trace is **not part of run identity**:
+Size is bounded by **the builder's configuration, and never by the corpus** —
+the argument ADR-C28 made for `top_k`, holding here in a slightly weaker form.
+`budget` is the cap, but its unit is the implementation's (§ 2), so a builder
+counting characters bounds the traced text directly while one counting chunks
+bounds it only together with the chunking that feeds it. Either way both are the
+user's configuration: no corpus makes a traced context grow. And the trace is
+**not part of run identity**:
 `run_id` in `eval/ragondin-harness/src/identity.rs` digests the five fields of
 `RunInputs` and nothing else, so an answer's text never enters `run_id` and two
 machines whose generators phrase an answer differently still produce the same run
@@ -409,7 +471,9 @@ here moves per-node detail into a `tracing` macro.
   `SchemaVersion::SUPPORTED` bumps with it. **INV-2**: `ragondin-engine` changes
   freely — the registry, the planner, `NodeValue` and `ValueSummary` are its own,
   and the executor's output type becomes an enum over what a terminal node may
-  produce, which is engine-internal and stable to nobody. **INV-7**: no privilege
+  produce, which is engine-internal and stable to nobody: ADR-C21 decided that
+  `ragondin-engine` is not an API boundary, and this is that licence being used,
+  not re-argued. **INV-7**: no privilege
   anywhere — the stub, the concatenating builder and the `Remote` adapters
   implement the same two traits and pass the same suites, with no path a
   third-party component could not take. **INV-10**: untouched; the trace is still
@@ -438,14 +502,17 @@ here moves per-node detail into a `tracing` macro.
   question stays where it is.
 
 - **A trace grows by roughly one context and one answer per query**, both bounded
-  by the plan: the context by the builder's `budget`, the answer by
-  `max_tokens` where a caller sets one. Neither grows with the corpus.
+  by the user's configuration: the context by the builder's `budget` and, where
+  that budget is not counted in text, by the chunking that feeds it; the answer
+  by `max_tokens` where a caller sets one. Neither grows with the corpus.
 
 - **What is deliberately left open.** Which node's output the retrieval metrics
   read (#252). How a node names and constructs a `Remote` service (#101).
-  `Embedder`, `Reranker` and `VectorStore` identity, which follows with #101.
-  Token usage on `Answer`, which is a later and deliberate INV-1 break. Each is
-  named so that the next reader can see it was weighed rather than missed.
+  `Embedder` and `Reranker` identity, which follows with #101 — `VectorStore` is
+  not on that list, because a store is not model-bearing and this ADR says
+  nothing about it. Token usage on `Answer`, which is a later and deliberate
+  INV-1 break. Each is named so that the next reader can see it was weighed
+  rather than missed.
 
 - No entry in `docs/OPEN_QUESTIONS.md` is opened, closed, or changed.
 
