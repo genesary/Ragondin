@@ -258,20 +258,25 @@ ADR-10 trusts the harness only once it reproduces a published leaderboard score
 to within half a point through an exact search, so that a discrepancy is the
 metric's or the encoding's and never approximation's;
 `docs/system-architecture.md` § 9.8 Calibrating the harness against a published
-leaderboard gives the procedure and the diagnostic table. `tests/calibration.rs`
-is that reproduction, through `bench`, and beside it the M2 exit criterion —
-hybrid retrieval with reranking against dense-only — on the same real corpus.
-It is `#[ignore]` and run by `just calibrate`: what it needs never enters the
-tree and is never fetched by it (ADR-C27 downloads the runtime, not a model),
-and it costs the better part of half an hour of CPU. Two environment variables
-name the material:
-`RAGONDIN_CALIBRATION_DATASETS`, a directory holding `scifact/` in the layout
-the BEIR adapter reads, and `RAGONDIN_CALIBRATION_MODELS`, a directory holding
-`all-MiniLM-L6-v2/` and `ms-marco-MiniLM-L6-v2/`, each with a `model.onnx` and
-its `tokenizer.json`. The configurations in `tests/fixtures/calibration/` name
-the models by those relative paths and the test runs the binary from the models
-directory, so their content hashes — and the run ids — are the same on every
-machine.
+leaderboard gives the procedure and the diagnostic table, and names the two
+cases it asks for: SciFact, whose qrels are binary, and then NFCorpus, whose
+graded qrels "alone can expose a linear-versus-exponential gain bug".
+`tests/calibration.rs` is both reproductions, through `bench`, one test each,
+and beside the SciFact one the M2 exit criterion — hybrid retrieval with
+reranking against dense-only — on that real corpus. They are `#[ignore]` and
+run by `just calibrate`: what they need never enters the tree and is never
+fetched by it (ADR-C27 downloads the runtime, not a model), and together they
+cost the better part of half an hour of CPU. Two environment variables name the
+material:
+`RAGONDIN_CALIBRATION_DATASETS`, a directory holding `scifact/` and `nfcorpus/`
+in the layout the BEIR adapter reads, and `RAGONDIN_CALIBRATION_MODELS`, a
+directory holding `all-MiniLM-L6-v2/` and `ms-marco-MiniLM-L6-v2/`, each with a
+`model.onnx` and its `tokenizer.json`. The configurations in
+`tests/fixtures/calibration/` name the models by those relative paths and the
+tests run the binary from the models directory, so their content hashes — and
+the run ids — are the same on every machine.
+
+### SciFact, the binary case
 
 **The reference, so that the reproduction can be redone from this section.**
 
@@ -359,3 +364,83 @@ lexical leg is strong, and nothing here says the hybrid beats its best single
 leg. And the equality of run ids holds on every machine by construction, while
 the metrics may move in their last bits across platforms, which is what the
 recorded tolerance is for.
+
+### NFCorpus, the graded case
+
+SciFact's qrels are 0/1, and on binary judgments `rel` and `2^rel - 1` are the
+same number — so no SciFact fixture, however many queries it freezes, can tell
+the two nDCG gain formulas apart. That is why § 9.8 asks for a second case.
+NFCorpus's qrels grade 1 and 2, and this is the reproduction over them.
+Dense-only only: the M2 exit criterion is SciFact's, and a hybrid case here
+would confirm nothing the one above has not already confirmed.
+
+**The reference, so that this reproduction can be redone from this section.**
+
+- *Dataset:* BEIR NFCorpus, the original `nfcorpus.zip` from the same BEIR
+  datasets bucket, SHA-256
+  `efe5be03f8c5b86a5870102d0599d227c8c6e2484328e68c6522560385671b0b`; the
+  archive carries no revision, hence the hash. Unpacked as is: `corpus.jsonl`,
+  `queries.jsonl`, `qrels/test.tsv`; 3 633 documents, 323 judged queries on
+  `test`, and 12 334 judgments of which 576 are grade 2. The adapter's
+  `dataset_version` for it is
+  `8046025011c86dcbac3c15f9f52e5cf0ebc534282944b50fe72884cfcb6a112b`.
+- *Embedder:* the same one, at the same revision, exported the same way and
+  digesting to the same
+  `9348202758f11c56c329d947ae359fea54be1a3d905bfcac4a3521a1eafc0414`. Holding
+  the encoder fixed is what makes this a second measurement of the harness
+  rather than a second experiment.
+- *Published figure:* NFCorpus, `test`, nDCG@10 **0.31594** for that model at
+  that revision, read on 2026-09-14 from the MTEB results repository —
+  `https://raw.githubusercontent.com/embeddings-benchmark/results/main/results/sentence-transformers__all-MiniLM-L6-v2/8b3219a92973c328a8e22fadcfa821b5dc75636a/NFCorpus.json`,
+  field `ndcg_at_10` of the `test` split, over MTEB's dataset revision
+  `ec0fa4fe99da2ff19ca1214b7966684033a58814`. The same file publishes
+  `recall_at_10` 0.15499, which the run below reproduces to five decimals and
+  which is therefore a second, independent check on the same encoding.
+- *Configuration:* `tests/fixtures/calibration/nfcorpus-dense-only.yaml`,
+  dense-only at `top_k: 10` and 256 word pieces — SciFact's dense configuration
+  in every respect, committed separately so that a change made for one
+  dataset's sake cannot move the other's run id.
+
+**What the recorded run scored.**
+
+| | nDCG@10 | recall@10 | MRR |
+|---|---|---|---|
+| Published (MTEB) | 0.31594 | 0.15499 | — |
+| dense-only, `bench` | 0.31667312754717813 | 0.15498797328057862 | 0.5076539387684899 |
+| `pytrec_eval`, per query, summed in benchmark order | 0.31667312754717813 | 0.15498797328057862 | 0.5076539387684899 |
+
+The gap to the published nDCG@10 is 0.073 of a point against a tolerance of
+0.5, and recall@10 agrees with the published figure to the precision it is
+published at. The `pytrec_eval` row is not an independent aggregate — that
+library reports per query — but the 969 per-query values summed the way the
+harness sums them, and every one of them, and all three sums, agree with the
+harness bit for bit. (Summed in a different order they would not: exact
+rounding over the same 323 values lands a few ulps away — three on nDCG@10,
+six on recall@10, none on MRR — which is what the recorded tolerance exists
+for.) Run id, over the committed configuration:
+`5df02792921fe418538358a0c8710bfb683b1b852fecf808c666429388d0fe21`; the two
+evaluations the P4 check requires take about 120 s each on a laptop CPU, four
+minutes for the test.
+
+MRR is not comparable to anything MTEB publishes: `trec_eval`'s `recip_rank`,
+which the harness reports, is uncut, and MTEB reports `mrr_at_10`. It is
+recorded because the fixture freezes it, not because it corroborates anything.
+
+**What is frozen, and what is not.** As above: the aggregates and the digests,
+and the P4 pair of evaluations into two stores. The per-query freeze is
+`eval/ragondin-metrics/tests/nfcorpus_calibration_fixture.rs`, and on this
+dataset it carries weight the SciFact one cannot. Swapping the linear gain for
+the exponential one moves 80 of the 323 queries by more than the fixture's
+tolerance — the worst by 12.4 points of nDCG@10 — but moves the **mean** only
+from 0.31667 to 0.31727, six hundredths
+of a point. That is inside the half-point tolerance this reproduction is held
+to, and inside the 1e-4 the test allows an aggregate. So the reproduction alone
+would report success with the wrong gain function, and the per-query fixture is
+what turns that into a named failing query. This is the reason § 9.8 asks for
+both, stated as a number rather than as a principle.
+
+**What this calibration does not claim.** Nothing about hybrid retrieval, which
+was not run here. And nothing about NFCorpus being an easy corpus: an nDCG@10
+of 0.32 with a recall@10 of 0.15 is what the leaderboard reports for this model
+on this dataset, and reproducing a modest figure is the same evidence as
+reproducing a strong one.
