@@ -42,7 +42,8 @@
 //! and it is not frozen here. The ranking is now recorded: ADR-C28 has each
 //! node's output entry in the execution trace name the chunks it produced, in
 //! rank order, so a stored run's `traces.json` holds every query's ranking.
-//! Freezing one as a fixture is issue #245, under `eval/ragondin-metrics`,
+//! The fixture that freezes them — both runs, query by query, against
+//! `pytrec_eval` — is `eval/ragondin-metrics/tests/scifact_calibration_fixture.rs`,
 //! where the metric it guards lives.
 
 #![cfg(all(feature = "bm25", feature = "onnx"))]
