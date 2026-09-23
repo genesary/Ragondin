@@ -1,15 +1,28 @@
 ---
-id: ADR-C29
-title: The generation contracts — ContextBuilder and Generator, their nodes and kinds, their model identity, and what the trace names
-status: superseded
+id: ADR-C31
+title: The generation contracts — ContextBuilder and Generator, their nodes and kinds, their model identity, what the trace names, and the template and served model as experiment variables
+status: accepted
 invariants: [INV-1, INV-2, INV-7, INV-9, INV-10]
-supersedes: []
-superseded_by: ADR-C31
+supersedes: [ADR-C29]
+superseded_by: null
 ---
 
-# ADR-C29: The generation contracts — ContextBuilder and Generator, their nodes and kinds, their model identity, and what the trace names
+# ADR-C31: The generation contracts — ContextBuilder and Generator, their nodes and kinds, their model identity, what the trace names, and the template and served model as experiment variables
 
 ## Context
+
+**This ADR supersedes ADR-C29 in full.** It restates ADR-C29's decision — every
+section, every alternative and every consequence — with one change: the prompt
+template and the name of the model a generator asks its backend for become
+required per-call parameters of the node, and `Generator::model_identity`
+becomes a check of that name rather than the only record of it. Everything
+ADR-C29 decided that this change does not touch is carried forward in ADR-C29's
+own words, so that the issues implementing it (#254–#266) read one text and
+never need to open the superseded one. The change and its reasons are set out
+under *What changed, and why* below; the background ADR-C29 was written against
+comes first, unchanged.
+
+### The background, carried forward from ADR-C29
 
 The platform retrieves, fuses and reranks. It does not generate. `ragondin-contracts`
 defines five families — `Retriever`, `Fusion`, `Reranker`, `Embedder` and
@@ -62,13 +75,112 @@ others**, which is why they are one decision:
 
 Each of the four lands on the escalation list in `AGENTS.md` § Rules of
 engagement: the public API of the three core crates (INV-1), the wire format
-(INV-9), and what the trace carries. Decided in #251.
+(INV-9), and what the trace carries. ADR-C29 decided them in #251.
+
+### What changed, and why
+
+ADR-C29 § 2 gave `GenerateParams` three per-call fields, all optional —
+temperature, seed, maximum tokens — and placed the prompt template with the
+implementation: *"The prompt template stays with the implementation —
+constructor configuration for a `Local` component, service-side for a `Remote`
+one"*, covered by `model_identity`. The name of the model a `Remote` generator
+asks its inference server for was nowhere in the pipeline representation
+either; it was the service's own configuration. Under that answer, a researcher
+who varies the template or the served model between two runs changes nothing in
+the pipeline: the two runs are written by one byte-identical YAML, their logical
+forms hash alike, and what differed between them is recorded only as an opaque
+identity string the service declared after the fact — or, from a service whose
+identity omits the template, not at all, in which case the two runs share one
+`run_id`. The repository owner's requirement, stated on 2026-09-23 while
+deciding #101, is the opposite: a prompt template and a model name are the first
+things a researcher varies, so they live in the YAML, like `top_k`.
+
+The accepted ADRs already point that way, and ADR-C29's own reasoning is what
+makes the change necessary rather than merely possible. ADR-1 holds that
+techniques are configuration; ADR-9 gives the judge its "model hash, prompt,
+temperature and seed" "on exactly the same footing as the generator and the
+embedder", and makes which model, which prompt and which temperature experiment
+variables. Neither says which of them is a node parameter and which constructor
+configuration, and ADR-C29 answered for the template in the direction that hides
+it. ADR-C29 § 2 also
+established that constructor configuration never crosses the `Remote` face, so
+per-call params are the only path from the pipeline representation to a
+service: that argument, which ADR-C29 made for temperature and seed, holds word
+for word for the template and the served model. And ADR-C29 rejected a
+hand-typed `model:` node parameter **as an identity mechanism** — a string the
+user typed standing in for what answered — not as an experiment variable; the
+question of what a researcher varies was not posed from that angle.
+
+The change, item by item against ADR-C29:
+
+- **§ 2, `GenerateParams`** gains two **required** fields, `served_model` and
+  `template`, both `String`; ADR-C29's sentence that `GenerateParams` "is per
+  call and every field is optional" is replaced. The three optional fields and
+  their proto3 presence rule are unchanged; the presence paragraph now says
+  "the three optional fields" where ADR-C29 said "the three fields", since there
+  are five. Three paragraphs are added: that the argument for per-call params
+  holds for the template and the served model, so a `Remote` service holds no
+  experiment variable of its own; that the executor reads the two required
+  fields as it reads `top_k`; and that they mirror on face 2 as required strings,
+  an empty one refused.
+- **§ 2, the template.** ADR-C29's paragraph beginning "The prompt template stays
+  with the implementation" is **withdrawn**, and replaced by the template's
+  grammar, the rule that the component renders it, why a template is not the
+  sub-grammar ADR-C22 rejected, and a statement that the context builder's own
+  configuration is not changed.
+- **§ 2, the conformance suite** may also check a generator's refusal of an
+  empty `served_model`, an empty `template` and a malformed template.
+- **§ 2, the generator's trait.** `Generator::model_identity` takes the served
+  model as an argument. `ContextBuilder::model_identity` does not change.
+- **§ 4, model identity.** The generator's identity is *the identity of the model
+  the component answers `served_model` with*, read once per generator node with
+  that node's `served_model`, and a name the backend does not serve is a
+  refusal before the run. The completeness rule is restated so that it no longer
+  names the generator's template, which is now in the node's params; the
+  opening paragraph of § 4 names both signatures; *How it is read* says which
+  name the generator's identity is read with.
+- **The lead of the Decision** names the template and the served model.
+- **Alternatives rejected** gains five entries — names as variants, the template
+  as constructor configuration, `model_identity` unchanged as the source of what
+  ran, optional fields with service-side defaults, and an in-place edit of
+  ADR-C29 — and the entry rejecting a hand-typed `model:` parameter gains a
+  closing sentence saying how it reads beside `served_model`.
+- **Consequences** gain what each implementation issue now owes, how the
+  citations of ADR-C29 elsewhere read, and what #267's reference service
+  becomes; the INV-9 clause says the two keys change no wire shape; the prose
+  #255 corrects includes the crate documentation's sentence on what params
+  structs carry. Two sentences of ADR-C29 had gone stale before this change and
+  are brought up to date: #252, which ADR-C29 left open, has since been decided by
+  ADR-C30, so the consequence on `Context.chunks` says so and the list of what is
+  left open drops it and names #253 instead.
+- **Context.** ADR-C29's closing "Decided in #251." reads "ADR-C29 decided them
+  in #251.", since this ADR was decided in #272.
+
+Nothing else moves. The values, the context builder's trait, `ContextParams`,
+ADR-C19 and ADR-C25, the nodes, the kinds, the port shapes, the `SchemaVersion`
+bump, the trace, the pattern for model-bearing families and its deferral, and
+`VectorStore`'s place outside it are ADR-C29's, restated.
+
+**Why a superseding ADR rather than an amendment.** The sentence withdrawn is in
+ADR-C29's **Decision**, and process rule 1 in `docs/adr/README.md` says an
+accepted decision changes only by supersession; process rule 2's in-place
+retraction reaches Context, Alternatives rejected and Consequences, never the
+Decision. And the withdrawn sentence is not a factual error in the reasoning —
+the reasoning around it stands and is now what argues the other way — but a
+changed answer. Nothing implements ADR-C29 § 2 yet: #255, #257, #266 and #267
+are not started, and no trait, proto field or service for generation exists in
+the tree, so this is the cheapest moment to change it. The repository owner
+chose a full rewrite over a narrow ADR that superseded ADR-C29 § 2 alone, so
+that an implementer reads one text rather than two that must be read together —
+the route ADR-C24 took for ADR-C7. Decided in #272.
 
 ## Decision
 
 **The retrieval-to-generation chain is contracted end to end, by two traits over
 three typed values, two node variants, two kinds, a model identity the component
-reports itself, and a trace that names the context and the answer.**
+reports itself, and a trace that names the context and the answer. The prompt
+template and the served model are experiment variables: node parameters, hashed
+with the pipeline and carried to the generator on every call.**
 
 ### 1. Three values in `ragondin-types`
 
@@ -144,7 +256,7 @@ pub trait ContextBuilder: Send + Sync {
 pub trait Generator: Send + Sync {
     async fn generate(&self, query: &Query, context: &Context, params: &GenerateParams)
         -> Result<Answer, ComponentError>;
-    async fn model_identity(&self) -> Result<ModelIdentity, ComponentError>;
+    async fn model_identity(&self, served_model: &str) -> Result<ModelIdentity, ComponentError>;
 }
 ```
 
@@ -164,9 +276,15 @@ boundary, in tokens — would require every leaf to carry a tokenizer to honour 
 contract, and the tokenizer would have to be the generator's, which the builder
 does not know.
 
-`GenerateParams { temperature: Option<f64>, seed: Option<u64>, max_tokens: Option<usize> }`
-is per call and every field is optional. **They are per-call parameters and not
-constructor configuration, because of the `Remote` face.**
+`GenerateParams { served_model: String, template: String, temperature: Option<f64>, seed: Option<u64>, max_tokens: Option<usize> }`
+is per call. **`served_model` and `template` are required; the other three are
+optional.** `served_model` is the name the generator asks its backend for: for a
+`Remote` generator, the name the inference server serves the model under; for a
+`Local` one, a name the component must recognise as the model it loaded, and a
+name it does not recognise is refused as `ComponentError::InvalidRequest`.
+`template` is the prompt template, whose grammar is stated below. **They are
+per-call parameters and not constructor configuration, because of the `Remote`
+face.**
 `docs/code-architecture.md` § 7.1 lays out the shape a `Remote` adapter takes: a
 client over a channel, delegating each trait method to the rpc that mirrors it.
 Face 2 therefore carries the trait's calls and nothing else — there is no
@@ -179,6 +297,15 @@ the logical form and therefore outside its hash, and two runs differing only in
 temperature would content-address identically. ADR-9 puts a judge's "model hash,
 prompt, temperature and seed" on exactly the same footing as the generator's, and
 ADR-15 promises that "everything that ran is recorded". Both forbid that outcome.
+The same holds of two runs differing only in their prompt template, or only in
+the model they ask the inference server for: **a setting a researcher varies
+between two runs must be in the pipeline representation**, or the two runs'
+configurations are identical and nothing that compares them can say what
+differed. A `Remote` generator's service therefore holds **no experiment
+variable of its own**: every setting that decides the answer arrives in the
+call, and the service relays it. What the service *is* — where it lives, the
+HTTP client it uses, the dialect it speaks to its inference server — is not an
+experiment variable, and #253 decides it.
 
 `Option` is what keeps the executor's rule intact. The executor refuses an absent
 required per-call parameter and **invents no default**:
@@ -191,7 +318,23 @@ earlier, of physical planning, which "applies no defaults of its own,
 deliberately". An absent optional key reads as `None` and is passed through as
 `None`; no default is substituted anywhere above the component.
 
-**Absence must survive face 2, and that needs saying.** The three fields mirror
+**`served_model` and `template` are read exactly as `top_k` is.** Both are
+ordinary node parameters — flat `String`s, which the grammar ADR-C22 fixed
+already holds — so both enter the canonical logical form and the pipeline's
+hash like any other parameter: a string parameter is fed to
+`LogicalPipeline::content_hash` as its bytes (`feed_str` in
+`core/ragondin-pipeline/src/hash.rs`), with no normalisation. The executor reads
+each from the generator node's params and refuses the call with
+`ExecError::InvalidParam` when the key is absent or holds something other than a
+string, as `per_call_top_k` refuses an absent or mistyped `top_k`. **No default
+is applied**, for the reason quoted above: a default template or a default model
+chosen above the component would be a second, disagreeing copy of a decision that
+belongs to the configuration. What the executor does not judge is the value: an
+empty string, a name the backend does not serve and a malformed template reach
+the component, which refuses each as `InvalidRequest` (below), exactly as a zero
+`top_k` reaches a retriever and is refused there.
+
+**Absence must survive face 2, and that needs saying.** The three optional fields mirror
 on face 2 with **explicit presence** — proto3 `optional` — so an omitted field
 decodes as `None` and never as a value, and the `Remote` adapter passes that
 `None` through rather than substituting anything. Without the clause a plain
@@ -206,12 +349,54 @@ the wire cannot say "absent" — and the same obligation: say which, in the
 Decision, or a `Remote` implementation silently differs from a `Local` one on the
 one axis the two faces promise to agree on.
 
-**The prompt template stays with the implementation** — constructor configuration
-for a `Local` component, service-side for a `Remote` one — applying the split
-between what a constructor receives and what a params struct carries that
-`ragondin-contracts`' documentation states and ADR-C17 decided, there for an
-embedder's per-role prefix text. It is therefore covered by `model_identity`, not
-by the params, and § 4 below says what that obliges.
+**The two required fields mirror on face 2 as required strings**, and there
+absence has the opposite shape: a proto3 `string` has no presence, so an omitted
+field decodes as the empty string. **An empty `served_model` or an empty
+`template` is refused as `InvalidRequest`** — by the `Remote` adapter before it
+sends the call, by a service on receipt, and by a `Local` generator alike, so the
+two faces agree on it. On face 1 the executor has already refused an absent key;
+the empty string is what remains, and it names no model and renders no prompt.
+
+**The template is a string with two placeholders, and the component renders
+it.** `template` is opaque to everything above the component and hashed byte for
+byte, so a YAML block scalar written with `|`, which keeps its final newline, and
+one written with `|-`, which strips it, are two templates and two
+configurations. Its grammar is the whole of the following, and a `Local`
+generator and a `Remote` service implement the same one:
+
+- `{query}` is replaced by the `text` of the `Query` the generator was handed,
+  and `{context}` by the `text` of the `Context`.
+- `{{` renders a literal `{`, and `}}` a literal `}`.
+- Any other `{` or `}` makes the template malformed — a name between braces
+  other than `query` or `context`, a `{` that no `}` closes, a lone `}` — and the
+  call is refused as `InvalidRequest`. The refusal is the component's, at the
+  call; nothing above the component parses a template.
+- Each placeholder may appear any number of times, including none.
+  Substitution is a single pass over the template: text substituted for a
+  placeholder is never scanned again, so a query containing `{context}` renders
+  as those nine characters.
+
+**Who renders is the component** — a `Local` generator itself, a `Remote`
+service on receipt — because face 2 carries the query and the context
+separately, as face 1 does, and rendering them into one message is the
+component's business. The rendered text is the whole of what the component asks
+its model to answer: it adds no instruction text of its own, since a system
+prompt kept service-side would be exactly the hidden template this decision
+withdraws. How that one message is framed for the inference server is the
+dialect's, and #253 decides it.
+
+**A template is a value, not the sub-grammar ADR-C22 rejected.** ADR-C22 refused
+flattened parameter **keys** — `filters.lang` — because they invent "a sub-grammar
+inside a string key that nothing validates and nothing canonicalizes". A
+template is a parameter's **value**, it is canonicalized as every string value
+is, byte for byte, and it is validated by the one party that renders it.
+
+**The context builder is not changed by this.** Its own configuration — the
+template it renders passages into `Context.text` with, and the unit its budget is
+counted in — stays constructor configuration, covered by its `model_identity`
+under § 4, as ADR-C29 decided. #272 changed the generator's template and served
+model and nothing else; the generator's template is the one this section names,
+and the builder's is not a parameter of its node.
 
 **ADR-C19 applies unchanged.** `build` over zero chunks is a valid call, not an
 invalid request: it returns the empty context, meaning `chunks.is_empty()`, with
@@ -225,7 +410,10 @@ moves that work off the caller's thread itself.
 join it: that a well-formed call succeeds; that a zero budget is rejected; and
 that `Context.chunks` fabricates no chunk id and repeats none — the `no fabricated
 ids` and `no duplicate ids` scenarios `ragondin-conformance` already applies to
-`Fusion` and `Reranker`. **Nothing about content.** A suite that does not know
+`Fusion` and `Reranker`. For a generator, likewise, that an empty `served_model`,
+an empty `template` and a malformed template are rejected — each a refusal of
+the call's form, which a suite can check without knowing the model. **Nothing
+about content.** A suite that does not know
 which model it is testing cannot say whether an answer is good, and a check that
 pretended to would certify less than it appears to.
 
@@ -282,10 +470,43 @@ breaking is the intended signal that a new node kind needs handling.
 
 ### 4. Model identity is reported by the component
 
-Both new traits carry `async fn model_identity(&self) -> Result<ModelIdentity, ComponentError>`,
-mirrored by a `GetModelIdentity` rpc on face 2. It is `async` because the only M3
+`ContextBuilder` carries `async fn model_identity(&self) -> Result<ModelIdentity, ComponentError>`,
+and `Generator` carries
+`async fn model_identity(&self, served_model: &str) -> Result<ModelIdentity, ComponentError>`;
+each is mirrored by a `GetModelIdentity` rpc on face 2, the generator's taking
+the served model as its request. It is `async` because the only M3
 implementation of either family is `Remote` and must make an rpc to answer; a
 synchronous method would force a `block_on` inside the trait, against ADR-C25.
+
+**The generator's identity is a verification, and it takes the served model.**
+`Generator::model_identity(served_model)` returns *the identity of the model this
+component answers `served_model` with*:
+
+- a **`Local`** generator returns the digest of the model it loaded — together
+  with whatever else of its constructor configuration decides the answer, under
+  the completeness rule below — when `served_model` is a name it recognises as
+  that model, and refuses any other name as `InvalidRequest`;
+- a **`Remote`** generator's adapter forwards `served_model` in the
+  `GetModelIdentity` rpc, and the service asks its inference server what the
+  server serves under `served_model`, and returns what the server reports — the served name, and its
+  revision or digest where the server reports one — refusing, as
+  `InvalidRequest`, a name the server does not serve.
+
+For a relay in front of an inference server whose API reports only an alias, the
+identity **is** that alias echoed back, plus whatever revision the server
+reports. That is weaker than a digest and it is stated here rather than
+discovered: the served name is already in the node's params and in the hash, so
+what the identity adds is the revision where one is reported, and the check that
+the backend serves what was asked. `ContextBuilder::model_identity(&self)` keeps
+its shape: nothing handed to a builder per call decides its output beyond its
+params, so there is no name for it to check.
+
+**A mismatch is a refusal, never a warning.** A `served_model` the backend does
+not serve is refused by `model_identity`, and the composition root treats that
+refusal as fatal before the run begins: a run whose recorded configuration names
+a model that did not answer is not recorded at all. `generate` refuses the same
+name the same way, as `InvalidRequest`, so a backend that stops serving it after
+the check fails the call rather than answering it.
 
 **What the identity must be.** Two properties, and an implementation that fails
 either is wrong:
@@ -294,11 +515,14 @@ either is wrong:
   no counter — P4 requires that a rerun of the same inputs produce the same
   `run_id`, and an identity that varied per call would make every run unique by
   construction.
-- **Complete.** It covers every knob that decides the answer and is not in the
-  per-call params or in the node's params: the model, its revision, and the prompt
-  template whenever the template is not itself in the node's params. A template
-  that changes the answers while the identity stays put is the failure this
-  method exists to prevent.
+- **Complete.** It covers every knob that decides the answer **and is not in the
+  node's params**. A generator's template and served model now are, so for a
+  generator what remains is the model's revision behind the served name — with,
+  for a `Local` generator, whatever of its constructor configuration decides the
+  answer — and the check that the backend serves what was asked; for a context
+  builder it is still its template and the unit its budget is counted in. A knob that changes the
+  answers while neither the node's params nor the identity moves is the failure
+  this method exists to prevent.
 
 For a `Local` component the identity is a digest of its own configuration and its
 model file — and **the completeness rule is what binds, not the presence of a
@@ -323,6 +547,9 @@ another instance. The synchronous `ComponentCtor` is therefore not an obstacle:
 `bench` in `bin/ragondin/src/bench.rs` is already `async`, and already computes
 `model_hashes` before it registers anything and before it calls `evaluate` — it
 does so today so that a missing model file is found before the expensive steps.
+A generator's identity is read **once per generator node, with that node's
+`served_model`**, at that same point, before the run; a refusal ends the run
+there, as stated above.
 Stated plainly, because it is the part a reader will otherwise assume away: **the
 identity is read from an instance other than the one that ran.** For a `Remote`
 component both instances reach one URL, so the two agree unless the service
@@ -443,6 +670,10 @@ here moves per-node detail into a `tracing` macro.
   string the user typed: a service that swaps the model behind the same URL
   produces the same `run_id` for two different runs, which is exactly what P4
   forbids. A parameter records an intention; the method records what answered.
+  This ADR does put the served model in the node's params, as what is **asked
+  for** — an experiment variable — and keeps the reported identity beside it as
+  what answered; the rejection stands against a parameter *replacing* the
+  identity, not against the parameter existing.
 
 - **Nothing in M3 — the generator does not enter `model_hashes`.** Self-preference
   detection waits for the judge in M4 anyway, so the cost looks deferred. It is
@@ -471,6 +702,43 @@ here moves per-node detail into a `tracing` macro.
   query from the one the builder saw, so a bundled query leaves which query the
   answer speaks for undecidable.
 
+- **Names as variants** — `impl: vllm-t1` and `impl: vllm-t2`, one service
+  instance per template, bound by the composition root, with the identity
+  recording what each served. It needs no change to ADR-C29, and it is a
+  workaround rather than a design: one deployment per prompt variant, and a YAML
+  that names a variant without saying what it is, so the configuration a run
+  records says which service answered and not which prompt it was given.
+
+- **The template as constructor configuration** — ADR-C29's own choice, and
+  withdrawn here for the reason § 2 gives: constructor configuration never
+  crosses the `Remote` face, so a template kept there lives outside the pipeline
+  representation and outside its hash, and a setting a researcher varies between
+  two runs must be in the representation or the two runs cannot be told apart by
+  their configuration.
+
+- **`model_identity` unchanged, as the source of what ran.** Once `served_model`
+  is a hashed node parameter it already says what was asked; an identity that
+  only echoed the ask back would add nothing to the run's record. What remains
+  for the method is verification — the revision behind the name where the
+  backend reports one, and the refusal of a name the backend does not serve —
+  and that is the job § 4 gives it.
+
+- **Optional `served_model` and `template`, with service-side defaults.**
+  Absent and explicit would then be two spellings of one generation with two
+  hashes: a node that omits `template` and one that writes out the service's
+  default template run the same prompt and content-address differently, and the
+  default itself sits service-side, outside the representation, where this
+  decision exists to take it from. It is ADR-C22's argument against `Null` — two
+  spellings of one configuration on a boundary that is content-addressed — met
+  from the other side, and it is refused for the same reason: the executor
+  invents no default, and neither does a service.
+
+- **An in-place edit of ADR-C29.** Process rule 1 changes an accepted Decision
+  only by supersession, and process rule 2's in-place retraction reaches
+  Context, Alternatives rejected and Consequences, never the Decision; the
+  sentence withdrawn is in the Decision. ADR-C24's supersession of ADR-C7 is the
+  precedent this follows.
+
 ## Consequences
 
 - **The M3 implementation issues are unblocked, and each owes this ADR something
@@ -485,12 +753,32 @@ here moves per-node detail into a `tracing` macro.
   `model_hashes`. None of them reopens this decision; each of them implements a
   named part of it.
 
+- **What each issue owes for the template and the served model**, on top of the
+  list above. #255: the five-field `GenerateParams`, and
+  `Generator::model_identity(&self, served_model: &str)`. #257: `GenerateRequest`
+  carries `served_model` and `template` as required strings, and the generator's
+  `GetModelIdentity` takes the served model. #258: the generator suite's
+  refusals of an empty `served_model`, an empty `template` and a malformed
+  template. #259: the executor reads the two
+  required params from the generator node and refuses an absent or mistyped one
+  with `ExecError::InvalidParam`, applying no default. #260: the stub generator
+  recognises one fixed served name and refuses any other, and renders the
+  template under the grammar of § 2. #261: the `Remote` generator adapter refuses
+  an empty `served_model` or `template` before sending, and calls the identity
+  rpc with the served model. #266: the binary reads the generator's identity once
+  per generator node with that node's `served_model`, before the run, and a
+  refusal is fatal. #267: the reference service is a stateless relay. #268: the
+  exit-criterion configurations write `served_model` and `template` on every
+  generator node.
+
 - **The INV-1 break is sanctioned here and covers three crates.**
   `ragondin-types` gains three value types, `ragondin-contracts` two traits and
   two params structs, `ragondin-pipeline` two `LogicalNode` variants and two
   `ValueKind` variants. **INV-9**: no struct on the wire changes shape — what
   widens is the vocabulary of `component:` values a configuration may name — and
-  `SchemaVersion::SUPPORTED` bumps for it all the same. **INV-2**: `ragondin-engine` changes
+  `SchemaVersion::SUPPORTED` bumps for it all the same. `served_model` and
+  `template` add nothing to that: they are keys of a node's existing params map,
+  in the flat grammar ADR-C22 fixed, and change no wire shape. **INV-2**: `ragondin-engine` changes
   freely — the registry, the planner, `NodeValue` and `ValueSummary` are its own,
   and the executor's output type becomes an enum over what a terminal node may
   produce, which is engine-internal and stable to nobody: ADR-C21 decided that
@@ -505,7 +793,28 @@ here moves per-node detail into a `tracing` macro.
   `Generation`; the type is named `Answer`. #254 corrects that sentence in the
   same diff that adds the type, not in a follow-up. `ragondin-contracts`' crate
   documentation lists the families it defines and names `ContextBuilder` and
-  `Generator` as absent by design; #255 is where both stop being true.
+  `Generator` as absent by design; #255 is where both stop being true. The same
+  crate documentation says the params structs "carry only what varies **per
+  call**", and `GenerateParams` carries settings fixed per node — as ADR-C29's
+  temperature and seed already were — because per-call params are the only path
+  to a `Remote` service; #255 qualifies that sentence in the same diff.
+
+- **ADR-C29 is superseded in full, and marked so.** Every citation of ADR-C29 in
+  the tree now resolves to a superseded ADR and is read against this one; the
+  sections it cites exist here under the same numbers and headings. Two
+  citations lean on the sentence this ADR withdraws. **ADR-C30 § 1** says that
+  producing a short answer "is the prompt template's job — constructor
+  configuration of the generator under ADR-C29 — and never the metric's", and its
+  Alternatives rejected that the template "is recorded in the generator's
+  identity (ADR-C29)". The rule they state — no extraction step in the metric —
+  does not depend on where the template lives, and stands; the parenthetical and
+  the clause about identity are read against this ADR, under which the template
+  is a node parameter, recorded in the pipeline's hash. The comments on #254,
+  #255 and #256 point at ADR-C29's sections, and the same sections exist here.
+  #267's constructor configuration — which lists the model name and the template,
+  and the generation knobs besides — shrinks to what the service *is*: the
+  inference server's base URL and its dialect (#253). Everything that decides an
+  answer arrives in the call.
 
 - **The per-query fixture reads answers out of `traces.json`**, as it reads
   rankings there today. That is what carrying the answer text in the trace buys,
@@ -519,16 +828,18 @@ here moves per-node detail into a `tracing` macro.
 
 - **`Context.chunks` gives #252 a second candidate ranking** — what entered the
   context, beside what the retrieval leg offered — without deciding which of the
-  two the retrieval metrics read once the terminal node is a generator. That
-  question stays where it is.
+  two the retrieval metrics read once the terminal node is a generator. ADR-C30
+  has since decided that question in #252; this ADR leaves its answer untouched.
 
 - **A trace grows by roughly one context and one answer per query**, both bounded
   by the user's configuration: the context by the builder's `budget` and, where
   that budget is not counted in text, by the chunking that feeds it; the answer
   by `max_tokens` where a caller sets one. Neither grows with the corpus.
 
-- **What is deliberately left open.** Which node's output the retrieval metrics
-  read (#252). How a node names and constructs a `Remote` service (#101).
+- **What is deliberately left open.** How a node names and constructs a `Remote`
+  service (#101). What the reference `Remote` generator service is — where it
+  lives, the HTTP client it brings, the dialect it speaks to its inference
+  server (#253).
   `Embedder` and `Reranker` identity, which follows with #101 — `VectorStore` is
   not on that list, because a store is not model-bearing and this ADR says
   nothing about it. Token usage on `Answer`, which is a later and deliberate
@@ -539,4 +850,4 @@ here moves per-node detail into a `tracing` macro.
 
 ## Status
 
-Superseded by [ADR-C31](ADR-C31-generation-contracts-template-and-served-model-per-call.md). The decision is carried forward there in full, with one change: the prompt template and the served model name become required per-call parameters of the generator node, and the generator's `model_identity` takes the served model and verifies it. The sentence of § 2 placing the template with the implementation is the reason for the supersession (#272).
+Accepted.
