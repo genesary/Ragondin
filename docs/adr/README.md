@@ -21,7 +21,7 @@ An **Architecture Decision Record (ADR)** captures one architectural decision: i
 
 - **`000-template.md`** — the template every ADR follows: Context / Decision / Alternatives rejected / Consequences / Status, plus an optional Amendments section (process rule 2).
 - **`ADR-001-*.md` … `ADR-015-*.md`** — the frozen decisions of the *system* architecture, one file per decision, cited as `ADR-1` … `ADR-15`.
-- **`ADR-C01-*.md` … `ADR-C29-*.md`** — the frozen decisions of the *code* architecture, one file per decision, cited as `ADR-C1` … `ADR-C29`.
+- **`ADR-C01-*.md` … `ADR-C30-*.md`** — the frozen decisions of the *code* architecture, one file per decision, cited as `ADR-C1` … `ADR-C30`.
 
 Each file is self-contained: it should be understandable and actionable on its own, without first reading `AGENTS.md` or the architecture documents. If an ADR only makes sense after reading something else, it is under-specified and should be fixed.
 
@@ -82,6 +82,7 @@ index of citable decisions is worse than none — `just check` fails when it dri
 | [`ADR-C27`](ADR-C27-onnx-runtime-obtained-by-download-binaries.md) | ONNX Runtime is obtained by `download-binaries` over `rustls`, declared once for the workspace | INV-4 | accepted |
 | [`ADR-C28`](ADR-C28-trace-names-what-each-node-produced.md) | The execution trace names what each node produced, in rank order | INV-2, INV-10 | accepted |
 | [`ADR-C29`](ADR-C29-generation-contracts-context-builder-and-generator.md) | The generation contracts — ContextBuilder and Generator, their nodes and kinds, their model identity, and what the trace names | INV-1, INV-2, INV-7, INV-9, INV-10 | accepted |
+| [`ADR-C30`](ADR-C30-generation-evaluation-regime-squad-metrics-and-benchmark.md) | The generation evaluation regime — exact match and F1 after the SQuAD script, SQuAD v1.1 dev as the first QA benchmark, and the ranking retrieval metrics read once a pipeline ends in an answer | INV-1 | accepted |
 
 <!-- END GENERATED ADR INDEX -->
 
@@ -132,7 +133,7 @@ stated here canonically.
 number is **never padded**:
 
 - System-architecture decisions use the bare prefix: `ADR-1` … `ADR-15`.
-- Code-architecture decisions use the `C` prefix: `ADR-C1` … `ADR-C29`.
+- Code-architecture decisions use the `C` prefix: `ADR-C1` … `ADR-C30`.
 - New decisions (from `decision` issues) continue the appropriate sequence and are added, never inserted retroactively.
 
 **The filename** is `ADR-<number>-<slug>.md`, where the number **is** padded — to
