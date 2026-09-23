@@ -12,30 +12,31 @@ superseded_by: null
 ## Context
 
 M3's exit criterion, as its milestone states it, is that "an end-to-end pipeline
-is benchmarked against reference answers". ADR-C29 contracted the chain that produces an answer — a `ContextBuilder` and a
-`Generator`, their nodes, their kinds and what the trace names — and left one
-question to this decision by name: which node's output the retrieval metrics
-read once the terminal node is a generator. Two more come with it. What a
-reference answer looks like is unsettled: `Benchmark` in
-`eval/ragondin-benchmarks/src/benchmark.rs` says "The fourth piece, reference
-answers, belongs to a later milestone and is deliberately absent", and gives it
-no shape — one answer, or several accepted spellings. And which metric scores
-it is unsettled too. None of the three can be answered apart from the others. The benchmark constrains the metric, since a dataset's references
-are written for the scorer it was published with, and both constrain the
-harness, which has to know where a ranking is and what a reference is before it
-can score either.
+is benchmarked against reference answers". ADR-C29 contracted the chain that
+produces an answer — a `ContextBuilder` and a `Generator`, their nodes, their
+kinds and what the trace names — and left one question to this decision by name:
+which node's output the retrieval metrics read once the terminal node is a
+generator. Two more come with it. What a reference answer looks like is
+unsettled: `Benchmark` in `eval/ragondin-benchmarks/src/benchmark.rs` says "The
+fourth piece, reference answers, belongs to a later milestone and is
+deliberately absent", and gives it no shape — one answer, or several accepted
+spellings. And which metric scores it is unsettled too. None of the three can be
+answered apart from the others. The benchmark constrains the metric, since a
+dataset's references are written for the scorer it was published with, and both
+constrain the harness, which has to know where a ranking is and what a reference
+is before it can score either.
 
 **The metric is a decision, not a free choice, and ADR-10 says so.** ADR-10
-fixes `trec_eval` as "the reference implementation, not a source of
-inspiration" for retrieval, and closes the door on improvisation: "A future
-metric that has no `trec_eval` counterpart is a new decision, not a free
-choice." No generation metric has a `trec_eval` counterpart. Exact match and
-token-F1 are defined by the reading-comprehension literature, and in that
-literature by one script — the official SQuAD evaluation script — whose choices
-(what counts as punctuation, which articles are removed, how several references
-combine) change the number a given set of answers scores. `docs/system-architecture.md` § 9.2
-says the platform borrows metric definitions rather than reinventing them; RAGAS,
-ARES and RAGChecker, the three it names, define neither metric.
+fixes `trec_eval` as "the reference implementation, not a source of inspiration"
+for retrieval, and closes the door on improvisation: "A future metric that has
+no `trec_eval` counterpart is a new decision, not a free choice." No generation
+metric has a `trec_eval` counterpart. Exact match and token-F1 are defined by
+the reading-comprehension literature, and in that literature by one script — the
+official SQuAD evaluation script — whose choices (what counts as punctuation,
+which articles are removed, how several references combine) change the number a
+given set of answers scores. `docs/system-architecture.md` § 9.2 says the
+platform borrows metric definitions rather than reinventing them; RAGAS, ARES
+and RAGChecker, the three it names, define neither metric.
 
 **ADR-10's reproduction obligation is discharged, and does not recur per
 benchmark.** ADR-10 earns credibility "by reproduction, not by implementation",
@@ -73,7 +74,54 @@ calibration configurations); its scorer must be deterministic, since the judge
 is M4's instrument; and its licence must allow the data to be used and a frozen
 fixture of it to be committed. A second, independent review checked the
 candidates against their data rather than their papers, and its findings are
-what § 2 of the Decision rests on.
+what § 2 of the Decision rests on. They are recorded here, as evidence, rather
+than in the Decision.
+
+**What SQuAD v1.1 dev offers.** Its paragraphs are short enough for the encoder:
+their median is 111 whitespace-separated words, and about 92 % of them
+(approximately 1 899 of 2 067) fall within 256 word pieces. That count is
+approximate: it was made for this decision with a reimplementation of BERT's
+WordPiece tokenisation over the M2 encoder's own vocabulary (its
+`tokenizer.json`), not with the encoder's tokenizer itself. Counted in
+whitespace-separated words, only 1.5 % of questions have their first reference
+answer beginning after word 180. The dense leg therefore mostly measures
+retrieval rather than truncation. Its official script *is* the metric, so
+nothing stands between the benchmark's own scorer and ours. It carries several
+references per question, the case the maximum exists for. Its qrels follow from
+the file, with no string-matching heuristic to decide which document is
+evidence. It needs no chunker, and it needs nothing from `Document.metadata`
+inside the embedded text. Its costs, named plainly:
+
+- **It is extractive.** Every reference is a span of its paragraph, so a
+  generator that copies the right span is correct; it is a weaker test of
+  generation than an abstractive benchmark, and a strong one of whether the
+  right paragraph reached the prompt.
+- **There is no published document-level retrieval figure to reproduce.** None
+  is owed: the reproduction obligation is discharged, and the new read path is
+  checked against SciFact instead (§ 4 of the Decision).
+- **Its licence is CC BY-SA 4.0**, which permits use and a fixture that quotes
+  it, on condition that the notice travels with it.
+
+**What rules MultiHop-RAG out for now.** The second review counted it at
+Hugging Face revision `71ac0d0bd1f951d2d6b70311f7d2ae404e1ffa82` of
+`yixuantt/MultiHopRAG`. The figures below are that review's, and are attributed
+to it rather than re-counted here. They rule it out for M3 on three independent
+grounds:
+
+- **Its documents do not fit the encoder.** 609 articles with a median body of
+  1 298 words, and 76 % of its 6 084 evidence facts begin after word 180 —
+  beyond the M2 encoder's window, so a document-level dense leg never sees most
+  of the evidence it is scored against.
+- **Its published retrieval figures are chunk-level and not reproducible here
+  even with a chunker.** They were produced with LlamaIndex's
+  `SentenceSplitter`, with metadata prepended to the embedded text, with CLS
+  pooling where this workspace mean-pools, with a hit decided by string
+  containment, and with MAP@10 dividing by `min(|gold|, 10)` — the convention
+  ADR-10 names and declines in favour of `trec_eval`'s.
+- **Its answers are not fairly scorable by exact match.** 94 % of its
+  comparison and temporal answers are yes or no, with inconsistent casing and
+  synonyms, so that a constant "Yes" scores 30.6 % exact match — the metric
+  rewards a constant rather than an answer.
 
 **The ranking the retrieval metrics read has to be named, because the harness
 only knows one place to look.** `evaluate` in
@@ -97,8 +145,9 @@ would otherwise share one identity; how it does so without moving the digests
 
 The first question is one ADR-10 reserves to a decision; the second decides a
 fixture that enters the tree permanently; the third changes what a run's metrics
-mean. Deciding any of them inside an implementation issue is the pattern ADR-10's
-own Amendments section records as the thing not to repeat. Decided in #252.
+mean. Deciding any of them inside an implementation issue is the pattern
+ADR-10's own Amendments section records as the thing not to repeat. Decided in
+#252.
 
 ## Decision
 
@@ -111,15 +160,15 @@ ranking that fed its context builder, found by port position.**
 
 **This ADR is the new decision ADR-10 requires for a metric with no `trec_eval`
 counterpart.** It extends ADR-10 to generation the way ADR-10's 2026-09-05
-amendment extended it to `trec_eval`, and it reopens nothing (process rule 4 of `docs/adr/README.md`):
-retrieval keeps its reference, its conventions and its calibration. It is a
-separate ADR, and never a second in-place edit of ADR-10, because ADR-10's
-Amendments section says that if its added paragraphs "need to change again,
-supersede this ADR rather than amend it a second time". This ADR changes none of
-ADR-10's paragraphs; it adds a decision beside them, and so neither amends nor
-supersedes it. ADR-10's reproduction of a published figure was "a one-time
-validation of the pipeline", and it is **discharged** (see the Context): the
-obligation is not re-triggered by a new benchmark.
+amendment extended it to `trec_eval`, and it reopens nothing (process rule 4 of
+`docs/adr/README.md`): retrieval keeps its reference, its conventions and its
+calibration. It is a separate ADR, and never a second in-place edit of ADR-10,
+because ADR-10's Amendments section says that if its added paragraphs "need to
+change again, supersede this ADR rather than amend it a second time". This ADR
+changes none of ADR-10's paragraphs; it adds a decision beside them, and so
+neither amends nor supersedes it. ADR-10's reproduction of a published figure
+was "a one-time validation of the pipeline", and it is **discharged** (see the
+Context): the obligation is not re-triggered by a new benchmark.
 
 **The reference implementation is the official SQuAD v1.1 evaluation script**,
 pinned as:
@@ -127,6 +176,8 @@ pinned as:
 - URL: `https://worksheets.codalab.org/rest/bundles/0xbcd57bee090b421c982906709c8c27e1/contents/blob/`
   — the bundle the SQuAD leaderboard's own v1.1 configuration names as
   `evaluate-v1.1.py`;
+- byte-identical mirror:
+  `https://raw.githubusercontent.com/allenai/bi-att-flow/master/squad/evaluate-v1.1.py`;
 - SHA-256: `f5a673dbbd173e29e9ea38f1b2091d883583b77b3a4c17144b223fb0f2f9bd09`.
 
 It plays for generation the role `trec_eval` plays for retrieval: **where a
@@ -153,9 +204,9 @@ methods are Unicode-aware; that is the behaviour below. Concretely, from its
   whitespace-separated tokens of the two normalised strings: the overlap is the
   multiset intersection, precision divides it by the prediction's token count,
   recall by the reference's, and an overlap of zero scores 0.
-- **Over several references, each metric takes the maximum** of its per-reference
-  scores, independently: the reference that maximises exact match need not be
-  the one that maximises F1.
+- **Over several references, each metric takes the maximum** of its
+  per-reference scores, independently: the reference that maximises exact match
+  need not be the one that maximises F1.
 - **Where both sides normalise to empty, v1.1's behaviour binds: exact match 1,
   F1 0** — equal empty strings, and an overlap of zero. This is not a
   hypothetical: three questions of the dev set carry the reference ".", which
@@ -163,8 +214,9 @@ methods are Unicode-aware; that is the behaviour below. Concretely, from its
   rejected below.
 
 **Scale: every value lies in [0, 1]**, as every metric in `ragondin-metrics`
-does. The script reports its means ×100; the parity fixture divides by 100
-before it compares.
+does. The script's `evaluate` reports its means ×100; where the parity fixture
+compares the script's reported means, it divides them by 100 first. The
+per-case values of `exact_match_score` and `f1_score` are already on [0, 1].
 
 **No extraction step.** The metric scores `Answer.text` (ADR-C29) exactly as the
 generator returned it. Producing a short answer rather than a sentence is the
@@ -181,8 +233,8 @@ each piece separately. An **empty prediction** is not a missing reference and is
 scored like any other: against a reference that does not normalise to empty it
 scores 0 on both metrics.
 
-**The parity fixture** lives under `eval/ragondin-metrics/tests/fixtures/` and is
-regenerated by a recorded script that calls the pinned SQuAD script, as
+**The parity fixture** lives under `eval/ragondin-metrics/tests/fixtures/` and
+is regenerated by a recorded script that calls the pinned SQuAD script, as
 `pytrec_eval_parity.tsv` is regenerated by one that calls `pytrec_eval`. It
 covers at least:
 
@@ -233,62 +285,27 @@ The four pieces of ADR-8's quadruple come out of it as follows:
   carry three.
 
 **The adapter is named `--benchmark squad/<dir>`** and reads `dev-v1.1.json` in
-that directory. The file it reads is selectable — the train file exists, is
-about six times larger (30 288 272 bytes), and is not M3's — and the adapter applies no split
-beyond the choice of file. **A question with no `answers` is an adapter error**,
-a `BenchmarkError`, never a silently unjudged query: in this dataset every
-question has one, so a missing list means a corrupt or wrong file.
+that directory by default. The file name is selectable through the adapter's
+constructor — the shape `BeirAdapter::with_split` in
+`eval/ragondin-benchmarks/src/beir.rs` already has for a BEIR split — because
+the train file exists, is about six times larger (30 288 272 bytes), and is not
+M3's. The adapter applies no split beyond the choice of file. **A question with
+no `answers` is an adapter error**, a `BenchmarkError`, never a silently
+unjudged query: in this dataset every question has one, so a missing list means
+a corrupt or wrong file.
 
-**Why SQuAD dev, and why now.** Its paragraphs are short enough for the
-encoder: median 111 words, and by a re-count with the M2 encoder's WordPiece
-vocabulary about 92 % of paragraphs (1 899 of 2 067) fall within 256 word
-pieces; only 1.5 % of questions have their first reference answer beginning
-after word 180. The dense leg therefore mostly measures retrieval rather
-than truncation. Its official script *is* the metric (§ 1), so nothing stands between
-the benchmark's own scorer and ours. It carries several references per question,
-the case the maximum exists for. Its qrels follow from the file, with no
-string-matching heuristic to decide which document is evidence. It needs no
-chunker, and it needs nothing from `Document.metadata` inside the embedded text.
+**Its licence is CC BY-SA 4.0**, as the SQuAD site states. The data stays
+outside the tree, as SciFact and NFCorpus do, under the directory
+`RAGONDIN_CALIBRATION_DATASETS` names; and **any frozen fixture that carries
+reference-answer text carries the licence notice beside it**, in the same
+directory.
 
-Its costs, named plainly:
-
-- **It is extractive.** Every reference is a span of its paragraph, so a
-  generator that copies the right span is correct; it is a weaker test of
-  generation than an abstractive benchmark, and a strong one of whether the
-  right paragraph reached the prompt.
-- **There is no published document-level retrieval figure to reproduce.** None
-  is owed (§ 1): the reproduction obligation is discharged, and the new read
-  path is checked against SciFact instead (§ 4).
-- **Its licence is CC BY-SA 4.0**, as the SQuAD site states. The data stays
-  outside the tree, as SciFact and NFCorpus do, under the directory
-  `RAGONDIN_CALIBRATION_DATASETS` names; and **any frozen fixture that carries
-  reference-answer text carries the licence notice beside it**, in the same
-  directory.
-
-**MultiHop-RAG is the benchmark that follows a chunker, not this one.** The
-second review counted it at Hugging Face revision
-`71ac0d0bd1f951d2d6b70311f7d2ae404e1ffa82` of `yixuantt/MultiHopRAG`, and what it
-found rules it out for M3 on three independent grounds:
-
-- **Its documents do not fit the encoder.** 609 articles with a median body of
-  1 298 words, and 76 % of its 6 084 evidence facts begin after word 180 —
-  beyond the M2 encoder's window, so a document-level dense leg never sees most
-  of the evidence it is scored against.
-- **Its published retrieval figures are chunk-level and not reproducible here
-  even with a chunker.** They were produced with LlamaIndex's
-  `SentenceSplitter`, with metadata prepended to the embedded text, with CLS
-  pooling where this workspace mean-pools, with a hit decided by string
-  containment, and with MAP@10 dividing by `min(|gold|, 10)` — the convention
-  ADR-10 names and declines in favour of `trec_eval`'s.
-- **Its answers do not score deterministically as written.** 94 % of its
-  comparison and temporal answers are yes or no, with inconsistent casing and
-  synonyms, so that a constant "Yes" scores 30.6 % exact match.
-
-A chunker in the composition root would contradict
+**MultiHop-RAG is the benchmark that follows a chunker, not this one.** A
+chunker in the composition root would contradict
 `eval/ragondin-harness/src/corpus.rs` § One chunk per document, which places a
 real chunker in the pipeline, and it would change what `index_version` names.
 That is a decision of its own, taken together with `docs/OPEN_QUESTIONS.md` #5,
-and not this one.
+and not this one. The grounds are in the Context.
 
 **The other candidates are rejected** — CRAG, HotpotQA in its distractor
 setting, Natural Questions and TriviaQA over Wikipedia — for the reasons under
@@ -312,6 +329,11 @@ node name.** When the terminal node is a `Generator`:
 `NodeTrace.inputs` cannot serve in place of step 3: a node's input entry holds a
 count, not a ranking (ADR-C28).
 
+**A pipeline whose terminal node is a `ContextBuilder`** — which ADR-C29
+permits, since the executor's output becomes "an enum over what a terminal node
+may produce" — has its ranking read from the builder's own chunks port: the walk
+is entered directly at step 2, and step 3 follows unchanged.
+
 **A pipeline whose terminal node produces chunks keeps today's rule**: the
 metrics read the terminal node's own output.
 
@@ -327,8 +349,9 @@ query has therefore run, and the entry the walk looks for exists.
 **When the walk fails, and the benchmark carries qrels, the harness returns a
 typed `HarnessError` of its own, distinct from `NothingToScore`.** The walk
 fails when the generator's context comes from a node that is not a
-`ContextBuilder`, or when the builder's chunks port is fed by a node whose trace
-entry is not a `RankedChunks`. It **never falls back to `Context.chunks`**: that
+`ContextBuilder`, or when the builder's chunks port — reached from a generator
+or as the terminal node — is fed by a node whose trace entry is not a
+`RankedChunks`. It **never falls back to `Context.chunks`**: that
 list is cut to the builder's budget, so an nDCG over it would mean one thing
 under a builder that keeps three chunks and another under one that keeps
 twenty. `Context.chunks` stays available as a second ranking — what entered the
@@ -392,7 +415,10 @@ qrels-only benchmark's digest moves, including the two
 reference answer digests exactly as today, byte for byte; one in which any
 query does appends, after the qrels, a section that opens with its own tag and
 then carries the references in the length-prefixed encoding the rest of the
-digest already uses.
+digest already uses: for each query in benchmark order that carries at least
+one reference, its query id, then the count of its references, then the
+reference strings in file order. A query with no reference is absent from the
+section.
 
 **Each metric averages over its own judged set**: exact match and F1 over the
 queries that carry a reference answer; the retrieval metrics over the queries
@@ -401,6 +427,14 @@ each it belongs to and no other. The regime — which families a run reports —
 ADR-8's, read from the pieces the benchmark carries, and `Benchmark` reports it
 (#263). A family the regime reports whose judged set is empty is the case
 `HarnessError::NothingToScore` exists for: a mean over nothing, not a zero.
+
+**A benchmark that carries reference answers, run through a pipeline that
+produces no `Answer`, is refused** — a pipeline whose terminal node produces
+chunks or a context. The harness returns a typed `HarnessError` of its own,
+distinct from `NothingToScore`, and never a run that silently reports the
+retrieval metrics alone: the benchmark asked for answers to be scored, and a run
+that dropped that family would read as a smaller evaluation reported as the
+whole one.
 
 **`Query` gains nothing (INV-1).** Any per-question attribute a future benchmark
 needs — a question type, for per-type reporting — lives beside the benchmark's
@@ -430,9 +464,10 @@ pieces, not on the value type.
 - **MultiHop-RAG in M3**, with or without a chunker in the composition root. Its
   evidence lies mostly beyond the encoder's window, its published retrieval
   figures rest on choices this workspace does not make, and its yes/no answers
-  make exact match reward a constant (§ 2). A composition-root chunker would
-  contradict where `corpus.rs` places chunking and change what `index_version`
-  names — a decision of its own, with `docs/OPEN_QUESTIONS.md` #5.
+  make exact match reward a constant (see the Context). A composition-root
+  chunker would contradict where `corpus.rs` places chunking and change what
+  `index_version` names — a decision of its own, with `docs/OPEN_QUESTIONS.md`
+  #5.
 
 - **CRAG.** Its official scoring — perfect, acceptable, missing, incorrect —
   presumes a judge, which is M4's instrument and which ADR-10 keeps out of the
@@ -455,10 +490,10 @@ pieces, not on the value type.
   context of three chunks is not the nDCG@10 of any leaderboard.
 
 - **Reading the ranking from the last `Chunks`-kind node in execution order.**
-  Simpler to find, and the same node as § 3 finds in every pipeline M3 builds — and
-  a different one as soon as a graph has two retrieval branches: which of two
-  ready branches runs last is decided by the canonical order of their ids, not
-  by which of them fed the prompt.
+  Simpler to find, and the same node as § 3 finds in every pipeline M3 builds —
+  and a different one as soon as a graph has two retrieval branches: which of
+  two ready branches runs last is decided by the canonical order of their ids,
+  not by which of them fed the prompt.
 
 - **Scoring generation only once a pipeline ends in an answer.** It loses the
   regime with both pieces that ADR-8 promises, and with it the comparison of
@@ -485,8 +520,11 @@ pieces, not on the value type.
   `ragondin-metrics`, on the [0, 1] scale, with the parity fixture and every
   edge case § 1 lists, regenerated by a recorded script calling the pinned
   SQuAD script. #265: regime selection in the harness, the port walk of § 3 and
-  its typed error, a separate denominator per metric family, and the
-  `dataset_version` tag of § 5. #268: the M2 exit-criterion fixture with
+  its typed error, the typed error of § 5 for a benchmark with reference answers
+  run through a pipeline that produces no `Answer`, a separate denominator per
+  metric family, and the `dataset_version` tag of § 5 — #265's because the
+  harness owns `identity.rs`, although ADR-C29's Consequences named #263 for
+  that obligation. #268: the M2 exit-criterion fixture with
   hand-written reference answers. #269: the SciFact assertion through the new
   read path, the SQuAD calibration, the subset rule, the tolerances of § 4, and
   the frozen fixture with its licence notice. None of them reopens this
