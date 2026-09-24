@@ -5,7 +5,7 @@
 //! a third-party component (INV-7).
 
 use ragondin_contracts::ComponentError;
-use ragondin_types::ScoredChunk;
+use ragondin_types::{ModelIdentity, ScoredChunk};
 
 use crate::failure::ConformanceFailure;
 
@@ -70,22 +70,23 @@ pub(crate) fn check_ranking(
 /// With nothing offered, *any* result is a fabrication — which is why the
 /// families that own their inputs need no separate "empty in, empty out"
 /// check: this one fires first, and with the more precise diagnosis.
+///
+/// It reads ids rather than ranked chunks so that a [`Context`]'s placed
+/// chunks, which carry no text, are checked by the same rule.
+///
+/// [`Context`]: ragondin_types::Context
 pub(crate) fn check_no_fabricated_ids(
     component: &'static str,
     context: &str,
-    hits: &[ScoredChunk],
+    returned: &[&str],
     offered: &[&str],
 ) -> Result<(), ConformanceFailure> {
-    if let Some(hit) = hits
-        .iter()
-        .find(|hit| !offered.contains(&hit.chunk.id.as_str()))
-    {
+    if let Some(id) = returned.iter().find(|id| !offered.contains(id)) {
         return Err(ConformanceFailure::new(
             component,
             "no fabricated ids",
             format!(
-                "{context}: returned chunk `{}`, which was not among the {} it was given",
-                hit.chunk.id.as_str(),
+                "{context}: returned chunk `{id}`, which was not among the {} it was given",
                 offered.len()
             ),
         ));
@@ -103,11 +104,10 @@ pub(crate) fn check_no_fabricated_ids(
 pub(crate) fn check_no_duplicate_ids(
     component: &'static str,
     context: &str,
-    hits: &[ScoredChunk],
+    returned: &[&str],
 ) -> Result<(), ConformanceFailure> {
-    let mut seen: Vec<&str> = Vec::with_capacity(hits.len());
-    for hit in hits {
-        let id = hit.chunk.id.as_str();
+    let mut seen: Vec<&str> = Vec::with_capacity(returned.len());
+    for &id in returned {
         if seen.contains(&id) {
             return Err(ConformanceFailure::new(
                 component,
@@ -172,4 +172,81 @@ pub(crate) fn check_zero_top_k_rejected(
             ),
         )),
     }
+}
+
+/// A call whose form is wrong is refused as the caller's error.
+///
+/// The generation families refuse a call's *form* — a zero budget, an empty
+/// served model, an empty or malformed template — and each refusal is
+/// [`ComponentError::InvalidRequest`], the variant that says the caller, not
+/// the component, is at fault. Succeeding hides the caller's bug; refusing
+/// with another variant blames the component for it. `check` names which
+/// refusal this is.
+pub(crate) fn check_invalid_request<T>(
+    component: &'static str,
+    check: &'static str,
+    context: &str,
+    outcome: Result<T, ComponentError>,
+) -> Result<(), ConformanceFailure> {
+    match outcome {
+        Err(ComponentError::InvalidRequest(_)) => Ok(()),
+        Err(other) => Err(ConformanceFailure::new(
+            component,
+            check,
+            format!("{context}: rejected with `{other}`, expected an invalid-request error"),
+        )),
+        Ok(_) => Err(ConformanceFailure::new(
+            component,
+            check,
+            format!("{context}: succeeded instead of being rejected"),
+        )),
+    }
+}
+
+/// An empty identity is not valid (ADR-C31 § 1).
+///
+/// The composition root records the identity in the run's `model_hashes`
+/// (ADR-C31 § 4), and an empty one records that *some* model answered
+/// without saying which.
+pub(crate) fn check_identity_non_empty(
+    component: &'static str,
+    context: &str,
+    identity: &ModelIdentity,
+) -> Result<(), ConformanceFailure> {
+    if identity.as_str().is_empty() {
+        return Err(ConformanceFailure::new(
+            component,
+            "identity non-empty",
+            format!("{context}: reported the empty identity"),
+        ));
+    }
+    Ok(())
+}
+
+/// The identity is stable while nothing has changed (ADR-C31 § 4).
+///
+/// No timestamp, no counter: a rerun of the same inputs must produce the same
+/// run id, and an identity that varies per call makes every run unique by
+/// construction. `again` is a later read, from the same instance or from
+/// another one the same constructor built — the composition root reads the
+/// identity from an instance other than the one that runs, so the two must
+/// agree.
+pub(crate) fn check_identity_stable(
+    component: &'static str,
+    context: &str,
+    first: &ModelIdentity,
+    again: &ModelIdentity,
+) -> Result<(), ConformanceFailure> {
+    if first != again {
+        return Err(ConformanceFailure::new(
+            component,
+            "identity stable across two calls",
+            format!(
+                "{context}: reported `{}`, where the first call reported `{}`",
+                again.as_str(),
+                first.as_str()
+            ),
+        ));
+    }
+    Ok(())
 }

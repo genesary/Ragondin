@@ -45,7 +45,8 @@ impl ConformanceFailure {
     }
 
     /// The trait family whose contract was broken — `"Retriever"`, `"Fusion"`,
-    /// `"Reranker"`, `"Embedder"`, `"VectorStore"`.
+    /// `"Reranker"`, `"Embedder"`, `"VectorStore"`, `"ContextBuilder"`,
+    /// `"Generator"`.
     pub fn component(&self) -> &'static str {
         self.component
     }

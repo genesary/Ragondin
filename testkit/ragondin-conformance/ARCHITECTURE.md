@@ -17,11 +17,24 @@ list. No embedder crate existed when it landed, so nothing broke. The
 precedent is the *reason*, not a licence: a family function's argument shape
 changes only when a check needs a fact no fixture can supply from inside.
 
+`check_generator_conformance(make, served_model, template)` was born with that
+shape rather than changed to it, on the same reasoning. Which model a fixture
+serves is a fact no suite can know: a `Local` generator recognises the names
+its constructor was given, a `Remote` one whatever its inference server
+serves, and a name the suite invented would be refused by both — correctly.
+The template is taken beside it so that the well-formed call is the call a
+node of the caller's actually makes; the grammar itself is still probed by the
+suite's own malformed templates, which no caller chooses. Both are the
+caller's claims about its fixture, and a wrong one fails `well-formed call
+succeeds`.
+
 ## What lives here
 
 The behavioural suite **every** component implementation must pass, whatever its
 nature (`docs/code-architecture.md` §7.4). One `check_*` / `assert_*` pair per
-M2 trait family: `Retriever`, `Fusion`, `Reranker`, `Embedder`, `VectorStore`.
+trait family: the M2 five — `Retriever`, `Fusion`, `Reranker`, `Embedder`,
+`VectorStore` — and the two generation families, `ContextBuilder` and
+`Generator`.
 
 This is the operational enforcement of **INV-7**. A built-in component and a
 third-party one call the same function, with the same argument shape, and earn
@@ -78,8 +91,8 @@ outside this workspace.
 ## Where each clause comes from
 
 The suite enforces nothing it invented. Each clause is either stated in
-`ragondin-contracts`, or stated in issue #17, or generalised from a sentence
-written on the shared error type — and the third kind is listed here explicitly
+`ragondin-contracts` or an ADR, or stated in issue #17, or generalised from a
+sentence written on the shared error type — and the last kind is listed here explicitly
 so a reviewer can see the reasoning rather than reconstruct it.
 
 | Clause | Grounding |
@@ -92,7 +105,11 @@ so a reviewer can see the reasoning rather than reconstruct it.
 | **one dimensionality, across both roles** | `Embedder`'s *One embedding space* clause. The per-batch half predates the role; ADR-C17 is what made two widths expressible at all, so the clause was written onto the trait in the same change that widened the check — the suite still enforces nothing it invented. Deliberately **not** a caller-declared `dim` argument the way `VectorStore` takes one: the suite can observe the width itself, and a family function's argument shape changes only when a check needs a fact no fixture can supply from inside. |
 | **a `top_k` of zero is an invalid request** | stated for `Retriever` on `RetrieveParams::new`; **generalised** to `Reranker` and `VectorStore::search` from `ComponentError::InvalidRequest`'s documentation, which names it as the example and is written on the error every boundary returns. #89 mirrors the sentence onto the two params structs that lack it. |
 | **the role changes the vector** | ADR-C17 and #97, which require the suite to exercise both roles and to check that a fixture *declaring* distinct per-role prefixes honours them. Opt-in by construction: the ADR states the suite cannot detect a wrong role and must not pretend to. |
-| **no duplicate ids** | **generalised**: a ranked list ranks each chunk once. Checked only for `Fusion` and `Reranker`, whose whole input the suite knows, so that "this id appears twice" is a statement about the component and not about a corpus. |
+| **no duplicate ids** | **generalised**: a ranked list ranks each chunk once. Checked only for `Fusion`, `Reranker` and `ContextBuilder`, whose whole input the suite knows, so that "this id appears twice" is a statement about the component and not about a corpus. |
+| a context's chunks: no fabricated ids, no duplicates; a zero budget rejected | `ContextBuilder`'s context contract, and ADR-C31 § 2's list of what the suite may check. The zero budget is `top_k`'s twin under the contracts crate's *Empty collections* rule. |
+| zero chunks, and an empty context, are valid calls | ADR-C19, restated for both families in ADR-C31 § 2. A refusal is reported as `well-formed call succeeds`, and a builder answering zero chunks with a placed chunk as `no fabricated ids` — the same diagnoses the M2 families give an empty input. |
+| an empty served model, an empty template, a malformed template rejected | `Generator`'s *What is refused* clause and ADR-C31 § 2. "Malformed" is probed once per case the template grammar on `Generator` names — an unknown name between braces, a `{` no `}` closes, a lone `}` — each in a template otherwise well formed, so that a generator forgiving any one of them fails. |
+| **identity non-empty**, **identity stable across two calls** | ADR-C31 § 1 (an empty identity is not valid) and § 4 (stable while nothing has changed); ADR-C32 § 4 adds both scenarios for every model-bearing family. Stability is read twice from one instance and once from a **second instance the same constructor built**: § 4's *How it is read* has the composition root read the identity from an instance other than the one that runs, so an identity naming its instance breaks the run record exactly as a counter does. A `model_identity` that fails is reported as `well-formed call succeeds`. |
 
 ## What the suite deliberately does not decide
 
@@ -105,6 +122,20 @@ would have gone:
   invalid request.
 - **An empty `upsert`** — #91. That same stub rejects it, while the neighbouring
   families all treat an empty input as success.
+
+Nor does it check three things the generation contracts state, each because
+the suite cannot observe it without knowing the component:
+
+- **A context builder's budget is not measured**, only refused at zero. Its
+  unit is the builder's own (ADR-C31 § 2); a "budget respected" check would
+  have to pick a unit, and would then certify that unit rather than the
+  contract.
+- **A generator refusing a model it does not serve** is not probed: no name is
+  one the suite could know every fixture refuses.
+- **A builder carrying each placed chunk's incoming score untouched** is on
+  `ContextBuilder`'s contract, but not on ADR-C31 § 2's list of what the suite
+  may check, and the suite checks what that list and ADR-C32 § 4 name, no
+  more.
 
 Nor does it decide **which prefix an asymmetric embedder should apply**. ADR-C17
 put the role on `EmbedParams`, so the suite exercises every embedder check under

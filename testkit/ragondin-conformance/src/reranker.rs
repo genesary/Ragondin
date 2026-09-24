@@ -40,7 +40,7 @@ pub async fn check_reranker_conformance(
         .rerank(&query, Vec::new(), &RerankParams::new(5))
         .await
         .map_err(|error| ConformanceFailure::from_call(COMPONENT, context, &error))?;
-    check_no_fabricated_ids(COMPONENT, context, &reordered, &[])?;
+    check_no_fabricated_ids(COMPONENT, context, &ids(&reordered), &[])?;
 
     let chunks = ranked("candidate", 3);
     let context = "rerank with top_k=2";
@@ -48,8 +48,8 @@ pub async fn check_reranker_conformance(
         .rerank(&query, chunks.clone(), &RerankParams::new(2))
         .await
         .map_err(|error| ConformanceFailure::from_call(COMPONENT, context, &error))?;
-    check_no_fabricated_ids(COMPONENT, context, &reordered, &ids(&chunks))?;
-    check_no_duplicate_ids(COMPONENT, context, &reordered)?;
+    check_no_fabricated_ids(COMPONENT, context, &ids(&reordered), &ids(&chunks))?;
+    check_no_duplicate_ids(COMPONENT, context, &ids(&reordered))?;
     check_top_k(COMPONENT, context, &reordered, 2)?;
     check_ranking(COMPONENT, context, &reordered)?;
 
