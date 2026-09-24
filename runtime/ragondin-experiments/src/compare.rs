@@ -137,6 +137,10 @@ fn parameters(pipeline: &LogicalPipeline) -> BTreeMap<(NodeId, ParameterKey), Pa
             LogicalNode::Retriever(node) => ("retriever", &node.implementation, &node.params),
             LogicalNode::Fusion(node) => ("fusion", &node.implementation, &node.params),
             LogicalNode::Reranker(node) => ("reranker", &node.implementation, &node.params),
+            LogicalNode::ContextBuilder(node) => {
+                ("context_builder", &node.implementation, &node.params)
+            }
+            LogicalNode::Generator(node) => ("generator", &node.implementation, &node.params),
             LogicalNode::Extension(node) => ("extension", &node.kind, &node.params),
         };
         let id = node.id();
@@ -298,8 +302,9 @@ pub struct ParameterDifference {
 /// differ in no listed parameter.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ParameterKey {
-    /// The node's `component:` family — `retriever`, `fusion`, `reranker` or
-    /// `extension` — held as a [`ParamValue::String`].
+    /// The node's `component:` family — `retriever`, `fusion`, `reranker`,
+    /// `context_builder`, `generator` or `extension` — held as a
+    /// [`ParamValue::String`].
     Component,
     /// The node's `impl:` name, held as a [`ParamValue::String`].
     Impl,
