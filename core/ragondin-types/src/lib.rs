@@ -1,15 +1,16 @@
 //! # ragondin-types
 //!
 //! The platform's core **value types**: `Document`, `Chunk`, `Query`,
-//! `Embedding`, `ScoredChunk`, and the identifier newtypes that name them.
+//! `Embedding`, `ScoredChunk`, and the identifier newtypes that name them; and
+//! the generation-side values `Context`, `ContextChunk`, `Answer` and
+//! `ModelIdentity` (ADR-C31 § 1).
 //!
 //! This crate is a **stable API boundary** (INV-1) and holds **value types
 //! only** (INV-3): no global context, no interner, no I/O. A value is fully
 //! determined by its content. It carries **no heavy dependency** (INV-4) —
 //! `serde` at most.
 //!
-//! The generation-side types (`Context`, `Generation`) arrive with the
-//! milestone that uses them, not before. See `ARCHITECTURE.md`.
+//! See `ARCHITECTURE.md`.
 
 use std::collections::BTreeMap;
 
@@ -162,6 +163,69 @@ pub struct ScoredChunk {
     pub score: f32,
 }
 
+/// One chunk of a [`Context`], named by identifier.
+///
+/// A context carries its provenance by identifier, never the chunk text: the
+/// text is already rendered into [`Context::text`] (ADR-C31 § 1).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ContextChunk {
+    /// The chunk placed in the context.
+    pub id: ChunkId,
+    /// The document that chunk was derived from.
+    pub document_id: DocId,
+    /// The score the chunk carried in, on the scale of the node that scored
+    /// it — not a score of the context's own (ADR-C31 § 1).
+    pub score: f32,
+}
+
+/// A rendered context, and the chunks it was rendered from.
+///
+/// It does not hold the query (ADR-C31 § 1): a value that carried one could not
+/// say which query it speaks for.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Context {
+    /// The chunks rendered into [`text`](Self::text), in the order the builder
+    /// placed them — which makes them a ranking rather than a set.
+    pub chunks: Vec<ContextChunk>,
+    /// The rendered context.
+    pub text: String,
+}
+
+/// A generated answer: text, and nothing else.
+///
+/// Deliberately so (ADR-C31 § 1). Because no type here is
+/// `#[non_exhaustive]`, adding a field later — token usage, say — is a
+/// versioned INV-1 break rather than an additive change.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Answer {
+    /// The answer text.
+    pub text: String,
+}
+
+/// The identity of the model behind a component, as the component reports it.
+///
+/// Opaque: nothing here parses it (ADR-C31 § 1, § 4).
+///
+/// An empty identity is *representable* and not valid (ADR-C31 § 1) — the
+/// shape ADR-C20 gave [`Embedding`]. Rejecting it here would require a
+/// fallible constructor and an error type in a crate that deliberately has
+/// none.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct ModelIdentity(String);
+
+impl ModelIdentity {
+    /// Wraps an identity.
+    pub fn new(identity: impl Into<String>) -> Self {
+        Self(identity.into())
+    }
+
+    /// Borrows the underlying identity.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -297,6 +361,104 @@ mod tests {
                 score: 0.87,
             }
         );
+    }
+
+    fn a_context() -> Context {
+        Context {
+            chunks: vec![
+                ContextChunk {
+                    id: ChunkId::new("chunk-2"),
+                    document_id: DocId::new("doc-1"),
+                    score: 0.91,
+                },
+                ContextChunk {
+                    id: ChunkId::new("chunk-1"),
+                    document_id: DocId::new("doc-1"),
+                    score: 0.87,
+                },
+            ],
+            text: "the cat sat on the mat\n\nthe mat was red".to_string(),
+        }
+    }
+
+    #[test]
+    fn context_chunk_round_trips() {
+        assert_round_trips(&ContextChunk {
+            id: ChunkId::new("chunk-1"),
+            document_id: DocId::new("doc-1"),
+            score: 0.87,
+        });
+    }
+
+    #[test]
+    fn context_round_trips() {
+        assert_round_trips(&a_context());
+    }
+
+    /// `chunks` is positional: the builder's order is what makes it a ranking
+    /// rather than a set (ADR-C31 § 1), so the round trip must keep it.
+    #[test]
+    fn context_keeps_the_order_of_its_chunks() {
+        let json = serde_json::to_string(&a_context()).expect("serializes");
+        let back: Context = serde_json::from_str(&json).expect("deserializes");
+        let ids: Vec<&str> = back.chunks.iter().map(|c| c.id.as_str()).collect();
+        assert_eq!(ids, ["chunk-2", "chunk-1"]);
+    }
+
+    #[test]
+    fn answer_round_trips() {
+        assert_round_trips(&Answer {
+            text: "on the mat".to_string(),
+        });
+    }
+
+    #[test]
+    fn model_identity_round_trips() {
+        assert_round_trips(&ModelIdentity::new("qwen2.5-7b-instruct@sha256:abc"));
+    }
+
+    #[test]
+    fn model_identity_exposes_its_inner_value() {
+        assert_eq!(ModelIdentity::new("m@rev").as_str(), "m@rev");
+    }
+
+    /// Field names are part of the wire form, and ADR-C24 makes the domain
+    /// types the source of truth a `.proto` mirrors field for field, so they
+    /// are pinned: a renamed one would still round trip.
+    #[test]
+    fn context_reads_from_its_documented_shape() {
+        let json = r#"{"chunks":[{"id":"chunk-2","document_id":"doc-1","score":0.91},{"id":"chunk-1","document_id":"doc-1","score":0.87}],"text":"the cat sat on the mat\n\nthe mat was red"}"#;
+        let context: Context = serde_json::from_str(json).expect("field names are the wire form");
+        assert_eq!(context, a_context());
+    }
+
+    #[test]
+    fn answer_reads_from_its_documented_shape() {
+        let answer: Answer = serde_json::from_str(r#"{"text":"on the mat"}"#)
+            .expect("field names are the wire form");
+        assert_eq!(
+            answer,
+            Answer {
+                text: "on the mat".to_string()
+            }
+        );
+    }
+
+    /// `ModelIdentity` is a newtype like the identifiers, and encodes the same
+    /// way: as a bare string, not a wrapper object.
+    #[test]
+    fn model_identity_encodes_as_a_bare_string() {
+        let json = serde_json::to_string(&ModelIdentity::new("m@rev")).expect("serializes");
+        assert_eq!(json, r#""m@rev""#);
+    }
+
+    /// The empty identity is representable and not valid (ADR-C31 § 1): the
+    /// crate has no error type, so construction stays infallible.
+    #[test]
+    fn empty_model_identity_is_representable() {
+        let empty = ModelIdentity::new("");
+        assert_eq!(empty.as_str(), "");
+        assert_round_trips(&empty);
     }
 
     #[test]
