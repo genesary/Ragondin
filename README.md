@@ -97,7 +97,7 @@ On `main` today:
 |---|---|
 | `ragondin-types` | The core value types: `DocId`, `ChunkId`, `QueryId`, `Document`, `Chunk`, `Query`, `Embedding`, `ScoredChunk`; and the generation-side values `Context`, `ContextChunk`, `Answer`, `ModelIdentity` (ADR-C31 § 1). |
 | `ragondin-pipeline` | The versioned `RawPipeline` wire schema, the `LogicalNode` model with its `Extension` variant, the port/`ValueKind` check, and the `RawPipeline → LogicalPipeline` validation and canonicalization pass. Content-addressed hashing over the canonical form (INV-8), as `LogicalPipeline::content_hash`. |
-| `ragondin-contracts` | Five component traits — `Retriever`, `Fusion`, `Reranker`, `Embedder`, `VectorStore` — with their params and `ComponentError`. |
+| `ragondin-contracts` | Seven component traits — `Retriever`, `Fusion`, `Reranker`, `Embedder`, `VectorStore`, `ContextBuilder`, `Generator` — with their params and `ComponentError`. |
 | `ragondin-engine` | `EngineContext` and the explicit component registry, physical planning (`LogicalPipeline` + registry → `PhysicalPipeline`), and an executor that returns its `ExecutionTrace` — on failure as well as on success. No `Branch` or `Loop`: no such node variant exists yet. |
 | `ragondin-conformance` | The behavioural suite every implementation of a contract must pass. |
 | `ragondin-metrics` | The deterministic metrics: nDCG@k, recall@k, precision@k, MRR and MAP@k for retrieval; exact match and token-F1, after the SQuAD v1.1 script, for generation. |

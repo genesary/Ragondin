@@ -15,9 +15,9 @@
 //! first-party component and a third-party one implement exactly the same
 //! thing, and there is no faster path for either.
 //!
-//! This crate defines five families: `Retriever`, `Fusion`, `Reranker`,
-//! `Embedder` and `VectorStore`. `Chunker`, `Indexer`, `ContextBuilder`,
-//! `Generator` and `Grader` are not defined here. Adding a trait is additive
+//! This crate defines seven families: `Retriever`, `Fusion`, `Reranker`,
+//! `Embedder`, `VectorStore`, `ContextBuilder` and `Generator`. `Chunker`,
+//! `Indexer` and `Grader` are not defined here. Adding a trait is additive
 //! on this boundary, so each of those arrives with the work that first
 //! consumes it; defining one before anything needs it would be dead API.
 //!
@@ -28,22 +28,38 @@
 //! planning (`docs/code-architecture.md` §6.3), which resolves an `impl:` name
 //! into a *constructed* component and applies defaults: implementation-specific
 //! configuration — BM25's `k1` and `b`, a model path — is handed to the
-//! constructor, while the params structs below carry only what varies **per
+//! constructor, while the params structs below carry what varies **per
 //! call**. The reference pipeline in `docs/system-architecture.md` §5.1 shows
 //! the split: `top_k` on a retriever and on a reranker, nothing on the fusion.
 //!
+//! One qualification: a params struct also carries a setting fixed per node
+//! when the setting must reach a `Remote` component. Face 2 carries the
+//! trait's calls and nothing else, so constructor configuration never crosses
+//! the wire, and a setting a researcher varies between two runs must be in the
+//! pipeline representation and its hash (ADR-C31 § 2). [`GenerateParams`] is
+//! that case: its served model, template, temperature, seed and token cap are
+//! fixed per generator node and travel on every call. So is the
+//! `served_model` of [`EmbedParams`] and [`RerankParams`], fixed per node and
+//! carried on every call so that it reaches a `Remote` embedder or reranker
+//! (ADR-C32 § 4).
+//!
 //! # Empty collections
 //!
-//! Four methods below take a collection — [`Fusion::fuse`], [`Reranker::rerank`],
-//! [`Embedder::embed`] and [`VectorStore::upsert`]. **An empty collection is a
-//! valid call on every one of them, and the component does nothing with it**
-//! (ADR-C19): empty in, empty out, and for `upsert`, whose return carries no
-//! data, empty in, nothing done, `Ok(())`. An implementation must not return
+//! Five methods below take a collection — [`Fusion::fuse`], [`Reranker::rerank`],
+//! [`Embedder::embed`], [`VectorStore::upsert`] and [`ContextBuilder::build`].
+//! **An empty collection is a valid call on every one of them, and the
+//! component does nothing with it** (ADR-C19): empty in, empty out; for
+//! `upsert`, whose return carries no data, empty in, nothing done, `Ok(())`;
+//! and for `build`, the empty context — no chunks, with its `text` left to the
+//! builder, since a template may render a header over no passages. A
+//! [`Generator`] handed an empty context is likewise a valid call, and an
+//! answer of "I do not know" is conformant. An implementation must not return
 //! [`ComponentError::InvalidRequest`] for it, so a caller batching over a corpus
 //! never has to guard a batch that came out empty.
 //!
 //! This is **not** the `top_k` rule and does not weaken it: a `top_k` of zero
-//! stays an invalid request wherever it is taken. A zero `top_k` asks for a
+//! stays an invalid request wherever it is taken, and so does a zero
+//! [`ContextParams::budget`], its twin (ADR-C31 § 2). A zero `top_k` asks for a
 //! *result* that cannot exist, and answering it with an empty list makes a
 //! caller's arithmetic bug look like an empty corpus; an empty collection asks
 //! for a state change, or a transformation, that is trivially satisfiable and
@@ -78,7 +94,7 @@
 #![warn(missing_docs)]
 
 use async_trait::async_trait;
-use ragondin_types::{Chunk, Embedding, Query, ScoredChunk};
+use ragondin_types::{Answer, Chunk, Context, Embedding, ModelIdentity, Query, ScoredChunk};
 use thiserror::Error;
 
 /// The error every component boundary returns.
@@ -174,15 +190,42 @@ impl FusionParams {
 pub struct RerankParams {
     /// How many chunks to keep after reordering.
     pub top_k: usize,
+    /// The name of the model the reranker is asked for (ADR-C32 § 4).
+    ///
+    /// `Some(name)` asks for the model the component serves under `name`;
+    /// `None` asks for the model it loaded. A component refuses, as
+    /// [`ComponentError::InvalidRequest`], a name it does not serve, an empty
+    /// name, and `None` when it has no single loaded model that `None` could
+    /// mean. Absence is the only spelling of "no name": there is no empty
+    /// string standing in for it.
+    ///
+    /// **Not yet true of the in-tree implementations.** The ONNX embedder and
+    /// reranker (`ragondin-embedder-onnx`, `ragondin-reranker-onnx`) and every
+    /// test stub in the workspace ignore this field and answer a `Some(name)`
+    /// as if it were `None`. The contract and the
+    /// behaviour change are separate PRs: #285, which adds `model_identity` to
+    /// `Embedder` and `Reranker`, is where the ONNX components start refusing
+    /// every `Some(name)`.
+    pub served_model: Option<String>,
 }
 
 impl RerankParams {
-    /// Keeps `top_k` chunks.
+    /// Keeps `top_k` chunks, from the model the component loaded
+    /// (`served_model` is `None`).
     ///
     /// Infallible: a `top_k` of zero is representable here and rejected by the
     /// component, as [`ComponentError::InvalidRequest`] describes.
     pub fn new(top_k: usize) -> Self {
-        Self { top_k }
+        Self {
+            top_k,
+            served_model: None,
+        }
+    }
+
+    /// Asks for the model the component serves under `served_model`.
+    pub fn with_served_model(mut self, served_model: impl Into<String>) -> Self {
+        self.served_model = Some(served_model.into());
+        self
     }
 }
 
@@ -220,12 +263,43 @@ pub enum EmbedRole {
 pub struct EmbedParams {
     /// The side the texts of this call are on.
     pub role: EmbedRole,
+    /// The name of the model the embedder is asked for (ADR-C32 § 4).
+    ///
+    /// `Some(name)` asks for the model the component serves under `name`;
+    /// `None` asks for the model it loaded. A component refuses, as
+    /// [`ComponentError::InvalidRequest`], a name it does not serve, an empty
+    /// name, and `None` when it has no single loaded model that `None` could
+    /// mean. Absence is the only spelling of "no name". A served-model name is
+    /// an identifier the backend resolves, never text prepended to the input:
+    /// it is not the prefix ADR-C17 keeps off this struct.
+    ///
+    /// **Not yet true of the in-tree implementations.** The ONNX embedder and
+    /// reranker (`ragondin-embedder-onnx`, `ragondin-reranker-onnx`) and every
+    /// test stub in the workspace ignore this field and answer a `Some(name)`
+    /// as if it were `None`. The contract and the
+    /// behaviour change are separate PRs: #285, which adds `model_identity` to
+    /// `Embedder` and `Reranker`, is where the ONNX components start refusing
+    /// every `Some(name)`.
+    pub served_model: Option<String>,
 }
 
 impl EmbedParams {
-    /// Embeds under `role`.
+    /// Embeds under `role`, with the model the component loaded
+    /// (`served_model` is `None`).
     pub fn new(role: EmbedRole) -> Self {
-        Self { role }
+        Self {
+            role,
+            served_model: None,
+        }
+    }
+
+    /// Asks for the model the component serves under `served_model`.
+    ///
+    /// The role stays mandatory: this sets the name on params that already
+    /// carry one.
+    pub fn with_served_model(mut self, served_model: impl Into<String>) -> Self {
+        self.served_model = Some(served_model.into());
+        self
     }
 }
 
@@ -244,6 +318,107 @@ impl SearchParams {
     /// component, as [`ComponentError::InvalidRequest`] describes.
     pub fn new(top_k: usize) -> Self {
         Self { top_k }
+    }
+}
+
+/// Per-call parameters of a [`ContextBuilder`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct ContextParams {
+    /// The cap on the size of the context — `top_k`'s twin (ADR-C31 § 2).
+    ///
+    /// **Its unit is the implementation's own, and the implementation
+    /// documents it**: characters, tokens, chunks. The contract fixes that
+    /// there is a cap and that zero is refused, never what is counted — a unit
+    /// fixed here, in tokens, would oblige every builder to carry the
+    /// generator's tokenizer.
+    pub budget: usize,
+}
+
+impl ContextParams {
+    /// Caps the context at `budget`.
+    ///
+    /// Infallible: a `budget` of zero is representable here and rejected by
+    /// the component, as a zero `top_k` is — see [`ContextBuilder`]'s context
+    /// contract.
+    pub fn new(budget: usize) -> Self {
+        Self { budget }
+    }
+}
+
+/// Per-call parameters of a [`Generator`] (ADR-C31 § 2).
+///
+/// **`served_model` and `template` are required; the other three are
+/// optional.** Required fields are the constructor's arguments, and each
+/// optional one is absent until a `with_*` method sets it.
+///
+/// There is deliberately **no `Default`**: with two required fields, a default
+/// would have to invent a model and a template, and a default chosen above the
+/// component is a second, disagreeing copy of a decision that belongs to the
+/// configuration (ADR-C31 § 2). An absent optional is passed through as `None`,
+/// and what the component does without it is the component's own.
+///
+/// Every field is fixed per pipeline node rather than varying from one call to
+/// the next. It is carried per call all the same, because the per-call params
+/// are the only path from the pipeline representation to a `Remote`
+/// generator's service: constructor configuration never crosses the wire, and a
+/// setting a researcher varies between two runs must be in the representation
+/// and its hash.
+#[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
+pub struct GenerateParams {
+    /// The name the generator asks its backend for.
+    ///
+    /// For a `Remote` generator, the name its inference server serves the
+    /// model under; for a `Local` one, a name it recognises as the model it
+    /// loaded — the names it recognises are its constructor configuration.
+    /// Empty, or a name the component does not serve, is refused as
+    /// [`ComponentError::InvalidRequest`].
+    pub served_model: String,
+    /// The prompt template, in the grammar stated on [`Generator`]. Empty, or
+    /// malformed, is refused as [`ComponentError::InvalidRequest`].
+    pub template: String,
+    /// The sampling temperature, when the configuration sets one.
+    pub temperature: Option<f64>,
+    /// The sampling seed, when the configuration sets one.
+    pub seed: Option<u64>,
+    /// The cap on the answer's length, in its model's tokens, when the
+    /// configuration sets one.
+    pub max_tokens: Option<usize>,
+}
+
+impl GenerateParams {
+    /// Asks the model served under `served_model` to answer the prompt
+    /// `template` renders, with no optional setting.
+    ///
+    /// Infallible: an empty `served_model` or `template` is representable here
+    /// and rejected by the component — see what [`Generator`] refuses.
+    pub fn new(served_model: impl Into<String>, template: impl Into<String>) -> Self {
+        Self {
+            served_model: served_model.into(),
+            template: template.into(),
+            temperature: None,
+            seed: None,
+            max_tokens: None,
+        }
+    }
+
+    /// Sets the sampling temperature.
+    pub fn with_temperature(mut self, temperature: f64) -> Self {
+        self.temperature = Some(temperature);
+        self
+    }
+
+    /// Sets the sampling seed.
+    pub fn with_seed(mut self, seed: u64) -> Self {
+        self.seed = Some(seed);
+        self
+    }
+
+    /// Sets the cap on the answer's length in tokens.
+    pub fn with_max_tokens(mut self, max_tokens: usize) -> Self {
+        self.max_tokens = Some(max_tokens);
+        self
     }
 }
 
@@ -381,6 +556,116 @@ pub trait VectorStore: Send + Sync {
     ) -> Result<Vec<ScoredChunk>, ComponentError>;
 }
 
+/// Selects, orders and renders retrieved chunks into a [`Context`].
+///
+/// # The context contract
+///
+/// A builder **selects, orders and renders; it does not judge relevance**
+/// (ADR-C31 § 1). Every [`ContextChunk`](ragondin_types::ContextChunk) it
+/// returns names a chunk it was handed — no fabricated id, and no id twice —
+/// in the order it placed them, and carries that chunk's incoming score
+/// untouched, on the producing node's scale: a builder that drops chunks over
+/// its budget or reorders what it keeps never assigns a score of its own.
+///
+/// A zero [`ContextParams::budget`] is refused as
+/// [`ComponentError::InvalidRequest`], under the crate's `top_k` rule. **Zero
+/// chunks is a valid call** (ADR-C19): it returns the empty context,
+/// `chunks.is_empty()`, with `text` unconstrained, since a template may render
+/// a header over no passages. ADR-C25 applies unchanged.
+///
+/// What the builder renders passages with, and the unit its budget is counted
+/// in, are its **constructor configuration**, and both are covered by
+/// [`model_identity`](Self::model_identity).
+///
+/// The conformance suite may check that a well-formed call succeeds, that a
+/// zero budget is refused, and that the context fabricates no chunk id and
+/// repeats none. **Nothing about content**: a suite that does not know the
+/// component cannot judge what it rendered.
+#[async_trait]
+pub trait ContextBuilder: Send + Sync {
+    /// Builds the context `query` is answered from, out of `chunks`, capped
+    /// at `params.budget`.
+    async fn build(
+        &self,
+        query: &Query,
+        chunks: Vec<ScoredChunk>,
+        params: &ContextParams,
+    ) -> Result<Context, ComponentError>;
+
+    /// Reports the identity of this builder's configuration (ADR-C31 § 4).
+    ///
+    /// **Stable** across calls while nothing has changed — no timestamp, no
+    /// counter — and **complete** over every knob that decides the output and
+    /// is not in the node's params: its template and the unit its budget is
+    /// counted in. A builder with no model digests its configuration alone.
+    /// An empty identity is not valid.
+    async fn model_identity(&self) -> Result<ModelIdentity, ComponentError>;
+}
+
+/// Answers a query from a [`Context`].
+///
+/// # The template contract
+///
+/// The component renders [`GenerateParams::template`] and asks its model to
+/// answer the rendered text, and **nothing above the component parses a
+/// template** (ADR-C31 § 2). The grammar is the whole of the following, and
+/// a `Local` generator and a `Remote` service implement the same one:
+///
+/// - `{query}` is replaced by the [`Query`]'s `text`, and `{context}` by the
+///   [`Context`]'s `text`;
+/// - `{{` renders a literal `{`, and `}}` a literal `}`;
+/// - any other `{` or `}` — a name other than `query` or `context` between
+///   braces, a `{` no `}` closes, a lone `}` — makes the template malformed,
+///   and the call is refused as [`ComponentError::InvalidRequest`];
+/// - each placeholder may appear any number of times, including none.
+///   Substitution is one pass, left to right, taking `{{` or `}}` before a
+///   placeholder at each position, so `{{query}}` renders as the text
+///   `{query}`; substituted text is never scanned again.
+///
+/// The rendered text is the whole of what the component asks its model: it
+/// adds no instruction text of its own. Framing that one message for an
+/// inference server — message roles and the server's own chat encoding — is
+/// allowed, and never adds wording of its own (ADR-C31 § 2).
+///
+/// # What is refused, and what is not
+///
+/// An empty [`GenerateParams::served_model`], an empty template, a malformed
+/// template and a served model the component does not serve are each refused
+/// as [`ComponentError::InvalidRequest`]. **An empty context is a valid call**
+/// (ADR-C19): an answer of "I do not know" is conformant, and refusing the
+/// call is not. ADR-C25 applies unchanged: a `Local` generator running a
+/// forward pass moves that work off the caller's thread itself.
+///
+/// The conformance suite may check that a well-formed call succeeds, and that
+/// an empty served model, an empty template and a malformed template are
+/// refused — each a refusal of the call's form. **Nothing about content**: a
+/// suite that does not know which model it is testing cannot say whether an
+/// answer is good.
+#[async_trait]
+pub trait Generator: Send + Sync {
+    /// Answers `query` from `context`, with the model and template `params`
+    /// name.
+    async fn generate(
+        &self,
+        query: &Query,
+        context: &Context,
+        params: &GenerateParams,
+    ) -> Result<Answer, ComponentError>;
+
+    /// Reports the identity of the model this component answers
+    /// `served_model` with (ADR-C31 § 4) — a verification of the name, not
+    /// only a record of it.
+    ///
+    /// A name the component does not serve is refused as
+    /// [`ComponentError::InvalidRequest`], never answered with a warning. The
+    /// identity is **stable** across calls while nothing has changed, and
+    /// **complete** over every knob that decides the answer and is not in the
+    /// node's params — the model's revision behind the served name and, for a
+    /// `Local` generator, whatever of its constructor configuration decides
+    /// the answer. An empty identity is not valid.
+    async fn model_identity(&self, served_model: &str) -> Result<ModelIdentity, ComponentError>;
+}
+
 // The `Send + Sync` bounds live next to what they constrain, not only in a
 // test whose deletion would remove the guarantee silently.
 const _: fn() = || {
@@ -390,13 +675,15 @@ const _: fn() = || {
     assert_send_sync::<dyn Reranker>();
     assert_send_sync::<dyn Embedder>();
     assert_send_sync::<dyn VectorStore>();
+    assert_send_sync::<dyn ContextBuilder>();
+    assert_send_sync::<dyn Generator>();
     assert_send_sync::<ComponentError>();
 };
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ragondin_types::{ChunkId, DocId, QueryId};
+    use ragondin_types::{ChunkId, ContextChunk, DocId, QueryId};
 
     // Each stub proves the trait is `dyn`-compatible (ADR-C8: `async_trait`,
     // not RPITIT) by being coerced to `Box<dyn _>` and called through the
@@ -508,6 +795,164 @@ mod tests {
                 .map(|i| scored(&format!("hit-{i}"), 1.0 - i as f32 / 10.0))
                 .collect())
         }
+    }
+
+    struct StubContextBuilder;
+    #[async_trait]
+    impl ContextBuilder for StubContextBuilder {
+        async fn build(
+            &self,
+            _query: &Query,
+            chunks: Vec<ScoredChunk>,
+            params: &ContextParams,
+        ) -> Result<Context, ComponentError> {
+            // The budget counts chunks here; the unit is the implementation's
+            // own, and a zero cap is refused as `top_k` is.
+            if params.budget == 0 {
+                return Err(ComponentError::InvalidRequest(
+                    "a zero budget asks for a context that cannot exist".into(),
+                ));
+            }
+            let kept: Vec<ScoredChunk> = chunks.into_iter().take(params.budget).collect();
+            Ok(Context {
+                text: kept
+                    .iter()
+                    .map(|c| c.chunk.text.as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+                chunks: kept
+                    .into_iter()
+                    .map(|c| ContextChunk {
+                        id: c.chunk.id,
+                        document_id: c.chunk.document_id,
+                        score: c.score,
+                    })
+                    .collect(),
+            })
+        }
+
+        async fn model_identity(&self) -> Result<ModelIdentity, ComponentError> {
+            Ok(ModelIdentity::new("stub-builder:chunks"))
+        }
+    }
+
+    struct StubGenerator;
+    #[async_trait]
+    impl Generator for StubGenerator {
+        async fn generate(
+            &self,
+            query: &Query,
+            context: &Context,
+            params: &GenerateParams,
+        ) -> Result<Answer, ComponentError> {
+            if params.served_model != "stub-model" {
+                return Err(ComponentError::InvalidRequest(format!(
+                    "model {:?} is not served here",
+                    params.served_model
+                )));
+            }
+            // Not the template grammar: enough to show the call's inputs reach
+            // the implementation through the vtable.
+            Ok(Answer {
+                text: params
+                    .template
+                    .replace("{query}", &query.text)
+                    .replace("{context}", &context.text),
+            })
+        }
+
+        async fn model_identity(
+            &self,
+            served_model: &str,
+        ) -> Result<ModelIdentity, ComponentError> {
+            if served_model != "stub-model" {
+                return Err(ComponentError::InvalidRequest(format!(
+                    "model {served_model:?} is not served here"
+                )));
+            }
+            Ok(ModelIdentity::new("stub-model@rev1"))
+        }
+    }
+
+    #[tokio::test]
+    async fn a_context_builder_is_callable_through_a_trait_object() {
+        let component: Box<dyn ContextBuilder> = Box::new(StubContextBuilder);
+        let query = Query {
+            id: QueryId::new("q1"),
+            text: "why".to_string(),
+        };
+        let context = component
+            .build(
+                &query,
+                vec![scored("a", 0.9), scored("b", 0.5), scored("c", 0.1)],
+                &ContextParams::new(2),
+            )
+            .await
+            .unwrap();
+        assert_eq!(context.chunks.len(), 2);
+        assert_eq!(context.chunks[0].id.as_str(), "a");
+        assert_eq!(
+            context.chunks[1].score, 0.5,
+            "a builder carries scores through"
+        );
+        assert_eq!(context.text, "text of a\ntext of b");
+        assert_eq!(
+            component.model_identity().await.unwrap().as_str(),
+            "stub-builder:chunks"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_generator_is_callable_through_a_trait_object() {
+        let component: Box<dyn Generator> = Box::new(StubGenerator);
+        let query = Query {
+            id: QueryId::new("q1"),
+            text: "why".to_string(),
+        };
+        let context = Context {
+            chunks: vec![],
+            text: "because".to_string(),
+        };
+        let answer = component
+            .generate(
+                &query,
+                &context,
+                &GenerateParams::new("stub-model", "Q: {query} C: {context}"),
+            )
+            .await
+            .unwrap();
+        assert_eq!(answer.text, "Q: why C: because");
+        assert_eq!(
+            component
+                .model_identity("stub-model")
+                .await
+                .unwrap()
+                .as_str(),
+            "stub-model@rev1"
+        );
+        let refused = component.model_identity("other").await.unwrap_err();
+        assert!(matches!(refused, ComponentError::InvalidRequest(_)));
+    }
+
+    #[tokio::test]
+    async fn a_zero_budget_is_representable_and_refused_by_the_component() {
+        // ADR-C31 § 2: `budget` is `top_k`'s twin. `ContextParams::new(0)`
+        // builds, as `RerankParams::new(0)` does, and the component refuses the
+        // call as an invalid request rather than answering an empty context.
+        // The refusal half is illustrative: it exercises this file's stub,
+        // which shows the shape of the refusal and proves nothing about any
+        // real builder.
+        assert_eq!(ContextParams::new(0).budget, 0);
+        let component: Box<dyn ContextBuilder> = Box::new(StubContextBuilder);
+        let query = Query {
+            id: QueryId::new("q1"),
+            text: "why".to_string(),
+        };
+        let err = component
+            .build(&query, vec![scored("a", 1.0)], &ContextParams::new(0))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ComponentError::InvalidRequest(_)));
     }
 
     #[tokio::test]
@@ -642,6 +1087,55 @@ mod tests {
     }
 
     #[test]
+    fn context_params_carry_the_budget() {
+        assert_eq!(ContextParams::new(512).budget, 512);
+    }
+
+    #[test]
+    fn generate_params_require_a_served_model_and_a_template_and_nothing_else() {
+        // ADR-C31 § 2: the two required fields are the constructor's
+        // arguments; the three optional ones are absent until set, and no
+        // default is invented for any of them.
+        let params = GenerateParams::new("llama-3-8b", "{context}\n\n{query}");
+        assert_eq!(params.served_model, "llama-3-8b");
+        assert_eq!(params.template, "{context}\n\n{query}");
+        assert_eq!(params.temperature, None);
+        assert_eq!(params.seed, None);
+        assert_eq!(params.max_tokens, None);
+    }
+
+    #[test]
+    fn generate_params_set_each_optional_independently() {
+        let params = GenerateParams::new("m", "{query}")
+            .with_temperature(0.0)
+            .with_seed(7)
+            .with_max_tokens(64);
+        assert_eq!(params.temperature, Some(0.0));
+        assert_eq!(params.seed, Some(7));
+        assert_eq!(params.max_tokens, Some(64));
+        assert_eq!(
+            GenerateParams::new("m", "{query}").with_seed(7).temperature,
+            None,
+            "setting one optional leaves the others absent"
+        );
+    }
+
+    #[test]
+    fn served_model_is_absent_unless_the_caller_sets_it() {
+        // ADR-C32 § 4: `None` asks for the model the component loaded, and
+        // absence is the only spelling of it, so the existing constructors
+        // leave the field `None`.
+        assert_eq!(EmbedParams::new(EmbedRole::Query).served_model, None);
+        assert_eq!(RerankParams::new(8).served_model, None);
+        let embed = EmbedParams::new(EmbedRole::Passage).with_served_model("bge-m3");
+        assert_eq!(embed.served_model.as_deref(), Some("bge-m3"));
+        assert_eq!(embed.role, EmbedRole::Passage);
+        let rerank = RerankParams::new(8).with_served_model("bge-reranker");
+        assert_eq!(rerank.served_model.as_deref(), Some("bge-reranker"));
+        assert_eq!(rerank.top_k, 8);
+    }
+
+    #[test]
     fn embed_params_carry_the_role_the_caller_states() {
         // ADR-C17: the role is mandatory and reaches the implementation
         // unchanged. `EmbedParams` has no `Default` and no other constructor,
@@ -676,6 +1170,8 @@ mod tests {
         assert_send_sync::<dyn Reranker>();
         assert_send_sync::<dyn Embedder>();
         assert_send_sync::<dyn VectorStore>();
+        assert_send_sync::<dyn ContextBuilder>();
+        assert_send_sync::<dyn Generator>();
         assert_send_sync::<ComponentError>();
     }
 }

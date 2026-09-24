@@ -9,8 +9,8 @@ The **component contract** — the domain traits a contributor implements, plus
 the shared `ComponentError` each boundary returns and the per-call params
 structs each trait takes.
 
-Five families are defined: `Retriever`, `Fusion`, `Reranker`, `Embedder`,
-`VectorStore`. `Chunker`, `Indexer`, `ContextBuilder`, `Generator` and `Grader`
+Seven families are defined: `Retriever`, `Fusion`, `Reranker`, `Embedder`,
+`VectorStore`, `ContextBuilder`, `Generator`. `Chunker`, `Indexer` and `Grader`
 are not. Adding a trait is additive on this boundary, so each of those arrives
 with the work that first consumes it; defining one before anything needs it
 would be dead API.
@@ -20,9 +20,17 @@ map (`ragondin-pipeline`); each trait here takes a typed params struct. Physical
 planning bridges the two (`docs/code-architecture.md` §6.3): it resolves an
 `impl:` name into a *constructed* component, so implementation-specific
 configuration — BM25's `k1`/`b`, a model path — goes to the constructor, and
-the params structs carry only what varies per call. The reference pipeline in
+the params structs carry what varies per call. The reference pipeline in
 `docs/system-architecture.md` §5.1 shows the split: `top_k` on a retriever and
-a reranker, nothing on the fusion.
+a reranker, nothing on the fusion. The qualification (ADR-C31 § 2): a params
+struct also carries a setting fixed per node when that setting must reach a
+`Remote` component, because face 2 carries the trait's calls and no
+constructor configuration, and a setting a researcher varies between two runs
+must be in the pipeline representation and its hash. `GenerateParams` is that
+case — its served model, template, temperature, seed and token cap are fixed
+per generator node and travel on every call. So is `served_model` on
+`EmbedParams` and `RerankParams`, fixed per node and carried on every call so
+that it reaches a `Remote` embedder or reranker (ADR-C32 § 4).
 
 **This is the crate an external contributor implements.** A `Local` component is
 a crate under `components/` that implements one of these traits; a `Remote`
@@ -47,25 +55,33 @@ component is a gRPC service honouring the mirror protobuf in `ragondin-proto`.
   concurrent queries, and it cannot tell `Local` from `Remote`. Each trait
   therefore has a test coercing a stub to `Box<dyn _>` and calling **through
   the vtable** — constructing one is not enough to prove the property.
-- **Every trait method takes a params struct, with one exception, and every
-  params struct is `#[non_exhaustive]` with a constructor.** One rule, and one
-  exception. Every trait method takes a params struct — including where it is
-  empty today (`FusionParams`) — except `VectorStore::upsert`, which takes
-  `entries` and no params struct at all. Adding a *field* is additive; changing
-  a method's *arity* breaks every implementation in and out of the repository,
-  third-party `Remote` services included, which is the contribution funnel
-  ADR-3 exists to protect. The uniformity is the point: an exception is where
-  the next knob will land.
+- **Every trait method takes a params struct, with two named exceptions, and
+  every params struct is `#[non_exhaustive]` with a constructor.** One rule,
+  and two exceptions, the second below. Every trait method takes a params
+  struct — including where it is empty today (`FusionParams`) — except
+  `VectorStore::upsert`, which takes `entries` and no params struct at all.
+  Adding a *field* is additive; changing a method's *arity* breaks every
+  implementation in and out of the repository, third-party `Remote` services
+  included, which is the contribution funnel ADR-3 exists to protect. The
+  uniformity is the point: an exception is where the next knob will land.
 
-  That is what this exception costs. The first per-call knob `upsert` needs — a
-  namespace, a consistency level, a write hint — cannot arrive as a field:
-  there is no *params* struct to put it in, and `EmbeddedChunk` is not
+  That is what the `upsert` exception costs. The first per-call knob `upsert`
+  needs — a namespace, a consistency level, a write hint — cannot arrive as a
+  field: there is no *params* struct to put it in, and `EmbeddedChunk` is not
   `#[non_exhaustive]` (below) nor per-call. It arrives as a new argument, which
   is the arity break the rule exists to prevent; a second, defaulted method
   would avoid the break only by letting every implementation ignore the knob in
   silence. Nothing forces that today, and closing the gap pre-emptively *is*
   that break, on an INV-1 boundary: `upsert` gains an `UpsertParams` as a
   deliberate, versioned decision, or not at all.
+
+  **A second, sanctioned exception: `model_identity`.**
+  `ContextBuilder::model_identity(&self)` and
+  `Generator::model_identity(&self, served_model: &str)` take no params
+  struct; ADR-C31 § 4 fixes both signatures. They are not calls on the
+  pipeline's data but a report ADR-C31 § 4 has the composition root read
+  once per node before a run. A knob either one later needs is an arity
+  break on this boundary, decided as `upsert`'s would be.
 
   This is the *opposite* of `ragondin-pipeline`'s recorded choice, deliberately.
   There, an exhaustive `match` that stops compiling is the intended signal that
@@ -90,17 +106,20 @@ component is a gRPC service honouring the mirror protobuf in `ragondin-proto`.
   configuration with no prefix rather than a special case.
 - **An empty collection argument is a valid call (ADR-C19).** Every method here
   that takes a collection — `Fusion::fuse`, `Reranker::rerank`,
-  `Embedder::embed`, `VectorStore::upsert` — accepts an empty one and does
-  nothing with it: empty in, empty out, and `Ok(())` where the return carries no
-  data. None of them may answer *the empty collection* with
+  `Embedder::embed`, `VectorStore::upsert`, `ContextBuilder::build` — accepts an
+  empty one and does nothing with it: empty in, empty out, `Ok(())` where the
+  return carries no data, and for `build` the empty context (no chunks, its
+  `text` left to the builder). A `Generator` handed an empty context is a valid
+  call too. None of them may answer *the empty collection* with
   `ComponentError::InvalidRequest` — a call may still be invalid for another
   reason, and `rerank(&query, vec![], &RerankParams::new(0))` is still rejected
   for its `top_k`. This is
   the uniformity clause above applied to behaviour rather than to signatures: a
   single method with a rejection rule is where a batching caller learns to guard
-  every call, and the guard then spreads to the three methods that never needed
+  every call, and the guard then spreads to the four methods that never needed
   it. The `top_k` rule is untouched and is a different rule — a zero `top_k` asks
-  for a result that cannot exist and stays an invalid request.
+  for a result that cannot exist and stays an invalid request, and so does a
+  zero `ContextParams::budget`, its twin (ADR-C31 § 2).
 
   This clause is **not yet true of the stub in this crate's own tests**, which
   still rejects an empty `upsert` and says so at the call site. The decision and
@@ -116,6 +135,41 @@ component is a gRPC service honouring the mirror protobuf in `ragondin-proto`.
   so the failure is attributed to the component that produced the vector rather
   than to the store that later refuses it. It constrains a returned vector, not
   a batch: an empty batch embeds to no vectors.
+
+- **The generation contracts are ADR-C31's, stated on the traits.**
+  `ContextBuilder` and `Generator` each carry a `model_identity` method beside
+  their call (ADR-C31 § 4); the template grammar a generator renders, the
+  refusals of an empty served model, an empty or malformed template and an
+  unserved name as `InvalidRequest`, and what a conformance suite may check —
+  the form of a call, never the content of an answer — are in their doc
+  comments. `ContextParams::budget`'s unit is the implementation's own and
+  documented by it; the contract fixes only that there is a cap and that zero
+  is refused.
+
+- **Two in-crate choices on the params structs, recorded here.**
+  - *`GenerateParams` has no `Default`.* It has two required fields,
+    `served_model` and `template`, so a default would invent a model and a
+    template — the default above the component ADR-C31 § 2 refuses. It is
+    built by `GenerateParams::new(served_model, template)`, and each optional
+    field (`temperature`, `seed`, `max_tokens`) is set by its own consuming
+    `with_*` method and is `None` until then. ADR-C17's removal of `Default`
+    from `EmbedParams` is a different reason (a mandatory role) and not the
+    precedent.
+  - *`served_model` on `EmbedParams` and `RerankParams` is set by a consuming
+    `with_served_model(name)`* (ADR-C32 § 4). The existing constructors
+    `EmbedParams::new(role)` and `RerankParams::new(top_k)` are unchanged and
+    leave the field `None`, because absence is the only spelling of "no
+    served-model name" — the rule ADR-C32 § 1 applies to a prefix, and § 4
+    to a served model, whose empty name is refused. A builder method rather
+    than a second constructor keeps one constructor per struct, so
+    `EmbedParams` still has exactly one way to be built and it still takes
+    the role. The fields stay `pub`, like every params field here.
+
+    The refusals ADR-C32 § 4 attaches to the field are **not yet true of the
+    in-tree implementations**: the ONNX embedder and reranker and every test
+    stub in the workspace ignore it and answer a `Some(name)` as if it were
+    `None`. #285, which adds `model_identity` to `Embedder` and `Reranker`, is
+    where the ONNX components start refusing every `Some(name)`.
 
 - **A component does not block the thread that called it (ADR-C25).** Every
   method here is `async`, and the engine cannot tell a `Local` implementation
