@@ -28,7 +28,9 @@ struct also carries a setting fixed per node when that setting must reach a
 constructor configuration, and a setting a researcher varies between two runs
 must be in the pipeline representation and its hash. `GenerateParams` is that
 case — its served model, template, temperature, seed and token cap are fixed
-per generator node and travel on every call.
+per generator node and travel on every call. So is `served_model` on
+`EmbedParams` and `RerankParams`, fixed per node and carried on every call so
+that it reaches a `Remote` embedder or reranker (ADR-C32 § 4).
 
 **This is the crate an external contributor implements.** A `Local` component is
 a crate under `components/` that implements one of these traits; a `Remote`
@@ -53,15 +55,23 @@ component is a gRPC service honouring the mirror protobuf in `ragondin-proto`.
   concurrent queries, and it cannot tell `Local` from `Remote`. Each trait
   therefore has a test coercing a stub to `Box<dyn _>` and calling **through
   the vtable** — constructing one is not enough to prove the property.
-- **Every trait method takes a params struct, with one exception, and every
-  params struct is `#[non_exhaustive]` with a constructor.** One rule, and one
-  exception. Every trait method takes a params struct — including where it is
-  empty today (`FusionParams`) — except `VectorStore::upsert`, which takes
-  `entries` and no params struct at all. Adding a *field* is additive; changing
-  a method's *arity* breaks every implementation in and out of the repository,
-  third-party `Remote` services included, which is the contribution funnel
-  ADR-3 exists to protect. The uniformity is the point: an exception is where
-  the next knob will land.
+- **Every trait method takes a params struct, with two named exceptions, and
+  every params struct is `#[non_exhaustive]` with a constructor.** One rule,
+  and two exceptions, the second below. Every trait method takes a params
+  struct — including where it is empty today (`FusionParams`) — except
+  `VectorStore::upsert`, which takes `entries` and no params struct at all.
+  Adding a *field* is additive; changing a method's *arity* breaks every
+  implementation in and out of the repository, third-party `Remote` services
+  included, which is the contribution funnel ADR-3 exists to protect. The
+  uniformity is the point: an exception is where the next knob will land.
+
+  **A second, sanctioned exception: `model_identity`.**
+  `ContextBuilder::model_identity(&self)` and
+  `Generator::model_identity(&self, served_model: &str)` take no params
+  struct; ADR-C31 § 4 fixes both signatures. They are not calls on the
+  pipeline's data but a report ADR-C31 § 4 has the composition root read once
+  per node before a run, and a knob either one later needs is an arity break on this boundary,
+  decided as `upsert`'s would be.
 
   That is what this exception costs. The first per-call knob `upsert` needs — a
   namespace, a consistency level, a write hint — cannot arrive as a field:
@@ -106,7 +116,7 @@ component is a gRPC service honouring the mirror protobuf in `ragondin-proto`.
   for its `top_k`. This is
   the uniformity clause above applied to behaviour rather than to signatures: a
   single method with a rejection rule is where a batching caller learns to guard
-  every call, and the guard then spreads to the three methods that never needed
+  every call, and the guard then spreads to the four methods that never needed
   it. The `top_k` rule is untouched and is a different rule — a zero `top_k` asks
   for a result that cannot exist and stays an invalid request, and so does a
   zero `ContextParams::budget`, its twin (ADR-C31 § 2).
@@ -156,8 +166,8 @@ component is a gRPC service honouring the mirror protobuf in `ragondin-proto`.
     the role. The fields stay `pub`, like every params field here.
 
     The refusals ADR-C32 § 4 attaches to the field are **not yet true of the
-    in-tree implementations**: the ONNX embedder and reranker and the test
-    stubs ignore it and answer a `Some(name)` as if it were `None`. #285, which
+    in-tree implementations**: the ONNX embedder and reranker and every test
+    stub in the workspace ignore it and answer a `Some(name)` as if it were `None`. #285, which
     adds `model_identity` to `Embedder` and `Reranker`, is where the ONNX
     components start refusing every `Some(name)`.
 

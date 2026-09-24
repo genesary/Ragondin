@@ -38,7 +38,10 @@
 //! the wire, and a setting a researcher varies between two runs must be in the
 //! pipeline representation and its hash (ADR-C31 § 2). [`GenerateParams`] is
 //! that case: its served model, template, temperature, seed and token cap are
-//! fixed per generator node and travel on every call.
+//! fixed per generator node and travel on every call. So is the
+//! `served_model` of [`EmbedParams`] and [`RerankParams`], fixed per node and
+//! carried on every call so that it reaches a `Remote` embedder or reranker
+//! (ADR-C32 § 4).
 //!
 //! # Empty collections
 //!
@@ -198,7 +201,7 @@ pub struct RerankParams {
     ///
     /// **Not yet true of the in-tree implementations.** The ONNX embedder and
     /// reranker (`ragondin-embedder-onnx`, `ragondin-reranker-onnx`) and the
-    /// test stubs, here and in `ragondin-conformance`, ignore this field and
+    /// every test stub in the workspace, ignore this field and
     /// answer a `Some(name)` as if it were `None`. The contract and the
     /// behaviour change are separate PRs: #285, which adds `model_identity` to
     /// `Embedder` and `Reranker`, is where the ONNX components start refusing
@@ -272,7 +275,7 @@ pub struct EmbedParams {
     ///
     /// **Not yet true of the in-tree implementations.** The ONNX embedder and
     /// reranker (`ragondin-embedder-onnx`, `ragondin-reranker-onnx`) and the
-    /// test stubs, here and in `ragondin-conformance`, ignore this field and
+    /// every test stub in the workspace, ignore this field and
     /// answer a `Some(name)` as if it were `None`. The contract and the
     /// behaviour change are separate PRs: #285, which adds `model_identity` to
     /// `Embedder` and `Reranker`, is where the ONNX components start refusing
