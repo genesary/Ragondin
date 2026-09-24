@@ -149,9 +149,8 @@ names**, and every other key is refused:
 - on every `dense` node: `top_k` (read by the executor), `embedder`, and the
   optional `query_prefix` and `passage_prefix`;
 - when `embedder:` names a `Local` ONNX embedder: `model` and `tokenizer`, both
-  required file paths, and the optional `max_sequence_length` and
-  `served_model` — the latter, when present, one of the names that embedder is
-  configured to recognise (§ 4);
+  required file paths, and the optional `max_sequence_length`; `served_model`
+  is refused, since the ONNX embedder recognises no served-model name (§ 4);
 - when `embedder:` names a `Remote` embedder: `served_model`, required — the
   name the inference service serves the model under. The composition root
   refuses a node without it, as ADR-C31 § 4 has it refuse a generator node
@@ -159,13 +158,14 @@ names**, and every other key is refused:
 
 **A reranker node has the same shape.** Every reranker node may carry `top_k`.
 One naming the `Local` ONNX reranker (`cross_encoder`) carries `model` and
-`tokenizer`, required, and the optional `max_sequence_length` and
-`served_model`; one naming a bound `Remote` reranker carries `served_model`,
+`tokenizer`, required, and the optional `max_sequence_length`, and `served_model`
+is refused on it; one naming a bound `Remote` reranker carries `served_model`,
 required, and nothing else.
 
-A key outside those sets is **refused, never hashed as inert**: `model`,
+A key outside those sets is **refused, never hashed as inert**: `served_model`
+on a node whose embedder or reranker is the `Local` ONNX one, or `model`,
 `tokenizer` or `max_sequence_length` on a node whose embedder or reranker is
-`Remote` is an error naming the node and the key, raised by the composition root
+`Remote`, is an error naming the node and the key, raised by the composition root
 when it reads the node (§ 4's order puts that before the benchmark is loaded).
 
 **`query_prefix` and `passage_prefix` stay parameters of the `dense` node, for
@@ -256,10 +256,10 @@ its first call — the identity call of § 4 — as `ComponentError::Unavailable
 closure.** The closure reads `embedder:`; for `onnx` it builds the in-process
 ONNX embedder from `model`, `tokenizer` and `max_sequence_length`; for a name
 bound under `embedder/<name>` it builds the `Remote` embedder adapter over that
-binding's channel, with the node's prefixes. In both cases it builds the dense
-retriever with the node's `served_model` — absent or present — as constructor
-configuration, and the retriever passes that value in the `EmbedParams` of every
-call (§ 4). The closure is
+binding's channel, with the node's prefixes. It builds the dense retriever with
+a served model as constructor configuration, which the retriever passes in the
+`EmbedParams` of every call (§ 4): `None` for `onnx`, meaning the model it
+loaded, and the node's `served_model` for a bound embedder. The closure is
 the composition root's own code, which a third party composing its own binary
 writes the same way (INV-7).
 
@@ -271,9 +271,12 @@ writes the same way (INV-7).
 both faces.** `EmbedParams` and `RerankParams` each gain
 `served_model: Option<String>`. `Some(name)` asks the component for the model it
 serves under `name`; `None` asks for the model the component loaded. A `Local`
-ONNX embedder or reranker recognises the names it is configured with — its
-constructor configuration — and refuses any other name as `InvalidRequest`; a
-`Remote` service refuses, as `InvalidRequest`, a name it does not serve, and the
+component recognises the names it is configured with — its constructor
+configuration, which binds a third-party `Local` component serving several
+names — and refuses any other name as `InvalidRequest`. **The ONNX embedder and
+reranker are configured with no served-model name**: they answer `None` and
+refuse every `Some(name)` as `InvalidRequest`, and the composition root passes
+`None` on every call to them. A `Remote` service refuses, as `InvalidRequest`, a name it does not serve, and the
 adapter and the service each refuse an empty name the same way. On face 2 the
 field is a proto3 `optional string` on the Embed and Rerank requests, so an
 omitted one decodes as `None` under ADR-C31 § 2's presence rule. This is the
@@ -287,14 +290,16 @@ transmitted per call; a served-model name is an identifier the backend resolves,
 and it changes no text. ADR-C31 § 2's "nothing here moves a prefix onto a
 per-call struct" still holds.
 
-**Where the value comes from.** For the embedder, the dense retriever holds the
-`dense` node's `served_model`, read by the composition root, as constructor
-configuration, and passes it in the `EmbedParams` of every call; the corpus
-embedding of § 4's step 4 passes the same value. For the reranker, the executor
+**Where the value comes from.** For the embedder, the dense retriever holds a
+served model as constructor configuration — `None` over the ONNX embedder, the
+`dense` node's `served_model` over a bound one, as the composition root reads
+it — and passes it in the `EmbedParams` of every call; the corpus embedding of
+§ 4's step 4 passes the same value. For the reranker, the executor
 reads `served_model` from the reranker node's params on each call, exactly as
 `per_call_top_k` in `engine/ragondin-engine/src/execute.rs` reads `top_k`, except
-that it is optional: an absent key is `None`, and a value that is not a string
-is refused with `ExecError::InvalidParam`.
+that it is optional: an absent key is `None` — always the case on a
+`cross_encoder` node, where § 1 refuses the key — and a value that is not a
+string is refused with `ExecError::InvalidParam`.
 
 **`Embedder` and `Reranker` gain
 `async fn model_identity(&self, served_model: Option<&str>) -> Result<ModelIdentity, ComponentError>`**,
@@ -314,9 +319,8 @@ and is not in the node's parameters — apply to both methods unchanged.
 
 **A `Local` ONNX component's identity is `<model>+<tokenizer>`**: the
 lowercase hex SHA-256 of the model file's bytes, the character `+`, and the
-lowercase hex SHA-256 of the tokenizer file's bytes, returned for `None` and for
-any name the component recognises; any other name is refused as
-`InvalidRequest`. It covers the ONNX embedder and the ONNX reranker alike. It does not cover the prefixes or
+lowercase hex SHA-256 of the tokenizer file's bytes, returned for `None`; any
+`Some(name)` is refused as `InvalidRequest`. It covers the ONNX embedder and the ONNX reranker alike. It does not cover the prefixes or
 `max_sequence_length`: those are node parameters and already in
 `content_hash`, and ADR-C31's completeness rule is about the knobs that are
 not. The tokenizer's contents are what it adds, and they are the hole today —
@@ -470,7 +474,7 @@ feature.
   on `EmbedParams` and `RerankParams` and the two identity methods, in the same
   versioned break as ADR-C31's traits. `ragondin-retriever-dense` and the
   corpus-embedding path: take `served_model` and pass it on every `EmbedParams`.
-  The ONNX crates: the recognition of configured names and the digests of § 4,
+  The ONNX crates: the refusal of any `Some(name)` and the digests of § 4,
   computed in the constructor, in the issue that adds the method to them. #258
   and the existing suites: the two identity scenarios.
 
