@@ -65,23 +65,23 @@ component is a gRPC service honouring the mirror protobuf in `ragondin-proto`.
   included, which is the contribution funnel ADR-3 exists to protect. The
   uniformity is the point: an exception is where the next knob will land.
 
-  **A second, sanctioned exception: `model_identity`.**
-  `ContextBuilder::model_identity(&self)` and
-  `Generator::model_identity(&self, served_model: &str)` take no params
-  struct; ADR-C31 § 4 fixes both signatures. They are not calls on the
-  pipeline's data but a report ADR-C31 § 4 has the composition root read once
-  per node before a run, and a knob either one later needs is an arity break on this boundary,
-  decided as `upsert`'s would be.
-
-  That is what this exception costs. The first per-call knob `upsert` needs — a
-  namespace, a consistency level, a write hint — cannot arrive as a field:
-  there is no *params* struct to put it in, and `EmbeddedChunk` is not
+  That is what the `upsert` exception costs. The first per-call knob `upsert`
+  needs — a namespace, a consistency level, a write hint — cannot arrive as a
+  field: there is no *params* struct to put it in, and `EmbeddedChunk` is not
   `#[non_exhaustive]` (below) nor per-call. It arrives as a new argument, which
   is the arity break the rule exists to prevent; a second, defaulted method
   would avoid the break only by letting every implementation ignore the knob in
   silence. Nothing forces that today, and closing the gap pre-emptively *is*
   that break, on an INV-1 boundary: `upsert` gains an `UpsertParams` as a
   deliberate, versioned decision, or not at all.
+
+  **A second, sanctioned exception: `model_identity`.**
+  `ContextBuilder::model_identity(&self)` and
+  `Generator::model_identity(&self, served_model: &str)` take no params
+  struct; ADR-C31 § 4 fixes both signatures. They are not calls on the
+  pipeline's data but a report ADR-C31 § 4 has the composition root read
+  once per node before a run. A knob either one later needs is an arity
+  break on this boundary, decided as `upsert`'s would be.
 
   This is the *opposite* of `ragondin-pipeline`'s recorded choice, deliberately.
   There, an exhaustive `match` that stops compiling is the intended signal that
@@ -167,9 +167,9 @@ component is a gRPC service honouring the mirror protobuf in `ragondin-proto`.
 
     The refusals ADR-C32 § 4 attaches to the field are **not yet true of the
     in-tree implementations**: the ONNX embedder and reranker and every test
-    stub in the workspace ignore it and answer a `Some(name)` as if it were `None`. #285, which
-    adds `model_identity` to `Embedder` and `Reranker`, is where the ONNX
-    components start refusing every `Some(name)`.
+    stub in the workspace ignore it and answer a `Some(name)` as if it were
+    `None`. #285, which adds `model_identity` to `Embedder` and `Reranker`, is
+    where the ONNX components start refusing every `Some(name)`.
 
 - **A component does not block the thread that called it (ADR-C25).** Every
   method here is `async`, and the engine cannot tell a `Local` implementation

@@ -200,9 +200,9 @@ pub struct RerankParams {
     /// string standing in for it.
     ///
     /// **Not yet true of the in-tree implementations.** The ONNX embedder and
-    /// reranker (`ragondin-embedder-onnx`, `ragondin-reranker-onnx`) and the
-    /// every test stub in the workspace, ignore this field and
-    /// answer a `Some(name)` as if it were `None`. The contract and the
+    /// reranker (`ragondin-embedder-onnx`, `ragondin-reranker-onnx`) and every
+    /// test stub in the workspace ignore this field and answer a `Some(name)`
+    /// as if it were `None`. The contract and the
     /// behaviour change are separate PRs: #285, which adds `model_identity` to
     /// `Embedder` and `Reranker`, is where the ONNX components start refusing
     /// every `Some(name)`.
@@ -274,9 +274,9 @@ pub struct EmbedParams {
     /// it is not the prefix ADR-C17 keeps off this struct.
     ///
     /// **Not yet true of the in-tree implementations.** The ONNX embedder and
-    /// reranker (`ragondin-embedder-onnx`, `ragondin-reranker-onnx`) and the
-    /// every test stub in the workspace, ignore this field and
-    /// answer a `Some(name)` as if it were `None`. The contract and the
+    /// reranker (`ragondin-embedder-onnx`, `ragondin-reranker-onnx`) and every
+    /// test stub in the workspace ignore this field and answer a `Some(name)`
+    /// as if it were `None`. The contract and the
     /// behaviour change are separate PRs: #285, which adds `model_identity` to
     /// `Embedder` and `Reranker`, is where the ONNX components start refusing
     /// every `Some(name)`.
