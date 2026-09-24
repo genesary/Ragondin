@@ -61,8 +61,10 @@ N_RANDOM = 200
 
 # Cases chosen by hand, each pinning a decision the script makes that a random
 # case would hit only by luck. `label` is carried into the .tsv as a comment so
-# a failure names what the case was protecting. The first ten are the edge
-# cases ADR-C30 § 1 requires, in its order.
+# a failure names what the case was protecting. The first thirty, in ten
+# commented groups, are the ten edge cases ADR-C30 § 1 requires, in its order;
+# the rest cover punctuation inside a token, further Unicode, an empty
+# reference and the F1 arithmetic.
 HAND_PICKED = [
     # ASCII punctuation beside non-ASCII punctuation: only `string.punctuation`
     # goes, so the curly quotes and the em dash survive as tokens or suffixes.
@@ -108,6 +110,10 @@ HAND_PICKED = [
     ("empty prediction against an article-only reference", "", ["The"]),
     ("punctuation-only prediction against punctuation-only reference", "?!", ["..."]),
     ("empty-normalising reference beside a real one", "", [".", "Paris"]),
+    # An empty reference, not in last position, so its escape is exercised
+    # between two fields as well as at the end of a line.
+    ("empty reference beside a real one", "Paris", ["", "Paris"]),
+    ("empty answer against an empty reference", "", ["", "Lyon"]),
     # Punctuation inside a token.
     ("punctuation inside a token", "U.S.A.", ["USA", "U S A"]),
     ("thousands separator", "1,000", ["1000", "1 000"]),
@@ -135,6 +141,8 @@ HAND_PICKED = [
 # Fragments the random cases are drawn from: words, articles in every case, the
 # punctuation and whitespace the hand-picked cases single out, and a few
 # non-ASCII characters on each side of every boundary the normalisation has.
+# Both must stay free of Other_Alphabetic characters: beside an article, those
+# are the one divergence `src/generation.rs` documents and the fixture excludes.
 WORDS = [
     "the", "The", "THE", "a", "A", "an", "An", "and", "then", "at", "cat",
     "Cat's", "dog", "red", "Paris", "naïve", "café", "élan",
@@ -175,9 +183,13 @@ def escape(field):
 
     A backslash doubles; any character that is not printable (tab, newline,
     every space but the ASCII one, zero-width characters) is written
-    `\\u{hex}`, as is a space at either end of the field, which an editor could
-    otherwise strip. `squad_parity.rs` decodes exactly this.
+    `\\u{hex}`, as is a space at either end of the field; and an empty field
+    is written `\\e`. So no line ends in whitespace an editor could strip — an
+    empty last reference would otherwise leave a trailing tab.
+    `squad_parity.rs` decodes exactly this.
     """
+    if field == "":
+        return "\\e"
     out = []
     last = len(field) - 1
     for i, ch in enumerate(field):
@@ -222,7 +234,8 @@ def main():
         "# exact_match and token_f1 are metric_max_over_ground_truths over\n"
         "# every reference; the normalised answer is normalize_answer(answer).\n"
         "# Fields are escaped: `\\\\` is a backslash, `\\u{hex}` any\n"
-        "# non-printable character or a space at either end of a field.\n"
+        "# non-printable character or a space at either end of a field, and\n"
+        "# `\\e` an empty field. No line ends in whitespace.\n"
     )
     for label, answer, references in list(HAND_PICKED) + list(random_cases()):
         if label:

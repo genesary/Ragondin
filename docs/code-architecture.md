@@ -574,7 +574,7 @@ The "plugin system" is **not** an exotic dynamic-loading mechanism. It is simply
 | Serialization | Round-trip property tests, domain ⇄ protobuf (§7.2) |
 | Canonicalization | Golden tests: varied YAML inputs → identical `LogicalPipeline` → identical hash (INV-8) |
 | Component conformance | `ragondin-conformance`: every `Local` and `Remote` implementation passes the same suite (§7.4) |
-| Metric fixtures | `ragondin-metrics`: frozen run/qrels fixtures checked against `pytrec_eval`-derived expected values, including at least one graded-relevance fixture (permanent regression tests, ADR-10) |
+| Metric fixtures | `ragondin-metrics`: frozen run/qrels fixtures checked against `pytrec_eval`-derived expected values, including at least one graded-relevance fixture (permanent regression tests, ADR-10); and a frozen answer/reference fixture checked against expected exact match and token-F1 values produced by the official SQuAD v1.1 evaluation script (ADR-C30) |
 | Unit | Per-crate tests; each `components/` crate compiles and tests independently |
 | End to end | The evaluation harness on a miniature benchmark — an integration test of the real path |
 | Leaderboard calibration | One-time reproduction of a published BEIR/MTEB nDCG@10 score (SciFact, then NFCorpus) via exact search, within 0.5 point (ADR-10, system §9.8) |

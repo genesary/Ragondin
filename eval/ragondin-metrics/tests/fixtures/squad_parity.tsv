@@ -8,7 +8,8 @@
 # exact_match and token_f1 are metric_max_over_ground_truths over
 # every reference; the normalised answer is normalize_answer(answer).
 # Fields are escaped: `\\` is a backslash, `\u{hex}` any
-# non-printable character or a space at either end of a field.
+# non-printable character or a space at either end of a field, and
+# `\e` an empty field. No line ends in whitespace.
 
 # ASCII punctuation removed, non-ASCII kept
 0	0.6666666666666665	“hello” she said — twice	“Hello,” she said — twice!	hello she said twice
@@ -74,10 +75,10 @@
 1	1.0	́ café	á café	́ café	café
 
 # empty prediction
-0	0.0			Paris
+0	0.0	\e	\e	Paris
 
 # empty prediction, several references
-0	0.0			Paris	Lyon
+0	0.0	\e	\e	Paris	Lyon
 
 # several references, maximum taken
 0	0.8571428571428571	big red dog	the big red dog	red dog	big red dog barks	a cat
@@ -89,16 +90,22 @@
 0	1.0	red big dog	red big dog	blue	big red dog	red dog
 
 # both normalise to empty (the reference '.')
-1	0.0		.	.
+1	0.0	\e	.	.
 
 # empty prediction against an article-only reference
-1	0.0			The
+1	0.0	\e	\e	The
 
 # punctuation-only prediction against punctuation-only reference
-1	0.0		?!	...
+1	0.0	\e	?!	...
 
 # empty-normalising reference beside a real one
-1	0.0			.	Paris
+1	0.0	\e	\e	.	Paris
+
+# empty reference beside a real one
+1	1.0	paris	Paris	\e	Paris
+
+# empty answer against an empty reference
+1	0.0	\e	\e	\e	Lyon
 
 # punctuation inside a token
 1	1.0	usa	U.S.A.	USA	U S A
@@ -156,164 +163,164 @@
 
 # identical after normalisation only
 1	1.0	denver broncos	\u{20} The DENVER, Broncos! \u{20}	denver broncos
-0	0.0			İ\u{a0}élan 42\u{1f}then“	Paris’Cat's\u{3000}élan-U.S. then	東京 THE“
+0	0.0	\e	\e	İ\u{a0}élan 42\u{1f}then“	Paris’Cat's\u{3000}élan-U.S. then	東京 THE“
 0	0.0	’theparis	_’THE.Paris-	naïve\u{3000}_\u{3000}red\u{3000}then\u{20}	an—İ\u{1f}a.東京\u{9}	rock'n'roll\u{1f}café-42 \u{20}
 0	0.0	\u{200b}andred	the\u{200b}and,red  A\u{3000}A\u{20}	reddog“
-0	0.0	naïve東京\u{200b}rocknrollcats	naïve東京\u{200b}rock'n'roll-Cat's\u{20}	café,dog a-naïve’Bankman-Fried—	café A,	
-0	0.0			Σİ \u{20}	U.S.\u{a0}The at“rock'n'roll\u{20}	The An.élana Bankman-Fried\u{20}
+0	0.0	naïve東京\u{200b}rocknrollcats	naïve東京\u{200b}rock'n'roll-Cat's\u{20}	café,dog a-naïve’Bankman-Fried—	café A,	\e
+0	0.0	\e	\e	Σİ \u{20}	U.S.\u{a0}The at“rock'n'roll\u{20}	The An.élana Bankman-Fried\u{20}
 0	0.0	at cats\u{200b}dog paris	at Cat's\u{200b}dog  Paris\u{1f}	Cat's\u{200b}an\u{3000}The—	and.cat \u{20}
-0	0.0	paris \u{200b}us then	Paris\u{a0}_ an\u{200b}U.S. then\u{1f}	at\u{1f}cat\u{9}		
+0	0.0	paris \u{200b}us then	Paris\u{a0}_ an\u{200b}U.S. then\u{1f}	at\u{1f}cat\u{9}	\e	\e
 0	0.0	42 aa’dog	42 Aa’dog\u{1f}	red an	Cat's	_\u{1f}élan-THE\u{1f}
 0	0.0	’	THE’	and  ΟΔΟΣ\u{200b}	42\u{1f}cat\u{3000}	An-
-0	0.0	rocknroll élan red café	rock'n'roll élan  red café,	42 an’İ\u{200b}	the’café\u{9}İ\u{20}	
+0	0.0	rocknroll élan red café	rock'n'roll élan  red café,	42 an’İ\u{200b}	the’café\u{9}İ\u{20}	\e
 0	0.0	café 1000 42 us	café\u{1f}the  1,000\u{1f}42\u{a0}U.S.\u{9}	Paris\u{1f}_\u{200b}an an\u{200b}	cat,THEand
-0	0.0			42’The\u{20}	then naïve\u{20}
+0	0.0	\e	\e	42’The\u{20}	then naïve\u{20}
 0	0.0	paris	Paris,	Cat's\u{9}
-1	0.0				Paris\u{9}The\u{a0}	The\u{1f}red,Cat's\u{200b}
-1	0.0				
+1	0.0	\e	\e	\e	Paris\u{9}The\u{a0}	The\u{1f}red,Cat's\u{200b}
+1	0.0	\e	\e	\e	\e
 0	0.0	straße“i̇ dog’and\u{200b}	Straße“İ dog’and\u{200b}The\u{a0}	ΟΔΟΣélan’	A A,cat at\u{9}
 0	0.0	bankmanfried	Bankman-Fried\u{9}	rock'n'roll\u{200b}Paris\u{200b}	東京’then—Straße	An\u{20}
-0	0.0			and\u{200b}the,dog“The“	A“
+0	0.0	\e	\e	and\u{200b}the,dog“The“	A“
 0	0.0	an1000“at	An,1,000“at\u{20}	then’A  the élan—	naïve—cat _  Straße\u{9}The\u{3000}
-0	0.0	cat	cat	İ—ΟΔΟΣ.at\u{3000}		
-0	0.0	cat and	cat\u{a0}THE\u{3000}and\u{9}an	at\u{a0}_\u{20}	
+0	0.0	cat	cat	İ—ΟΔΟΣ.at\u{3000}	\e	\e
+0	0.0	cat and	cat\u{a0}THE\u{3000}and\u{9}an	at\u{a0}_\u{20}	\e
 0	0.0	1000	1,000\u{1f}	naïve,Straße,Σ“
-0	0.0	straßebankmanfried—cats	Straße,Bankman-Fried—Cat's \u{20}	Bankman-Fried\u{200b}42 an\u{9}at,		and\u{200b}café’rock'n'roll“Straße\u{3000}
+0	0.0	straßebankmanfried—cats	Straße,Bankman-Fried—Cat's \u{20}	Bankman-Fried\u{200b}42 an\u{9}at,	\e	and\u{200b}café’rock'n'roll“Straße\u{3000}
 0	0.0	1000 at and rocknroll“at	1,000\u{9}at\u{1f}and\u{1f}rock'n'roll“at\u{9}	café\u{9}at—a The \u{20}
-0	0.0	red’	red’THE\u{a0}	red\u{1f}café’an,	
+0	0.0	red’	red’THE\u{a0}	red\u{1f}café’an,	\e
 0	0.0	cat naïve\u{200b}atthen 1000	cat\u{9}naïve\u{200b}atthen 1,000 \u{20}	ΟΔΟΣ“an’ΟΔΟΣ	a\u{3000}42-naïve“the.	rock'n'roll\u{a0}at,An’and\u{a0}
-0	0.0			cat\u{3000}1,000\u{200b}and\u{3000}at  dog\u{9}
-0	0.0			Σ 42\u{1f}A\u{a0}	ata“a an-東京\u{20}
-0	0.0			Bankman-Fried-
+0	0.0	\e	\e	cat\u{3000}1,000\u{200b}and\u{3000}at  dog\u{9}
+0	0.0	\e	\e	Σ 42\u{1f}A\u{a0}	ata“a an-東京\u{20}
+0	0.0	\e	\e	Bankman-Fried-
 0	0.0	and then’usnaïve	and  then’U.S.,naïve,	at\u{a0}1,000  a-élan“An-	café’ΟΔΟΣ	_“a—
 0	0.0	and1000	and1,000 A	then\u{a0}cat.
 0	0.0	東京 catsthen“café at	東京\u{1f}Cat'sthen“café\u{3000}at\u{9}	THE\u{3000}
-0	0.0	us cat 1000οδος	U.S.\u{a0}cat\u{3000}1,000ΟΔΟΣ\u{20}	dog“at,Paris\u{9}		_\u{1f}dog  42  42.
+0	0.0	us cat 1000οδος	U.S.\u{a0}cat\u{3000}1,000ΟΔΟΣ\u{20}	dog“at,Paris\u{9}	\e	_\u{1f}dog  42  42.
 0	0.0	東京 naïve—	東京 naïve—	Paris\u{9}a—	1,000.	ΟΔΟΣ“Straße\u{3000}
-1	0.0				A\u{3000}1,000.
+1	0.0	\e	\e	\e	A\u{3000}1,000.
 0	0.0	’at rocknroll	A’at\u{3000}rock'n'roll\u{a0}	_-
 0	0.0	élan	élan\u{9}an\u{20}	theCat's\u{200b}東京\u{20}	Paris“42\u{1f}ΟΔΟΣ Σ\u{a0}then	A\u{20}
-0	0.0	cafédog andthe—	café.dog and.the—		İ.U.S.\u{1f}Paris 東京 1,000\u{1f}	at\u{a0}at\u{200b}The\u{20}
+0	0.0	cafédog andthe—	café.dog and.the—	\e	İ.U.S.\u{1f}Paris 東京 1,000\u{1f}	at\u{a0}at\u{200b}The\u{20}
 0	0.0	caféus 1000	café.U.S.\u{3000}1,000\u{1f}	42-	_\u{1f}dog—Σ  café,Paris\u{20}
-1	0.0					_\u{1f}ΟΔΟΣ“cat\u{a0}Paris\u{3000}
-0	0.0			a\u{9}Cat's’THE\u{200b}İ\u{a0}1,000,	dog U.S.\u{9}at.Bankman-Fried-
+1	0.0	\e	\e	\e	\e	_\u{1f}ΟΔΟΣ“cat\u{a0}Paris\u{3000}
+0	0.0	\e	\e	a\u{9}Cat's’THE\u{200b}İ\u{a0}1,000,	dog U.S.\u{9}at.Bankman-Fried-
 0	0.0	anan	_ An,An\u{3000}	A An—_\u{3000}	café  U.S.—red,
 0	0.0	cats	Cat's\u{9}The \u{20}	ΟΔΟΣ\u{3000}42,
 0	0.0	paris	Paris	a a U.S.-red\u{a0}
 0	0.0	élan then 東京—	élan then\u{9}東京—_-	Bankman-Fried—café  an\u{3000}	Σ-Bankman-Fried\u{3000}naïve-THE’
 0	0.0	“paris	THE“Paris an\u{20}	42\u{200b}café-	1,000  red“
 0	0.0	then 1000and	then\u{1f}1,000-and-	An\u{9}1,000\u{3000}Straße\u{20}	東京 a\u{a0}
-0	0.0			U.S..	café—A.A U.S.
+0	0.0	\e	\e	U.S..	café—A.A U.S.
 0	0.0	σ us élan\u{200b}42	_\u{a0}Σ\u{a0}U.S. élan\u{200b}42\u{20}	cat\u{1f}ΟΔΟΣ.Straße  _\u{a0}then,
-1	0.0			café—Cat's  dog\u{200b}red\u{a0}	red  THE\u{1f}an\u{9}cat—	
+1	0.0	\e	\e	café—Cat's  dog\u{200b}red\u{a0}	red  THE\u{1f}an\u{9}cat—	\e
 0	0.0	σthe\u{200b}rocknroll	Σ,the\u{200b}rock'n'roll	Bankman-Fried“a\u{200b}	東京\u{20}
-0	0.0	42\u{200b}rocknroll catsnaïve	42\u{200b}rock'n'roll\u{9}Cat's.naïve,	red	
+0	0.0	42\u{200b}rocknroll catsnaïve	42\u{200b}rock'n'roll\u{9}Cat's.naïve,	red	\e
 0	0.0	café	café  A\u{1f}	東京\u{a0}élan\u{20}	İ\u{9}at ΟΔΟΣ,Σ\u{20}
-0	0.0	parisnaïve	Parisnaïve,		A\u{1f}
+0	0.0	parisnaïve	Parisnaïve,	\e	A\u{1f}
 0	0.0	“paris 42 οδος—	the“Paris 42\u{a0}ΟΔΟΣ—	1,000-
-0	0.0			Straße“1,000  The\u{9}Σ  Σ\u{1f}
-0	0.0	café 東京dog rocknroll	café 東京.dog._\u{1f}rock'n'roll\u{20}	
-0	0.5	42 οδος	42 ΟΔΟΣ\u{3000}		ΟΔΟΣ\u{1f}U.S. A\u{9}
+0	0.0	\e	\e	Straße“1,000  The\u{9}Σ  Σ\u{1f}
+0	0.0	café 東京dog rocknroll	café 東京.dog._\u{1f}rock'n'roll\u{20}	\e
+0	0.5	42 οδος	42 ΟΔΟΣ\u{3000}	\e	ΟΔΟΣ\u{1f}U.S. A\u{9}
 0	0.0	theοδοσ’	the,ΟΔΟΣ’a a	Straße 42,The\u{9}İnaïve\u{200b}
-0	0.0	then\u{200b}	then\u{200b}		Paris“catΣ.	an-an  _\u{9}cat\u{9}
+0	0.0	then\u{200b}	then\u{200b}	\e	Paris“catΣ.	an-an  _\u{9}cat\u{9}
 0	0.0	atstraße 42\u{200b}paris	at,Straße 42\u{200b}Paris\u{3000}	U.S. Cat's—İ at—	café\u{a0}A\u{200b}Straße\u{a0}Paris\u{1f}THE\u{1f}	naïve dog\u{9}cat\u{3000}
 0	0.0	élan	élan\u{20}	red  U.S.  naïve  at naïve\u{9}
 0	0.0	rocknroll	rock'n'roll\u{3000}	東京\u{a0}an A\u{200b}İ élan“
 0	0.0	bankmanfried	Bankman-Fried\u{20}	1,000.THEat—an \u{20}	Straße red Paris\u{3000}	a\u{1f}The İ’élan’dog\u{3000}
 0	0.0	rocknroll“	rock'n'roll“	Straße
 0	0.0	rocknrollcats	rock'n'roll,Cat's \u{20}	dog’then\u{9}cat\u{3000}
-0	0.0			and\u{a0}Straße  1,000\u{9}café\u{1f}	red“and\u{200b}red\u{200b}	The\u{a0}then \u{20}
+0	0.0	\e	\e	and\u{a0}Straße  1,000\u{9}café\u{1f}	red“and\u{200b}red\u{200b}	The\u{a0}then \u{20}
 0	0.0	dog café— οδος\u{200b}	dog\u{3000}café—_ ΟΔΟΣ\u{200b}	1,000-café,_\u{a0}	Paris  A\u{200b}at\u{20}
-0	0.0	σ	Σ\u{3000}		THE\u{9}café\u{200b}naïve \u{20}	
+0	0.0	σ	Σ\u{3000}	\e	THE\u{9}café\u{200b}naïve \u{20}	\e
 0	0.0	42naïve σ“	42naïve\u{1f}Σ“_\u{a0}	rock'n'roll,	cat-	Bankman-Fried\u{9}
 0	0.0	οδος 1000 bankmanfried élan	An ΟΔΟΣ\u{a0}1,000 Bankman-Fried\u{9}élan\u{1f}	rock'n'rollİ\u{200b}the“
-1	0.0			The\u{9}Σ’THE\u{20}		
+1	0.0	\e	\e	The\u{9}Σ’THE\u{20}	\e	\e
 0	0.0	’paris	THE’Paris\u{a0}	an,Bankman-Fried\u{1f}at\u{a0}42’42.	red\u{1f}U.S.\u{20}
 0	0.0	and οδοσ’ οδος	and ΟΔΟΣ’THE ΟΔΟΣ\u{9}	Bankman-Fried\u{9}	THE.	THE—
-0	0.0			cat’at\u{a0}Cat's\u{3000}	red\u{20}
-1	0.0				Bankman-Fried,an“Σ\u{1f}the“Cat's\u{20}	
-0	0.0		The	cat\u{200b}at\u{200b}a\u{9}naïve\u{20}	THE.Straße,	and a ΟΔΟΣ.
-0	0.0	42catsdogcat οδος	42Cat's,dog-cat ΟΔΟΣ \u{20}			Σ,
-0	0.0	us’red cat\u{200b}then\u{200b}	U.S.’red the cat\u{200b}then\u{200b}		An\u{a0}and’and—cat,naïve\u{a0}
-0	0.0	—1000 at naïve	The—1,000  at\u{3000}naïve\u{9}	
-1	0.0			then.	
-0	0.0	naïve“	naïve“	U.S.\u{20}	İ  _  東京42.東京\u{1f}	
+0	0.0	\e	\e	cat’at\u{a0}Cat's\u{3000}	red\u{20}
+1	0.0	\e	\e	\e	Bankman-Fried,an“Σ\u{1f}the“Cat's\u{20}	\e
+0	0.0	\e	The	cat\u{200b}at\u{200b}a\u{9}naïve\u{20}	THE.Straße,	and a ΟΔΟΣ.
+0	0.0	42catsdogcat οδος	42Cat's,dog-cat ΟΔΟΣ \u{20}	\e	\e	Σ,
+0	0.0	us’red cat\u{200b}then\u{200b}	U.S.’red the cat\u{200b}then\u{200b}	\e	An\u{a0}and’and—cat,naïve\u{a0}
+0	0.0	—1000 at naïve	The—1,000  at\u{3000}naïve\u{9}	\e
+1	0.0	\e	\e	then.	\e
+0	0.0	naïve“	naïve“	U.S.\u{20}	İ  _  東京42.東京\u{1f}	\e
 0	0.0	thecat then42 dog	The,cat then42\u{a0}dog\u{9}	and\u{9}	42 _’An\u{a0}Cat's\u{20}	42“U.S.\u{1f}
-0	0.0			naïve élan\u{9}café-Σ’	A Straße.Bankman-Fried the \u{20}
-0	0.0	us’cats	U.S.’Cat's\u{20}		A—	_\u{200b}
-0	0.0	and’catred red—	and’cat.red\u{a0}red—	
+0	0.0	\e	\e	naïve élan\u{9}café-Σ’	A Straße.Bankman-Fried the \u{20}
+0	0.0	us’cats	U.S.’Cat's\u{20}	\e	A—	_\u{200b}
+0	0.0	and’catred red—	and’cat.red\u{a0}red—	\e
 0	0.0	1000 straße atherocknroll	1,000\u{1f}Straße\u{9}a,the-rock'n'roll\u{1f}	1,000.dog\u{1f}Σ\u{20}
-0	0.0			An“dog\u{20}	Paris—東京’the—at\u{a0}Σ\u{20}
-0	0.0	—then	The—then\u{a0}	
-0	0.0	paris	_Paris the	a—red  _\u{3000}élan \u{20}	
+0	0.0	\e	\e	An“dog\u{20}	Paris—東京’the—at\u{a0}Σ\u{20}
+0	0.0	—then	The—then\u{a0}	\e
+0	0.0	paris	_Paris the	a—red  _\u{3000}élan \u{20}	\e
 0	0.0	bankmanfried dog	An\u{1f}Bankman-Fried  dog\u{3000}	A\u{3000}THE\u{9}	İ\u{3000}
-0	0.0			cat élan 42  東京\u{a0}Paris-	An Straße\u{9}
+0	0.0	\e	\e	cat élan 42  東京\u{a0}Paris-	An Straße\u{9}
 0	0.0	naïve naïvecats i̇	naïve _\u{9}naïve-Cat's  İ\u{3000}	élan\u{1f}U.S. rock'n'roll-İ\u{200b}Straße.
-0	0.0	cat 1000’bankmanfried 1000	cat 1,000’Bankman-Fried  1,000\u{9}	
-0	0.0	élan i̇ catsred’	élan İ,_\u{9}Cat's.red’	A’	
+0	0.0	cat 1000’bankmanfried 1000	cat 1,000’Bankman-Fried  1,000\u{9}	\e
+0	0.0	élan i̇ catsred’	élan İ,_\u{9}Cat's.red’	A’	\e
 0	0.0	thecat dog at	the,cat\u{9}dog at an\u{9}	An.An.
-0	0.0	élan	élan\u{20}	rock'n'roll\u{20}	
+0	0.0	élan	élan\u{20}	rock'n'roll\u{20}	\e
 0	0.0	and σ naïve“	and\u{a0}Σ naïve“	_.東京“rock'n'roll\u{9}naïve\u{a0}An“
-0	0.0			an-élan the\u{200b}	The\u{1f}Σ.Σ\u{9}élan\u{a0}
-0	0.0			élan—Cat's—An,élan-at—	ΟΔΟΣ.
-0	0.0		A\u{a0}	An\u{200b}1,000,Bankman-Fried\u{9}an-
-0	0.0	\u{200b}i̇—and“ at\u{200b}	a\u{200b}İ—and“an\u{1f}at\u{200b}	then \u{20}	
+0	0.0	\e	\e	an-élan the\u{200b}	The\u{1f}Σ.Σ\u{9}élan\u{a0}
+0	0.0	\e	\e	élan—Cat's—An,élan-at—	ΟΔΟΣ.
+0	0.0	\e	A\u{a0}	An\u{200b}1,000,Bankman-Fried\u{9}an-
+0	0.0	\u{200b}i̇—and“ at\u{200b}	a\u{200b}İ—and“an\u{1f}at\u{200b}	then \u{20}	\e
 0	0.0	σ straßeσ οδος	Σ Straße-Σ  ΟΔΟΣ-	at\u{9}1,000\u{1f}Cat's\u{9}ΟΔΟΣ\u{200b}	ΟΔΟΣ’at\u{3000}U.S.’at’東京\u{9}	Cat's\u{200b}_“
 0	0.0	thenthe—bankmanfried\u{200b}	then-THE—Bankman-Fried\u{200b}	an-then  1,000\u{a0}Paris.then,	Σ-	the\u{200b}
-0	0.3333333333333333	東京 rocknroll and	東京 rock'n'roll  and\u{1f}	An\u{3000}rock'n'roll at\u{a0}Cat's\u{a0}		Straße  The İ\u{9}42 \u{20}
+0	0.3333333333333333	東京 rocknroll and	東京 rock'n'roll  and\u{1f}	An\u{3000}rock'n'roll at\u{a0}Cat's\u{a0}	\e	Straße  The İ\u{9}42 \u{20}
 0	0.0	dog οδος東京	dog  ΟΔΟΣ.東京\u{1f}an,	naïve\u{9}_“東京-	an\u{200b}red\u{1f}Bankman-Fried\u{9}	rock'n'roll-
 0	0.0	thea1000\u{200b}σ	THEa,1,000\u{200b}Σ\u{20}	Cat's\u{200b}A\u{1f}	Straße\u{a0}
 0	0.0	42	The\u{a0}42\u{9}	red\u{a0}at\u{3000}Bankman-Fried at“İ’	1,000 ΟΔΟΣ\u{9}U.S..cat“ΟΔΟΣ.	The—
-0	0.0	東京anbankmanfried	東京,an_.Bankman-Fried\u{a0}	rock'n'roll _ red,red\u{3000}		an—
-0	0.0	42	42\u{3000}	Straße-An.élan—Cat's“_		
-0	0.0	’paris	a’Paris\u{9}THE \u{20}		An1,000 \u{20}	1,000—
-0	0.0			élan\u{9}café\u{200b}
-0	0.0	\u{200b}1000\u{200b}	A\u{200b}1,000\u{200b}	Straße café\u{200b}then  élan\u{9}		_.an\u{200b}
+0	0.0	東京anbankmanfried	東京,an_.Bankman-Fried\u{a0}	rock'n'roll _ red,red\u{3000}	\e	an—
+0	0.0	42	42\u{3000}	Straße-An.élan—Cat's“_	\e	\e
+0	0.0	’paris	a’Paris\u{9}THE \u{20}	\e	An1,000 \u{20}	1,000—
+0	0.0	\e	\e	élan\u{9}café\u{200b}
+0	0.0	\u{200b}1000\u{200b}	A\u{200b}1,000\u{200b}	Straße café\u{200b}then  élan\u{9}	\e	_.an\u{200b}
 0	0.0	οδοςcats	ΟΔΟΣ-Cat's\u{20}	StraßeCat's\u{a0}a.red\u{a0}	ΟΔΟΣ\u{20}	Paris\u{1f}café\u{3000}
 0	0.0	paris dogdognaïve	Paris\u{a0}dogdognaïve\u{20}	İ at-élan’
-0	0.22222222222222224	1000 1000 1000 café\u{200b}	1,000 1,000\u{a0}1,000\u{1f}café\u{200b}			ΟΔΟΣ\u{9}1,000\u{9}at  Straße cat\u{200b}
-0	0.0	σ“then“	Σ“then“		café-	42—a\u{1f}dog,
+0	0.22222222222222224	1000 1000 1000 café\u{200b}	1,000 1,000\u{a0}1,000\u{1f}café\u{200b}	\e	\e	ΟΔΟΣ\u{9}1,000\u{9}at  Straße cat\u{200b}
+0	0.0	σ“then“	Σ“then“	\e	café-	42—a\u{1f}dog,
 0	0.0	and’dog東京	and’dog-東京\u{3000}	the-then\u{20}	A  rock'n'roll rock'n'roll\u{9}
-0	0.0	and—東京thea\u{200b}	The  and—東京.THE.a\u{200b}	élan\u{a0}café dog,rock'n'roll—	
+0	0.0	and—東京thea\u{200b}	The  and—東京.THE.a\u{200b}	élan\u{a0}café dog,rock'n'roll—	\e
 0	0.0	café	café.	A\u{9}
 0	0.0	i̇	İ,	42\u{3000}an élan 1,000“élan\u{20}	at\u{1f}	an’İ—Bankman-Fried \u{20}
-0	0.0	dog adog cat bankmanfried—	dog\u{1f}a.dog cat  Bankman-Fried—	
+0	0.0	dog adog cat bankmanfried—	dog\u{1f}a.dog cat  Bankman-Fried—	\e
 0	0.0	paris catscafé	The\u{3000}an\u{3000}Paris\u{3000}Cat'scafé\u{20}	東京’	and—café\u{a0}at-dog—rock'n'roll.	東京’東京 U.S.\u{1f}_\u{a0}then\u{20}
 0	0.0	élan42 us’	élan,42 U.S.’	Bankman-Fried\u{20}	at’42“	_ dog\u{9}A.Paris Bankman-Fried\u{20}
-0	0.0	οδος cats cats bankmanfried—café—	ΟΔΟΣ Cat's\u{9}Cat's\u{9}Bankman-Fried—café—	
-0	0.0	1000cat red café	1,000-cat\u{9}red\u{9}café THE\u{20}		An rock'n'roll—red \u{20}
+0	0.0	οδος cats cats bankmanfried—café—	ΟΔΟΣ Cat's\u{9}Cat's\u{9}Bankman-Fried—café—	\e
+0	0.0	1000cat red café	1,000-cat\u{9}red\u{9}café THE\u{20}	\e	An rock'n'roll—red \u{20}
 0	0.0	naïve’1000	naïve’1,000\u{20}	42—an élan\u{1f}
-1	0.0			
-0	0.0	bankmanfried“thea	Bankman-Fried“the,a,	and\u{20}	
-0	0.0	“	The“the the\u{3000}	THE—THE	red İ\u{3000}Cat's Σ  naïve—	
+1	0.0	\e	\e	\e
+0	0.0	bankmanfried“thea	Bankman-Fried“the,a,	and\u{20}	\e
+0	0.0	“	The“the the\u{3000}	THE—THE	red İ\u{3000}Cat's Σ  naïve—	\e
 0	0.0	i̇\u{200b}caféan	İ\u{200b}café,an _\u{1f}	naïve\u{a0}the,A\u{3000}an\u{200b}	THE,ΟΔΟΣ,
 0	0.0	bankmanfried	Bankman-Fried\u{9}The\u{1f}An\u{9}	cat\u{1f}Cat's  Cat's東京a\u{1f}	42\u{3000}42-élan,	42“at\u{200b}rock'n'roll—
-0	0.0	cats42 élan	Cat's-42\u{9}the élan.	at.rock'n'roll \u{20}	
+0	0.0	cats42 élan	Cat's-42\u{9}the élan.	at.rock'n'roll \u{20}	\e
 0	0.0	— élan	A—The\u{3000}élan\u{3000}	dog\u{9}
 0	0.0	cats red bankmanfried’	Cat's\u{1f}red\u{1f}Bankman-Fried’	élan Bankman-Fried\u{3000}élan東京\u{20}	ΟΔΟΣ an\u{20}
 0	0.0	naïvethe“and	naïve,THE“_and-	Σ\u{3000}42\u{3000}
-0	0.0	café 42 東京the	café 42 東京.The._,	an\u{a0}anat—Paris\u{3000}a\u{1f}		Σ\u{9}
+0	0.0	café 42 東京the	café 42 東京.The._,	an\u{a0}anat—Paris\u{3000}a\u{1f}	\e	Σ\u{9}
 0	0.0	σ ancatsélan	Σ  AnCat's,élan\u{9}an\u{20}	an.	東京—the café\u{9}	the-
 0	0.0	cats us’atandthen	Cat's U.S.’at-and,then\u{1f}	red—_—	and\u{1f}Paris.an élan“	A\u{9}An’THE’ΟΔΟΣ\u{1f}
-0	0.0	paris red\u{200b}	Paris red\u{200b}	élan\u{3000}dog\u{20}		42\u{1f}Cat's  A.café
+0	0.0	paris red\u{200b}	Paris red\u{200b}	élan\u{3000}dog\u{20}	\e	42\u{1f}Cat's  A.café
 0	0.0	bankmanfriedus dog	Bankman-Fried,U.S.\u{1f}dog,	U.S.—
 0	0.0	42a\u{200b}’naïve red	42A\u{200b}_’naïve red\u{20}	café.1,000then _“a\u{20}	Straße\u{3000}ΟΔΟΣ at\u{1f}_\u{a0}rock'n'roll\u{200b}
 0	0.0	redat\u{200b}paris	redat\u{200b}Paris	İ\u{a0}The\u{3000}
-0	0.0			caféand-1,000  Bankman-Fried\u{9}
+0	0.0	\e	\e	caféand-1,000  Bankman-Fried\u{9}
 0	0.4	élan rocknrollstraße\u{200b}paris	élan\u{a0}rock'n'roll-Straße\u{200b}Paris\u{20}	rock'n'roll\u{3000}Bankman-Fried\u{9}1,000’	Paris cat’élan\u{3000}THE\u{1f}élan \u{20}	_—東京\u{200b}
-0	0.0			42\u{200b}A,at  1,000	Bankman-Fried an,Cat's.Σ\u{200b}café\u{9}
+0	0.0	\e	\e	42\u{200b}A,at  1,000	Bankman-Fried an,Cat's.Σ\u{200b}café\u{9}
 0	0.0	red“	red“	A,
-0	0.0	us’at—οδοσan and	U.S.’at—ΟΔΟΣ.an\u{a0}and-	café  U.S. Bankman-Fried,Bankman-Fried,	Straße,THE  東京 \u{20}	
+0	0.0	us’at—οδοσan and	U.S.’at—ΟΔΟΣ.an\u{a0}and-	café  U.S. Bankman-Fried,Bankman-Fried,	Straße,THE  東京 \u{20}	\e
 0	0.0	and paris\u{200b}straße’	and\u{3000}Paris\u{200b}Straße’	then-at\u{9}at\u{20}	ΟΔΟΣ\u{1f}naïve-cat \u{20}	The-
-0	0.0	cats\u{200b}	Cat's\u{200b}		THE café—An—élan\u{3000}	dog U.S. The\u{20}
+0	0.0	cats\u{200b}	Cat's\u{200b}	\e	THE café—An—élan\u{3000}	dog U.S. The\u{20}
 0	0.0	οδοσrocknrollparis\u{200b}	THE ΟΔΟΣrock'n'roll.Paris\u{200b}	İ-élan an\u{1f}cat then—
 0	0.0	at straßethe	at  Straße.The\u{a0}THE,	café \u{20}	red  Bankman-Fried A\u{1f}an,
-1	0.0			a\u{1f}	
+1	0.0	\e	\e	a\u{1f}	\e
 0	0.0	élan—i̇café—	élan—İ-café—	a.The—a“ΟΔΟΣ\u{3000}red-
 0	0.0	’東京 —élan—dog—	_’東京\u{3000}The—élan—dog—	the,rock'n'roll’then—cat\u{a0}	red\u{a0}ΟΔΟΣ  Σ dog“a\u{200b}	The,Bankman-Fried \u{20}
 0	0.0	café“rocknroll—then—	The\u{1f}café“rock'n'roll—then—The\u{1f}	_\u{200b}THE	café“dog\u{a0}and\u{200b}rock'n'roll The-	cat Σ THE\u{20}
-0	0.0	café“σat	café“Σ.at\u{9}	1,000 Paris\u{200b}the\u{200b}		Anand“a at\u{20}
-0	0.0			Straße élan.	rock'n'roll—rock'n'roll\u{200b}Bankman-Fried
+0	0.0	café“σat	café“Σ.at\u{9}	1,000 Paris\u{200b}the\u{200b}	\e	Anand“a at\u{20}
+0	0.0	\e	\e	Straße élan.	rock'n'roll—rock'n'roll\u{200b}Bankman-Fried
 0	0.0	naïve—élan 東京rocknroll rocknroll	naïve—élan  東京,rock'n'roll rock'n'roll\u{9}	café at \u{20}	dog-naïve-naïve—	_  Paris,ΟΔΟΣ.dogİ,
 0	0.0	straße	Straße\u{20}	élan’the\u{3000}	An Cat's.1,000.1,000\u{20}
 0	0.0	red	red,	and—1,000.Σ,then,	rock'n'roll\u{a0}
@@ -321,38 +328,38 @@
 0	0.0	cats—	Cat's—the\u{9}	cat  rock'n'roll.rock'n'roll\u{9}Paris.An-
 0	0.0	cat dog“	_\u{3000}cat dog“	ΟΔΟΣ\u{1f}_	Cat's,_’Bankman-Fried dog\u{20}
 0	0.0	cata	cat,A\u{9}an\u{20}	42\u{9}Paris-The\u{3000}red—Straße-	Bankman-Fried“
-0	0.0			an\u{9}1,000 A\u{20}
+0	0.0	\e	\e	an\u{9}1,000 A\u{20}
 0	0.0	straße’ i̇	Straße’THE\u{3000}İ A\u{1f}	dog—An naïve\u{a0}and’The\u{200b}	at The at Cat'sStraße\u{9}
 0	0.0	cats athe“	Cat's\u{9}AThe“	Cat's\u{200b}İ The\u{1f}	élan Bankman-Fried\u{1f}Cat's\u{200b}	an  Cat's東京\u{20}
-0	0.0	and us’ς42“	and U.S.’Σ,42“	
-0	0.0	naïve	naïve-	A Paris\u{200b}	U.S.-naïve\u{20}	
-1	0.0		_ An,		cat“
+0	0.0	and us’ς42“	and U.S.’Σ,42“	\e
+0	0.0	naïve	naïve-	A Paris\u{200b}	U.S.-naïve\u{20}	\e
+1	0.0	\e	_ An,	\e	cat“
 0	0.0	οδος cat theélan	ΟΔΟΣ cat THEélan\u{20}	Paris“élan—a\u{a0}ΟΔΟΣ\u{200b}and\u{200b}	and\u{200b}	_,THE  Bankman-FriedTHE\u{200b}
-0	0.0	i̇ athe\u{200b}straßethe	İ a,The\u{200b}Straße-the,		Straße.cafédog  élan élan
+0	0.0	i̇ athe\u{200b}straßethe	İ a,The\u{200b}Straße-the,	\e	Straße.cafédog  élan élan
 0	0.6666666666666666	rocknroll at\u{200b}	rock'n'roll  at\u{200b}	The rock'n'roll\u{1f}	THE  Σ\u{9}THE—Bankman-Fried“	a 42\u{a0}rock'n'roll“İ \u{20}
-0	0.0	at	at\u{3000}		An,
-0	0.0			rock'n'rolldog\u{200b}naïve\u{a0}U.S.	The cat  café’	A’Paris\u{200b}dog rock'n'roll’
-0	0.0	atstraße i̇i̇“	at-Straße\u{1f}İ-İ“	élan\u{20}	
+0	0.0	at	at\u{3000}	\e	An,
+0	0.0	\e	\e	rock'n'rolldog\u{200b}naïve\u{a0}U.S.	The cat  café’	A’Paris\u{200b}dog rock'n'roll’
+0	0.0	atstraße i̇i̇“	at-Straße\u{1f}İ-İ“	élan\u{20}	\e
 0	0.0	naïve “	naïve\u{9}The“	42\u{200b}_,an’Bankman-Fried\u{3000}cat\u{9}
-0	0.0	café straßestraße and’	café An  StraßeStraße\u{9}and’	Bankman-Fried“then“A at-		_\u{200b}an,An-dog,cat’
-1	0.0			
-0	0.0	and	_ and\u{20}	_ an—then\u{1f}élan dog\u{20}		An\u{200b}An\u{20}
+0	0.0	café straßestraße and’	café An  StraßeStraße\u{9}and’	Bankman-Fried“then“A at-	\e	_\u{200b}an,An-dog,cat’
+1	0.0	\e	\e	\e
+0	0.0	and	_ and\u{20}	_ an—then\u{1f}élan dog\u{20}	\e	An\u{200b}An\u{20}
 0	0.0	42a 東京 東京	42,A  東京\u{1f}東京.	rock'n'roll東京,and\u{9}_,An\u{9}	42 then Bankman-Fried—A-	An\u{200b}
 0	0.0	and anthe—	and An.the—	rock'n'roll\u{200b}café’a\u{9}İ—
-0	0.0			A,Paris\u{200b}_\u{1f}東京\u{200b}	café\u{a0}
+0	0.0	\e	\e	A,Paris\u{200b}_\u{1f}東京\u{200b}	café\u{a0}
 0	0.0	naïve1000 then—cat	naïve1,000\u{3000}then—cat	U.S.,the—42’
-0	0.0	cats straße 1000	Cat's Straße  1,000\u{20}	rock'n'roll.a,A’	U.S.\u{1f}	
+0	0.0	cats straße 1000	Cat's Straße  1,000\u{20}	rock'n'roll.a,A’	U.S.\u{1f}	\e
 0	0.0	élan—red i̇“then	élan—red\u{3000}İ“then\u{9}	then\u{1f}A\u{9}THE \u{20}	dog  東京\u{1f}	Σ’
-0	0.0			Paris—then,rock'n'roll\u{1f}red\u{9}
+0	0.0	\e	\e	Paris—then,rock'n'roll\u{1f}red\u{9}
 0	0.6666666666666666	rocknroll	rock'n'roll\u{20}	rock'n'roll Cat's \u{20}	café-A—thendog“
-1	0.0		the\u{20}	
+1	0.0	\e	the\u{20}	\e
 0	0.0	redat“	redat“	U.S.\u{20}	rock'n'roll\u{200b}naïve\u{200b}and\u{3000}
 0	0.0	at\u{200b}	a  at\u{200b}	then\u{9}U.S..
 0	0.0	οδος 東京 naïve us	ΟΔΟΣ 東京\u{9}naïve U.S.\u{20}	Cat's,dog\u{200b}an\u{9}	Σ,
 0	0.0	then“ “	_An\u{1f}then“the“	_’	İ.
-0	0.0	— “οδοσ’café	_.a—a“ΟΔΟΣ’café\u{20}		THE a“
-0	0.0	dog’straße cat	dog’Straße _\u{3000}cat\u{3000}		_.	THErock'n'roll\u{3000}the\u{9}
-0	0.0	dogοδοσélan	dog.ΟΔΟΣ.élan\u{3000}	cat\u{3000}an—Bankman-Fried’catthe,	naïve\u{1f}	
-0	0.0	paris	Paris _\u{9}	The,An’then,		café\u{3000}The’and\u{3000}
+0	0.0	— “οδοσ’café	_.a—a“ΟΔΟΣ’café\u{20}	\e	THE a“
+0	0.0	dog’straße cat	dog’Straße _\u{3000}cat\u{3000}	\e	_.	THErock'n'roll\u{3000}the\u{9}
+0	0.0	dogοδοσélan	dog.ΟΔΟΣ.élan\u{3000}	cat\u{3000}an—Bankman-Fried’catthe,	naïve\u{1f}	\e
+0	0.0	paris	Paris _\u{9}	The,An’then,	\e	café\u{3000}The’and\u{3000}
 0	0.0	at at i̇	at at  İ \u{20}	thenStraße“_ A’An\u{200b}
 0	0.0	cats	Cat's\u{a0}	at \u{20}	dog\u{3000}A—
