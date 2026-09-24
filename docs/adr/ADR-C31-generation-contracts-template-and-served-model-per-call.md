@@ -153,6 +153,13 @@ The change, item by item against ADR-C29:
   are brought up to date: #252, which ADR-C29 left open, has since been decided by
   ADR-C30, so the consequence on `Context.chunks` says so and the list of what is
   left open drops it and names #253 instead.
+- **Also stated**, in the sections above: the template scan runs left to
+  right, `{{` and `}}` taken first; framing for the inference server adds roles
+  and encoding, never text; the names a `Local` generator recognises are its
+  constructor configuration; the composition root refuses an absent
+  `served_model` itself; two generator nodes with differing identities are
+  refused under the one-model-per-role rule; #259 generalises `InvalidParam`'s
+  message; and a context builder's template is named among what is left open.
 - **Context.** ADR-C29's closing "Decided in #251." reads "ADR-C29 decided them
   in #251.", since this ADR was decided in #272.
 
@@ -280,7 +287,8 @@ does not know.
 is per call. **`served_model` and `template` are required; the other three are
 optional.** `served_model` is the name the generator asks its backend for: for a
 `Remote` generator, the name the inference server serves the model under; for a
-`Local` one, a name the component must recognise as the model it loaded, and a
+`Local` one, a name the component must recognise as the model it loaded — the
+names a `Local` generator recognises are its constructor configuration — and a
 name it does not recognise is refused as `ComponentError::InvalidRequest`.
 `template` is the prompt template, whose grammar is stated below. **They are
 per-call parameters and not constructor configuration, because of the `Remote`
@@ -372,7 +380,9 @@ generator and a `Remote` service implement the same one:
   call is refused as `InvalidRequest`. The refusal is the component's, at the
   call; nothing above the component parses a template.
 - Each placeholder may appear any number of times, including none.
-  Substitution is a single pass over the template: text substituted for a
+  Substitution is a single pass over the template, **left to right**, and at each
+  position `{{` or `}}` is taken before a placeholder is looked for — so
+  `{{query}}` renders as the literal text `{query}`. Text substituted for a
   placeholder is never scanned again, so a query containing `{context}` renders
   as those nine characters.
 
@@ -383,7 +393,9 @@ component's business. The rendered text is the whole of what the component asks
 its model to answer: it adds no instruction text of its own, since a system
 prompt kept service-side would be exactly the hidden template this decision
 withdraws. How that one message is framed for the inference server is the
-dialect's, and #253 decides it.
+dialect's, and #253 decides it; framing adds message roles and the server's own
+chat encoding, **never text** — no system-role message of the relay's own
+wording.
 
 **A template is a value, not the sub-grammar ADR-C22 rejected.** ADR-C22 refused
 flattened parameter **keys** — `filters.lang` — because they invent "a sub-grammar
@@ -396,7 +408,8 @@ template it renders passages into `Context.text` with, and the unit its budget i
 counted in — stays constructor configuration, covered by its `model_identity`
 under § 4, as ADR-C29 decided. #272 changed the generator's template and served
 model and nothing else; the generator's template is the one this section names,
-and the builder's is not a parameter of its node.
+and the builder's is not a parameter of its node. Whether it should be is named
+among what is deliberately left open, under Consequences.
 
 **ADR-C19 applies unchanged.** `build` over zero chunks is a valid call, not an
 invalid request: it returns the empty context, meaning `chunks.is_empty()`, with
@@ -485,7 +498,8 @@ component answers `served_model` with*:
 - a **`Local`** generator returns the digest of the model it loaded — together
   with whatever else of its constructor configuration decides the answer, under
   the completeness rule below — when `served_model` is a name it recognises as
-  that model, and refuses any other name as `InvalidRequest`;
+  that model (the names it recognises being its constructor configuration), and
+  refuses any other name as `InvalidRequest`;
 - a **`Remote`** generator's adapter forwards `served_model` in the
   `GetModelIdentity` rpc, and the service asks its inference server what the
   server serves under `served_model`, and returns what the server reports — the served name, and its
@@ -549,7 +563,15 @@ another instance. The synchronous `ComponentCtor` is therefore not an obstacle:
 does so today so that a missing model file is found before the expensive steps.
 A generator's identity is read **once per generator node, with that node's
 `served_model`**, at that same point, before the run; a refusal ends the run
-there, as stated above.
+there, as stated above. That point comes before the executor ever reads the
+node's params, so the executor's `InvalidParam` check has not yet run: **the
+composition root refuses an absent or non-string `served_model` itself**, as a
+fatal error, rather than passing an empty string for the component to refuse.
+**Two generator nodes whose identities differ are refused** under the rule
+`model_hashes` in `bin/ragondin/src/wiring.rs` already applies to every role: a
+run records one model per role, and two such nodes are evaluated as two
+pipelines. Any other keying of `model_hashes` would change the shape of the run
+record, and is not decided here.
 Stated plainly, because it is the part a reader will otherwise assume away: **the
 identity is read from an instance other than the one that ran.** For a `Remote`
 component both instances reach one URL, so the two agree unless the service
@@ -761,7 +783,13 @@ here moves per-node detail into a `tracing` macro.
   refusals of an empty `served_model`, an empty `template` and a malformed
   template. #259: the executor reads the two
   required params from the generator node and refuses an absent or mistyped one
-  with `ExecError::InvalidParam`, applying no default. #260: the stub generator
+  with `ExecError::InvalidParam`, applying no default; and it generalises
+  `InvalidParam`'s message and documentation in
+  `engine/ragondin-engine/src/error.rs`, which today describe an integer — the
+  message says the key "must be a non-negative integer", and
+  `param_found_clause` renders a string as a wrong kind — so that the diagnosis
+  names the kind the key requires. The executor's rule is unchanged: an absent
+  key or one of the wrong kind is refused, and no default is applied. #260: the stub generator
   recognises one fixed served name and refuses any other, and renders the
   template under the grammar of § 2. #261: the `Remote` generator adapter refuses
   an empty `served_model` or `template` before sending, and calls the identity
@@ -839,7 +867,11 @@ here moves per-node detail into a `tracing` macro.
 - **What is deliberately left open.** How a node names and constructs a `Remote`
   service (#101). What the reference `Remote` generator service is — where it
   lives, the HTTP client it brings, the dialect it speaks to its inference
-  server (#253).
+  server (#253). Whether a context builder's template belongs in the node's
+  params: § 2's principle — a setting a researcher varies between two runs must
+  be in the pipeline representation — applies to it as it does to the
+  generator's, and a `Remote` context builder's template would sit service-side,
+  unhashed. #272 did not reopen it; it is open, not settled.
   `Embedder` and `Reranker` identity, which follows with #101 — `VectorStore` is
   not on that list, because a store is not model-bearing and this ADR says
   nothing about it. Token usage on `Answer`, which is a later and deliberate
