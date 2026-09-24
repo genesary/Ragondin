@@ -76,6 +76,21 @@ Both are stated here because no ADR settles them and both are visible in an
   does without a parameter is the component's to decide, and a default applied
   here could only be a second, disagreeing copy of it.
 
+## The generation nodes are refused, not yet planned
+
+`ragondin-pipeline` validates a `ContextBuilder` and a `Generator` node
+(ADR-C31 § 3), and this crate does not plan either yet: no registry family
+resolves them. Physical planning refuses both in its first pass, beside the
+`Extension` refusal and before any constructor runs, with
+`PlanError::GenerationUnsupported`, which names the node and its `component:`
+value. Every other exhaustive match over `LogicalNode` in this crate gives the
+two variants an arm that **returns an error** rather than panicking —
+`resolve` returns the same `PlanError`, and the executor's `call` returns
+`ExecError::UnplannableNode`, a defect in this crate by construction, since no
+plan `plan_physical` builds holds one. The choice made here is a typed refusal
+per pass rather than an `unreachable!()`: an arm that cannot be reached today
+still costs nothing to make harmless.
+
 ## Local invariants
 
 - **Knows only traits (INV-5, CI-enforced).** Depends on `ragondin-contracts`, not on
