@@ -17,7 +17,7 @@ template and the name of the model a generator asks its backend for become
 required per-call parameters of the node, and `Generator::model_identity`
 becomes a check of that name rather than the only record of it. Everything
 ADR-C29 decided that this change does not touch is carried forward in ADR-C29's
-own words, so that the issues implementing it (#254–#266) read one text and
+own words, so that the issues implementing it (#254–#268) read one text and
 never need to open the superseded one. The change and its reasons are set out
 under *What changed, and why* below; the background ADR-C29 was written against
 comes first, unchanged.
@@ -149,17 +149,21 @@ The change, item by item against ADR-C29:
   citations of ADR-C29 elsewhere read, and what #267's reference service
   becomes; the INV-9 clause says the two keys change no wire shape; the prose
   #255 corrects includes the crate documentation's sentence on what params
-  structs carry. Two sentences of ADR-C29 had gone stale before this change and
+  structs carry. Three sentences of ADR-C29 had gone stale before this change and
   are brought up to date: #252, which ADR-C29 left open, has since been decided by
   ADR-C30, so the consequence on `Context.chunks` says so and the list of what is
-  left open drops it and names #253 instead.
+  left open drops it and names #253 instead; and the `dataset_version`
+  obligation, which ADR-C29 gave to #263, is #265's under ADR-C30's
+  Consequences.
 - **Also stated**, in the sections above: the template scan runs left to
   right, `{{` and `}}` taken first; framing for the inference server adds roles
   and encoding, never text; the names a `Local` generator recognises are its
   constructor configuration; the composition root refuses an absent
   `served_model` itself; two generator nodes with differing identities are
   refused under the one-model-per-role rule; #259 generalises `InvalidParam`'s
-  message; and a context builder's template is named among what is left open.
+  message; a context builder's template is named among what is left open; and
+  § 2 states that ADR-C17 stands and why this ADR does not move an embedder's
+  prefixes.
 - **Context.** ADR-C29's closing "Decided in #251." reads "ADR-C29 decided them
   in #251.", since this ADR was decided in #272.
 
@@ -394,7 +398,7 @@ its model to answer: it adds no instruction text of its own, since a system
 prompt kept service-side would be exactly the hidden template this decision
 withdraws. How that one message is framed for the inference server is the
 dialect's, and #253 decides it; framing adds message roles and the server's own
-chat encoding, **never text** — no system-role message of the relay's own
+chat encoding, **never wording of its own** — no system-role message of the relay's own
 wording.
 
 **A template is a value, not the sub-grammar ADR-C22 rejected.** ADR-C22 refused
@@ -402,6 +406,19 @@ flattened parameter **keys** — `filters.lang` — because they invent "a sub-g
 inside a string key that nothing validates and nothing canonicalizes". A
 template is a parameter's **value**, it is canonicalized as every string value
 is, byte for byte, and it is validated by the one party that renders it.
+
+**ADR-C17 stands.** The principle above requires that a setting a researcher
+varies be **present in the pipeline representation**, and so hashed;
+transmitting it **per call** is only the mechanism where constructor
+configuration cannot reach the component — the `Remote` face, where the generator
+lives. An embedder's prefixes are already in the representation: they are the
+`dense` node's params `query_prefix` and `passage_prefix`, read from them into
+constructor configuration (`embedder_of` in `bin/ragondin/src/wiring.rs`). ADR-C17
+rejected "Prefix text on `EmbedParams`" — model-specific prompt text on the
+stable contract, transmitted per call — and this ADR does not meet that
+objection: nothing here moves a prefix onto a per-call struct. Which constructor
+a `Remote` embedder's prefixes reach is #101's decision, not this ADR's. The
+identity gap ADR-C17's Consequences name stays where ADR-C17 left it (#31).
 
 **The context builder is not changed by this.** Its own configuration — the
 template it renders passages into `Context.text` with, and the unit its budget is
@@ -568,9 +585,13 @@ node's params, so the executor's `InvalidParam` check has not yet run: **the
 composition root refuses an absent or non-string `served_model` itself**, as a
 fatal error, rather than passing an empty string for the component to refuse.
 **Two generator nodes whose identities differ are refused** under the rule
-`model_hashes` in `bin/ragondin/src/wiring.rs` already applies to every role: a
-run records one model per role, and two such nodes are evaluated as two
-pipelines. Any other keying of `model_hashes` would change the shape of the run
+`model_hashes` in `bin/ragondin/src/wiring.rs` already applies to every role it
+records — a run records one model per role, and two such nodes are evaluated as
+two pipelines — to which #266 adds the roles `generator` and `context_builder`.
+In M3 the case is already refused one step later in any event: nothing consumes
+an `Answer`, so two generator nodes are two terminal nodes, which
+`terminal_node` in `engine/ragondin-engine/src/execute.rs` refuses as
+`ExecError::MultipleTerminalNodes`. Any other keying of `model_hashes` would change the shape of the run
 record, and is not decided here.
 Stated plainly, because it is the part a reader will otherwise assume away: **the
 identity is read from an instance other than the one that ran.** For a `Remote`
@@ -755,11 +776,8 @@ here moves per-node detail into a `tracing` macro.
   from the other side, and it is refused for the same reason: the executor
   invents no default, and neither does a service.
 
-- **An in-place edit of ADR-C29.** Process rule 1 changes an accepted Decision
-  only by supersession, and process rule 2's in-place retraction reaches
-  Context, Alternatives rejected and Consequences, never the Decision; the
-  sentence withdrawn is in the Decision. ADR-C24's supersession of ADR-C7 is the
-  precedent this follows.
+- **An in-place edit of ADR-C29.** Refused by process rules 1 and 2, as the
+  Context says under *Why a superseding ADR rather than an amendment*.
 
 ## Consequences
 
@@ -825,7 +843,9 @@ here moves per-node detail into a `tracing` macro.
   crate documentation says the params structs "carry only what varies **per
   call**", and `GenerateParams` carries settings fixed per node — as ADR-C29's
   temperature and seed already were — because per-call params are the only path
-  to a `Remote` service; #255 qualifies that sentence in the same diff.
+  to a `Remote` service; #255 qualifies that sentence in the same diff, and the
+  same sentence in `core/ragondin-contracts/ARCHITECTURE.md` (its paragraph
+  *Where parameters come from*).
 
 - **ADR-C29 is superseded in full, and marked so.** Every citation of ADR-C29 in
   the tree now resolves to a superseded ADR and is read against this one; the
@@ -851,8 +871,9 @@ here moves per-node detail into a `tracing` macro.
 - **The harness must add reference answers to `dataset_version`.** A benchmark
   typed by reference answers (ADR-8) whose references change is a different
   benchmark; without them in the digest, two benchmarks differing only in their
-  references share one identity and their runs collide. That obligation is #263's,
-  and this ADR names it rather than discharging it.
+  references share one identity and their runs collide. That obligation is #265's,
+  as ADR-C30's Consequences assign it (the harness owns `identity.rs`), and this
+  ADR names it rather than discharging it.
 
 - **`Context.chunks` gives #252 a second candidate ranking** — what entered the
   context, beside what the retrieval leg offered — without deciding which of the
