@@ -160,7 +160,7 @@ names**, and every other key is refused:
 One naming the `Local` ONNX reranker (`cross_encoder`) carries `model` and
 `tokenizer`, required, and the optional `max_sequence_length`, and `served_model`
 is refused on it; one naming a bound `Remote` reranker carries `served_model`,
-required, and nothing else.
+required, and nothing else besides `top_k`.
 
 A key outside those sets is **refused, never hashed as inert**: `served_model`
 on a node whose embedder or reranker is the `Local` ONNX one, or `model`,
@@ -200,8 +200,10 @@ before the benchmark is loaded and before anything is planned:**
 - an argument with no `/`, no `=` after it, or an empty `<family>`, `<name>`
   or `<uri>`;
 - a `<family>` that is not one of those above;
-- a `<uri>` that does not parse as an absolute URI with the scheme `http` and a
-  host; an `https` URI is refused with them, since TLS is not decided (§ 3);
+- a `<uri>` that is not an absolute URI of the shape `http://<host>` or
+  `http://<host>:<port>` — the scheme `http`, a host, an optional port, and no
+  path, query or fragment; an `https` URI is refused with them, since TLS is not
+  decided (§ 3);
 - the same `<family>/<name>` bound twice, whatever the two URIs;
 - a `<name>` under which the composition root registers a `Local` component of
   that family — or, for `embedder`, resolves a `Local` embedder — in **any**
@@ -219,7 +221,11 @@ configuration is loaded. A build compiled without the `remote` feature
 (ADR-C14) accepts the argument, runs the five parsing checks above on it, and
 then refuses any binding that passes them, naming the feature.
 **`validate` takes no bindings** and passes a node naming any implementation,
-bound or not — by design, since it never plans.
+bound or not — by design, since it never plans. It applies none of § 1's wiring
+checks either: `run` in `bin/ragondin/src/validate.rs` loads, validates and
+hashes the configuration and runs no composition-root check, so a `dense` node
+without `embedder:`, or with an empty prefix, still validates and prints a hash
+that `bench` then refuses.
 
 **One explicit `register_*` call per binding of a node family**, on the
 `EngineContext` the composition root already holds; for an `embedder` binding,
@@ -273,11 +279,16 @@ both faces.** `EmbedParams` and `RerankParams` each gain
 serves under `name`; `None` asks for the model the component loaded. A `Local`
 component recognises the names it is configured with — its constructor
 configuration, which binds a third-party `Local` component serving several
-names — and refuses any other name as `InvalidRequest`. **The ONNX embedder and
+names — and refuses any other name as `InvalidRequest`; a `Local` component that
+loads several models also refuses `None` as `InvalidRequest`, since only a
+single-model component has a model `None` can mean. **The ONNX embedder and
 reranker are configured with no served-model name**: they answer `None` and
 refuse every `Some(name)` as `InvalidRequest`, and the composition root passes
-`None` on every call to them. A `Remote` service refuses, as `InvalidRequest`, a name it does not serve, and the
-adapter and the service each refuse an empty name the same way. On face 2 the
+`None` on every call to them. A `Remote` service refuses, as `InvalidRequest`, a
+name it does not serve, and **refuses `None`** the same way: a service has no
+loaded model that `None` could name, which is why § 1 requires `served_model` on
+a node bound to a `Remote` embedder or reranker. The adapter and the service
+each refuse an empty name the same way. On face 2 the
 field is a proto3 `optional string` on the Embed and Rerank requests, so an
 omitted one decodes as `None` under ADR-C31 § 2's presence rule. This is the
 treatment ADR-C31 gives the generator, applied to the two families it deferred
@@ -325,8 +336,9 @@ lowercase hex SHA-256 of the tokenizer file's bytes, returned for `None`; any
 `content_hash`, and ADR-C31's completeness rule is about the knobs that are
 not. The tokenizer's contents are what it adds, and they are the hole today —
 only the tokenizer's path is hashed. **The ONNX crates compute both digests in
-their constructor**, which already reads both files synchronously to load the
-session and the tokenizer, and `model_identity` returns the stored value:
+their constructor**, beside the synchronous work already done at construction —
+loading the session through `commit_from_file` and the tokenizer through
+`Tokenizer::from_file` — reading the files' bytes again or from memory; and `model_identity` returns the stored value:
 ADR-C25 governs the call, not construction, and the call then does no blocking
 work at all.
 
@@ -345,23 +357,26 @@ is final.** The adapter prepends `query_prefix` to each text of a
 `EmbedRole::Query` call and `passage_prefix` to each text of a
 `EmbedRole::Passage` call, then sends. The role field stays mandatory on the
 wire — `EMBED_ROLE_UNSPECIFIED` is refused, as ADR-C17 decided — and **a
-service must not transform the text by the role**: no prefix, no instruction,
-nothing. This is normative, because no conformance test can observe double
+service must not prefix or otherwise transform the text by the role**; it **may
+use the role for anything that is not text** — selecting a query tower or a
+passage tower, for instance. This is normative, because no conformance test can observe double
 prefixing. It makes the hashed YAML the one source of the prefix, makes a
 `Local` and a `Remote` embedder of one model behave identically given the same
 node, and leaves a service author nothing to configure.
 
 **The order in `bench`:**
 
-1. Load the configuration, refuse what v0 does not run, check the `dense` nodes'
-   keys (§ 1) and the bindings' use (§ 2).
+1. Load the configuration, refuse what v0 does not run, check the `dense` and
+   reranker nodes' keys (§ 1) and the bindings' use (§ 2).
 2. For each model-bearing node whose name the composition root knows — its
    `Local` names and its bindings — construct one instance per node naming it,
    and await `model_identity` with that node's `served_model`: for a `dense`
    node the instance constructed is the embedder its `embedder:` names, and for
    a reranker node the reranker it names — each read with the node's
    `served_model`, `None` when the key is absent — and for a generator node the
-   identity is read with its required `served_model`, as ADR-C31 § 4 states. Record the results in
+   identity is read with its required `served_model`, as ADR-C31 § 4 states;
+   a context builder node's identity is read with no argument, as ADR-C31 § 4
+   states. Record the results in
    `model_hashes` under the roles `embedder`, `reranker`, `generator` and
    `context_builder` — by family, never by `impl:` name. Two nodes on one role
    whose identities differ are refused under the one-model-per-role rule
@@ -377,7 +392,11 @@ A node name the composition root does not know is skipped in step 2 and reaches
 the planner, whose `PlanError::UnknownImpl` names the family and the name. An
 `embedder:` name it does not know has no planner to reach, since no plan ever
 looks an embedder up, so the composition root refuses it in step 1, naming the
-node and the name. Step 2 keeps today's fail-fast — a missing model file, and
+node and the name. A name the composition root knows — one it registers or
+resolves in any build of it, § 2 — but whose backend this build cannot
+construct, such as `embedder: onnx` in a build without the `onnx` feature, is
+refused in step 1, naming the feature, rather than reaching the planner. Step 2
+keeps today's fail-fast — a missing model file, and
 now an unreachable service or a model it does not serve, "is found now".
 
 **The conformance suites** — #258's and the existing `Embedder` and `Reranker`
@@ -466,14 +485,19 @@ feature.
   absent `served_model` on a node naming a `Remote` embedder or reranker, and the
   executor reading a reranker node's optional `served_model` per call. #261 and
   #13: the `Remote` adapters apply the prefixes, forward `served_model` from
-  `EmbedParams` and `RerankParams` and into `GetModelIdentity`, and call it.
+  `EmbedParams` and `RerankParams` and into `GetModelIdentity`, refuse `None`
+  before sending, and call it.
   #257 and #12: the rpc on the embedder and reranker services, `served_model` as
   a proto3 `optional string` on the Embed and Rerank requests and on
-  `GetModelIdentity`, and the rule that a service must not prefix, written as a
-  comment in the `.proto` beside the role field. #255: the `served_model` field
+  `GetModelIdentity`, the rule that a service refuses an absent one, and the
+  rule that a service must not prefix or otherwise transform the text by the
+  role and may use it for anything that is not text, written as a comment in the
+  `.proto` beside the role field. #255: the `served_model` field
   on `EmbedParams` and `RerankParams` and the two identity methods, in the same
-  versioned break as ADR-C31's traits. `ragondin-retriever-dense` and the
-  corpus-embedding path: take `served_model` and pass it on every `EmbedParams`.
+  versioned break as ADR-C31's traits. #266 also owns `ragondin-retriever-dense`
+  and the corpus-embedding path taking `served_model` and passing it on every
+  `EmbedParams`: the binary and that one component crate, two crates, within
+  the limit `AGENTS.md` sets.
   The ONNX crates: the refusal of any `Some(name)` and the digests of § 4,
   computed in the constructor, in the issue that adds the method to them. #258
   and the existing suites: the two identity scenarios.
@@ -524,19 +548,24 @@ feature.
 - **ADR-C17 is amended, not superseded, in its own pull request.** Its
   Decision stands: the role is per call, the prefix text is the component's
   constructor configuration — the `Remote` adapter being the component — and the
-  wire reserves the zero. Three passages of its Consequences are overtaken and
-  are retracted under process rule 2 in a pull request of their own: the
-  reason given for carrying the role on face 2, that without it "a `Remote`
-  embedder is deaf to the role", which now reads against a service that must
-  not act on the role; the statement that "nothing carries a prefix into run
-  identity today", which is already false — the `dense` node's prefixes are
-  parameters of the node, read by `embedder_of`, and so hashed, since the bench
-  subcommand #31 asked for landed (PR #232), and #31 is closed. ADR-C31 repeats
-  the gap twice — § 2 says it "stays where ADR-C17 left it (#31)", and § 4 calls
-  it "a hole it names and leaves to #31" — and a reader of ADR-C31 should read
-  both as closed by #31, with nothing further owed; and the `embedder: { … }` sub-map, which "would
-  require #43" — moot, since the key is a flat name. With it, ADR-C22's candidate
-  demanders for a `Map` from #101 are gone: nothing here needs one.
+  wire reserves the zero. Three passages of its Consequences are overtaken, and
+  a pull request of their own addresses them under process rule 2: the reason
+  given for carrying the role on face 2, that without it "a `Remote` embedder is
+  deaf to the role" — which still holds for what the role is now for, since a
+  service may use it for anything that is not text, and is narrowed only in
+  that a service must not prefix or otherwise transform the text by it; the
+  statement that "nothing carries a prefix into run identity today", which is
+  already false — the `dense` node's prefixes are parameters of the node, read
+  by `embedder_of`, and so hashed, since the bench subcommand #31 asked for
+  landed (PR #232), and #31 is closed; and the `embedder: { … }` sub-map, which
+  "would require #43" — moot, since the key is a flat name. With it, ADR-C22's
+  candidate demanders for a `Map` from #101 are gone: nothing here needs one.
+  A reader's note on ADR-C31, which corrects a stale factual claim in its text
+  and changes none of its decisions: ADR-C31 repeats the prefix gap twice — § 2
+  says it "stays where ADR-C17 left it (#31)", and § 4 calls it "a hole it names
+  and leaves to #31" — and both sentences sit in its Decision, which process
+  rule 2 cannot amend, so they stand as written and are read as closed by #31,
+  with nothing further owed.
 
 - **Dead engine surface is removed in an issue of its own.** No plan resolves an
   embedder or a store, and after this decision nothing ever will through the
