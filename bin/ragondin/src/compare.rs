@@ -17,7 +17,8 @@ use ragondin_experiments::{
 use ragondin_pipeline::ParamValue;
 
 /// Loads the runs named by `run_a` and `run_b` from the store rooted at
-/// `store_root` and prints their metric-by-metric diff.
+/// `store_root` and prints their diff: metric by metric, then the
+/// configuration parameters they differ in.
 ///
 /// A `run_id` that does not parse, or that names no run in the store, is
 /// reported through [`RunStoreError`](ragondin_experiments::RunStoreError)'s
@@ -40,14 +41,14 @@ pub fn run(store_root: &Path, run_a: &str, run_b: &str) -> Result<()> {
 }
 
 /// Renders a comparison as one line per metric either run recorded, followed
-/// by `identical` when the two runs agree on every one of them, and then the
+/// by `metrics: identical` when the two runs agree on every one of them, and then the
 /// configuration block ([`render_configuration`]).
 ///
 /// Two runs with no metrics at all are `identical` too
 /// ([`RunComparison::is_identical`]'s own rule) — there is nothing they
 /// disagree about, and this renders exactly that empty table plus the line.
-/// That `identical` speaks of the metrics only; the configuration block below
-/// it says whether the configurations agree.
+/// That line speaks of the metrics only; the configuration block below it
+/// says whether the configurations agree.
 fn render(comparison: &RunComparison) -> String {
     let mut report = format!("{} vs {}\n", comparison.left, comparison.right);
     for metric in &comparison.metrics {
@@ -55,7 +56,7 @@ fn render(comparison: &RunComparison) -> String {
         report.push('\n');
     }
     if comparison.is_identical() {
-        report.push_str("identical\n");
+        report.push_str("metrics: identical\n");
     }
     report.push_str(&render_configuration(&comparison.configuration));
     report
@@ -67,10 +68,20 @@ fn render(comparison: &RunComparison) -> String {
 /// `ragondin-experiments` returns them, node id then key.
 fn render_configuration(configuration: &ConfigurationComparison) -> String {
     match configuration {
-        ConfigurationComparison::Compared(differences) if differences.is_empty() => {
-            "configuration: identical\n".to_owned()
+        ConfigurationComparison::Compared {
+            differences,
+            same_logical_form,
+        } if differences.is_empty() => {
+            // `identical` only when the canonical forms hash equal: two
+            // configurations wired differently share every parameter and are
+            // still two configurations, with two run identities.
+            if *same_logical_form {
+                "configuration: identical\n".to_owned()
+            } else {
+                "configuration: no parameter differs; the wiring does\n".to_owned()
+            }
         }
-        ConfigurationComparison::Compared(differences) => {
+        ConfigurationComparison::Compared { differences, .. } => {
             let mut block = match differences.len() {
                 1 => "configuration: 1 parameter differs\n".to_owned(),
                 count => format!("configuration: {count} parameters differ\n"),
@@ -170,8 +181,22 @@ mod tests {
     #[test]
     fn identical_configurations_say_so_in_one_line() {
         assert_eq!(
-            render_configuration(&ConfigurationComparison::Compared(Vec::new())),
+            render_configuration(&ConfigurationComparison::Compared {
+                differences: Vec::new(),
+                same_logical_form: true,
+            }),
             "configuration: identical\n"
+        );
+    }
+
+    #[test]
+    fn no_differing_parameter_under_a_different_logical_form_names_the_wiring() {
+        assert_eq!(
+            render_configuration(&ConfigurationComparison::Compared {
+                differences: Vec::new(),
+                same_logical_form: false,
+            }),
+            "configuration: no parameter differs; the wiring does\n"
         );
     }
 
@@ -202,7 +227,10 @@ mod tests {
         ];
 
         assert_eq!(
-            render_configuration(&ConfigurationComparison::Compared(differences)),
+            render_configuration(&ConfigurationComparison::Compared {
+                differences,
+                same_logical_form: false,
+            }),
             "configuration: 3 parameters differ\n\
              \x20 sparse impl: \"bm25\" vs \"splade\"\n\
              \x20 sparse params.k: 60 vs 60.0\n\

@@ -160,15 +160,23 @@ Why here and not elsewhere:
 - **`serde_yaml` is used here, not added.** The entry already exists in
   `[workspace.dependencies]` for this format, so this fills no new utility role
   and does not escalate. What this crate now has to follow is the wire schema:
-  a stored document that no longer lowers — a run stored under a schema version
-  this build cannot read — is reported as
-  `ConfigurationComparison::Unavailable`, naming the side and the reason, and
-  the metrics are compared regardless. The store itself still never parses a
-  document.
+  a stored document that no longer lowers is reported as
+  `ConfigurationComparison::Unavailable`, naming the side and the reason — the
+  schema version is peeked first, as `ragondin-config` does, so a run stored
+  under a version this build cannot read says exactly that — and the metrics
+  are compared regardless. The store itself still never parses a document.
+- **The YAML format now has two readers.** `ragondin-config` reads a
+  configuration file; this crate reads the verbatim copy a run kept. Both land
+  the text in `ragondin-pipeline`'s `RawPipeline` and lower it through the same
+  `validate`, so the schema and the pass stay single; what is duplicated is the
+  few lines of `serde_yaml` in front of them. Prose elsewhere that reads as
+  "the format is parsed in one crate" is out of date on this point.
 
 What is compared, and what is not: every node's `impl:` name (an extension
 node's `kind`, which is where its `impl:` lands on lowering) and every key under
 its `params:`, identified by node id and key, sorted in that order. A node only
 one run has shows each of its keys with the other side absent. The wiring — a
 node's `inputs`, the pipeline's declared inputs — and a node's component family
-are not compared.
+are not listed parameter by parameter; whether the two canonical forms hash
+equal (`LogicalPipeline::content_hash`) is carried beside the list, so two
+configurations that differ only there are never reported identical.

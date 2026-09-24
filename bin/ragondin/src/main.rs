@@ -95,7 +95,9 @@ enum Command {
     #[command(long_about = "Compare two runs already recorded in a run store.\n\n\
         Both are read by their `run_id` and never re-executed: the diff is \
         metric by metric, over whatever either run recorded, and names which \
-        side scored higher on each one. No default run store location is \
+        side scored higher on each one; then it names the configuration \
+        parameters and `impl:` names the two runs differ in, node by node, \
+        with both values. No default run store location is \
         settled yet, so `--store` names it explicitly.")]
     Compare {
         /// The first run's identity.

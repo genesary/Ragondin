@@ -42,7 +42,7 @@ pipeline:
 
 fn differences(comparison: &ConfigurationComparison) -> &[ParameterDifference] {
     match comparison {
-        ConfigurationComparison::Compared(differences) => differences,
+        ConfigurationComparison::Compared { differences, .. } => differences,
         other => panic!("both documents lower, so they are compared: {other:?}"),
     }
 }
@@ -83,8 +83,44 @@ pipeline:
 
     assert_eq!(
         comparison.configuration,
-        ConfigurationComparison::Compared(Vec::new())
+        ConfigurationComparison::Compared {
+            differences: Vec::new(),
+            same_logical_form: true,
+        }
     );
+}
+
+#[test]
+fn a_difference_in_wiring_alone_is_no_parameter_difference_and_not_an_identical_configuration() {
+    let rewired = BASELINE.replace("[question]", "[query]");
+
+    let comparison = compare(&a_run(0x01, BASELINE), &a_run(0x02, &rewired));
+
+    assert_eq!(
+        comparison.configuration,
+        ConfigurationComparison::Compared {
+            differences: Vec::new(),
+            same_logical_form: false,
+        }
+    );
+}
+
+#[test]
+fn a_document_stored_under_a_schema_version_this_build_cannot_read_says_so() {
+    let future = format!("version: 99\n{BASELINE}");
+
+    let comparison = compare(&a_run(0x01, BASELINE), &a_run(0x02, &future));
+
+    match &comparison.configuration {
+        ConfigurationComparison::Unavailable { side, reason } => {
+            assert_eq!(*side, Side::Right);
+            assert!(
+                reason.starts_with("stored under a schema version this build cannot read"),
+                "got: {reason}"
+            );
+        }
+        other => panic!("the right document is from a newer schema: {other:?}"),
+    }
 }
 
 #[test]

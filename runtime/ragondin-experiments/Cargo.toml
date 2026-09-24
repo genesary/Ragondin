@@ -11,8 +11,8 @@ rust-version.workspace = true
 # `PipelineHash` that is the first component of run identity
 # (`docs/system-architecture.md` §7.1) and for the `RawPipeline` and
 # `validate` a comparison lowers two stored configurations through, and on
-# `ragondin-types` for the
-# `QueryId` a per-query trace is filed under. It does **not** depend on
+# `ragondin-types` for the `QueryId` a per-query trace is filed under. It does
+# **not** depend on
 # `ragondin-engine`: the harness is the driver that holds both, and it renders
 # the engine's `ExecutionTrace` into the document this crate stores.
 #

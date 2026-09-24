@@ -57,7 +57,7 @@ fn a_run(id: RunId, metrics: &[(&str, f64)]) -> Run {
             engine_version: "0.0.0".to_owned(),
         },
         metrics: metrics.iter().copied().collect(),
-        config: ConfigDocument::new("schema_version: 1\nnodes: []\n"),
+        config: ConfigDocument::new(a_configuration(10)),
         traces: BTreeMap::new(),
     }
 }
@@ -118,11 +118,13 @@ fn comparing_a_run_with_itself_reports_identical() {
         output.status.code(),
         stderr(&output)
     );
-    assert!(
-        stdout(&output).contains("identical"),
-        "got:\n{}",
-        stdout(&output)
-    );
+    let report = stdout(&output);
+    for line in ["metrics: identical", "configuration: identical"] {
+        assert!(
+            report.lines().any(|found| found == line),
+            "expected the line `{line}`, got:\n{report}"
+        );
+    }
 }
 
 #[test]

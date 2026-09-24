@@ -9,8 +9,10 @@
 //! It compares **metrics**, and **which configuration parameters differ**:
 //! the node-level parameters and `impl:` names one run's stored configuration
 //! holds and the other does not, or holds with another value. The graph's
-//! wiring — a node's `inputs`, the pipeline's declared inputs — is not
-//! compared. Both documents are lowered to
+//! wiring — a node's `inputs`, the pipeline's declared inputs — is not listed
+//! parameter by parameter; whether the two canonical forms hash equal is
+//! carried beside the list, so a difference there is still reported. Both
+//! documents are lowered to
 //! [`LogicalPipeline`] first, through
 //! `ragondin-pipeline`'s own [`RawPipeline`] and [`validate()`], so the
 //! difference is one between canonical logical forms and never between texts
@@ -19,7 +21,10 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use ragondin_pipeline::{validate, LogicalNode, LogicalPipeline, NodeId, ParamValue, RawPipeline};
+use ragondin_pipeline::{
+    peek_schema_version, validate, LogicalNode, LogicalPipeline, NodeId, ParamValue, RawPipeline,
+    SchemaVersionPeekError,
+};
 
 use crate::run::{ConfigDocument, Run, RunId};
 
@@ -77,29 +82,44 @@ fn compare_configurations(
         }
     };
 
+    let same_logical_form = left.content_hash() == right.content_hash();
     let left = parameters(&left);
     let right = parameters(&right);
     let keys: BTreeSet<&(NodeId, ParameterKey)> = left.keys().chain(right.keys()).collect();
 
-    ConfigurationComparison::Compared(
-        keys.into_iter()
-            .filter_map(|entry| {
-                let (left, right) = (left.get(entry), right.get(entry));
-                (left != right).then(|| ParameterDifference {
-                    node: entry.0.clone(),
-                    key: entry.1.clone(),
-                    left: left.cloned(),
-                    right: right.cloned(),
-                })
+    let differences = keys
+        .into_iter()
+        .filter_map(|entry| {
+            let (left, right) = (left.get(entry), right.get(entry));
+            (left != right).then(|| ParameterDifference {
+                node: entry.0.clone(),
+                key: entry.1.clone(),
+                left: left.cloned(),
+                right: right.cloned(),
             })
-            .collect(),
-    )
+        })
+        .collect();
+    ConfigurationComparison::Compared {
+        differences,
+        same_logical_form,
+    }
 }
 
 /// The load path `ragondin-config` runs over a file, run over the kept text:
 /// into the hand-maintained wire schema, then through the validation pass —
 /// never a deserializer pointed at an internal type (INV-9).
+///
+/// The schema version is peeked first, as `ragondin-config` does, so a run
+/// stored under a version this build cannot read says that rather than
+/// reporting a syntax error.
 fn lower(document: &ConfigDocument) -> Result<LogicalPipeline, String> {
+    if let Err(SchemaVersionPeekError::Unsupported(source)) =
+        peek_schema_version(serde_yaml::Deserializer::from_str(document.as_str()))
+    {
+        return Err(format!(
+            "stored under a schema version this build cannot read: {source}"
+        ));
+    }
     let raw: RawPipeline = serde_yaml::from_str(document.as_str())
         .map_err(|error| format!("the stored configuration does not parse: {error}"))?;
     validate(raw).map_err(|error| format!("the stored configuration does not validate: {error}"))
@@ -133,7 +153,8 @@ fn parameters(pipeline: &LogicalPipeline) -> BTreeMap<(NodeId, ParameterKey), Pa
     parameters
 }
 
-/// What two runs scored, metric by metric.
+/// What two runs scored, metric by metric, and which configuration
+/// parameters they differ in.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RunComparison {
     /// The run on the left-hand side.
@@ -211,11 +232,19 @@ impl MetricComparison {
 /// said.
 #[derive(Clone, Debug, PartialEq)]
 pub enum ConfigurationComparison {
-    /// Both stored documents lowered. One entry per parameter — `impl:` name
-    /// included — that one run's configuration holds and the other does not,
-    /// or holds with another value, sorted by node id and then by key. Empty
-    /// when the two configurations agree on every one.
-    Compared(Vec<ParameterDifference>),
+    /// Both stored documents lowered.
+    Compared {
+        /// One entry per parameter — `impl:` name included — that one run's
+        /// configuration holds and the other does not, or holds with another
+        /// value, sorted by node id and then by key. Empty when the two
+        /// configurations agree on every one.
+        differences: Vec<ParameterDifference>,
+        /// Whether the two canonical logical forms hash equal
+        /// ([`LogicalPipeline::content_hash`]). No differing parameter does
+        /// not make two configurations one: the wiring, the declared inputs
+        /// or a node's family can still differ, and this is what says so.
+        same_logical_form: bool,
+    },
     /// One side's stored document does not lower under this build — the left
     /// one, when neither does.
     Unavailable {
