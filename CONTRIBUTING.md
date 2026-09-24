@@ -119,8 +119,13 @@ A new crate under `components/` that implements a trait from `ragondin-contracts
 - Its heavy dependency (the retrieval engine, the ML runtime, the store client)
   is confined to the crate and **feature-gated**, so the default workspace build
   stays lean.
-- It registers on an `EngineContext` through exactly the same mechanism a
-  third-party component would use.
+- The binary — the composition root — constructs it, through exactly the same
+  mechanism a third-party component would use. A retriever, a fusion or a
+  reranker — the families a pipeline node names — is registered on an
+  `EngineContext` by a `register_*` call. An embedder or a vector store has no
+  table on the context: the composition root builds it inside the constructor
+  it registers for the dense retriever
+  ([ADR-C32](docs/adr/ADR-C32-remote-named-by-impl-bound-by-the-composition-root.md) § 3).
 - Naming: `ragondin-<role>-<implementation>`, e.g. `ragondin-reranker-onnx`,
   `ragondin-store-qdrant`.
 - A choice the documents do not settle and that stays inside your crate is

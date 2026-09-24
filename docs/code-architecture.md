@@ -538,7 +538,7 @@ flowchart LR
 
 The "plugin system" is **not** an exotic dynamic-loading mechanism. It is simply:
 
-- **`Local` contribution** — a new crate under `components/` implementing a trait from `ragondin-contracts` and registering on the `EngineContext`. In-repository, compiled, on the hot path. **Compiles only `ragondin-contracts` and `ragondin-types`** — not the engine.
+- **`Local` contribution** — a new crate under `components/` implementing a trait from `ragondin-contracts`, constructed by the composition root, and registered on the `EngineContext` when its family is one a pipeline node names (§8.1); an embedder or a vector store has no table there and is built inside the dense retriever's constructor (ADR-C32 § 3). In-repository, compiled, on the hot path. **Compiles only `ragondin-contracts` and `ragondin-types`** — not the engine.
 - **`Remote` contribution** — a gRPC service **outside the repository, in any language**, honouring the protobuf service in `ragondin-proto`. Named by URL in the configuration, resolved to a `Remote<T>`.
 - **A genuinely new node type** — the `Extension` variant (§6.2), without touching the core.
 
