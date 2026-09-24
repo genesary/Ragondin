@@ -67,7 +67,7 @@ impl Qrels {
     ///
     /// This is **not** the count of *evaluable* queries, and must not be used
     /// as the denominator of a mean over a run. A qrels file can name a query
-    /// that `queries.jsonl` never defines — `read_queries` filters queries by
+    /// that `queries.jsonl` never defines — `judged_in_split` filters queries by
     /// qrels, but nothing filters qrels by queries, so this count can exceed
     /// the number of queries a run can actually be scored against. The
     /// correct denominator for a mean over a run is `Benchmark::queries().len()`;

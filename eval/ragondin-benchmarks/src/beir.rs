@@ -578,7 +578,7 @@ fn read_qrels(path: &Path) -> Result<Qrels, BenchmarkError> {
 
         // Trim every field, not just the score: an untrimmed id that differs
         // from the "real" id by only whitespace parses fine, inserts fine,
-        // and then matches nothing when `queries()` filters by qrels, so the
+        // and then matches nothing when `judged_in_split` filters by qrels, so the
         // query set empties out. `load`'s `NoJudgedQuery` guard now catches
         // that state, but only after the fact and only when *every* query
         // misses; trimming here is what stops it happening.

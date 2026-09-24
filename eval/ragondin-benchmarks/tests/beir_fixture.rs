@@ -647,7 +647,7 @@ fn an_empty_qrels_file_still_loads_with_no_queries_and_no_error() {
 /// Trimming only the qrels side is the shape that silently breaks a dataset
 /// whose ids carry the same surrounding whitespace in every file: the qrels
 /// id becomes `q1` while the query id stays `q1 `, they stop matching, and
-/// `read_queries` filters the query out. Untrimmed on both sides used to
+/// `judged_in_split` filters the query out. Untrimmed on both sides used to
 /// match; trimmed on both sides matches too. One side only is the broken case
 /// — and on a dataset with more than one query it drops only the affected
 /// ones, which the `NoJudgedQuery` guard cannot see. Trimming is the fix; the

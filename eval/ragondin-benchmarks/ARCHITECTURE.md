@@ -202,7 +202,7 @@ qrels TSV normally opens with `query-id  corpus-id  score`, and reading that
 as data invents a judgment for a query called `query-id` that no run will ever
 answer, quietly lowering every mean. The obvious guard — always skip line one —
 fails the other way round on the qrels files that ship without a header, where
-it discards a real judgment *and*, because `read_queries` filters queries by
+it discards a real judgment *and*, because `judged_in_split` filters queries by
 qrels, removes that query from the run entirely. So the first record is a
 header, and is skipped, **only when its score field both fails to parse as a
 `u8` and spells BEIR's own `score`**. Do not replace this with
@@ -246,7 +246,7 @@ all of them.
 
 Three separate parsing bugs on this reader — a swallowed headerless first row,
 a one-sided trim, a byte welded onto the first id — all ended in the same
-state: judgments loaded, every query filtered out by `read_queries`, and the
+state: judgments loaded, every query filtered out by `judged_in_split`, and the
 benchmark returned `Ok` with an empty query set. Nothing failed; the mismatch
 between the two files surfaced later as a metric of zero, reported as a
 number.
