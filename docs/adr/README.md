@@ -115,8 +115,11 @@ superseded_by: null
   *no invariant applies*. Nothing here is inferred: an invented cross-reference is
   worse than a missing one, because it will be cited.
 - **`supersedes`** / **`superseded_by`** record supersession, and only where an
-  ADR states it. Both are empty across the current set — no decision has been
-  superseded yet — and they exist so the first supersession has somewhere to go.
+  ADR states it. The superseding ADR lists the old one in `supersedes`, and the
+  old one names its successor in `superseded_by` and carries `status: superseded`;
+  the first to do so was ADR-C24, which superseded ADR-C7. Which decisions are
+  superseded now is the index under *The decisions* above, generated from these
+  fields.
 
 **Front-matter is metadata about a decision, never part of one.** Adding it edited
 no Context, Decision, Alternatives rejected, Consequences or Status section, and
