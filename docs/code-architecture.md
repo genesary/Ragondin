@@ -106,7 +106,8 @@ workspace/
 ├── Cargo.toml                 # [workspace] + [workspace.dependencies] — versions centralized here
 │
 ├── core/                      # THE CORE — stable API boundaries, no heavy dependencies
-│   ├── ragondin-types              # Document, Chunk, Query, Embedding, ScoredChunk, Context, Generation
+│   ├── ragondin-types              # Document, Chunk, Query, Embedding, ScoredChunk, Context,
+│   │                          #   ContextChunk, Answer, ModelIdentity
 │   │                          #   Value types. serde only. No I/O, no globals.
 │   ├── ragondin-pipeline           # RawPipeline → LogicalPipeline → PhysicalPipeline
 │   │                          #   Graph, control flow, Extension variant, canonical hashing

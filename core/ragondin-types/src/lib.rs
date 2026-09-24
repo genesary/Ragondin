@@ -204,13 +204,12 @@ pub struct Answer {
 
 /// The identity of the model behind a component, as the component reports it.
 ///
-/// Opaque: nothing here parses it. What it must cover is the reporting
-/// component's obligation, stated in ADR-C31 § 4.
+/// Opaque: nothing here parses it (ADR-C31 § 4).
 ///
 /// An empty identity is *representable* and not valid (ADR-C31 § 1) — the
 /// shape ADR-C20 gave [`Embedding`]. Rejecting it here would require a
 /// fallible constructor and an error type in a crate that deliberately has
-/// none; the rule lives where a component's obligations live.
+/// none.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct ModelIdentity(String);
@@ -423,7 +422,8 @@ mod tests {
         assert_eq!(ModelIdentity::new("m@rev").as_str(), "m@rev");
     }
 
-    /// The protobuf mirror is field-for-field (ADR-C24), so the field names
+    /// Field names are part of the wire form, and ADR-C24 makes the domain
+    /// types the source of truth a `.proto` mirrors field for field, so they
     /// are pinned: a renamed one would still round trip.
     #[test]
     fn context_reads_from_its_documented_shape() {
