@@ -368,8 +368,8 @@ node, and leaves a service author nothing to configure.
 
 1. Load the configuration, refuse what v0 does not run, check the `dense` and
    reranker nodes' keys (§ 1) and the bindings' use (§ 2).
-2. For each model-bearing node whose name the composition root knows — its
-   `Local` names and its bindings — construct one instance per node naming it,
+2. For each model-bearing node whose name the composition root knows — the
+   `Local` names this build can construct, and its bindings — construct one instance per node naming it,
    and await `model_identity` with that node's `served_model`: for a `dense`
    node the instance constructed is the embedder its `embedder:` names, and for
    a reranker node the reranker it names — each read with the node's
@@ -389,13 +389,17 @@ node, and leaves a service author nothing to configure.
 6. Evaluate, and save.
 
 A node name the composition root does not know is skipped in step 2 and reaches
-the planner, whose `PlanError::UnknownImpl` names the family and the name. An
-`embedder:` name it does not know has no planner to reach, since no plan ever
-looks an embedder up, so the composition root refuses it in step 1, naming the
-node and the name. A name the composition root knows — one it registers or
-resolves in any build of it, § 2 — but whose backend this build cannot
-construct, such as `embedder: onnx` in a build without the `onnx` feature, is
-refused in step 1, naming the feature, rather than reaching the planner. Step 2
+the planner, whose `PlanError::UnknownImpl` names the family and the name. So is
+a node name whose backend this build does not carry — `cross_encoder` or `bm25`
+in a build without their feature: its constructor cannot be built, so it is not
+known for identity purposes, no identity is read for it, and the planner refuses
+it by the same `UnknownImpl`, as `bin/ragondin/src/wiring.rs`'s module
+documentation describes today. A non-node family has no planner to reach, since
+no plan ever looks an embedder up, so the composition root diagnoses it itself
+in step 1: an `embedder:` name it does not know is refused naming the node and
+the name, and a name it gives a `Local` embedder in some build but cannot
+construct in this one — `embedder: onnx` in a build without the `onnx` feature —
+is refused naming the feature. Step 2
 keeps today's fail-fast — a missing model file, and
 now an unreachable service or a model it does not serve, "is found now".
 
