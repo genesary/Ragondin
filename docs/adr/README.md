@@ -21,7 +21,7 @@ An **Architecture Decision Record (ADR)** captures one architectural decision: i
 
 - **`000-template.md`** — the template every ADR follows: Context / Decision / Alternatives rejected / Consequences / Status, plus an optional Amendments section (process rule 2).
 - **`ADR-001-*.md` … `ADR-015-*.md`** — the frozen decisions of the *system* architecture, one file per decision, cited as `ADR-1` … `ADR-15`.
-- **`ADR-C01-*.md` … `ADR-C32-*.md`** — the frozen decisions of the *code* architecture, one file per decision, cited as `ADR-C1` … `ADR-C32`.
+- **`ADR-C01-*.md` … `ADR-C33-*.md`** — the frozen decisions of the *code* architecture, one file per decision, cited as `ADR-C1` … `ADR-C33`.
 
 Each file is self-contained: it should be understandable and actionable on its own, without first reading `AGENTS.md` or the architecture documents. If an ADR only makes sense after reading something else, it is under-specified and should be fixed.
 
@@ -85,6 +85,7 @@ index of citable decisions is worse than none — `just check` fails when it dri
 | [`ADR-C30`](ADR-C30-generation-evaluation-regime-squad-metrics-and-benchmark.md) | The generation evaluation regime — exact match and F1 after the SQuAD script, SQuAD v1.1 dev as the first QA benchmark, and the ranking retrieval metrics read once a pipeline ends in an answer | INV-1 | accepted |
 | [`ADR-C31`](ADR-C31-generation-contracts-template-and-served-model-per-call.md) | The generation contracts — ContextBuilder and Generator, their nodes and kinds, their model identity, what the trace names, and the template and served model as experiment variables | INV-1, INV-2, INV-7, INV-9, INV-10 | accepted |
 | [`ADR-C32`](ADR-C32-remote-named-by-impl-bound-by-the-composition-root.md) | A node names a Remote component by an ordinary implementation name; its address is bound by the composition root, never written in the pipeline; the embedder and the reranker report their model identity | INV-1, INV-6, INV-7, INV-8, INV-9 | accepted |
+| [`ADR-C33`](ADR-C33-reference-generator-service-stateless-relay.md) | The reference Remote generator service is a stateless relay under testkit/, behind a feature, over one HTTP client, speaking the OpenAI-compatible chat-completions dialect | INV-4, INV-11 | accepted |
 
 <!-- END GENERATED ADR INDEX -->
 
@@ -135,7 +136,7 @@ stated here canonically.
 number is **never padded**:
 
 - System-architecture decisions use the bare prefix: `ADR-1` … `ADR-15`.
-- Code-architecture decisions use the `C` prefix: `ADR-C1` … `ADR-C32`.
+- Code-architecture decisions use the `C` prefix: `ADR-C1` … `ADR-C33`.
 - New decisions (from `decision` issues) continue the appropriate sequence and are added, never inserted retroactively.
 
 **The filename** is `ADR-<number>-<slug>.md`, where the number **is** padded — to
