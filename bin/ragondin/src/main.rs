@@ -15,8 +15,9 @@
 //! configuration through `ragondin-config`, stops at the `LogicalPipeline`, and
 //! prints its content hash — the config→logical→hash path end to end, with no
 //! registry and no execution. `compare` reads two runs already recorded in a
-//! run store (`ragondin-experiments`) and prints their metric-by-metric diff —
-//! no re-execution and no new metric, a packaging-only handler over that
+//! run store (`ragondin-experiments`) and prints their diff — metric by
+//! metric, then the configuration parameters they differ in — with no
+//! re-execution and no new metric, a packaging-only handler over that
 //! crate's comparison (ADR-C15). `bench` evaluates a configuration against a
 //! benchmark and records the run. `serve` parses its arguments and then
 //! reports that this build does not implement it.

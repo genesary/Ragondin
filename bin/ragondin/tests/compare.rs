@@ -147,3 +147,40 @@ fn comparing_an_unknown_run_id_is_a_diagnosis_not_a_crash() {
         "the report must name the run id that was not found, got:\n{report}"
     );
 }
+
+/// A valid one-node configuration whose retriever sets `top_k` as given.
+fn a_configuration(top_k: u32) -> String {
+    format!(
+        "pipeline:\n  inputs: [question]\n  nodes:\n    - id: sparse\n      component: retriever\n      impl: bm25\n      inputs: [question]\n      params: {{ top_k: {top_k} }}\n"
+    )
+}
+
+#[test]
+fn compare_names_the_configuration_parameter_the_two_runs_differ_in() {
+    let store = store("configuration");
+    let mut baseline = a_run(run_id(0x66), &[("ndcg@10", 0.64)]);
+    baseline.config = ConfigDocument::new(a_configuration(10));
+    let mut candidate = a_run(run_id(0x77), &[("ndcg@10", 0.71)]);
+    candidate.config = ConfigDocument::new(a_configuration(20));
+    store
+        .save(&baseline)
+        .expect("the baseline run must be writable");
+    store
+        .save(&candidate)
+        .expect("the candidate run must be writable");
+
+    let output = ragondin(&[
+        "compare",
+        &baseline.id.to_string(),
+        &candidate.id.to_string(),
+        "--store",
+        store.root().to_str().expect("UTF-8 path"),
+    ]);
+
+    assert!(output.status.success(), "{}", stderr(&output));
+    let report = stdout(&output);
+    assert!(
+        report.contains("sparse params.top_k: 10 vs 20"),
+        "the diff must name the node, the key and both values, got:\n{report}"
+    );
+}

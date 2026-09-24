@@ -9,7 +9,9 @@ rust-version.workspace = true
 
 # The experiment plane's own state. It depends on `ragondin-pipeline` for the
 # `PipelineHash` that is the first component of run identity
-# (`docs/system-architecture.md` §7.1), and on `ragondin-types` for the
+# (`docs/system-architecture.md` §7.1) and for the `RawPipeline` and
+# `validate` a comparison lowers two stored configurations through, and on
+# `ragondin-types` for the
 # `QueryId` a per-query trace is filed under. It does **not** depend on
 # `ragondin-engine`: the harness is the driver that holds both, and it renders
 # the engine's `ExecutionTrace` into the document this crate stores.
@@ -22,4 +24,11 @@ ragondin-pipeline = { workspace = true }
 ragondin-types = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true } # the on-disk format of a run record
+# `compare` lowers the two stored configuration documents to `LogicalPipeline`
+# to say which parameters differ. The documents are YAML, and `ragondin-config`
+# only reads one from a path, asynchronously; parsing the kept text here into
+# `ragondin-pipeline`'s own `RawPipeline` and running its `validate` is the
+# same lowering without the file. Used here, not added here: no new utility
+# role (`ARCHITECTURE.md` § The comparison lowers the stored configurations).
+serde_yaml = { workspace = true }
 thiserror = { workspace = true }

@@ -16,7 +16,7 @@ view of the product.
 | `RunId` | The content address of a run: a 32-byte digest, rendered and parsed as 64 lowercase hex digits |
 | `Run` | One execution: its identity tuple's components, its metrics, the configuration document, the per-query traces |
 | `FileSystemRunStore` | `save`, `load` by id, `compare` by two ids — one directory per run |
-| `compare` | The metric-by-metric diff behind `ragondin compare` |
+| `compare` | The diff behind `ragondin compare`: metric by metric, and the configuration parameters the two runs differ in |
 
 **Deliberately absent**, and each for its own reason: the **export adapters**
 (MLflow, OpenTelemetry) — additive to the plane and not what a local benchmark
@@ -131,3 +131,44 @@ harness.
   `0.0` when nothing is relevant — but an aggregate has denominators of its own:
   a mean over an empty query set, or a cost-per-query where the count is zero,
   is `0.0 / 0.0`.
+
+## The comparison lowers the stored configurations
+
+A choice made in this crate (`AGENTS.md` § Rules of engagement), recorded here.
+
+`compare` says which node-level parameters and `impl:` names two runs differ
+in. It takes that difference between the two stored configuration documents
+**lowered to `LogicalPipeline`**, never between their texts — two spellings of
+one configuration are one configuration (the spirit of INV-8) — and it lowers
+them **here**, from the kept text: `serde_yaml` into `ragondin-pipeline`'s own
+`RawPipeline`, then that crate's `validate`. That is the path `ragondin-config`
+runs over a file, and INV-9 is kept the same way: the text lands in the
+hand-maintained wire schema and reaches the in-memory model only through the
+pass.
+
+Why here and not elsewhere:
+
+- **Not through `ragondin-config`.** Its one source, `LocalFile`, reads a path,
+  asynchronously; a stored run is text, and its path is this crate's internal
+  layout, which no caller may name. A text entry point on `ragondin-config`
+  would make the change three crates, and an edge from this crate to that one
+  is not in `docs/code-architecture.md` § 4.3's graph.
+- **Not in the binary.** The binary would lower the same text the same way, with
+  `serde_yaml` promoted from its dev-dependencies, and the comparison is this
+  crate's (§ What lives here): the binary's `compare` is a packaging of it
+  (ADR-C15 makes the one binary a packaging decision) and renders it.
+- **`serde_yaml` is used here, not added.** The entry already exists in
+  `[workspace.dependencies]` for this format, so this fills no new utility role
+  and does not escalate. What this crate now has to follow is the wire schema:
+  a stored document that no longer lowers — a run stored under a schema version
+  this build cannot read — is reported as
+  `ConfigurationComparison::Unavailable`, naming the side and the reason, and
+  the metrics are compared regardless. The store itself still never parses a
+  document.
+
+What is compared, and what is not: every node's `impl:` name (an extension
+node's `kind`, which is where its `impl:` lands on lowering) and every key under
+its `params:`, identified by node id and key, sorted in that order. A node only
+one run has shows each of its keys with the other side absent. The wiring — a
+node's `inputs`, the pipeline's declared inputs — and a node's component family
+are not compared.
