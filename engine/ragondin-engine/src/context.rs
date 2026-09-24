@@ -1,8 +1,8 @@
 //! The component registry and the context that carries it.
 //!
 //! `EngineContext` is the composition root (`docs/code-architecture.md` §8.1),
-//! modelled on DataFusion's session context: one table per component family,
-//! mapping an `impl:` name to a constructor. It is **passed explicitly, never
+//! modelled on DataFusion's session context: one table per family a pipeline
+//! node names, mapping an `impl:` name to a constructor. It is **passed explicitly, never
 //! global** (INV-6), so several contexts can exist in one process — which is
 //! what lets the evaluation harness hold two configurations side by side.
 //!
@@ -14,7 +14,7 @@
 
 use std::collections::BTreeMap;
 
-use ragondin_contracts::{Embedder, Fusion, Reranker, Retriever, VectorStore};
+use ragondin_contracts::{Fusion, Reranker, Retriever};
 use ragondin_pipeline::Params;
 
 use crate::error::{ComponentFamily, ConstructionError, PlanError};
@@ -36,10 +36,6 @@ pub type RetrieverCtor = ComponentCtor<dyn Retriever>;
 pub type FusionCtor = ComponentCtor<dyn Fusion>;
 /// Constructs a [`Reranker`].
 pub type RerankerCtor = ComponentCtor<dyn Reranker>;
-/// Constructs an [`Embedder`].
-pub type EmbedderCtor = ComponentCtor<dyn Embedder>;
-/// Constructs a [`VectorStore`].
-pub type VectorStoreCtor = ComponentCtor<dyn VectorStore>;
 
 /// One family's table of constructors, keyed by `impl:` name.
 ///
@@ -99,8 +95,6 @@ pub struct EngineContext {
     retrievers: Registry<dyn Retriever>,
     fusions: Registry<dyn Fusion>,
     rerankers: Registry<dyn Reranker>,
-    embedders: Registry<dyn Embedder>,
-    vector_stores: Registry<dyn VectorStore>,
 }
 
 impl EngineContext {
@@ -115,8 +109,6 @@ impl EngineContext {
             retrievers: Registry::new(ComponentFamily::Retriever),
             fusions: Registry::new(ComponentFamily::Fusion),
             rerankers: Registry::new(ComponentFamily::Reranker),
-            embedders: Registry::new(ComponentFamily::Embedder),
-            vector_stores: Registry::new(ComponentFamily::VectorStore),
         }
     }
 
@@ -141,18 +133,6 @@ impl EngineContext {
     pub fn register_reranker(&mut self, name: &str, ctor: RerankerCtor) {
         self.rerankers.register(name, ctor);
     }
-
-    /// Registers an [`Embedder`] constructor under `name`. See
-    /// [`register_retriever`](Self::register_retriever) on re-registration.
-    pub fn register_embedder(&mut self, name: &str, ctor: EmbedderCtor) {
-        self.embedders.register(name, ctor);
-    }
-
-    /// Registers a [`VectorStore`] constructor under `name`. See
-    /// [`register_retriever`](Self::register_retriever) on re-registration.
-    pub fn register_vector_store(&mut self, name: &str, ctor: VectorStoreCtor) {
-        self.vector_stores.register(name, ctor);
-    }
 }
 
 /// The resolution half of the registry: crate-internal, because physical
@@ -160,19 +140,11 @@ impl EngineContext {
 /// (INV-2).
 ///
 /// That caller is [`crate::plan_physical`], which resolves each node's `impl:`
-/// name through these methods. It does not reach every family the registry
-/// keeps a table for — [`crate::ComponentFamily`] records which, and the open
-/// question behind it — so this crate's tests are what exercises the rest. That
-/// is what the per-method allows below are for: a family planning does not yet
-/// reach, not a method that is unnecessary. Per method rather than on the
-/// block, so that a method added here without a caller does not inherit the
-/// exemption unnoticed.
-///
-/// `allow` and not `expect`: in the `cfg(test)` build the tests do use these,
-/// so an expectation would go unfulfilled and fail `clippy -D warnings`.
+/// name through these methods — one per table, and so one per
+/// [`crate::ComponentFamily`]. No method here carries a `dead_code` exemption:
+/// a table planning stopped reading would show up as a warning, not sit unused.
 impl EngineContext {
     /// Builds the [`Retriever`] registered under `name` from `config`.
-    #[allow(dead_code)]
     pub(crate) fn build_retriever(
         &self,
         name: &str,
@@ -182,7 +154,6 @@ impl EngineContext {
     }
 
     /// Builds the [`Fusion`] registered under `name` from `config`.
-    #[allow(dead_code)]
     pub(crate) fn build_fusion(
         &self,
         name: &str,
@@ -192,33 +163,12 @@ impl EngineContext {
     }
 
     /// Builds the [`Reranker`] registered under `name` from `config`.
-    #[allow(dead_code)]
     pub(crate) fn build_reranker(
         &self,
         name: &str,
         config: &Params,
     ) -> Result<Box<dyn Reranker>, PlanError> {
         self.rerankers.build(name, config)
-    }
-
-    /// Builds the [`Embedder`] registered under `name` from `config`.
-    #[allow(dead_code)]
-    pub(crate) fn build_embedder(
-        &self,
-        name: &str,
-        config: &Params,
-    ) -> Result<Box<dyn Embedder>, PlanError> {
-        self.embedders.build(name, config)
-    }
-
-    /// Builds the [`VectorStore`] registered under `name` from `config`.
-    #[allow(dead_code)]
-    pub(crate) fn build_vector_store(
-        &self,
-        name: &str,
-        config: &Params,
-    ) -> Result<Box<dyn VectorStore>, PlanError> {
-        self.vector_stores.build(name, config)
     }
 }
 
@@ -238,11 +188,10 @@ mod tests {
     use super::*;
     use async_trait::async_trait;
     use ragondin_contracts::{
-        ComponentError, EmbedParams, EmbedRole, EmbeddedChunk, Embedder, Fusion, FusionParams,
-        RerankParams, Reranker, RetrieveParams, Retriever, SearchParams, VectorStore,
+        ComponentError, Fusion, FusionParams, RerankParams, Reranker, RetrieveParams, Retriever,
     };
     use ragondin_pipeline::{ParamValue, Params};
-    use ragondin_types::{Chunk, ChunkId, DocId, Embedding, Query, QueryId, ScoredChunk};
+    use ragondin_types::{Chunk, ChunkId, DocId, Query, QueryId, ScoredChunk};
 
     fn params(pairs: &[(&str, ParamValue)]) -> Params {
         pairs
@@ -329,41 +278,6 @@ mod tests {
         ) -> Result<Vec<ScoredChunk>, ComponentError> {
             chunks.truncate(params.top_k);
             Ok(chunks)
-        }
-    }
-
-    struct ZeroEmbedder {
-        dim: usize,
-    }
-
-    #[async_trait]
-    impl Embedder for ZeroEmbedder {
-        async fn embed(
-            &self,
-            texts: &[String],
-            _params: &EmbedParams,
-        ) -> Result<Vec<Embedding>, ComponentError> {
-            Ok(texts
-                .iter()
-                .map(|_| Embedding::new(vec![0.0; self.dim]))
-                .collect())
-        }
-    }
-
-    struct EmptyStore;
-
-    #[async_trait]
-    impl VectorStore for EmptyStore {
-        async fn upsert(&self, _entries: Vec<EmbeddedChunk>) -> Result<(), ComponentError> {
-            Ok(())
-        }
-
-        async fn search(
-            &self,
-            _embedding: &Embedding,
-            _params: &SearchParams,
-        ) -> Result<Vec<ScoredChunk>, ComponentError> {
-            Ok(Vec::new())
         }
     }
 
@@ -512,14 +426,12 @@ mod tests {
 
     #[tokio::test]
     async fn every_family_registers_and_builds_through_the_same_mechanism() {
-        // INV-7 in one test: five families, one shape of call, no privileged
-        // path for any of them.
+        // INV-7 in one test: every family the registry keeps, one shape of
+        // call, no privileged path for any of them.
         let mut ctx = EngineContext::new();
         ctx.register_retriever("counting", Box::new(counting_retriever));
         ctx.register_fusion("concat", Box::new(|_| Ok(Box::new(ConcatFusion))));
         ctx.register_reranker("truncating", Box::new(|_| Ok(Box::new(TruncatingReranker))));
-        ctx.register_embedder("zero", Box::new(|_| Ok(Box::new(ZeroEmbedder { dim: 4 }))));
-        ctx.register_vector_store("empty", Box::new(|_| Ok(Box::new(EmptyStore))));
 
         let config = Params::new();
         let one = vec![scored("a", 1.0)];
@@ -539,27 +451,6 @@ mod tests {
             .await
             .expect("the stub does not fail");
         assert_eq!(reranked.len(), 1);
-
-        let embeddings = ctx
-            .build_embedder("zero", &config)
-            .expect("registered")
-            .embed(&["a".to_string()], &EmbedParams::new(EmbedRole::Query))
-            .await
-            .expect("the stub does not fail");
-        assert_eq!(embeddings[0].dim(), 4);
-
-        let store = ctx
-            .build_vector_store("empty", &config)
-            .expect("registered");
-        store
-            .upsert(Vec::new())
-            .await
-            .expect("the stub does not fail");
-        assert!(store
-            .search(&Embedding::new(vec![0.0; 4]), &SearchParams::new(3))
-            .await
-            .expect("the stub does not fail")
-            .is_empty());
 
         assert!(ctx.build_retriever("counting", &config).is_ok());
     }

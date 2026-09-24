@@ -33,10 +33,7 @@ mod execute;
 mod plan;
 mod trace;
 
-pub use context::{
-    ComponentCtor, EmbedderCtor, EngineContext, FusionCtor, RerankerCtor, RetrieverCtor,
-    VectorStoreCtor,
-};
+pub use context::{ComponentCtor, EngineContext, FusionCtor, RerankerCtor, RetrieverCtor};
 pub use error::{ComponentFamily, ConstructionError, ExecError, PlanError};
 pub use execute::{Engine, Output};
 pub use plan::{plan_physical, PhysicalPipeline};
