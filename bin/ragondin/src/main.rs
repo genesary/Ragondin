@@ -15,8 +15,9 @@
 //! configuration through `ragondin-config`, stops at the `LogicalPipeline`, and
 //! prints its content hash — the config→logical→hash path end to end, with no
 //! registry and no execution. `compare` reads two runs already recorded in a
-//! run store (`ragondin-experiments`) and prints their metric-by-metric diff —
-//! no re-execution and no new metric, a packaging-only handler over that
+//! run store (`ragondin-experiments`) and prints their diff — metric by
+//! metric, then the configuration parameters they differ in — with no
+//! re-execution and no new metric, a packaging-only handler over that
 //! crate's comparison (ADR-C15). `bench` evaluates a configuration against a
 //! benchmark and records the run. `serve` parses its arguments and then
 //! reports that this build does not implement it.
@@ -94,7 +95,9 @@ enum Command {
     #[command(long_about = "Compare two runs already recorded in a run store.\n\n\
         Both are read by their `run_id` and never re-executed: the diff is \
         metric by metric, over whatever either run recorded, and names which \
-        side scored higher on each one. No default run store location is \
+        side scored higher on each one; then it names the configuration \
+        parameters and `impl:` names the two runs differ in, node by node, \
+        with both values. No default run store location is \
         settled yet, so `--store` names it explicitly.")]
     Compare {
         /// The first run's identity.

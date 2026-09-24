@@ -15,8 +15,9 @@
 //!   components, the metrics, the configuration and the per-query traces.
 //! - [`store`] — [`FileSystemRunStore`], a directory per run. Native by
 //!   decision (ADR-13), and filesystem-backed by a choice that module argues.
-//! - [`mod@compare`] — [`compare()`], the metric-by-metric diff behind
-//!   `ragondin compare` and, later, the comparison view (§6.5).
+//! - [`mod@compare`] — [`compare()`], the diff behind `ragondin compare`:
+//!   metric by metric, and the configuration parameters the two runs differ
+//!   in and, later, the comparison view (§6.5).
 //!
 //! Not here, and deliberately: **export adapters** to MLflow or OpenTelemetry
 //! (additive to the plane, and not what a local benchmark needs), the
@@ -30,6 +31,9 @@ pub mod compare;
 pub mod run;
 pub mod store;
 
-pub use compare::{compare, MetricComparison, RunComparison};
+pub use compare::{
+    compare, ConfigurationComparison, MetricComparison, ParameterDifference, ParameterKey,
+    RunComparison, Side,
+};
 pub use run::{ConfigDocument, Metrics, Run, RunId, RunIdParseError, RunInputs, TraceDocument};
 pub use store::{FileSystemRunStore, RunStoreError};

@@ -191,7 +191,7 @@ impl FileSystemRunStore {
         })
     }
 
-    /// Compares two stored runs, metric by metric.
+    /// Compares two stored runs, metric by metric and parameter by parameter.
     ///
     /// The comparison a run store is asked for is between two *ids* — that is
     /// what `ragondin compare` takes and what a comparison view links to — so

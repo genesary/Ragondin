@@ -208,7 +208,10 @@ impl<K: Into<String>> FromIterator<(K, f64)> for Metrics {
 /// to [`RunInputs::pipeline`], and re-serializing it from an in-memory pipeline
 /// would put a second, drifting spelling of the configuration in the store.
 /// The store never parses it — it does not need to, and a store that parsed
-/// configurations would have to be upgraded whenever the schema moves.
+/// configurations would have to be upgraded whenever the schema moves. The
+/// comparison does ([`compare`](crate::compare())), to say which parameters
+/// two runs differ in, and reports a document it cannot lower rather than
+/// failing on it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct ConfigDocument {

@@ -18,7 +18,7 @@ charter.
 |---|---|
 | `src/main.rs` | The `clap` definition of the four subcommands, and the dispatch |
 | `src/validate.rs` | Loads a configuration and prints its content hash |
-| `src/compare.rs` | Reads two stored runs and prints their metric-by-metric diff |
+| `src/compare.rs` | Reads two stored runs and prints their diff: metric by metric, then the configuration parameters they differ in |
 | `src/bench.rs` | Evaluates a configuration against a benchmark and records the run |
 | `src/wiring.rs` | A node's `Params` on one side, a constructed component on the other |
 | `tests/cli.rs` | `validate` and the rest of the command line, exercised as a process |
