@@ -327,7 +327,8 @@ fn summarize_inputs(node: &PhysicalNode, table: &Table) -> Vec<ValueSummary> {
 /// fails to compile here — and the component is destructured inside each arm,
 /// where the only other pairing is the one planning rules out. The variants
 /// planning refuses — an extension, a context builder, a generator — share one
-/// arm that returns [`ExecError::UnplannableNode`], so no plan reaches it.
+/// arm that returns [`ExecError::UnplannableNode`]; no plan `plan_physical`
+/// builds reaches it, since planning refuses those variants first.
 async fn call(node: &PhysicalNode, table: &Table) -> Result<NodeValue, ExecError> {
     match node.logical() {
         LogicalNode::Retriever(logical) => {

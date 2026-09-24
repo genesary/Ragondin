@@ -319,11 +319,11 @@ flowchart TB
   VK -.->|"Err: KindMismatch"| VERR
 
   LOG -->|hash| H[("content hash — run identity")]
-  LOG -->|"ragondin_engine::plan_physical(logical, ctx)"| PX["refuse every Extension node (#93)"]
+  LOG -->|"ragondin_engine::plan_physical(logical, ctx)"| PX["refuse every Extension node (#93),<br/>every ContextBuilder and Generator node"]
   PX --> PK["kind check, LAYER 2 — with the registry in hand"]
   PK --> RES["resolve: match the node's VARIANT to its family's registry,<br/>never the impl name (INV-7) · ctor(Params) constructs the component"]
   RES --> PHY["PhysicalPipeline<br/>components constructed · holds Box#60;dyn Trait#62; · not serializable"]
-  PX -.->|"Err: ExtensionUnsupported"| PERR["PlanError"]
+  PX -.->|"Err: ExtensionUnsupported · GenerationUnsupported"| PERR["PlanError"]
   PK -.->|"Err: KindMismatch"| PERR
   RES -.->|"Err: UnknownImpl · Construction"| PERR
 
@@ -334,7 +334,7 @@ flowchart TB
   PHY -->|"Engine::execute(plan, query)"| EX["executor<br/>topological schedule over the data-flow edges ·<br/>an erased NodeValue on each edge · one adapter per node variant"]
   EX --> PAIR["the return type is a PAIR, not a Result of one:<br/>(Result#60;Output, ExecError#62;, ExecutionTrace)"]
   PAIR --> OKP["Ok(Output) — the terminal node's chunks,<br/>beside the full trace"]
-  PAIR --> ERP["Err(ExecError) — Component · MissingInput · DanglingInput ·<br/>KindMismatch · No/MultipleTerminalNodes · InvalidParam ·<br/>Cycle · DuplicateNodeIds — beside the trace of what ran,<br/>failing node last. The trace is a return value, not a log (INV-10)."]
+  PAIR --> ERP["Err(ExecError) — Component · MissingInput · DanglingInput ·<br/>KindMismatch · No/MultipleTerminalNodes · InvalidParam ·<br/>Cycle · DuplicateNodeIds · UnplannableNode — beside the trace of what ran,<br/>failing node last. The trace is a return value, not a log (INV-10)."]
 ```
 
 **How to read it.** `DERIV` is joined to both kind checks by a plain line and to nothing else: it is not a stage of the path but the pair of functions both stages call, which is what ADR-C16's "one derivation, two call sites" means. Layer 1 needs no registry, which is what lets `ragondin validate` and the configuration service's NACK (ADR-6) reject an incompatible wiring before anything is constructed; layer 2 is the same derivation run where the registry is available, and the `EngineContext` is consulted only at `resolve`, one step later. The comparison *loop* around the derivation is written twice, once per crate, and each raises its own error type — deliberately, and word for word the same message.
@@ -447,7 +447,7 @@ impl EngineContext {
 }
 ```
 
-**Three tables, one way in, and two families with no table.** The context keeps one table per family a pipeline node names: `Retriever`, `Fusion` and `Reranker`. Each is populated by the same `register_*` call (INV-7 in the API), and physical planning looks each one up from the node's `impl:` name. `Embedder` and `VectorStore` are **not** node variants and have **no** table: a dense retriever is built *from* them, and a `ComponentCtor` is handed the node's `Params` and never the `EngineContext`, so the composition root builds both itself, inside the constructor closure it registers for the dense retriever (ADR-C32). That asymmetry is drawn below because the struct shows only what is there.
+**Three tables, one way in, and two families with no table.** The context keeps one table per family a pipeline node names: `Retriever`, `Fusion` and `Reranker`. Each is populated by the same `register_*` call (INV-7 in the API), and physical planning looks each one up from the node's `impl:` name. `Embedder` and `VectorStore` are **not** node variants and have **no** table: a dense retriever is built *from* them, and a `ComponentCtor` is handed the node's `Params` and never the `EngineContext`, so the composition root builds both itself, inside the constructor closure it registers for the dense retriever (ADR-C32). `ContextBuilder` and `Generator` *are* node variants (ADR-C31) and have no table yet either: physical planning refuses them with `GenerationUnsupported` (see `engine/ragondin-engine/ARCHITECTURE.md`). That asymmetry is drawn below because the struct shows only what is there.
 
 ```mermaid
 flowchart TB

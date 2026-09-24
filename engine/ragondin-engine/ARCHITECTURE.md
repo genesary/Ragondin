@@ -15,6 +15,9 @@ them.
   builds them itself, inside the constructor closure it registers for a dense
   retriever
   ([ADR-C32](../../docs/adr/ADR-C32-remote-named-by-impl-bound-by-the-composition-root.md)).
+  A context builder and a generator are nodes and have no table yet either:
+  planning refuses them — see § The generation nodes are refused, not yet
+  planned.
 - **Physical planning** — `LogicalPipeline` + `EngineContext` →
   `PhysicalPipeline`, resolving each `impl` name to a constructed component
   (`Local` or `Remote`). The logical→physical seam exists; the optimizer is the

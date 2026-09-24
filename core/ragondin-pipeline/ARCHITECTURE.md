@@ -86,8 +86,9 @@ actually look like is not settled, so neither variant exists yet.
   node variant that predates generation and every parameter shape, and a
   generation pipeline covering the context-builder and generator tags. More
   than one because one cannot reach every tag byte: a realistic pipeline has
-  no reranker, no extension node, no `Bool` and no `List`, so four tags could
-  be renumbered in silence while the reference digest sat still. The
+  no reranker, no extension node, no context builder, no generator, no `Bool`
+  and no `List`, so six tags could be renumbered in silence while the
+  reference digest sat still. The
   generation variants got a fixture of their own rather than joining the
   whole-grammar one, because adding nodes to that document would have moved a
   digest already pinned. The encoder **folds `-0.0` into `0.0` itself**, as lowering

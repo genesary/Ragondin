@@ -93,10 +93,15 @@ use serde::{Deserialize, Deserializer, Serialize};
 /// ADR-C31 § 3 bumped it to 3 when [`RawNode::component`] began accepting
 /// `context_builder` and `generator`. No struct changed shape — `component`
 /// is a `String` either way — but the vocabulary a configuration may name
-/// widened, and that is a change to the schema all the same. A document that
-/// states `version: 2` is now refused here, by the version gate, rather than
-/// further down as an unknown component; one that states no version still
-/// reads as the current one, as above.
+/// widened, and that is a change to the schema all the same. What the bump
+/// buys is on the other side of it: a build that reads only version 2, handed
+/// a document that states `version: 3`, refuses it here, by the version gate,
+/// for what it is — a schema that build does not have — rather than reading on
+/// and reporting `generator` as an unknown component. A document that states
+/// no version still falls through to that unknown-component refusal there,
+/// since an absent version reads as the reader's own. That this build now
+/// refuses a document stating `version: 2` is a consequence of reading exactly
+/// one version, not the purpose of the bump.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 #[serde(transparent)]
 pub struct SchemaVersion(u32);
@@ -505,9 +510,9 @@ mod tests {
 
     #[test]
     fn a_configuration_stating_the_previous_version_is_refused() {
-        // A document written for version 2 cannot name a generation node, and
-        // this build no longer reads it as its own: the version gate refuses it
-        // for what it is, not further down as an unknown component.
+        // A build reads exactly one version, so moving it to 3 means a
+        // document stating `version: 2` is refused at the gate — the
+        // consequence of the bump, pinned so it cannot change silently.
         assert_eq!(
             SchemaVersion::new(2),
             Err(UnsupportedSchemaVersion { found: 2 })

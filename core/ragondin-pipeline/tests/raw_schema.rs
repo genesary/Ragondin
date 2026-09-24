@@ -100,8 +100,9 @@ fn the_reference_pipeline_validates_once_its_transform_is_written_as_an_extensio
     //
     // One substitution is required and it is the document's, not the
     // fixture's: §5.1 writes `component: query_transform`, and `lower_node`
-    // knows four family names — `retriever`, `fusion`, `reranker`,
-    // `extension` — so `query_transform` is an `UnknownComponent`. A query
+    // knows six family names — `retriever`, `fusion`, `reranker`,
+    // `context_builder`, `generator`, `extension` — so `query_transform` is
+    // an `UnknownComponent`. A query
     // transform is written as an `Extension` today. Applying that here
     // programmatically, rather than transcribing an edited copy of §5.1 into
     // a test, is what keeps the document, the fixture and the assertion from

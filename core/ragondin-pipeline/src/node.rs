@@ -205,7 +205,7 @@ pub struct RerankerNode {
 pub struct ContextBuilderNode {
     /// This node's identifier, unique within the pipeline.
     pub id: NodeId,
-    /// The `impl:` value naming the component to resolve, e.g. `"bm25"`.
+    /// The `impl:` value naming the component to resolve, e.g. `"concatenate"`.
     ///
     /// Part of the logical form, so it enters the content hash: two backends
     /// are two different configurations (ADR-C2 § Amendments).
@@ -224,7 +224,7 @@ pub struct ContextBuilderNode {
 pub struct GeneratorNode {
     /// This node's identifier, unique within the pipeline.
     pub id: NodeId,
-    /// The `impl:` value naming the component to resolve, e.g. `"bm25"`.
+    /// The `impl:` value naming the component to resolve, e.g. `"openai_chat"`.
     ///
     /// Part of the logical form, so it enters the content hash: two backends
     /// are two different configurations (ADR-C2 § Amendments).

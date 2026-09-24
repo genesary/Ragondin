@@ -356,9 +356,10 @@ fn the_two_zeroes_agree_whichever_door_the_pipeline_came_through() {
 ///
 /// [`REFERENCE`] is the realistic pipeline, and it is the wrong thing to pin
 /// the grammar against: it contains no reranker, no extension, no `Bool` and
-/// no `List`, so four of the tag bytes it could reach never reach its hasher.
-/// Renumbering any of those four would silently invalidate every stored digest
-/// for a pipeline that used them, and the reference digest would not move.
+/// no `List`, so four tag bytes never reach its hasher — six, counting the two
+/// generation variants [`GENERATION`] covers. Renumbering any of them would
+/// silently invalidate every stored digest for a pipeline that used them, and
+/// the reference digest would not move.
 ///
 /// The two generation variants are not added here: this document's digest was
 /// pinned before they existed, and adding nodes to it would move it. The
