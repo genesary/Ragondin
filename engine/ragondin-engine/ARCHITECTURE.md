@@ -9,7 +9,12 @@ them.
 - **`EngineContext`** — the component registry, a table mapping an
   implementation name to a constructor. Passed **explicitly**, never global
   (INV-6). Several contexts can exist in one process — indispensable for the
-  harness comparing two configurations side by side.
+  harness comparing two configurations side by side. It keeps one table per
+  family a pipeline node names — retriever, fusion, reranker — and none for an
+  embedder or a vector store: those are not nodes, and the composition root
+  builds them itself, inside the constructor closure it registers for a dense
+  retriever
+  ([ADR-C32](../../docs/adr/ADR-C32-remote-named-by-impl-bound-by-the-composition-root.md)).
 - **Physical planning** — `LogicalPipeline` + `EngineContext` →
   `PhysicalPipeline`, resolving each `impl` name to a constructed component
   (`Local` or `Remote`). The logical→physical seam exists; the optimizer is the

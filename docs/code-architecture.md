@@ -435,7 +435,7 @@ Modelled on DataFusion's session context. The context carries the **registry**: 
 pub struct EngineContext {
     retrievers: Registry<dyn Retriever>,
     rerankers:  Registry<dyn Reranker>,
-    // … one registry per component family
+    // … one registry per node family (retriever, fusion, reranker)
 }
 
 impl EngineContext {
@@ -447,21 +447,19 @@ impl EngineContext {
 }
 ```
 
-**Five families, two ways a component reaches a plan.** The context keeps one table per component family, and all five are populated by the same `register_*` call — that is INV-7 in the API. What differs is what *reads* a table. `Retriever`, `Fusion` and `Reranker` are pipeline node variants, so physical planning looks each one up from the node's `impl:` name. `Embedder` and `VectorStore` are **not** node variants: a dense retriever is built *from* them, so nothing in planning looks them up, and a `ComponentCtor` is handed the node's `Params` and never the `EngineContext`. That asymmetry is drawn below because it is invisible in the struct, where all five tables look alike.
+**Three tables, one way in, and two families with no table.** The context keeps one table per family a pipeline node names: `Retriever`, `Fusion` and `Reranker`. Each is populated by the same `register_*` call (INV-7 in the API), and physical planning looks each one up from the node's `impl:` name. `Embedder` and `VectorStore` are **not** node variants and have **no** table: a dense retriever is built *from* them, and a `ComponentCtor` is handed the node's `Params` and never the `EngineContext`, so the composition root builds both itself, inside the constructor closure it registers for the dense retriever (ADR-C32). That asymmetry is drawn below because the struct shows only what is there.
 
 ```mermaid
 flowchart TB
-  ROOT["bin/ragondin — the composition root<br/>register_retriever · register_fusion · register_reranker ·<br/>register_embedder · register_vector_store<br/>ONE way in: a built-in and a third-party crate call the same fn (INV-7)"]
+  ROOT["bin/ragondin — the composition root<br/>register_retriever · register_fusion · register_reranker<br/>ONE way in: a built-in and a third-party crate call the same fn (INV-7)"]
 
-  subgraph CTX["EngineContext — one table per family, impl name → ComponentCtor(Params)"]
+  subgraph CTX["EngineContext — one table per node family, impl name → ComponentCtor(Params)"]
     RT["Registry#60;dyn Retriever#62;"]
     FU["Registry#60;dyn Fusion#62;"]
     RR["Registry#60;dyn Reranker#62;"]
-    EM["Registry#60;dyn Embedder#62;"]
-    VC["Registry#60;dyn VectorStore#62;"]
   end
 
-  ROOT --> RT & FU & RR & EM & VC
+  ROOT --> RT & FU & RR
 
   NODE["a node of the LogicalPipeline<br/>Retriever · Fusion · Reranker, each carrying an impl name"]
   NODE -->|"plan_physical matches the node VARIANT to pick the table"| RT
@@ -471,14 +469,9 @@ flowchart TB
   FU --> PN
   RR --> PN
 
-  EM -.->|"no node variant, so no lookup"| INJ
-  VC -.->|"no node variant, so no lookup"| INJ
-  INJ["reserved (#31): a dense retriever is built from an embedder and a<br/>vector store, and the retriever's own registration closure at the<br/>composition root is what would hold them"]
-  INJ -.-> RT
-
-  OQ["OPEN DECISION #101 — how a Remote embedder or vector store is built.<br/>Until it is answered, build_embedder and build_vector_store<br/>have no caller in planning, and these two tables have no reader."]
-  EM -.- OQ
-  VC -.- OQ
+  DENSE["the dense retriever's constructor closure, written by the composition root:<br/>it builds the Embedder and the VectorStore itself (ADR-C32)"]
+  ROOT -.->|"registers it as a retriever"| DENSE
+  DENSE -.-> RT
 ```
 
 A constructor receives the node's parameter map whole — `ragondin-pipeline`'s untyped `Params` (`BTreeMap<String, ParamValue>`), every key of it, not a subset planning has picked out — and never a per-call params struct. It reads the **configuration** keys and leaves the rest; the executor reads the per-call keys out of the same map afterwards. `RerankParams` is per-call (§7.1) and carries only `top_k` (`ragondin-contracts`), which is not enough to construct anything: what a reranker needs at construction is a model path and a device, from which it builds the ONNX session it then reranks with. The two kinds of parameter reach the component by different routes — one through the constructor, once; one through each call's params struct — and §6.3 is where they are told apart.

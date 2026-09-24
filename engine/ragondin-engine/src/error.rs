@@ -20,23 +20,12 @@ use ragondin_pipeline::{NodeId, ParamValue, ValueKind};
 /// and an error that named only `bm25` would send the reader looking for a
 /// missing registration that is in fact present under another family.
 ///
-/// Wider than [`ragondin_pipeline::LogicalNode`]'s variants, and deliberately:
-/// `Embedder` and `VectorStore` are not pipeline nodes. They are components a
-/// dense retriever is built from, registered through the same public
-/// `register_*` API as every other family (INV-7) and **injected into that
-/// retriever at the composition root** (#31), whose registration closure
-/// captures them.
-///
-/// Nothing resolves one from a node, and nothing can: physical planning matches
-/// a `Retriever`, a `Fusion` and a `Reranker`, and a [`crate::ComponentCtor`]
-/// receives the node's `Params` and never the [`crate::EngineContext`]. So both
-/// families are here for the error rather than for a lookup — the registry
-/// keeps one table per family, and the family is part of every name it fails to
-/// find — and their tables have no consumer in planning today, nor do
-/// `build_embedder` and `build_vector_store` outside tests. That is an open
-/// question, not a settled design: how a `Remote` embedder or vector store is
-/// built is #101. Recorded here so it is read as a gap rather than inferred
-/// from an unused table.
+/// One variant per [`ragondin_pipeline::LogicalNode`] variant that physical
+/// planning resolves to a component, and no other. An embedder and a vector
+/// store have none: they are not pipeline nodes but components a dense
+/// retriever is built from, and the composition root builds them itself,
+/// inside the constructor closure it registers for that retriever. The engine
+/// never resolves either, so it keeps no table for them (ADR-C32).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ComponentFamily {
     /// [`ragondin_contracts::Retriever`].
@@ -45,10 +34,6 @@ pub enum ComponentFamily {
     Fusion,
     /// [`ragondin_contracts::Reranker`].
     Reranker,
-    /// [`ragondin_contracts::Embedder`].
-    Embedder,
-    /// [`ragondin_contracts::VectorStore`].
-    VectorStore,
 }
 
 impl fmt::Display for ComponentFamily {
@@ -57,8 +42,6 @@ impl fmt::Display for ComponentFamily {
             Self::Retriever => "retriever",
             Self::Fusion => "fusion",
             Self::Reranker => "reranker",
-            Self::Embedder => "embedder",
-            Self::VectorStore => "vector store",
         };
         f.write_str(name)
     }
