@@ -69,7 +69,7 @@ engagement, and no accepted text settles any of them:
 ### Facts about the two external surfaces, checked for this decision
 
 - **`reqwest`'s feature names differ between its two current release lines.**
-  In `0.12.24`, `rustls-tls` enables `rustls-tls-webpki-roots`, which selects
+  In `0.12.28`, the last release of the `0.12` line, `rustls-tls` enables `rustls-tls-webpki-roots`, which selects
   `ring` as the `rustls` crypto provider and `webpki-roots` as the root store;
   `json` enables `serde_json`; the `default` set is `default-tls`, `charset`,
   `http2` and `system-proxy`, and `default-tls` selects the platform's native
@@ -152,15 +152,18 @@ through `POST <base>/v1/chat/completions` and `GetModelIdentity` through
 trailing `/` removed.
 
 **Its whole configuration is three values, none of them an experiment
-variable:**
+variable.** The service reads its two flags from `std::env::args` itself,
+without `clap`: the root `Cargo.toml` declares `clap` as "the CLI parser, in
+`bin/ragondin` and nowhere else", and two required flags need no parser.
 
 - `--base-url <url>`, required: the inference server's root, an absolute
   `http` or `https` URL, without the `/v1` segment;
 - `--listen <socket address>`, required: the address the gRPC server binds;
   `127.0.0.1:0` asks the operating system for a free port;
 - the environment variable `RAGONDIN_INFERENCE_API_KEY`, optional: when it is
-  set, every request to the inference server carries
-  `Authorization: Bearer <value>`. The key is never a flag and is never
+  set to a non-empty value, every request to the inference server carries
+  `Authorization: Bearer <value>`; unset and set to the empty string are the
+  same, and send no `Authorization` header. The key is never a flag and is never
   written to any output.
 
 **Once bound, the service writes exactly one line to stdout,
@@ -171,7 +174,9 @@ calibration reads that line to learn the port.
 **Per `Generate` call, the service:**
 
 1. Refuses an empty `served_model` or an empty `template` as
-   `InvalidArgument`, as ADR-C31 § 2 requires of a service on receipt.
+   `InvalidArgument`, as ADR-C31 § 2 requires of a service on receipt, and
+   refuses a `temperature` that is present and not finite — `NaN` or an
+   infinity, which `serde_json` would write as `null` — as `InvalidArgument`.
 2. Renders `template` under ADR-C31 § 2's grammar — `{query}` and `{context}`
    replaced by the query's and the context's text, `{{` and `}}` rendered as
    literal braces, left to right in one pass — and refuses a malformed
@@ -201,8 +206,9 @@ only that the seed asked for is the seed sent.
 **`GetModelIdentity(served_model)` reads `GET <base>/v1/models`** and looks for
 the first entry of `data` whose `id` equals `served_model` byte for byte.
 
-- **Listed:** the identity is the compact JSON object — no whitespace, keys in
-  the order `id`, `root`, `parent` — holding `id`, and `root` and `parent`
+- **Listed:** the identity is a JSON object encoded as `serde_json` encodes
+  one — compact, with its string escaping — with keys in the order `id`,
+  `root`, `parent`, holding `id`, and `root` and `parent`
   each only when the server reports it as a non-empty string. vLLM serving a
   base model under the name `qwen` from `Qwen/Qwen2.5-7B-Instruct` yields
   `{"id":"qwen","root":"Qwen/Qwen2.5-7B-Instruct"}`. No other field of the entry
@@ -225,13 +231,21 @@ adapter maps to a `ComponentError` (#261):
 |---|---|
 | empty `served_model` or `template`; malformed template | `InvalidArgument` |
 | the HTTP request failed before any response — connection refused, a connect or request timeout the client reports | `Unavailable` |
-| an HTTP `4xx` from either endpoint, including a model the server does not serve | `InvalidArgument` |
-| an HTTP `5xx`, or any other non-success status | `Internal` |
+| the transport failed after the status line — the connection reset while the body was read | `Unavailable` |
+| HTTP `429` or `503`, each of which means "try later" | `Unavailable` |
+| any other HTTP `4xx` from either endpoint, including a model the server does not serve | `InvalidArgument` |
+| any other HTTP `5xx`, or any other non-success status, a `3xx` included | `Internal` |
 | a `2xx` body that does not decode into the shape above, a response with no choice, or a first choice whose `content` is null | `Internal` |
 | `served_model` absent from `/v1/models` | `InvalidArgument` |
 
-The status message carries the inference server's status code and, where
-present, its error text; it never carries the API key.
+**The client follows no redirect** (`reqwest::redirect::Policy::none()`), so
+a `3xx` is a non-success status like any other: `reqwest`'s default policy
+would follow it, and on a `301`, `302` or `303` resend the `POST` as a `GET`.
+The classes above are deliberately coarse. `429` and `503` are the two
+statuses carved out because the caller's remedy for both is to try later,
+which is what `Unavailable` says; every finer distinction is left to the
+status message, which carries the inference server's status code and, where
+present, its error text, and never carries the API key.
 
 ### 6. Tests
 
@@ -263,7 +277,9 @@ needs a real model. The tests compile under the `service` feature, and
   makes a single binary, `ragondin`, the composition root and the entire
   user-facing surface.
 - **`hyper` with `hyper-util` and `http-body-util` directly.** Already in
-  `tonic`'s closure, so nothing new would reach `check-deny`. It costs a
+  `tonic`'s closure, so for a plain `http` inference server nothing new would
+  reach `check-deny`; an `https` one would still need `hyper-rustls` or
+  `tokio-rustls`, which it does not carry. It costs a
   hand-written client — connection handling, body collection, TLS wiring —
   for one JSON POST and one GET, which is more code than a reference fixture
   deserves and more for a `Remote` author to read past.
@@ -274,7 +290,11 @@ needs a real model. The tests compile under the `service` feature, and
 - **`reqwest` `0.13`.** The current release line; its `rustls` feature selects
   `aws-lc-rs`, a crypto provider with a C build that nothing in the lockfile
   needs today, where `0.12`'s `rustls-tls` reuses the `ring` and `webpki-roots`
-  the lockfile already resolves.
+  the lockfile already resolves. `0.13`'s `rustls-no-provider` would let `ring`
+  be installed by hand, and still verifies through `rustls-platform-verifier`
+  rather than `webpki-roots`. `0.12` is the superseded line — its last release
+  is `0.12.28` — so a future advisory on it is the likely trigger of the
+  escalation § 2 names for moving the entry.
 - **A native dialect** — one server's own API rather than the OpenAI-compatible
   one. Tighter for that server and useless for every other; #253 records the
   OpenAI-compatible surface as the one vLLM, Ollama, llama.cpp, TGI and the
@@ -294,9 +314,12 @@ needs a real model. The tests compile under the `service` feature, and
   was waiting on.
 - **#269 spawns the binary** exactly as § 6's tests do, and binds it to the
   pipeline through `ragondin bench --remote generator/<name>=<uri>` (ADR-C32
-  § 2). Because an absent optional takes the server's default, and a `seed`
-  may be ignored, #269's record names the inference server and its version, as
-  its scope already requires.
+  § 2). **No ADR names the inference server**: this one decides the dialect,
+  not the server, and vLLM appears above only as the source of the facts
+  checked. #269 chooses an OpenAI-compatible server it can run locally and
+  records it, with its version, in `bin/ragondin/ARCHITECTURE.md` — which an
+  absent optional taking the server's default, and a `seed` the server may
+  ignore, make necessary.
 - **#261 maps the statuses of § 5.** `Unavailable` must reach
   `ComponentError::Unavailable`, and `InvalidArgument`
   `ComponentError::InvalidRequest`; `Internal` reaches whatever #261's shared
@@ -311,7 +334,8 @@ needs a real model. The tests compile under the `service` feature, and
 - **`testkit/` widens** from "the conformance suite" to "reference
   implementations and fixtures". `testkit/` has no README; #267 states the
   wider meaning in the new crate's `ARCHITECTURE.md` and corrects the
-  `testkit/` entry of `docs/code-architecture.md` § 4.1's layout, in the same
+  `testkit/` entry of `docs/code-architecture.md` § 4.1's layout and the
+  `testkit/` subgraph of § 4.3's dependency graph, in the same
   diff that makes the old description incomplete. `ragondin-conformance`'s own
   rule to stay light is not affected: nothing depends on the service crate.
 - **`max_tokens` is the deprecated spelling on at least one server.** vLLM
