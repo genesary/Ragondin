@@ -10,9 +10,26 @@ The platform's core value types: `Document`, `Chunk`, `Query`, `Embedding`,
 Everything downstream depends on these; they depend on almost nothing.
 `ragondin-types` is the ultimate leaf of the dependency graph.
 
-The generation-side types (`Context`, `Generation`) belong here too, but arrive
-with the milestone that consumes them — adding them earlier would be dead code
-on a stable boundary.
+The generation-side values arrived with M3, named and shaped by ADR-C31 § 1:
+`Context` (the rendered text, and the `ContextChunk`s it was rendered from, by
+identifier and in order), `Answer` (text only) and the `ModelIdentity` newtype.
+They were added when the milestone that consumes them began, not earlier, so
+that nothing on this boundary was dead code.
+
+## Local choices
+
+- **Derives follow ADR-C31 § 1 exactly, and no further.** `Context` and
+  `ContextChunk` are not `Eq`, because they carry an `f32` score, as
+  `ScoredChunk` is not. `ModelIdentity` is a newtype built like the identifiers
+  (`new`, `as_str`, `#[serde(transparent)]`, so it encodes as a bare string) but
+  does **not** take their `Hash` and ordering derives: those serve identifiers
+  used as map keys and sort keys, and ADR-C31 calls for neither on an identity.
+  Adding a derive later is additive on this boundary; removing one is not, so
+  the smaller set is the one to start from.
+- **An empty `ModelIdentity` is representable and not valid**, the shape
+  ADR-C20 gave an empty `Embedding`: this crate has no error type, so the rule
+  is documented on the type and pinned by a test, never enforced by a
+  constructor.
 
 ## Local invariants
 
