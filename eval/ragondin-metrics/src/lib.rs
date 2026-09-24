@@ -1,15 +1,20 @@
-//! Deterministic retrieval metrics: nDCG@k, recall@k, precision@k, MRR@k
-//! (via [`reciprocal_rank_at_k`]) and MAP@k (via [`average_precision_at_k`]).
+//! Deterministic evaluation metrics: the retrieval metrics nDCG@k, recall@k,
+//! precision@k, MRR@k (via [`reciprocal_rank_at_k`]) and MAP@k (via
+//! [`average_precision_at_k`]), and the generation metrics [`exact_match`] and
+//! [`token_f1`].
 //!
-//! These are what make M2 defensible **without an LLM judge** (ADR-10): they
-//! are computed from *qrels* — relevance judgments prepared in advance — and
-//! are fully deterministic. Generation metrics arrive in a later milestone.
+//! The retrieval metrics are what make M2 defensible **without an LLM judge**
+//! (ADR-10): they are computed from *qrels* — relevance judgments prepared in
+//! advance — and are fully deterministic. The generation metrics are
+//! deterministic in the same way, computed from reference answers; they are
+//! described under [Generation metrics](#generation-metrics), and every section
+//! before that one is about retrieval.
 //!
 //! # What these functions are, and are not
 //!
 //! Each one scores **a single query**. The figure a benchmark reports —
 //! "nDCG@10 on SciFact" — is the **mean over queries**, and computing that mean
-//! belongs to the harness. Three of the six functions are named accordingly
+//! belongs to the harness. Three of the six retrieval functions are named accordingly
 //! rather than after the aggregate they feed: [`reciprocal_rank`] and
 //! [`reciprocal_rank_at_k`] rather than `mrr`, and [`average_precision_at_k`]
 //! rather than `map`, because MRR and MAP are themselves *means of these
@@ -56,7 +61,7 @@
 //!
 //! # The `k` cutoff, and what it divides by
 //!
-//! Five of the six functions take a `k` — [`reciprocal_rank`] is the exception,
+//! Five of the six retrieval functions take a `k` — [`reciprocal_rank`] is the exception,
 //! matching `trec_eval`'s uncut `recip_rank`. What differs between the other
 //! five is the *denominator*, and getting it wrong is the second most common
 //! way to diverge from a published score (after the gain function above). Every
@@ -89,7 +94,7 @@
 //!
 //! # Degenerate inputs
 //!
-//! Every function returns `0.0` rather than an error or a `NaN`: an empty
+//! Every retrieval function returns `0.0` rather than an error or a `NaN`: an empty
 //! ranking, a `k` of zero, qrels with nothing relevant.
 //!
 //! This matches `trec_eval`, which scores such a query `0.0` and **counts it in
@@ -98,11 +103,69 @@
 //! harness should average over every judged query, this crate's zeros included.
 //! (A query with *no qrels line at all* is a different matter: `trec_eval`
 //! never evaluates it, because it is unjudged rather than judged-and-empty.)
+//!
+//! # Generation metrics
+//!
+//! [`exact_match`] and [`token_f1`] score one query's generated answer against
+//! its reference answers, on `[0, 1]`; their names in a run's metrics are
+//! `exact_match` and `token_f1`. As with retrieval, the mean over queries is
+//! the harness's.
+//!
+//! **The reference implementation is the official SQuAD v1.1 evaluation
+//! script** (ADR-C30 § 1 pins it by URL and SHA-256): it plays for these two
+//! the role `trec_eval` plays above, so where a definition admits
+//! alternatives, the script's binds. Concretely:
+//!
+//! - **Normalisation** ([`normalize_answer`]), applied to answer and reference
+//!   alike: lower-case, remove ASCII punctuation (and only ASCII punctuation),
+//!   replace the standalone articles *a*, *an* and *the* by a space, collapse
+//!   whitespace. The articles are **English** ones: the normalisation assumes
+//!   English answers, and another language's articles survive it.
+//! - **Exact match** is the equality of the two normalised strings; **token-F1**
+//!   the F1 over the multisets of their tokens, `0` when they share none.
+//! - **Several references: each metric takes its own maximum**, so the
+//!   reference that maximises exact match need not be the one that maximises
+//!   F1.
+//! - **Both sides normalising to empty** — an empty answer against the
+//!   reference "." — scores exact match `1` and F1 `0`: v1.1's rule, where
+//!   SQuAD v2.0's script would score F1 `1`.
+//! - **An empty answer is scored like any other**: `0` on both metrics against
+//!   a reference that does not normalise to empty.
+//! - **A query with no reference answer is unjudged**, not scored `0`: the
+//!   script is undefined there, so both functions panic on an empty reference
+//!   list rather than invent a value, and the harness leaves such a query out
+//!   of the mean — `trec_eval`'s rule for a query with no qrels.
+//!
+//! `tests/squad_parity.rs` holds both functions and the normalisation to
+//! values the script itself produced (exact match exactly, F1 within `1e-12`),
+//! over every edge case ADR-C30 lists; `tests/fixtures/regenerate_squad_parity.py`
+//! records how, and under which Python.
+//!
+//! **The script's Unicode behaviour is reproduced with the standard library's
+//! character tables, which is exact but for one known class.** The script runs
+//! under Python 3, where `str.lower`, `str.split` and `\b` are Unicode-aware.
+//! `str::to_lowercase` performs the same full case mapping, final sigma
+//! included; `str.split`'s whitespace is `char::is_whitespace` plus the ASCII
+//! information separators U+001C..=U+001F, which Python counts and Rust does
+//! not. The word characters behind `\b` are where the two differ:
+//! `char::is_alphanumeric` counts the combining marks and symbols carrying the
+//! Unicode `Other_Alphabetic` property (U+0345, the Indic vowel signs, the
+//! circled letters) and Python's `\w` does not, so an article written directly
+//! against one of them — "a" followed by U+0345, with no space between — is
+//! kept here and removed by the script. Reproducing that exactly would take a
+//! character table this crate does not carry, for a case no English answer
+//! produces. Beyond it, the two sides agree character for character only while
+//! they read the same Unicode version: a character assigned in a newer version
+//! than the other side knows can lower, split or bound words differently.
 
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 
 use ragondin_types::DocId;
+
+mod generation;
+
+pub use generation::{exact_match, normalize_answer, token_f1};
 
 /// The relevance grade of `id`, with an unjudged document counting as `0`.
 fn grade(relevance: &BTreeMap<DocId, u8>, id: &DocId) -> u8 {

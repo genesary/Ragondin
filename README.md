@@ -100,7 +100,7 @@ On `main` today:
 | `ragondin-contracts` | Five component traits — `Retriever`, `Fusion`, `Reranker`, `Embedder`, `VectorStore` — with their params and `ComponentError`. |
 | `ragondin-engine` | `EngineContext` and the explicit component registry, physical planning (`LogicalPipeline` + registry → `PhysicalPipeline`), and an executor that returns its `ExecutionTrace` — on failure as well as on success. No `Branch` or `Loop`: no such node variant exists yet. |
 | `ragondin-conformance` | The behavioural suite every implementation of a contract must pass. |
-| `ragondin-metrics` | The deterministic retrieval metrics: nDCG@k, recall@k, precision@k, MRR, MAP@k. |
+| `ragondin-metrics` | The deterministic metrics: nDCG@k, recall@k, precision@k, MRR and MAP@k for retrieval; exact match and token-F1, after the SQuAD v1.1 script, for generation. |
 | `ragondin-config` | The `ConfigSource` abstraction and its `LocalFile` implementation: a YAML file read into `RawPipeline` and compiled to a `LogicalPipeline`, with a typed error that keeps an unreadable file, an unsupported schema version, a parse fault and an invalid graph apart. No `Stream` source — that is M6. |
 | `ragondin-benchmarks` | The `BenchmarkAdapter` trait, the internal `Benchmark` structure it produces — corpus, queries, `Qrels` — and `BeirAdapter`, which reads a BEIR dataset from disk. |
 | `ragondin-harness` | The evaluation driver: `evaluate` takes a validated `LogicalPipeline`, a ready `EngineContext` and a loaded `Benchmark`, runs the pipeline once per query through `ragondin-engine`, scores the rankings against the qrels, and assembles the `Run` that names itself by its content-addressed identity. No execution logic of its own (ADR-4). |

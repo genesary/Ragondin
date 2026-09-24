@@ -134,8 +134,8 @@ workspace/
 │   └── …                      # each: ragondin-contracts + ragondin-types + its own heavy dependency
 │
 ├── eval/
-│   ├── ragondin-metrics            # nDCG@k, recall@k, precision@k, MRR@k, MAP@k (deterministic);
-│   │                          #   generation metrics later
+│   ├── ragondin-metrics            # nDCG@k, recall@k, precision@k, MRR@k, MAP@k; exact match,
+│   │                          #   token-F1 (deterministic)
 │   ├── ragondin-benchmarks         # BenchmarkAdapter + adapters (BEIR/MTEB, CRAG, MultiHop-RAG…),
 │   │                          #   each parsing one canonical corpus/queries/qrels shape
 │   └── ragondin-harness            # Evaluation harness: benchmark → engine → metrics → run
