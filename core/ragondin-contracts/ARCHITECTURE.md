@@ -150,10 +150,16 @@ component is a gRPC service honouring the mirror protobuf in `ragondin-proto`.
     `EmbedParams::new(role)` and `RerankParams::new(top_k)` are unchanged and
     leave the field `None`, because absence is the only spelling of "no
     served-model name" — the rule ADR-C32 § 1 applies to a prefix, and § 4
-    to a served model, whose empty name is refused. A builder method rather than a second constructor keeps one
-    constructor per struct, so `EmbedParams` still has exactly one way to be
-    built and it still takes the role. The fields stay `pub`, like every
-    params field here.
+    to a served model, whose empty name is refused. A builder method rather
+    than a second constructor keeps one constructor per struct, so
+    `EmbedParams` still has exactly one way to be built and it still takes
+    the role. The fields stay `pub`, like every params field here.
+
+    The refusals ADR-C32 § 4 attaches to the field are **not yet true of the
+    in-tree implementations**: the ONNX embedder and reranker and the test
+    stubs ignore it and answer a `Some(name)` as if it were `None`. #285, which
+    adds `model_identity` to `Embedder` and `Reranker`, is where the ONNX
+    components start refusing every `Some(name)`.
 
 - **A component does not block the thread that called it (ADR-C25).** Every
   method here is `async`, and the engine cannot tell a `Local` implementation

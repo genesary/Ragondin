@@ -195,6 +195,14 @@ pub struct RerankParams {
     /// name, and `None` when it has no single loaded model that `None` could
     /// mean. Absence is the only spelling of "no name": there is no empty
     /// string standing in for it.
+    ///
+    /// **Not yet true of the in-tree implementations.** The ONNX embedder and
+    /// reranker (`ragondin-embedder-onnx`, `ragondin-reranker-onnx`) and the
+    /// test stubs, here and in `ragondin-conformance`, ignore this field and
+    /// answer a `Some(name)` as if it were `None`. The contract and the
+    /// behaviour change are separate PRs: #285, which adds `model_identity` to
+    /// `Embedder` and `Reranker`, is where the ONNX components start refusing
+    /// every `Some(name)`.
     pub served_model: Option<String>,
 }
 
@@ -261,6 +269,14 @@ pub struct EmbedParams {
     /// mean. Absence is the only spelling of "no name". A served-model name is
     /// an identifier the backend resolves, never text prepended to the input:
     /// it is not the prefix ADR-C17 keeps off this struct.
+    ///
+    /// **Not yet true of the in-tree implementations.** The ONNX embedder and
+    /// reranker (`ragondin-embedder-onnx`, `ragondin-reranker-onnx`) and the
+    /// test stubs, here and in `ragondin-conformance`, ignore this field and
+    /// answer a `Some(name)` as if it were `None`. The contract and the
+    /// behaviour change are separate PRs: #285, which adds `model_identity` to
+    /// `Embedder` and `Reranker`, is where the ONNX components start refusing
+    /// every `Some(name)`.
     pub served_model: Option<String>,
 }
 
@@ -320,7 +336,8 @@ impl ContextParams {
     /// Caps the context at `budget`.
     ///
     /// Infallible: a `budget` of zero is representable here and rejected by
-    /// the component, as a zero `top_k` is ([`ComponentError::InvalidRequest`]).
+    /// the component, as a zero `top_k` is — see [`ContextBuilder`]'s context
+    /// contract.
     pub fn new(budget: usize) -> Self {
         Self { budget }
     }
@@ -362,8 +379,8 @@ pub struct GenerateParams {
     pub temperature: Option<f64>,
     /// The sampling seed, when the configuration sets one.
     pub seed: Option<u64>,
-    /// The cap on the answer's length in tokens, when the configuration sets
-    /// one.
+    /// The cap on the answer's length, in its model's tokens, when the
+    /// configuration sets one.
     pub max_tokens: Option<usize>,
 }
 
@@ -372,8 +389,7 @@ impl GenerateParams {
     /// `template` renders, with no optional setting.
     ///
     /// Infallible: an empty `served_model` or `template` is representable here
-    /// and rejected by the component, as [`ComponentError::InvalidRequest`]
-    /// describes.
+    /// and rejected by the component — see what [`Generator`] refuses.
     pub fn new(served_model: impl Into<String>, template: impl Into<String>) -> Self {
         Self {
             served_model: served_model.into(),
@@ -604,7 +620,9 @@ pub trait ContextBuilder: Send + Sync {
 ///   `{query}`; substituted text is never scanned again.
 ///
 /// The rendered text is the whole of what the component asks its model: it
-/// adds no instruction text of its own.
+/// adds no instruction text of its own. Framing that one message for an
+/// inference server — message roles and the server's own chat encoding — is
+/// allowed, and never adds wording of its own (ADR-C31 § 2).
 ///
 /// # What is refused, and what is not
 ///
@@ -918,6 +936,9 @@ mod tests {
         // ADR-C31 § 2: `budget` is `top_k`'s twin. `ContextParams::new(0)`
         // builds, as `RerankParams::new(0)` does, and the component refuses the
         // call as an invalid request rather than answering an empty context.
+        // The refusal half is illustrative: it exercises this file's stub,
+        // which shows the shape of the refusal and proves nothing about any
+        // real builder.
         assert_eq!(ContextParams::new(0).budget, 0);
         let component: Box<dyn ContextBuilder> = Box::new(StubContextBuilder);
         let query = Query {
