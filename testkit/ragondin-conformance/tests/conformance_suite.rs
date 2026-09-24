@@ -1571,6 +1571,11 @@ async fn a_context_builder_refusing_zero_chunks_fails() {
             .await
             .expect_err("zero chunks is a valid call (ADR-C19)");
     assert_eq!(failure.check(), "well-formed call succeeds");
+    assert!(
+        failure.detail().contains("zero chunks"),
+        "the diagnosis must name the zero-chunk call: {}",
+        failure.detail()
+    );
 }
 
 #[tokio::test]
@@ -1624,10 +1629,9 @@ async fn the_context_builder_assert_wrapper_panics_on_a_broken_component() {
 
 // ---------------------------------------------------------------- Generator
 
-/// The model the stub generators serve, and a template in the contract's
-/// grammar: what a caller of the generator suite hands it.
+/// The model the stub generators serve: what a caller of the generator suite
+/// hands it.
 const SERVED: &str = "stub-model";
-const TEMPLATE: &str = "Answer {query} from these passages:\n{context}\n{{no placeholder}}";
 
 /// Which malformations of the template grammar stated on `Generator` a stub
 /// refuses. The conformant stub refuses all three; each broken one forgives
@@ -1708,6 +1712,11 @@ enum GeneratorFlaw {
     RefusesAnEmptyModelAsUnavailable,
     /// Answers an empty template with an empty prompt.
     AcceptsAnEmptyTemplate,
+    /// Refuses the `{{` and `}}` escapes, which the grammar allows.
+    RefusesEscapes,
+    /// Refuses a placeholder that appears more than once, which the grammar
+    /// allows.
+    RefusesARepeatedPlaceholder,
     /// Treats an empty context as an invalid request, against ADR-C19.
     RefusesAnEmptyContext,
     /// Fails every generate.
@@ -1753,6 +1762,20 @@ impl Generator for StubGenerator {
         if params.template.is_empty() && !matches!(flaw, GeneratorFlaw::AcceptsAnEmptyTemplate) {
             return Err(ComponentError::InvalidRequest("an empty template".into()));
         }
+        let template = params.template.as_str();
+        if matches!(flaw, GeneratorFlaw::RefusesEscapes)
+            && (template.contains("{{") || template.contains("}}"))
+        {
+            return Err(ComponentError::InvalidRequest("no escapes here".into()));
+        }
+        if matches!(flaw, GeneratorFlaw::RefusesARepeatedPlaceholder)
+            && (template.matches("{query}").count() > 1
+                || template.matches("{context}").count() > 1)
+        {
+            return Err(ComponentError::InvalidRequest(
+                "each placeholder once".into(),
+            ));
+        }
         if context.chunks.is_empty() && matches!(flaw, GeneratorFlaw::RefusesAnEmptyContext) {
             return Err(ComponentError::InvalidRequest(
                 "nothing to answer from".into(),
@@ -1796,7 +1819,7 @@ impl Generator for StubGenerator {
 async fn generator_failure(
     flaw: impl Fn() -> GeneratorFlaw,
 ) -> ragondin_conformance::ConformanceFailure {
-    check_generator_conformance(|| Box::new(StubGenerator(flaw())), SERVED, TEMPLATE)
+    check_generator_conformance(|| Box::new(StubGenerator(flaw())), SERVED)
         .await
         .expect_err("the stub is not conformant")
 }
@@ -1808,6 +1831,10 @@ fn the_stub_renderer_follows_the_template_grammar() {
     let render = |t: &str| render(t, "Q", "C", STRICT);
     assert_eq!(render("{query}|{context}|{query}").unwrap(), "Q|C|Q");
     assert_eq!(render("{{query}}").unwrap(), "{query}");
+    assert_eq!(
+        render("{query}\n{context}\n{query} {{literal}}").unwrap(),
+        "Q\nC\nQ {literal}"
+    );
     assert_eq!(render("no placeholder").unwrap(), "no placeholder");
     for malformed in ["{unknown}", "{query", "}", "{context} {", "{query} }"] {
         assert!(
@@ -1819,13 +1846,9 @@ fn the_stub_renderer_follows_the_template_grammar() {
 
 #[tokio::test]
 async fn a_conformant_generator_passes() {
-    check_generator_conformance(
-        || Box::new(StubGenerator(GeneratorFlaw::None)),
-        SERVED,
-        TEMPLATE,
-    )
-    .await
-    .expect("the stub honours the generator contract");
+    check_generator_conformance(|| Box::new(StubGenerator(GeneratorFlaw::None)), SERVED)
+        .await
+        .expect("the stub honours the generator contract");
 }
 
 #[tokio::test]
@@ -1835,7 +1858,6 @@ async fn a_generator_asked_for_a_model_it_does_not_serve_fails_the_well_formed_c
     let failure = check_generator_conformance(
         || Box::new(StubGenerator(GeneratorFlaw::None)),
         "some-other-model",
-        TEMPLATE,
     )
     .await
     .expect_err("the stub serves only its own model");
@@ -1858,6 +1880,20 @@ async fn a_generator_refusing_an_empty_context_fails() {
         "the diagnosis must name the empty context: {}",
         failure.detail()
     );
+}
+
+#[tokio::test]
+async fn a_generator_refusing_the_escapes_fails() {
+    // The suite owns the well-formed template, so a caller cannot certify a
+    // generator by handing it a template with nothing in it to get wrong.
+    let failure = generator_failure(|| GeneratorFlaw::RefusesEscapes).await;
+    assert_eq!(failure.check(), "well-formed call succeeds");
+}
+
+#[tokio::test]
+async fn a_generator_refusing_a_repeated_placeholder_fails() {
+    let failure = generator_failure(|| GeneratorFlaw::RefusesARepeatedPlaceholder).await;
+    assert_eq!(failure.check(), "well-formed call succeeds");
 }
 
 #[tokio::test]
@@ -1951,7 +1987,6 @@ async fn a_generator_whose_identity_names_the_instance_fails() {
             )))
         },
         SERVED,
-        TEMPLATE,
     )
     .await
     .expect_err("one configuration, one identity");
@@ -1970,7 +2005,6 @@ async fn the_generator_assert_wrapper_panics_on_a_broken_component() {
     assert_generator_conformance(
         || Box::new(StubGenerator(GeneratorFlaw::AcceptsAnEmptyTemplate)),
         SERVED,
-        TEMPLATE,
     )
     .await;
 }

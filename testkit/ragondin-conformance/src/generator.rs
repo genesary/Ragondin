@@ -11,6 +11,12 @@ use crate::{
 
 const COMPONENT: &str = "Generator";
 
+/// The template of every well-formed call. It is the suite's, not the
+/// caller's, so that every generator is held to the whole grammar stated on
+/// [`Generator`]: both placeholders, one of them twice, and both escapes. A
+/// caller-chosen template could leave out whatever its generator gets wrong.
+const TEMPLATE: &str = "{query}\n{context}\n{query} {{literal}}";
+
 /// One template per way the grammar on [`Generator`] makes a template
 /// malformed, each otherwise well formed so that nothing else is refused.
 const MALFORMED_TEMPLATES: [(&str, &str); 3] = [
@@ -24,15 +30,17 @@ const MALFORMED_TEMPLATES: [(&str, &str); 3] = [
 
 /// Checks that `make`'s generators honour the [`Generator`] contract.
 ///
-/// `served_model` must be a name the fixture serves, and `template` a template
-/// it is expected to accept, in the grammar stated on [`Generator`]: the suite
-/// cannot know which model a fixture serves, so the caller states it, as it
-/// states a vector store's dimensionality. Both are the caller's claims about
-/// its fixture, and a wrong one fails `well-formed call succeeds`.
+/// `served_model` must be a name the fixture serves: the suite cannot know
+/// which model a fixture serves, so the caller states it, as it states a
+/// vector store's dimensionality. It is the caller's claim about its fixture,
+/// and a wrong one fails `well-formed call succeeds`. The template is the
+/// suite's own, and exercises the whole grammar.
 ///
 /// - **A well-formed call succeeds** — over a context holding passages, and
 ///   over the **empty context** (ADR-C19), where an answer of "I do not know"
-///   is conformant and a refusal is not.
+///   is conformant and a refusal is not. Its template holds both
+///   placeholders, one of them twice, and the `{{` and `}}` escapes, so a
+///   generator refusing any of those fails here.
 /// - An **empty served model**, an **empty template** and a **malformed
 ///   template** are each rejected as an invalid request: each is a refusal of
 ///   the call's form, which the suite can check without knowing the model.
@@ -51,11 +59,10 @@ const MALFORMED_TEMPLATES: [(&str, &str); 3] = [
 pub async fn check_generator_conformance(
     make: impl Fn() -> Box<dyn Generator>,
     served_model: &str,
-    template: &str,
 ) -> Result<(), ConformanceFailure> {
     let generator = make();
     let query = query();
-    let params = GenerateParams::new(served_model, template);
+    let params = GenerateParams::new(served_model, TEMPLATE);
 
     let context = "generate over a context of two passages";
     generator
@@ -78,7 +85,7 @@ pub async fn check_generator_conformance(
         "empty served_model rejected",
         "generate with an empty served_model",
         generator
-            .generate(&query, &passages(), &GenerateParams::new("", template))
+            .generate(&query, &passages(), &GenerateParams::new("", TEMPLATE))
             .await,
     )?;
 
@@ -152,9 +159,8 @@ fn passages() -> Context {
 pub async fn assert_generator_conformance(
     make: impl Fn() -> Box<dyn Generator>,
     served_model: &str,
-    template: &str,
 ) {
-    if let Err(failure) = check_generator_conformance(make, served_model, template).await {
+    if let Err(failure) = check_generator_conformance(make, served_model).await {
         panic!("{failure}");
     }
 }

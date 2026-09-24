@@ -94,7 +94,7 @@ pub(crate) fn check_no_fabricated_ids(
     Ok(())
 }
 
-/// A ranked list ranks each chunk once.
+/// A ranked list ranks each chunk once, and a context places each chunk once.
 ///
 /// Checked only where the component's whole input is known to the suite, so
 /// that "this id appears twice" is a statement about the component and not

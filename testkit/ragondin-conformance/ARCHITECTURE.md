@@ -17,16 +17,18 @@ list. No embedder crate existed when it landed, so nothing broke. The
 precedent is the *reason*, not a licence: a family function's argument shape
 changes only when a check needs a fact no fixture can supply from inside.
 
-`check_generator_conformance(make, served_model, template)` was born with that
-shape rather than changed to it, on the same reasoning. Which model a fixture
-serves is a fact no suite can know: a `Local` generator recognises the names
-its constructor was given, a `Remote` one whatever its inference server
-serves, and a name the suite invented would be refused by both — correctly.
-The template is taken beside it so that the well-formed call is the call a
-node of the caller's actually makes; the grammar itself is still probed by the
-suite's own malformed templates, which no caller chooses. Both are the
-caller's claims about its fixture, and a wrong one fails `well-formed call
-succeeds`.
+`check_generator_conformance(make, served_model)` was born with that shape
+rather than changed to it, on the same reasoning. Which model a fixture serves
+is a fact no suite can know: a `Local` generator recognises the names its
+constructor was given, a `Remote` one whatever its inference server serves,
+and a name the suite invented would be refused by both — correctly. It is the
+caller's claim about its fixture, and a wrong one fails `well-formed call
+succeeds`. **The template is not an argument**, because the suite can supply
+it: the grammar on `Generator` is the same for every implementation, so the
+suite's well-formed template exercises all of it — both placeholders, one of
+them twice, and the `{{`/`}}` escapes. A caller-chosen template could leave
+out exactly what its generator gets wrong, and then a built-in and a third
+party would no longer earn the same guarantee (INV-7).
 
 ## What lives here
 
@@ -105,9 +107,10 @@ so a reviewer can see the reasoning rather than reconstruct it.
 | **one dimensionality, across both roles** | `Embedder`'s *One embedding space* clause. The per-batch half predates the role; ADR-C17 is what made two widths expressible at all, so the clause was written onto the trait in the same change that widened the check — the suite still enforces nothing it invented. Deliberately **not** a caller-declared `dim` argument the way `VectorStore` takes one: the suite can observe the width itself, and a family function's argument shape changes only when a check needs a fact no fixture can supply from inside. |
 | **a `top_k` of zero is an invalid request** | stated for `Retriever` on `RetrieveParams::new`; **generalised** to `Reranker` and `VectorStore::search` from `ComponentError::InvalidRequest`'s documentation, which names it as the example and is written on the error every boundary returns. #89 mirrors the sentence onto the two params structs that lack it. |
 | **the role changes the vector** | ADR-C17 and #97, which require the suite to exercise both roles and to check that a fixture *declaring* distinct per-role prefixes honours them. Opt-in by construction: the ADR states the suite cannot detect a wrong role and must not pretend to. |
-| **no duplicate ids** | **generalised**: a ranked list ranks each chunk once. Checked only for `Fusion`, `Reranker` and `ContextBuilder`, whose whole input the suite knows, so that "this id appears twice" is a statement about the component and not about a corpus. |
+| **no duplicate ids** | **generalised**: a ranked list ranks each chunk once, and a context places each chunk once. Checked only for `Fusion`, `Reranker` and `ContextBuilder`, whose whole input the suite knows, so that "this id appears twice" is a statement about the component and not about a corpus. |
 | a context's chunks: no fabricated ids, no duplicates; a zero budget rejected | `ContextBuilder`'s context contract, and ADR-C31 § 2's list of what the suite may check. The zero budget is `top_k`'s twin under the contracts crate's *Empty collections* rule. |
 | zero chunks, and an empty context, are valid calls | ADR-C19, restated for both families in ADR-C31 § 2. A refusal is reported as `well-formed call succeeds`, and a builder answering zero chunks with a placed chunk as `no fabricated ids` — the same diagnoses the M2 families give an empty input. |
+| a well-formed template accepted: both placeholders, a repeated one, the `{{`/`}}` escapes | The template grammar on `Generator`, which every implementation shares. Its refusal is reported as `well-formed call succeeds`. |
 | an empty served model, an empty template, a malformed template rejected | `Generator`'s *What is refused* clause and ADR-C31 § 2. "Malformed" is probed once per case the template grammar on `Generator` names — an unknown name between braces, a `{` no `}` closes, a lone `}` — each in a template otherwise well formed, so that a generator forgiving any one of them fails. |
 | **identity non-empty**, **identity stable across two calls** | ADR-C31 § 1 (an empty identity is not valid) and § 4 (stable while nothing has changed); ADR-C32 § 4 adds both scenarios for every model-bearing family. Stability is read twice from one instance and once from a **second instance the same constructor built**: § 4's *How it is read* has the composition root read the identity from an instance other than the one that runs, so an identity naming its instance breaks the run record exactly as a counter does. A `model_identity` that fails is reported as `well-formed call succeeds`. |
 

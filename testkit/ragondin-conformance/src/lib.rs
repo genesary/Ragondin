@@ -71,8 +71,8 @@
 //! answering "I do not know" to everything is conformant. A context builder's
 //! budget is refused at zero but never measured, because its unit is the
 //! builder's own. And what the suite cannot know about a generator — which
-//! model it serves, and a template it accepts — the caller states in the
-//! argument list.
+//! model it serves — the caller states in the argument list; the template is
+//! the suite's own.
 //!
 //! # The check names
 //!
