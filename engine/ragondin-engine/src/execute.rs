@@ -52,7 +52,9 @@ use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
 use ragondin_contracts::{FusionParams, RerankParams, RetrieveParams};
-use ragondin_pipeline::{LogicalNode, NodeId, ParamValue, Params, ValueKind};
+use ragondin_pipeline::{
+    ContextBuilderNode, GeneratorNode, LogicalNode, NodeId, ParamValue, Params, ValueKind,
+};
 use ragondin_types::{Query, ScoredChunk};
 
 use crate::error::ExecError;
@@ -320,9 +322,11 @@ fn summarize_inputs(node: &PhysicalNode, table: &Table) -> Vec<ValueSummary> {
 /// enum so that a kind added later turns every site that does not handle it
 /// into a compiler error; a match over the `(node, component)` pair with a
 /// catch-all arm would turn it into a runtime panic instead. So the variant is
-/// matched first and without a wildcard — a `LogicalNode` variant added in M3
-/// (#93) fails to compile here — and the component is destructured inside
-/// each arm, where the only other pairing is the one planning rules out.
+/// matched first and without a wildcard — a `LogicalNode` variant added later
+/// fails to compile here — and the component is destructured inside each arm,
+/// where the only other pairing is the one planning rules out. The two
+/// generation variants have an arm that returns [`ExecError::UnplannableNode`]:
+/// planning refuses them, so no plan reaches it.
 async fn call(node: &PhysicalNode, table: &Table) -> Result<NodeValue, ExecError> {
     match node.logical() {
         LogicalNode::Retriever(logical) => {
@@ -366,6 +370,13 @@ async fn call(node: &PhysicalNode, table: &Table) -> Result<NodeValue, ExecError
                 .await
                 .map_err(|source| component_failed(&logical.id, source))?;
             Ok(NodeValue::Chunks(reranked))
+        }
+        // `PhysicalNode` is built in one place, and `plan_physical` refuses
+        // both generation variants before it builds any — so no plan holds
+        // one. Returned as an error, never panicked on.
+        LogicalNode::ContextBuilder(ContextBuilderNode { id, .. })
+        | LogicalNode::Generator(GeneratorNode { id, .. }) => {
+            Err(ExecError::UnplannableNode { node: id.clone() })
         }
         // `PhysicalNode` is built in one place, and `plan_physical` refuses
         // every `Extension` before it builds any — so no plan holds one, and

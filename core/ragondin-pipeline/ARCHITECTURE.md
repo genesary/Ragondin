@@ -15,6 +15,42 @@ The pipeline representation, in **three levels**:
 
 Plus the node graph and the open `Extension` variant.
 
+### The node variants and the value kinds
+
+`LogicalNode` has six variants, and each one's port shape is derived from the
+variant alone (ADR-C16) by `produced_kind` and `consumed_kinds` in
+`src/kind.rs`:
+
+| Variant | `component:` | Consumes | Produces |
+|---|---|---|---|
+| `Retriever` | `retriever` | `Fixed([Query])` | `Chunks` |
+| `Fusion` | `fusion` | `Variadic(Chunks)` | `Chunks` |
+| `Reranker` | `reranker` | `Fixed([Query, Chunks])` | `Chunks` |
+| `ContextBuilder` | `context_builder` | `Fixed([Query, Chunks])` | `Context` |
+| `Generator` | `generator` | `Fixed([Query, Context])` | `Answer` |
+| `Extension` | `extension` | `Unknown` | `Opaque` |
+
+`ValueKind` has five variants, each with a pinned `Display` rendering that a
+`KindMismatch` message is built from: `Query` (`query`), `Chunks` (`chunks`),
+`Context` (`context`), `Answer` (`answer`) and `Opaque` (`opaque`). The two
+generation variants and the two kinds they carry were added by
+[ADR-C31](../../docs/adr/ADR-C31-generation-contracts-template-and-served-model-per-call.md)
+§ 3, as the deliberate INV-1 break it sanctions; `Context` and `Answer` are two
+kinds rather than one shared text kind so that a generator fed raw chunks, or
+fed another generator's answer, fails validation by name.
+
+### Schema-version history
+
+| `SchemaVersion::SUPPORTED` | What changed on the wire | Decided in |
+|---|---|---|
+| 2 | `RawGraph` gained `inputs` — a pipeline declares its inputs | [ADR-C18](../../docs/adr/ADR-C18-a-pipeline-declares-its-inputs.md) |
+| 3 | `RawNode.component` accepts `context_builder` and `generator` | [ADR-C31](../../docs/adr/ADR-C31-generation-contracts-template-and-served-model-per-call.md) § 3 |
+
+A build reads exactly one version: a document stating an earlier one is
+refused as `UnsupportedSchemaVersion`, and a document stating none reads as the
+current one. The reason for each bump is recorded again on `SchemaVersion`
+itself, in `src/raw.rs`.
+
 `LogicalNode` reserves **no `Branch` or `Loop` variant today**, and `src/node.rs`
 says so where someone about to add one will read it. That control flow belongs
 in the representation at all is argued in
@@ -45,12 +81,16 @@ actually look like is not settled, so neither variant exists yet.
   distinct canonical logical forms must produce two distinct byte streams,
   which is what the length prefixes and the per-enum tag bytes buy. Changing
   the framing, a tag's value, or the domain separator invalidates every digest
-  ever written to a run store; `tests/content_hash.rs` pins **two** so the
-  change cannot be silent — the reference pipeline, and a fixture covering
-  every node variant and every parameter shape. Two because one cannot reach
-  every tag byte: a realistic pipeline has no reranker, no extension node, no
-  `Bool` and no `List`, so four of the nine tags could be renumbered in
-  silence while the reference digest sat still. The encoder **folds `-0.0` into `0.0` itself**, as lowering
+  ever written to a run store; `tests/content_hash.rs` pins **three** so the
+  change cannot be silent — the reference pipeline, a fixture covering every
+  node variant that predates generation and every parameter shape, and a
+  generation pipeline covering the context-builder and generator tags. More
+  than one because one cannot reach every tag byte: a realistic pipeline has
+  no reranker, no extension node, no `Bool` and no `List`, so four tags could
+  be renumbered in silence while the reference digest sat still. The
+  generation variants got a fixture of their own rather than joining the
+  whole-grammar one, because adding nodes to that document would have moved a
+  digest already pinned. The encoder **folds `-0.0` into `0.0` itself**, as lowering
   already does: the two compare equal and their bits differ, so a raw
   `to_bits()` would give one value two digests, and ADR-C23 gives
   `Deserialize` a path to a `LogicalPipeline` that never ran lowering. It

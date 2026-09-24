@@ -15,7 +15,8 @@ use std::collections::{HashMap, HashSet};
 
 use ragondin_contracts::{Fusion, Reranker, Retriever};
 use ragondin_pipeline::{
-    consumed_kinds, produced_kind, LogicalNode, LogicalPipeline, NodeId, PortSpec, ValueKind,
+    consumed_kinds, produced_kind, ContextBuilderNode, GeneratorNode, LogicalNode, LogicalPipeline,
+    NodeId, PortSpec, ValueKind,
 };
 
 use crate::context::EngineContext;
@@ -104,7 +105,10 @@ impl PhysicalPipeline {
 ///
 /// 1. every [`LogicalNode::Extension`] is refused
 ///    ([`PlanError::ExtensionUnsupported`]) — see that variant, and #93, for
-///    why the check ADR-C16 reserves for planning cannot yet apply to them;
+///    why the check ADR-C16 reserves for planning cannot yet apply to them —
+///    and so is every [`LogicalNode::ContextBuilder`] and
+///    [`LogicalNode::Generator`] ([`PlanError::GenerationUnsupported`]), which
+///    no registry family here resolves;
 /// 2. every edge's kinds are checked, and a mismatch refused
 ///    ([`PlanError::KindMismatch`]) — see that variant for what the check is,
 ///    and for why a pipeline that came through `validate` never reaches it;
@@ -131,6 +135,9 @@ pub fn plan_physical(
                 kind: extension.kind.clone(),
             });
         }
+        if let Some(refusal) = generation_unsupported(node) {
+            return Err(refusal);
+        }
     }
 
     let index: HashMap<&NodeId, &LogicalNode> =
@@ -151,6 +158,25 @@ pub fn plan_physical(
     Ok(PhysicalPipeline {
         inputs: logical.inputs().to_vec(),
         nodes,
+    })
+}
+
+/// The refusal for a node of a generation variant, `None` for any other.
+///
+/// Exhaustive over [`LogicalNode`], so a variant added later has to be
+/// placed on one side or the other here.
+fn generation_unsupported(node: &LogicalNode) -> Option<PlanError> {
+    let (id, component) = match node {
+        LogicalNode::ContextBuilder(node) => (&node.id, "context_builder"),
+        LogicalNode::Generator(node) => (&node.id, "generator"),
+        LogicalNode::Retriever(_)
+        | LogicalNode::Fusion(_)
+        | LogicalNode::Reranker(_)
+        | LogicalNode::Extension(_) => return None,
+    };
+    Some(PlanError::GenerationUnsupported {
+        node: id.clone(),
+        component,
     })
 }
 
@@ -205,8 +231,10 @@ fn check_kinds(
             };
 
             // Derived from the *producer*, never from `node`: indistinguishable
-            // today, since every primitive produces `Chunks`, and a live bug the
-            // moment a node kind that does not arrives (#93, or a generator).
+            // today, since every variant that reaches this check — a retriever,
+            // a fusion, a reranker — produces `Chunks`, and a live bug the
+            // moment one that does not is planned (a context builder or a
+            // generator, both refused before this runs for now).
             let found = match index.get(input_id) {
                 Some(producer) => {
                     // The clause `ragondin-pipeline`'s check carries, kept here
@@ -272,6 +300,18 @@ fn resolve(node: &LogicalNode, ctx: &EngineContext) -> Result<ResolvedComponent,
         LogicalNode::Reranker(node) => ctx
             .build_reranker(&node.implementation, &node.params)
             .map(ResolvedComponent::Reranker),
+        // Refused by the first pass of `plan_physical`, so never reached; an
+        // error rather than a panic all the same, and the same one.
+        LogicalNode::ContextBuilder(ContextBuilderNode { id, .. }) => {
+            Err(PlanError::GenerationUnsupported {
+                node: id.clone(),
+                component: "context_builder",
+            })
+        }
+        LogicalNode::Generator(GeneratorNode { id, .. }) => Err(PlanError::GenerationUnsupported {
+            node: id.clone(),
+            component: "generator",
+        }),
         LogicalNode::Extension(_) => {
             unreachable!("every Extension node is refused before resolution")
         }
@@ -577,6 +617,59 @@ mod tests {
     }
 
     #[test]
+    fn a_generation_node_is_refused_as_unsupported() {
+        // ADR-C31's two variants have no physical planner in this build: each
+        // is refused with a typed error naming the node and its component,
+        // never a panic.
+        for (component, id) in [("context_builder", "ctx"), ("generator", "gen")] {
+            let pipeline = logical(vec![raw(id, component, "any_impl", &["question"])]);
+
+            let Err(err) = plan_physical(&pipeline, &context()) else {
+                panic!("no {component} node has a physical planner in this build")
+            };
+
+            assert!(
+                matches!(
+                    &err,
+                    PlanError::GenerationUnsupported { node, component: found }
+                        if node.as_str() == id && *found == component
+                ),
+                "expected GenerationUnsupported for {component}, got {err:?}"
+            );
+            let message = err.to_string();
+            assert!(
+                message.contains(&format!("`{id}`")) && message.contains(component),
+                "the message must name the node and its component: {message}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_generation_node_is_refused_before_any_component_is_constructed() {
+        // Same ordering as for an Extension: `leg` names an unregistered impl,
+        // so resolving it first would report `UnknownImpl` instead.
+        let pipeline = logical(vec![
+            raw("leg", "retriever", "splade", &["question"]),
+            raw(
+                "ctx",
+                "context_builder",
+                "concatenate",
+                &["question", "leg"],
+            ),
+            raw("gen", "generator", "openai_chat", &["question", "ctx"]),
+        ]);
+
+        let Err(err) = plan_physical(&pipeline, &context()) else {
+            panic!("the pipeline holds generation nodes and an unregistered impl")
+        };
+
+        assert!(
+            matches!(&err, PlanError::GenerationUnsupported { .. }),
+            "a generation node must be refused before resolution is attempted, got {err:?}"
+        );
+    }
+
+    #[test]
     fn a_miswired_edge_is_refused_with_a_kind_mismatch_naming_the_edge() {
         // A reranker's port 0 wants a `Query`; `leg` produces `Chunks`. Every
         // impl below is registered, so the kind check is the only thing that
@@ -654,8 +747,9 @@ mod tests {
         // skipped, which lets port 1 — a position the variant never declared —
         // carry the fault: no kind to compare against, only an edge that should
         // not exist. That skip is the only route to `expected: None` in this
-        // build, since every primitive produces `Chunks` and every fixed port 0
-        // wants `Query`, so no edge can match port 0 and then overflow arity.
+        // build, since every variant planning admits produces `Chunks` and
+        // every fixed port 0 wants `Query`, so no edge can match port 0 and
+        // then overflow arity.
         let pipeline = forged(
             r#"{"inputs":[],"nodes":[
                 {"Retriever":{"id":"a","implementation":"bm25","inputs":[],"params":{}}},

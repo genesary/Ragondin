@@ -89,13 +89,21 @@ use serde::{Deserialize, Deserializer, Serialize};
 /// against documents that do not exist would only cost every configuration a
 /// `version:` line. The mechanism is here and versioned; what it discriminates
 /// between starts mattering when a version is actually in use somewhere.
+///
+/// ADR-C31 § 3 bumped it to 3 when [`RawNode::component`] began accepting
+/// `context_builder` and `generator`. No struct changed shape — `component`
+/// is a `String` either way — but the vocabulary a configuration may name
+/// widened, and that is a change to the schema all the same. A document that
+/// states `version: 2` is now refused here, by the version gate, rather than
+/// further down as an unknown component; one that states no version still
+/// reads as the current one, as above.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 #[serde(transparent)]
 pub struct SchemaVersion(u32);
 
 impl SchemaVersion {
     /// The only schema version this build can read.
-    pub const SUPPORTED: u32 = 2;
+    pub const SUPPORTED: u32 = 3;
 
     /// [`SchemaVersion::SUPPORTED`] as a value, and what
     /// [`RawPipeline::version`] defaults to.
@@ -483,8 +491,44 @@ mod tests {
     #[test]
     fn the_supported_version_is_accepted_when_stated() {
         let doc: RawPipeline =
-            serde_json::from_str(r#"{"version":2,"pipeline":{"nodes":[]}}"#).unwrap();
+            serde_json::from_str(r#"{"version":3,"pipeline":{"nodes":[]}}"#).unwrap();
         assert_eq!(doc.version.get(), SchemaVersion::SUPPORTED);
+    }
+
+    #[test]
+    fn the_generation_nodes_are_what_version_three_adds() {
+        // ADR-C31 § 3 sanctions this bump by name: `component:` accepts
+        // `context_builder` and `generator` from version 3 on.
+        assert_eq!(SchemaVersion::SUPPORTED, 3);
+    }
+
+    #[test]
+    fn a_configuration_stating_the_previous_version_is_refused() {
+        // A document written for version 2 cannot name a generation node, and
+        // this build no longer reads it as its own: the version gate refuses it
+        // for what it is, not further down as an unknown component.
+        assert_eq!(
+            SchemaVersion::new(2),
+            Err(UnsupportedSchemaVersion { found: 2 })
+        );
+        let text = "version: 2\npipeline:\n  inputs: [question]\n  nodes: []\n";
+        match peek_schema_version(serde_yaml::Deserializer::from_str(text)) {
+            Err(SchemaVersionPeekError::Unsupported(unsupported)) => {
+                assert_eq!(unsupported.found(), 2);
+            }
+            other => panic!("version 2 must be refused as unsupported, got {other:?}"),
+        }
+        assert!(
+            serde_yaml::from_str::<RawPipeline>(text).is_err(),
+            "the full parse must refuse version 2 as well"
+        );
+    }
+
+    #[test]
+    fn an_absent_version_reads_as_the_generation_schema() {
+        let doc: RawPipeline =
+            serde_yaml::from_str("pipeline:\n  inputs: [question]\n  nodes: []\n").unwrap();
+        assert_eq!(doc.version.get(), 3);
     }
 
     #[test]
@@ -492,7 +536,10 @@ mod tests {
         let err = SchemaVersion::new(7).unwrap_err();
         assert_eq!(err.found(), 7);
         assert!(
-            err.to_string().contains('7') && err.to_string().contains('2'),
+            err.to_string().contains('7')
+                && err
+                    .to_string()
+                    .contains(&SchemaVersion::SUPPORTED.to_string()),
             "the message must name both what was found and what is understood: {err}"
         );
     }
@@ -553,7 +600,7 @@ mod tests {
         );
 
         let yaml = peek_schema_version(serde_yaml::Deserializer::from_str(
-            "version: 2\n\tnodes: []\n",
+            "version: 3\n\tnodes: []\n",
         ))
         .expect_err("a tab where YAML expects indentation is a syntax error");
         assert!(
@@ -677,7 +724,7 @@ mod tests {
         // A peek that disagreed with `Deserialize` would refuse documents the
         // parser accepts, or wave through ones it refuses.
         let stated = peek_schema_version(&mut serde_json::Deserializer::from_str(
-            r#"{"version":2,"pipeline":{"nodes":[]}}"#,
+            r#"{"version":3,"pipeline":{"nodes":[]}}"#,
         ))
         .expect("the supported version must peek");
         assert_eq!(stated, SchemaVersion::CURRENT);
@@ -837,7 +884,7 @@ mod tests {
     #[test]
     fn the_wire_form_round_trips() {
         let doc: RawPipeline = serde_json::from_str(
-            r#"{"version":2,"pipeline":{"inputs":["question"],"nodes":[{"id":"d","component":"retriever","impl":"bm25","inputs":["t"],"params":{"top_k":50,"alpha":0.5}}]}}"#,
+            r#"{"version":3,"pipeline":{"inputs":["question"],"nodes":[{"id":"d","component":"retriever","impl":"bm25","inputs":["t"],"params":{"top_k":50,"alpha":0.5}}]}}"#,
         )
         .unwrap();
         let back: RawPipeline =

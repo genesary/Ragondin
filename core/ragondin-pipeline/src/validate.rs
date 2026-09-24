@@ -27,7 +27,8 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::kind::{consumed_kinds, produced_kind, PortSpec, ValueKind};
 use crate::node::{
-    ExtensionNode, FusionNode, LogicalNode, NodeId, ParamValue, Params, RerankerNode, RetrieverNode,
+    ContextBuilderNode, ExtensionNode, FusionNode, GeneratorNode, LogicalNode, NodeId, ParamValue,
+    Params, RerankerNode, RetrieverNode,
 };
 use crate::pipeline::LogicalPipeline;
 use crate::raw::{RawNode, RawParamValue, RawPipeline};
@@ -254,8 +255,9 @@ fn lower_params(
 
 /// Lowers one [`RawNode`] into the [`LogicalNode`] variant its `component`
 /// names (settled reading A1): `retriever` -> `RetrieverNode`, `fusion` ->
-/// `FusionNode`, `reranker` -> `RerankerNode`, `extension` ->
-/// `ExtensionNode { kind: <impl> }`. Any other `component` is
+/// `FusionNode`, `reranker` -> `RerankerNode`, `context_builder` ->
+/// `ContextBuilderNode`, `generator` -> `GeneratorNode` (ADR-C31 § 3),
+/// `extension` -> `ExtensionNode { kind: <impl> }`. Any other `component` is
 /// [`ValidationError::UnknownComponent`].
 ///
 /// Per settled reading A2, a node with no `inputs` is not rejected here — a
@@ -289,6 +291,18 @@ fn lower_node(raw: RawNode) -> Result<LogicalNode, ValidationError> {
             inputs,
         })),
         "reranker" => Ok(LogicalNode::Reranker(RerankerNode {
+            params: lower_params(&id, params)?,
+            id,
+            implementation,
+            inputs,
+        })),
+        "context_builder" => Ok(LogicalNode::ContextBuilder(ContextBuilderNode {
+            params: lower_params(&id, params)?,
+            id,
+            implementation,
+            inputs,
+        })),
+        "generator" => Ok(LogicalNode::Generator(GeneratorNode {
             params: lower_params(&id, params)?,
             id,
             implementation,
@@ -651,6 +665,32 @@ mod tests {
         let node = lower_node(raw).unwrap();
         let LogicalNode::Reranker(node) = node else {
             panic!("expected Reranker, got {node:?}")
+        };
+        assert_eq!(node.id, NodeId::new("n"));
+        assert_eq!(node.implementation, "impl_name");
+        assert_eq!(node.inputs, vec![NodeId::new("a"), NodeId::new("b")]);
+        assert_eq!(node.params, expected_params());
+    }
+
+    #[test]
+    fn a_context_builder_lowers_with_its_shape_intact_and_in_order() {
+        let raw = raw_node("context_builder", fixture_params());
+        let node = lower_node(raw).unwrap();
+        let LogicalNode::ContextBuilder(node) = node else {
+            panic!("expected ContextBuilder, got {node:?}")
+        };
+        assert_eq!(node.id, NodeId::new("n"));
+        assert_eq!(node.implementation, "impl_name");
+        assert_eq!(node.inputs, vec![NodeId::new("a"), NodeId::new("b")]);
+        assert_eq!(node.params, expected_params());
+    }
+
+    #[test]
+    fn a_generator_lowers_with_its_shape_intact_and_in_order() {
+        let raw = raw_node("generator", fixture_params());
+        let node = lower_node(raw).unwrap();
+        let LogicalNode::Generator(node) = node else {
+            panic!("expected Generator, got {node:?}")
         };
         assert_eq!(node.id, NodeId::new("n"));
         assert_eq!(node.implementation, "impl_name");
@@ -1204,7 +1244,7 @@ mod tests {
         // key order in the source text is what differs, not two
         // already-equal maps.
         let forward = r#"
-version: 2
+version: 3
 pipeline:
   inputs: [question]
   nodes:
@@ -1231,7 +1271,7 @@ pipeline:
         // Same nodes, listed in reverse, each with its `params` keys written
         // in the opposite order.
         let reversed = r#"
-version: 2
+version: 3
 pipeline:
   inputs: [question]
   nodes:
@@ -1338,6 +1378,82 @@ pipeline:
         assert!(
             message.contains("query") && message.contains("chunks"),
             "the message must name both the expected and found kinds: {message}"
+        );
+    }
+
+    #[test]
+    fn a_retriever_feeding_a_context_builder_feeding_a_generator_validates() {
+        // ADR-C31 § 3: both generation nodes take the declared query as an
+        // explicit edge at port 0, and each consumes what the one before it
+        // produces at port 1 — chunks into the builder, a context into the
+        // generator.
+        let raw = pipeline(vec![
+            node("r", "retriever", &["question"]),
+            node("c", "context_builder", &["question", "r"]),
+            node("g", "generator", &["question", "c"]),
+        ]);
+        let logical =
+            validate(raw).expect("retriever -> context_builder -> generator must validate");
+        assert!(
+            logical
+                .nodes()
+                .iter()
+                .any(|n| matches!(n, LogicalNode::Generator(g) if g.id.as_str() == "g")),
+            "the generator must survive validation as a Generator node"
+        );
+    }
+
+    #[test]
+    fn a_generator_wired_straight_to_a_retriever_fails_with_kind_mismatch() {
+        // The reason `Context` is a kind of its own (ADR-C31 § 3): a generator
+        // handed raw chunks, with no context builder between, is refused by
+        // name at validation rather than at execution.
+        let raw = pipeline(vec![
+            node("r", "retriever", &["question"]),
+            node("g", "generator", &["question", "r"]),
+        ]);
+        let err = validate(raw).unwrap_err();
+        assert_eq!(
+            err,
+            ValidationError::KindMismatch {
+                consumer: NodeId::new("g"),
+                port: 1,
+                producer: NodeId::new("r"),
+                expected: Some(ValueKind::Context),
+                found: ValueKind::Chunks,
+            }
+        );
+        let message = err.to_string();
+        assert!(
+            message.contains("expected `context`") && message.contains("found `chunks`"),
+            "the message must name both kinds by their pinned rendering: {message}"
+        );
+    }
+
+    #[test]
+    fn a_generator_feeding_a_generator_fails_with_kind_mismatch() {
+        // The other half of why `Answer` and `Context` are two kinds rather
+        // than one shared `Text`: an answer is not a context.
+        let raw = pipeline(vec![
+            node("r", "retriever", &["question"]),
+            node("c", "context_builder", &["question", "r"]),
+            node("g1", "generator", &["question", "c"]),
+            node("g2", "generator", &["question", "g1"]),
+        ]);
+        let err = validate(raw).unwrap_err();
+        assert_eq!(
+            err,
+            ValidationError::KindMismatch {
+                consumer: NodeId::new("g2"),
+                port: 1,
+                producer: NodeId::new("g1"),
+                expected: Some(ValueKind::Context),
+                found: ValueKind::Answer,
+            }
+        );
+        assert!(
+            err.to_string().contains("found `answer`"),
+            "the message must name the answer kind by its pinned rendering: {err}"
         );
     }
 

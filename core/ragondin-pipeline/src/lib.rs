@@ -48,7 +48,8 @@ pub mod validate;
 pub use hash::PipelineHash;
 pub use kind::{consumed_kinds, produced_kind, PortSpec, ValueKind};
 pub use node::{
-    ExtensionNode, FusionNode, LogicalNode, NodeId, ParamValue, Params, RerankerNode, RetrieverNode,
+    ContextBuilderNode, ExtensionNode, FusionNode, GeneratorNode, LogicalNode, NodeId, ParamValue,
+    Params, RerankerNode, RetrieverNode,
 };
 pub use pipeline::LogicalPipeline;
 pub use raw::{

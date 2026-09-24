@@ -351,13 +351,18 @@ fn the_two_zeroes_agree_whichever_door_the_pipeline_came_through() {
     );
 }
 
-/// Every node variant and every parameter shape in one document.
+/// Every node variant that predates generation, and every parameter shape, in
+/// one document.
 ///
 /// [`REFERENCE`] is the realistic pipeline, and it is the wrong thing to pin
 /// the grammar against: it contains no reranker, no extension, no `Bool` and
-/// no `List`, so four of the nine tag bytes never reach its hasher. Renumbering
-/// any of those four would silently invalidate every stored digest for a
-/// pipeline that used them, and the reference digest would not move.
+/// no `List`, so four of the tag bytes it could reach never reach its hasher.
+/// Renumbering any of those four would silently invalidate every stored digest
+/// for a pipeline that used them, and the reference digest would not move.
+///
+/// The two generation variants are not added here: this document's digest was
+/// pinned before they existed, and adding nodes to it would move it. The
+/// [`GENERATION`] fixture carries their two tag bytes instead.
 ///
 /// Two legal shapes it deliberately omits, both held by unit tests instead: a
 /// node with empty `params` and a node with no `inputs` at all (ADR-C19, and
@@ -393,10 +398,10 @@ pipeline:
 #[test]
 fn the_digest_of_the_whole_grammar_is_pinned() {
     // The second tripwire, and the one that guards the tag bytes the
-    // reference pipeline cannot reach. Both literals must be updated together
-    // when the canonical form deliberately changes — and if only one of them
-    // moves, the encoding has become inconsistent across the grammar rather
-    // than versioned.
+    // reference pipeline cannot reach. The three pinned literals in this file
+    // must be updated together when the canonical form deliberately changes —
+    // and if only some of them move, the encoding has become inconsistent
+    // across the grammar rather than versioned.
     assert_eq!(
         hash_of(EVERY_SHAPE).to_string(),
         "ea280050c4438aeba2f23cbb039847f5de9ebf5f8668a77c7203cac8c09a42fd",
@@ -405,24 +410,34 @@ fn the_digest_of_the_whole_grammar_is_pinned() {
 }
 
 #[test]
-fn the_whole_grammar_fixture_really_does_exercise_every_shape() {
-    // The guard on the fixture above. A pin over a document that quietly
+fn the_pinned_fixtures_together_exercise_every_shape() {
+    // The guard on the pinned fixtures. A pin over a document that quietly
     // stopped covering a variant would be a tripwire with nothing under it,
-    // and nothing else in this file would notice.
-    let pipeline = canonicalize(EVERY_SHAPE);
-    let mut seen = std::collections::BTreeSet::new();
-    for node in pipeline.nodes() {
-        seen.insert(match node {
+    // and nothing else in this file would notice. [`EVERY_SHAPE`] covers the
+    // four variants that existed before generation and stays byte-identical so
+    // its digest does not move; [`GENERATION`] covers the two ADR-C31 added.
+    fn variant(node: &LogicalNode) -> &'static str {
+        match node {
             LogicalNode::Retriever(_) => "retriever",
             LogicalNode::Fusion(_) => "fusion",
             LogicalNode::Reranker(_) => "reranker",
             LogicalNode::Extension(_) => "extension",
-        });
+            LogicalNode::ContextBuilder(_) => "context_builder",
+            LogicalNode::Generator(_) => "generator",
+        }
     }
+    let pipeline = canonicalize(EVERY_SHAPE);
+    let seen: std::collections::BTreeSet<_> = pipeline.nodes().iter().map(variant).collect();
     assert_eq!(
         seen.into_iter().collect::<Vec<_>>(),
         vec!["extension", "fusion", "reranker", "retriever"],
-        "the fixture must cover all four node variants"
+        "the whole-grammar fixture must cover the four pre-generation node variants"
+    );
+    let generation = canonicalize(GENERATION);
+    let seen: std::collections::BTreeSet<_> = generation.nodes().iter().map(variant).collect();
+    assert!(
+        seen.contains("context_builder") && seen.contains("generator"),
+        "the generation fixture must cover both generation node variants: {seen:?}"
     );
 
     let mut kinds = std::collections::BTreeSet::new();
@@ -447,6 +462,8 @@ fn the_whole_grammar_fixture_really_does_exercise_every_shape() {
             LogicalNode::Fusion(n) => &n.params,
             LogicalNode::Reranker(n) => &n.params,
             LogicalNode::Extension(n) => &n.params,
+            LogicalNode::ContextBuilder(n) => &n.params,
+            LogicalNode::Generator(n) => &n.params,
         };
         for value in params.values() {
             note(value, &mut kinds);
@@ -472,5 +489,146 @@ fn a_list_nested_in_a_list_is_hashed_through() {
         hash_of(EVERY_SHAPE),
         hash_of(&regrouped),
         "a nested list's grouping is part of the value"
+    );
+}
+
+/// A retrieval-augmented generation pipeline: a retriever, a context builder
+/// and a generator, each generation node taking the declared query as its
+/// explicit first edge (ADR-C31 § 3).
+///
+/// Pinned separately from [`EVERY_SHAPE`] rather than folded into it, because
+/// adding nodes to that document would move a digest this crate has already
+/// published; the two new tag bytes are reached here instead.
+const GENERATION: &str = r#"
+pipeline:
+  inputs: [question]
+  nodes:
+    - id: sparse
+      component: retriever
+      impl: bm25
+      inputs: [question]
+      params: { top_k: 20 }
+    - id: context
+      component: context_builder
+      impl: concatenate
+      inputs: [question, sparse]
+      params: { max_chunks: 8, separator: "\n\n" }
+    - id: answer
+      component: generator
+      impl: openai_chat
+      inputs: [question, context]
+      params: { served_model: qwen2.5-7b-instruct, temperature: 0.0, template: "Answer from the context." }
+"#;
+
+#[test]
+fn a_generation_pipeline_hashes_identically_under_two_spellings() {
+    // The same configuration with its nodes listed in another order, its
+    // params keys reordered, and in block style with comments: nothing a
+    // parser keeps, so nothing the hash may see (INV-8).
+    let respelled = r#"
+# Generation, written out the long way.
+pipeline:
+    inputs:
+        - question
+    nodes:
+        -   id: answer
+            component: generator
+            impl: openai_chat
+            inputs:
+                - question      # the query is an explicit edge
+                - context
+            params:
+                template: "Answer from the context."
+                temperature: 0.0
+                served_model: qwen2.5-7b-instruct
+
+        -   id: context
+            component: context_builder
+            impl: concatenate
+            inputs: [question, sparse]
+            params:
+                separator: "\n\n"
+                max_chunks: 8
+
+        -   id: sparse
+            component: retriever
+            impl: bm25
+            inputs: [question]
+            params:
+                top_k: 20
+"#;
+    assert_eq!(
+        hash_of(GENERATION),
+        hash_of(respelled),
+        "two spellings of one generation pipeline must hash identically (INV-8)"
+    );
+}
+
+/// A one-node logical pipeline, deserialized rather than validated — the
+/// second door ADR-C23 opens — so a test can hash a node validation would
+/// refuse, and compare digests field by field.
+fn one_node(variant: &str, inputs: &str) -> LogicalPipeline {
+    serde_json::from_str(&format!(
+        r#"{{"inputs":["question"],"nodes":[{{"{variant}":{{"id":"n","implementation":"x","inputs":{inputs},"params":{{}}}}}}]}}"#
+    ))
+    .expect("the fixture must deserialize")
+}
+
+#[test]
+fn a_generation_nodes_inputs_are_positional_and_never_reordered() {
+    // ADR-C16's positional ports, on the new variants: the digest follows
+    // port order, so two orderings of the same edges are two digests.
+    for variant in ["ContextBuilder", "Generator"] {
+        assert_ne!(
+            one_node(variant, r#"["question","ctx"]"#).content_hash(),
+            one_node(variant, r#"["ctx","question"]"#).content_hash(),
+            "{variant}'s inputs are hashed in port order"
+        );
+    }
+}
+
+#[test]
+fn a_generation_param_changes_the_hash() {
+    // ADR-C31: the served model is an experiment variable, so it is in the
+    // canonical form and moves the digest.
+    let reserved = GENERATION.replace(
+        "served_model: qwen2.5-7b-instruct",
+        "served_model: llama-3.1-8b",
+    );
+    assert_ne!(reserved, GENERATION, "the substitution must have applied");
+    assert_ne!(
+        hash_of(GENERATION),
+        hash_of(&reserved),
+        "a different served model is a different configuration"
+    );
+}
+
+#[test]
+fn every_node_variant_has_its_own_tag_byte() {
+    // The same id, impl, inputs and params under each variant must not
+    // collide: only the tag byte separates them, so this pins that the two
+    // new variants took tags of their own rather than reusing one.
+    let digests: std::collections::HashSet<PipelineHash> = [
+        "Retriever",
+        "Fusion",
+        "Reranker",
+        "ContextBuilder",
+        "Generator",
+    ]
+    .into_iter()
+    .map(|variant| one_node(variant, r#"["question"]"#).content_hash())
+    .collect();
+    assert_eq!(digests.len(), 5, "two variants share a tag byte");
+}
+
+#[test]
+fn the_digest_of_the_generation_pipeline_is_pinned() {
+    // The third tripwire, over the two tag bytes ADR-C31's variants added.
+    // Moves only with a deliberate change to the canonical form, together
+    // with the other two.
+    assert_eq!(
+        hash_of(GENERATION).to_string(),
+        "a4e482fd613d98748254162b12f733ed9030bc616fe295a4aae539b585a04d2f",
+        "the canonical encoding changed; update this literal only deliberately"
     );
 }

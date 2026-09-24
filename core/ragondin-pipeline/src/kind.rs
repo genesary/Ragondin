@@ -30,10 +30,16 @@ use crate::node::LogicalNode;
 /// never stored in `LogicalPipeline`, never hashed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ValueKind {
-    /// The question travelling into a retriever or a reranker.
+    /// The question travelling into a retriever, a reranker, a context
+    /// builder or a generator.
     Query,
     /// A list of retrieved chunks, scored or not.
     Chunks,
+    /// The assembled context a generator reads, produced by a context
+    /// builder (ADR-C31 § 3).
+    Context,
+    /// A generator's answer (ADR-C31 § 3).
+    Answer,
     /// The kind of a value produced or consumed by an
     /// [`ExtensionNode`](crate::node::ExtensionNode), unknown to the core by
     /// construction (ADR-C16).
@@ -48,6 +54,8 @@ impl fmt::Display for ValueKind {
         let s = match self {
             Self::Query => "query",
             Self::Chunks => "chunks",
+            Self::Context => "context",
+            Self::Answer => "answer",
             Self::Opaque => "opaque",
         };
         f.write_str(s)
@@ -84,6 +92,8 @@ pub fn produced_kind(node: &LogicalNode) -> ValueKind {
         LogicalNode::Retriever(_) => ValueKind::Chunks,
         LogicalNode::Fusion(_) => ValueKind::Chunks,
         LogicalNode::Reranker(_) => ValueKind::Chunks,
+        LogicalNode::ContextBuilder(_) => ValueKind::Context,
+        LogicalNode::Generator(_) => ValueKind::Answer,
         LogicalNode::Extension(_) => ValueKind::Opaque,
     }
 }
@@ -96,6 +106,12 @@ pub fn consumed_kinds(node: &LogicalNode) -> PortSpec {
         // Positional pair, query first: `node.rs`'s module doc states this
         // order, and canonicalization must never reorder `inputs` to match it.
         LogicalNode::Reranker(_) => PortSpec::Fixed(vec![ValueKind::Query, ValueKind::Chunks]),
+        // The query is an explicit edge on both generation nodes, first
+        // (ADR-C31 § 3, applying ADR-C18) — the same positional discipline.
+        LogicalNode::ContextBuilder(_) => {
+            PortSpec::Fixed(vec![ValueKind::Query, ValueKind::Chunks])
+        }
+        LogicalNode::Generator(_) => PortSpec::Fixed(vec![ValueKind::Query, ValueKind::Context]),
         LogicalNode::Fusion(_) => PortSpec::Variadic(ValueKind::Chunks),
         LogicalNode::Extension(_) => PortSpec::Unknown,
     }
@@ -103,7 +119,10 @@ pub fn consumed_kinds(node: &LogicalNode) -> PortSpec {
 
 #[cfg(test)]
 mod tests {
-    use crate::node::{ExtensionNode, FusionNode, NodeId, Params, RerankerNode, RetrieverNode};
+    use crate::node::{
+        ContextBuilderNode, ExtensionNode, FusionNode, GeneratorNode, NodeId, Params, RerankerNode,
+        RetrieverNode,
+    };
     use crate::{consumed_kinds, produced_kind, LogicalNode, PortSpec, ValueKind};
 
     fn retriever() -> LogicalNode {
@@ -133,6 +152,24 @@ mod tests {
         })
     }
 
+    fn context_builder() -> LogicalNode {
+        LogicalNode::ContextBuilder(ContextBuilderNode {
+            id: NodeId::new("c"),
+            implementation: "concatenate".to_string(),
+            inputs: vec![NodeId::new("question"), NodeId::new("k")],
+            params: Params::new(),
+        })
+    }
+
+    fn generator() -> LogicalNode {
+        LogicalNode::Generator(GeneratorNode {
+            id: NodeId::new("g"),
+            implementation: "openai_chat".to_string(),
+            inputs: vec![NodeId::new("question"), NodeId::new("c")],
+            params: Params::new(),
+        })
+    }
+
     fn extension() -> LogicalNode {
         LogicalNode::Extension(ExtensionNode {
             id: NodeId::new("x"),
@@ -155,6 +192,16 @@ mod tests {
     #[test]
     fn a_reranker_produces_chunks() {
         assert_eq!(produced_kind(&reranker()), ValueKind::Chunks);
+    }
+
+    #[test]
+    fn a_context_builder_produces_a_context() {
+        assert_eq!(produced_kind(&context_builder()), ValueKind::Context);
+    }
+
+    #[test]
+    fn a_generator_produces_an_answer() {
+        assert_eq!(produced_kind(&generator()), ValueKind::Answer);
     }
 
     #[test]
@@ -181,6 +228,23 @@ mod tests {
     }
 
     #[test]
+    fn a_context_builder_consumes_a_query_then_a_chunks_port_in_that_order() {
+        // ADR-C31 § 3: the query is an explicit edge, and it comes first.
+        assert_eq!(
+            consumed_kinds(&context_builder()),
+            PortSpec::Fixed(vec![ValueKind::Query, ValueKind::Chunks])
+        );
+    }
+
+    #[test]
+    fn a_generator_consumes_a_query_then_a_context_port_in_that_order() {
+        assert_eq!(
+            consumed_kinds(&generator()),
+            PortSpec::Fixed(vec![ValueKind::Query, ValueKind::Context])
+        );
+    }
+
+    #[test]
     fn a_fusion_consumes_any_number_of_chunks_ports() {
         assert_eq!(
             consumed_kinds(&fusion()),
@@ -200,5 +264,7 @@ mod tests {
         assert_eq!(ValueKind::Query.to_string(), "query");
         assert_eq!(ValueKind::Chunks.to_string(), "chunks");
         assert_eq!(ValueKind::Opaque.to_string(), "opaque");
+        assert_eq!(ValueKind::Context.to_string(), "context");
+        assert_eq!(ValueKind::Answer.to_string(), "answer");
     }
 }

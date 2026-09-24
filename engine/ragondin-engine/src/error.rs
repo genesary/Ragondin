@@ -130,6 +130,25 @@ pub enum PlanError {
         kind: String,
     },
 
+    /// The node is a context builder or a generator (ADR-C31 § 3), and
+    /// nothing in this build can plan one.
+    ///
+    /// `ragondin-pipeline` validates both variants, and no component family
+    /// here resolves either, so planning refuses them in one typed error
+    /// rather than reaching resolution without a registry to consult.
+    /// `component` is the node's `component:` value as a configuration
+    /// writes it — `context_builder` or `generator`.
+    #[error(
+        "node `{}`: no physical planner for a `{component}` node in this build",
+        node.as_str()
+    )]
+    GenerationUnsupported {
+        /// The node that cannot be planned.
+        node: NodeId,
+        /// Its `component:` value, `"context_builder"` or `"generator"`.
+        component: &'static str,
+    },
+
     /// An edge's value kinds do not line up (ADR-C16), caught at planning.
     ///
     /// Mirrors `ragondin_pipeline::ValidationError::KindMismatch` — the same
@@ -353,6 +372,25 @@ pub enum ExecError {
         /// Each id that names more than one node, once, in the plan's
         /// canonical order.
         nodes: Vec<NodeId>,
+    },
+
+    /// A node of this plan is of a variant physical planning refuses.
+    ///
+    /// A defect in this crate, not upstream: a [`PhysicalPipeline`] is built
+    /// only by [`plan_physical`], which refuses a context builder or a
+    /// generator with [`PlanError::GenerationUnsupported`], so no plan holds
+    /// one. Returned rather than panicked on, so the executor's match over
+    /// every node variant has no arm that aborts the process.
+    ///
+    /// [`PhysicalPipeline`]: crate::PhysicalPipeline
+    /// [`plan_physical`]: crate::plan_physical
+    #[error(
+        "node `{}` is of a kind physical planning refuses, so no plan built by `plan_physical` holds it — reaching it at execution is a defect in the engine",
+        node.as_str()
+    )]
+    UnplannableNode {
+        /// The node no plan should hold.
+        node: NodeId,
     },
 }
 
