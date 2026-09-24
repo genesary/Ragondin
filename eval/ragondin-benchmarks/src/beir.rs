@@ -7,7 +7,19 @@
 //! queries.jsonl       {"_id": "...", "text": "...", "metadata": {...}}
 //! qrels/test.tsv      TAB-separated, typically WITH a header row: query-id/corpus-id/score
 //! qrels/train.tsv     same shape; splits vary by dataset
+//! answers.jsonl       {"_id": "<query id>", "answers": ["...", ...]}   optional; see below
 //! ```
+//!
+//! # Two reading paths
+//!
+//! [`BeirAdapter::new`] and [`BeirAdapter::with_split`] load the retrieval
+//! triple and **ignore `answers.jsonl`**, so a directory that carries one
+//! loads exactly as it did before the file existed. Adding
+//! [`BeirAdapter::with_reference_answers`] selects the second path, which
+//! **requires** the file and loads it as the benchmark's reference answers
+//! (ADR-C30 § 2). A query with no line in it carries no reference; a line
+//! whose `_id` names no query of `queries.jsonl`, an `_id` on two lines, and a
+//! line whose list is empty are each a typed error naming the file and the id.
 //!
 //! # Three things that bite, and what this reader does about them
 //!
@@ -60,7 +72,7 @@ use std::path::{Path, PathBuf};
 use ragondin_types::{DocId, Document, Query, QueryId};
 use serde::Deserialize;
 
-use crate::benchmark::{Benchmark, BenchmarkAdapter, Qrels};
+use crate::benchmark::{Benchmark, BenchmarkAdapter, Qrels, ReferenceAnswers};
 use crate::error::BenchmarkError;
 
 /// One line of `corpus.jsonl`.
@@ -76,6 +88,14 @@ struct CorpusRecord {
     #[serde(default)]
     title: Option<String>,
     text: String,
+}
+
+/// One line of `answers.jsonl`.
+#[derive(Deserialize)]
+struct AnswersRecord {
+    #[serde(rename = "_id")]
+    id: String,
+    answers: Vec<String>,
 }
 
 /// One line of `queries.jsonl`.
@@ -95,6 +115,7 @@ struct QueryRecord {
 pub struct BeirAdapter {
     root: PathBuf,
     split: String,
+    reference_answers: bool,
 }
 
 impl BeirAdapter {
@@ -113,7 +134,20 @@ impl BeirAdapter {
         Self {
             root: root.into(),
             split: split.into(),
+            reference_answers: false,
         }
+    }
+
+    /// Also reads `answers.jsonl` in the root, as the reference answers.
+    ///
+    /// The file is then required: a missing one is [`BenchmarkError::Io`]. The
+    /// query set is unchanged — the queries judged in the split — and only
+    /// their references are kept; a line naming a query of another split is
+    /// valid and left out, since it names a real query this benchmark does not
+    /// evaluate.
+    pub fn with_reference_answers(mut self) -> Self {
+        self.reference_answers = true;
+        self
     }
 
     fn qrels_path(&self) -> PathBuf {
@@ -125,7 +159,16 @@ impl BenchmarkAdapter for BeirAdapter {
     fn load(&self) -> Result<Benchmark, BenchmarkError> {
         let qrels = read_qrels(&self.qrels_path())?;
         let corpus = read_corpus(&self.root.join("corpus.jsonl"))?;
-        let queries = read_queries(&self.root.join("queries.jsonl"), &qrels)?;
+        let all_queries = read_queries(&self.root.join("queries.jsonl"))?;
+        let references = if self.reference_answers {
+            Some(read_answers(
+                &self.root.join("answers.jsonl"),
+                &all_queries,
+            )?)
+        } else {
+            None
+        };
+        let queries = judged_in_split(all_queries, &qrels);
 
         // Judgments on one side and nothing to evaluate on the other is a
         // mismatch between the two files, not a benchmark. Every id-handling
@@ -155,7 +198,22 @@ impl BenchmarkAdapter for BeirAdapter {
             });
         }
 
-        Ok(Benchmark::new(corpus, queries, qrels))
+        let benchmark = Benchmark::new(corpus, queries, qrels);
+        Ok(match references {
+            Some(references) => {
+                // Only the evaluated queries' references: the rest name real
+                // queries of other splits, and a benchmark's pieces describe
+                // its own query set.
+                let mut kept = ReferenceAnswers::new();
+                for query in benchmark.queries() {
+                    if let Some(answers) = references.for_query(&query.id) {
+                        kept.insert(query.id.clone(), answers.to_vec());
+                    }
+                }
+                benchmark.with_reference_answers(kept)
+            }
+            None => benchmark,
+        })
     }
 }
 
@@ -296,7 +354,33 @@ fn combined_text(title: &str, text: &str) -> String {
     format!("{title} {text}").trim().to_string()
 }
 
-/// Reads the query set, keeping only the queries judged in the loaded split.
+/// Reads every query of `queries.jsonl`, in file order.
+///
+/// Every split's queries, not only the loaded split's: `answers.jsonl` is
+/// checked against the whole file, since a line naming a query of another
+/// split names a real query. [`judged_in_split`] narrows the set afterwards.
+fn read_queries(path: &Path) -> Result<Vec<Query>, BenchmarkError> {
+    let mut seen = BTreeSet::new();
+    read_jsonl(path, |record: QueryRecord, line| {
+        // Trimmed to match `read_qrels`. Trimming one side only is worse than
+        // trimming neither: it turns a dataset whose ids carry the same
+        // whitespace everywhere — which used to match itself — into one whose
+        // queries are all filtered out by `judged_in_split`.
+        let id = record.id.trim();
+        // Checked before the qrels filter, so a duplicate is reported whether
+        // or not that id happens to be judged in this split: the file is
+        // malformed either way, and a rule that only fires on some splits is a
+        // rule nobody can rely on.
+        claim_id(&mut seen, id, path, line)?;
+
+        Ok(Query {
+            id: QueryId::new(id),
+            text: record.text,
+        })
+    })
+}
+
+/// Keeps only the queries judged in the loaded split.
 ///
 /// `queries.jsonl` holds every query of the dataset across all splits, while
 /// `qrels/test.tsv` holds only the test ones. Evaluating a test run over train
@@ -307,30 +391,48 @@ fn combined_text(title: &str, text: &str) -> String {
 /// Filtering everything away is not this function's business to report: it
 /// returns an empty `Vec` and `load` decides, since only `load` knows whether
 /// the qrels held anything to match in the first place.
-fn read_queries(path: &Path, qrels: &Qrels) -> Result<Vec<Query>, BenchmarkError> {
-    let mut seen = BTreeSet::new();
-    let all = read_jsonl(path, |record: QueryRecord, line| {
-        // Trimmed to match `read_qrels`. Trimming one side only is worse than
-        // trimming neither: it turns a dataset whose ids carry the same
-        // whitespace everywhere — which used to match itself — into one whose
-        // queries are all filtered out below.
-        let id = record.id.trim();
-        // Checked before the qrels filter below, so a duplicate is reported
-        // whether or not that id happens to be judged in this split: the file
-        // is malformed either way, and a rule that only fires on some splits
-        // is a rule nobody can rely on.
-        claim_id(&mut seen, id, path, line)?;
-
-        Ok(Query {
-            id: QueryId::new(id),
-            text: record.text,
-        })
-    })?;
-
-    Ok(all
+fn judged_in_split(queries: Vec<Query>, qrels: &Qrels) -> Vec<Query> {
+    queries
         .into_iter()
         .filter(|query| qrels.for_query(&query.id).is_some())
-        .collect())
+        .collect()
+}
+
+/// Reads `answers.jsonl` against every query `queries.jsonl` defines.
+///
+/// Three faults are errors naming the file and the id, never a silent skip: an
+/// `_id` naming no query ([`BenchmarkError::UnknownQuery`]), an `_id` on two
+/// lines ([`BenchmarkError::DuplicateId`], rejected as `claim_id` rejects one
+/// in the other files), and an empty `answers` list
+/// ([`BenchmarkError::NoReferenceAnswer`]). The last is ours: a query with
+/// nothing to say has no line, so a line that lists nothing is a corrupt one —
+/// the same strictness the SQuAD adapter applies to a question with no
+/// answers. Ids are trimmed, as on every other side of this reader.
+fn read_answers(path: &Path, queries: &[Query]) -> Result<ReferenceAnswers, BenchmarkError> {
+    let defined: BTreeSet<&str> = queries.iter().map(|query| query.id.as_str()).collect();
+    let mut seen = BTreeSet::new();
+    let mut references = ReferenceAnswers::new();
+    read_jsonl(path, |record: AnswersRecord, line| {
+        let id = record.id.trim();
+        claim_id(&mut seen, id, path, line)?;
+        if !defined.contains(id) {
+            return Err(BenchmarkError::UnknownQuery {
+                path: path.to_path_buf(),
+                line,
+                id: id.to_string(),
+            });
+        }
+        if record.answers.is_empty() {
+            return Err(BenchmarkError::NoReferenceAnswer {
+                path: path.to_path_buf(),
+                line: Some(line),
+                id: id.to_string(),
+            });
+        }
+        references.insert(QueryId::new(id), record.answers);
+        Ok(())
+    })?;
+    Ok(references)
 }
 
 /// Reads `qrels/<split>.tsv`.
@@ -476,7 +578,7 @@ fn read_qrels(path: &Path) -> Result<Qrels, BenchmarkError> {
 
         // Trim every field, not just the score: an untrimmed id that differs
         // from the "real" id by only whitespace parses fine, inserts fine,
-        // and then matches nothing when `queries()` filters by qrels, so the
+        // and then matches nothing when `judged_in_split` filters by qrels, so the
         // query set empties out. `load`'s `NoJudgedQuery` guard now catches
         // that state, but only after the fact and only when *every* query
         // misses; trimming here is what stops it happening.

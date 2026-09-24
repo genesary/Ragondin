@@ -111,6 +111,66 @@ pub enum BenchmarkError {
         id: String,
     },
 
+    /// One id names two records in a dataset that is a single JSON document
+    /// rather than one record per line — a SQuAD file — so there is no line
+    /// to name.
+    ///
+    /// The whole-document counterpart of [`BenchmarkError::DuplicateId`], and
+    /// rejected for the same reason: two records under one id disagree about
+    /// what that id is. In a SQuAD file the id is a question id, or a paragraph's
+    /// derived `DocId` — two articles sharing a title would give their
+    /// paragraphs the same ids.
+    #[error("{path}: duplicate id {id:?}")]
+    DuplicateRecord {
+        /// The file holding both records.
+        path: PathBuf,
+        /// The id that appeared twice.
+        id: String,
+    },
+
+    /// A query's record in a reference-answer source lists no answer.
+    ///
+    /// Raised by both adapters that read references: `SquadAdapter`, for a
+    /// question whose `answers` is absent, `null` or empty, and
+    /// `BeirAdapter`'s reference path, for an `answers.jsonl` line whose list
+    /// is empty. A missing reference in a dataset that states one for every
+    /// query means a corrupt or wrong file, not an unjudged query (ADR-C30
+    /// § 2). Scoring it as unjudged would quietly shrink the generation
+    /// family's judged set.
+    ///
+    /// One variant for both, with the line optional, because the fault is the
+    /// same and only the file's shape differs: a JSONL file has a line to
+    /// name, while a SQuAD file is one JSON document read whole and has none.
+    #[error(
+        "{}{}: query {id:?} has no reference answer",
+        .path.display(),
+        .line.map(|line| format!(":{line}")).unwrap_or_default()
+    )]
+    NoReferenceAnswer {
+        /// The file holding the record.
+        path: PathBuf,
+        /// The 1-based line of the record in a line-oriented file; `None` for
+        /// a file read as one JSON document.
+        line: Option<usize>,
+        /// The query whose answer list is absent or empty.
+        id: String,
+    },
+
+    /// A line of a reference-answer file names a query the dataset does not
+    /// define.
+    ///
+    /// Its references could be scored against nothing; the likelier cause is
+    /// an answers file taken from another dataset or another snapshot.
+    #[error("{path}:{line}: id {id:?} names no query of this dataset")]
+    UnknownQuery {
+        /// The reference-answer file.
+        path: PathBuf,
+        /// The 1-based line number.
+        line: usize,
+        /// The id that names no query.
+        id: String,
+    },
+
     /// A delimited record does not have the shape the format requires.
     #[error("{path}:{line}: malformed record: {reason}")]
     MalformedRecord {
