@@ -2,9 +2,10 @@
 //!
 //! `EngineContext` is the composition root (`docs/code-architecture.md` §8.1),
 //! modelled on DataFusion's session context: one table per family a pipeline
-//! node names, mapping an `impl:` name to a constructor. It is **passed explicitly, never
-//! global** (INV-6), so several contexts can exist in one process — which is
-//! what lets the evaluation harness hold two configurations side by side.
+//! node names, mapping an `impl:` name to a constructor. It is **passed
+//! explicitly, never global** (INV-6), so several contexts can exist in one
+//! process — which is what lets the evaluation harness hold two configurations
+//! side by side.
 //!
 //! **No privilege for built-ins (INV-7).** There is one `register_*` per
 //! family and no second way in. A first-party component, a third-party crate

@@ -11,12 +11,8 @@
 # run of the reference scan invented six phantom edges to `#123`, a worked
 # example in CONTRIBUTING.md — that is the shape of the risk.
 #
-# What would make a gate honest: an empty list of findings, so that going red
-# means something new arrived. For weeks the list held two, `build_embedder`
-# and `build_vector_store`, and a gate turned on then would have been red on its
-# first run — a check that is red on day one is a check people switch off. Both
-# left with the engine's dead embedder and vector-store registry surface, and
-# the list is empty; turning a gate on is the issue to open for it, not a
+# What would make a gate honest: an empty findings list, so that going red
+# means something new arrived. Turning a gate on is an issue of its own, not a
 # change to make here.
 #
 # Deliberately separate from ci.yml so a diagnostic is never mistaken for, and

@@ -435,7 +435,7 @@ Modelled on DataFusion's session context. The context carries the **registry**: 
 pub struct EngineContext {
     retrievers: Registry<dyn Retriever>,
     rerankers:  Registry<dyn Reranker>,
-    // … one registry per component family
+    // … one registry per node family (retriever, fusion, reranker)
 }
 
 impl EngineContext {
@@ -447,7 +447,7 @@ impl EngineContext {
 }
 ```
 
-**Three tables, one way in, and two families with no table.** The context keeps one table per family a pipeline node names — `Retriever`, `Fusion`, `Reranker` — each populated by the same `register_*` call — that is INV-7 in the API — and physical planning looks each one up from the node's `impl:` name. `Embedder` and `VectorStore` are **not** node variants and have **no** table: a dense retriever is built *from* them, and a `ComponentCtor` is handed the node's `Params` and never the `EngineContext`, so the composition root builds both itself, inside the constructor closure it registers for the dense retriever (ADR-C32). That asymmetry is drawn below because the struct shows only what is there.
+**Three tables, one way in, and two families with no table.** The context keeps one table per family a pipeline node names: `Retriever`, `Fusion` and `Reranker`. Each is populated by the same `register_*` call (INV-7 in the API), and physical planning looks each one up from the node's `impl:` name. `Embedder` and `VectorStore` are **not** node variants and have **no** table: a dense retriever is built *from* them, and a `ComponentCtor` is handed the node's `Params` and never the `EngineContext`, so the composition root builds both itself, inside the constructor closure it registers for the dense retriever (ADR-C32). That asymmetry is drawn below because the struct shows only what is there.
 
 ```mermaid
 flowchart TB
