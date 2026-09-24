@@ -82,8 +82,11 @@ ConfigSource), unchanged". A laptop's `localhost:50051` and a cluster's service
 name are two addresses for one experiment, and P4 identifies a run by the
 complete tuple of its **inputs**: where a service happened to listen is not
 one of them. An address in the node's parameters would give one experiment two
-`run_id`s, and would make porting a component to `Local` a configuration
-change.
+`run_id`s — that is the decisive reason — and would make porting a component to
+`Local` a configuration change on top of whatever keys the two natures read
+differently. ADR-3's promise is not kept whole by this decision either: for the
+embedder and the reranker the keys differ by nature (§ 1), and Consequences
+says so.
 
 The same objection disposes of the prose that points the other way.
 `docs/code-architecture.md` § 10 says a `Remote` contribution is "Named by URL
@@ -146,14 +149,24 @@ names**, and every other key is refused:
 - on every `dense` node: `top_k` (read by the executor), `embedder`, and the
   optional `query_prefix` and `passage_prefix`;
 - when `embedder:` names a `Local` ONNX embedder: `model` and `tokenizer`, both
-  required file paths, and the optional `max_sequence_length`;
+  required file paths, and the optional `max_sequence_length` and
+  `served_model` — the latter, when present, one of the names that embedder is
+  configured to recognise (§ 4);
 - when `embedder:` names a `Remote` embedder: `served_model`, required — the
-  name the inference service serves the model under.
+  name the inference service serves the model under. The composition root
+  refuses a node without it, as ADR-C31 § 4 has it refuse a generator node
+  without one.
 
-A key outside that set is **refused, never hashed as inert**: `served_model` on
-a node whose embedder is `Local`, or `model` on one whose embedder is `Remote`,
-is an error naming the node and the key, raised by the composition root when it
-reads the node (§ 4's order puts that before the benchmark is loaded).
+**A reranker node has the same shape.** Every reranker node may carry `top_k`.
+One naming the `Local` ONNX reranker (`cross_encoder`) carries `model` and
+`tokenizer`, required, and the optional `max_sequence_length` and
+`served_model`; one naming a bound `Remote` reranker carries `served_model`,
+required, and nothing else.
+
+A key outside those sets is **refused, never hashed as inert**: `model`,
+`tokenizer` or `max_sequence_length` on a node whose embedder or reranker is
+`Remote` is an error naming the node and the key, raised by the composition root
+when it reads the node (§ 4's order puts that before the benchmark is loaded).
 
 **`query_prefix` and `passage_prefix` stay parameters of the `dense` node, for
 both natures**, as ADR-C17 and `embedder_of` have them. **An empty-string prefix
@@ -203,7 +216,8 @@ before the benchmark is loaded and before anything is planned:**
 
 The first five are refused when the arguments are parsed, the last once the
 configuration is loaded. A build compiled without the `remote` feature
-(ADR-C14) accepts the argument and refuses any binding, naming the feature.
+(ADR-C14) accepts the argument, runs the five parsing checks above on it, and
+then refuses any binding that passes them, naming the feature.
 **`validate` takes no bindings** and passes a node naming any implementation,
 bound or not — by design, since it never plans.
 
@@ -242,7 +256,10 @@ its first call — the identity call of § 4 — as `ComponentError::Unavailable
 closure.** The closure reads `embedder:`; for `onnx` it builds the in-process
 ONNX embedder from `model`, `tokenizer` and `max_sequence_length`; for a name
 bound under `embedder/<name>` it builds the `Remote` embedder adapter over that
-binding's channel, with the node's `served_model` and prefixes. The closure is
+binding's channel, with the node's prefixes. In both cases it builds the dense
+retriever with the node's `served_model` — absent or present — as constructor
+configuration, and the retriever passes that value in the `EmbedParams` of every
+call (§ 4). The closure is
 the composition root's own code, which a third party composing its own binary
 writes the same way (INV-7).
 
@@ -250,13 +267,45 @@ writes the same way (INV-7).
 
 ### 4. Identity, and the order in `bench`
 
+**`served_model` is a per-call parameter of the embedder and the reranker, on
+both faces.** `EmbedParams` and `RerankParams` each gain
+`served_model: Option<String>`. `Some(name)` asks the component for the model it
+serves under `name`; `None` asks for the model the component loaded. A `Local`
+ONNX embedder or reranker recognises the names it is configured with — its
+constructor configuration — and refuses any other name as `InvalidRequest`; a
+`Remote` service refuses, as `InvalidRequest`, a name it does not serve, and the
+adapter and the service each refuse an empty name the same way. On face 2 the
+field is a proto3 `optional string` on the Embed and Rerank requests, so an
+omitted one decodes as `None` under ADR-C31 § 2's presence rule. This is the
+treatment ADR-C31 gives the generator, applied to the two families it deferred
+here; the generator's value is required and these two are optional, because a
+`Local` component that loaded one model needs no name to find it.
+
+A served-model name is not the prefix ADR-C17 refused to put on `EmbedParams`.
+That refusal was of model-specific prompt text, prepended to the input and
+transmitted per call; a served-model name is an identifier the backend resolves,
+and it changes no text. ADR-C31 § 2's "nothing here moves a prefix onto a
+per-call struct" still holds.
+
+**Where the value comes from.** For the embedder, the dense retriever holds the
+`dense` node's `served_model`, read by the composition root, as constructor
+configuration, and passes it in the `EmbedParams` of every call; the corpus
+embedding of § 4's step 4 passes the same value. For the reranker, the executor
+reads `served_model` from the reranker node's params on each call, exactly as
+`per_call_top_k` in `engine/ragondin-engine/src/execute.rs` reads `top_k`, except
+that it is optional: an absent key is `None`, and a value that is not a string
+is refused with `ExecError::InvalidParam`.
+
 **`Embedder` and `Reranker` gain
-`async fn model_identity(&self) -> Result<ModelIdentity, ComponentError>`**,
-each mirrored on face 2 by a `GetModelIdentity` rpc, in the shape ADR-C31 § 4
-gives the context builder's. **This is the deliberate, versioned INV-1 break on
-`ragondin-contracts` that ADR-C31 deferred here**, sanctioned by this section
-and nowhere else: adding a method to a trait breaks every implementation of it,
-in and out of the workspace. It is required rather than optional because
+`async fn model_identity(&self, served_model: Option<&str>) -> Result<ModelIdentity, ComponentError>`**,
+each mirrored on face 2 by a `GetModelIdentity` rpc whose request carries the
+served model as a proto3 `optional string`. The generator's takes `&str`, since
+ADR-C31 makes its value required. **This is the deliberate, versioned INV-1
+break on `ragondin-contracts` that ADR-C31 deferred here**, sanctioned by this
+section and nowhere else: adding a method to a trait breaks every implementation
+of it, in and out of the workspace. The two new fields are additive at the Rust
+API — `EmbedParams` and `RerankParams` are `#[non_exhaustive]` and built through
+constructors — and how a caller sets one is #255's. It is required rather than optional because
 `model_hashes` today keys on the `impl:` names `dense` and `cross_encoder`, so a
 reranker bound under any other name would record no hash at all, silently. The
 two properties ADR-C31 § 4 requires of an identity — **stable** across calls
@@ -265,8 +314,9 @@ and is not in the node's parameters — apply to both methods unchanged.
 
 **A `Local` ONNX component's identity is `<model>+<tokenizer>`**: the
 lowercase hex SHA-256 of the model file's bytes, the character `+`, and the
-lowercase hex SHA-256 of the tokenizer file's bytes. It covers the ONNX embedder
-and the ONNX reranker alike. It does not cover the prefixes or
+lowercase hex SHA-256 of the tokenizer file's bytes, returned for `None` and for
+any name the component recognises; any other name is refused as
+`InvalidRequest`. It covers the ONNX embedder and the ONNX reranker alike. It does not cover the prefixes or
 `max_sequence_length`: those are node parameters and already in
 `content_hash`, and ADR-C31's completeness rule is about the knobs that are
 not. The tokenizer's contents are what it adds, and they are the hole today —
@@ -276,18 +326,15 @@ session and the tokenizer, and `model_identity` returns the stored value:
 ADR-C25 governs the call, not construction, and the call then does no blocking
 work at all.
 
-**A `Remote` embedder's identity is what its service reports for the
-`served_model` it was asked**, in the shape ADR-C31 § 4 defines for the
+**A `Remote` embedder's or reranker's identity is what its service reports for
+the `served_model` it was asked**, in the shape ADR-C31 § 4 defines for the
 generator — for a service whose backend reports only an alias, that alias
-echoed back plus whatever revision the backend reports. A `served_model` the
-service does not serve is refused as `InvalidRequest`, and the composition root
-treats that refusal as fatal. The adapter sends the node's `served_model`, as a
-required string, in its `GetModelIdentity` request and in every Embed request —
-constructor configuration never crosses face 2 otherwise, as ADR-C31 § 2
-establishes — and the adapter and the service each refuse an empty one as
-`InvalidRequest`. A `Remote` reranker's identity is what its service reports
-through `GetModelIdentity`. An empty identity is refused by the adapter, as
-ADR-C31 § 1 requires of every `ModelIdentity`.
+echoed back plus whatever revision the backend reports. The adapter forwards
+the `served_model` it is handed, in `GetModelIdentity` and in every Embed and
+Rerank request. A `served_model` the service does not serve is refused as
+`InvalidRequest`, and the composition root treats that refusal as fatal. An
+empty identity is refused by the adapter, as ADR-C31 § 1 requires of every
+`ModelIdentity`.
 
 **The `Remote` embedder adapter applies the prefixes; the text on the Embed rpc
 is final.** The adapter prepends `query_prefix` to each text of a
@@ -306,9 +353,11 @@ node, and leaves a service author nothing to configure.
    keys (§ 1) and the bindings' use (§ 2).
 2. For each model-bearing node whose name the composition root knows — its
    `Local` names and its bindings — construct one instance per node naming it,
-   and await `model_identity`; for a `dense` node the instance constructed is
-   the embedder its `embedder:` names, for a generator node the identity is read
-   with that node's `served_model` as ADR-C31 § 4 states. Record the results in
+   and await `model_identity` with that node's `served_model`: for a `dense`
+   node the instance constructed is the embedder its `embedder:` names, and for
+   a reranker node the reranker it names — each read with the node's
+   `served_model`, `None` when the key is absent — and for a generator node the
+   identity is read with its required `served_model`, as ADR-C31 § 4 states. Record the results in
    `model_hashes` under the roles `embedder`, `reranker`, `generator` and
    `context_builder` — by family, never by `impl:` name. Two nodes on one role
    whose identities differ are refused under the one-model-per-role rule
@@ -355,8 +404,10 @@ feature.
 - **`impl: remote` and an `endpoint:` parameter on the node.** The shape
   #101's comment proposed for a node family, and the smallest change. The
   address enters `content_hash`, so the laptop run and the cluster run of one
-  configuration get two `run_id`s; porting the component to `Local` changes the
-  configuration, which ADR-3 promised it would not; and the YAML that runs
+  configuration get two `run_id`s — the decisive objection; porting the
+  component to `Local` changes the configuration further, which ADR-3 promised
+  it would not, though for the embedder and the reranker this decision's own
+  per-nature keys already dent that promise; and the YAML that runs
   locally is no longer the one that runs in the cluster, which ADR-7 and M6's
   exit criterion forbid.
 
@@ -407,15 +458,30 @@ feature.
   grammar and its refusals, one `register_*` per binding, the bindings on the
   `Run`, the identity step and the order of § 4, the required `embedder:` key,
   the refusal of inert keys and of empty prefixes, corpus embedding through a
-  `Remote` embedder, and a build with `remote` and without `onnx`. #261 and #13:
-  the `Remote` adapters apply the prefixes, send `served_model` where § 4 says,
-  and call `GetModelIdentity`. #257 and #12: the rpc on the embedder and
-  reranker services, `served_model` on the embedder's requests, and the rule that
-  a service must not prefix, written as a comment in the `.proto` beside the role
-  field. #255: the two trait methods, in the same versioned break as ADR-C31's
-  traits. The ONNX crates: the digests of § 4, computed in the constructor, in
-  the issue that adds the method to them. #258 and the existing suites: the two
-  identity scenarios.
+  `Remote` embedder, a build with `remote` and without `onnx`, the refusal of an
+  absent `served_model` on a node naming a `Remote` embedder or reranker, and the
+  executor reading a reranker node's optional `served_model` per call. #261 and
+  #13: the `Remote` adapters apply the prefixes, forward `served_model` from
+  `EmbedParams` and `RerankParams` and into `GetModelIdentity`, and call it.
+  #257 and #12: the rpc on the embedder and reranker services, `served_model` as
+  a proto3 `optional string` on the Embed and Rerank requests and on
+  `GetModelIdentity`, and the rule that a service must not prefix, written as a
+  comment in the `.proto` beside the role field. #255: the `served_model` field
+  on `EmbedParams` and `RerankParams` and the two identity methods, in the same
+  versioned break as ADR-C31's traits. `ragondin-retriever-dense` and the
+  corpus-embedding path: take `served_model` and pass it on every `EmbedParams`.
+  The ONNX crates: the recognition of configured names and the digests of § 4,
+  computed in the constructor, in the issue that adds the method to them. #258
+  and the existing suites: the two identity scenarios.
+
+- **ADR-3's port promise is dented for the embedder and the reranker.** A
+  `dense` node over the in-process embedder writes `embedder: onnx` with `model`
+  and `tokenizer`; over a bound one it writes the bound name with
+  `served_model`. The same holds for a reranker node. Porting a winning `Remote`
+  embedder or reranker to `Local` therefore changes those keys, where ADR-3
+  promised "no change to any user's configuration". The address is still kept
+  out of the configuration, which is the part of the promise this decision can
+  keep; the rest is the cost of refusing inert keys rather than hashing them.
 
 - **The calibration moves once, and the metrics do not.** `RECORDED_EMBEDDER`
   and `RECORDED_RERANKER` in `bin/ragondin/tests/calibration.rs` become
@@ -459,8 +525,12 @@ feature.
   reason given for carrying the role on face 2, that without it "a `Remote`
   embedder is deaf to the role", which now reads against a service that must
   not act on the role; the statement that "nothing carries a prefix into run
-  identity today", which the prefixes' place among the `dense` node's parameters
-  has already made false; and the `embedder: { … }` sub-map, which "would
+  identity today", which is already false — the `dense` node's prefixes are
+  parameters of the node, read by `embedder_of`, and so hashed, since the bench
+  subcommand #31 asked for landed (PR #232), and #31 is closed. ADR-C31 repeats
+  the gap twice — § 2 says it "stays where ADR-C17 left it (#31)", and § 4 calls
+  it "a hole it names and leaves to #31" — and a reader of ADR-C31 should read
+  both as closed by #31, with nothing further owed; and the `embedder: { … }` sub-map, which "would
   require #43" — moot, since the key is a flat name. With it, ADR-C22's candidate
   demanders for a `Map` from #101 are gone: nothing here needs one.
 
@@ -475,9 +545,10 @@ feature.
   **INV-7**: a `Remote` component registers through the call a `Local` one
   uses, under an ordinary name. **INV-8**: refusing the empty prefix is what
   makes two equivalent spellings impossible rather than differently hashed.
-  **INV-9**: no wire shape changes — `embedder` and `served_model` are keys of a
-  node's existing parameter map, in ADR-C22's flat grammar, and a binding is not
-  configuration at all.
+  **INV-9**: the pipeline's wire schema (`RawPipeline`) changes no shape —
+  `embedder` and `served_model` are keys of a node's existing parameter map, in
+  ADR-C22's flat grammar, and a binding is not configuration at all. Face 2's
+  `.proto` does gain fields and an rpc, and those are #257's.
 
 - **The `VectorStore` face 2 stays defined and unreachable until § 5's trigger
   fires.** #12, still open, says so in its scope; #17 has closed, and the
@@ -487,10 +558,7 @@ feature.
 
 - **What is deliberately left open.** The `Remote` vector store (with #24).
   TLS and authentication on a binding (M6). What the reference generator service
-  is (#253). Whether a node naming a `Remote` reranker carries a `served_model`
-  as the embedder's does: the principle ADR-C31 § 2 states — a setting a
-  researcher varies between two runs must be in the pipeline representation —
-  reaches it, and this decision did not take it up. No entry in
+  is (#253). No entry in
   `docs/OPEN_QUESTIONS.md` is opened, closed, or changed.
 
 ## Status
