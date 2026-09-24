@@ -7,17 +7,16 @@
 //! any later interface render what [`compare`] returns.
 //!
 //! It compares **metrics**, and **which configuration parameters differ**:
-//! the node-level parameters and `impl:` names one run's stored configuration
-//! holds and the other does not, or holds with another value. The graph's
-//! wiring — a node's `inputs`, the pipeline's declared inputs — is not listed
-//! parameter by parameter; whether the two canonical forms hash equal is
-//! carried beside the list, so a difference there is still reported. Both
-//! documents are lowered to
-//! [`LogicalPipeline`] first, through
-//! `ragondin-pipeline`'s own [`RawPipeline`] and [`validate()`], so the
-//! difference is one between canonical logical forms and never between texts
-//! (the spirit of INV-8): a document respelled — keys reordered, flow style
-//! for block style — differs in nothing.
+//! the node-level parameters, `impl:` names and component families one run's
+//! stored configuration holds and the other does not, or holds with another
+//! value. The graph's wiring — a node's `inputs`, the pipeline's declared
+//! inputs — is not listed parameter by parameter; whether the two canonical
+//! forms hash equal is carried beside the list, so a difference there is
+//! still reported. Both documents are lowered to [`LogicalPipeline`] first,
+//! through `ragondin-pipeline`'s own [`RawPipeline`] and [`validate()`], so
+//! the difference is one between canonical logical forms and never between
+//! texts (the spirit of INV-8): a document respelled — keys reordered, flow
+//! style for block style — differs in nothing.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -125,20 +124,26 @@ fn lower(document: &ConfigDocument) -> Result<LogicalPipeline, String> {
     validate(raw).map_err(|error| format!("the stored configuration does not validate: {error}"))
 }
 
-/// Every node's `impl:` name and parameters, keyed by node and then by key.
+/// Every node's component family, `impl:` name and parameters, keyed by node
+/// and then by key.
 ///
 /// An extension node's `kind` is where its `impl:` value lands on lowering, so
 /// it is that node's [`ParameterKey::Impl`].
 fn parameters(pipeline: &LogicalPipeline) -> BTreeMap<(NodeId, ParameterKey), ParamValue> {
     let mut parameters = BTreeMap::new();
     for node in pipeline.nodes() {
-        let (implementation, params) = match node {
-            LogicalNode::Retriever(node) => (&node.implementation, &node.params),
-            LogicalNode::Fusion(node) => (&node.implementation, &node.params),
-            LogicalNode::Reranker(node) => (&node.implementation, &node.params),
-            LogicalNode::Extension(node) => (&node.kind, &node.params),
+        // The family is spelled as the configuration's `component:` value.
+        let (component, implementation, params) = match node {
+            LogicalNode::Retriever(node) => ("retriever", &node.implementation, &node.params),
+            LogicalNode::Fusion(node) => ("fusion", &node.implementation, &node.params),
+            LogicalNode::Reranker(node) => ("reranker", &node.implementation, &node.params),
+            LogicalNode::Extension(node) => ("extension", &node.kind, &node.params),
         };
         let id = node.id();
+        parameters.insert(
+            (id.clone(), ParameterKey::Component),
+            ParamValue::String(component.to_owned()),
+        );
         parameters.insert(
             (id.clone(), ParameterKey::Impl),
             ParamValue::String(implementation.clone()),
@@ -241,8 +246,8 @@ pub enum ConfigurationComparison {
         differences: Vec<ParameterDifference>,
         /// Whether the two canonical logical forms hash equal
         /// ([`LogicalPipeline::content_hash`]). No differing parameter does
-        /// not make two configurations one: the wiring, the declared inputs
-        /// or a node's family can still differ, and this is what says so.
+        /// not make two configurations one: a node's `inputs` or the declared
+        /// inputs can still differ, and this is what says so.
         same_logical_form: bool,
     },
     /// One side's stored document does not lower under this build — the left
@@ -282,11 +287,20 @@ pub struct ParameterDifference {
 
 /// A node's parameter, as a configuration spells it.
 ///
-/// `impl:` and `params:` are separate keys in a node, so a parameter named
-/// `impl` under `params:` stays distinct from the node's `impl:` name. The
-/// order puts `impl:` first, then the parameters by name.
+/// `component:`, `impl:` and `params:` are separate keys in a node, so a
+/// parameter named `impl` under `params:` stays distinct from the node's
+/// `impl:` name. The order puts `component:` first, then `impl:`, then the
+/// parameters by name.
+///
+/// The family is a key because the canonical form hashes a node's variant: a
+/// node lowered as an extension rather than a retriever, same `impl:` and
+/// same `params:`, is another configuration, and without this key it would
+/// differ in no listed parameter.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ParameterKey {
+    /// The node's `component:` family — `retriever`, `fusion`, `reranker` or
+    /// `extension` — held as a [`ParamValue::String`].
+    Component,
     /// The node's `impl:` name, held as a [`ParamValue::String`].
     Impl,
     /// A key under the node's `params:`.

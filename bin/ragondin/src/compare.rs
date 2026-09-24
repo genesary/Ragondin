@@ -41,10 +41,10 @@ pub fn run(store_root: &Path, run_a: &str, run_b: &str) -> Result<()> {
 }
 
 /// Renders a comparison as one line per metric either run recorded, followed
-/// by `metrics: identical` when the two runs agree on every one of them, and then the
-/// configuration block ([`render_configuration`]).
+/// by `metrics: identical` when the two runs agree on every one of them, and
+/// then the configuration block ([`render_configuration`]).
 ///
-/// Two runs with no metrics at all are `identical` too
+/// Two runs with no metrics at all get `metrics: identical` too
 /// ([`RunComparison::is_identical`]'s own rule) — there is nothing they
 /// disagree about, and this renders exactly that empty table plus the line.
 /// That line speaks of the metrics only; the configuration block below it
@@ -63,18 +63,20 @@ fn render(comparison: &RunComparison) -> String {
 }
 
 /// The configuration block: one heading line, then one indented line per
-/// differing parameter — `<node> impl:` or `<node> params.<key>:`, both
-/// values, `-` for a side that does not set it — in the order
-/// `ragondin-experiments` returns them, node id then key.
+/// differing parameter — `<node> component:`, `<node> impl:` or
+/// `<node> params.<key>:`, both values, `-` for a side that does not set it —
+/// in the order `ragondin-experiments` returns them, node id then key.
 fn render_configuration(configuration: &ConfigurationComparison) -> String {
     match configuration {
         ConfigurationComparison::Compared {
             differences,
             same_logical_form,
         } if differences.is_empty() => {
-            // `identical` only when the canonical forms hash equal: two
-            // configurations wired differently share every parameter and are
-            // still two configurations, with two run identities.
+            // `identical` only when the canonical forms hash equal. Every
+            // node's family, `impl:` and params are listed keys, so what the
+            // hash sees beyond them is the wiring: a node's `inputs` and the
+            // declared inputs. Two configurations wired differently share
+            // every parameter and are still two, with two run identities.
             if *same_logical_form {
                 "configuration: identical\n".to_owned()
             } else {
@@ -88,6 +90,7 @@ fn render_configuration(configuration: &ConfigurationComparison) -> String {
             };
             for difference in differences {
                 let key = match &difference.key {
+                    ParameterKey::Component => "component".to_owned(),
                     ParameterKey::Impl => "impl".to_owned(),
                     ParameterKey::Param(key) => format!("params.{key}"),
                 };
@@ -115,8 +118,8 @@ fn render_side(value: Option<&ParamValue>) -> String {
 }
 
 /// A value as a reader tells the grammar's five shapes apart: a string
-/// quoted, a float always with its point — `k: 60` and `k: 60.0` are two
-/// configurations, and must not render as one.
+/// quoted, a float never rendered as an integer would be — `k: 60` and
+/// `k: 60.0` are two configurations, and must not render as one.
 fn render_value(value: &ParamValue) -> String {
     match value {
         ParamValue::String(text) => format!("{text:?}"),
@@ -205,6 +208,12 @@ mod tests {
         let differences = vec![
             ParameterDifference {
                 node: NodeId::new("sparse"),
+                key: ParameterKey::Component,
+                left: Some(ParamValue::String("retriever".to_owned())),
+                right: Some(ParamValue::String("extension".to_owned())),
+            },
+            ParameterDifference {
+                node: NodeId::new("sparse"),
                 key: ParameterKey::Impl,
                 left: Some(ParamValue::String("bm25".to_owned())),
                 right: Some(ParamValue::String("splade".to_owned())),
@@ -231,7 +240,8 @@ mod tests {
                 differences,
                 same_logical_form: false,
             }),
-            "configuration: 3 parameters differ\n\
+            "configuration: 4 parameters differ\n\
+             \x20 sparse component: \"retriever\" vs \"extension\"\n\
              \x20 sparse impl: \"bm25\" vs \"splade\"\n\
              \x20 sparse params.k: 60 vs 60.0\n\
              \x20 tail params.fields: - vs [\"title\", true]\n"

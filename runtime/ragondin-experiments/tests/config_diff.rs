@@ -164,7 +164,9 @@ fn a_node_only_one_run_has_is_reported_key_by_key_sorted_by_node_then_key() {
     assert_eq!(
         found,
         [
+            ("alpha", &ParameterKey::Component, false, true),
             ("alpha", &ParameterKey::Impl, false, true),
+            ("reorder", &ParameterKey::Component, false, true),
             ("reorder", &ParameterKey::Impl, false, true),
             (
                 "reorder",
@@ -173,6 +175,26 @@ fn a_node_only_one_run_has_is_reported_key_by_key_sorted_by_node_then_key() {
                 true
             ),
         ]
+    );
+}
+
+#[test]
+fn a_node_whose_component_family_alone_changed_names_the_family() {
+    let candidate = BASELINE.replace("component: retriever", "component: extension");
+
+    let comparison = compare(&a_run(0x01, BASELINE), &a_run(0x02, &candidate));
+
+    assert_eq!(
+        comparison.configuration,
+        ConfigurationComparison::Compared {
+            differences: vec![ParameterDifference {
+                node: NodeId::new("sparse"),
+                key: ParameterKey::Component,
+                left: Some(ParamValue::String("retriever".to_owned())),
+                right: Some(ParamValue::String("extension".to_owned())),
+            }],
+            same_logical_form: false,
+        }
     );
 }
 
