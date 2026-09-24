@@ -69,7 +69,7 @@ index of citable decisions is worse than none — `just check` fails when it dri
 | [`ADR-C14`](ADR-C14-heavy-backends-feature-gated-lean-default-build.md) | Heavy backends feature-gated; lean default build | — | accepted |
 | [`ADR-C15`](ADR-C15-one-binary-with-subcommands.md) | One binary with subcommands | — | accepted |
 | [`ADR-C16`](ADR-C16-erased-edge-values-checked-before-execution.md) | Erased edge values, with compatibility checked before execution | INV-1, INV-2, INV-7, INV-8 | accepted |
-| [`ADR-C17`](ADR-C17-embedding-role-per-call-prefixes-in-the-constructor.md) | The embedding role is a per-call parameter; prefix text is constructor configuration | INV-1, INV-7 | accepted |
+| [`ADR-C17`](ADR-C17-embedding-role-per-call-prefixes-in-the-constructor.md) | The embedding role is a per-call parameter; prefix text is constructor configuration | INV-1, INV-7 | amended |
 | [`ADR-C18`](ADR-C18-a-pipeline-declares-its-inputs.md) | A pipeline declares its inputs; the query is an explicit edge | INV-1, INV-8, INV-9 | amended |
 | [`ADR-C19`](ADR-C19-empty-collection-arguments-are-valid.md) | An empty collection argument is a valid call, not an invalid request | INV-1, INV-4, INV-7 | accepted |
 | [`ADR-C20`](ADR-C20-zero-dimensional-embedding-is-not-a-valid-output.md) | A zero-dimensional embedding is not a valid Embedder output | INV-1, INV-7 | accepted |
