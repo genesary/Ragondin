@@ -3,8 +3,8 @@
 ## What lives here
 
 The `BenchmarkAdapter` trait, the internal benchmark structure it produces
-(`Benchmark` = corpus + queries + `Qrels`), and one adapter per external
-dataset format. `BeirAdapter` is the first.
+(`Benchmark` = corpus + queries + `Qrels` + `ReferenceAnswers`), and one
+adapter per external dataset format: `BeirAdapter` and `SquadAdapter`.
 
 ## The internal structure is the stable thing
 
@@ -17,10 +17,91 @@ one dataset.
 
 `Benchmark`'s fields are private and it is built through `Benchmark::new`.
 That is deliberate: §5.3 models a benchmark as a **quadruple** — corpus +
-queries + qrels + **reference answers** — and only the first three are in
-scope while there is no LLM judge. When reference answers arrive, they arrive
-as an additional constructor or setter, leaving `new` and every existing
-accessor untouched. Do not add the field before the milestone that reads it.
+queries + qrels + **reference answers** — and the fourth piece was added after
+the first three without touching a construction site. `Benchmark::new` still
+takes the retrieval triple and builds a benchmark with no reference answer;
+`Benchmark::with_reference_answers` is the builder step that adds the fourth
+piece. Every accessor and `Benchmark::iter` are unchanged;
+`Benchmark::iter_with_references` is the loop that also yields each query's
+references, as an empty slice for a query that has none.
+
+## The regime is read off the value: `CarriedPieces`
+
+ADR-8 says the pieces present determine the computable metrics, and ADR-C30
+§ 5 defines *present* as **carried**: a piece is carried when at least one of
+the benchmark's queries has a non-empty list for it — one judgment, grade `0`
+included, for qrels; one string for reference answers. `Benchmark::carries`
+returns that as a `CarriedPieces` value — `Neither`, `QrelsOnly`,
+`ReferenceAnswersOnly`, `QrelsAndReferenceAnswers` — which the harness matches
+on to pick the metric families. Choices made here, inside this crate:
+
+- **An enum of the four combinations, not two booleans or a bit set.** A
+  `match` over it is exhaustive, so a harness that forgets the generation-only
+  case does not compile. It is deliberately not `#[non_exhaustive]`: the
+  quadruple has two optional pieces, and a fifth case would be a new regime a
+  caller must not absorb through a wildcard arm.
+- **Judged over `Benchmark::queries`, not over the pieces as sets.** A
+  judgment or a reference naming a query the benchmark does not hold is
+  nothing a run can score, and the ADR's wording is "at least one of its
+  queries".
+- **An empty reference list is not stored.** `ReferenceAnswers::insert` with
+  an empty `Vec` removes the query's entry, so `ReferenceAnswers::is_empty`,
+  its counts and `carries` never disagree about a set holding only empty
+  lists. Otherwise it replaces, last-wins, like `Qrels::insert`.
+
+`ReferenceAnswers` holds a `Vec<String>` per query in dataset order, repeats
+kept (ADR-C30 § 2): the metric takes the maximum over references, so order
+changes no score, but a frozen fixture compares files byte for byte.
+
+## The SQuAD adapter
+
+`SquadAdapter` reads SQuAD v1.1 as ADR-C30 § 2 maps it: each paragraph a
+`Document` with `DocId` `<article title>#<paragraph index from 0>`, its text
+the `context`, `metadata["title"]` the article title; each question a `Query`
+under its own id; the source paragraph as the one grade-1 judgment; and
+`answers[].text` as the references. `SquadAdapter::new(root)` reads
+`dev-v1.1.json`; `SquadAdapter::with_file(root, name)` reads another file,
+shaped as `BeirAdapter::with_split` is. Choices made here:
+
+- **Absent, `null` and empty `answers` are one error**,
+  `BenchmarkError::NoReferenceAnswer`, naming the file and the question id.
+  The ADR makes a question with no `answers` an adapter error; a key present
+  with nothing in it says the same thing, and treating it as an unjudged
+  query would shrink the generation family's judged set in silence.
+- **A repeated question id, or a repeated derived `DocId`, is
+  `BenchmarkError::DuplicateRecord`**, naming the file and the id — the
+  single-document counterpart of `DuplicateId`, which carries a line a JSON
+  document read whole cannot give. Two articles sharing a title collide on
+  their paragraphs' ids, and a judgment would then name two documents.
+- **The file is read whole, and everything is kept verbatim.** The format has
+  no line structure to stream, and the dev file is under 5 MB. A malformed
+  file is `MalformedJson` with the line `serde_json` reports. No id is trimmed:
+  BEIR trims because one id must match itself across several files, and every
+  SQuAD id is the file's own or derived inside it.
+- `version` and `answer_start` are not read: no rule depends on the first, and
+  an answer is scored as text, never located in the paragraph.
+
+## BEIR's reference-answer path
+
+`BeirAdapter::with_reference_answers()` selects a second reading path that
+**requires** `answers.jsonl` in the dataset root — one line per query,
+`{"_id": <query id>, "answers": [<strings>]}` — and loads it as the reference
+answers (ADR-C30 § 2). Without it the file is never opened, so every M2 load,
+and the `beir-mini` fixture, is unchanged. On that path:
+
+- A line whose `_id` names no query of `queries.jsonl` is
+  `BenchmarkError::UnknownQuery`, and an `_id` on two lines is `DuplicateId`;
+  both name the file, the line and the id (the ADR's two errors).
+- **A line with an empty `answers` list is `NoReferenceAnswer`** — our choice:
+  a query with nothing to say has no line, so a line that lists nothing is a
+  corrupt one, the same strictness `SquadAdapter` applies. A line with no
+  `answers` key is `MalformedJson`.
+- **`_id`s are checked against every query of `queries.jsonl`**, which spans
+  all splits, and the query set is still the split's judged queries. A line
+  about a query of another split names a real query and is accepted; only the
+  references of the queries the benchmark holds are kept, so its pieces
+  describe its own query set. `_id`s are trimmed, as on every other side of
+  this reader.
 
 ## This crate owns qrels; `ragondin-metrics` owns none of it
 
@@ -246,7 +327,9 @@ arithmetic each fixed one file shape and broke another.
 
 ## What is deliberately not here
 
-- CRAG, MultiHop-RAG and any end-to-end adapter carrying reference answers:
-  they need generation and a judge, and belong to M3+ (ADR-10).
+- CRAG, MultiHop-RAG and any adapter needing a judge: ADR-C30 rejects CRAG
+  as the first QA benchmark and leaves MultiHop-RAG to follow a chunker, and
+  reference answers here are labels, and ADR-10 puts label-based metrics
+  beneath any judge.
 - Metric computation (`ragondin-metrics`) and engine execution
   (`ragondin-harness`).
