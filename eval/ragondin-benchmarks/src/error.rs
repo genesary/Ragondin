@@ -130,13 +130,28 @@ pub enum BenchmarkError {
 
     /// A query's record in a reference-answer source lists no answer.
     ///
-    /// A missing reference in a dataset that states one for every query means
-    /// a corrupt or wrong file, not an unjudged query (ADR-C30 § 2). Scoring
-    /// it as unjudged would quietly shrink the generation family's judged set.
-    #[error("{path}: query {id:?} has no reference answer")]
+    /// Raised by both adapters that read references: `SquadAdapter`, for a
+    /// question whose `answers` is absent, `null` or empty, and
+    /// `BeirAdapter`'s reference path, for an `answers.jsonl` line whose list
+    /// is empty. A missing reference in a dataset that states one for every
+    /// query means a corrupt or wrong file, not an unjudged query (ADR-C30
+    /// § 2). Scoring it as unjudged would quietly shrink the generation
+    /// family's judged set.
+    ///
+    /// One variant for both, with the line optional, because the fault is the
+    /// same and only the file's shape differs: a JSONL file has a line to
+    /// name, while a SQuAD file is one JSON document read whole and has none.
+    #[error(
+        "{}{}: query {id:?} has no reference answer",
+        .path.display(),
+        .line.map(|line| format!(":{line}")).unwrap_or_default()
+    )]
     NoReferenceAnswer {
         /// The file holding the record.
         path: PathBuf,
+        /// The 1-based line of the record in a line-oriented file; `None` for
+        /// a file read as one JSON document.
+        line: Option<usize>,
         /// The query whose answer list is absent or empty.
         id: String,
     },

@@ -170,8 +170,10 @@ fn a_question_with_no_answers_field_is_an_error_naming_the_file_and_the_question
 
     let error = SquadAdapter::new(&root).load().expect_err("must fail");
     match &error {
-        BenchmarkError::NoReferenceAnswer { path, id } => {
+        BenchmarkError::NoReferenceAnswer { path, line, id } => {
             assert_eq!(path, &root.join("dev-v1.1.json"));
+            // A JSON document read whole has no line to give.
+            assert_eq!(*line, None);
             assert_eq!(id, "q-x");
         }
         other => panic!("expected NoReferenceAnswer, got {other:?}"),

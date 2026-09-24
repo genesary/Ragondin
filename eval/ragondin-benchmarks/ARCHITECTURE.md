@@ -64,7 +64,8 @@ under its own id; the source paragraph as the one grade-1 judgment; and
 shaped as `BeirAdapter::with_split` is. Choices made here:
 
 - **Absent, `null` and empty `answers` are one error**,
-  `BenchmarkError::NoReferenceAnswer`, naming the file and the question id.
+  `BenchmarkError::NoReferenceAnswer`, naming the file and the question id,
+  with no line: a JSON document read whole has none to give.
   The ADR makes a question with no `answers` an adapter error; a key present
   with nothing in it says the same thing, and treating it as an unjudged
   query would shrink the generation family's judged set in silence.
@@ -92,10 +93,12 @@ and the `beir-mini` fixture, is unchanged. On that path:
 - A line whose `_id` names no query of `queries.jsonl` is
   `BenchmarkError::UnknownQuery`, and an `_id` on two lines is `DuplicateId`;
   both name the file, the line and the id (the ADR's two errors).
-- **A line with an empty `answers` list is `NoReferenceAnswer`** — our choice:
-  a query with nothing to say has no line, so a line that lists nothing is a
-  corrupt one, the same strictness `SquadAdapter` applies. A line with no
-  `answers` key is `MalformedJson`.
+- **A line with an empty `answers` list is `NoReferenceAnswer`**, naming the
+  file, the line and the id — our choice: a query with nothing to say has no
+  line, so a line that lists nothing is a corrupt one, the same strictness
+  `SquadAdapter` applies. A line with no `answers` key is `MalformedJson`.
+  The variant's line is an `Option`, not a second variant: the fault is the
+  same on both paths, and only the file's shape decides whether a line exists.
 - **`_id`s are checked against every query of `queries.jsonl`**, which spans
   all splits, and the query set is still the split's judged queries. A line
   about a query of another split names a real query and is accepted; only the
@@ -327,9 +330,9 @@ arithmetic each fixed one file shape and broke another.
 
 ## What is deliberately not here
 
-- CRAG, MultiHop-RAG and any adapter needing a judge: ADR-C30 rejects CRAG
-  as the first QA benchmark and leaves MultiHop-RAG to follow a chunker, and
-  reference answers here are labels, and ADR-10 puts label-based metrics
+- CRAG, MultiHop-RAG and any adapter needing a judge. ADR-C30 rejects CRAG
+  as the first QA benchmark and leaves MultiHop-RAG to follow a chunker.
+  Reference answers here are labels, and ADR-10 puts label-based metrics
   beneath any judge.
 - Metric computation (`ragondin-metrics`) and engine execution
   (`ragondin-harness`).

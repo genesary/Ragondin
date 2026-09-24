@@ -166,12 +166,14 @@ fn a_line_listing_no_answer_is_an_error_naming_the_file_and_the_id() {
         .load()
         .expect_err("must fail");
     match &error {
-        BenchmarkError::NoReferenceAnswer { path, id } => {
+        BenchmarkError::NoReferenceAnswer { path, line, id } => {
             assert_eq!(path, &root.join("answers.jsonl"));
+            assert_eq!(*line, Some(1));
             assert_eq!(id, "q-2");
         }
         other => panic!("expected NoReferenceAnswer, got {other:?}"),
     }
+    assert!(error.to_string().contains("answers.jsonl:1:"));
     let _ = fs::remove_dir_all(&root);
 }
 

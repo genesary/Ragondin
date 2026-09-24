@@ -1,6 +1,6 @@
 [package]
 name = "ragondin-benchmarks"
-description = "BenchmarkAdapter and its implementations (BEIR, CRAG, MultiHop-RAG, …)."
+description = "BenchmarkAdapter and its implementations (BEIR, SQuAD v1.1)."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

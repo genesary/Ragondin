@@ -425,6 +425,7 @@ fn read_answers(path: &Path, queries: &[Query]) -> Result<ReferenceAnswers, Benc
         if record.answers.is_empty() {
             return Err(BenchmarkError::NoReferenceAnswer {
                 path: path.to_path_buf(),
+                line: Some(line),
                 id: id.to_string(),
             });
         }

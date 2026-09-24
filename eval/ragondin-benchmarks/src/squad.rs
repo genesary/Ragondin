@@ -161,6 +161,7 @@ impl BenchmarkAdapter for SquadAdapter {
                     if answers.is_empty() {
                         return Err(BenchmarkError::NoReferenceAnswer {
                             path: path.clone(),
+                            line: None,
                             id: question.id,
                         });
                     }
