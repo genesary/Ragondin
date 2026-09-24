@@ -13,20 +13,26 @@
 //! forbids shipping a component implementation; these exist only to test the
 //! harness itself.
 
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 
 use async_trait::async_trait;
 use ragondin_conformance::{
-    assert_embedder_conformance, assert_fusion_conformance, assert_reranker_conformance,
-    assert_retriever_conformance, assert_vector_store_conformance, check_embedder_conformance,
-    check_fusion_conformance, check_reranker_conformance, check_retriever_conformance,
-    check_vector_store_conformance, RolePrefixes,
+    assert_context_builder_conformance, assert_embedder_conformance, assert_fusion_conformance,
+    assert_generator_conformance, assert_reranker_conformance, assert_retriever_conformance,
+    assert_vector_store_conformance, check_context_builder_conformance, check_embedder_conformance,
+    check_fusion_conformance, check_generator_conformance, check_reranker_conformance,
+    check_retriever_conformance, check_vector_store_conformance, RolePrefixes,
 };
 use ragondin_contracts::{
-    ComponentError, EmbedParams, EmbedRole, EmbeddedChunk, Embedder, Fusion, FusionParams,
-    RerankParams, Reranker, RetrieveParams, Retriever, SearchParams, VectorStore,
+    ComponentError, ContextBuilder, ContextParams, EmbedParams, EmbedRole, EmbeddedChunk, Embedder,
+    Fusion, FusionParams, GenerateParams, Generator, RerankParams, Reranker, RetrieveParams,
+    Retriever, SearchParams, VectorStore,
 };
-use ragondin_types::{Chunk, ChunkId, DocId, Embedding, Query, ScoredChunk};
+use ragondin_types::{
+    Answer, Chunk, ChunkId, Context, ContextChunk, DocId, Embedding, ModelIdentity, Query,
+    ScoredChunk,
+};
 
 const DIM: usize = 3;
 
@@ -1370,6 +1376,635 @@ async fn the_vector_store_assert_wrapper_panics_on_a_broken_component() {
             })
         },
         DIM,
+    )
+    .await;
+}
+
+// ----------------------------------------------------------- ContextBuilder
+
+/// What a stub builder gets wrong, if anything. One stub with a named flaw
+/// rather than a struct per flaw: every flaw is a one-line departure from the
+/// same conformant builder, and a reader should see only the departure.
+enum BuilderFlaw {
+    None,
+    /// Places a chunk it was never handed ahead of the real ones.
+    Fabricates,
+    /// Answers zero chunks with a context holding one.
+    FillsAnEmptyInput,
+    /// Places its first chunk twice.
+    Duplicates,
+    /// Answers a zero budget with the empty context.
+    AcceptsAZeroBudget,
+    /// Refuses a zero budget, but as a failure of its own rather than the
+    /// caller's.
+    RefusesAZeroBudgetAsUnavailable,
+    /// Treats zero chunks as an invalid request, against ADR-C19.
+    RefusesZeroChunks,
+    /// Fails every build.
+    RefusesEverything,
+    /// Reports the empty identity.
+    EmptyIdentity,
+    /// Reports an identity that changes on every call.
+    CountingIdentity(AtomicUsize),
+    /// Reports an identity that names the instance, so two instances built by
+    /// one constructor disagree.
+    InstanceIdentity(usize),
+    /// Cannot report an identity at all.
+    FailingIdentity,
+}
+
+/// A builder whose budget counts chunks — its own unit, as the contract
+/// leaves it to be — and which renders each chunk's text on a line.
+struct StubBuilder(BuilderFlaw);
+
+#[async_trait]
+impl ContextBuilder for StubBuilder {
+    async fn build(
+        &self,
+        _query: &Query,
+        chunks: Vec<ScoredChunk>,
+        params: &ContextParams,
+    ) -> Result<Context, ComponentError> {
+        let flaw = &self.0;
+        if matches!(flaw, BuilderFlaw::RefusesEverything) {
+            return Err(ComponentError::Unavailable("builder down".into()));
+        }
+        if params.budget == 0 {
+            return match flaw {
+                BuilderFlaw::AcceptsAZeroBudget => Ok(Context {
+                    chunks: Vec::new(),
+                    text: String::new(),
+                }),
+                BuilderFlaw::RefusesAZeroBudgetAsUnavailable => {
+                    Err(ComponentError::Unavailable("no room".into()))
+                }
+                _ => Err(ComponentError::InvalidRequest("a zero budget".into())),
+            };
+        }
+        if chunks.is_empty() {
+            match flaw {
+                BuilderFlaw::RefusesZeroChunks => {
+                    return Err(ComponentError::InvalidRequest("nothing to build".into()))
+                }
+                BuilderFlaw::FillsAnEmptyInput => {
+                    return Ok(Context {
+                        chunks: vec![context_chunk(&scored("out-of-nowhere", 1.0))],
+                        text: "a passage from nowhere".to_string(),
+                    })
+                }
+                _ => {}
+            }
+        }
+        let kept: Vec<ScoredChunk> = chunks.into_iter().take(params.budget).collect();
+        let mut placed: Vec<ContextChunk> = kept.iter().map(context_chunk).collect();
+        match flaw {
+            BuilderFlaw::Fabricates if !placed.is_empty() => {
+                placed.insert(0, context_chunk(&scored("hallucinated", 1.0)));
+            }
+            BuilderFlaw::Duplicates if !placed.is_empty() => placed.push(placed[0].clone()),
+            _ => {}
+        }
+        Ok(Context {
+            text: kept
+                .iter()
+                .map(|hit| hit.chunk.text.as_str())
+                .collect::<Vec<_>>()
+                .join("\n"),
+            chunks: placed,
+        })
+    }
+
+    async fn model_identity(&self) -> Result<ModelIdentity, ComponentError> {
+        match &self.0 {
+            BuilderFlaw::EmptyIdentity => Ok(ModelIdentity::new("")),
+            BuilderFlaw::CountingIdentity(calls) => Ok(ModelIdentity::new(format!(
+                "stub-builder:chunks#{}",
+                calls.fetch_add(1, Ordering::SeqCst)
+            ))),
+            BuilderFlaw::InstanceIdentity(instance) => Ok(ModelIdentity::new(format!(
+                "stub-builder:chunks/instance-{instance}"
+            ))),
+            BuilderFlaw::FailingIdentity => {
+                Err(ComponentError::Unavailable("identity unknown".into()))
+            }
+            _ => Ok(ModelIdentity::new("stub-builder:chunks")),
+        }
+    }
+}
+
+fn context_chunk(hit: &ScoredChunk) -> ContextChunk {
+    ContextChunk {
+        id: hit.chunk.id.clone(),
+        document_id: hit.chunk.document_id.clone(),
+        score: hit.score,
+    }
+}
+
+/// Runs the suite over builders that each carry the flaw `flaw` makes.
+async fn builder_failure(
+    flaw: impl Fn() -> BuilderFlaw,
+) -> ragondin_conformance::ConformanceFailure {
+    check_context_builder_conformance(|| Box::new(StubBuilder(flaw())))
+        .await
+        .expect_err("the stub is not conformant")
+}
+
+#[tokio::test]
+async fn a_conformant_context_builder_passes() {
+    check_context_builder_conformance(|| Box::new(StubBuilder(BuilderFlaw::None)))
+        .await
+        .expect("the stub honours the context builder contract");
+}
+
+#[tokio::test]
+async fn a_context_builder_fabricating_a_chunk_id_fails() {
+    let failure =
+        check_context_builder_conformance(|| Box::new(StubBuilder(BuilderFlaw::Fabricates)))
+            .await
+            .expect_err("a builder selects, it does not invent");
+    assert_eq!(failure.check(), "no fabricated ids");
+    assert_eq!(failure.component(), "ContextBuilder");
+}
+
+#[tokio::test]
+async fn a_context_builder_filling_an_empty_input_fails() {
+    let failure =
+        check_context_builder_conformance(|| Box::new(StubBuilder(BuilderFlaw::FillsAnEmptyInput)))
+            .await
+            .expect_err("zero chunks in, the empty context out (ADR-C19)");
+    assert_eq!(failure.check(), "no fabricated ids");
+}
+
+#[tokio::test]
+async fn a_context_builder_placing_a_chunk_twice_fails() {
+    let failure =
+        check_context_builder_conformance(|| Box::new(StubBuilder(BuilderFlaw::Duplicates)))
+            .await
+            .expect_err("a context places each chunk once");
+    assert_eq!(failure.check(), "no duplicate ids");
+}
+
+#[tokio::test]
+async fn a_context_builder_accepting_a_zero_budget_fails() {
+    let failure = check_context_builder_conformance(|| {
+        Box::new(StubBuilder(BuilderFlaw::AcceptsAZeroBudget))
+    })
+    .await
+    .expect_err("a zero budget is top_k's twin");
+    assert_eq!(failure.check(), "zero budget rejected");
+}
+
+#[tokio::test]
+async fn a_context_builder_refusing_a_zero_budget_as_its_own_failure_fails() {
+    let failure = check_context_builder_conformance(|| {
+        Box::new(StubBuilder(BuilderFlaw::RefusesAZeroBudgetAsUnavailable))
+    })
+    .await
+    .expect_err("a zero budget is the caller's error, not the component's");
+    assert_eq!(failure.check(), "zero budget rejected");
+}
+
+#[tokio::test]
+async fn a_context_builder_refusing_zero_chunks_fails() {
+    let failure =
+        check_context_builder_conformance(|| Box::new(StubBuilder(BuilderFlaw::RefusesZeroChunks)))
+            .await
+            .expect_err("zero chunks is a valid call (ADR-C19)");
+    assert_eq!(failure.check(), "well-formed call succeeds");
+    assert!(
+        failure.detail().contains("zero chunks"),
+        "the diagnosis must name the zero-chunk call: {}",
+        failure.detail()
+    );
+}
+
+#[tokio::test]
+async fn a_context_builder_failing_a_well_formed_call_fails() {
+    let failure =
+        check_context_builder_conformance(|| Box::new(StubBuilder(BuilderFlaw::RefusesEverything)))
+            .await
+            .expect_err("a well-formed call must succeed");
+    assert_eq!(failure.check(), "well-formed call succeeds");
+}
+
+#[tokio::test]
+async fn a_context_builder_reporting_the_empty_identity_fails() {
+    let failure = builder_failure(|| BuilderFlaw::EmptyIdentity).await;
+    assert_eq!(failure.check(), "identity non-empty");
+}
+
+#[tokio::test]
+async fn a_context_builder_whose_identity_changes_per_call_fails() {
+    let failure = builder_failure(|| BuilderFlaw::CountingIdentity(AtomicUsize::new(0))).await;
+    assert_eq!(failure.check(), "identity stable across two calls");
+}
+
+#[tokio::test]
+async fn a_context_builder_whose_identity_names_the_instance_fails() {
+    // The composition root reads the identity from an instance other than the
+    // one that runs (ADR-C31 § 4), so two instances of one configuration must
+    // agree — an identity naming the instance breaks that on the second call.
+    let instances = AtomicUsize::new(0);
+    let failure = check_context_builder_conformance(|| {
+        Box::new(StubBuilder(BuilderFlaw::InstanceIdentity(
+            instances.fetch_add(1, Ordering::SeqCst),
+        )))
+    })
+    .await
+    .expect_err("one configuration, one identity");
+    assert_eq!(failure.check(), "identity stable across two calls");
+}
+
+#[tokio::test]
+async fn a_context_builder_unable_to_report_its_identity_fails() {
+    let failure = builder_failure(|| BuilderFlaw::FailingIdentity).await;
+    assert_eq!(failure.check(), "well-formed call succeeds");
+}
+
+#[tokio::test]
+#[should_panic(expected = "no fabricated ids")]
+async fn the_context_builder_assert_wrapper_panics_on_a_broken_component() {
+    assert_context_builder_conformance(|| Box::new(StubBuilder(BuilderFlaw::Fabricates))).await;
+}
+
+// ---------------------------------------------------------------- Generator
+
+/// The model the stub generators serve: what a caller of the generator suite
+/// hands it.
+const SERVED: &str = "stub-model";
+
+/// Which malformations of the template grammar stated on `Generator` a stub
+/// refuses. The conformant stub refuses all three; each broken one forgives
+/// exactly one, which proves the suite probes every one of them.
+#[derive(Clone, Copy)]
+struct Strictness {
+    unknown_name: bool,
+    unclosed_brace: bool,
+    lone_close: bool,
+}
+
+const STRICT: Strictness = Strictness {
+    unknown_name: true,
+    unclosed_brace: true,
+    lone_close: true,
+};
+
+/// Renders `template` in the contract's grammar: one pass, left to right,
+/// `{{` and `}}` taken before a placeholder at each position.
+fn render(
+    template: &str,
+    query: &str,
+    context: &str,
+    strict: Strictness,
+) -> Result<String, ComponentError> {
+    let malformed = |why: &str| {
+        Err(ComponentError::InvalidRequest(format!(
+            "malformed template: {why}"
+        )))
+    };
+    let mut out = String::new();
+    let mut rest = template;
+    while let Some(next) = rest.chars().next() {
+        if let Some(after) = rest.strip_prefix("{{") {
+            out.push('{');
+            rest = after;
+        } else if let Some(after) = rest.strip_prefix("}}") {
+            out.push('}');
+            rest = after;
+        } else if let Some(after) = rest.strip_prefix('{') {
+            match after.find('}') {
+                Some(end) => {
+                    match &after[..end] {
+                        "query" => out.push_str(query),
+                        "context" => out.push_str(context),
+                        _ if strict.unknown_name => return malformed("an unknown placeholder"),
+                        other => out.push_str(other),
+                    }
+                    rest = &after[end + 1..];
+                }
+                None if strict.unclosed_brace => return malformed("a `{` no `}` closes"),
+                None => {
+                    out.push_str(after);
+                    rest = "";
+                }
+            }
+        } else if let Some(after) = rest.strip_prefix('}') {
+            if strict.lone_close {
+                return malformed("a lone `}`");
+            }
+            rest = after;
+        } else {
+            out.push(next);
+            rest = &rest[next.len_utf8()..];
+        }
+    }
+    Ok(out)
+}
+
+/// What a stub generator gets wrong, if anything.
+enum GeneratorFlaw {
+    None,
+    /// Reads the template with one malformation forgiven.
+    Forgives(Strictness),
+    /// Answers an empty served model with the model it serves.
+    AcceptsAnEmptyModel,
+    /// Refuses an empty served model, but as a failure of its own.
+    RefusesAnEmptyModelAsUnavailable,
+    /// Answers an empty template with an empty prompt.
+    AcceptsAnEmptyTemplate,
+    /// Refuses the `{{` and `}}` escapes, which the grammar allows.
+    RefusesEscapes,
+    /// Refuses a placeholder that appears more than once, which the grammar
+    /// allows.
+    RefusesARepeatedPlaceholder,
+    /// Treats an empty context as an invalid request, against ADR-C19.
+    RefusesAnEmptyContext,
+    /// Fails every generate.
+    RefusesEverything,
+    /// Reports the empty identity.
+    EmptyIdentity,
+    /// Reports an identity that changes on every call.
+    CountingIdentity(AtomicUsize),
+    /// Reports an identity that names the instance.
+    InstanceIdentity(usize),
+    /// Cannot report an identity at all.
+    FailingIdentity,
+}
+
+struct StubGenerator(GeneratorFlaw);
+
+#[async_trait]
+impl Generator for StubGenerator {
+    async fn generate(
+        &self,
+        query: &Query,
+        context: &Context,
+        params: &GenerateParams,
+    ) -> Result<Answer, ComponentError> {
+        let flaw = &self.0;
+        if matches!(flaw, GeneratorFlaw::RefusesEverything) {
+            return Err(ComponentError::Unavailable("generator down".into()));
+        }
+        let serves = params.served_model == SERVED
+            || (params.served_model.is_empty()
+                && matches!(flaw, GeneratorFlaw::AcceptsAnEmptyModel));
+        if params.served_model.is_empty()
+            && matches!(flaw, GeneratorFlaw::RefusesAnEmptyModelAsUnavailable)
+        {
+            return Err(ComponentError::Unavailable("no default model".into()));
+        }
+        if !serves {
+            return Err(ComponentError::InvalidRequest(format!(
+                "model {:?} is not served here",
+                params.served_model
+            )));
+        }
+        if params.template.is_empty() && !matches!(flaw, GeneratorFlaw::AcceptsAnEmptyTemplate) {
+            return Err(ComponentError::InvalidRequest("an empty template".into()));
+        }
+        let template = params.template.as_str();
+        if matches!(flaw, GeneratorFlaw::RefusesEscapes)
+            && (template.contains("{{") || template.contains("}}"))
+        {
+            return Err(ComponentError::InvalidRequest("no escapes here".into()));
+        }
+        if matches!(flaw, GeneratorFlaw::RefusesARepeatedPlaceholder)
+            && (template.matches("{query}").count() > 1
+                || template.matches("{context}").count() > 1)
+        {
+            return Err(ComponentError::InvalidRequest(
+                "each placeholder once".into(),
+            ));
+        }
+        if context.chunks.is_empty() && matches!(flaw, GeneratorFlaw::RefusesAnEmptyContext) {
+            return Err(ComponentError::InvalidRequest(
+                "nothing to answer from".into(),
+            ));
+        }
+        let strict = match flaw {
+            GeneratorFlaw::Forgives(strict) => *strict,
+            _ => STRICT,
+        };
+        // The "model" answers with the prompt it was asked: content is not
+        // the suite's business, so the stub need not be a good generator.
+        Ok(Answer {
+            text: render(&params.template, &query.text, &context.text, strict)?,
+        })
+    }
+
+    async fn model_identity(&self, served_model: &str) -> Result<ModelIdentity, ComponentError> {
+        if served_model != SERVED {
+            return Err(ComponentError::InvalidRequest(format!(
+                "model {served_model:?} is not served here"
+            )));
+        }
+        match &self.0 {
+            GeneratorFlaw::EmptyIdentity => Ok(ModelIdentity::new("")),
+            GeneratorFlaw::CountingIdentity(calls) => Ok(ModelIdentity::new(format!(
+                "stub-model@rev1#{}",
+                calls.fetch_add(1, Ordering::SeqCst)
+            ))),
+            GeneratorFlaw::InstanceIdentity(instance) => Ok(ModelIdentity::new(format!(
+                "stub-model@rev1/instance-{instance}"
+            ))),
+            GeneratorFlaw::FailingIdentity => {
+                Err(ComponentError::Unavailable("identity unknown".into()))
+            }
+            _ => Ok(ModelIdentity::new("stub-model@rev1")),
+        }
+    }
+}
+
+/// Runs the suite over generators that each carry the flaw `flaw` makes.
+async fn generator_failure(
+    flaw: impl Fn() -> GeneratorFlaw,
+) -> ragondin_conformance::ConformanceFailure {
+    check_generator_conformance(|| Box::new(StubGenerator(flaw())), SERVED)
+        .await
+        .expect_err("the stub is not conformant")
+}
+
+#[test]
+fn the_stub_renderer_follows_the_template_grammar() {
+    // The conformant stub is only as good as its renderer; pin the grammar's
+    // own examples so a broken renderer cannot make a broken suite look sound.
+    let render = |t: &str| render(t, "Q", "C", STRICT);
+    assert_eq!(render("{query}|{context}|{query}").unwrap(), "Q|C|Q");
+    assert_eq!(render("{{query}}").unwrap(), "{query}");
+    assert_eq!(
+        render("{query}\n{context}\n{query} {{literal}}").unwrap(),
+        "Q\nC\nQ {literal}"
+    );
+    assert_eq!(render("no placeholder").unwrap(), "no placeholder");
+    for malformed in ["{unknown}", "{query", "}", "{context} {", "{query} }"] {
+        assert!(
+            matches!(render(malformed), Err(ComponentError::InvalidRequest(_))),
+            "{malformed:?} must be refused"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_conformant_generator_passes() {
+    check_generator_conformance(|| Box::new(StubGenerator(GeneratorFlaw::None)), SERVED)
+        .await
+        .expect("the stub honours the generator contract");
+}
+
+#[tokio::test]
+async fn a_generator_asked_for_a_model_it_does_not_serve_fails_the_well_formed_call() {
+    // The served model is the caller's statement of what the fixture serves;
+    // the suite asks for exactly that name, so a wrong statement shows here.
+    let failure = check_generator_conformance(
+        || Box::new(StubGenerator(GeneratorFlaw::None)),
+        "some-other-model",
+    )
+    .await
+    .expect_err("the stub serves only its own model");
+    assert_eq!(failure.check(), "well-formed call succeeds");
+    assert_eq!(failure.component(), "Generator");
+}
+
+#[tokio::test]
+async fn a_generator_failing_a_well_formed_call_fails() {
+    let failure = generator_failure(|| GeneratorFlaw::RefusesEverything).await;
+    assert_eq!(failure.check(), "well-formed call succeeds");
+}
+
+#[tokio::test]
+async fn a_generator_refusing_an_empty_context_fails() {
+    let failure = generator_failure(|| GeneratorFlaw::RefusesAnEmptyContext).await;
+    assert_eq!(failure.check(), "well-formed call succeeds");
+    assert!(
+        failure.detail().contains("empty context"),
+        "the diagnosis must name the empty context: {}",
+        failure.detail()
+    );
+}
+
+#[tokio::test]
+async fn a_generator_refusing_the_escapes_fails() {
+    // The suite owns the well-formed template, so a caller cannot certify a
+    // generator by handing it a template with nothing in it to get wrong.
+    let failure = generator_failure(|| GeneratorFlaw::RefusesEscapes).await;
+    assert_eq!(failure.check(), "well-formed call succeeds");
+}
+
+#[tokio::test]
+async fn a_generator_refusing_a_repeated_placeholder_fails() {
+    let failure = generator_failure(|| GeneratorFlaw::RefusesARepeatedPlaceholder).await;
+    assert_eq!(failure.check(), "well-formed call succeeds");
+}
+
+#[tokio::test]
+async fn a_generator_accepting_an_empty_served_model_fails() {
+    let failure = generator_failure(|| GeneratorFlaw::AcceptsAnEmptyModel).await;
+    assert_eq!(failure.check(), "empty served_model rejected");
+}
+
+#[tokio::test]
+async fn a_generator_refusing_an_empty_served_model_as_its_own_failure_fails() {
+    let failure = generator_failure(|| GeneratorFlaw::RefusesAnEmptyModelAsUnavailable).await;
+    assert_eq!(failure.check(), "empty served_model rejected");
+}
+
+#[tokio::test]
+async fn a_generator_accepting_an_empty_template_fails() {
+    let failure = generator_failure(|| GeneratorFlaw::AcceptsAnEmptyTemplate).await;
+    assert_eq!(failure.check(), "empty template rejected");
+}
+
+#[tokio::test]
+async fn a_generator_accepting_an_unknown_placeholder_fails() {
+    let failure = generator_failure(|| {
+        GeneratorFlaw::Forgives(Strictness {
+            unknown_name: false,
+            ..STRICT
+        })
+    })
+    .await;
+    assert_eq!(failure.check(), "malformed template rejected");
+    assert!(
+        failure.detail().contains("{unknown}"),
+        "the diagnosis must name the template: {}",
+        failure.detail()
+    );
+}
+
+#[tokio::test]
+async fn a_generator_accepting_an_unclosed_brace_fails() {
+    let failure = generator_failure(|| {
+        GeneratorFlaw::Forgives(Strictness {
+            unclosed_brace: false,
+            ..STRICT
+        })
+    })
+    .await;
+    assert_eq!(failure.check(), "malformed template rejected");
+    assert!(
+        failure.detail().contains("{context} {"),
+        "the diagnosis must name the template: {}",
+        failure.detail()
+    );
+}
+
+#[tokio::test]
+async fn a_generator_accepting_a_lone_closing_brace_fails() {
+    let failure = generator_failure(|| {
+        GeneratorFlaw::Forgives(Strictness {
+            lone_close: false,
+            ..STRICT
+        })
+    })
+    .await;
+    assert_eq!(failure.check(), "malformed template rejected");
+    assert!(
+        failure.detail().contains("{query} }"),
+        "the diagnosis must name the template: {}",
+        failure.detail()
+    );
+}
+
+#[tokio::test]
+async fn a_generator_reporting_the_empty_identity_fails() {
+    let failure = generator_failure(|| GeneratorFlaw::EmptyIdentity).await;
+    assert_eq!(failure.check(), "identity non-empty");
+}
+
+#[tokio::test]
+async fn a_generator_whose_identity_changes_per_call_fails() {
+    let failure = generator_failure(|| GeneratorFlaw::CountingIdentity(AtomicUsize::new(0))).await;
+    assert_eq!(failure.check(), "identity stable across two calls");
+}
+
+#[tokio::test]
+async fn a_generator_whose_identity_names_the_instance_fails() {
+    let instances = AtomicUsize::new(0);
+    let failure = check_generator_conformance(
+        || {
+            Box::new(StubGenerator(GeneratorFlaw::InstanceIdentity(
+                instances.fetch_add(1, Ordering::SeqCst),
+            )))
+        },
+        SERVED,
+    )
+    .await
+    .expect_err("one configuration, one identity");
+    assert_eq!(failure.check(), "identity stable across two calls");
+}
+
+#[tokio::test]
+async fn a_generator_unable_to_report_its_identity_fails() {
+    let failure = generator_failure(|| GeneratorFlaw::FailingIdentity).await;
+    assert_eq!(failure.check(), "well-formed call succeeds");
+}
+
+#[tokio::test]
+#[should_panic(expected = "empty template rejected")]
+async fn the_generator_assert_wrapper_panics_on_a_broken_component() {
+    assert_generator_conformance(
+        || Box::new(StubGenerator(GeneratorFlaw::AcceptsAnEmptyTemplate)),
+        SERVED,
     )
     .await;
 }

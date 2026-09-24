@@ -46,7 +46,7 @@ pub async fn check_fusion_conformance(
             .fuse(inputs, &FusionParams::new())
             .await
             .map_err(|error| ConformanceFailure::from_call(COMPONENT, context, &error))?;
-        check_no_fabricated_ids(COMPONENT, context, &fused, &[])?;
+        check_no_fabricated_ids(COMPONENT, context, &ids(&fused), &[])?;
     }
 
     let leg = ranked("leg-a", 3);
@@ -55,8 +55,8 @@ pub async fn check_fusion_conformance(
         .fuse(vec![leg.clone()], &FusionParams::new())
         .await
         .map_err(|error| ConformanceFailure::from_call(COMPONENT, context, &error))?;
-    check_no_fabricated_ids(COMPONENT, context, &fused, &ids(&leg))?;
-    check_no_duplicate_ids(COMPONENT, context, &fused)?;
+    check_no_fabricated_ids(COMPONENT, context, &ids(&fused), &ids(&leg))?;
+    check_no_duplicate_ids(COMPONENT, context, &ids(&fused))?;
     check_non_empty(context, &fused)?;
     check_ranking(COMPONENT, context, &fused)?;
     check_order_preserved(context, &leg, &fused)?;
@@ -76,8 +76,8 @@ pub async fn check_fusion_conformance(
         .map_err(|error| ConformanceFailure::from_call(COMPONENT, context, &error))?;
     let mut union = ids(&left);
     union.extend(ids(&right));
-    check_no_fabricated_ids(COMPONENT, context, &fused, &union)?;
-    check_no_duplicate_ids(COMPONENT, context, &fused)?;
+    check_no_fabricated_ids(COMPONENT, context, &ids(&fused), &union)?;
+    check_no_duplicate_ids(COMPONENT, context, &ids(&fused))?;
     check_non_empty(context, &fused)?;
     check_ranking(COMPONENT, context, &fused)
 }
