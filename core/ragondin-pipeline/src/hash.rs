@@ -22,9 +22,11 @@
 //! a float by a shortest-round-trip rule, orders a map by whatever the map
 //! orders by, and would put this crate's identity at the mercy of a dependency
 //! whose output is documented as readable, not as stable. The encoding below
-//! is instead a property of this file, which is what the two pinned digests in
-//! `tests/content_hash.rs` guard — one over a realistic pipeline, one over the
-//! whole grammar, because no single fixture reaches every tag byte.
+//! is instead a property of this file, which is what the three pinned digests
+//! in `tests/content_hash.rs` guard — one over a realistic pipeline, one over
+//! every variant that predates generation and every parameter shape, and one
+//! over a generation pipeline — because no single fixture reaches every tag
+//! byte.
 //!
 //! # The encoding
 //!
@@ -94,7 +96,8 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use sha2::{Digest, Sha256};
 
 use crate::node::{
-    ExtensionNode, FusionNode, LogicalNode, NodeId, ParamValue, Params, RerankerNode, RetrieverNode,
+    ContextBuilderNode, ExtensionNode, FusionNode, GeneratorNode, LogicalNode, NodeId, ParamValue,
+    Params, RerankerNode, RetrieverNode,
 };
 use crate::pipeline::LogicalPipeline;
 
@@ -113,6 +116,8 @@ const TAG_RETRIEVER: u8 = 0x01;
 const TAG_FUSION: u8 = 0x02;
 const TAG_RERANKER: u8 = 0x03;
 const TAG_EXTENSION: u8 = 0x04;
+const TAG_CONTEXT_BUILDER: u8 = 0x05;
+const TAG_GENERATOR: u8 = 0x06;
 
 /// Tag bytes for [`ParamValue`]'s variants. Numbered in their own space,
 /// which is unambiguous because a param value is only ever read where one is
@@ -319,6 +324,18 @@ fn feed_node(hasher: &mut Sha256, node: &LogicalNode) {
             inputs,
             params,
         }) => (TAG_RERANKER, id, implementation, inputs, params),
+        LogicalNode::ContextBuilder(ContextBuilderNode {
+            id,
+            implementation,
+            inputs,
+            params,
+        }) => (TAG_CONTEXT_BUILDER, id, implementation, inputs, params),
+        LogicalNode::Generator(GeneratorNode {
+            id,
+            implementation,
+            inputs,
+            params,
+        }) => (TAG_GENERATOR, id, implementation, inputs, params),
         LogicalNode::Extension(ExtensionNode {
             id,
             kind,

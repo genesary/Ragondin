@@ -68,8 +68,9 @@ pub type ConstructionError = Box<dyn std::error::Error + Send + Sync>;
 /// makes it for `ValidationError`: this enum is not on a stable boundary
 /// (INV-2), so a `match` in the binary that stops compiling when a variant
 /// arrives is the intended signal that a new refusal needs reporting — which
-/// `#[non_exhaustive]` would suppress. Physical planning added the last two
-/// that way.
+/// `#[non_exhaustive]` would suppress. Physical planning added
+/// [`PlanError::ExtensionUnsupported`] and [`PlanError::KindMismatch`] that
+/// way, and the generation nodes added [`PlanError::GenerationUnsupported`].
 #[derive(Debug, thiserror::Error)]
 pub enum PlanError {
     /// No implementation is registered under this name for this family.
@@ -128,6 +129,25 @@ pub enum PlanError {
         node: NodeId,
         /// Its [`ragondin_pipeline::ExtensionNode::kind`], e.g. `"hyde"`.
         kind: String,
+    },
+
+    /// The node is a context builder or a generator (ADR-C31 § 3), and
+    /// nothing in this build can plan one.
+    ///
+    /// `ragondin-pipeline` validates both variants, and no component family
+    /// here resolves either, so planning refuses them in one typed error
+    /// rather than reaching resolution without a registry to consult.
+    /// `component` is the node's `component:` value as a configuration
+    /// writes it — `context_builder` or `generator`.
+    #[error(
+        "node `{}`: no physical planner for a `{component}` node in this build",
+        node.as_str()
+    )]
+    GenerationUnsupported {
+        /// The node that cannot be planned.
+        node: NodeId,
+        /// Its `component:` value, `"context_builder"` or `"generator"`.
+        component: &'static str,
     },
 
     /// An edge's value kinds do not line up (ADR-C16), caught at planning.
@@ -196,6 +216,10 @@ fn kind_mismatch_expected_clause(expected: &Option<ValueKind>) -> String {
 /// of them names, and [`plan_physical`] refuses the first as well, so a plan
 /// that came through both cannot raise them; a `LogicalPipeline` deserialized
 /// straight from a store or a wire is the shape that can.
+///
+/// A fifth, [`ExecError::UnplannableNode`], reports a defect **in this crate**
+/// rather than upstream: no `LogicalPipeline`, however obtained, can make
+/// [`plan_physical`] build a plan holding the node it names.
 ///
 /// [`plan_physical`]: crate::plan_physical
 #[derive(Debug, thiserror::Error)]
@@ -353,6 +377,26 @@ pub enum ExecError {
         /// Each id that names more than one node, once, in the plan's
         /// canonical order.
         nodes: Vec<NodeId>,
+    },
+
+    /// A node of this plan is of a variant physical planning refuses.
+    ///
+    /// A defect in this crate, not upstream: a [`PhysicalPipeline`] is built
+    /// only by [`plan_physical`], which refuses an extension with
+    /// [`PlanError::ExtensionUnsupported`] and a context builder or a
+    /// generator with [`PlanError::GenerationUnsupported`], so no plan holds
+    /// one. Returned rather than panicked on, so the executor's match over
+    /// every node variant has no arm that aborts the process.
+    ///
+    /// [`PhysicalPipeline`]: crate::PhysicalPipeline
+    /// [`plan_physical`]: crate::plan_physical
+    #[error(
+        "node `{}` is of a kind physical planning refuses, so no plan built by `plan_physical` holds it — reaching it at execution is a defect in the engine",
+        node.as_str()
+    )]
+    UnplannableNode {
+        /// The node no plan should hold.
+        node: NodeId,
     },
 }
 

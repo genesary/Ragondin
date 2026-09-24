@@ -199,6 +199,44 @@ pub struct RerankerNode {
     pub params: Params,
 }
 
+/// A context-building node: it assembles the chunks a generator reads into
+/// one context (ADR-C31 § 3).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ContextBuilderNode {
+    /// This node's identifier, unique within the pipeline.
+    pub id: NodeId,
+    /// The `impl:` value naming the component to resolve, e.g. `"concatenate"`.
+    ///
+    /// Part of the logical form, so it enters the content hash: two backends
+    /// are two different configurations (ADR-C2 § Amendments).
+    pub implementation: String,
+    /// The ids of what this node consumes — another node, whose output it
+    /// takes, or one of the pipeline's declared inputs (ADR-C18) — **in port
+    /// order**.
+    pub inputs: Vec<NodeId>,
+    /// This node's parameters, in canonical key order.
+    pub params: Params,
+}
+
+/// A generation node: it answers the query from an assembled context
+/// (ADR-C31 § 3).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct GeneratorNode {
+    /// This node's identifier, unique within the pipeline.
+    pub id: NodeId,
+    /// The `impl:` value naming the component to resolve, e.g. `"openai_chat"`.
+    ///
+    /// Part of the logical form, so it enters the content hash: two backends
+    /// are two different configurations (ADR-C2 § Amendments).
+    pub implementation: String,
+    /// The ids of what this node consumes — another node, whose output it
+    /// takes, or one of the pipeline's declared inputs (ADR-C18) — **in port
+    /// order**.
+    pub inputs: Vec<NodeId>,
+    /// This node's parameters, in canonical key order.
+    pub params: Params,
+}
+
 /// A node defined outside the core — the escape hatch of ADR-C3.
 ///
 /// A researcher who invents a genuinely new node type expresses it here,
@@ -235,6 +273,10 @@ pub enum LogicalNode {
     Fusion(FusionNode),
     /// Reorders retrieved chunks.
     Reranker(RerankerNode),
+    /// Assembles retrieved chunks into a context (ADR-C31 § 3).
+    ContextBuilder(ContextBuilderNode),
+    /// Answers the query from a context (ADR-C31 § 3).
+    Generator(GeneratorNode),
     /// A node defined outside the core (ADR-C3).
     Extension(ExtensionNode),
 }
@@ -246,6 +288,8 @@ impl LogicalNode {
             Self::Retriever(node) => &node.id,
             Self::Fusion(node) => &node.id,
             Self::Reranker(node) => &node.id,
+            Self::ContextBuilder(node) => &node.id,
+            Self::Generator(node) => &node.id,
             Self::Extension(node) => &node.id,
         }
     }
@@ -257,6 +301,8 @@ impl LogicalNode {
             Self::Retriever(node) => &node.inputs,
             Self::Fusion(node) => &node.inputs,
             Self::Reranker(node) => &node.inputs,
+            Self::ContextBuilder(node) => &node.inputs,
+            Self::Generator(node) => &node.inputs,
             Self::Extension(node) => &node.inputs,
         }
     }
@@ -372,6 +418,45 @@ mod tests {
     }
 
     #[test]
+    fn a_context_builder_reads_from_its_documented_shape() {
+        let node = ContextBuilderNode {
+            id: NodeId::new("context"),
+            implementation: "concatenate".to_string(),
+            // Two ports, in order: the query, then the chunks to assemble.
+            inputs: vec![NodeId::new("question"), NodeId::new("cross_encoder")],
+            params: params(&[("max_chunks", ParamValue::Int(8))]),
+        };
+        assert_eq!(node.id.as_str(), "context");
+        assert_eq!(node.implementation, "concatenate");
+        assert_eq!(
+            node.inputs,
+            vec![NodeId::new("question"), NodeId::new("cross_encoder")]
+        );
+        assert_eq!(node.params["max_chunks"], ParamValue::Int(8));
+    }
+
+    #[test]
+    fn a_generator_reads_from_its_documented_shape() {
+        let node = GeneratorNode {
+            id: NodeId::new("answer"),
+            implementation: "openai_chat".to_string(),
+            // Two ports, in order: the query, then the assembled context.
+            inputs: vec![NodeId::new("question"), NodeId::new("context")],
+            params: params(&[("served_model", ParamValue::String("m".to_string()))]),
+        };
+        assert_eq!(node.id.as_str(), "answer");
+        assert_eq!(node.implementation, "openai_chat");
+        assert_eq!(
+            node.inputs,
+            vec![NodeId::new("question"), NodeId::new("context")]
+        );
+        assert_eq!(
+            node.params["served_model"],
+            ParamValue::String("m".to_string())
+        );
+    }
+
+    #[test]
     fn an_extension_reads_from_its_documented_shape() {
         let node = ExtensionNode {
             id: NodeId::new("my_technique"),
@@ -410,11 +495,23 @@ mod tests {
                 inputs: vec![NodeId::new("k")],
                 params: Params::new(),
             }),
+            LogicalNode::ContextBuilder(ContextBuilderNode {
+                id: NodeId::new("c"),
+                implementation: "concatenate".to_string(),
+                inputs: vec![NodeId::new("x")],
+                params: Params::new(),
+            }),
+            LogicalNode::Generator(GeneratorNode {
+                id: NodeId::new("g"),
+                implementation: "openai_chat".to_string(),
+                inputs: vec![NodeId::new("c")],
+                params: Params::new(),
+            }),
         ];
         let ids: Vec<&str> = nodes.iter().map(|n| n.id().as_str()).collect();
-        assert_eq!(ids, vec!["r", "f", "k", "x"]);
+        assert_eq!(ids, vec!["r", "f", "k", "x", "c", "g"]);
         let inputs: Vec<&str> = nodes.iter().map(|n| n.inputs()[0].as_str()).collect();
-        assert_eq!(inputs, vec!["q", "r", "f", "k"]);
+        assert_eq!(inputs, vec!["q", "r", "f", "k", "x", "c"]);
     }
 
     #[test]
@@ -484,6 +581,18 @@ mod tests {
                     ("temperature", ParamValue::Float(0.2)),
                     ("enabled", ParamValue::Bool(true)),
                 ]),
+            }),
+            LogicalNode::ContextBuilder(ContextBuilderNode {
+                id: NodeId::new("context"),
+                implementation: "concatenate".to_string(),
+                inputs: vec![NodeId::new("question"), NodeId::new("cross_encoder")],
+                params: params(&[("max_chunks", ParamValue::Int(8))]),
+            }),
+            LogicalNode::Generator(GeneratorNode {
+                id: NodeId::new("answer"),
+                implementation: "openai_chat".to_string(),
+                inputs: vec![NodeId::new("question"), NodeId::new("context")],
+                params: params(&[("served_model", ParamValue::String("m".to_string()))]),
             }),
         ];
         for node in nodes {

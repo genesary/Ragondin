@@ -15,6 +15,9 @@ them.
   builds them itself, inside the constructor closure it registers for a dense
   retriever
   ([ADR-C32](../../docs/adr/ADR-C32-remote-named-by-impl-bound-by-the-composition-root.md)).
+  A context builder and a generator are nodes and have no table yet either:
+  planning refuses them — see § The generation nodes are refused, not yet
+  planned.
 - **Physical planning** — `LogicalPipeline` + `EngineContext` →
   `PhysicalPipeline`, resolving each `impl` name to a constructed component
   (`Local` or `Remote`). The logical→physical seam exists; the optimizer is the
@@ -75,6 +78,25 @@ Both are stated here because no ADR settles them and both are visible in an
   absent, of another kind, or negative. **The executor invents no default**: what a component
   does without a parameter is the component's to decide, and a default applied
   here could only be a second, disagreeing copy of it.
+
+## The generation nodes are refused, not yet planned
+
+`ragondin-pipeline` validates a `ContextBuilder` and a `Generator` node
+(ADR-C31 § 3), and this crate does not plan either yet: no registry family
+resolves them. One function, `plannable` in `src/plan.rs`, sorts every
+`LogicalNode` variant into one this build plans — a retriever, a fusion, a
+reranker — or a typed refusal: `PlanError::ExtensionUnsupported` for an
+extension, `PlanError::GenerationUnsupported` (naming the node and its
+`component:` value) for a context builder or a generator. Physical planning
+calls it for every node in its first pass, before any constructor runs, and
+`resolve` calls it again and matches only over what it narrowed to, so
+resolution has no arm for a refused variant. The executor's `call` matches
+`LogicalNode` exhaustively on purpose, and gives the three refused variants
+one arm that returns `ExecError::UnplannableNode` — a defect in this crate by
+construction, since no plan `plan_physical` builds holds one. The choice made
+here is a typed error rather than an `unreachable!()` for an arm that cannot be
+reached today: it costs nothing to make harmless, and a test builds such a plan
+by hand to pin it.
 
 ## Local invariants
 

@@ -231,3 +231,46 @@ fn a_document_that_does_not_lower_is_reported_and_the_metrics_are_still_compared
     }
     assert_eq!(comparison.metrics.len(), 1);
 }
+
+#[test]
+fn a_generation_pipeline_names_only_its_differing_generator_parameter() {
+    let generation = "\
+pipeline:
+  inputs: [question]
+  nodes:
+    - id: sparse
+      component: retriever
+      impl: bm25
+      inputs: [question]
+      params: { top_k: 10 }
+    - id: context
+      component: context_builder
+      impl: concatenate
+      inputs: [question, sparse]
+    - id: answer
+      component: generator
+      impl: openai_chat
+      inputs: [question, context]
+      params: { template: short }
+";
+    let itself = compare(&a_run(0x01, generation), &a_run(0x02, generation));
+    assert_eq!(
+        itself.configuration,
+        ConfigurationComparison::Compared {
+            differences: Vec::new(),
+            same_logical_form: true,
+        }
+    );
+
+    let retemplated = generation.replace("template: short", "template: long");
+    let comparison = compare(&a_run(0x01, generation), &a_run(0x02, &retemplated));
+    assert_eq!(
+        differences(&comparison.configuration),
+        [ParameterDifference {
+            node: NodeId::new("answer"),
+            key: ParameterKey::Param("template".to_owned()),
+            left: Some(ParamValue::String("short".to_owned())),
+            right: Some(ParamValue::String("long".to_owned())),
+        }]
+    );
+}
