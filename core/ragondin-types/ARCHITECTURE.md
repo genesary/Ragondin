@@ -13,8 +13,7 @@ Everything downstream depends on these; they depend on almost nothing.
 The generation-side values arrived with M3, named and shaped by ADR-C31 § 1:
 `Context` (the rendered text, and the `ContextChunk`s it was rendered from, by
 identifier and in order), `Answer` (text only) and the `ModelIdentity` newtype.
-They were added when the milestone that consumes them began, not earlier, so
-that nothing on this boundary was dead code.
+They were added once the milestone's contracts were decided, not before.
 
 ## Local choices
 

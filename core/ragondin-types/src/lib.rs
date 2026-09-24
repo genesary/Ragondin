@@ -204,7 +204,7 @@ pub struct Answer {
 
 /// The identity of the model behind a component, as the component reports it.
 ///
-/// Opaque: nothing here parses it (ADR-C31 § 4).
+/// Opaque: nothing here parses it (ADR-C31 § 1, § 4).
 ///
 /// An empty identity is *representable* and not valid (ADR-C31 § 1) — the
 /// shape ADR-C20 gave [`Embedding`]. Rejecting it here would require a
@@ -453,8 +453,7 @@ mod tests {
     }
 
     /// The empty identity is representable and not valid (ADR-C31 § 1): the
-    /// crate has no error type, so construction stays infallible and the rule
-    /// lives with the component that reports an identity.
+    /// crate has no error type, so construction stays infallible.
     #[test]
     fn empty_model_identity_is_representable() {
         let empty = ModelIdentity::new("");
