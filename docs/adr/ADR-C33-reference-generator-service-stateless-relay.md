@@ -33,7 +33,7 @@ engagement, and no accepted text settles any of them:
   boundary; a `Remote` service has one by construction (ADR-3), but a program
   outside the workspace is compiled by no gate and cannot be spawned by a test.
 - **The HTTP client.** `[workspace.dependencies]` in the root `Cargo.toml`
-  carries `tonic`, `prost`, `tokio`, `serde` and `serde_json`, and no HTTP
+  carries, among others, `tonic`, `prost`, `tokio`, `serde` and `serde_json`, and no HTTP
   client. `AGENTS.md` escalates a new entry that "a crate outside
   `components/` depends on in the same diff", and a service that is not a
   component is exactly that crate. This entry is also the first of its utility
@@ -127,7 +127,9 @@ itself is never written as a `tower::Service` (INV-11).
 user-facing surface: `ragondin` stays the one binary a user runs, and the
 composition root. `ragondin-generator-service` is not user-facing surface. It
 is a worked example a `Remote` author reads beside the `.proto`, and the
-fixture #269 spawns; it ships nowhere, and nothing in the product reaches it.
+fixture #269 spawns; it ships nowhere — its manifest sets `publish = false`,
+which no crate of the workspace sets today, so the sentence holds by
+construction — and nothing in the product reaches it.
 
 ### 2. The HTTP client
 
@@ -165,6 +167,13 @@ without `clap`: the root `Cargo.toml` declares `clap` as "the CLI parser, in
   `Authorization: Bearer <value>`; unset and set to the empty string are the
   same, and send no `Authorization` header. The key is never a flag and is never
   written to any output.
+
+**A bad command line is refused at startup**, with a non-zero exit status and
+a message on stderr, before any `listening on` line: a missing or unknown
+flag; a base URL whose scheme is not `http` or `https`, that carries a query
+or a fragment, or whose path ends in `/v1` — the conventional OpenAI base,
+which would double to `/v1/v1/…`; and a listen address that does not parse
+as a socket address.
 
 **Once bound, the service writes exactly one line to stdout,
 `listening on <address>`**, where `<address>` is the bound socket address in
@@ -208,12 +217,19 @@ the first entry of `data` whose `id` equals `served_model` byte for byte.
 
 - **Listed:** the identity is a JSON object encoded as `serde_json` encodes
   one — compact, with its string escaping — with keys in the order `id`,
-  `root`, `parent`, holding `id`, and `root` and `parent`
-  each only when the server reports it as a non-empty string. vLLM serving a
-  base model under the name `qwen` from `Qwen/Qwen2.5-7B-Instruct` yields
-  `{"id":"qwen","root":"Qwen/Qwen2.5-7B-Instruct"}`. No other field of the entry
-  enters the identity: `created` and the permission ids change per response,
-  and ADR-C31 § 4 requires an identity to be stable.
+  `root`, `parent`, `max_model_len`, holding `id`; `root` and `parent` each
+  only when the server reports it as a non-empty string; and `max_model_len`
+  only when the server reports it as an integer. vLLM serving a base model
+  under the name `qwen` from `Qwen/Qwen2.5-7B-Instruct` with a context of 32768
+  tokens yields
+  `{"id":"qwen","root":"Qwen/Qwen2.5-7B-Instruct","max_model_len":32768}`.
+  `max_model_len` is in because it decides the answer: vLLM caps the tokens it
+  generates at `max_model_len` minus the prompt's length and refuses a longer
+  prompt (`get_max_tokens` in `vllm/entrypoints/serve/utils/api_utils.py`), so
+  ADR-C31 § 4's completeness rule reaches it. No other field of the entry
+  enters the identity: `owned_by` is a constant that decides nothing, and
+  `created` and the permission ids change per response, where ADR-C31 § 4
+  requires an identity to be stable.
 - **Not listed:** the call is refused as `InvalidArgument` — a refusal, never
   a warning, as ADR-C31 § 4 requires.
 
@@ -229,19 +245,24 @@ adapter maps to a `ComponentError` (#261):
 
 | What happened | gRPC status |
 |---|---|
-| empty `served_model` or `template`; malformed template | `InvalidArgument` |
-| the HTTP request failed before any response — connection refused, a connect or request timeout the client reports | `Unavailable` |
+| empty `served_model` or `template`; a non-finite `temperature`; malformed template | `InvalidArgument` |
+| the HTTP request failed before any response — connection refused, or a connect failure the operating system reports | `Unavailable` |
 | the transport failed after the status line — the connection reset while the body was read | `Unavailable` |
 | HTTP `429` or `503`, each of which means "try later" | `Unavailable` |
 | any other HTTP `4xx` from either endpoint, including a model the server does not serve | `InvalidArgument` |
 | any other HTTP `5xx`, or any other non-success status, a `3xx` included | `Internal` |
-| a `2xx` body that does not decode into the shape above, a response with no choice, or a first choice whose `content` is null | `Internal` |
+| a `2xx` chat-completions body that does not decode into the shape of § 3, a response with no choice, or a first choice whose `content` is null | `Internal` |
+| a `2xx` models body with no `data` array of objects each carrying a string `id` | `Internal` |
 | `served_model` absent from `/v1/models` | `InvalidArgument` |
 
 **The client follows no redirect** (`reqwest::redirect::Policy::none()`), so
 a `3xx` is a non-success status like any other: `reqwest`'s default policy
 would follow it, and on a `301`, `302` or `303` resend the `POST` as a `GET`.
-The classes above are deliberately coarse. `429` and `503` are the two
+A `root`, `parent` or `max_model_len` that is null, empty, or not of the type
+§ 4 states is omitted from the identity, never a decode failure.
+The classes above are deliberately coarse: an operator's wrong API key draws a
+`401` or `403`, and reaches the caller as `InvalidRequest` like any other
+`4xx`, though the caller's request was not what was wrong. `429` and `503` are the two
 statuses carved out because the caller's remedy for both is to try later,
 which is what `Unavailable` says; every finer distinction is left to the
 status message, which carries the inference server's status code and, where
@@ -250,7 +271,11 @@ present, its error text, and never carries the API key.
 ### 6. Tests
 
 **The service's tests run the binary against an in-process fake inference
-server**: a minimal HTTP responder started inside the test on a loopback port.
+server**: HTTP/1.1 written by hand over `tokio::net::TcpListener`, started
+inside the test on a loopback port. It adds no dependency: `axum`, `hyper` or
+a mock-server crate as a dev-dependency would be a new
+`[workspace.dependencies]` entry used outside `components/`, which
+`AGENTS.md` § Rules of engagement escalates.
 The test spawns the built binary with `--base-url` pointed at the fake and
 `--listen 127.0.0.1:0`, reads the `listening on` line, and drives the service
 through `RemoteGenerator` from `ragondin-remote` (#261), a dev-dependency. They
