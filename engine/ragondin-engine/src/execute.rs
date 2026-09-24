@@ -53,7 +53,8 @@ use std::time::Instant;
 
 use ragondin_contracts::{FusionParams, RerankParams, RetrieveParams};
 use ragondin_pipeline::{
-    ContextBuilderNode, GeneratorNode, LogicalNode, NodeId, ParamValue, Params, ValueKind,
+    ContextBuilderNode, ExtensionNode, GeneratorNode, LogicalNode, NodeId, ParamValue, Params,
+    ValueKind,
 };
 use ragondin_types::{Query, ScoredChunk};
 
@@ -324,9 +325,9 @@ fn summarize_inputs(node: &PhysicalNode, table: &Table) -> Vec<ValueSummary> {
 /// catch-all arm would turn it into a runtime panic instead. So the variant is
 /// matched first and without a wildcard — a `LogicalNode` variant added later
 /// fails to compile here — and the component is destructured inside each arm,
-/// where the only other pairing is the one planning rules out. The two
-/// generation variants have an arm that returns [`ExecError::UnplannableNode`]:
-/// planning refuses them, so no plan reaches it.
+/// where the only other pairing is the one planning rules out. The variants
+/// planning refuses — an extension, a context builder, a generator — share one
+/// arm that returns [`ExecError::UnplannableNode`], so no plan reaches it.
 async fn call(node: &PhysicalNode, table: &Table) -> Result<NodeValue, ExecError> {
     match node.logical() {
         LogicalNode::Retriever(logical) => {
@@ -372,17 +373,12 @@ async fn call(node: &PhysicalNode, table: &Table) -> Result<NodeValue, ExecError
             Ok(NodeValue::Chunks(reranked))
         }
         // `PhysicalNode` is built in one place, and `plan_physical` refuses
-        // both generation variants before it builds any — so no plan holds
-        // one. Returned as an error, never panicked on.
+        // every variant below before it builds any — so no plan holds one.
+        // Returned as an error, never panicked on.
         LogicalNode::ContextBuilder(ContextBuilderNode { id, .. })
-        | LogicalNode::Generator(GeneratorNode { id, .. }) => {
+        | LogicalNode::Generator(GeneratorNode { id, .. })
+        | LogicalNode::Extension(ExtensionNode { id, .. }) => {
             Err(ExecError::UnplannableNode { node: id.clone() })
-        }
-        // `PhysicalNode` is built in one place, and `plan_physical` refuses
-        // every `Extension` before it builds any — so no plan holds one, and
-        // `ResolvedComponent` has no variant it could carry.
-        LogicalNode::Extension(_) => {
-            unreachable!("`plan_physical` refuses every Extension node, so no plan holds one")
         }
     }
 }

@@ -496,9 +496,10 @@ mod tests {
     }
 
     #[test]
-    fn the_generation_nodes_are_what_version_three_adds() {
-        // ADR-C31 § 3 sanctions this bump by name: `component:` accepts
-        // `context_builder` and `generator` from version 3 on.
+    fn the_supported_version_is_three() {
+        // ADR-C31 § 3 sanctions this bump by name, for `component:` accepting
+        // `context_builder` and `generator`; that the vocabulary itself
+        // lowers is tested in `validate`.
         assert_eq!(SchemaVersion::SUPPORTED, 3);
     }
 

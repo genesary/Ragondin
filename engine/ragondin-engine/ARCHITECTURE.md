@@ -80,16 +80,20 @@ Both are stated here because no ADR settles them and both are visible in an
 
 `ragondin-pipeline` validates a `ContextBuilder` and a `Generator` node
 (ADR-C31 § 3), and this crate does not plan either yet: no registry family
-resolves them. Physical planning refuses both in its first pass, beside the
-`Extension` refusal and before any constructor runs, with
-`PlanError::GenerationUnsupported`, which names the node and its `component:`
-value. Every other exhaustive match over `LogicalNode` in this crate gives the
-two variants an arm that **returns an error** rather than panicking —
-`resolve` returns the same `PlanError`, and the executor's `call` returns
-`ExecError::UnplannableNode`, a defect in this crate by construction, since no
-plan `plan_physical` builds holds one. The choice made here is a typed refusal
-per pass rather than an `unreachable!()`: an arm that cannot be reached today
-still costs nothing to make harmless.
+resolves them. One function, `plannable` in `src/plan.rs`, sorts every
+`LogicalNode` variant into one this build plans — a retriever, a fusion, a
+reranker — or a typed refusal: `PlanError::ExtensionUnsupported` for an
+extension, `PlanError::GenerationUnsupported` (naming the node and its
+`component:` value) for a context builder or a generator. Physical planning
+calls it for every node in its first pass, before any constructor runs, and
+`resolve` calls it again and matches only over what it narrowed to, so
+resolution has no arm for a refused variant. The executor's `call` matches
+`LogicalNode` exhaustively on purpose, and gives the three refused variants
+one arm that returns `ExecError::UnplannableNode` — a defect in this crate by
+construction, since no plan `plan_physical` builds holds one. The choice made
+here is a typed error rather than an `unreachable!()` for an arm that cannot be
+reached today: it costs nothing to make harmless, and a test builds such a plan
+by hand to pin it.
 
 ## Local invariants
 

@@ -68,8 +68,9 @@ pub type ConstructionError = Box<dyn std::error::Error + Send + Sync>;
 /// makes it for `ValidationError`: this enum is not on a stable boundary
 /// (INV-2), so a `match` in the binary that stops compiling when a variant
 /// arrives is the intended signal that a new refusal needs reporting — which
-/// `#[non_exhaustive]` would suppress. Physical planning added the last two
-/// that way.
+/// `#[non_exhaustive]` would suppress. Physical planning added
+/// [`PlanError::ExtensionUnsupported`] and [`PlanError::KindMismatch`] that
+/// way, and the generation nodes added [`PlanError::GenerationUnsupported`].
 #[derive(Debug, thiserror::Error)]
 pub enum PlanError {
     /// No implementation is registered under this name for this family.
@@ -215,6 +216,10 @@ fn kind_mismatch_expected_clause(expected: &Option<ValueKind>) -> String {
 /// of them names, and [`plan_physical`] refuses the first as well, so a plan
 /// that came through both cannot raise them; a `LogicalPipeline` deserialized
 /// straight from a store or a wire is the shape that can.
+///
+/// A fifth, [`ExecError::UnplannableNode`], reports a defect **in this crate**
+/// rather than upstream: no `LogicalPipeline`, however obtained, can make
+/// [`plan_physical`] build a plan holding the node it names.
 ///
 /// [`plan_physical`]: crate::plan_physical
 #[derive(Debug, thiserror::Error)]
@@ -377,7 +382,8 @@ pub enum ExecError {
     /// A node of this plan is of a variant physical planning refuses.
     ///
     /// A defect in this crate, not upstream: a [`PhysicalPipeline`] is built
-    /// only by [`plan_physical`], which refuses a context builder or a
+    /// only by [`plan_physical`], which refuses an extension with
+    /// [`PlanError::ExtensionUnsupported`] and a context builder or a
     /// generator with [`PlanError::GenerationUnsupported`], so no plan holds
     /// one. Returned rather than panicked on, so the executor's match over
     /// every node variant has no arm that aborts the process.

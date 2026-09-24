@@ -605,10 +605,12 @@ fn a_generation_param_changes_the_hash() {
 
 #[test]
 fn every_node_variant_has_its_own_tag_byte() {
-    // The same id, impl, inputs and params under each variant must not
+    // The same id, name, inputs and params under each variant must not
     // collide: only the tag byte separates them, so this pins that the two
-    // new variants took tags of their own rather than reusing one.
-    let digests: std::collections::HashSet<PipelineHash> = [
+    // new variants took tags of their own rather than reusing one — including
+    // `Extension`'s, whose name sits in the same slot under the field `kind`
+    // and so needs its own JSON shape to reach the hasher with the same bytes.
+    let mut digests: std::collections::HashSet<PipelineHash> = [
         "Retriever",
         "Fusion",
         "Reranker",
@@ -618,7 +620,12 @@ fn every_node_variant_has_its_own_tag_byte() {
     .into_iter()
     .map(|variant| one_node(variant, r#"["question"]"#).content_hash())
     .collect();
-    assert_eq!(digests.len(), 5, "two variants share a tag byte");
+    let extension: LogicalPipeline = serde_json::from_str(
+        r#"{"inputs":["question"],"nodes":[{"Extension":{"id":"n","kind":"x","inputs":["question"],"params":{}}}]}"#,
+    )
+    .expect("the fixture must deserialize");
+    digests.insert(extension.content_hash());
+    assert_eq!(digests.len(), 6, "two variants share a tag byte");
 }
 
 #[test]

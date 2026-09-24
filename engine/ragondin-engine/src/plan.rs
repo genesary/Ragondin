@@ -15,8 +15,8 @@ use std::collections::{HashMap, HashSet};
 
 use ragondin_contracts::{Fusion, Reranker, Retriever};
 use ragondin_pipeline::{
-    consumed_kinds, produced_kind, ContextBuilderNode, GeneratorNode, LogicalNode, LogicalPipeline,
-    NodeId, PortSpec, ValueKind,
+    consumed_kinds, produced_kind, FusionNode, LogicalNode, LogicalPipeline, NodeId, PortSpec,
+    RerankerNode, RetrieverNode, ValueKind,
 };
 
 use crate::context::EngineContext;
@@ -129,15 +129,7 @@ pub fn plan_physical(
     let nodes = logical.nodes();
 
     for node in nodes {
-        if let LogicalNode::Extension(extension) = node {
-            return Err(PlanError::ExtensionUnsupported {
-                node: extension.id.clone(),
-                kind: extension.kind.clone(),
-            });
-        }
-        if let Some(refusal) = generation_unsupported(node) {
-            return Err(refusal);
-        }
+        plannable(node)?;
     }
 
     let index: HashMap<&NodeId, &LogicalNode> =
@@ -161,23 +153,40 @@ pub fn plan_physical(
     })
 }
 
-/// The refusal for a node of a generation variant, `None` for any other.
+/// A node this build can plan, narrowed to the three variants that resolve
+/// through a registry family.
+enum Plannable<'a> {
+    Retriever(&'a RetrieverNode),
+    Fusion(&'a FusionNode),
+    Reranker(&'a RerankerNode),
+}
+
+/// Narrows a node to one this build can plan, or returns the refusal.
 ///
-/// Exhaustive over [`LogicalNode`], so a variant added later has to be
-/// placed on one side or the other here.
-fn generation_unsupported(node: &LogicalNode) -> Option<PlanError> {
-    let (id, component) = match node {
-        LogicalNode::ContextBuilder(node) => (&node.id, "context_builder"),
-        LogicalNode::Generator(node) => (&node.id, "generator"),
-        LogicalNode::Retriever(_)
-        | LogicalNode::Fusion(_)
-        | LogicalNode::Reranker(_)
-        | LogicalNode::Extension(_) => return None,
-    };
-    Some(PlanError::GenerationUnsupported {
-        node: id.clone(),
-        component,
-    })
+/// The one place a variant is sorted into planned or refused, and the one
+/// place each refusal is spelled: `plan_physical`'s first pass calls it for
+/// every node before any constructor runs, and [`resolve`] calls it again, so
+/// resolution matches only over [`Plannable`] and has no arm for a refused
+/// variant to be unreachable in. Exhaustive over [`LogicalNode`], so a variant
+/// added later has to be placed on one side or the other here.
+fn plannable(node: &LogicalNode) -> Result<Plannable<'_>, PlanError> {
+    match node {
+        LogicalNode::Retriever(node) => Ok(Plannable::Retriever(node)),
+        LogicalNode::Fusion(node) => Ok(Plannable::Fusion(node)),
+        LogicalNode::Reranker(node) => Ok(Plannable::Reranker(node)),
+        LogicalNode::Extension(extension) => Err(PlanError::ExtensionUnsupported {
+            node: extension.id.clone(),
+            kind: extension.kind.clone(),
+        }),
+        LogicalNode::ContextBuilder(node) => Err(PlanError::GenerationUnsupported {
+            node: node.id.clone(),
+            component: "context_builder",
+        }),
+        LogicalNode::Generator(node) => Err(PlanError::GenerationUnsupported {
+            node: node.id.clone(),
+            component: "generator",
+        }),
+    }
 }
 
 /// The optimization phase between the logical and physical levels: **the
@@ -290,31 +299,16 @@ fn check_kinds(
 /// registry — never on the implementation name (INV-7): a built-in resolves
 /// through exactly the path a third-party crate's registration does.
 fn resolve(node: &LogicalNode, ctx: &EngineContext) -> Result<ResolvedComponent, PlanError> {
-    match node {
-        LogicalNode::Retriever(node) => ctx
+    match plannable(node)? {
+        Plannable::Retriever(node) => ctx
             .build_retriever(&node.implementation, &node.params)
             .map(ResolvedComponent::Retriever),
-        LogicalNode::Fusion(node) => ctx
+        Plannable::Fusion(node) => ctx
             .build_fusion(&node.implementation, &node.params)
             .map(ResolvedComponent::Fusion),
-        LogicalNode::Reranker(node) => ctx
+        Plannable::Reranker(node) => ctx
             .build_reranker(&node.implementation, &node.params)
             .map(ResolvedComponent::Reranker),
-        // Refused by the first pass of `plan_physical`, so never reached; an
-        // error rather than a panic all the same, and the same one.
-        LogicalNode::ContextBuilder(ContextBuilderNode { id, .. }) => {
-            Err(PlanError::GenerationUnsupported {
-                node: id.clone(),
-                component: "context_builder",
-            })
-        }
-        LogicalNode::Generator(GeneratorNode { id, .. }) => Err(PlanError::GenerationUnsupported {
-            node: id.clone(),
-            component: "generator",
-        }),
-        LogicalNode::Extension(_) => {
-            unreachable!("every Extension node is refused before resolution")
-        }
     }
 }
 
@@ -862,6 +856,57 @@ mod tests {
             ),
             "the fault after the skipped edge must still be reported: {err:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn a_plan_holding_a_node_planning_refuses_is_an_error_at_execution_not_a_panic() {
+        // `plan_physical` refuses these variants, so only a plan built by hand
+        // here — where `PhysicalPipeline`'s fields are visible — can hold one.
+        // The executor's arm for them must return `UnplannableNode` rather
+        // than abort, whatever component the forged node carries.
+        use ragondin_pipeline::{ExtensionNode, GeneratorNode, LogicalNode};
+
+        let forged_nodes = [
+            LogicalNode::Generator(GeneratorNode {
+                id: NodeId::new("gen"),
+                implementation: "openai_chat".to_string(),
+                inputs: vec![NodeId::new("question")],
+                params: Params::new(),
+            }),
+            LogicalNode::Extension(ExtensionNode {
+                id: NodeId::new("gen"),
+                kind: "hyde".to_string(),
+                inputs: vec![NodeId::new("question")],
+                params: Params::new(),
+            }),
+        ];
+        for node in forged_nodes {
+            let plan = PhysicalPipeline {
+                inputs: vec![NodeId::new("question")],
+                nodes: vec![PhysicalNode {
+                    node: node.clone(),
+                    component: ResolvedComponent::Retriever(Box::new(StubRetriever)),
+                }],
+            };
+
+            let (output, _trace) = crate::Engine::new()
+                .execute(
+                    &plan,
+                    Query {
+                        id: QueryId::new("q"),
+                        text: "anything".to_string(),
+                    },
+                )
+                .await;
+
+            assert!(
+                matches!(
+                    &output,
+                    Err(crate::ExecError::UnplannableNode { node }) if node.as_str() == "gen"
+                ),
+                "expected UnplannableNode for {node:?}, got {output:?}"
+            );
+        }
     }
 
     #[tokio::test]
