@@ -35,7 +35,7 @@ a composition root would.
 trace is the executor's return value, never a log (INV-10,
 [ADR-C9](../../docs/adr/ADR-C09-traces-are-the-executors-return-value.md)). The
 harness keeps every one of them, renders it into the `TraceDocument` the run
-store holds, and files it under its query. Three consequences are deliberate:
+store holds, and files it under its query. Four consequences are deliberate:
 
 - **The rendering is hand-written** (`src/trace.rs`) and `ExecutionTrace` is
   not serialized by a derive. The engine is internal and not an API boundary
@@ -58,8 +58,9 @@ store holds, and files it under its query. Three consequences are deliberate:
   and an answer as `{"answer": {"text_bytes": ...}}`: its chunk count and the
   byte length of its text, the sizes the engine's trace records there.
 - **A failed query carries its trace out with the error.**
-  `HarnessError::Execute` holds the rendered trace of the run that failed,
-  because that is the trace worth reading and an error that dropped it would
+  `HarnessError::Execute` holds the rendered trace of the run that failed, and
+  `HarnessError::UnscorableOutput` the trace of the run whose output it
+  refused — the only record of the context or answer it produced — because that is the trace worth reading and an error that dropped it would
   discard exactly the evidence INV-10 exists to preserve.
 
 ## Indexing is ad hoc, and that is not a position on open question 5
@@ -163,10 +164,11 @@ reader can disagree with it.
    ranking, a context or an answer, whichever the pipeline's terminal node
    produces. A ranking is scored as described above; a context or an answer is
    refused, for every query and judged or not, with
-   `HarnessError::UnscorableOutput` naming the query and the kind. That is this
-   crate's state until it selects which ranking a generation pipeline is scored
-   on and scores answers themselves — reporting numbers over an output nobody
-   asked to have scored would be worse than refusing.
+   `HarnessError::UnscorableOutput` naming the query and the kind, and carrying
+   the query's rendered trace. That is this crate's state until it selects
+   which ranking a generation pipeline is scored on and scores answers
+   themselves — reporting numbers over an output nobody asked to have scored
+   would be worse than refusing.
 6. **One failing query fails the whole run.** Averaging over the queries that
    happened to succeed would report a smaller benchmark as the whole one, under
    an id that claims to name the whole one.

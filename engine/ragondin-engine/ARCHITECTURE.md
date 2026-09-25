@@ -72,7 +72,7 @@ and what a consumed one must say — a context's chunk count and text length, an
 answer's text length — and leaves the input-side shapes to this crate. The
 choice made here:
 
-- **Two more input-side variants, `ContextSize { chunks, text_bytes }` and
+- **Two more input-side variants, `ContextSize { count, text_bytes }` and
   `AnswerSize { text_bytes }`,** on the pattern `Chunks { count }` set, and
   not fields on the produced variants, for the reason given above for chunks:
   one variant holding both a size and an optional value states one fact twice.

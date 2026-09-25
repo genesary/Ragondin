@@ -63,6 +63,13 @@ pub enum HarnessError {
     UnscorableOutput {
         /// The query whose output cannot be scored.
         query: QueryId,
+        /// What the executor recorded for that query, rendered.
+        ///
+        /// Carried for the reason [`HarnessError::Execute`] carries its own:
+        /// the refused output — the context or the answer the pipeline
+        /// produced — is named in this trace and nowhere else, so dropping it
+        /// would discard the one record of what the pipeline returned.
+        trace: TraceDocument,
         /// The kind of what the pipeline returned instead, as a configuration
         /// names it: `"context"` or `"answer"`.
         kind: &'static str,

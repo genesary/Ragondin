@@ -2037,7 +2037,7 @@ mod tests {
                     id: QueryId::new("q1")
                 },
                 ValueSummary::ContextSize {
-                    chunks: 2,
+                    count: 2,
                     text_bytes: "text of c1\ntext of c2".len(),
                 },
             ],

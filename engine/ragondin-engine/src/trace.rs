@@ -123,8 +123,9 @@ pub enum ValueSummary {
     },
     /// A context, sized and not named: what an **input** port records.
     ContextSize {
-        /// How many chunks the context held.
-        chunks: usize,
+        /// How many chunks the context held — `count`, as
+        /// [`Self::Chunks`] names a list's size.
+        count: usize,
         /// The length of its rendered text, in bytes of UTF-8.
         text_bytes: usize,
     },
@@ -159,7 +160,7 @@ impl ValueSummary {
                 count: chunks.len(),
             },
             NodeValue::Context(context) => Self::ContextSize {
-                chunks: context.chunks.len(),
+                count: context.chunks.len(),
                 text_bytes: context.text.len(),
             },
             NodeValue::Answer(answer) => Self::AnswerSize {

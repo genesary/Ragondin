@@ -13,7 +13,7 @@
 //! knows both the engine and the run store, translates between them, and this
 //! module is where that translation is legible and changeable.
 
-use ragondin_engine::{ExecutionTrace, ValueSummary};
+use ragondin_engine::{ExecutionTrace, RankedChunk, ValueSummary};
 use ragondin_experiments::TraceDocument;
 use serde_json::{json, Value};
 
@@ -37,6 +37,15 @@ pub(crate) fn render(trace: &ExecutionTrace) -> TraceDocument {
         .collect();
 
     TraceDocument::new(json!({ "nodes": nodes }))
+}
+
+/// One named chunk — of a ranking or of a context, rendered alike.
+fn ranked_chunk(hit: &RankedChunk) -> Value {
+    json!({
+        "chunk": hit.chunk.as_str(),
+        "document": hit.document.as_str(),
+        "score": hit.score,
+    })
 }
 
 /// Renders one edge value's summary.
@@ -65,27 +74,13 @@ fn summary(value: &ValueSummary) -> Value {
         ValueSummary::Chunks { count } => json!({"chunks": {"count": count}}),
         ValueSummary::RankedChunks { chunks } => json!({"chunks": {
             "count": chunks.len(),
-            "ranked": chunks
-                .iter()
-                .map(|hit| json!({
-                    "chunk": hit.chunk.as_str(),
-                    "document": hit.document.as_str(),
-                    "score": hit.score,
-                }))
-                .collect::<Vec<_>>(),
+            "ranked": chunks.iter().map(ranked_chunk).collect::<Vec<_>>(),
         }}),
-        ValueSummary::ContextSize { chunks, text_bytes } => {
-            json!({"context": {"count": chunks, "text_bytes": text_bytes}})
+        ValueSummary::ContextSize { count, text_bytes } => {
+            json!({"context": {"count": count, "text_bytes": text_bytes}})
         }
         ValueSummary::Context { chunks, text } => json!({"context": {
-            "chunks": chunks
-                .iter()
-                .map(|hit| json!({
-                    "chunk": hit.chunk.as_str(),
-                    "document": hit.document.as_str(),
-                    "score": hit.score,
-                }))
-                .collect::<Vec<_>>(),
+            "chunks": chunks.iter().map(ranked_chunk).collect::<Vec<_>>(),
             "text": text,
         }}),
         ValueSummary::AnswerSize { text_bytes } => json!({"answer": {"text_bytes": text_bytes}}),
@@ -97,7 +92,7 @@ fn summary(value: &ValueSummary) -> Value {
 mod tests {
     use std::time::Duration;
 
-    use ragondin_engine::{NodeTrace, RankedChunk};
+    use ragondin_engine::NodeTrace;
     use ragondin_pipeline::NodeId;
     use ragondin_types::{ChunkId, DocId, QueryId};
 
@@ -189,7 +184,7 @@ mod tests {
                     node: NodeId::new("gen"),
                     inputs: vec![
                         ValueSummary::ContextSize {
-                            chunks: 2,
+                            count: 2,
                             text_bytes: 9,
                         },
                         ValueSummary::AnswerSize { text_bytes: 4 },

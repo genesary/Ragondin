@@ -23,7 +23,7 @@ use std::collections::BTreeMap;
 
 use ragondin_benchmarks::Benchmark;
 use ragondin_engine::{plan_physical, Engine, EngineContext, Output};
-use ragondin_experiments::{ConfigDocument, Metrics, Run, RunInputs};
+use ragondin_experiments::{ConfigDocument, Metrics, Run, RunInputs, TraceDocument};
 use ragondin_metrics::{ndcg_at_k, recall_at_k, reciprocal_rank};
 use ragondin_pipeline::LogicalPipeline;
 use ragondin_types::{DocId, QueryId, ScoredChunk};
@@ -101,8 +101,8 @@ pub async fn evaluate(
             trace: document.clone(),
             source: Box::new(source),
         })?;
+        let output = ranking(&query.id, output, &document)?;
         traces.insert(query.id.clone(), document);
-        let output = ranking(&query.id, output)?;
 
         // A query with no qrels line at all is executed and left unscored:
         // `trec_eval` never evaluates one, because it is unjudged rather than
@@ -141,7 +141,11 @@ pub async fn evaluate(
 
 /// The ranking a query's output is scored on, or the refusal of an output
 /// this harness does not score — see [`HarnessError::UnscorableOutput`].
-fn ranking(query: &QueryId, output: Output) -> Result<Vec<ScoredChunk>, HarnessError> {
+fn ranking(
+    query: &QueryId,
+    output: Output,
+    trace: &TraceDocument,
+) -> Result<Vec<ScoredChunk>, HarnessError> {
     let kind = match output {
         Output::Chunks(chunks) => return Ok(chunks),
         Output::Context(_) => "context",
@@ -149,6 +153,7 @@ fn ranking(query: &QueryId, output: Output) -> Result<Vec<ScoredChunk>, HarnessE
     };
     Err(HarnessError::UnscorableOutput {
         query: query.clone(),
+        trace: trace.clone(),
         kind,
     })
 }
@@ -241,12 +246,21 @@ mod tests {
         assert!(ranked_documents(&[]).is_empty());
     }
 
+    /// A stand-in for a query's rendered trace.
+    fn trace() -> TraceDocument {
+        TraceDocument::new(serde_json::json!({"nodes": [{"node": "gen"}]}))
+    }
+
     #[test]
     fn a_ranking_output_is_scored_as_it_is() {
         let chunks = vec![hit("d-1#0", "d-1", 0.9)];
 
-        let ranking = ranking(&QueryId::new("q-1"), Output::Chunks(chunks.clone()))
-            .expect("a ranking is what the harness scores");
+        let ranking = ranking(
+            &QueryId::new("q-1"),
+            Output::Chunks(chunks.clone()),
+            &trace(),
+        )
+        .expect("a ranking is what the harness scores");
 
         assert_eq!(ranking, chunks);
     }
@@ -269,15 +283,15 @@ mod tests {
             ),
         ];
         for (output, expected) in outputs {
-            let Err(err) = ranking(&QueryId::new("q-1"), output) else {
+            let Err(err) = ranking(&QueryId::new("q-1"), output, &trace()) else {
                 panic!("a {expected} is not a ranking this harness can score")
             };
 
             assert!(
                 matches!(
                     &err,
-                    HarnessError::UnscorableOutput { query, kind }
-                        if query.as_str() == "q-1" && *kind == expected
+                    HarnessError::UnscorableOutput { query, trace: carried, kind }
+                        if query.as_str() == "q-1" && *kind == expected && *carried == trace()
                 ),
                 "expected UnscorableOutput for the {expected}, got {err:?}"
             );

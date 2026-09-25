@@ -236,10 +236,12 @@ fn check_kinds(
                 ),
             };
 
-            // Derived from the *producer*, never from `node`: a context
-            // builder produces `Context` and a generator `Answer`, so reading
-            // the consumer's own kind here would accept a generator fed by a
-            // retriever.
+            // Derived from the *producer*, never from `node`: reading the
+            // consumer's own kind here would accept any producer on a port
+            // whose kind the consumer happens to produce — a context builder
+            // feeding a reranker's `Chunks` port would pass, since a reranker
+            // produces `Chunks` — and would refuse every correctly wired
+            // context builder and generator, whose outputs match no port.
             let found = match index.get(input_id) {
                 Some(producer) => {
                     // The clause `ragondin-pipeline`'s check carries, kept here
@@ -971,39 +973,36 @@ mod tests {
         // abort, whatever component the forged node carries.
         use ragondin_pipeline::{ExtensionNode, LogicalNode};
 
-        let forged_nodes = [LogicalNode::Extension(ExtensionNode {
-            id: NodeId::new("gen"),
-            kind: "hyde".to_string(),
+        let plan = PhysicalPipeline {
             inputs: vec![NodeId::new("question")],
-            params: Params::new(),
-        })];
-        for node in forged_nodes {
-            let plan = PhysicalPipeline {
-                inputs: vec![NodeId::new("question")],
-                nodes: vec![PhysicalNode {
-                    node: node.clone(),
-                    component: ResolvedComponent::Retriever(Box::new(StubRetriever)),
-                }],
-            };
+            nodes: vec![PhysicalNode {
+                node: LogicalNode::Extension(ExtensionNode {
+                    id: NodeId::new("ext"),
+                    kind: "hyde".to_string(),
+                    inputs: vec![NodeId::new("question")],
+                    params: Params::new(),
+                }),
+                component: ResolvedComponent::Retriever(Box::new(StubRetriever)),
+            }],
+        };
 
-            let (output, _trace) = crate::Engine::new()
-                .execute(
-                    &plan,
-                    Query {
-                        id: QueryId::new("q"),
-                        text: "anything".to_string(),
-                    },
-                )
-                .await;
+        let (output, _trace) = crate::Engine::new()
+            .execute(
+                &plan,
+                Query {
+                    id: QueryId::new("q"),
+                    text: "anything".to_string(),
+                },
+            )
+            .await;
 
-            assert!(
-                matches!(
-                    &output,
-                    Err(crate::ExecError::UnplannableNode { node }) if node.as_str() == "gen"
-                ),
-                "expected UnplannableNode for {node:?}, got {output:?}"
-            );
-        }
+        assert!(
+            matches!(
+                &output,
+                Err(crate::ExecError::UnplannableNode { node }) if node.as_str() == "ext"
+            ),
+            "expected UnplannableNode for the extension, got {output:?}"
+        );
     }
 
     #[tokio::test]
