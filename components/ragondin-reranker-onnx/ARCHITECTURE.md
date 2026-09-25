@@ -59,8 +59,8 @@ engine, and the binary is the composition root that puts the two together
 - **A served-model name, then a `top_k` of zero, is rejected before anything
   else**, including before the empty-input shortcut. ADR-C19 makes an empty
   chunk list a valid call that does nothing; it explicitly does not weaken the
-  `top_k` rule, so the order of the two checks is the order the contract states
-  them in, not an accident. The served-model check is ADR-C32 § 4's: this
+  `top_k` rule, so running the `top_k` check before the empty-input shortcut
+  is the order the contract states the two rules in, not an accident. The served-model check is ADR-C32 § 4's: this
   component is configured with no served-model name, so `None` asks for the
   model it loaded and every `Some(name)` — the empty one included — is refused
   as `InvalidRequest`, on `rerank` and on `model_identity` alike.
@@ -74,9 +74,22 @@ engine, and the binary is the composition root that puts the two together
   in a synchronous constructor, which ADR-C25 leaves outside its rule — so
   `model_identity` returns a stored value and does no work on the caller's
   thread. A file that loaded and then cannot be read again is
-  `ModelError::Digest`. Reading the files again, rather than loading from
+  `ModelError::Digest`; one *replaced* between the load and the digest yields
+  the identity of the new bytes, the window ADR-C32 § 4 accepts by
+  sanctioning a second read. Reading the files again, rather than loading from
   bytes already in memory — ADR-C32 § 4 allows either — leaves how the
   session and the tokenizer are loaded exactly as it was.
+  **A known gap: `intra_threads`.** It can move a score's last bits (see
+  *Determinism* below), and it is not in the identity, because ADR-C32 § 4
+  fixes the format as the two digests and nothing else. Today it is pinned at
+  its default of one: no configuration reaches it, since the composition root
+  never sets it. Exposing it first needs a decision on where it belongs — a
+  node parameter, and so in the pipeline's hash, or part of the identity,
+  under ADR-C31 § 4's completeness rule. `batch_size` is not a gap in the same
+  sense: it divides the work, batch composition is fixed by the input order,
+  and for the fixture cross-encoder batching does not change the scores, which
+  a test pins. Whether a real model's score depends on its batch-mates is that
+  model's property, as *Determinism* below states.
 - **Typed errors (ADR-C13).** `ModelError` for loading and for a failed forward
   pass, `ComponentError` at the trait boundary — the latter wrapping the former
   in `Backend`, so a `Local` caller can walk `source()` to the cause. A library

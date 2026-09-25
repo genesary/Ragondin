@@ -759,6 +759,18 @@ mod tests {
         }
     }
 
+    /// The stubs below serve the model they loaded and no name, as the ONNX
+    /// components do: `None` is the only served model they answer, on a call
+    /// and in `model_identity` alike.
+    fn serves_no_name(served_model: Option<&str>) -> Result<(), ComponentError> {
+        match served_model {
+            None => Ok(()),
+            Some(name) => Err(ComponentError::InvalidRequest(format!(
+                "model {name:?} is not served here"
+            ))),
+        }
+    }
+
     struct StubReranker;
     #[async_trait]
     impl Reranker for StubReranker {
@@ -768,6 +780,7 @@ mod tests {
             mut chunks: Vec<ScoredChunk>,
             params: &RerankParams,
         ) -> Result<Vec<ScoredChunk>, ComponentError> {
+            serves_no_name(params.served_model.as_deref())?;
             // Reranks by chunk id, then re-scores so the result honours the
             // ranking contract: descending, finite.
             chunks.sort_by(|a, b| b.chunk.id.as_str().cmp(a.chunk.id.as_str()));
@@ -782,12 +795,8 @@ mod tests {
             &self,
             served_model: Option<&str>,
         ) -> Result<ModelIdentity, ComponentError> {
-            match served_model {
-                None => Ok(ModelIdentity::new("stub-reranker@rev1")),
-                Some(name) => Err(ComponentError::InvalidRequest(format!(
-                    "model {name:?} is not served here"
-                ))),
-            }
+            serves_no_name(served_model)?;
+            Ok(ModelIdentity::new("stub-reranker@rev1"))
         }
     }
 
@@ -797,8 +806,9 @@ mod tests {
         async fn embed(
             &self,
             texts: &[String],
-            _params: &EmbedParams,
+            params: &EmbedParams,
         ) -> Result<Vec<Embedding>, ComponentError> {
+            serves_no_name(params.served_model.as_deref())?;
             Ok(texts
                 .iter()
                 .map(|t| Embedding::new(vec![t.len() as f32]))
@@ -809,12 +819,8 @@ mod tests {
             &self,
             served_model: Option<&str>,
         ) -> Result<ModelIdentity, ComponentError> {
-            match served_model {
-                None => Ok(ModelIdentity::new("stub-embedder@rev1")),
-                Some(name) => Err(ComponentError::InvalidRequest(format!(
-                    "model {name:?} is not served here"
-                ))),
-            }
+            serves_no_name(served_model)?;
+            Ok(ModelIdentity::new("stub-embedder@rev1"))
         }
     }
 
@@ -1062,6 +1068,16 @@ mod tests {
         );
         let refused = component.model_identity(Some("other")).await.unwrap_err();
         assert!(matches!(refused, ComponentError::InvalidRequest(_)));
+        // Refused exactly where `model_identity` refuses it.
+        let refused = component
+            .rerank(
+                &query,
+                vec![scored("a", 1.0)],
+                &RerankParams::new(2).with_served_model("other"),
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(refused, ComponentError::InvalidRequest(_)));
     }
 
     #[tokio::test]
@@ -1082,6 +1098,15 @@ mod tests {
             "stub-embedder@rev1"
         );
         let refused = component.model_identity(Some("other")).await.unwrap_err();
+        assert!(matches!(refused, ComponentError::InvalidRequest(_)));
+        // Refused exactly where `model_identity` refuses it.
+        let refused = component
+            .embed(
+                &["ab".to_string()],
+                &EmbedParams::new(EmbedRole::Query).with_served_model("other"),
+            )
+            .await
+            .unwrap_err();
         assert!(matches!(refused, ComponentError::InvalidRequest(_)));
     }
 

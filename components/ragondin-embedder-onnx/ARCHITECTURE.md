@@ -120,10 +120,21 @@ the whole of the crate.
   synchronous work in a synchronous constructor, which ADR-C25 leaves outside
   its rule — so `model_identity` returns a stored value and does no work on
   the caller's thread. A file that loaded and then cannot be read again is
-  `EmbedderError::Digest`. **Reading the files again** rather than loading the
+  `EmbedderError::Digest`; one *replaced* between the load and the digest
+  yields the identity of the new bytes, the window ADR-C32 § 4 accepts by
+  sanctioning a second read. **Reading the files again** rather than loading the
   model from bytes already in memory — ADR-C32 § 4 allows either — is the
   choice here: it leaves how the session and the tokenizer are loaded exactly
   as it was, and streaming never holds a whole model in memory to hash it.
+  **A known gap: `intra_threads`.** It can move a vector's last bits (see
+  *Determinism* below), and it is not in the identity, because ADR-C32 § 4
+  fixes the format as the two digests and nothing else. Today it is pinned at
+  its default of one: no configuration reaches it, since the composition root
+  never sets it. Exposing it first needs a decision on where it belongs — a
+  node parameter, and so in the pipeline's hash, or part of the identity,
+  under ADR-C31 § 4's completeness rule. `batch_size` is not a gap: it does
+  not decide the output, which *Batching is internal* above claims and the
+  tests pin.
 - **A `max_sequence_length` that leaves no room for text is refused at
   construction.** A post-processor wraps a sequence in special tokens, and
   `tokenizers` subtracts their count from the truncation limit unchecked. At

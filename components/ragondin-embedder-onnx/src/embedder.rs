@@ -217,7 +217,9 @@ pub enum EmbedderError {
     ///
     /// The model's identity is the SHA-256 of the model file and of the
     /// tokenizer file (ADR-C32 § 4), taken once, here, after both loaded — so
-    /// this is a file that vanished or became unreadable in between.
+    /// this is a file that vanished or became unreadable in between. A file
+    /// *replaced* in between is not an error: the identity is then that of the
+    /// new bytes, the window ADR-C32 § 4 accepts by sanctioning a second read.
     #[error("the file at {path} could not be read to digest it")]
     Digest {
         /// The path that was read.
