@@ -1,10 +1,14 @@
 //! # ragondin-stub
 //!
 //! **Deterministic stub components**: a [`Retriever`](ragondin_contracts::Retriever)
-//! whose ranked list is fabricated from its configuration, and a
+//! whose ranked list is fabricated from its configuration, a
 //! [`Fusion`](ragondin_contracts::Fusion) that interleaves the lists it is
-//! given. Neither reads a corpus, an index or a model, so a pipeline built out
-//! of them runs anywhere, in the same time, with the same answer.
+//! given, a [`ContextBuilder`](ragondin_contracts::ContextBuilder) that renders
+//! the chunks it is handed one per line, and a
+//! [`Generator`](ragondin_contracts::Generator) that answers with the first
+//! line of the context its prompt carries. None of them reads a corpus, an
+//! index or a model, so a pipeline built out of them runs anywhere, in the same
+//! time, with the same answer.
 //!
 //! # What it is for
 //!
@@ -18,11 +22,15 @@
 //! **Nothing here says anything about retrieval.** A stub retriever answers
 //! every query identically and its scores encode rank and nothing else, so no
 //! measurement taken over these components means anything about quality. They
-//! are conformant, which is a floor and not an endorsement.
+//! are conformant, which is a floor and not an endorsement. **Nor does anything
+//! here say anything about generation**: the stub generator's answer is a
+//! fixed function of its context, chosen so that a test can tell a pipeline
+//! that ranked the right passage first from one that did not, and no score
+//! taken over it measures a model.
 //!
 //! # Two things this crate is not evidence for
 //!
-//! - **Crate granularity.** It holds two components of two different families,
+//! - **Crate granularity.** It holds four components of four different families,
 //!   and `docs/OPEN_QUESTIONS.md` #4 — one crate per family, or one per
 //!   implementation — is **deliberately unresolved**. One crate holding several
 //!   trivial stubs is a fixture kept in one place, not a position on how
@@ -41,11 +49,19 @@
 #![warn(missing_docs)]
 
 #[cfg(feature = "stub")]
+mod context_builder;
+#[cfg(feature = "stub")]
 mod fusion;
+#[cfg(feature = "stub")]
+mod generator;
 #[cfg(feature = "stub")]
 mod retriever;
 
 #[cfg(feature = "stub")]
+pub use context_builder::StubContextBuilder;
+#[cfg(feature = "stub")]
 pub use fusion::StubFusion;
+#[cfg(feature = "stub")]
+pub use generator::StubGenerator;
 #[cfg(feature = "stub")]
 pub use retriever::StubRetriever;
