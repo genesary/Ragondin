@@ -1911,6 +1911,13 @@ mod tests {
                 1.0,
             )])
         }
+
+        async fn model_identity(
+            &self,
+            served_model: Option<&str>,
+        ) -> Result<ModelIdentity, ComponentError> {
+            Ok(ModelIdentity::new(served_model.unwrap_or("no-model")))
+        }
     }
 
     /// [`context`] with the generation families registered as well.
