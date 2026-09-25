@@ -41,8 +41,9 @@ chosen for, and it is recorded below.
 
 ## Choices made in this crate
 
-ADR-C31 leaves each of these to the implementation. They are recorded here
-because a test fixture's contract is what a later test builds on.
+ADR-C31 leaves most of these to the implementation; refusing a name the
+generator does not serve is § 2's and § 4's, not this crate's. They are
+recorded here because a test fixture's contract is what a later test builds on.
 
 - **The stub builder's budget counts chunks.** The contract leaves the unit to
   the implementation (ADR-C31 § 2). A count of chunks needs no tokenizer and no
@@ -72,9 +73,11 @@ because a test fixture's contract is what a later test builds on.
   it carries the context, and building a string it would not read is ceremony.
   The query, the template's other text, `temperature`, `seed` and `max_tokens`
   change nothing — there is no sampling to steer and no tokenizer to count with.
-- **The served name is checked, and decides nothing else.** Any other name, and
-  the empty one whatever the constructor was given, is refused as
-  `InvalidRequest` by both `generate` and `model_identity` (ADR-C31 § 2, § 4).
+- **The served name is checked, and decides nothing else.** Refusing any other
+  name as `InvalidRequest`, from both `generate` and `model_identity`, is
+  mandated by ADR-C31 § 2 and § 4. What this crate chose is the rest: the empty
+  name is refused even when the constructor was given it, and the name decides
+  whether a call is served, never what it is answered.
 - **Both identities are constants**, `StubContextBuilder::IDENTITY` and
   `StubGenerator::IDENTITY`, public so a test asserting on `model_hashes` need
   not copy the string. A constant is conformant where no configuration decides
