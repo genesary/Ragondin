@@ -5,7 +5,8 @@ BM25 over tantivy), `ragondin-retriever-dense` (dense retrieval through a
 `VectorStore`), `ragondin-store-memory` (an exact brute-force vector store),
 `ragondin-fusion-rrf` (Reciprocal Rank Fusion), `ragondin-embedder-onnx`
 (in-process embeddings over ONNX Runtime) and `ragondin-reranker-onnx` (an
-in-process cross-encoder over ONNX Runtime) are here, alongside
+in-process cross-encoder over ONNX Runtime) and `ragondin-context-concat`
+(ordered concatenation of chunks under a character budget) are here, alongside
 `ragondin-stub` — deterministic stubs, the fixture the end-to-end tests are
 wired with rather than a production component. `ragondin-store-qdrant` and
 the rest arrive in later issues.
@@ -27,7 +28,7 @@ Each component is its own crate and a **leaf** of the dependency graph:
 
 ## Which way a feature default goes
 
-`bm25` and `onnx` are off by default; `rrf`, `memory`, `dense` and `stub` are on. That is one rule
+`bm25` and `onnx` are off by default; `rrf`, `memory`, `dense`, `concat` and `stub` are on. That is one rule
 applied repeatedly rather than an inconsistency, and it follows from
 [ADR-C14](../docs/adr/ADR-C14-heavy-backends-feature-gated-lean-default-build.md)
 — which is where the lean default build is decided — rather than deciding
@@ -49,14 +50,15 @@ anything new:
   defer, so turning it off would cost a workspace build the component and save
   it nothing. `ragondin-fusion-rrf` has `default = ["rrf"]`,
   `ragondin-store-memory` has `default = ["memory"]` and
-  `ragondin-retriever-dense` has `default = ["dense"]` and `ragondin-stub` has
-  `default = ["stub"]`; all but one gate arithmetic, and `dense` gates two calls
+  `ragondin-retriever-dense` has `default = ["dense"]`,
+  `ragondin-context-concat` has `default = ["concat"]` and `ragondin-stub` has
+  `default = ["stub"]`; all but one gate arithmetic or string concatenation, and `dense` gates two calls
   through trait objects, so there is no backend behind any of them to keep out
   of the build.
   Such a crate still names its feature after its implementation — the uniformity
   is in the **naming, not the invocation**.
 
-A third-party component crate follows the same rule as the seven here.
+A third-party component crate follows the same rule as the eight here.
 
 The rule has one mechanical consequence worth knowing before you pick a default.
 `cargo test --workspace` builds with default features, so a crate behind an

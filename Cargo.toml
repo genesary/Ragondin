@@ -20,6 +20,7 @@ members = [
     "components/ragondin-embedder-onnx",
     "components/ragondin-reranker-onnx",
     "components/ragondin-stub",
+    "components/ragondin-context-concat",
     "testkit/ragondin-conformance",
     "bin/ragondin",
 ]
@@ -53,6 +54,7 @@ ragondin-embedder-onnx = { path = "components/ragondin-embedder-onnx" }
 ragondin-reranker-onnx = { path = "components/ragondin-reranker-onnx" }
 ragondin-store-memory = { path = "components/ragondin-store-memory" }
 ragondin-stub = { path = "components/ragondin-stub" }
+ragondin-context-concat = { path = "components/ragondin-context-concat" }
 ragondin-metrics = { path = "eval/ragondin-metrics" }
 ragondin-benchmarks = { path = "eval/ragondin-benchmarks" }
 ragondin-harness = { path = "eval/ragondin-harness" }

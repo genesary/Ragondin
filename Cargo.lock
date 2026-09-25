@@ -1502,6 +1502,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "ragondin-context-concat"
+version = "0.0.0"
+dependencies = [
+ "async-trait",
+ "ragondin-conformance",
+ "ragondin-contracts",
+ "ragondin-types",
+ "sha2",
+ "tokio",
+]
+
+[[package]]
 name = "ragondin-contracts"
 version = "0.0.0"
 dependencies = [
