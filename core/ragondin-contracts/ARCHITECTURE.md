@@ -78,10 +78,16 @@ component is a gRPC service honouring the mirror protobuf in `ragondin-proto`.
   **A second, sanctioned exception: `model_identity`.**
   `ContextBuilder::model_identity(&self)` and
   `Generator::model_identity(&self, served_model: &str)` take no params
-  struct; ADR-C31 § 4 fixes both signatures. They are not calls on the
-  pipeline's data but a report ADR-C31 § 4 has the composition root read
-  once per node before a run. A knob either one later needs is an arity
-  break on this boundary, decided as `upsert`'s would be.
+  struct; ADR-C31 § 4 fixes both signatures. `Embedder::model_identity` and
+  `Reranker::model_identity`, each `(&self, served_model: Option<&str>)`,
+  extend the exception; ADR-C32 § 4 fixes both signatures, and adding them
+  was the deliberate, versioned INV-1 break that section sanctions — every
+  implementation of the two traits, in and out of the workspace, gains the
+  method, and none has a default body, since a default would report an
+  identity nobody computed. None of the four is a call on the pipeline's
+  data: each is a report ADR-C31 § 4 and ADR-C32 § 4 have the composition
+  root read once per node before a run. A knob any one of them later needs
+  is an arity break on this boundary, decided as `upsert`'s would be.
 
   This is the *opposite* of `ragondin-pipeline`'s recorded choice, deliberately.
   There, an exhaustive `match` that stops compiling is the intended signal that
@@ -165,11 +171,9 @@ component is a gRPC service honouring the mirror protobuf in `ragondin-proto`.
     `EmbedParams` still has exactly one way to be built and it still takes
     the role. The fields stay `pub`, like every params field here.
 
-    The refusals ADR-C32 § 4 attaches to the field are **not yet true of the
-    in-tree implementations**: the ONNX embedder and reranker and every test
-    stub in the workspace ignore it and answer a `Some(name)` as if it were
-    `None`. #285, which adds `model_identity` to `Embedder` and `Reranker`, is
-    where the ONNX components start refusing every `Some(name)`.
+    The ONNX embedder and reranker honour the refusals ADR-C32 § 4 attaches
+    to the field: configured with no served-model name, they refuse every
+    `Some(name)`, on a call and in `model_identity`.
 
 - **A component does not block the thread that called it (ADR-C25).** Every
   method here is `async`, and the engine cannot tell a `Local` implementation

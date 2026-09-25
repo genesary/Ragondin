@@ -449,6 +449,74 @@ async fn the_fusion_assert_wrapper_panics_on_a_broken_component() {
 
 // ----------------------------------------------------------------- Reranker
 
+/// One of the flaws the two identity checks exist to catch. Shared by the
+/// reranker and embedder stubs, whose identities are asked for the same way.
+enum IdentityFlaw {
+    /// Reports the empty identity.
+    Empty,
+    /// Reports an identity that changes on every call.
+    Counting(AtomicUsize),
+    /// Reports an identity that names the instance, so two instances built by
+    /// one constructor disagree.
+    Instance(usize),
+    /// Cannot report an identity at all.
+    Failing,
+}
+
+impl IdentityFlaw {
+    /// The identity `faithful`, as this flaw misreports it.
+    fn report(&self, faithful: &str) -> Result<ModelIdentity, ComponentError> {
+        match self {
+            IdentityFlaw::Empty => Ok(ModelIdentity::new("")),
+            IdentityFlaw::Counting(calls) => Ok(ModelIdentity::new(format!(
+                "{faithful}#{}",
+                calls.fetch_add(1, Ordering::SeqCst)
+            ))),
+            IdentityFlaw::Instance(instance) => Ok(ModelIdentity::new(format!(
+                "{faithful}/instance-{instance}"
+            ))),
+            IdentityFlaw::Failing => Err(ComponentError::Unavailable("identity unknown".into())),
+        }
+    }
+}
+
+/// Refuses every served-model name, as a `Local` component configured with
+/// none does (ADR-C32 § 4): `None` is the only thing it can be asked for.
+fn serves_only_its_loaded_model(served_model: Option<&str>) -> Result<(), ComponentError> {
+    match served_model {
+        None => Ok(()),
+        Some(name) => Err(ComponentError::InvalidRequest(format!(
+            "model {name:?} is not served here"
+        ))),
+    }
+}
+
+/// Serves only [`SERVED`], and refuses `None`, as a `Remote` service does: it
+/// has no loaded model that `None` could name (ADR-C32 § 4).
+fn serves_only_a_named_model(served_model: Option<&str>) -> Result<(), ComponentError> {
+    match served_model {
+        Some(SERVED) => Ok(()),
+        other => Err(ComponentError::InvalidRequest(format!(
+            "{other:?} is not a model served here"
+        ))),
+    }
+}
+
+/// The conformant reordering every well-behaved stub reranker shares.
+fn rerank_by_id(
+    mut chunks: Vec<ScoredChunk>,
+    params: &RerankParams,
+) -> Result<Vec<ScoredChunk>, ComponentError> {
+    if params.top_k == 0 {
+        return Err(ComponentError::InvalidRequest("top_k of zero".into()));
+    }
+    chunks.sort_by(|a, b| b.chunk.id.as_str().cmp(a.chunk.id.as_str()));
+    chunks.truncate(params.top_k);
+    Ok(rescored_descending(chunks))
+}
+
+/// Conformant, and shaped like the ONNX reranker: it serves the model it
+/// loaded and no name.
 struct GoodReranker;
 
 #[async_trait]
@@ -456,15 +524,67 @@ impl Reranker for GoodReranker {
     async fn rerank(
         &self,
         _query: &Query,
-        mut chunks: Vec<ScoredChunk>,
+        chunks: Vec<ScoredChunk>,
         params: &RerankParams,
     ) -> Result<Vec<ScoredChunk>, ComponentError> {
-        if params.top_k == 0 {
-            return Err(ComponentError::InvalidRequest("top_k of zero".into()));
-        }
-        chunks.sort_by(|a, b| b.chunk.id.as_str().cmp(a.chunk.id.as_str()));
-        chunks.truncate(params.top_k);
-        Ok(rescored_descending(chunks))
+        serves_only_its_loaded_model(params.served_model.as_deref())?;
+        rerank_by_id(chunks, params)
+    }
+
+    async fn model_identity(
+        &self,
+        served_model: Option<&str>,
+    ) -> Result<ModelIdentity, ComponentError> {
+        serves_only_its_loaded_model(served_model)?;
+        Ok(ModelIdentity::new("stub-reranker@rev1"))
+    }
+}
+
+/// Conformant, and shaped like a `Remote` reranker: it serves [`SERVED`] and
+/// refuses `None`, so it passes only when the caller names that model.
+struct NamedReranker;
+
+#[async_trait]
+impl Reranker for NamedReranker {
+    async fn rerank(
+        &self,
+        _query: &Query,
+        chunks: Vec<ScoredChunk>,
+        params: &RerankParams,
+    ) -> Result<Vec<ScoredChunk>, ComponentError> {
+        serves_only_a_named_model(params.served_model.as_deref())?;
+        rerank_by_id(chunks, params)
+    }
+
+    async fn model_identity(
+        &self,
+        served_model: Option<&str>,
+    ) -> Result<ModelIdentity, ComponentError> {
+        serves_only_a_named_model(served_model)?;
+        Ok(ModelIdentity::new("stub-model@rev1"))
+    }
+}
+
+/// Reranks conformantly, and reports its identity with a flaw.
+struct IdentityFlawedReranker(IdentityFlaw);
+
+#[async_trait]
+impl Reranker for IdentityFlawedReranker {
+    async fn rerank(
+        &self,
+        _query: &Query,
+        chunks: Vec<ScoredChunk>,
+        params: &RerankParams,
+    ) -> Result<Vec<ScoredChunk>, ComponentError> {
+        rerank_by_id(chunks, params)
+    }
+
+    async fn model_identity(
+        &self,
+        served_model: Option<&str>,
+    ) -> Result<ModelIdentity, ComponentError> {
+        serves_only_its_loaded_model(served_model)?;
+        self.0.report("stub-reranker@rev1")
     }
 }
 
@@ -491,6 +611,13 @@ impl Reranker for FabricatingReranker {
         out.truncate(params.top_k);
         Ok(rescored_descending(out))
     }
+
+    async fn model_identity(
+        &self,
+        _served_model: Option<&str>,
+    ) -> Result<ModelIdentity, ComponentError> {
+        Ok(ModelIdentity::new("stub-reranker@rev1"))
+    }
 }
 
 /// Returns one candidate twice.
@@ -514,6 +641,13 @@ impl Reranker for DuplicatingReranker {
         out.truncate(params.top_k);
         Ok(rescored_descending(out))
     }
+
+    async fn model_identity(
+        &self,
+        _served_model: Option<&str>,
+    ) -> Result<ModelIdentity, ComponentError> {
+        Ok(ModelIdentity::new("stub-reranker@rev1"))
+    }
 }
 
 /// Reorders correctly but leaves the scores ascending.
@@ -535,6 +669,13 @@ impl Reranker for AscendingReranker {
         out.reverse();
         Ok(out)
     }
+
+    async fn model_identity(
+        &self,
+        _served_model: Option<&str>,
+    ) -> Result<ModelIdentity, ComponentError> {
+        Ok(ModelIdentity::new("stub-reranker@rev1"))
+    }
 }
 
 /// Treats a zero `top_k` as a request for nothing.
@@ -550,6 +691,13 @@ impl Reranker for ZeroTopKReranker {
     ) -> Result<Vec<ScoredChunk>, ComponentError> {
         chunks.truncate(params.top_k);
         Ok(rescored_descending(chunks))
+    }
+
+    async fn model_identity(
+        &self,
+        _served_model: Option<&str>,
+    ) -> Result<ModelIdentity, ComponentError> {
+        Ok(ModelIdentity::new("stub-reranker@rev1"))
     }
 }
 
@@ -568,6 +716,13 @@ impl Reranker for OverlongReranker {
             return Err(ComponentError::InvalidRequest("top_k of zero".into()));
         }
         Ok(rescored_descending(chunks))
+    }
+
+    async fn model_identity(
+        &self,
+        _served_model: Option<&str>,
+    ) -> Result<ModelIdentity, ComponentError> {
+        Ok(ModelIdentity::new("stub-reranker@rev1"))
     }
 }
 
@@ -592,18 +747,25 @@ impl Reranker for EchoingReranker {
         out.truncate(params.top_k);
         Ok(rescored_descending(out))
     }
+
+    async fn model_identity(
+        &self,
+        _served_model: Option<&str>,
+    ) -> Result<ModelIdentity, ComponentError> {
+        Ok(ModelIdentity::new("stub-reranker@rev1"))
+    }
 }
 
 #[tokio::test]
 async fn a_conformant_reranker_passes() {
-    check_reranker_conformance(|| Box::new(GoodReranker))
+    check_reranker_conformance(|| Box::new(GoodReranker), None)
         .await
         .expect("the stub honours the reranker contract");
 }
 
 #[tokio::test]
 async fn a_reranker_fabricating_a_chunk_id_fails() {
-    let failure = check_reranker_conformance(|| Box::new(FabricatingReranker))
+    let failure = check_reranker_conformance(|| Box::new(FabricatingReranker), None)
         .await
         .expect_err("a reranker reorders, it does not invent");
     assert_eq!(failure.check(), "no fabricated ids");
@@ -612,7 +774,7 @@ async fn a_reranker_fabricating_a_chunk_id_fails() {
 
 #[tokio::test]
 async fn a_reranker_returning_a_candidate_twice_fails() {
-    let failure = check_reranker_conformance(|| Box::new(DuplicatingReranker))
+    let failure = check_reranker_conformance(|| Box::new(DuplicatingReranker), None)
         .await
         .expect_err("a ranked list ranks each chunk once");
     assert_eq!(failure.check(), "no duplicate ids");
@@ -620,7 +782,7 @@ async fn a_reranker_returning_a_candidate_twice_fails() {
 
 #[tokio::test]
 async fn a_reranker_returning_ascending_scores_fails() {
-    let failure = check_reranker_conformance(|| Box::new(AscendingReranker))
+    let failure = check_reranker_conformance(|| Box::new(AscendingReranker), None)
         .await
         .expect_err("the ranking contract binds every family that ranks");
     assert_eq!(failure.check(), "descending scores");
@@ -628,7 +790,7 @@ async fn a_reranker_returning_ascending_scores_fails() {
 
 #[tokio::test]
 async fn a_reranker_accepting_a_zero_top_k_fails() {
-    let failure = check_reranker_conformance(|| Box::new(ZeroTopKReranker))
+    let failure = check_reranker_conformance(|| Box::new(ZeroTopKReranker), None)
         .await
         .expect_err("a zero top_k is an unmet precondition");
     assert_eq!(failure.check(), "zero top_k rejected");
@@ -636,7 +798,7 @@ async fn a_reranker_accepting_a_zero_top_k_fails() {
 
 #[tokio::test]
 async fn a_reranker_returning_more_than_top_k_fails() {
-    let failure = check_reranker_conformance(|| Box::new(OverlongReranker))
+    let failure = check_reranker_conformance(|| Box::new(OverlongReranker), None)
         .await
         .expect_err("top_k bounds the answer");
     assert_eq!(failure.check(), "top_k respected");
@@ -644,20 +806,106 @@ async fn a_reranker_returning_more_than_top_k_fails() {
 
 #[tokio::test]
 async fn a_reranker_answering_an_empty_candidate_list_fails() {
-    let failure = check_reranker_conformance(|| Box::new(EchoingReranker))
+    let failure = check_reranker_conformance(|| Box::new(EchoingReranker), None)
         .await
         .expect_err("with no candidates, any answer is invented");
     assert_eq!(failure.check(), "no fabricated ids");
 }
 
 #[tokio::test]
+async fn a_reranker_serving_a_named_model_passes_when_the_caller_names_it() {
+    // The served model reaches every call the suite makes, not only
+    // `model_identity`: a `Remote` reranker refuses `None` on each of them.
+    check_reranker_conformance(|| Box::new(NamedReranker), Some(SERVED))
+        .await
+        .expect("the stub honours the reranker contract for the model it serves");
+}
+
+#[tokio::test]
+async fn a_reranker_asked_for_a_model_it_does_not_serve_fails_the_well_formed_call() {
+    // The served model is the caller's statement of what the fixture serves;
+    // a wrong statement shows as a well-formed call failing.
+    for (make, served_model) in [
+        (
+            (|| Box::new(NamedReranker) as Box<dyn Reranker>) as fn() -> Box<dyn Reranker>,
+            None,
+        ),
+        (|| Box::new(GoodReranker) as Box<dyn Reranker>, Some(SERVED)),
+    ] {
+        let failure = check_reranker_conformance(make, served_model)
+            .await
+            .expect_err("each stub serves only what it serves");
+        assert_eq!(failure.check(), "well-formed call succeeds");
+        assert_eq!(failure.component(), "Reranker");
+    }
+}
+
+/// Runs the suite over rerankers that each carry the identity flaw `flaw`
+/// makes.
+async fn reranker_identity_failure(
+    flaw: impl Fn() -> IdentityFlaw,
+) -> ragondin_conformance::ConformanceFailure {
+    check_reranker_conformance(|| Box::new(IdentityFlawedReranker(flaw())), None)
+        .await
+        .expect_err("the stub is not conformant")
+}
+
+#[tokio::test]
+async fn a_reranker_reporting_the_empty_identity_fails() {
+    let failure = reranker_identity_failure(|| IdentityFlaw::Empty).await;
+    assert_eq!(failure.check(), "identity non-empty");
+    assert_eq!(failure.component(), "Reranker");
+}
+
+#[tokio::test]
+async fn a_reranker_whose_identity_changes_per_call_fails() {
+    let failure = reranker_identity_failure(|| IdentityFlaw::Counting(AtomicUsize::new(0))).await;
+    assert_eq!(failure.check(), "identity stable across two calls");
+}
+
+#[tokio::test]
+async fn a_reranker_whose_identity_names_the_instance_fails() {
+    // The composition root reads the identity from an instance other than the
+    // one that runs (ADR-C31 § 4), so two instances of one configuration must
+    // agree.
+    let instances = AtomicUsize::new(0);
+    let failure = check_reranker_conformance(
+        || {
+            Box::new(IdentityFlawedReranker(IdentityFlaw::Instance(
+                instances.fetch_add(1, Ordering::SeqCst),
+            )))
+        },
+        None,
+    )
+    .await
+    .expect_err("one configuration, one identity");
+    assert_eq!(failure.check(), "identity stable across two calls");
+}
+
+#[tokio::test]
+async fn a_reranker_unable_to_report_its_identity_fails() {
+    let failure = reranker_identity_failure(|| IdentityFlaw::Failing).await;
+    assert_eq!(failure.check(), "well-formed call succeeds");
+}
+
+#[tokio::test]
 #[should_panic(expected = "no fabricated ids")]
 async fn the_reranker_assert_wrapper_panics_on_a_broken_component() {
-    assert_reranker_conformance(|| Box::new(FabricatingReranker)).await;
+    assert_reranker_conformance(|| Box::new(FabricatingReranker), None).await;
 }
 
 // ----------------------------------------------------------------- Embedder
 
+/// The conformant embedding every well-behaved stub embedder shares.
+fn embed_by_length(texts: &[String]) -> Vec<Embedding> {
+    texts
+        .iter()
+        .map(|t| Embedding::new(vec![t.len() as f32, 1.0, 0.0]))
+        .collect()
+}
+
+/// Conformant, and shaped like the ONNX embedder: it serves the model it
+/// loaded and no name.
 struct GoodEmbedder;
 
 #[async_trait]
@@ -665,12 +913,64 @@ impl Embedder for GoodEmbedder {
     async fn embed(
         &self,
         texts: &[String],
+        params: &EmbedParams,
+    ) -> Result<Vec<Embedding>, ComponentError> {
+        serves_only_its_loaded_model(params.served_model.as_deref())?;
+        Ok(embed_by_length(texts))
+    }
+
+    async fn model_identity(
+        &self,
+        served_model: Option<&str>,
+    ) -> Result<ModelIdentity, ComponentError> {
+        serves_only_its_loaded_model(served_model)?;
+        Ok(ModelIdentity::new("stub-embedder@rev1"))
+    }
+}
+
+/// Conformant, and shaped like a `Remote` embedder: it serves [`SERVED`] and
+/// refuses `None`, so it passes only when the caller names that model.
+struct NamedEmbedder;
+
+#[async_trait]
+impl Embedder for NamedEmbedder {
+    async fn embed(
+        &self,
+        texts: &[String],
+        params: &EmbedParams,
+    ) -> Result<Vec<Embedding>, ComponentError> {
+        serves_only_a_named_model(params.served_model.as_deref())?;
+        Ok(embed_by_length(texts))
+    }
+
+    async fn model_identity(
+        &self,
+        served_model: Option<&str>,
+    ) -> Result<ModelIdentity, ComponentError> {
+        serves_only_a_named_model(served_model)?;
+        Ok(ModelIdentity::new("stub-model@rev1"))
+    }
+}
+
+/// Embeds conformantly, and reports its identity with a flaw.
+struct IdentityFlawedEmbedder(IdentityFlaw);
+
+#[async_trait]
+impl Embedder for IdentityFlawedEmbedder {
+    async fn embed(
+        &self,
+        texts: &[String],
         _params: &EmbedParams,
     ) -> Result<Vec<Embedding>, ComponentError> {
-        Ok(texts
-            .iter()
-            .map(|t| Embedding::new(vec![t.len() as f32, 1.0, 0.0]))
-            .collect())
+        Ok(embed_by_length(texts))
+    }
+
+    async fn model_identity(
+        &self,
+        served_model: Option<&str>,
+    ) -> Result<ModelIdentity, ComponentError> {
+        serves_only_its_loaded_model(served_model)?;
+        self.0.report("stub-embedder@rev1")
     }
 }
 
@@ -690,6 +990,13 @@ impl Embedder for DroppingEmbedder {
             .map(|t| Embedding::new(vec![t.len() as f32, 1.0, 0.0]))
             .collect())
     }
+
+    async fn model_identity(
+        &self,
+        _served_model: Option<&str>,
+    ) -> Result<ModelIdentity, ComponentError> {
+        Ok(ModelIdentity::new("stub-embedder@rev1"))
+    }
 }
 
 /// Varies dimensionality within one batch.
@@ -708,6 +1015,13 @@ impl Embedder for RaggedEmbedder {
             .map(|(i, t)| Embedding::new(vec![t.len() as f32; i + 1]))
             .collect())
     }
+
+    async fn model_identity(
+        &self,
+        _served_model: Option<&str>,
+    ) -> Result<ModelIdentity, ComponentError> {
+        Ok(ModelIdentity::new("stub-embedder@rev1"))
+    }
 }
 
 /// Emits a non-finite component, which serializes without error and cannot be
@@ -725,6 +1039,13 @@ impl Embedder for NanEmbedder {
             .iter()
             .map(|t| Embedding::new(vec![t.len() as f32, f32::NAN, 0.0]))
             .collect())
+    }
+
+    async fn model_identity(
+        &self,
+        _served_model: Option<&str>,
+    ) -> Result<ModelIdentity, ComponentError> {
+        Ok(ModelIdentity::new("stub-embedder@rev1"))
     }
 }
 
@@ -748,6 +1069,13 @@ impl Embedder for RoleAwareEmbedder {
             .map(|t| Embedding::new(vec![t.len() as f32, prefix, 0.0]))
             .collect())
     }
+
+    async fn model_identity(
+        &self,
+        _served_model: Option<&str>,
+    ) -> Result<ModelIdentity, ComponentError> {
+        Ok(ModelIdentity::new("stub-embedder@rev1"))
+    }
 }
 
 /// Accepts the role and drops it — the likeliest bug in an asymmetric
@@ -766,6 +1094,13 @@ impl Embedder for RoleIgnoringEmbedder {
             .iter()
             .map(|t| Embedding::new(vec![t.len() as f32, 1.0, 0.0]))
             .collect())
+    }
+
+    async fn model_identity(
+        &self,
+        _served_model: Option<&str>,
+    ) -> Result<ModelIdentity, ComponentError> {
+        Ok(ModelIdentity::new("stub-embedder@rev1"))
     }
 }
 
@@ -796,6 +1131,13 @@ impl Embedder for SplitDimensionEmbedder {
             .map(|t| Embedding::new(vec![t.len() as f32; dim]))
             .collect())
     }
+
+    async fn model_identity(
+        &self,
+        _served_model: Option<&str>,
+    ) -> Result<ModelIdentity, ComponentError> {
+        Ok(ModelIdentity::new("stub-embedder@rev1"))
+    }
 }
 
 /// Conformant under `Query`, and drops an input under `Passage`. The suite
@@ -822,54 +1164,69 @@ impl Embedder for PassageDroppingEmbedder {
             .map(|t| Embedding::new(vec![t.len() as f32, 1.0, 0.0]))
             .collect())
     }
+
+    async fn model_identity(
+        &self,
+        _served_model: Option<&str>,
+    ) -> Result<ModelIdentity, ComponentError> {
+        Ok(ModelIdentity::new("stub-embedder@rev1"))
+    }
 }
 
 #[tokio::test]
 async fn a_conformant_embedder_passes() {
-    check_embedder_conformance(|| Box::new(GoodEmbedder), RolePrefixes::Undeclared)
+    check_embedder_conformance(|| Box::new(GoodEmbedder), RolePrefixes::Undeclared, None)
         .await
         .expect("the stub honours the embedder contract");
 }
 
 #[tokio::test]
 async fn an_embedder_dropping_an_input_fails() {
-    let failure =
-        check_embedder_conformance(|| Box::new(DroppingEmbedder), RolePrefixes::Undeclared)
-            .await
-            .expect_err("one vector per input, or the corpus and the index disagree");
+    let failure = check_embedder_conformance(
+        || Box::new(DroppingEmbedder),
+        RolePrefixes::Undeclared,
+        None,
+    )
+    .await
+    .expect_err("one vector per input, or the corpus and the index disagree");
     assert_eq!(failure.check(), "one vector per input");
     assert_eq!(failure.component(), "Embedder");
 }
 
 #[tokio::test]
 async fn an_embedder_with_a_ragged_batch_fails() {
-    let failure = check_embedder_conformance(|| Box::new(RaggedEmbedder), RolePrefixes::Undeclared)
-        .await
-        .expect_err("a batch has one dimensionality");
+    let failure =
+        check_embedder_conformance(|| Box::new(RaggedEmbedder), RolePrefixes::Undeclared, None)
+            .await
+            .expect_err("a batch has one dimensionality");
     assert_eq!(failure.check(), "constant dimensionality");
 }
 
 #[tokio::test]
 async fn an_embedder_emitting_a_nan_component_fails() {
-    let failure = check_embedder_conformance(|| Box::new(NanEmbedder), RolePrefixes::Undeclared)
-        .await
-        .expect_err("a non-finite component cannot be read back");
+    let failure =
+        check_embedder_conformance(|| Box::new(NanEmbedder), RolePrefixes::Undeclared, None)
+            .await
+            .expect_err("a non-finite component cannot be read back");
     assert_eq!(failure.check(), "finite components");
 }
 
 #[tokio::test]
 async fn an_embedder_with_declared_prefixes_may_separate_the_roles() {
-    check_embedder_conformance(|| Box::new(RoleAwareEmbedder), RolePrefixes::Distinct)
+    check_embedder_conformance(|| Box::new(RoleAwareEmbedder), RolePrefixes::Distinct, None)
         .await
         .expect("distinct prefixes produce distinct vectors, as declared");
 }
 
 #[tokio::test]
 async fn an_embedder_ignoring_a_declared_role_fails() {
-    let failure =
-        check_embedder_conformance(|| Box::new(RoleIgnoringEmbedder), RolePrefixes::Distinct)
-            .await
-            .expect_err("a fixture declaring distinct prefixes must not answer both roles alike");
+    let failure = check_embedder_conformance(
+        || Box::new(RoleIgnoringEmbedder),
+        RolePrefixes::Distinct,
+        None,
+    )
+    .await
+    .expect_err("a fixture declaring distinct prefixes must not answer both roles alike");
     assert_eq!(failure.check(), "role changes the vector");
     assert_eq!(failure.component(), "Embedder");
 }
@@ -886,6 +1243,7 @@ async fn an_embedder_broken_only_under_passage_fails() {
     let failure = check_embedder_conformance(
         || Box::new(PassageDroppingEmbedder),
         RolePrefixes::Undeclared,
+        None,
     )
     .await
     .expect_err("a contract broken on one side only is still broken");
@@ -904,6 +1262,7 @@ async fn an_embedder_whose_dimensionality_depends_on_the_role_fails() {
     let failure = check_embedder_conformance(
         || Box::new(SplitDimensionEmbedder),
         RolePrefixes::Undeclared,
+        None,
     )
     .await
     .expect_err("an embedder has one dimensionality, not one per role");
@@ -915,15 +1274,104 @@ async fn an_embedder_whose_dimensionality_depends_on_the_role_fails() {
 async fn an_embedder_ignoring_an_undeclared_role_conforms() {
     // A symmetric model is correct, and the suite does not know which it is
     // holding: without a declaration there is nothing to compare against.
-    check_embedder_conformance(|| Box::new(RoleIgnoringEmbedder), RolePrefixes::Undeclared)
-        .await
-        .expect("an undeclared fixture is never asked to separate the roles");
+    check_embedder_conformance(
+        || Box::new(RoleIgnoringEmbedder),
+        RolePrefixes::Undeclared,
+        None,
+    )
+    .await
+    .expect("an undeclared fixture is never asked to separate the roles");
+}
+
+#[tokio::test]
+async fn an_embedder_serving_a_named_model_passes_when_the_caller_names_it() {
+    // The served model reaches every call the suite makes, not only
+    // `model_identity`: a `Remote` embedder refuses `None` on each of them.
+    check_embedder_conformance(
+        || Box::new(NamedEmbedder),
+        RolePrefixes::Undeclared,
+        Some(SERVED),
+    )
+    .await
+    .expect("the stub honours the embedder contract for the model it serves");
+}
+
+#[tokio::test]
+async fn an_embedder_asked_for_a_model_it_does_not_serve_fails_the_well_formed_call() {
+    for (make, served_model) in [
+        (
+            (|| Box::new(NamedEmbedder) as Box<dyn Embedder>) as fn() -> Box<dyn Embedder>,
+            None,
+        ),
+        (|| Box::new(GoodEmbedder) as Box<dyn Embedder>, Some(SERVED)),
+    ] {
+        let failure = check_embedder_conformance(make, RolePrefixes::Undeclared, served_model)
+            .await
+            .expect_err("each stub serves only what it serves");
+        assert_eq!(failure.check(), "well-formed call succeeds");
+        assert_eq!(failure.component(), "Embedder");
+    }
+}
+
+/// Runs the suite over embedders that each carry the identity flaw `flaw`
+/// makes.
+async fn embedder_identity_failure(
+    flaw: impl Fn() -> IdentityFlaw,
+) -> ragondin_conformance::ConformanceFailure {
+    check_embedder_conformance(
+        || Box::new(IdentityFlawedEmbedder(flaw())),
+        RolePrefixes::Undeclared,
+        None,
+    )
+    .await
+    .expect_err("the stub is not conformant")
+}
+
+#[tokio::test]
+async fn an_embedder_reporting_the_empty_identity_fails() {
+    let failure = embedder_identity_failure(|| IdentityFlaw::Empty).await;
+    assert_eq!(failure.check(), "identity non-empty");
+    assert_eq!(failure.component(), "Embedder");
+}
+
+#[tokio::test]
+async fn an_embedder_whose_identity_changes_per_call_fails() {
+    let failure = embedder_identity_failure(|| IdentityFlaw::Counting(AtomicUsize::new(0))).await;
+    assert_eq!(failure.check(), "identity stable across two calls");
+}
+
+#[tokio::test]
+async fn an_embedder_whose_identity_names_the_instance_fails() {
+    let instances = AtomicUsize::new(0);
+    let failure = check_embedder_conformance(
+        || {
+            Box::new(IdentityFlawedEmbedder(IdentityFlaw::Instance(
+                instances.fetch_add(1, Ordering::SeqCst),
+            )))
+        },
+        RolePrefixes::Undeclared,
+        None,
+    )
+    .await
+    .expect_err("one configuration, one identity");
+    assert_eq!(failure.check(), "identity stable across two calls");
+}
+
+#[tokio::test]
+async fn an_embedder_unable_to_report_its_identity_fails() {
+    let failure = embedder_identity_failure(|| IdentityFlaw::Failing).await;
+    assert_eq!(failure.check(), "well-formed call succeeds");
 }
 
 #[tokio::test]
 #[should_panic(expected = "one vector per input")]
 async fn the_embedder_assert_wrapper_panics_on_a_broken_component() {
-    assert_embedder_conformance(|| Box::new(DroppingEmbedder), RolePrefixes::Undeclared).await;
+    assert_embedder_conformance(
+        || Box::new(DroppingEmbedder),
+        RolePrefixes::Undeclared,
+        None,
+    )
+    .await;
 }
 
 // -------------------------------------------------------------- VectorStore

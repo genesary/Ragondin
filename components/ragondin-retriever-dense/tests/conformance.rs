@@ -73,6 +73,13 @@ impl Embedder for SharedEmbedder {
     ) -> Result<Vec<Embedding>, ComponentError> {
         self.0.embed(texts, params).await
     }
+
+    async fn model_identity(
+        &self,
+        served_model: Option<&str>,
+    ) -> Result<ragondin_types::ModelIdentity, ComponentError> {
+        self.0.model_identity(served_model).await
+    }
 }
 
 #[async_trait]
@@ -101,6 +108,13 @@ impl Embedder for FakeEmbedder {
                 Embedding::new(components)
             })
             .collect())
+    }
+
+    async fn model_identity(
+        &self,
+        _served_model: Option<&str>,
+    ) -> Result<ragondin_types::ModelIdentity, ComponentError> {
+        Ok(ragondin_types::ModelIdentity::new("fake-embedder"))
     }
 }
 
@@ -281,6 +295,13 @@ impl Embedder for MiscountingEmbedder {
         Ok((0..self.count)
             .map(|_| Embedding::new(vec![1.0, 0.0, 0.0]))
             .collect())
+    }
+
+    async fn model_identity(
+        &self,
+        _served_model: Option<&str>,
+    ) -> Result<ragondin_types::ModelIdentity, ComponentError> {
+        Ok(ragondin_types::ModelIdentity::new("fake-embedder"))
     }
 }
 

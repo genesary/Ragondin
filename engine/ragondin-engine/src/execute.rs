@@ -927,6 +927,13 @@ mod tests {
             }
             Ok(chunks)
         }
+
+        async fn model_identity(
+            &self,
+            _served_model: Option<&str>,
+        ) -> Result<ragondin_types::ModelIdentity, ComponentError> {
+            Ok(ragondin_types::ModelIdentity::new("stub-reranker"))
+        }
     }
 
     /// A context registering one implementation per family a test names.
@@ -1903,6 +1910,13 @@ mod tests {
                 params.served_model.as_deref().unwrap_or("no-model"),
                 1.0,
             )])
+        }
+
+        async fn model_identity(
+            &self,
+            served_model: Option<&str>,
+        ) -> Result<ModelIdentity, ComponentError> {
+            Ok(ModelIdentity::new(served_model.unwrap_or("no-model")))
         }
     }
 

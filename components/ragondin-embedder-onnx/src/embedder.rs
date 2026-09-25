@@ -8,7 +8,8 @@ use async_trait::async_trait;
 use ort::session::{Session, SessionInputValue};
 use ort::value::Tensor;
 use ragondin_contracts::{ComponentError, EmbedParams, EmbedRole, Embedder};
-use ragondin_types::Embedding;
+use ragondin_types::{Embedding, ModelIdentity};
+use sha2::{Digest, Sha256};
 use thiserror::Error;
 use tokenizers::tokenizer::{
     PostProcessor, Tokenizer, TruncationDirection, TruncationParams, TruncationStrategy,
@@ -39,10 +40,14 @@ const DEFAULT_INTRA_THREADS: usize = 1;
 /// Everything here is **constructor configuration** rather than a per-call
 /// parameter: it is fixed for the life of the component, and the split is the
 /// one `ragondin-contracts` states — implementation-specific configuration to
-/// the constructor, only what varies per call in the params struct. The
-/// per-role prefixes are configuration for exactly that reason (ADR-C17): the
-/// text a model wants prepended is fixed when the component is built, while the
-/// role it applies to is known only per call.
+/// the constructor, what varies per call in the params struct. (The contracts
+/// crate qualifies that rule: a setting fixed per node travels in the params
+/// struct when it must reach a `Remote` component, which is why
+/// `EmbedParams::served_model` is there — and why this component, configured
+/// with no served-model name, refuses one.) The per-role prefixes are
+/// configuration for the rule's own reason (ADR-C17): the text a model wants
+/// prepended is fixed when the component is built, while the role it applies
+/// to is known only per call.
 ///
 /// The two paths are read when the component is constructed and never later.
 /// Nothing is downloaded at any point.
@@ -137,7 +142,7 @@ fn nonzero(n: usize) -> NonZeroUsize {
 /// What can go wrong loading or running an ONNX embedder.
 ///
 /// Typed, and this crate's own: a library never imposes `anyhow` on its
-/// consumers (ADR-C13). The first five variants arise when the component is
+/// consumers (ADR-C13). The first six variants arise when the component is
 /// **built** — they report a configuration or wiring mistake, and reporting
 /// them at construction is what keeps them out of the query path. The rest
 /// arise per call, and reach a caller boxed inside
@@ -206,6 +211,22 @@ pub enum EmbedderError {
         max_sequence_length: usize,
         /// What this tokenizer's post-processor adds to one sequence.
         added_tokens: usize,
+    },
+
+    /// A file that loaded could not be read again to digest it.
+    ///
+    /// The model's identity is the SHA-256 of the model file and of the
+    /// tokenizer file (ADR-C32 § 4), taken once, here, after both loaded — so
+    /// this is a file that vanished or became unreadable in between. A file
+    /// *replaced* in between is not an error: the identity is then that of the
+    /// new bytes, the window ADR-C32 § 4 accepts by sanctioning a second read.
+    #[error("the file at {path} could not be read to digest it")]
+    Digest {
+        /// The path that was read.
+        path: PathBuf,
+        /// What the filesystem said about it.
+        #[source]
+        source: std::io::Error,
     },
 
     /// A batch could not be tokenized.
@@ -332,6 +353,9 @@ pub struct OnnxEmbedder {
     /// Shared with the blocking task that runs the model, which is why this is
     /// an `Arc` rather than a set of fields.
     inner: Arc<Encoder>,
+    /// `<model>+<tokenizer>`, computed once at construction, so that
+    /// `model_identity` does no work at all (ADR-C25 governs the call).
+    identity: ModelIdentity,
     query_prefix: String,
     passage_prefix: String,
     batch_size: NonZeroUsize,
@@ -357,6 +381,11 @@ impl OnnxEmbedder {
     /// this component can supply. What is left for the call is what only a real
     /// tensor settles — the shape the model returns, whose sequence axis is
     /// dynamic until there is a batch.
+    ///
+    /// Both files are also read once more, here, to digest them into the
+    /// component's identity (ADR-C32 § 4). That is synchronous work in a
+    /// synchronous constructor, beside the loading it follows, and it happens
+    /// once per component rather than once per call.
     pub fn new(config: OnnxEmbedderConfig) -> Result<Self, EmbedderError> {
         let session = load_session(&config.model, config.intra_threads)?;
 
@@ -379,13 +408,21 @@ impl OnnxEmbedder {
             return Err(EmbedderError::NoTokenInput);
         }
 
+        let tokenizer = load_tokenizer(&config.tokenizer, config.max_sequence_length)?;
+        let identity = ModelIdentity::new(format!(
+            "{}+{}",
+            sha256_hex(&config.model)?,
+            sha256_hex(&config.tokenizer)?
+        ));
+
         Ok(Self {
             inner: Arc::new(Encoder {
                 session: Mutex::new(session),
-                tokenizer: load_tokenizer(&config.tokenizer, config.max_sequence_length)?,
+                tokenizer,
                 feeds_attention_mask,
                 feeds_token_type_ids,
             }),
+            identity,
             query_prefix: config.query_prefix,
             passage_prefix: config.passage_prefix,
             batch_size: config.batch_size,
@@ -573,6 +610,32 @@ fn tensor(shape: Vec<i64>, data: Vec<i64>) -> Result<SessionInputValue<'static>,
         .map_err(EmbedderError::Inference)
 }
 
+/// The lowercase hex SHA-256 of the file at `path`, streamed rather than read
+/// whole, since a real model runs to hundreds of megabytes.
+fn sha256_hex(path: &Path) -> Result<String, EmbedderError> {
+    let digest = |source| EmbedderError::Digest {
+        path: path.to_path_buf(),
+        source,
+    };
+    let mut file = std::fs::File::open(path).map_err(digest)?;
+    let mut hasher = Sha256::new();
+    std::io::copy(&mut file, &mut hasher).map_err(digest)?;
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+/// Refuses a served-model name: this component is configured with none, so
+/// `None` — the model it loaded — is the only thing it can be asked for
+/// (ADR-C32 § 4).
+fn refuse_served_model(served_model: Option<&str>) -> Result<(), ComponentError> {
+    match served_model {
+        None => Ok(()),
+        Some(name) => Err(ComponentError::InvalidRequest(format!(
+            "an ONNX embedder is configured with no served-model name, so it \
+             serves none: {name:?} is refused, and None asks for the model it loaded"
+        ))),
+    }
+}
+
 /// A failed session option hands the builder back inside the error, so that a
 /// caller can retry with the option dropped. There is nothing to retry here —
 /// the option is the reproducibility choice — so the builder is discarded and
@@ -644,10 +707,13 @@ fn load_tokenizer(
 impl Embedder for OnnxEmbedder {
     /// Embeds `texts` under `params.role`, one vector per input, in order.
     ///
-    /// Every failure arrives as [`ComponentError::Backend`]: nothing about a
-    /// call is a precondition this component can find unmet — a batch of any
-    /// size, including none, is a valid request — so what is left is the model
-    /// and the tokenizer failing, which is what that variant is for.
+    /// A `Some` in `params.served_model` is refused as
+    /// [`ComponentError::InvalidRequest`], before anything else and whatever
+    /// the batch: this component is configured with no served-model name
+    /// (ADR-C32 § 4). Every other failure arrives as
+    /// [`ComponentError::Backend`]: a batch of any size, including none, is a
+    /// valid request, so what is left is the model and the tokenizer failing,
+    /// which is what that variant is for.
     ///
     /// The work does not run on the thread that called this (ADR-C25).
     /// Tokenization, tensor building, the session lock and the forward pass
@@ -665,6 +731,8 @@ impl Embedder for OnnxEmbedder {
         texts: &[String],
         params: &EmbedParams,
     ) -> Result<Vec<Embedding>, ComponentError> {
+        refuse_served_model(params.served_model.as_deref())?;
+
         // An empty batch embeds to no vectors, and does it here: no model is
         // locked, and no thread is borrowed to run nothing on.
         if texts.is_empty() {
@@ -680,5 +748,23 @@ impl Embedder for OnnxEmbedder {
             .await
             .map_err(|panicked| ComponentError::Backend(Box::new(panicked)))?
             .map_err(|failed| ComponentError::Backend(Box::new(failed)))
+    }
+
+    /// Reports `<model>+<tokenizer>` — the lowercase hex SHA-256 of the model
+    /// file's bytes, `+`, and that of the tokenizer file's (ADR-C32 § 4) — for
+    /// `None`, and refuses every `Some(name)` as
+    /// [`ComponentError::InvalidRequest`].
+    ///
+    /// The digests were taken at construction, so this returns a stored value
+    /// and does no blocking work (ADR-C25). The identity covers neither the
+    /// prefixes nor `max_sequence_length`: ADR-C32 § 4 leaves those to the
+    /// node's parameters, and ADR-C31 § 4's completeness rule is about the
+    /// knobs that are not there.
+    async fn model_identity(
+        &self,
+        served_model: Option<&str>,
+    ) -> Result<ModelIdentity, ComponentError> {
+        refuse_served_model(served_model)?;
+        Ok(self.identity.clone())
     }
 }

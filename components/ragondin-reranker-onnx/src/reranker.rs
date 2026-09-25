@@ -2,14 +2,15 @@
 
 use std::borrow::Cow;
 use std::num::NonZeroUsize;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use ort::session::{Session, SessionInputValue};
 use ort::value::Tensor;
 use ragondin_contracts::{ComponentError, RerankParams, Reranker};
-use ragondin_types::{Query, ScoredChunk};
+use ragondin_types::{ModelIdentity, Query, ScoredChunk};
+use sha2::{Digest, Sha256};
 use thiserror::Error;
 use tokenizers::tokenizer::{
     PostProcessor, Tokenizer, TruncationDirection, TruncationParams, TruncationStrategy,
@@ -151,6 +152,23 @@ pub enum ModelError {
         added_tokens: usize,
     },
 
+    /// A file that loaded could not be read again to digest it.
+    ///
+    /// The model's identity is the SHA-256 of the model file and of the
+    /// tokenizer file (ADR-C32 § 4), taken once, at construction, after both
+    /// loaded — so this is a file that vanished or became unreadable in
+    /// between. A file *replaced* in between is not an error: the identity is
+    /// then that of the new bytes, the window ADR-C32 § 4 accepts by
+    /// sanctioning a second read.
+    #[error("the file at {path} could not be read to digest it")]
+    Digest {
+        /// The path that was read.
+        path: PathBuf,
+        /// What the filesystem said about it.
+        #[source]
+        source: std::io::Error,
+    },
+
     /// A previous call panicked while holding the session.
     ///
     /// The session's state after a panic inside ONNX Runtime is not this
@@ -169,6 +187,9 @@ pub struct OnnxReranker {
     /// an `Arc` rather than a field.
     inner: Arc<CrossEncoder>,
     batch_size: NonZeroUsize,
+    /// `<model>+<tokenizer>`, computed once at construction, so that
+    /// `model_identity` does no work at all (ADR-C25 governs the call).
+    identity: ModelIdentity,
 }
 
 struct CrossEncoder {
@@ -187,7 +208,9 @@ impl OnnxReranker {
     ///
     /// Both are read from disk here, at construction — which is exactly what a
     /// `ComponentCtor` does at physical planning, and what ADR-C25 leaves
-    /// outside the rule that a call does not block its caller.
+    /// outside the rule that a call does not block its caller. Both are read
+    /// once more, after they load, to digest them into the component's
+    /// identity (ADR-C32 § 4).
     pub fn new(config: OnnxRerankerConfig) -> Result<Self, ModelError> {
         let mut tokenizer =
             Tokenizer::from_file(&config.tokenizer_path).map_err(ModelError::Tokenizer)?;
@@ -253,6 +276,12 @@ impl OnnxReranker {
             .name()
             .to_string();
 
+        let identity = ModelIdentity::new(format!(
+            "{}+{}",
+            sha256_hex(&config.model_path)?,
+            sha256_hex(&config.tokenizer_path)?
+        ));
+
         Ok(Self {
             inner: Arc::new(CrossEncoder {
                 session: Mutex::new(session),
@@ -261,7 +290,34 @@ impl OnnxReranker {
                 output,
             }),
             batch_size: config.batch_size,
+            identity,
         })
+    }
+}
+
+/// The lowercase hex SHA-256 of the file at `path`, streamed rather than read
+/// whole, since a real model runs to hundreds of megabytes.
+fn sha256_hex(path: &Path) -> Result<String, ModelError> {
+    let digest = |source| ModelError::Digest {
+        path: path.to_path_buf(),
+        source,
+    };
+    let mut file = std::fs::File::open(path).map_err(digest)?;
+    let mut hasher = Sha256::new();
+    std::io::copy(&mut file, &mut hasher).map_err(digest)?;
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+/// Refuses a served-model name: this component is configured with none, so
+/// `None` — the model it loaded — is the only thing it can be asked for
+/// (ADR-C32 § 4).
+fn refuse_served_model(served_model: Option<&str>) -> Result<(), ComponentError> {
+    match served_model {
+        None => Ok(()),
+        Some(name) => Err(ComponentError::InvalidRequest(format!(
+            "an ONNX reranker is configured with no served-model name, so it \
+             serves none: {name:?} is refused, and None asks for the model it loaded"
+        ))),
     }
 }
 
@@ -380,6 +436,7 @@ impl Reranker for OnnxReranker {
         chunks: Vec<ScoredChunk>,
         params: &RerankParams,
     ) -> Result<Vec<ScoredChunk>, ComponentError> {
+        refuse_served_model(params.served_model.as_deref())?;
         if params.top_k == 0 {
             return Err(ComponentError::InvalidRequest(
                 "a top_k of zero asks for a result that cannot exist".to_string(),
@@ -427,5 +484,22 @@ impl Reranker for OnnxReranker {
         });
         reordered.truncate(params.top_k);
         Ok(reordered)
+    }
+
+    /// Reports `<model>+<tokenizer>` — the lowercase hex SHA-256 of the model
+    /// file's bytes, `+`, and that of the tokenizer file's (ADR-C32 § 4) — for
+    /// `None`, and refuses every `Some(name)` as
+    /// [`ComponentError::InvalidRequest`].
+    ///
+    /// The digests were taken at construction, so this returns a stored value
+    /// and does no blocking work (ADR-C25). It covers the model and the
+    /// tokenizer, the format ADR-C32 § 4 fixes, and not `max_sequence_length`,
+    /// which that section leaves to the node's parameters.
+    async fn model_identity(
+        &self,
+        served_model: Option<&str>,
+    ) -> Result<ModelIdentity, ComponentError> {
+        refuse_served_model(served_model)?;
+        Ok(self.identity.clone())
     }
 }

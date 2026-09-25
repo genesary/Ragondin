@@ -64,7 +64,9 @@ async fn embed(embedder: &OnnxEmbedder, texts: &[&str], role: EmbedRole) -> Vec<
 
 #[tokio::test]
 async fn honours_the_embedder_contract() {
-    assert_embedder_conformance(|| Box::new(embedder()), RolePrefixes::Distinct).await;
+    // `None`: configured with no served-model name, it serves the model it
+    // loaded and nothing else (ADR-C32 § 4).
+    assert_embedder_conformance(|| Box::new(embedder()), RolePrefixes::Distinct, None).await;
 }
 
 /// A symmetric model is configured with no prefix on either side rather than
@@ -81,6 +83,7 @@ async fn a_symmetric_configuration_is_conformant() {
             )
         },
         RolePrefixes::Undeclared,
+        None,
     )
     .await;
 }
@@ -616,4 +619,137 @@ async fn concurrent_calls_answer_as_sequential_ones_do() {
     for handle in handles {
         assert_eq!(handle.await.expect("no task must panic"), expected);
     }
+}
+
+/// The lowercase hex SHA-256 of a file's bytes, computed here independently of
+/// the component, so that the identity's format is pinned rather than echoed.
+fn sha256_hex(path: &Path) -> String {
+    use sha2::{Digest, Sha256};
+    let bytes = std::fs::read(path).expect("a fixture is readable");
+    format!("{:x}", Sha256::digest(bytes))
+}
+
+/// A directory of its own under cargo's scratch space for integration tests,
+/// emptied first, so a test can rewrite a file at one path.
+fn scratch(test: &str) -> PathBuf {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR"))
+        .join("ragondin-embedder-onnx")
+        .join(test);
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("the scratch directory can be created");
+    dir
+}
+
+/// A model and a tokenizer at fixed paths in `dir`, holding the bytes of the
+/// two fixtures named.
+fn place(dir: &Path, model: &str, tokenizer: &str) -> OnnxEmbedderConfig {
+    let (model_at, tokenizer_at) = (dir.join("model.onnx"), dir.join("tokenizer.json"));
+    std::fs::copy(fixture(model), &model_at).expect("the model fixture copies");
+    std::fs::copy(fixture(tokenizer), &tokenizer_at).expect("the tokenizer fixture copies");
+    OnnxEmbedderConfig::new(model_at, tokenizer_at)
+}
+
+async fn identity_of(config: OnnxEmbedderConfig) -> String {
+    OnnxEmbedder::new(config)
+        .expect("the fixture model and tokenizer must load")
+        .model_identity(None)
+        .await
+        .expect("an ONNX embedder reports its identity for None")
+        .as_str()
+        .to_string()
+}
+
+/// ADR-C32 § 4 fixes the format: the model file's digest, `+`, the tokenizer
+/// file's digest, each the lowercase hex SHA-256 of the file's bytes.
+#[tokio::test]
+async fn the_identity_is_the_digest_of_the_model_then_of_the_tokenizer() {
+    let expected = format!(
+        "{}+{}",
+        sha256_hex(&fixture("tiny-embedder.onnx")),
+        sha256_hex(&fixture("tokenizer.json"))
+    );
+    assert_eq!(identity_of(asymmetric()).await, expected);
+}
+
+/// The identity is over the files' contents, never their names: the same
+/// bytes at another path are the same model.
+#[tokio::test]
+async fn the_identity_follows_the_bytes_and_not_the_path() {
+    let moved = place(
+        &scratch("follows-the-bytes"),
+        "tiny-embedder.onnx",
+        "tokenizer.json",
+    );
+    assert_eq!(identity_of(moved).await, identity_of(asymmetric()).await);
+}
+
+#[tokio::test]
+async fn the_identity_changes_when_the_model_bytes_change() {
+    let dir = scratch("model-bytes-change");
+    let before = identity_of(place(&dir, "tiny-embedder.onnx", "tokenizer.json")).await;
+    let after = identity_of(place(&dir, "tiny-embedder-nan.onnx", "tokenizer.json")).await;
+    assert_ne!(
+        before, after,
+        "another model at the same path is another model"
+    );
+    assert_eq!(
+        before.split('+').nth(1),
+        after.split('+').nth(1),
+        "the tokenizer's half does not move with the model"
+    );
+}
+
+/// The tokenizer is what ADR-C32 § 4 adds to the identity: a path alone was
+/// hashed before, and a tokenizer rewritten in place changed nothing recorded.
+#[tokio::test]
+async fn the_identity_changes_when_the_tokenizer_bytes_change() {
+    let dir = scratch("tokenizer-bytes-change");
+    let before = identity_of(place(&dir, "tiny-embedder.onnx", "tokenizer.json")).await;
+    let after = identity_of(place(&dir, "tiny-embedder.onnx", "tokenizer-padding.json")).await;
+    assert_ne!(
+        before, after,
+        "another tokenizer at the same path is another model"
+    );
+    assert_eq!(
+        before.split('+').next(),
+        after.split('+').next(),
+        "the model's half does not move with the tokenizer"
+    );
+}
+
+/// Configured with no served-model name, the component serves none: `None` is
+/// the only accepted value, on a call and in `model_identity` (ADR-C32 § 4).
+#[tokio::test]
+async fn a_served_model_name_is_refused() {
+    let embedder = embedder();
+
+    let refused = embedder
+        .model_identity(Some("bge-m3"))
+        .await
+        .expect_err("an ONNX embedder serves no name");
+    assert!(
+        matches!(refused, ComponentError::InvalidRequest(_)),
+        "{refused}"
+    );
+
+    for texts in [vec!["a cat".to_string()], Vec::new()] {
+        let refused = embedder
+            .embed(
+                &texts,
+                &EmbedParams::new(EmbedRole::Query).with_served_model("bge-m3"),
+            )
+            .await
+            .expect_err("an ONNX embedder serves no name");
+        assert!(
+            matches!(refused, ComponentError::InvalidRequest(_)),
+            "{} texts: {refused}",
+            texts.len()
+        );
+    }
+
+    let empty_name = embedder
+        .model_identity(Some(""))
+        .await
+        .expect_err("an empty name is still a name");
+    assert!(matches!(empty_name, ComponentError::InvalidRequest(_)));
 }

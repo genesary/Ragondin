@@ -22,6 +22,10 @@ tokenizers = { workspace = true, optional = true } # the pair encoder that feeds
 # feature, exactly where ADR-C25 puts it — `ragondin-contracts` names no
 # runtime and gains nothing (INV-4).
 tokio = { workspace = true, optional = true }
+# The model's identity (ADR-C32 § 4): the SHA-256 of the model file and of the
+# tokenizer file, taken once at construction. Behind the same feature, since
+# only the component that loads those files digests them.
+sha2 = { workspace = true, optional = true }
 
 [dev-dependencies]
 ragondin-conformance = { workspace = true }
@@ -36,4 +40,4 @@ tokio = { workspace = true }
 # and names no crate, so this one is covered without adding a recipe of its own.
 [features]
 default = []
-onnx = ["dep:ort", "dep:tokenizers", "dep:tokio"]
+onnx = ["dep:ort", "dep:tokenizers", "dep:tokio", "dep:sha2"]

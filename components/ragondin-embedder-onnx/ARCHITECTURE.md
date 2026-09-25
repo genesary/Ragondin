@@ -23,7 +23,7 @@ the whole of the crate.
 
 - **It is a leaf ([INV-5](../../AGENTS.md)).** It depends on
   `ragondin-contracts`, `ragondin-types`, `async-trait`, `thiserror` and — behind
-  the `onnx` feature — `ort`, `tokenizers` and `tokio`. Never on
+  the `onnx` feature — `ort`, `tokenizers`, `tokio` and `sha2`. Never on
   `ragondin-engine`, and never on a sibling component:
   `ragondin-retriever-dense` is built *from* an `Embedder` and reaches this one
   as a trait object chosen by the composition root
@@ -97,12 +97,44 @@ the whole of the crate.
   nothing is `0/0`; unguarded, that is `NaN`, which the contract forbids and
   which `ragondin-types` says cannot be read back once serialized. Normalization
   is guarded the same way, since a zero vector has no direction to preserve.
-- **Every failure a call can produce is a `ComponentError::Backend`.** Nothing
-  about a call is a precondition this component can find unmet — a batch of any
-  size, including none, is a valid request — so `InvalidRequest` has no occasion
-  to arise here. `EmbedderError` is boxed inside that variant, and its
-  in-process fidelity is what lets a `Local` caller walk `source` back to the
-  model or the tokenizer.
+- **It serves no named model, so a served-model name is the one invalid
+  request.** [ADR-C32 § 4](../../docs/adr/ADR-C32-remote-named-by-impl-bound-by-the-composition-root.md)
+  configures the ONNX embedder with no served-model name: `None` asks for the
+  model it loaded, and every `Some(name)` — the empty one included — is
+  refused as `ComponentError::InvalidRequest`, on `embed` and on
+  `model_identity` alike. `embed` checks it first, before the empty-batch
+  shortcut: ADR-C19 makes an empty batch valid, not a call that is invalid
+  for another reason.
+- **Every other failure a call can produce is a `ComponentError::Backend`.**
+  Nothing else about a call is a precondition this component can find unmet —
+  a batch of any size, including none, is a valid request. `EmbedderError` is
+  boxed inside that variant, and its in-process fidelity is what lets a
+  `Local` caller walk `source` back to the model or the tokenizer.
+- **Its identity is `<model>+<tokenizer>`, digested once, at construction.**
+  ADR-C32 § 4 fixes the format: the lowercase hex SHA-256 of the model file's
+  bytes, `+`, and that of the tokenizer file's. The tokenizer is in it because
+  its contents decide the vectors as surely as the model's do, and a path
+  says nothing about contents. The prefixes and `max_sequence_length` are not:
+  they are the node's parameters, already in the pipeline's hash. `new` reads
+  each file once more after loading it and streams it through the hasher —
+  synchronous work in a synchronous constructor, which ADR-C25 leaves outside
+  its rule — so `model_identity` returns a stored value and does no work on
+  the caller's thread. A file that loaded and then cannot be read again is
+  `EmbedderError::Digest`; one *replaced* between the load and the digest
+  yields the identity of the new bytes, the window ADR-C32 § 4 accepts by
+  sanctioning a second read. **Reading the files again** rather than loading the
+  model from bytes already in memory — ADR-C32 § 4 allows either — is the
+  choice here: it leaves how the session and the tokenizer are loaded exactly
+  as it was, and streaming never holds a whole model in memory to hash it.
+  **A known gap: `intra_threads`.** It can move a vector's last bits (see
+  *Determinism* below), and it is not in the identity, because ADR-C32 § 4
+  fixes the format as the two digests and nothing else. Today it is pinned at
+  its default of one: no configuration reaches it, since the composition root
+  never sets it. Exposing it first needs a decision on where it belongs — a
+  node parameter, and so in the pipeline's hash, or part of the identity,
+  under ADR-C31 § 4's completeness rule. `batch_size` is not a gap: it does
+  not decide the output, which *Batching is internal* above claims and the
+  tests pin.
 - **A `max_sequence_length` that leaves no room for text is refused at
   construction.** A post-processor wraps a sequence in special tokens, and
   `tokenizers` subtracts their count from the truncation limit unchecked. At
@@ -253,11 +285,10 @@ tokenizer's.
 
 **No model fetching, and no model registry.** Which model to load is
 configuration. A path is what this crate accepts; resolving a name to a path,
-caching a download, or hashing a model into run identity
-(`docs/system-architecture.md` §7.1) belongs to the runtime and the composition
-root, not to a component. Prefixes are configuration that changes the numbers
-and therefore owe an entry in `model_hashes`; ADR-C17 names that hole and #31
-closes it.
+or caching a download, belongs to the runtime and the composition root, not to
+a component. This component reports its model's identity through
+`Embedder::model_identity`; recording it in a run's `model_hashes`
+(`docs/system-architecture.md` §7.1) is the composition root's.
 
 **No corpus embedding loop, and no continuous batching.** `embed` batches the
 texts it is handed and returns. Driving a corpus through it — and deciding

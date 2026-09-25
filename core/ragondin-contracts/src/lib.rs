@@ -199,13 +199,9 @@ pub struct RerankParams {
     /// mean. Absence is the only spelling of "no name": there is no empty
     /// string standing in for it.
     ///
-    /// **Not yet true of the in-tree implementations.** The ONNX embedder and
-    /// reranker (`ragondin-embedder-onnx`, `ragondin-reranker-onnx`) and every
-    /// test stub in the workspace ignore this field and answer a `Some(name)`
-    /// as if it were `None`. The contract and the
-    /// behaviour change are separate PRs: #285, which adds `model_identity` to
-    /// `Embedder` and `Reranker`, is where the ONNX components start refusing
-    /// every `Some(name)`.
+    /// The ONNX embedder and reranker (`ragondin-embedder-onnx`,
+    /// `ragondin-reranker-onnx`) are configured with no served-model name, so
+    /// they refuse every `Some(name)`, on a call and in `model_identity`.
     pub served_model: Option<String>,
 }
 
@@ -273,13 +269,9 @@ pub struct EmbedParams {
     /// an identifier the backend resolves, never text prepended to the input:
     /// it is not the prefix ADR-C17 keeps off this struct.
     ///
-    /// **Not yet true of the in-tree implementations.** The ONNX embedder and
-    /// reranker (`ragondin-embedder-onnx`, `ragondin-reranker-onnx`) and every
-    /// test stub in the workspace ignore this field and answer a `Some(name)`
-    /// as if it were `None`. The contract and the
-    /// behaviour change are separate PRs: #285, which adds `model_identity` to
-    /// `Embedder` and `Reranker`, is where the ONNX components start refusing
-    /// every `Some(name)`.
+    /// The ONNX embedder and reranker (`ragondin-embedder-onnx`,
+    /// `ragondin-reranker-onnx`) are configured with no served-model name, so
+    /// they refuse every `Some(name)`, on a call and in `model_identity`.
     pub served_model: Option<String>,
 }
 
@@ -479,6 +471,24 @@ pub trait Reranker: Send + Sync {
         chunks: Vec<ScoredChunk>,
         params: &RerankParams,
     ) -> Result<Vec<ScoredChunk>, ComponentError>;
+
+    /// Reports the identity of the model this component reranks with when
+    /// asked for `served_model` (ADR-C32 § 4) — the same value
+    /// [`RerankParams::served_model`] carries on each call.
+    ///
+    /// `Some(name)` asks for the model served under `name`, and `None` for the
+    /// model the component loaded; each is refused, as
+    /// [`ComponentError::InvalidRequest`], exactly where a call carrying it
+    /// would be. The identity is **stable** across calls while nothing has
+    /// changed — no timestamp, no counter — and **complete** over every knob
+    /// that decides the scores and is not in the node's params (ADR-C31 § 4):
+    /// for a `Local` component, a digest of its model and of whatever else
+    /// of its constructor configuration decides the scores, such as its
+    /// tokenizer. An empty identity is not valid.
+    async fn model_identity(
+        &self,
+        served_model: Option<&str>,
+    ) -> Result<ModelIdentity, ComponentError>;
 }
 
 /// Turns text into vectors.
@@ -530,6 +540,24 @@ pub trait Embedder: Send + Sync {
         texts: &[String],
         params: &EmbedParams,
     ) -> Result<Vec<Embedding>, ComponentError>;
+
+    /// Reports the identity of the model this component embeds with when
+    /// asked for `served_model` (ADR-C32 § 4) — the same value
+    /// [`EmbedParams::served_model`] carries on each call.
+    ///
+    /// `Some(name)` asks for the model served under `name`, and `None` for the
+    /// model the component loaded; each is refused, as
+    /// [`ComponentError::InvalidRequest`], exactly where a call carrying it
+    /// would be. The identity is **stable** across calls while nothing has
+    /// changed — no timestamp, no counter — and **complete** over every knob
+    /// that decides the vectors and is not in the node's params (ADR-C31 § 4):
+    /// for a `Local` component, a digest of its model and of whatever else
+    /// of its constructor configuration decides the vectors, such as its
+    /// tokenizer. An empty identity is not valid.
+    async fn model_identity(
+        &self,
+        served_model: Option<&str>,
+    ) -> Result<ModelIdentity, ComponentError>;
 }
 
 /// The vector index a dense retriever queries.
@@ -731,6 +759,18 @@ mod tests {
         }
     }
 
+    /// The stubs below serve the model they loaded and no name, as the ONNX
+    /// components do: `None` is the only served model they answer, on a call
+    /// and in `model_identity` alike.
+    fn serves_no_name(served_model: Option<&str>) -> Result<(), ComponentError> {
+        match served_model {
+            None => Ok(()),
+            Some(name) => Err(ComponentError::InvalidRequest(format!(
+                "model {name:?} is not served here"
+            ))),
+        }
+    }
+
     struct StubReranker;
     #[async_trait]
     impl Reranker for StubReranker {
@@ -740,6 +780,7 @@ mod tests {
             mut chunks: Vec<ScoredChunk>,
             params: &RerankParams,
         ) -> Result<Vec<ScoredChunk>, ComponentError> {
+            serves_no_name(params.served_model.as_deref())?;
             // Reranks by chunk id, then re-scores so the result honours the
             // ranking contract: descending, finite.
             chunks.sort_by(|a, b| b.chunk.id.as_str().cmp(a.chunk.id.as_str()));
@@ -749,6 +790,14 @@ mod tests {
             }
             Ok(chunks)
         }
+
+        async fn model_identity(
+            &self,
+            served_model: Option<&str>,
+        ) -> Result<ModelIdentity, ComponentError> {
+            serves_no_name(served_model)?;
+            Ok(ModelIdentity::new("stub-reranker@rev1"))
+        }
     }
 
     struct StubEmbedder;
@@ -757,12 +806,21 @@ mod tests {
         async fn embed(
             &self,
             texts: &[String],
-            _params: &EmbedParams,
+            params: &EmbedParams,
         ) -> Result<Vec<Embedding>, ComponentError> {
+            serves_no_name(params.served_model.as_deref())?;
             Ok(texts
                 .iter()
                 .map(|t| Embedding::new(vec![t.len() as f32]))
                 .collect())
+        }
+
+        async fn model_identity(
+            &self,
+            served_model: Option<&str>,
+        ) -> Result<ModelIdentity, ComponentError> {
+            serves_no_name(served_model)?;
+            Ok(ModelIdentity::new("stub-embedder@rev1"))
         }
     }
 
@@ -1004,6 +1062,22 @@ mod tests {
             out[0].score >= out[1].score && out.iter().all(|c| c.score.is_finite()),
             "a reranker returns finite scores in descending order"
         );
+        assert_eq!(
+            component.model_identity(None).await.unwrap().as_str(),
+            "stub-reranker@rev1"
+        );
+        let refused = component.model_identity(Some("other")).await.unwrap_err();
+        assert!(matches!(refused, ComponentError::InvalidRequest(_)));
+        // Refused exactly where `model_identity` refuses it.
+        let refused = component
+            .rerank(
+                &query,
+                vec![scored("a", 1.0)],
+                &RerankParams::new(2).with_served_model("other"),
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(refused, ComponentError::InvalidRequest(_)));
     }
 
     #[tokio::test]
@@ -1019,6 +1093,21 @@ mod tests {
         assert_eq!(out.len(), 2);
         assert_eq!(out[0].dim(), 1);
         assert_eq!(out[1].as_slice(), &[4.0]);
+        assert_eq!(
+            component.model_identity(None).await.unwrap().as_str(),
+            "stub-embedder@rev1"
+        );
+        let refused = component.model_identity(Some("other")).await.unwrap_err();
+        assert!(matches!(refused, ComponentError::InvalidRequest(_)));
+        // Refused exactly where `model_identity` refuses it.
+        let refused = component
+            .embed(
+                &["ab".to_string()],
+                &EmbedParams::new(EmbedRole::Query).with_served_model("other"),
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(refused, ComponentError::InvalidRequest(_)));
     }
 
     #[tokio::test]
