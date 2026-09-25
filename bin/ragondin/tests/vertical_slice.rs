@@ -23,8 +23,8 @@ use std::path::PathBuf;
 use ragondin_config::{ConfigSource, LocalFile};
 use ragondin_engine::{plan_physical, Engine, EngineContext, ExecutionTrace, Output, ValueSummary};
 use ragondin_pipeline::{LogicalPipeline, ParamValue};
-use ragondin_stub::{StubFusion, StubRetriever};
-use ragondin_types::{Query, QueryId, ScoredChunk};
+use ragondin_stub::{StubContextBuilder, StubFusion, StubGenerator, StubRetriever};
+use ragondin_types::{Answer, Query, QueryId, ScoredChunk};
 
 /// The checked-in fixture, read from disk rather than built in code: a
 /// hand-built pipeline would skip the half of the path this test exists for.
@@ -56,6 +56,27 @@ fn register_stubs(ctx: &mut EngineContext) {
         }),
     );
     ctx.register_fusion("stub_interleave", Box::new(|_| Ok(Box::new(StubFusion))));
+    ctx.register_context_builder(
+        "stub_concat",
+        Box::new(|_| Ok(Box::new(StubContextBuilder))),
+    );
+    // The name a stub generator serves is its constructor configuration
+    // (ADR-C31 § 2), and the node's `served_model` is where the composition
+    // root reads it: the executor passes the same key on every call, so the
+    // two agree by construction.
+    ctx.register_generator(
+        "stub_generator",
+        Box::new(|config| {
+            let served_model = match config.get("served_model") {
+                Some(ParamValue::String(name)) => name.clone(),
+                Some(other) => {
+                    return Err(format!("`served_model` must be a string, found {other:?}").into())
+                }
+                None => return Err("`served_model` is required".into()),
+            };
+            Ok(Box::new(StubGenerator::new(served_model)))
+        }),
+    );
 }
 
 /// Loads the fixture, plans it and runs it, returning everything the
@@ -232,5 +253,130 @@ async fn two_runs_agree_on_the_output_and_on_the_logical_hash() {
         first_logical.content_hash(),
         second_logical.content_hash(),
         "the same file on disk content-addresses to the same pipeline"
+    );
+}
+
+/// The generation fixture: a stub retriever, the stub context builder, the
+/// stub generator — the whole of the generation chain, over components that
+/// fabricate their outputs.
+fn generation_fixture() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/stub-generation.yaml")
+}
+
+/// Loads the generation fixture, plans it and runs it.
+async fn run_the_generation_slice() -> (Answer, ExecutionTrace) {
+    let logical = LocalFile::new(generation_fixture())
+        .load()
+        .await
+        .expect("the checked-in generation fixture is a valid configuration");
+
+    let mut ctx = EngineContext::new();
+    register_stubs(&mut ctx);
+
+    let plan = plan_physical(&logical, &ctx)
+        .expect("the retriever, the builder and the generator are all registered above");
+
+    let query = Query {
+        id: QueryId::new("q-1"),
+        text: "what does the generation slice do".to_string(),
+    };
+    let (output, trace) = Engine::new().execute(&plan, query).await;
+
+    let Output::Answer(answer) = output.expect("the stubs cannot fail on this pipeline") else {
+        panic!("the generation slice ends on a generator, so its output is an answer")
+    };
+    (answer, trace)
+}
+
+#[tokio::test]
+async fn the_generation_slice_answers_with_the_first_line_of_its_context() {
+    let (answer, _) = run_the_generation_slice().await;
+
+    // The stub retriever's first chunk, rendered first by the stub builder,
+    // is the first line of the context; the stub generator answers with it.
+    // An answer naming that chunk is the retriever's output having travelled
+    // through the builder into the generator's prompt.
+    assert_eq!(
+        answer.text,
+        "stub chunk 0 of `docs` for `what does the generation slice do`"
+    );
+}
+
+#[tokio::test]
+async fn the_generation_trace_holds_the_three_entries_in_execution_order() {
+    let (answer, trace) = run_the_generation_slice().await;
+
+    assert_eq!(
+        trace
+            .nodes
+            .iter()
+            .map(|node| node.node.as_str())
+            .collect::<Vec<_>>(),
+        ["search", "prompt", "answer"],
+        "retrieval, then the context, then the answer — not the canonical order"
+    );
+    let [search, prompt, generated] = &trace.nodes[..] else {
+        panic!("the plan has exactly three nodes")
+    };
+
+    assert_eq!(
+        produced(search.output.as_ref()),
+        [
+            ("docs-0", "docs", 1.0),
+            ("docs-1", "docs", 0.5),
+            ("docs-2", "docs", 1.0 / 3.0),
+        ]
+    );
+
+    // The builder's inputs: the query, and the ranking counted (it is named on
+    // the leg that produced it). Its output is the context whole (ADR-C31
+    // § 5): the first two chunks — a budget of two — one per line.
+    assert_eq!(
+        prompt.inputs,
+        [
+            ValueSummary::Query {
+                id: QueryId::new("q-1")
+            },
+            ValueSummary::Chunks { count: 3 }
+        ]
+    );
+    let Some(ValueSummary::Context { chunks, text }) = prompt.output.as_ref() else {
+        panic!(
+            "a context builder names the context it produced: {:?}",
+            prompt.output
+        )
+    };
+    assert_eq!(
+        chunks
+            .iter()
+            .map(|hit| hit.chunk.as_str())
+            .collect::<Vec<_>>(),
+        ["docs-0", "docs-1"]
+    );
+    assert_eq!(
+        text,
+        "stub chunk 0 of `docs` for `what does the generation slice do`\n\
+         stub chunk 1 of `docs` for `what does the generation slice do`"
+    );
+
+    // The generator's inputs: the query, and the context sized. Its output is
+    // the answer the executor returned — the trace records the value, not a
+    // second opinion of it.
+    let Some(ValueSummary::ContextSize { count, .. }) = generated.inputs.get(1) else {
+        panic!(
+            "a generator's second port is the context: {:?}",
+            generated.inputs
+        )
+    };
+    assert_eq!(*count, 2);
+    assert_eq!(
+        generated.output,
+        Some(ValueSummary::Answer {
+            text: answer.text.clone()
+        })
+    );
+    assert!(
+        trace.nodes.iter().all(|node| node.error.is_none()),
+        "nothing failed"
     );
 }

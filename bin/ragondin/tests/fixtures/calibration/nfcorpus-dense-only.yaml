@@ -24,6 +24,7 @@ pipeline:
       inputs: [question]
       params:
         top_k: 10
+        embedder: onnx
         model: all-MiniLM-L6-v2/model.onnx
         tokenizer: all-MiniLM-L6-v2/tokenizer.json
         max_sequence_length: 256

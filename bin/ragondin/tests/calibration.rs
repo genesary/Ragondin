@@ -88,13 +88,17 @@ const NFCORPUS_PUBLISHED_NDCG: f64 = 0.31594;
 const PUBLISHED_TOLERANCE: f64 = 0.005;
 
 /// The digests a run over the recorded material records — each original
-/// archive as the adapter reads it, and the two exported model files. A run
-/// over anything else is a different calibration, and fails by name.
+/// archive as the adapter reads it, and the identity each exported model
+/// reports: `<model>+<tokenizer>`, the SHA-256 of the model file, `+`, and the
+/// SHA-256 of its `tokenizer.json` (ADR-C32 § 4). A run over anything else is
+/// a different calibration, and fails by name.
 const RECORDED_DATASET: &str = "9a07f80c0d4f1e9e74912d033a8d1fbd52c54b758dafcaa85c19abacfdee5f29";
 const RECORDED_NFCORPUS_DATASET: &str =
     "8046025011c86dcbac3c15f9f52e5cf0ebc534282944b50fe72884cfcb6a112b";
-const RECORDED_EMBEDDER: &str = "9348202758f11c56c329d947ae359fea54be1a3d905bfcac4a3521a1eafc0414";
-const RECORDED_RERANKER: &str = "8b0fe5bc3c5ddc752524552d8e081baa7726e389b1d23396e56ad31d69b88d52";
+const RECORDED_EMBEDDER: &str = "9348202758f11c56c329d947ae359fea54be1a3d905bfcac4a3521a1eafc0414\
+     +da0e79933b9ed51798a3ae27893d3c5fa4a201126cef75586296df9b4d2c62a0";
+const RECORDED_RERANKER: &str = "8b0fe5bc3c5ddc752524552d8e081baa7726e389b1d23396e56ad31d69b88d52\
+     +d241a60d5e8f04cc1b2b3e9ef7a4921b27bf526d9f6050ab90f9267a1f9e5c66";
 
 /// What the recorded runs scored, metric by metric.
 const RECORDED_DENSE: [(&str, f64); 3] = [

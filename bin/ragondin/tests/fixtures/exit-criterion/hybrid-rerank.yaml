@@ -21,6 +21,7 @@ pipeline:
       inputs: [question]
       params:
         top_k: 3
+        embedder: onnx
         model: models/embedder.onnx
         tokenizer: models/tokenizer.json
     - id: fused

@@ -50,17 +50,26 @@ sha2 = { workspace = true }
 # backend behind it, so gating it would buy no compile time and would leave the
 # lean build unable to fuse two legs it can otherwise retrieve.
 ragondin-fusion-rrf = { workspace = true }
+# Not optional either, for RRF's reason: concatenation is string arithmetic.
+ragondin-context-concat = { workspace = true }
 ragondin-retriever-bm25 = { workspace = true, optional = true }
 ragondin-retriever-dense = { workspace = true, optional = true }
 ragondin-store-memory = { workspace = true, optional = true }
 ragondin-embedder-onnx = { workspace = true, optional = true }
 ragondin-reranker-onnx = { workspace = true, optional = true }
+# The stub generator, behind the `stub` feature below: no production `Local`
+# generator exists — a generator is `Remote` by design (ADR-C31) — so a build
+# that runs a generation pipeline without an inference service needs one, and
+# the CLI tests are what need that build.
+ragondin-stub = { workspace = true, optional = true }
 
 # Test-only, and deliberately so. `ragondin-stub` is the fixture component
 # crate the vertical slice in `tests/` wires: `bench` registers the real
-# components now, and the slice keeps registering stubs, because what it exists
-# to show is the wiring rather than a retrieval result — components that
-# fabricate their answers are what make the trace it asserts on predictable.
+# components, and the slice registers stubs itself, because what it exists to
+# show is the wiring rather than a retrieval result — components that fabricate
+# their answers are what make the trace it asserts on predictable. (It is also
+# an optional normal dependency, behind `stub`, for the one stub `bench` can
+# register.)
 # `assert_cmd` spawns the built binary for the CLI tests: a subcommand's
 # contract is an exit status and what lands on stdout and stderr, and only a
 # test that runs the process observes those.
@@ -98,3 +107,9 @@ onnx = [
     "dep:ragondin-retriever-dense",
     "dep:ragondin-store-memory",
 ]
+# The stub generator, registered by `bench` as `stub_generator`: a generator
+# that needs no model and no service, for tests that drive `bench` over a
+# generation pipeline. Off by default — it is a fixture, not a product
+# component — and it gates nothing heavy, so the reason it is a feature is
+# that, and not compile time.
+stub = ["dep:ragondin-stub", "ragondin-stub/stub"]

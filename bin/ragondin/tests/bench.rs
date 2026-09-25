@@ -107,6 +107,34 @@ fn a_configuration_holding_an_extension_node_is_refused_before_anything_runs() {
     assert!(!store.exists(), "a refused configuration records no run");
 }
 
+/// A generator no build registers is refused by planning's unknown `impl:`,
+/// naming the family and the name — in every build, lean included: a
+/// `Remote` generator is named by an ordinary `impl:` name, and until
+/// something binds it, it is a name this composition root does not know.
+#[test]
+fn a_generator_this_build_does_not_register_is_refused_naming_family_and_name() {
+    let store = store("unregistered-generator");
+
+    let output = ragondin(&[
+        "bench",
+        &fixture("unregistered-generator.yaml"),
+        "--benchmark",
+        "beir/beir-mini",
+        "--datasets",
+        path(&fixtures()),
+        "--store",
+        path(&store),
+    ]);
+
+    assert!(!output.status.success(), "{}", stdout(&output));
+    let error = stderr(&output);
+    assert!(
+        error.contains("no generator implementation is registered under `vllm`"),
+        "{error}"
+    );
+    assert!(!store.exists(), "a refused configuration records no run");
+}
+
 /// What a build with no retriever does with a configuration that names one.
 ///
 /// The claim `Cargo.toml` makes for the lean build: it still reads, validates
@@ -215,7 +243,7 @@ mod with_components {
              - id: lexical\n      component: retriever\n      impl: bm25\n      \
              inputs: [question]\n      params: {{ top_k: 10 }}\n    \
              - id: vectors\n      component: retriever\n      impl: dense\n      \
-             inputs: [question]\n      params: {{ top_k: 10, model: {model}, \
+             inputs: [question]\n      params: {{ top_k: 10, embedder: onnx, model: {model}, \
              tokenizer: {tokenizer} }}\n    \
              - id: fused\n      component: fusion\n      impl: rrf\n      \
              inputs: [lexical, vectors]\n      params: {{ k: 60 }}\n",

@@ -1,0 +1,28 @@
+# A generation pipeline whose generator no build of this binary registers:
+# `vllm` is an ordinary `impl:` name, the kind a `Remote` generator is named
+# by (ADR-C32 § 1), and nothing here binds it. `bench` reads no identity for a
+# name it does not know, so planning is what refuses it, naming the family and
+# the name. The generator's id sorts first, so planning reaches it before the
+# retriever, which a lean build does not carry either.
+pipeline:
+  inputs: [question]
+  nodes:
+    - id: answer
+      component: generator
+      impl: vllm
+      inputs: [question, prompt]
+      params:
+        served_model: qwen2.5-7b-instruct
+        template: "Answer from the context.\n{context}\nQuestion: {query}"
+
+    - id: prompt
+      component: context_builder
+      impl: concat
+      inputs: [question, search]
+      params: { budget: 2000, separator: "\n" }
+
+    - id: search
+      component: retriever
+      impl: bm25
+      inputs: [question]
+      params: { top_k: 3 }
