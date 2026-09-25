@@ -57,11 +57,12 @@ store holds, and files it under its query. Four consequences are deliberate:
   port, a context renders as `{"context": {"count": ..., "text_bytes": ...}}`
   and an answer as `{"answer": {"text_bytes": ...}}`: its chunk count and the
   byte length of its text, the sizes the engine's trace records there.
-- **A failed query carries its trace out with the error.**
-  `HarnessError::Execute` holds the rendered trace of the run that failed, and
-  `HarnessError::UnscorableOutput` the trace of the run whose output it
-  refused — the only record of the context or answer it produced — because that is the trace worth reading and an error that dropped it would
-  discard exactly the evidence INV-10 exists to preserve.
+- **A query that stops the run carries its trace out with the error**, whether
+  it failed or was refused. `HarnessError::Execute` holds the rendered trace of
+  the run that failed, and `HarnessError::UnscorableOutput` the trace of the
+  run whose output it refused — the only record of the context or answer it
+  produced — because that is the trace worth reading and an error that dropped
+  it would discard exactly the evidence INV-10 exists to preserve.
 
 ## Indexing is ad hoc, and that is not a position on open question 5
 

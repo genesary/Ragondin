@@ -60,7 +60,7 @@ disagree with it:
   which is the one thing ADR-C28 asks the code to keep straight. The cost is
   that a reader who only wants "how many chunks" matches two variants instead
   of one, and that the enum is exhaustively matched at every such site — which
-  is how a third kind added in M3 becomes a compiler error rather than a
+  is how a kind added later becomes a compiler error rather than a
   silently unnamed output. `RankedChunk` carries no chunk *text*: it is the one
   field that grows with the corpus and the one no reader of a ranking needs.
 

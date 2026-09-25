@@ -51,10 +51,12 @@ fn ranked_chunk(hit: &RankedChunk) -> Value {
 /// Renders one edge value's summary.
 ///
 /// An output's chunks are **named**, in the order the node returned them, and
-/// an input's are counted (ADR-C28). `count` is rendered on both, so a reader
-/// of the field does not have to know which side it is looking at; on an
-/// output it is the length of `ranked`, which is where the ranking a per-query
-/// fixture, a graded-relevance calibration or a replay view reads lives.
+/// an input's are counted (ADR-C28). For chunks, `count` is rendered on both
+/// sides, so a reader of the field does not have to know which side it is
+/// looking at; on an output it is the length of `ranked`, which is where the
+/// ranking a per-query fixture, a graded-relevance calibration or a replay
+/// view reads lives. A context is rendered differently on each side: `chunks`
+/// and `text` when produced, `count` and `text_bytes` when consumed.
 ///
 /// A produced context renders as `{"context": {"chunks": [...], "text": ...}}`
 /// and a produced answer as `{"answer": {"text": ...}}` — the shapes ADR-C31
