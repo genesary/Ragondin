@@ -7,8 +7,11 @@
 
 #![cfg(feature = "stub")]
 
-use ragondin_conformance::{assert_fusion_conformance, assert_retriever_conformance};
-use ragondin_stub::{StubFusion, StubRetriever};
+use ragondin_conformance::{
+    assert_context_builder_conformance, assert_fusion_conformance, assert_generator_conformance,
+    assert_retriever_conformance,
+};
+use ragondin_stub::{StubContextBuilder, StubFusion, StubGenerator, StubRetriever};
 
 #[tokio::test]
 async fn the_stub_retriever_is_conformant() {
@@ -18,4 +21,14 @@ async fn the_stub_retriever_is_conformant() {
 #[tokio::test]
 async fn the_stub_fusion_is_conformant() {
     assert_fusion_conformance(|| Box::new(StubFusion)).await;
+}
+
+#[tokio::test]
+async fn the_stub_context_builder_is_conformant() {
+    assert_context_builder_conformance(|| Box::new(StubContextBuilder)).await;
+}
+
+#[tokio::test]
+async fn the_stub_generator_is_conformant() {
+    assert_generator_conformance(|| Box::new(StubGenerator::new("stub-model")), "stub-model").await;
 }
