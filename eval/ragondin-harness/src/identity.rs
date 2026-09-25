@@ -30,15 +30,18 @@
 //!
 //! Iteration order is fixed everywhere it is read: a corpus and a query set in
 //! the order the adapter loaded them (`Benchmark::new` preserves file order),
-//! qrels and model hashes in the key order of the `BTreeMap` that holds them.
+//! qrels and model hashes in the key order of the `BTreeMap` that holds them,
+//! reference answers in the order of the query set.
 
-use ragondin_benchmarks::Benchmark;
+use ragondin_benchmarks::{Benchmark, CarriedPieces};
 use ragondin_experiments::{RunId, RunInputs};
-use ragondin_types::Chunk;
+use ragondin_types::{Chunk, QueryId};
 use sha2::{Digest, Sha256};
 
 /// The domain separator of the dataset digest.
 const DATASET_DOMAIN: &str = "ragondin/dataset-version/v1";
+/// The tag opening the reference-answers section of the dataset digest.
+const REFERENCES_TAG: &str = "references";
 /// The domain separator of the index digest.
 const INDEX_DOMAIN: &str = "ragondin/index-version/v1";
 /// The domain separator of the run identity digest.
@@ -95,7 +98,15 @@ fn hex(digest: [u8; 32]) -> String {
 }
 
 /// The `dataset_version` of a loaded benchmark: a digest over everything a
-/// metric can depend on — the corpus, the query set, and every judgment.
+/// metric can depend on — the corpus, the query set, every judgment, and the
+/// reference answers when the benchmark carries any.
+///
+/// The reference answers follow the qrels as a section of their own, opened
+/// by the tag `references` and present only when the benchmark carries them
+/// (ADR-C30 § 5): the query count, then, for each query in benchmark order
+/// that has a reference, its id, its reference count and its references in
+/// the order the benchmark holds them. A benchmark that carries none digests
+/// exactly as it did before reference answers existed.
 ///
 /// Over the *loaded* benchmark rather than over the files it came from: two
 /// snapshots that parse to the same corpus, queries and qrels are the same
@@ -130,6 +141,36 @@ pub(crate) fn dataset_version(benchmark: &Benchmark) -> String {
             encoder.field(document.as_str().as_bytes());
             // A grade is one byte and writing it raw needs no length.
             encoder.hasher.update([*grade]);
+        }
+    }
+
+    // Conditional, so tagged (ADR-C30 § 5): a benchmark that carries no
+    // reference answer ends its stream here, byte for byte as it did before
+    // reference answers existed, and every digest already recorded for one
+    // stays valid. The tag is the only in-stream section marker in this
+    // encoding, because this is the only section that may be absent.
+    if matches!(
+        benchmark.carries(),
+        CarriedPieces::ReferenceAnswersOnly | CarriedPieces::QrelsAndReferenceAnswers
+    ) {
+        let answered: Vec<(&QueryId, &[String])> = benchmark
+            .queries()
+            .iter()
+            .filter_map(|query| {
+                benchmark
+                    .reference_answers()
+                    .for_query(&query.id)
+                    .map(|references| (&query.id, references))
+            })
+            .collect();
+        encoder.field(REFERENCES_TAG.as_bytes());
+        encoder.count(answered.len());
+        for (query, references) in answered {
+            encoder.field(query.as_str().as_bytes());
+            encoder.count(references.len());
+            for reference in references {
+                encoder.field(reference.as_bytes());
+            }
         }
     }
 
@@ -177,7 +218,7 @@ pub(crate) fn run_id(inputs: &RunInputs) -> RunId {
 mod tests {
     use std::collections::BTreeMap;
 
-    use ragondin_benchmarks::Qrels;
+    use ragondin_benchmarks::{Qrels, ReferenceAnswers};
     use ragondin_pipeline::PipelineHash;
     use ragondin_types::{ChunkId, DocId, Document, Query, QueryId};
 
@@ -252,6 +293,68 @@ mod tests {
         let right = benchmark(vec![document("d-1a", "b")], 1);
 
         assert_ne!(dataset_version(&left), dataset_version(&right));
+    }
+
+    /// The digest [`dataset_version`] gave `benchmark(vec![document("d-1",
+    /// "text")], 1)` before reference answers existed. Pinned rather than
+    /// recomputed: ADR-C30 § 5 requires a benchmark that carries no reference
+    /// answer to digest byte for byte as it did, and only a recorded value can
+    /// tell a changed encoding from an unchanged one.
+    const REFERENCE_FREE_DIGEST: &str =
+        "7e3efcd5b197ef8f8abeeea1902efc82a438a0f0362c88092a973bec1a3be6e3";
+
+    fn with_references(base: Benchmark, answers: &[(&str, &[&str])]) -> Benchmark {
+        let mut references = ReferenceAnswers::new();
+        for (query, strings) in answers {
+            references.insert(
+                QueryId::new(*query),
+                strings.iter().map(|s| (*s).to_string()).collect(),
+            );
+        }
+        base.with_reference_answers(references)
+    }
+
+    #[test]
+    fn a_benchmark_that_carries_no_reference_answer_digests_as_it_always_did() {
+        let base = benchmark(vec![document("d-1", "text")], 1);
+
+        assert_eq!(dataset_version(&base), REFERENCE_FREE_DIGEST);
+        assert_eq!(
+            dataset_version(&with_references(base.clone(), &[])),
+            REFERENCE_FREE_DIGEST,
+            "an empty reference-answers value carries nothing, so adds nothing"
+        );
+        assert_eq!(
+            dataset_version(&with_references(base, &[("q-unknown", &["yes"])])),
+            REFERENCE_FREE_DIGEST,
+            "a reference to a query the benchmark does not hold is not carried"
+        );
+    }
+
+    #[test]
+    fn reference_answers_the_benchmark_carries_enter_the_digest() {
+        let base = benchmark(vec![document("d-1", "text")], 1);
+        let answered = with_references(base.clone(), &[("q-1", &["yes", "no"])]);
+
+        assert_ne!(
+            dataset_version(&answered),
+            dataset_version(&base),
+            "two benchmarks differing only in their references are two datasets"
+        );
+        assert_eq!(
+            dataset_version(&answered),
+            dataset_version(&with_references(base.clone(), &[("q-1", &["yes", "no"])])),
+        );
+        assert_ne!(
+            dataset_version(&answered),
+            dataset_version(&with_references(base.clone(), &[("q-1", &["no", "yes"])])),
+            "references are digested in the order the benchmark holds them"
+        );
+        assert_ne!(
+            dataset_version(&with_references(base.clone(), &[("q-1", &["ab"])])),
+            dataset_version(&with_references(base, &[("q-1", &["a", "b"])])),
+            "each reference is length-prefixed, so a split is not a join"
+        );
     }
 
     fn chunk(id: &str, text: &str) -> Chunk {

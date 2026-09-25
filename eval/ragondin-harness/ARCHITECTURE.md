@@ -4,8 +4,9 @@
 
 The **evaluation driver**: `evaluate`, which takes a validated
 `LogicalPipeline`, a ready `EngineContext` and a loaded `Benchmark`, runs the
-pipeline once per query through `ragondin-engine`, scores the rankings against
-the benchmark's qrels, and assembles the `Run` that names itself by the
+pipeline once per query through `ragondin-engine`, scores every metric family
+the benchmark's pieces allow — rankings against its qrels, answers against its
+reference answers — and assembles the `Run` that names itself by the
 content-addressed identity tuple.
 
 One of the **two drivers** over the one engine (`docs/code-architecture.md` §9,
@@ -59,10 +60,45 @@ store holds, and files it under its query. Four consequences are deliberate:
   byte length of its text, the sizes the engine's trace records there.
 - **A query that stops the run carries its trace out with the error**, whether
   it failed or was refused. `HarnessError::Execute` holds the rendered trace of
-  the run that failed, and `HarnessError::UnscorableOutput` the trace of the
-  run whose output it refused — the only record of the context or answer it
-  produced — because that is the trace worth reading and an error that dropped
-  it would discard exactly the evidence INV-10 exists to preserve.
+  the run that failed, and `HarnessError::NoAnswer` and
+  `HarnessError::NoRanking` the trace of the run whose output they refused —
+  the only record of what it produced — because that is the trace worth
+  reading and an error that dropped it would discard exactly the evidence
+  INV-10 exists to preserve.
+
+## The regime, and where each family reads its input
+
+Which metric families a run reports follows the pieces the benchmark carries
+(ADR-8, [ADR-C30](../../docs/adr/ADR-C30-generation-evaluation-regime-squad-metrics-and-benchmark.md)
+§ 5), read once from `Benchmark::carries`: qrels score the retrieval metrics,
+reference answers score `exact_match` and `token_f1`, and a benchmark carrying
+both scores both. Each family averages over its own judged set — a query with
+at least one judgment for the retrieval metrics, a query with a non-empty
+reference list for the generation ones — so a query may be scored in one
+family, both, or neither. A family the benchmark does not carry is absent from
+`Run.metrics`, not zero.
+
+- **The ranking** is read out of the trace, never out of the executor's
+  output, by port position (ADR-C30 § 3): a terminal generator's context port
+  names its context builder, the builder's chunks port names the node whose
+  `RankedChunks` output entry is the ranking, and a terminal builder enters the
+  walk at its own chunks port. A terminal node that produces chunks is its own
+  ranking, which is today's rule and today's numbers. The walk never falls back
+  to the context's own chunks, which are cut to the builder's budget; when it
+  finds no ranking over a benchmark that carries qrels, the query is refused
+  with `HarnessError::NoRanking`, naming where the walk stopped
+  (`RankingWalkError`). `ranked_documents` is the one place a ranking is
+  extracted.
+- **The answer** is read from the terminal node's output entry in the trace
+  (ADR-C31 § 5), the `{"answer": {"text": ...}}` a stored run's `traces.json`
+  holds — the place the per-query fixture reads it, so the text scored here and
+  the text a re-scorer reads are one value. The text is scored exactly as the
+  generator returned it; there is no extraction step (ADR-C30 § 1).
+- **A benchmark carrying reference answers, run through a pipeline that
+  produces no answer**, is refused with `HarnessError::NoAnswer`, never
+  reported on its retrieval metrics alone. `NothingToScore` keeps its meaning:
+  no family scored any query, which only a benchmark carrying neither piece
+  reaches.
 
 ## Indexing is ad hoc, and that is not a position on open question 5
 
@@ -112,7 +148,12 @@ defines the record and states that the digest is assembled by the harness;
 - **`dataset_version` is taken over the loaded benchmark**, not over the files
   it was parsed from: two snapshots that parse to the same corpus, queries and
   judgments are the same dataset, and a digest over bytes would make a
-  re-download a different one.
+  re-download a different one. Reference answers enter it only when the
+  benchmark carries them, as a section opened by its own tag after the qrels
+  (ADR-C30 § 5), so a qrels-only benchmark digests byte for byte as it did
+  before reference answers existed — the digests
+  `bin/ragondin/tests/calibration.rs` pins included. The answer text a run
+  produces is in its trace, and the trace is not part of identity.
 - **`index_version` is taken over the chunk set**, not over a backend artifact:
   the chunks are what any index is built from, and an index file's bytes move
   with a library version that changed nothing about what is indexed.
@@ -140,36 +181,42 @@ reader can disagree with it.
    that question 6 of `docs/OPEN_QUESTIONS.md` leaves unresolved, and because a
    returned record is testable without a filesystem. The end-to-end test performs the
    save, so the record is proved storable here rather than two crates away.
-2. **The metric set is nDCG@k, recall@k and MRR**, under the names `ndcg@{k}`,
-   `recall@{k}` and `mrr`. Those are the three the issue names; `precision@k`
+2. **The retrieval metric set is nDCG@k, recall@k and MRR**, under the names
+   `ndcg@{k}`, `recall@{k}` and `mrr`; the generation set is ADR-C30's,
+   `exact_match` and `token_f1`, and is not this crate's choice. The retrieval
+   three are the ones the issue that built this driver named; `precision@k`
    and MAP@k exist in `ragondin-metrics` and are not computed, because a metric
    nothing asked for is a number someone has to maintain. MRR is the **uncut**
    `reciprocal_rank`, matching `trec_eval`'s `recip_rank`, which is why its
    name carries no `@k`.
-3. **A query with no qrels line at all is executed and left unscored.**
+3. **A query with no qrels line at all is executed and left unscored** by the
+   retrieval family, as a query with no reference answer is by the generation
+   one (ADR-C30 § 1 applies the same rule to each piece).
    `ragondin-metrics` records that `trec_eval` evaluates a judged-and-empty
    query (counting its zero in the mean) and never evaluates an unjudged one;
    `Benchmark::iter` yields an empty map for a query the qrels never name, and
    that empty map is exactly the distinction. The query still runs and still
-   leaves a trace — the mean is over the queries that were *scored*, and a
-   benchmark in which that count is zero is refused
+   leaves a trace — each mean is over the queries that family *scored*, and a
+   benchmark in which no family scored any query is refused
    (`HarnessError::NothingToScore`) rather than reported as `NaN`. On a
    BEIR-loaded benchmark the two denominators coincide, because the adapter
    already filters queries by qrels.
 4. **A chunk ranking collapses to a document ranking by first occurrence.**
-   Metrics score documents; a pipeline returns chunks. The output is sorted by
-   descending score by the ranking contract, so the first chunk of a document
+   Metrics score documents; a pipeline ranks chunks. The node's output entry
+   names them in the order the node returned them, which the ranking contract
+   makes descending score order, so the first chunk of a document
    is its best — which makes first-occurrence the max-score-per-document rule
    BEIR evaluations use, without a second sort.
-5. **Only a ranking of chunks is scored.** The engine's output is one of a
-   ranking, a context or an answer, whichever the pipeline's terminal node
-   produces. A ranking is scored as described above; a context or an answer is
-   refused, for every query and judged or not, with
-   `HarnessError::UnscorableOutput` naming the query and the kind, and carrying
-   the query's rendered trace. That is this crate's state until it selects
-   which ranking a generation pipeline is scored on and scores answers
-   themselves — reporting numbers over an output nobody asked to have scored
-   would be worse than refusing.
+5. **A refusal is checked for every query once the benchmark carries the
+   piece**, judged or not. `NoAnswer` is returned for the first query whose
+   pipeline produced no answer over a benchmark carrying reference answers,
+   and `NoRanking` for the first whose ranking the walk cannot find over a
+   benchmark carrying qrels, even when that query itself carries no reference
+   or no judgment: a refusal that depended on which queries happen to be
+   judged would accept a pipeline on one benchmark and refuse it on a subset of
+   the same one. The walk's own failure modes are ADR-C30's; naming each of
+   them as a `RankingWalkError` variant, and finding the terminal node as the
+   one node no other node consumes, is this crate's reading of it.
 6. **One failing query fails the whole run.** Averaging over the queries that
    happened to succeed would report a smaller benchmark as the whole one, under
    an id that claims to name the whole one.
@@ -186,7 +233,15 @@ from `CARGO_MANIFEST_DIR`. It is not copied here: one miniature dataset in the
 repository is one set of expected numbers to keep true, and two would drift the
 day one of them is edited.
 
-The expected metrics in that file are derived by hand in a comment, from the
+`tests/generation_regime.rs` drives the generation regime over a benchmark
+written in the file and `retriever → fusion → context builder → generator`
+stubs (`tests/fixtures/stub-generation.yaml`, and `stub-context.yaml` without
+its generator). Its context builder keeps one chunk out of a two-document
+ranking, so a query judging the second document scores differently over the
+ranking and over the context — which is what pins the ranking ADR-C30 § 3 names
+as the one read.
+
+The expected metrics in both files are derived by hand in a comment, from the
 fixture's qrels and from what the stub components fabricate. That is the point
 of stubs: the arithmetic is checkable by a reader, and **no number the test
 asserts is a measurement of retrieval quality**. The pipeline fixture labels its

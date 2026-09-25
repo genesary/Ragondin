@@ -27,15 +27,24 @@
 //!   index_version, model_hashes, engine_version)` (§7.1). Identical inputs
 //!   yield an identical `run_id` and identical metrics (P4).
 //!
+//! # What a run scores
+//!
+//! The regime follows the pieces the benchmark carries (ADR-8), never a flag:
+//! qrels score nDCG@k, recall@k and MRR; reference answers score `exact_match`
+//! and `token_f1` (ADR-C30 § 1); a benchmark carrying both scores both, each
+//! family averaged over the queries that carry its piece. Once a pipeline ends
+//! in an answer, the retrieval metrics read the ranking that fed its context
+//! builder, found by port position (ADR-C30 § 3), and the answer is read from
+//! the generator's entry in the trace.
+//!
 //! The harness **returns** the run rather than storing it: the store root is
 //! the caller's, and `FileSystemRunStore::save` is one call away. What belongs
 //! here is the record; where it is written down is the composition root's.
 //!
 //! # What is not here
 //!
-//! No serving path and no Tower (that is `ragondin-server`). No judge and no
-//! generation — retrieval metrics only, which is what makes M2 defensible
-//! without an LLM (ADR-10). No cache: question 6 of `docs/OPEN_QUESTIONS.md` is
+//! No serving path and no Tower (that is `ragondin-server`). No judge: every
+//! metric is deterministic (ADR-10). No cache: question 6 of `docs/OPEN_QUESTIONS.md` is
 //! unresolved. And no component: a driver is handed a ready `EngineContext`
 //! and constructs nothing, so this crate depends on nothing under
 //! `components/`.
@@ -53,5 +62,5 @@ mod identity;
 mod trace;
 
 pub use corpus::CorpusIndex;
-pub use error::HarnessError;
+pub use error::{HarnessError, RankingWalkError};
 pub use evaluate::{evaluate, Evaluation};
