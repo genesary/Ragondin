@@ -13,7 +13,7 @@
 //! knows both the engine and the run store, translates between them, and this
 //! module is where that translation is legible and changeable.
 
-use ragondin_engine::{ExecutionTrace, ValueSummary};
+use ragondin_engine::{ExecutionTrace, RankedChunk, ValueSummary};
 use ragondin_experiments::TraceDocument;
 use serde_json::{json, Value};
 
@@ -39,13 +39,31 @@ pub(crate) fn render(trace: &ExecutionTrace) -> TraceDocument {
     TraceDocument::new(json!({ "nodes": nodes }))
 }
 
+/// One named chunk — of a ranking or of a context, rendered alike.
+fn ranked_chunk(hit: &RankedChunk) -> Value {
+    json!({
+        "chunk": hit.chunk.as_str(),
+        "document": hit.document.as_str(),
+        "score": hit.score,
+    })
+}
+
 /// Renders one edge value's summary.
 ///
 /// An output's chunks are **named**, in the order the node returned them, and
-/// an input's are counted (ADR-C28). `count` is rendered on both, so a reader
-/// of the field does not have to know which side it is looking at; on an
-/// output it is the length of `ranked`, which is where the ranking a per-query
-/// fixture, a graded-relevance calibration or a replay view reads lives.
+/// an input's are counted (ADR-C28). For chunks, `count` is rendered on both
+/// sides, so a reader of the field does not have to know which side it is
+/// looking at; on an output it is the length of `ranked`, which is where the
+/// ranking a per-query fixture, a graded-relevance calibration or a replay
+/// view reads lives. A context is rendered differently on each side: `chunks`
+/// and `text` when produced, `count` and `text_bytes` when consumed.
+///
+/// A produced context renders as `{"context": {"chunks": [...], "text": ...}}`
+/// and a produced answer as `{"answer": {"text": ...}}` — the shapes ADR-C31
+/// § 5 pins, each chunk rendered as a ranked one is. Consumed, a context
+/// renders as `{"context": {"count": ..., "text_bytes": ...}}` and an answer
+/// as `{"answer": {"text_bytes": ...}}`: sizes only, since the value is named
+/// under the node that produced it.
 ///
 /// A score is rendered as the JSON number of its `f32`, widened to `f64` on
 /// the way — lossless, and the reason a stored score shows more digits than
@@ -58,15 +76,17 @@ fn summary(value: &ValueSummary) -> Value {
         ValueSummary::Chunks { count } => json!({"chunks": {"count": count}}),
         ValueSummary::RankedChunks { chunks } => json!({"chunks": {
             "count": chunks.len(),
-            "ranked": chunks
-                .iter()
-                .map(|hit| json!({
-                    "chunk": hit.chunk.as_str(),
-                    "document": hit.document.as_str(),
-                    "score": hit.score,
-                }))
-                .collect::<Vec<_>>(),
+            "ranked": chunks.iter().map(ranked_chunk).collect::<Vec<_>>(),
         }}),
+        ValueSummary::ContextSize { count, text_bytes } => {
+            json!({"context": {"count": count, "text_bytes": text_bytes}})
+        }
+        ValueSummary::Context { chunks, text } => json!({"context": {
+            "chunks": chunks.iter().map(ranked_chunk).collect::<Vec<_>>(),
+            "text": text,
+        }}),
+        ValueSummary::AnswerSize { text_bytes } => json!({"answer": {"text_bytes": text_bytes}}),
+        ValueSummary::Answer { text } => json!({"answer": {"text": text}}),
     }
 }
 
@@ -74,7 +94,7 @@ fn summary(value: &ValueSummary) -> Value {
 mod tests {
     use std::time::Duration;
 
-    use ragondin_engine::{NodeTrace, RankedChunk};
+    use ragondin_engine::NodeTrace;
     use ragondin_pipeline::NodeId;
     use ragondin_types::{ChunkId, DocId, QueryId};
 
@@ -144,6 +164,61 @@ mod tests {
         let rendered = &document.as_value()["nodes"][0];
         assert_eq!(rendered["output"], Value::Null);
         assert_eq!(rendered["error"], "the component refused the request");
+    }
+
+    #[test]
+    fn a_context_and_an_answer_render_named_as_outputs_and_sized_as_inputs() {
+        // ADR-C31 § 5: a produced context names its chunks and its text, a
+        // produced answer its text; consumed, each is rendered by its sizes.
+        let document = render(&ExecutionTrace {
+            nodes: vec![
+                NodeTrace {
+                    node: NodeId::new("ctx"),
+                    inputs: vec![ValueSummary::Chunks { count: 2 }],
+                    output: Some(ValueSummary::Context {
+                        chunks: vec![ranked("c-3", "doc-b", 0.5), ranked("c-1", "doc-a", 0.25)],
+                        text: "three\none".to_string(),
+                    }),
+                    duration: Duration::from_nanos(10),
+                    error: None,
+                },
+                NodeTrace {
+                    node: NodeId::new("gen"),
+                    inputs: vec![
+                        ValueSummary::ContextSize {
+                            count: 2,
+                            text_bytes: 9,
+                        },
+                        ValueSummary::AnswerSize { text_bytes: 4 },
+                    ],
+                    output: Some(ValueSummary::Answer {
+                        text: "yes.".to_string(),
+                    }),
+                    duration: Duration::from_nanos(20),
+                    error: None,
+                },
+            ],
+        });
+
+        let nodes = &document.as_value()["nodes"];
+        assert_eq!(
+            nodes[0]["output"],
+            json!({"context": {
+                "chunks": [
+                    {"chunk": "c-3", "document": "doc-b", "score": 0.5},
+                    {"chunk": "c-1", "document": "doc-a", "score": 0.25},
+                ],
+                "text": "three\none",
+            }})
+        );
+        assert_eq!(nodes[1]["output"], json!({"answer": {"text": "yes."}}));
+        assert_eq!(
+            nodes[1]["inputs"],
+            json!([
+                {"context": {"count": 2, "text_bytes": 9}},
+                {"answer": {"text_bytes": 4}},
+            ])
+        );
     }
 
     #[test]

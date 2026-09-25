@@ -320,11 +320,11 @@ flowchart TB
   VK -.->|"Err: KindMismatch"| VERR
 
   LOG -->|hash| H[("content hash — run identity")]
-  LOG -->|"ragondin_engine::plan_physical(logical, ctx)"| PX["refuse every Extension node (#93),<br/>every ContextBuilder and Generator node"]
+  LOG -->|"ragondin_engine::plan_physical(logical, ctx)"| PX["refuse every Extension node (#93)"]
   PX --> PK["kind check, LAYER 2 — with the registry in hand"]
   PK --> RES["resolve: match the node's VARIANT to its family's registry,<br/>never the impl name (INV-7) · ctor(Params) constructs the component"]
   RES --> PHY["PhysicalPipeline<br/>components constructed · holds Box#60;dyn Trait#62; · not serializable"]
-  PX -.->|"Err: ExtensionUnsupported · GenerationUnsupported"| PERR["PlanError"]
+  PX -.->|"Err: ExtensionUnsupported"| PERR["PlanError"]
   PK -.->|"Err: KindMismatch"| PERR
   RES -.->|"Err: UnknownImpl · Construction"| PERR
 
@@ -334,13 +334,13 @@ flowchart TB
 
   PHY -->|"Engine::execute(plan, query)"| EX["executor<br/>topological schedule over the data-flow edges ·<br/>an erased NodeValue on each edge · one adapter per node variant"]
   EX --> PAIR["the return type is a PAIR, not a Result of one:<br/>(Result#60;Output, ExecError#62;, ExecutionTrace)"]
-  PAIR --> OKP["Ok(Output) — the terminal node's chunks,<br/>beside the full trace"]
+  PAIR --> OKP["Ok(Output) — the terminal node's value: Chunks · Context · Answer,<br/>beside the full trace"]
   PAIR --> ERP["Err(ExecError) — Component · MissingInput · DanglingInput ·<br/>KindMismatch · No/MultipleTerminalNodes · InvalidParam ·<br/>Cycle · DuplicateNodeIds · UnplannableNode — beside the trace of what ran,<br/>failing node last. The trace is a return value, not a log (INV-10)."]
 ```
 
 **How to read it.** `DERIV` is joined to both kind checks by a plain line and to nothing else: it is not a stage of the path but the pair of functions both stages call, which is what ADR-C16's "one derivation, two call sites" means. Layer 1 needs no registry, which is what lets `ragondin validate` and the configuration service's NACK (ADR-6) reject an incompatible wiring before anything is constructed; layer 2 is the same derivation run where the registry is available, and the `EngineContext` is consulted only at `resolve`, one step later. The comparison *loop* around the derivation is written twice, once per crate, and each raises its own error type — deliberately, and word for word the same message.
 
-**Where a node's parameters go.** A *component* node — one that resolves to an implementation, as `Branch` and `Loop` do not — carries a single untyped parameter map (`Params`). Nothing splits that map. It reaches the constructor whole, the plan keeps carrying it on the node, and the two readers on either side of the seam pick different keys out of the one map. The keys that configure the *implementation* — a model path, a device, BM25's `k1` and `b` — are the ones the **constructor** reads, and what it takes from them is fixed for the component's lifetime. The keys that vary *per call* — a retriever's or a reranker's `top_k` — are read out of that same map later, by the **executor**, which builds the typed params struct the trait method takes (§7.1) afresh for each call; on the `Remote` face that struct rides in every request. So what keeps configuration and per-call parameters apart is an agreement between two readers about which keys are whose, not a partition performed anywhere — a weaker guarantee than a split, and the one actually in force. It is still why `build_reranker` (§8.1) receives the map and not a `RerankParams`: `RerankParams` is per-call by construction, so a constructor given only that could build nothing.
+**Where a node's parameters go.** A *component* node — one that resolves to an implementation, as `Branch` and `Loop` do not — carries a single untyped parameter map (`Params`). Nothing splits that map. It reaches the constructor whole, the plan keeps carrying it on the node, and the two readers on either side of the seam pick different keys out of the one map. The keys that configure the *implementation* — a model path, a device, BM25's `k1` and `b` — are the ones the **constructor** reads, and what it takes from them is fixed for the component's lifetime. The keys that vary *per call* — a retriever's or a reranker's `top_k`, a reranker's optional `served_model`, a context builder's `budget`, a generator's `served_model`, `template` and optional `temperature`, `seed` and `max_tokens` — are read out of that same map later, by the **executor**, which builds the typed params struct the trait method takes (§7.1) afresh for each call; on the `Remote` face that struct rides in every request. So what keeps configuration and per-call parameters apart is an agreement between two readers about which keys are whose, not a partition performed anywhere — a weaker guarantee than a split, and the one actually in force. It is still why `build_reranker` (§8.1) receives the map and not a `RerankParams`: `RerankParams` is per-call by construction, so a constructor given only that could build nothing.
 
 **v0 decision.** The seam exists — it is an architectural boundary that is expensive to introduce after the fact — but the optimization phase between logical and physical is **the identity function** at first. We reserve the optimizer's place; we do not build the optimizer. (DataFusion's optimizer is an entire subsystem.)
 
@@ -436,7 +436,8 @@ Modelled on DataFusion's session context. The context carries the **registry**: 
 pub struct EngineContext {
     retrievers: Registry<dyn Retriever>,
     rerankers:  Registry<dyn Reranker>,
-    // … one registry per node family (retriever, fusion, reranker)
+    // … one registry per node family (retriever, fusion, reranker,
+    //   context builder, generator)
 }
 
 impl EngineContext {
@@ -448,34 +449,40 @@ impl EngineContext {
 }
 ```
 
-**Three tables, one way in, and two families with no table.** The context keeps one table per family a pipeline node names: `Retriever`, `Fusion` and `Reranker`. Each is populated by the same `register_*` call (INV-7 in the API), and physical planning looks each one up from the node's `impl:` name. `Embedder` and `VectorStore` are **not** node variants and have **no** table: a dense retriever is built *from* them, and a `ComponentCtor` is handed the node's `Params` and never the `EngineContext`, so the composition root builds both itself, inside the constructor closure it registers for the dense retriever (ADR-C32). `ContextBuilder` and `Generator` *are* node variants (ADR-C31) and have no table yet either: physical planning refuses them with `GenerationUnsupported` (see `engine/ragondin-engine/ARCHITECTURE.md`). That asymmetry is drawn below because the struct shows only what is there.
+**Five tables, one way in, and two families with no table.** The context keeps one table per family a pipeline node names: `Retriever`, `Fusion`, `Reranker`, `ContextBuilder` and `Generator` (ADR-C31). Each is populated by the same `register_*` call (INV-7 in the API), and physical planning looks each one up from the node's `impl:` name. `Embedder` and `VectorStore` are **not** node variants and have **no** table: a dense retriever is built *from* them, and a `ComponentCtor` is handed the node's `Params` and never the `EngineContext`, so the composition root builds both itself, inside the constructor closure it registers for the dense retriever (ADR-C32). That asymmetry is drawn below because the struct shows only what is there.
 
 ```mermaid
 flowchart TB
-  ROOT["bin/ragondin — the composition root<br/>register_retriever · register_fusion · register_reranker<br/>ONE way in: a built-in and a third-party crate call the same fn (INV-7)"]
+  ROOT["bin/ragondin — the composition root<br/>register_retriever · register_fusion · register_reranker ·<br/>register_context_builder · register_generator<br/>ONE way in: a built-in and a third-party crate call the same fn (INV-7)"]
 
   subgraph CTX["EngineContext — one table per node family, impl name → ComponentCtor(Params)"]
     RT["Registry#60;dyn Retriever#62;"]
     FU["Registry#60;dyn Fusion#62;"]
     RR["Registry#60;dyn Reranker#62;"]
+    CB["Registry#60;dyn ContextBuilder#62;"]
+    GE["Registry#60;dyn Generator#62;"]
   end
 
-  ROOT --> RT & FU & RR
+  ROOT --> RT & FU & RR & CB & GE
 
-  NODE["a node of the LogicalPipeline<br/>Retriever · Fusion · Reranker, each carrying an impl name"]
+  NODE["a node of the LogicalPipeline<br/>Retriever · Fusion · Reranker · ContextBuilder · Generator,<br/>each carrying an impl name"]
   NODE -->|"plan_physical matches the node VARIANT to pick the table"| RT
   NODE --> FU
   NODE --> RR
+  NODE --> CB
+  NODE --> GE
   RT --> PN["a PhysicalNode of the plan,<br/>holding the constructed Box#60;dyn Trait#62;"]
   FU --> PN
   RR --> PN
+  CB --> PN
+  GE --> PN
 
   DENSE["the dense retriever's constructor closure, written by the composition root:<br/>it builds the Embedder and the VectorStore itself (ADR-C32)"]
   ROOT -.->|"registers it as a retriever"| DENSE
   DENSE -.-> RT
 ```
 
-A constructor receives the node's parameter map whole — `ragondin-pipeline`'s untyped `Params` (`BTreeMap<String, ParamValue>`), every key of it, not a subset planning has picked out — and never a per-call params struct. It reads the **configuration** keys and leaves the rest; the executor reads the per-call keys out of the same map afterwards. `RerankParams` is per-call (§7.1) and carries only `top_k` (`ragondin-contracts`), which is not enough to construct anything: what a reranker needs at construction is a model path and a device, from which it builds the ONNX session it then reranks with. The two kinds of parameter reach the component by different routes — one through the constructor, once; one through each call's params struct — and §6.3 is where they are told apart.
+A constructor receives the node's parameter map whole — `ragondin-pipeline`'s untyped `Params` (`BTreeMap<String, ParamValue>`), every key of it, not a subset planning has picked out — and never a per-call params struct. It reads the **configuration** keys and leaves the rest; the executor reads the per-call keys out of the same map afterwards. `RerankParams` is per-call (§7.1) and carries only `top_k` and an optional `served_model` (`ragondin-contracts`), which is not enough to construct anything: what a reranker needs at construction is a model path and a device, from which it builds the ONNX session it then reranks with. The two kinds of parameter reach the component by different routes — one through the constructor, once; one through each call's params struct — and §6.3 is where they are told apart.
 
 ### 8.2 The executor and its traces
 

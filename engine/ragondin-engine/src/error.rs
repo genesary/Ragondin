@@ -21,7 +21,10 @@ use ragondin_pipeline::{NodeId, ParamValue, ValueKind};
 /// missing registration that is in fact present under another family.
 ///
 /// One variant per [`ragondin_pipeline::LogicalNode`] variant that physical
-/// planning resolves to a component, and no other. An embedder and a vector
+/// planning resolves to a component, and no other. Each renders as the
+/// `component:` value a configuration writes for that node — `retriever`,
+/// `fusion`, `reranker`, `context_builder`, `generator` — so a diagnostic
+/// names the family in the reader's own words. An embedder and a vector
 /// store have none: they are not pipeline nodes but components a dense
 /// retriever is built from, and the composition root builds them itself,
 /// inside the constructor closure it registers for that retriever. The engine
@@ -34,6 +37,10 @@ pub enum ComponentFamily {
     Fusion,
     /// [`ragondin_contracts::Reranker`].
     Reranker,
+    /// [`ragondin_contracts::ContextBuilder`].
+    ContextBuilder,
+    /// [`ragondin_contracts::Generator`].
+    Generator,
 }
 
 impl fmt::Display for ComponentFamily {
@@ -42,6 +49,8 @@ impl fmt::Display for ComponentFamily {
             Self::Retriever => "retriever",
             Self::Fusion => "fusion",
             Self::Reranker => "reranker",
+            Self::ContextBuilder => "context_builder",
+            Self::Generator => "generator",
         };
         f.write_str(name)
     }
@@ -70,7 +79,7 @@ pub type ConstructionError = Box<dyn std::error::Error + Send + Sync>;
 /// arrives is the intended signal that a new refusal needs reporting — which
 /// `#[non_exhaustive]` would suppress. Physical planning added
 /// [`PlanError::ExtensionUnsupported`] and [`PlanError::KindMismatch`] that
-/// way, and the generation nodes added [`PlanError::GenerationUnsupported`].
+/// way.
 #[derive(Debug, thiserror::Error)]
 pub enum PlanError {
     /// No implementation is registered under this name for this family.
@@ -129,25 +138,6 @@ pub enum PlanError {
         node: NodeId,
         /// Its [`ragondin_pipeline::ExtensionNode::kind`], e.g. `"hyde"`.
         kind: String,
-    },
-
-    /// The node is a context builder or a generator (ADR-C31 § 3), and
-    /// nothing in this build can plan one.
-    ///
-    /// `ragondin-pipeline` validates both variants, and no component family
-    /// here resolves either, so planning refuses them in one typed error
-    /// rather than reaching resolution without a registry to consult.
-    /// `component` is the node's `component:` value as a configuration
-    /// writes it — `context_builder` or `generator`.
-    #[error(
-        "node `{}`: no physical planner for a `{component}` node in this build",
-        node.as_str()
-    )]
-    GenerationUnsupported {
-        /// The node that cannot be planned.
-        node: NodeId,
-        /// Its `component:` value, `"context_builder"` or `"generator"`.
-        component: &'static str,
     },
 
     /// An edge's value kinds do not line up (ADR-C16), caught at planning.
@@ -325,15 +315,20 @@ pub enum ExecError {
         nodes: Vec<NodeId>,
     },
 
-    /// A per-call parameter is absent, of another kind than the executor
-    /// reads, or negative.
+    /// A per-call parameter is unreadable: a required key is absent, or a
+    /// declared key — required or optional — holds a value of another kind
+    /// than the one [`ExecError::InvalidParam::expected`] names, or a
+    /// negative number where a count is read.
     ///
     /// The executor reads a node's per-call keys from its `Params` (§6.3) and
     /// **invents no default**: what a component does in the absence of a
     /// parameter is the component's to decide, and a default applied here
-    /// could only be a second, disagreeing copy of it.
+    /// could only be a second, disagreeing copy of it. An absent *optional*
+    /// key is not refused — it reaches the component as `None` — but an
+    /// optional key the node declares with a value the executor cannot read
+    /// is.
     #[error(
-        "node `{}`: the per-call parameter `{key}` must be a non-negative integer, {}",
+        "node `{}`: the per-call parameter `{key}` must be {expected}, {}",
         node.as_str(),
         param_found_clause(found)
     )]
@@ -342,6 +337,8 @@ pub enum ExecError {
         node: NodeId,
         /// The parameter's key.
         key: &'static str,
+        /// The kind of value the executor reads under that key.
+        expected: ParamKind,
         /// What the node declared under that key instead, if anything.
         found: Option<ParamValue>,
     },
@@ -383,10 +380,9 @@ pub enum ExecError {
     ///
     /// A defect in this crate, not upstream: a [`PhysicalPipeline`] is built
     /// only by [`plan_physical`], which refuses an extension with
-    /// [`PlanError::ExtensionUnsupported`] and a context builder or a
-    /// generator with [`PlanError::GenerationUnsupported`], so no plan holds
-    /// one. Returned rather than panicked on, so the executor's match over
-    /// every node variant has no arm that aborts the process.
+    /// [`PlanError::ExtensionUnsupported`], so no plan holds one. Returned
+    /// rather than panicked on, so the executor's match over every node
+    /// variant has no arm that aborts the process.
     ///
     /// [`PhysicalPipeline`]: crate::PhysicalPipeline
     /// [`plan_physical`]: crate::plan_physical
@@ -400,6 +396,36 @@ pub enum ExecError {
     },
 }
 
+/// The kind of value the executor reads under a per-call key, as
+/// [`ExecError::InvalidParam`] names it.
+///
+/// Its `Display` completes the sentence "the per-call parameter `key` must
+/// be …", so the diagnosis says what the key requires rather than assuming
+/// every per-call key is a count.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ParamKind {
+    /// A [`ParamValue::Int`] of zero or more — `top_k`, `budget`, `seed`,
+    /// `max_tokens`.
+    NonNegativeInteger,
+    /// A [`ParamValue::String`] — `served_model`, `template`. Any string,
+    /// the empty one included: the executor judges the kind, never the value.
+    String,
+    /// A [`ParamValue::Float`] — `temperature`. An integer is refused as a
+    /// kind of its own rather than widened, since widening would be a
+    /// conversion chosen above the component.
+    Float,
+}
+
+impl fmt::Display for ParamKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::NonNegativeInteger => "a non-negative integer",
+            Self::String => "a string",
+            Self::Float => "a float",
+        })
+    }
+}
+
 /// Renders a node list for a message: `` `a`, `b`, `c` ``.
 fn node_list(nodes: &[NodeId]) -> String {
     nodes
@@ -410,9 +436,10 @@ fn node_list(nodes: &[NodeId]) -> String {
 }
 
 /// The part of [`ExecError::InvalidParam`]'s message that says what the node
-/// declared instead. A wrong *value* is named (a `top_k` of `-1` is worth
-/// reading back); a wrong *kind* is named by kind, since printing a whole
-/// list into an error message helps nobody.
+/// declared instead. An integer is named by value — a `top_k` of `-1` is worth
+/// reading back, and so is a `7` where a string was required; any other kind
+/// is named by kind, since printing a whole list, or a whole template, into an
+/// error message helps nobody.
 fn param_found_clause(found: &Option<ParamValue>) -> String {
     match found {
         None => "and this node declares none".to_string(),

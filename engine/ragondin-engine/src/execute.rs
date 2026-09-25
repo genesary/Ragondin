@@ -32,43 +32,65 @@
 //! plan consumes it, and a plan must have exactly one: the executor returns
 //! one value, and nothing in the representation says which of several
 //! unconsumed outputs that would be. Zero is [`ExecError::NoTerminalNode`],
-//! more than one is [`ExecError::MultipleTerminalNodes`]. The M2 [`Output`]
-//! is that node's `Vec<ScoredChunk>`.
+//! more than one is [`ExecError::MultipleTerminalNodes`]. [`Output`] is that
+//! node's value, whichever kind it is — a ranking, a context or an answer.
 //!
 //! **Per-call parameters.** A node's `Params` has two readers, one on each
 //! side of the seam (`docs/code-architecture.md` §6.3): planning passes the
 //! node's whole map to the constructor, which reads what configures the
 //! implementation, and the executor reads the per-call keys from the same
 //! map. Nothing splits the map — the two readers pick different keys out of
-//! it. In M2 the executor's key is one — `top_k`, on a retriever and on a
-//! reranker — read as a [`ParamValue::Int`] and refused as
-//! [`ExecError::InvalidParam`] when it is absent, of another kind, or
-//! negative. **No default is invented here**: what a component does without a
+//! it. The keys the executor reads, by node:
+//!
+//! | node | required | optional |
+//! |---|---|---|
+//! | retriever | `top_k` (count) | — |
+//! | reranker | `top_k` (count) | `served_model` (string) |
+//! | context builder | `budget` (count) | — |
+//! | generator | `served_model`, `template` (strings) | `temperature` (float), `seed`, `max_tokens` (counts) |
+//!
+//! A count is a [`ParamValue::Int`] of zero or more, a string a
+//! [`ParamValue::String`], a float a [`ParamValue::Float`]. A required key
+//! that is absent, and any declared key whose value is of another kind or a
+//! negative count, is refused as [`ExecError::InvalidParam`] before the
+//! component is called; an absent optional key reaches the component as
+//! `None`. **No default is invented here**: what a component does without a
 //! parameter is the component's to decide (§8.1), and a default applied here
-//! could only be a second, disagreeing copy of it. A fusion's `FusionParams`
-//! carries no key, so nothing is read for one.
+//! could only be a second, disagreeing copy of it. **Nor is a value judged**:
+//! a zero count or an empty string reaches the component, which refuses it
+//! (ADR-C31 § 2). A fusion's `FusionParams` carries no key, so nothing is read
+//! for one.
 
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
-use ragondin_contracts::{FusionParams, RerankParams, RetrieveParams};
-use ragondin_pipeline::{
-    ContextBuilderNode, ExtensionNode, GeneratorNode, LogicalNode, NodeId, ParamValue, Params,
-    ValueKind,
+use ragondin_contracts::{
+    ContextParams, FusionParams, GenerateParams, RerankParams, RetrieveParams,
 };
-use ragondin_types::{Query, ScoredChunk};
+use ragondin_pipeline::{ExtensionNode, LogicalNode, NodeId, ParamValue, Params, ValueKind};
+use ragondin_types::{Answer, Context, Query, ScoredChunk};
 
-use crate::error::ExecError;
+use crate::error::{ExecError, ParamKind};
 use crate::plan::{PhysicalNode, PhysicalPipeline, ResolvedComponent};
 use crate::trace::{ExecutionTrace, NodeTrace, ValueSummary};
 
-/// What a pipeline returns to its caller.
+/// What a pipeline returns to its caller: its terminal node's value.
 ///
-/// In M2 a pipeline retrieves, so its output is its terminal node's ranked
-/// chunks. It is an alias rather than a struct because there is nothing yet to
-/// carry beside them; a generation-shaped output arrives with M3, and this
-/// crate is internal (INV-2), so widening it then breaks nobody's API.
-pub type Output = Vec<ScoredChunk>;
+/// One variant per kind a node produces (ADR-C31's Consequences: "an enum over
+/// what a terminal node may produce"). A query is not among them — no node
+/// produces one. A pipeline may end on a ranking, on its context builder, or
+/// on its generator. This crate is internal (INV-2), so a kind added later
+/// widens this enum and breaks nobody's API; a caller's exhaustive `match`
+/// failing to compile is the intended signal.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Output {
+    /// A ranked list of chunks, from a retriever, a fusion or a reranker.
+    Chunks(Vec<ScoredChunk>),
+    /// A context, from a context builder.
+    Context(Context),
+    /// An answer, from a generator.
+    Answer(Answer),
+}
 
 /// The erased value travelling along one edge of a plan (ADR-C16).
 ///
@@ -77,7 +99,7 @@ pub type Output = Vec<ScoredChunk>;
 /// authors never see it — each node's adapter below destructures it and calls
 /// the component with typed arguments.
 ///
-/// A closed enum rather than `Box<dyn Any>`: a kind added in M3 turns every
+/// A closed enum rather than `Box<dyn Any>`: a kind added later turns every
 /// adapter that does not handle it into a compiler error, which a downcast
 /// would turn into a runtime string.
 pub(crate) enum NodeValue {
@@ -85,14 +107,37 @@ pub(crate) enum NodeValue {
     Query(Query),
     /// A ranked list of chunks.
     Chunks(Vec<ScoredChunk>),
+    /// A context, produced by a context builder.
+    Context(Context),
+    /// An answer, produced by a generator.
+    Answer(Answer),
+}
+
+impl NodeValue {
+    /// The [`ValueKind`] this value is of — what a kind-mismatch backstop
+    /// reports as found.
+    fn kind(&self) -> ValueKind {
+        match self {
+            Self::Query(_) => ValueKind::Query,
+            Self::Chunks(_) => ValueKind::Chunks,
+            Self::Context(_) => ValueKind::Context,
+            Self::Answer(_) => ValueKind::Answer,
+        }
+    }
 }
 
 /// The value each producer has produced so far, keyed by its id.
 type Table = HashMap<NodeId, NodeValue>;
 
-/// The key of the only per-call parameter this build reads. See the module
-/// documentation for the rule.
+// The per-call keys this build reads. See the module documentation for which
+// node reads which, and for the rule.
 const TOP_K: &str = "top_k";
+const BUDGET: &str = "budget";
+const SERVED_MODEL: &str = "served_model";
+const TEMPLATE: &str = "template";
+const TEMPERATURE: &str = "temperature";
+const SEED: &str = "seed";
+const MAX_TOKENS: &str = "max_tokens";
 
 /// The executor.
 ///
@@ -193,8 +238,10 @@ async fn run(
     }
 
     match table.remove(&terminal) {
-        Some(NodeValue::Chunks(chunks)) => Ok(chunks),
-        // Exhaustive on purpose (ADR-C16): a kind added in M3 that a pipeline
+        Some(NodeValue::Chunks(chunks)) => Ok(Output::Chunks(chunks)),
+        Some(NodeValue::Context(context)) => Ok(Output::Context(context)),
+        Some(NodeValue::Answer(answer)) => Ok(Output::Answer(answer)),
+        // Exhaustive on purpose (ADR-C16): a kind added later that a pipeline
         // can end on must be handled here, and this match is where the
         // compiler says so.
         Some(NodeValue::Query(_)) => {
@@ -325,10 +372,13 @@ fn summarize_inputs(node: &PhysicalNode, table: &Table) -> Vec<ValueSummary> {
 /// catch-all arm would turn it into a runtime panic instead. So the variant is
 /// matched first and without a wildcard — a `LogicalNode` variant added later
 /// fails to compile here — and the component is destructured inside each arm,
-/// where the only other pairing is the one planning rules out. The variants
-/// planning refuses — an extension, a context builder, a generator — share one
-/// arm that returns [`ExecError::UnplannableNode`]; no plan `plan_physical`
-/// builds reaches it, since planning refuses those variants first.
+/// where the only other pairing is the one planning rules out. The variant
+/// planning refuses — an extension — has an arm that returns
+/// [`ExecError::UnplannableNode`]; no plan `plan_physical` builds reaches it,
+/// since planning refuses that variant first.
+///
+/// Every per-call parameter is read before the component is called, so a
+/// refused parameter never reaches a component.
 async fn call(node: &PhysicalNode, table: &Table) -> Result<NodeValue, ExecError> {
     match node.logical() {
         LogicalNode::Retriever(logical) => {
@@ -366,19 +416,60 @@ async fn call(node: &PhysicalNode, table: &Table) -> Result<NodeValue, ExecError
             };
             let query = query_at(&logical.id, &logical.inputs, 0, table)?;
             let chunks = chunks_at(&logical.id, &logical.inputs, 1, table)?.to_vec();
-            let params = RerankParams::new(per_call_top_k(&logical.id, &logical.params)?);
+            let mut params = RerankParams::new(per_call_top_k(&logical.id, &logical.params)?);
+            if let Some(served_model) = optional(
+                &logical.id,
+                &logical.params,
+                SERVED_MODEL,
+                ParamKind::String,
+                string,
+            )? {
+                params = params.with_served_model(served_model);
+            }
             let reranked = component
                 .rerank(query, chunks, &params)
                 .await
                 .map_err(|source| component_failed(&logical.id, source))?;
             Ok(NodeValue::Chunks(reranked))
         }
+        LogicalNode::ContextBuilder(logical) => {
+            let ResolvedComponent::ContextBuilder(component) = node.component() else {
+                unreachable!(
+                    "planning resolves a ContextBuilder node through the context builder registry"
+                )
+            };
+            let query = query_at(&logical.id, &logical.inputs, 0, table)?;
+            let chunks = chunks_at(&logical.id, &logical.inputs, 1, table)?.to_vec();
+            let params = ContextParams::new(required(
+                &logical.id,
+                &logical.params,
+                BUDGET,
+                ParamKind::NonNegativeInteger,
+                non_negative,
+            )?);
+            let context = component
+                .build(query, chunks, &params)
+                .await
+                .map_err(|source| component_failed(&logical.id, source))?;
+            Ok(NodeValue::Context(context))
+        }
+        LogicalNode::Generator(logical) => {
+            let ResolvedComponent::Generator(component) = node.component() else {
+                unreachable!("planning resolves a Generator node through the generator registry")
+            };
+            let query = query_at(&logical.id, &logical.inputs, 0, table)?;
+            let context = context_at(&logical.id, &logical.inputs, 1, table)?;
+            let params = generate_params(&logical.id, &logical.params)?;
+            let answer = component
+                .generate(query, context, &params)
+                .await
+                .map_err(|source| component_failed(&logical.id, source))?;
+            Ok(NodeValue::Answer(answer))
+        }
         // `PhysicalNode` is built in one place, and `plan_physical` refuses
-        // every variant below before it builds any — so no plan holds one.
-        // Returned as an error, never panicked on.
-        LogicalNode::ContextBuilder(ContextBuilderNode { id, .. })
-        | LogicalNode::Generator(GeneratorNode { id, .. })
-        | LogicalNode::Extension(ExtensionNode { id, .. }) => {
+        // an extension before it builds any — so no plan holds one. Returned
+        // as an error, never panicked on.
+        LogicalNode::Extension(ExtensionNode { id, .. }) => {
             Err(ExecError::UnplannableNode { node: id.clone() })
         }
     }
@@ -402,13 +493,7 @@ fn query_at<'t>(
     let producer = producer_at(consumer, inputs, port, ValueKind::Query)?;
     match value_of(producer, table) {
         NodeValue::Query(query) => Ok(query),
-        NodeValue::Chunks(_) => Err(ExecError::KindMismatch {
-            consumer: consumer.clone(),
-            port,
-            producer: producer.clone(),
-            expected: ValueKind::Query,
-            found: ValueKind::Chunks,
-        }),
+        other => Err(mismatch(consumer, port, producer, ValueKind::Query, other)),
     }
 }
 
@@ -422,13 +507,44 @@ fn chunks_at<'t>(
     let producer = producer_at(consumer, inputs, port, ValueKind::Chunks)?;
     match value_of(producer, table) {
         NodeValue::Chunks(chunks) => Ok(chunks),
-        NodeValue::Query(_) => Err(ExecError::KindMismatch {
-            consumer: consumer.clone(),
+        other => Err(mismatch(consumer, port, producer, ValueKind::Chunks, other)),
+    }
+}
+
+/// The context on `port`, or the typed refusal.
+fn context_at<'t>(
+    consumer: &NodeId,
+    inputs: &[NodeId],
+    port: usize,
+    table: &'t Table,
+) -> Result<&'t Context, ExecError> {
+    let producer = producer_at(consumer, inputs, port, ValueKind::Context)?;
+    match value_of(producer, table) {
+        NodeValue::Context(context) => Ok(context),
+        other => Err(mismatch(
+            consumer,
             port,
-            producer: producer.clone(),
-            expected: ValueKind::Chunks,
-            found: ValueKind::Query,
-        }),
+            producer,
+            ValueKind::Context,
+            other,
+        )),
+    }
+}
+
+/// ADR-C16's backstop: the value on an edge is not the kind its port wants.
+fn mismatch(
+    consumer: &NodeId,
+    port: usize,
+    producer: &NodeId,
+    expected: ValueKind,
+    found: &NodeValue,
+) -> ExecError {
+    ExecError::KindMismatch {
+        consumer: consumer.clone(),
+        port,
+        producer: producer.clone(),
+        expected,
+        found: found.kind(),
     }
 }
 
@@ -457,18 +573,108 @@ fn value_of<'t>(producer: &NodeId, table: &'t Table) -> &'t NodeValue {
 /// The per-call `top_k` a node declares. See the module documentation for the
 /// rule, including why no default is applied here.
 fn per_call_top_k(node: &NodeId, params: &Params) -> Result<usize, ExecError> {
-    let found = params.get(TOP_K);
-    let refuse = || ExecError::InvalidParam {
+    required(
+        node,
+        params,
+        TOP_K,
+        ParamKind::NonNegativeInteger,
+        non_negative,
+    )
+}
+
+/// The per-call params of a generator node: two required strings and three
+/// optional settings (ADR-C31 § 2).
+fn generate_params(node: &NodeId, params: &Params) -> Result<GenerateParams, ExecError> {
+    let served_model = required(node, params, SERVED_MODEL, ParamKind::String, string)?;
+    let template = required(node, params, TEMPLATE, ParamKind::String, string)?;
+    let mut call = GenerateParams::new(served_model, template);
+    if let Some(temperature) = optional(node, params, TEMPERATURE, ParamKind::Float, float)? {
+        call = call.with_temperature(temperature);
+    }
+    if let Some(seed) = optional(
+        node,
+        params,
+        SEED,
+        ParamKind::NonNegativeInteger,
+        non_negative,
+    )? {
+        call = call.with_seed(seed);
+    }
+    if let Some(max_tokens) = optional(
+        node,
+        params,
+        MAX_TOKENS,
+        ParamKind::NonNegativeInteger,
+        non_negative,
+    )? {
+        call = call.with_max_tokens(max_tokens);
+    }
+    Ok(call)
+}
+
+/// Reads a key the node must declare: absent is refused, as is a value `read`
+/// cannot turn into a `T`.
+fn required<T>(
+    node: &NodeId,
+    params: &Params,
+    key: &'static str,
+    expected: ParamKind,
+    read: fn(&ParamValue) -> Option<T>,
+) -> Result<T, ExecError> {
+    optional(node, params, key, expected, read)?.ok_or_else(|| ExecError::InvalidParam {
         node: node.clone(),
-        key: TOP_K,
-        found: found.cloned(),
+        key,
+        expected,
+        found: None,
+    })
+}
+
+/// Reads a key the node may omit: absent is `None`, and a declared value
+/// `read` cannot turn into a `T` is refused — "optional" never means
+/// "unreadable reads as absent".
+fn optional<T>(
+    node: &NodeId,
+    params: &Params,
+    key: &'static str,
+    expected: ParamKind,
+    read: fn(&ParamValue) -> Option<T>,
+) -> Result<Option<T>, ExecError> {
+    let Some(found) = params.get(key) else {
+        return Ok(None);
     };
-    match found {
-        // `top_k` is a `usize` on the contract, and `-1 as usize` is a very
-        // large count rather than an error, so the conversion is checked
-        // rather than cast.
-        Some(ParamValue::Int(value)) => usize::try_from(*value).map_err(|_| refuse()),
-        _ => Err(refuse()),
+    read(found)
+        .map(Some)
+        .ok_or_else(|| ExecError::InvalidParam {
+            node: node.clone(),
+            key,
+            expected,
+            found: Some(found.clone()),
+        })
+}
+
+/// A count: an integer of zero or more, converted with a check rather than a
+/// cast, because `-1 as usize` is a very large count rather than an error.
+fn non_negative<T: TryFrom<i64>>(value: &ParamValue) -> Option<T> {
+    match value {
+        ParamValue::Int(value) => T::try_from(*value).ok(),
+        _ => None,
+    }
+}
+
+/// Any string, the empty one included — the value is the component's to
+/// judge (ADR-C31 § 2).
+fn string(value: &ParamValue) -> Option<String> {
+    match value {
+        ParamValue::String(value) => Some(value.clone()),
+        _ => None,
+    }
+}
+
+/// A float, and only a float: an integer is not widened here.
+fn float(value: &ParamValue) -> Option<f64> {
+    match value {
+        ParamValue::Float(value) => Some(*value),
+        _ => None,
     }
 }
 
@@ -490,12 +696,19 @@ const _: fn() = || {
 mod tests {
     use super::*;
     use async_trait::async_trait;
-    use ragondin_contracts::{ComponentError, Fusion, Reranker, Retriever};
+    use ragondin_contracts::{
+        ComponentError, ContextBuilder, ContextParams, Fusion, GenerateParams, Generator, Reranker,
+        Retriever,
+    };
     use ragondin_pipeline::{
         validate, LogicalPipeline, RawGraph, RawNode, RawParamValue, RawPipeline, SchemaVersion,
     };
-    use ragondin_types::{Chunk, ChunkId, DocId, QueryId};
+    use ragondin_types::{
+        Answer, Chunk, ChunkId, Context, ContextChunk, DocId, ModelIdentity, QueryId,
+    };
     use std::collections::BTreeMap;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
     use std::time::Duration;
 
     use crate::context::EngineContext;
@@ -796,8 +1009,12 @@ mod tests {
         plan_physical(&forged(json), &context()).expect("the fixture must plan")
     }
 
-    fn ids(chunks: &[ScoredChunk]) -> Vec<&str> {
-        chunks.iter().map(|hit| hit.chunk.id.as_str()).collect()
+    /// The chunk ids of an output that is a ranking.
+    fn ids(output: &Output) -> Vec<&str> {
+        match output {
+            Output::Chunks(chunks) => chunks.iter().map(|hit| hit.chunk.id.as_str()).collect(),
+            other => panic!("expected a ranking, got {other:?}"),
+        }
     }
 
     fn traced(trace: &ExecutionTrace) -> Vec<&str> {
@@ -1362,7 +1579,7 @@ mod tests {
         let (output, _) = Engine::new().execute(&plan, query()).await;
 
         assert_eq!(
-            output.expect("the node declares its top_k").len(),
+            ids(&output.expect("the node declares its top_k")).len(),
             4,
             "the component was called with top_k = 4"
         );
@@ -1383,7 +1600,7 @@ mod tests {
         assert!(
             matches!(
                 &err,
-                ExecError::InvalidParam { node, key: "top_k", found: None }
+                ExecError::InvalidParam { node, key: "top_k", found: None, .. }
                     if node.as_str() == "leg"
             ),
             "expected InvalidParam, got {err:?}"
@@ -1408,7 +1625,7 @@ mod tests {
         assert!(
             matches!(
                 &err,
-                ExecError::InvalidParam { node, key: "top_k", found: Some(_) }
+                ExecError::InvalidParam { node, key: "top_k", found: Some(_), .. }
                     if node.as_str() == "leg"
             ),
             "expected InvalidParam naming what it found, got {err:?}"
@@ -1529,9 +1746,650 @@ mod tests {
         let (first, first_trace) = engine.execute(&baseline, query()).await;
         let (second, second_trace) = engine.execute(&candidate, query()).await;
 
-        assert_eq!(first.expect("the baseline runs").len(), 1);
-        assert_eq!(second.expect("the candidate runs").len(), 5);
+        assert_eq!(ids(&first.expect("the baseline runs")).len(), 1);
+        assert_eq!(ids(&second.expect("the candidate runs")).len(), 5);
         assert_eq!(first_trace.nodes.len(), 1);
         assert_eq!(second_trace.nodes.len(), 1);
+    }
+
+    // ---- The generation nodes (ADR-C31) ----
+
+    /// Keeps at most `budget` chunks — its budget counts chunks — in the
+    /// order it received them, carries each one's score through untouched
+    /// (ADR-C31 § 1), and renders their texts one per line. Refuses a zero
+    /// budget, as the contract requires of every builder.
+    struct JoiningBuilder;
+
+    #[async_trait]
+    impl ContextBuilder for JoiningBuilder {
+        async fn build(
+            &self,
+            _query: &Query,
+            chunks: Vec<ScoredChunk>,
+            params: &ContextParams,
+        ) -> Result<Context, ComponentError> {
+            if params.budget == 0 {
+                return Err(ComponentError::InvalidRequest(
+                    "a budget of zero asks for a context that cannot exist".into(),
+                ));
+            }
+            let kept: Vec<ScoredChunk> = chunks.into_iter().take(params.budget).collect();
+            Ok(Context {
+                text: kept
+                    .iter()
+                    .map(|hit| hit.chunk.text.as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+                chunks: kept
+                    .iter()
+                    .map(|hit| ContextChunk {
+                        id: hit.chunk.id.clone(),
+                        document_id: hit.chunk.document_id.clone(),
+                        score: hit.score,
+                    })
+                    .collect(),
+            })
+        }
+
+        async fn model_identity(&self) -> Result<ModelIdentity, ComponentError> {
+            Ok(ModelIdentity::new("joining"))
+        }
+    }
+
+    /// Answers with every per-call parameter it was handed, then the query
+    /// and the context, so a test reads back exactly what reached the call.
+    struct EchoGenerator;
+
+    #[async_trait]
+    impl Generator for EchoGenerator {
+        async fn generate(
+            &self,
+            query: &Query,
+            context: &Context,
+            params: &GenerateParams,
+        ) -> Result<Answer, ComponentError> {
+            Ok(Answer {
+                text: echo(query, context, params),
+            })
+        }
+
+        async fn model_identity(
+            &self,
+            served_model: &str,
+        ) -> Result<ModelIdentity, ComponentError> {
+            Ok(ModelIdentity::new(served_model))
+        }
+    }
+
+    fn echo(query: &Query, context: &Context, params: &GenerateParams) -> String {
+        format!(
+            "{}|{}|{:?}|{:?}|{:?}|{}|{}",
+            params.served_model,
+            params.template,
+            params.temperature,
+            params.seed,
+            params.max_tokens,
+            query.text,
+            context.text
+        )
+    }
+
+    /// Always fails, the way an unreachable inference server would.
+    struct OfflineGenerator;
+
+    #[async_trait]
+    impl Generator for OfflineGenerator {
+        async fn generate(
+            &self,
+            _query: &Query,
+            _context: &Context,
+            _params: &GenerateParams,
+        ) -> Result<Answer, ComponentError> {
+            Err(ComponentError::Unavailable(
+                "the inference server is offline".into(),
+            ))
+        }
+
+        async fn model_identity(
+            &self,
+            _served_model: &str,
+        ) -> Result<ModelIdentity, ComponentError> {
+            Err(ComponentError::Unavailable(
+                "the inference server is offline".into(),
+            ))
+        }
+    }
+
+    /// Counts its calls, so a test can prove a refusal came before one.
+    struct CountingGenerator {
+        calls: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl Generator for CountingGenerator {
+        async fn generate(
+            &self,
+            query: &Query,
+            context: &Context,
+            params: &GenerateParams,
+        ) -> Result<Answer, ComponentError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(Answer {
+                text: echo(query, context, params),
+            })
+        }
+
+        async fn model_identity(
+            &self,
+            served_model: &str,
+        ) -> Result<ModelIdentity, ComponentError> {
+            Ok(ModelIdentity::new(served_model))
+        }
+    }
+
+    /// Answers with one chunk whose id is the served model it was handed, or
+    /// `no-model` when it was handed none.
+    struct ModelNamingReranker;
+
+    #[async_trait]
+    impl Reranker for ModelNamingReranker {
+        async fn rerank(
+            &self,
+            _query: &Query,
+            _chunks: Vec<ScoredChunk>,
+            params: &RerankParams,
+        ) -> Result<Vec<ScoredChunk>, ComponentError> {
+            Ok(vec![scored(
+                params.served_model.as_deref().unwrap_or("no-model"),
+                1.0,
+            )])
+        }
+    }
+
+    /// [`context`] with the generation families registered as well.
+    fn generation_context() -> EngineContext {
+        let mut ctx = context();
+        ctx.register_context_builder("joining", Box::new(|_| Ok(Box::new(JoiningBuilder))));
+        ctx.register_generator("echo", Box::new(|_| Ok(Box::new(EchoGenerator))));
+        ctx.register_generator("offline", Box::new(|_| Ok(Box::new(OfflineGenerator))));
+        ctx.register_reranker(
+            "model_naming",
+            Box::new(|_| Ok(Box::new(ModelNamingReranker))),
+        );
+        ctx
+    }
+
+    /// A node carrying the given params.
+    fn raw_with(
+        id: &str,
+        component: &str,
+        implementation: &str,
+        inputs: &[&str],
+        params: &[(&str, RawParamValue)],
+    ) -> RawNode {
+        let mut node = raw(id, component, implementation, inputs);
+        for (key, value) in params {
+            node.params.insert((*key).to_string(), value.clone());
+        }
+        node
+    }
+
+    fn string(value: &str) -> RawParamValue {
+        RawParamValue::String(value.to_string())
+    }
+
+    /// `leg` (bm25, top_k 2) → `ctx` (joining, budget 2) → `gen`, the
+    /// generator carrying `generator_params`.
+    fn generation_nodes(
+        generator: &str,
+        generator_params: &[(&str, RawParamValue)],
+    ) -> Vec<RawNode> {
+        vec![
+            raw_top_k(
+                "leg",
+                "retriever",
+                "bm25",
+                &["question"],
+                RawParamValue::Int(2),
+            ),
+            raw_with(
+                "ctx",
+                "context_builder",
+                "joining",
+                &["question", "leg"],
+                &[("budget", RawParamValue::Int(2))],
+            ),
+            raw_with(
+                "gen",
+                "generator",
+                generator,
+                &["question", "ctx"],
+                generator_params,
+            ),
+        ]
+    }
+
+    fn plan_generation(nodes: Vec<RawNode>) -> PhysicalPipeline {
+        plan_physical(&logical(nodes), &generation_context()).expect("the fixture must plan")
+    }
+
+    fn required_generator_params() -> Vec<(&'static str, RawParamValue)> {
+        vec![
+            ("served_model", string("m-7b")),
+            ("template", string("Q: {query}")),
+        ]
+    }
+
+    #[tokio::test]
+    async fn a_retriever_a_context_builder_and_a_generator_run_end_to_end() {
+        // The acceptance criterion of the generation nodes: three entries in
+        // execution order, the context named as ADR-C31 § 5 pins it, the
+        // answer carrying its text, and the pipeline's output the answer.
+        let plan = plan_generation(generation_nodes("echo", &required_generator_params()));
+
+        let (output, trace) = Engine::new().execute(&plan, query()).await;
+
+        let expected_text = "m-7b|Q: {query}|None|None|None|why|text of c1\ntext of c2";
+        assert_eq!(
+            output.expect("every node of this plan can run"),
+            Output::Answer(Answer {
+                text: expected_text.to_string()
+            }),
+            "the pipeline's output is the terminal generator's answer"
+        );
+        assert_eq!(traced(&trace), vec!["leg", "ctx", "gen"]);
+
+        let context = &trace.nodes[1];
+        assert_eq!(
+            context.inputs,
+            vec![
+                ValueSummary::Query {
+                    id: QueryId::new("q1")
+                },
+                ValueSummary::Chunks { count: 2 },
+            ]
+        );
+        assert_eq!(
+            context.output,
+            Some(ValueSummary::Context {
+                chunks: vec![
+                    RankedChunk {
+                        chunk: ChunkId::new("c1"),
+                        document: DocId::new("doc"),
+                        score: 1.0,
+                    },
+                    RankedChunk {
+                        chunk: ChunkId::new("c2"),
+                        document: DocId::new("doc"),
+                        score: 0.9,
+                    },
+                ],
+                text: "text of c1\ntext of c2".to_string(),
+            }),
+            "a context entry names its chunks, in the builder's order, and its text"
+        );
+
+        let answer = &trace.nodes[2];
+        assert_eq!(
+            answer.inputs,
+            vec![
+                ValueSummary::Query {
+                    id: QueryId::new("q1")
+                },
+                ValueSummary::ContextSize {
+                    count: 2,
+                    text_bytes: "text of c1\ntext of c2".len(),
+                },
+            ],
+            "a consumed context is summarized by its chunk count and text length"
+        );
+        assert_eq!(
+            answer.output,
+            Some(ValueSummary::Answer {
+                text: expected_text.to_string()
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn a_pipeline_may_end_on_its_context_builder() {
+        let plan = plan_generation(vec![
+            raw_top_k(
+                "leg",
+                "retriever",
+                "bm25",
+                &["question"],
+                RawParamValue::Int(3),
+            ),
+            raw_with(
+                "ctx",
+                "context_builder",
+                "joining",
+                &["question", "leg"],
+                &[("budget", RawParamValue::Int(1))],
+            ),
+        ]);
+
+        let (output, _) = Engine::new().execute(&plan, query()).await;
+
+        assert_eq!(
+            output.expect("every node of this plan can run"),
+            Output::Context(Context {
+                chunks: vec![ContextChunk {
+                    id: ChunkId::new("c1"),
+                    document_id: DocId::new("doc"),
+                    score: 1.0,
+                }],
+                text: "text of c1".to_string(),
+            }),
+            "a context builder with no consumer is the terminal node, and the budget reached it"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_failing_generator_leaves_its_error_in_the_trace_and_the_trace_is_returned() {
+        let plan = plan_generation(generation_nodes("offline", &required_generator_params()));
+
+        let (output, trace) = Engine::new().execute(&plan, query()).await;
+
+        let Err(err) = output else {
+            panic!("the generator always fails")
+        };
+        assert!(
+            matches!(&err, ExecError::Component { node, .. } if node.as_str() == "gen"),
+            "expected a Component failure naming `gen`, got {err:?}"
+        );
+        assert_eq!(traced(&trace), vec!["leg", "ctx", "gen"]);
+        let failed = &trace.nodes[2];
+        assert_eq!(failed.output, None);
+        assert!(
+            failed
+                .error
+                .as_deref()
+                .is_some_and(|message| message.contains("the inference server is offline")),
+            "the trace records the failure: {:?}",
+            failed.error
+        );
+    }
+
+    #[tokio::test]
+    async fn a_generator_missing_a_required_parameter_is_refused_before_the_call() {
+        // No default: an absent `served_model` or `template` is refused, and
+        // the component is never called with an invented one.
+        for missing in ["served_model", "template"] {
+            let calls = Arc::new(AtomicUsize::new(0));
+            let counter = Arc::clone(&calls);
+            let mut ctx = generation_context();
+            ctx.register_generator(
+                "counting",
+                Box::new(move |_| {
+                    Ok(Box::new(CountingGenerator {
+                        calls: Arc::clone(&counter),
+                    }))
+                }),
+            );
+            let params: Vec<(&str, RawParamValue)> = required_generator_params()
+                .into_iter()
+                .filter(|(key, _)| *key != missing)
+                .collect();
+            let plan = plan_physical(&logical(generation_nodes("counting", &params)), &ctx)
+                .expect("the fixture must plan");
+
+            let (output, trace) = Engine::new().execute(&plan, query()).await;
+
+            let Err(err) = output else {
+                panic!("the generator declares no `{missing}`")
+            };
+            assert!(
+                matches!(
+                    &err,
+                    ExecError::InvalidParam { node, key, found: None, .. }
+                        if node.as_str() == "gen" && *key == missing
+                ),
+                "expected InvalidParam for `{missing}`, got {err:?}"
+            );
+            assert_eq!(
+                calls.load(Ordering::SeqCst),
+                0,
+                "the generator must not be called without `{missing}`"
+            );
+            assert_eq!(trace.nodes[2].output, None);
+        }
+    }
+
+    #[tokio::test]
+    async fn a_generators_required_parameter_of_another_kind_is_refused() {
+        for key in ["served_model", "template"] {
+            let mut params = required_generator_params();
+            for (name, value) in params.iter_mut() {
+                if *name == key {
+                    *value = RawParamValue::Int(7);
+                }
+            }
+            let plan = plan_generation(generation_nodes("echo", &params));
+
+            let (output, _) = Engine::new().execute(&plan, query()).await;
+
+            let Err(err) = output else {
+                panic!("`{key}` is an integer here")
+            };
+            assert!(
+                matches!(
+                    &err,
+                    ExecError::InvalidParam { key: found_key, found: Some(ParamValue::Int(7)), .. }
+                        if *found_key == key
+                ),
+                "expected InvalidParam for `{key}`, got {err:?}"
+            );
+            let message = err.to_string();
+            assert!(
+                message.contains("must be a string") && message.contains("`7`"),
+                "the message names the kind required and what was found: {message}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn an_empty_served_model_or_template_reaches_the_generator_unjudged() {
+        // The executor judges presence and kind, never the value: an empty
+        // string is the component's to refuse (ADR-C31 § 2).
+        let plan = plan_generation(generation_nodes(
+            "echo",
+            &[("served_model", string("")), ("template", string(""))],
+        ));
+
+        let (output, _) = Engine::new().execute(&plan, query()).await;
+
+        let Output::Answer(answer) = output.expect("the stub accepts empty strings") else {
+            panic!("the terminal node is a generator")
+        };
+        assert!(
+            answer.text.starts_with("||None|None|None|"),
+            "both empty strings reached the call: {}",
+            answer.text
+        );
+    }
+
+    #[tokio::test]
+    async fn a_generators_optional_parameters_reach_the_call_when_declared() {
+        let mut params = required_generator_params();
+        params.extend([
+            ("temperature", RawParamValue::Float(0.25)),
+            ("seed", RawParamValue::Int(42)),
+            ("max_tokens", RawParamValue::Int(64)),
+        ]);
+        let plan = plan_generation(generation_nodes("echo", &params));
+
+        let (output, _) = Engine::new().execute(&plan, query()).await;
+
+        let Output::Answer(answer) = output.expect("every parameter is well formed") else {
+            panic!("the terminal node is a generator")
+        };
+        assert!(
+            answer
+                .text
+                .starts_with("m-7b|Q: {query}|Some(0.25)|Some(42)|Some(64)|"),
+            "each optional parameter reached the call: {}",
+            answer.text
+        );
+    }
+
+    #[tokio::test]
+    async fn a_generators_optional_parameter_of_the_wrong_kind_or_sign_is_refused() {
+        // Optional means "absent reads as None", never "anything unreadable
+        // reads as None": a declared value the executor cannot read is refused.
+        let cases = [
+            ("temperature", RawParamValue::Int(1), "a float"),
+            ("seed", RawParamValue::Int(-1), "a non-negative integer"),
+            ("seed", string("seven"), "a non-negative integer"),
+            (
+                "max_tokens",
+                RawParamValue::Int(-5),
+                "a non-negative integer",
+            ),
+            (
+                "max_tokens",
+                RawParamValue::Float(1.5),
+                "a non-negative integer",
+            ),
+        ];
+        for (key, value, required) in cases {
+            let mut params = required_generator_params();
+            params.push((key, value.clone()));
+            let plan = plan_generation(generation_nodes("echo", &params));
+
+            let (output, _) = Engine::new().execute(&plan, query()).await;
+
+            let Err(err) = output else {
+                panic!("`{key}: {value:?}` cannot be read")
+            };
+            assert!(
+                matches!(
+                    &err,
+                    ExecError::InvalidParam { node, key: found_key, found: Some(_), .. }
+                        if node.as_str() == "gen" && *found_key == key
+                ),
+                "expected InvalidParam for `{key}`, got {err:?}"
+            );
+            assert!(
+                err.to_string().contains(&format!("must be {required}")),
+                "the message names the kind `{key}` requires: {err}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_context_builder_without_its_budget_is_refused() {
+        let plan = plan_generation(vec![
+            raw_top_k(
+                "leg",
+                "retriever",
+                "bm25",
+                &["question"],
+                RawParamValue::Int(3),
+            ),
+            raw("ctx", "context_builder", "joining", &["question", "leg"]),
+        ]);
+
+        let (output, _) = Engine::new().execute(&plan, query()).await;
+
+        let Err(err) = output else {
+            panic!("the context builder declares no budget")
+        };
+        assert!(
+            matches!(
+                &err,
+                ExecError::InvalidParam { node, key: "budget", found: None, .. }
+                    if node.as_str() == "ctx"
+            ),
+            "expected InvalidParam for `budget`, got {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_zero_budget_reaches_the_context_builder_which_refuses_it() {
+        let plan = plan_generation(vec![
+            raw_top_k(
+                "leg",
+                "retriever",
+                "bm25",
+                &["question"],
+                RawParamValue::Int(3),
+            ),
+            raw_with(
+                "ctx",
+                "context_builder",
+                "joining",
+                &["question", "leg"],
+                &[("budget", RawParamValue::Int(0))],
+            ),
+        ]);
+
+        let (output, _) = Engine::new().execute(&plan, query()).await;
+
+        assert!(
+            matches!(
+                &output,
+                Err(ExecError::Component { node, source: ComponentError::InvalidRequest(_) })
+                    if node.as_str() == "ctx"
+            ),
+            "zero is the component's to refuse, not the executor's: {output:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_reranker_is_called_with_the_served_model_its_node_declares() {
+        let reranked = |served_model: Option<RawParamValue>| {
+            let mut params = vec![("top_k", RawParamValue::Int(1))];
+            if let Some(value) = served_model {
+                params.push(("served_model", value));
+            }
+            plan_generation(vec![
+                raw_top_k(
+                    "leg",
+                    "retriever",
+                    "bm25",
+                    &["question"],
+                    RawParamValue::Int(3),
+                ),
+                raw_with(
+                    "rank",
+                    "reranker",
+                    "model_naming",
+                    &["question", "leg"],
+                    &params,
+                ),
+            ])
+        };
+        let engine = Engine::new();
+
+        let (named, _) = engine
+            .execute(&reranked(Some(string("bge-reranker"))), query())
+            .await;
+        let (absent, _) = engine.execute(&reranked(None), query()).await;
+        let (mistyped, _) = engine
+            .execute(&reranked(Some(RawParamValue::Int(3))), query())
+            .await;
+
+        assert_eq!(
+            named.expect("a string served_model is readable"),
+            Output::Chunks(vec![scored("bge-reranker", 1.0)])
+        );
+        assert_eq!(
+            absent.expect("served_model is optional on a reranker"),
+            Output::Chunks(vec![scored("no-model", 1.0)]),
+            "an absent served_model reaches the reranker as None"
+        );
+        assert!(
+            matches!(
+                &mistyped,
+                Err(ExecError::InvalidParam {
+                    key: "served_model",
+                    found: Some(ParamValue::Int(3)),
+                    ..
+                })
+            ),
+            "a served_model that is not a string is refused: {mistyped:?}"
+        );
     }
 }

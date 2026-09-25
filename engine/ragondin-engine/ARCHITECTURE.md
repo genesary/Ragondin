@@ -10,26 +10,27 @@ them.
   implementation name to a constructor. Passed **explicitly**, never global
   (INV-6). Several contexts can exist in one process — indispensable for the
   harness comparing two configurations side by side. It keeps one table per
-  family a pipeline node names — retriever, fusion, reranker — and none for an
-  embedder or a vector store: those are not nodes, and the composition root
-  builds them itself, inside the constructor closure it registers for a dense
-  retriever
+  family a pipeline node names — retriever, fusion, reranker, context builder,
+  generator
+  ([ADR-C31](../../docs/adr/ADR-C31-generation-contracts-template-and-served-model-per-call.md))
+  — and none for an embedder or a vector store: those are not nodes, and the
+  composition root builds them itself, inside the constructor closure it
+  registers for a dense retriever
   ([ADR-C32](../../docs/adr/ADR-C32-remote-named-by-impl-bound-by-the-composition-root.md)).
-  A context builder and a generator are nodes and have no table yet either:
-  planning refuses them — see § The generation nodes are refused, not yet
-  planned.
 - **Physical planning** — `LogicalPipeline` + `EngineContext` →
   `PhysicalPipeline`, resolving each `impl` name to a constructed component
   (`Local` or `Remote`). The logical→physical seam exists; the optimizer is the
   identity function for now.
 - **The executor** — `Engine::execute(plan, query)` runs a `PhysicalPipeline`
-  and returns `(Result<Output, ExecError>, ExecutionTrace)`. It schedules
+  and returns `(Result<Output, ExecError>, ExecutionTrace)`, where `Output` is
+  the terminal node's value: a ranking, a context or an answer. It schedules
   nodes in a **topological order over the data-flow edges** — a node runs once
   every id its `inputs` name holds a value — and never in the order the plan
   stores them, which is canonical (sorted by `NodeId`, for the content hash)
   and not an execution order. Each edge carries an erased `NodeValue`
-  (ADR-C16), and each node's adapter destructures the value it expects, calls
-  the component with typed per-call params, and re-wraps the typed result. The
+  (ADR-C16) — a query, a ranking, a context or an answer — and each node's
+  adapter destructures the value it expects, calls the component with typed
+  per-call params, and re-wraps the typed result. The
   value table is seeded from the pipeline's **declared inputs** (ADR-C18).
   Control flow is not executed, because no `Branch` or `Loop` variant exists
   yet; when they arrive they are executed here, as they are not components.
@@ -38,6 +39,9 @@ them.
   failed with. A node's **output** names the chunks it produced — chunk id,
   document id, score — in the order it returned them; a node's **input** stays a
   count ([ADR-C28](../../docs/adr/ADR-C28-trace-names-what-each-node-produced.md)).
+  A produced context is named by its chunks, in the builder's order, and its
+  text; a produced answer by its text; a consumed one of either by its sizes
+  (ADR-C31 § 5).
 
 ## How an output's chunks are represented
 
@@ -56,47 +60,83 @@ disagree with it:
   which is the one thing ADR-C28 asks the code to keep straight. The cost is
   that a reader who only wants "how many chunks" matches two variants instead
   of one, and that the enum is exhaustively matched at every such site — which
-  is how a third kind added in M3 becomes a compiler error rather than a
+  is how a kind added later becomes a compiler error rather than a
   silently unnamed output. `RankedChunk` carries no chunk *text*: it is the one
   field that grows with the corpus and the one no reader of a ranking needs.
 
+## How a context and an answer are represented
+
+ADR-C31 § 5 pins what a node **produced** — `ValueSummary::Context { chunks:
+Vec<RankedChunk>, text: String }` and `ValueSummary::Answer { text: String }` —
+and what a consumed one must say — a context's chunk count and text length, an
+answer's text length — and leaves the input-side shapes to this crate. The
+choice made here:
+
+- **Two more input-side variants, `ContextSize { count, text_bytes }` and
+  `AnswerSize { text_bytes }`,** on the pattern `Chunks { count }` set, and
+  not fields on the produced variants, for the reason given above for chunks:
+  one variant holding both a size and an optional value states one fact twice.
+  Every kind then has one variant per side of a node, which is a table a
+  reader can hold in their head.
+- **A text length is counted in bytes of UTF-8** — `String::len`, and the name
+  says so. Characters would need a decision about what a character is (a
+  scalar value, a grapheme) that nothing reading a size needs; bytes are what
+  a trace's storage costs.
+- **A context's chunks reuse `RankedChunk`**, mapped field for field from
+  `ContextChunk`'s id, document id and score. The score is the one the chunk
+  carried into the builder (ADR-C31 § 1); the builder assigns none.
+
 ## Two rules the executor fixes
 
-Both are stated here because no ADR settles them and both are visible in an
-`ExecError` variant.
+Both are visible in an `ExecError` variant. No ADR settles the first; the
+keys of the second are ADR-C31's and ADR-C32's, and how an unreadable one is
+refused is this crate's.
 
 - **The terminal node.** A node is **terminal** when no other node of the plan
   consumes it. A plan must have exactly one: the executor returns one value,
   and nothing in the representation says which of several unconsumed outputs
-  that would be. The M2 `Output` is that node's `Vec<ScoredChunk>`.
+  that would be. `Output` is that node's value, one variant per kind a node
+  produces — `Chunks`, `Context`, `Answer` (ADR-C31's Consequences) — since
+  `validate` admits a pipeline ending on a ranking, on a context builder or on
+  a generator.
 - **Per-call parameters.** A node's `Params` has two readers, one on each
   side of the seam (`docs/code-architecture.md` §6.3): planning passes the
   node's whole map to the constructor, which reads what configures the
   implementation, and the executor reads the per-call keys from the same map.
-  Nothing splits the map. In M2 the executor's key is one — `top_k`, on a
-  retriever and on a reranker — read as a `ParamValue::Int` and refused when
-  absent, of another kind, or negative. **The executor invents no default**: what a component
-  does without a parameter is the component's to decide, and a default applied
-  here could only be a second, disagreeing copy of it.
+  Nothing splits the map. The executor's keys: `top_k` on a retriever and a
+  reranker, and an optional `served_model` on a reranker
+  ([ADR-C32](../../docs/adr/ADR-C32-remote-named-by-impl-bound-by-the-composition-root.md)
+  § 4); `budget` on a context builder; `served_model` and `template` on a
+  generator, with `temperature`, `seed` and `max_tokens` optional (ADR-C31
+  § 2). A required key that is absent, and any declared key of another kind
+  than it is read as — or a negative count — is refused as
+  `ExecError::InvalidParam`, which names the kind the key requires, before the
+  component is called; an absent optional key reaches the component as `None`.
+  **The executor invents no default**: what a component does without a
+  parameter is the component's to decide, and a default applied here could
+  only be a second, disagreeing copy of it. **Nor does it judge a value**: a
+  zero `budget` or an empty `template` reaches the component, which refuses
+  it. And **a float is not widened from an integer**: `temperature: 1` is
+  refused rather than read as `1.0`, a choice made in this crate — widening is
+  a conversion applied above the component, which is the same kind of second
+  copy the no-default rule refuses, and the flat parameter grammar keeps `Int`
+  and `Float` apart for a configuration to choose between.
 
-## The generation nodes are refused, not yet planned
+## The extension node is refused, not planned
 
-`ragondin-pipeline` validates a `ContextBuilder` and a `Generator` node
-(ADR-C31 § 3), and this crate does not plan either yet: no registry family
-resolves them. One function, `plannable` in `src/plan.rs`, sorts every
-`LogicalNode` variant into one this build plans — a retriever, a fusion, a
-reranker — or a typed refusal: `PlanError::ExtensionUnsupported` for an
-extension, `PlanError::GenerationUnsupported` (naming the node and its
-`component:` value) for a context builder or a generator. Physical planning
+One function, `plannable` in `src/plan.rs`, sorts every `LogicalNode` variant
+into one this build plans — a retriever, a fusion, a reranker, a context
+builder, a generator — or a typed refusal: `PlanError::ExtensionUnsupported`
+for an extension, whose lookup mechanism is undecided (#93). Physical planning
 calls it for every node in its first pass, before any constructor runs, and
 `resolve` calls it again and matches only over what it narrowed to, so
 resolution has no arm for a refused variant. The executor's `call` matches
-`LogicalNode` exhaustively on purpose, and gives the three refused variants
-one arm that returns `ExecError::UnplannableNode` — a defect in this crate by
-construction, since no plan `plan_physical` builds holds one. The choice made
-here is a typed error rather than an `unreachable!()` for an arm that cannot be
-reached today: it costs nothing to make harmless, and a test builds such a plan
-by hand to pin it.
+`LogicalNode` exhaustively on purpose, and gives the extension an arm that
+returns `ExecError::UnplannableNode` — a defect in this crate by construction,
+since no plan `plan_physical` builds holds one. The choice made here is a typed
+error rather than an `unreachable!()` for an arm that cannot be reached today:
+it costs nothing to make harmless, and a test builds such a plan by hand to pin
+it.
 
 ## Local invariants
 

@@ -13,10 +13,10 @@
 
 use std::collections::{HashMap, HashSet};
 
-use ragondin_contracts::{Fusion, Reranker, Retriever};
+use ragondin_contracts::{ContextBuilder, Fusion, Generator, Reranker, Retriever};
 use ragondin_pipeline::{
-    consumed_kinds, produced_kind, FusionNode, LogicalNode, LogicalPipeline, NodeId, PortSpec,
-    RerankerNode, RetrieverNode, ValueKind,
+    consumed_kinds, produced_kind, ContextBuilderNode, FusionNode, GeneratorNode, LogicalNode,
+    LogicalPipeline, NodeId, PortSpec, RerankerNode, RetrieverNode, ValueKind,
 };
 
 use crate::context::EngineContext;
@@ -35,6 +35,10 @@ pub(crate) enum ResolvedComponent {
     Fusion(Box<dyn Fusion>),
     /// A resolved [`LogicalNode::Reranker`].
     Reranker(Box<dyn Reranker>),
+    /// A resolved [`LogicalNode::ContextBuilder`].
+    ContextBuilder(Box<dyn ContextBuilder>),
+    /// A resolved [`LogicalNode::Generator`].
+    Generator(Box<dyn Generator>),
 }
 
 /// One node of a plan: its logical form, and the component it resolved to.
@@ -105,10 +109,7 @@ impl PhysicalPipeline {
 ///
 /// 1. every [`LogicalNode::Extension`] is refused
 ///    ([`PlanError::ExtensionUnsupported`]) — see that variant, and #93, for
-///    why the check ADR-C16 reserves for planning cannot yet apply to them —
-///    and so is every [`LogicalNode::ContextBuilder`] and
-///    [`LogicalNode::Generator`] ([`PlanError::GenerationUnsupported`]), which
-///    no registry family here resolves;
+///    why the check ADR-C16 reserves for planning cannot yet apply to them;
 /// 2. every edge's kinds are checked, and a mismatch refused
 ///    ([`PlanError::KindMismatch`]) — see that variant for what the check is,
 ///    and for why a pipeline that came through `validate` never reaches it;
@@ -153,12 +154,14 @@ pub fn plan_physical(
     })
 }
 
-/// A node this build can plan, narrowed to the three variants that resolve
-/// through a registry family.
+/// A node this build can plan, narrowed to the variants that resolve through
+/// a registry family.
 enum Plannable<'a> {
     Retriever(&'a RetrieverNode),
     Fusion(&'a FusionNode),
     Reranker(&'a RerankerNode),
+    ContextBuilder(&'a ContextBuilderNode),
+    Generator(&'a GeneratorNode),
 }
 
 /// Narrows a node to one this build can plan, or returns the refusal.
@@ -174,17 +177,11 @@ fn plannable(node: &LogicalNode) -> Result<Plannable<'_>, PlanError> {
         LogicalNode::Retriever(node) => Ok(Plannable::Retriever(node)),
         LogicalNode::Fusion(node) => Ok(Plannable::Fusion(node)),
         LogicalNode::Reranker(node) => Ok(Plannable::Reranker(node)),
+        LogicalNode::ContextBuilder(node) => Ok(Plannable::ContextBuilder(node)),
+        LogicalNode::Generator(node) => Ok(Plannable::Generator(node)),
         LogicalNode::Extension(extension) => Err(PlanError::ExtensionUnsupported {
             node: extension.id.clone(),
             kind: extension.kind.clone(),
-        }),
-        LogicalNode::ContextBuilder(node) => Err(PlanError::GenerationUnsupported {
-            node: node.id.clone(),
-            component: "context_builder",
-        }),
-        LogicalNode::Generator(node) => Err(PlanError::GenerationUnsupported {
-            node: node.id.clone(),
-            component: "generator",
         }),
     }
 }
@@ -239,11 +236,12 @@ fn check_kinds(
                 ),
             };
 
-            // Derived from the *producer*, never from `node`: indistinguishable
-            // today, since every variant that reaches this check — a retriever,
-            // a fusion, a reranker — produces `Chunks`, and a live bug the
-            // moment one that does not is planned (a context builder or a
-            // generator, both refused before this runs for now).
+            // Derived from the *producer*, never from `node`: reading the
+            // consumer's own kind here would accept any producer on a port
+            // whose kind the consumer happens to produce — a context builder
+            // feeding a reranker's `Chunks` port would pass, since a reranker
+            // produces `Chunks` — and would refuse every correctly wired
+            // context builder and generator, whose outputs match no port.
             let found = match index.get(input_id) {
                 Some(producer) => {
                     // The clause `ragondin-pipeline`'s check carries, kept here
@@ -309,6 +307,12 @@ fn resolve(node: &LogicalNode, ctx: &EngineContext) -> Result<ResolvedComponent,
         Plannable::Reranker(node) => ctx
             .build_reranker(&node.implementation, &node.params)
             .map(ResolvedComponent::Reranker),
+        Plannable::ContextBuilder(node) => ctx
+            .build_context_builder(&node.implementation, &node.params)
+            .map(ResolvedComponent::ContextBuilder),
+        Plannable::Generator(node) => ctx
+            .build_generator(&node.implementation, &node.params)
+            .map(ResolvedComponent::Generator),
     }
 }
 
@@ -317,13 +321,16 @@ mod tests {
     use super::*;
     use async_trait::async_trait;
     use ragondin_contracts::{
-        ComponentError, FusionParams, RerankParams, Reranker, RetrieveParams, Retriever,
+        ComponentError, ContextBuilder, ContextParams, FusionParams, GenerateParams, Generator,
+        RerankParams, Reranker, RetrieveParams, Retriever,
     };
     use ragondin_pipeline::{
         validate, ParamValue, Params, RawGraph, RawNode, RawParamValue, RawPipeline, SchemaVersion,
         ValidationError, ValueKind,
     };
-    use ragondin_types::{Chunk, ChunkId, DocId, Query, QueryId, ScoredChunk};
+    use ragondin_types::{
+        Answer, Chunk, ChunkId, Context, DocId, ModelIdentity, Query, QueryId, ScoredChunk,
+    };
     use std::collections::BTreeMap;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
@@ -408,6 +415,50 @@ mod tests {
         }
     }
 
+    struct StubBuilder;
+
+    #[async_trait]
+    impl ContextBuilder for StubBuilder {
+        async fn build(
+            &self,
+            _query: &Query,
+            _chunks: Vec<ScoredChunk>,
+            _params: &ContextParams,
+        ) -> Result<Context, ComponentError> {
+            Ok(Context {
+                chunks: Vec::new(),
+                text: String::new(),
+            })
+        }
+
+        async fn model_identity(&self) -> Result<ModelIdentity, ComponentError> {
+            Ok(ModelIdentity::new("stub"))
+        }
+    }
+
+    struct StubGenerator;
+
+    #[async_trait]
+    impl Generator for StubGenerator {
+        async fn generate(
+            &self,
+            _query: &Query,
+            _context: &Context,
+            _params: &GenerateParams,
+        ) -> Result<Answer, ComponentError> {
+            Ok(Answer {
+                text: String::new(),
+            })
+        }
+
+        async fn model_identity(
+            &self,
+            served_model: &str,
+        ) -> Result<ModelIdentity, ComponentError> {
+            Ok(ModelIdentity::new(served_model))
+        }
+    }
+
     /// A context registering one implementation per family a node can name.
     fn context() -> EngineContext {
         let mut ctx = EngineContext::new();
@@ -416,6 +467,8 @@ mod tests {
         ctx.register_fusion("rrf", Box::new(|_| Ok(Box::new(StubFusion))));
         ctx.register_reranker("cross_encoder", Box::new(|_| Ok(Box::new(StubReranker))));
         ctx.register_retriever("configured", Box::new(configured_retriever));
+        ctx.register_context_builder("joining", Box::new(|_| Ok(Box::new(StubBuilder))));
+        ctx.register_generator("echo", Box::new(|_| Ok(Box::new(StubGenerator))));
         ctx
     }
 
@@ -472,6 +525,8 @@ mod tests {
             ResolvedComponent::Retriever(_) => ComponentFamily::Retriever,
             ResolvedComponent::Fusion(_) => ComponentFamily::Fusion,
             ResolvedComponent::Reranker(_) => ComponentFamily::Reranker,
+            ResolvedComponent::ContextBuilder(_) => ComponentFamily::ContextBuilder,
+            ResolvedComponent::Generator(_) => ComponentFamily::Generator,
         }
     }
 
@@ -611,55 +666,107 @@ mod tests {
     }
 
     #[test]
-    fn a_generation_node_is_refused_as_unsupported() {
-        // ADR-C31's two variants have no physical planner in this build: each
-        // is refused with a typed error naming the node and its component,
-        // never a panic.
-        for (component, id) in [("context_builder", "ctx"), ("generator", "gen")] {
-            let pipeline = logical(vec![raw(id, component, "any_impl", &["question"])]);
+    fn a_generation_pipeline_plans_each_node_through_its_own_family() {
+        // ADR-C31's two node variants resolve through the ordinary path — the
+        // variant selects the family's registry, the `impl:` name the entry.
+        let pipeline = logical(vec![
+            raw("leg", "retriever", "bm25", &["question"]),
+            raw("ctx", "context_builder", "joining", &["question", "leg"]),
+            raw("gen", "generator", "echo", &["question", "ctx"]),
+        ]);
+
+        let plan = plan_physical(&pipeline, &context()).expect("every impl is registered");
+
+        let resolved: Vec<(&str, ComponentFamily)> = plan
+            .nodes()
+            .iter()
+            .map(|node| (node.logical().id().as_str(), family(node.component())))
+            .collect();
+        assert_eq!(
+            resolved,
+            vec![
+                ("ctx", ComponentFamily::ContextBuilder),
+                ("gen", ComponentFamily::Generator),
+                ("leg", ComponentFamily::Retriever),
+            ]
+        );
+    }
+
+    #[test]
+    fn an_unregistered_generation_impl_is_refused_naming_its_family_and_name() {
+        // Exactly as a retriever's is: the family and the name, typed and in
+        // the message.
+        let cases = [
+            (
+                "generator",
+                raw("gen", "generator", "vllm", &["question", "ctx"]),
+                raw("ctx", "context_builder", "joining", &["question", "leg"]),
+                ComponentFamily::Generator,
+                "vllm",
+            ),
+            (
+                "context_builder",
+                raw("gen", "generator", "echo", &["question", "ctx"]),
+                raw("ctx", "context_builder", "templated", &["question", "leg"]),
+                ComponentFamily::ContextBuilder,
+                "templated",
+            ),
+        ];
+        for (label, generator, builder, expected_family, expected_name) in cases {
+            let pipeline = logical(vec![
+                raw("leg", "retriever", "bm25", &["question"]),
+                builder,
+                generator,
+            ]);
 
             let Err(err) = plan_physical(&pipeline, &context()) else {
-                panic!("no {component} node has a physical planner in this build")
+                panic!("the {label} implementation is registered nowhere")
             };
 
             assert!(
                 matches!(
                     &err,
-                    PlanError::GenerationUnsupported { node, component: found }
-                        if node.as_str() == id && *found == component
+                    PlanError::UnknownImpl { family, name }
+                        if *family == expected_family && name == expected_name
                 ),
-                "expected GenerationUnsupported for {component}, got {err:?}"
+                "expected UnknownImpl for the {label}, got {err:?}"
             );
             let message = err.to_string();
             assert!(
-                message.contains(&format!("`{id}`")) && message.contains(component),
-                "the message must name the node and its component: {message}"
+                message.contains(label) && message.contains(expected_name),
+                "the message must name the family and the name: {message}"
             );
         }
     }
 
     #[test]
-    fn a_generation_node_is_refused_before_any_component_is_constructed() {
-        // Same ordering as for an Extension: `leg` names an unregistered impl,
-        // so resolving it first would report `UnknownImpl` instead.
-        let pipeline = logical(vec![
-            raw("leg", "retriever", "splade", &["question"]),
-            raw(
-                "ctx",
-                "context_builder",
-                "concatenate",
-                &["question", "leg"],
-            ),
-            raw("gen", "generator", "openai_chat", &["question", "ctx"]),
-        ]);
+    fn a_generators_context_port_is_kind_checked_at_planning() {
+        // ADR-C16's second layer over the generation ports: a generator's
+        // port 1 wants a `Context`, and a retriever produces `Chunks`.
+        // Forged, because `validate` refuses the same wiring first.
+        let pipeline = forged(
+            r#"{"inputs":["question"],"nodes":[
+                {"Generator":{"id":"gen","implementation":"echo","inputs":["question","leg"],"params":{}}},
+                {"Retriever":{"id":"leg","implementation":"bm25","inputs":["question"],"params":{}}}
+            ]}"#,
+        );
 
         let Err(err) = plan_physical(&pipeline, &context()) else {
-            panic!("the pipeline holds generation nodes and an unregistered impl")
+            panic!("a retriever cannot feed a generator's context port")
         };
 
         assert!(
-            matches!(&err, PlanError::GenerationUnsupported { .. }),
-            "a generation node must be refused before resolution is attempted, got {err:?}"
+            matches!(
+                &err,
+                PlanError::KindMismatch {
+                    consumer,
+                    port: 1,
+                    producer,
+                    expected: Some(ValueKind::Context),
+                    found: ValueKind::Chunks,
+                } if consumer.as_str() == "gen" && producer.as_str() == "leg"
+            ),
+            "expected KindMismatch at the generator's port 1, got {err:?}"
         );
     }
 
@@ -740,10 +847,9 @@ mod tests {
         // A retriever declares one port. Port 0 is dangling and therefore
         // skipped, which lets port 1 — a position the variant never declared —
         // carry the fault: no kind to compare against, only an edge that should
-        // not exist. That skip is the only route to `expected: None` in this
-        // build, since every variant planning admits produces `Chunks` and
-        // every fixed port 0 wants `Query`, so no edge can match port 0 and
-        // then overflow arity.
+        // not exist. Skipping port 0 keeps the fault on port 1 without
+        // needing port 0 to match: every fixed port 0 wants `Query`, and no
+        // node produces one.
         let pipeline = forged(
             r#"{"inputs":[],"nodes":[
                 {"Retriever":{"id":"a","implementation":"bm25","inputs":[],"params":{}}},
@@ -777,9 +883,10 @@ mod tests {
 
     #[test]
     fn a_rerankers_ports_are_read_by_position_not_by_first() {
-        // The reranker is the only node with heterogeneous ports — `[Query,
-        // Chunks]` — so it is the only node that can tell a positional lookup
-        // from one that always reads the first declared kind. Port 0 dangles
+        // The reranker has heterogeneous ports — `[Query, Chunks]`, as the
+        // context builder's and the generator's are — so it can tell a
+        // positional lookup from one that always reads the first declared
+        // kind. Port 0 dangles
         // and is skipped; port 1 legitimately takes the chunks a retriever
         // produces, so this must plan.
         let pipeline = forged(
@@ -860,53 +967,42 @@ mod tests {
 
     #[tokio::test]
     async fn a_plan_holding_a_node_planning_refuses_is_an_error_at_execution_not_a_panic() {
-        // `plan_physical` refuses these variants, so only a plan built by hand
+        // `plan_physical` refuses an extension, so only a plan built by hand
         // here — where `PhysicalPipeline`'s fields are visible — can hold one.
-        // The executor's arm for them must return `UnplannableNode` rather
-        // than abort, whatever component the forged node carries.
-        use ragondin_pipeline::{ExtensionNode, GeneratorNode, LogicalNode};
+        // The executor's arm for it must return `UnplannableNode` rather than
+        // abort, whatever component the forged node carries.
+        use ragondin_pipeline::{ExtensionNode, LogicalNode};
 
-        let forged_nodes = [
-            LogicalNode::Generator(GeneratorNode {
-                id: NodeId::new("gen"),
-                implementation: "openai_chat".to_string(),
-                inputs: vec![NodeId::new("question")],
-                params: Params::new(),
-            }),
-            LogicalNode::Extension(ExtensionNode {
-                id: NodeId::new("gen"),
-                kind: "hyde".to_string(),
-                inputs: vec![NodeId::new("question")],
-                params: Params::new(),
-            }),
-        ];
-        for node in forged_nodes {
-            let plan = PhysicalPipeline {
-                inputs: vec![NodeId::new("question")],
-                nodes: vec![PhysicalNode {
-                    node: node.clone(),
-                    component: ResolvedComponent::Retriever(Box::new(StubRetriever)),
-                }],
-            };
+        let plan = PhysicalPipeline {
+            inputs: vec![NodeId::new("question")],
+            nodes: vec![PhysicalNode {
+                node: LogicalNode::Extension(ExtensionNode {
+                    id: NodeId::new("ext"),
+                    kind: "hyde".to_string(),
+                    inputs: vec![NodeId::new("question")],
+                    params: Params::new(),
+                }),
+                component: ResolvedComponent::Retriever(Box::new(StubRetriever)),
+            }],
+        };
 
-            let (output, _trace) = crate::Engine::new()
-                .execute(
-                    &plan,
-                    Query {
-                        id: QueryId::new("q"),
-                        text: "anything".to_string(),
-                    },
-                )
-                .await;
+        let (output, _trace) = crate::Engine::new()
+            .execute(
+                &plan,
+                Query {
+                    id: QueryId::new("q"),
+                    text: "anything".to_string(),
+                },
+            )
+            .await;
 
-            assert!(
-                matches!(
-                    &output,
-                    Err(crate::ExecError::UnplannableNode { node }) if node.as_str() == "gen"
-                ),
-                "expected UnplannableNode for {node:?}, got {output:?}"
-            );
-        }
+        assert!(
+            matches!(
+                &output,
+                Err(crate::ExecError::UnplannableNode { node }) if node.as_str() == "ext"
+            ),
+            "expected UnplannableNode for the extension, got {output:?}"
+        );
     }
 
     #[tokio::test]
