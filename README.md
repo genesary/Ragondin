@@ -110,6 +110,7 @@ On `main` today:
 | `ragondin-embedder-onnx` | In-process embeddings over ONNX Runtime: mean-over-mask pooling and L2 normalization. |
 | `ragondin-reranker-onnx` | An in-process cross-encoder over the same runtime. |
 | `ragondin-fusion-rrf` | Reciprocal Rank Fusion. |
+| `ragondin-context-concat` | A context builder: chunks concatenated in order under a character budget. |
 | `ragondin-store-memory` | Exact brute-force vector search, in memory. |
 | `ragondin-stub` | The deterministic stubs the wiring tests are assembled over. |
 | `ragondin` | The binary and the composition root: `validate`, `compare` and `bench` implemented, `serve` declared and refusing. |
