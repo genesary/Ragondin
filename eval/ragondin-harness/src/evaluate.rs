@@ -26,7 +26,7 @@ use ragondin_engine::{plan_physical, Engine, EngineContext, Output};
 use ragondin_experiments::{ConfigDocument, Metrics, Run, RunInputs};
 use ragondin_metrics::{ndcg_at_k, recall_at_k, reciprocal_rank};
 use ragondin_pipeline::LogicalPipeline;
-use ragondin_types::DocId;
+use ragondin_types::{DocId, QueryId, ScoredChunk};
 
 use crate::corpus::CorpusIndex;
 use crate::error::HarnessError;
@@ -76,9 +76,10 @@ pub struct Evaluation<'a> {
 ///
 /// [`HarnessError::Plan`] if the pipeline cannot be planned against `ctx`;
 /// [`HarnessError::Execute`] if a query fails — a run is not reported over the
-/// queries that happened to work; and [`HarnessError::NothingToScore`] if no
-/// query of the benchmark is judged, which is a mean over nothing rather than a
-/// score of zero.
+/// queries that happened to work; [`HarnessError::UnscorableOutput`] if a
+/// query's pipeline returns a context or an answer rather than a ranking; and
+/// [`HarnessError::NothingToScore`] if no query of the benchmark is judged,
+/// which is a mean over nothing rather than a score of zero.
 pub async fn evaluate(
     evaluation: &Evaluation<'_>,
     ctx: &EngineContext,
@@ -101,6 +102,7 @@ pub async fn evaluate(
             source: Box::new(source),
         })?;
         traces.insert(query.id.clone(), document);
+        let output = ranking(&query.id, output)?;
 
         // A query with no qrels line at all is executed and left unscored:
         // `trec_eval` never evaluates one, because it is unjudged rather than
@@ -137,6 +139,20 @@ pub async fn evaluate(
     })
 }
 
+/// The ranking a query's output is scored on, or the refusal of an output
+/// this harness does not score — see [`HarnessError::UnscorableOutput`].
+fn ranking(query: &QueryId, output: Output) -> Result<Vec<ScoredChunk>, HarnessError> {
+    let kind = match output {
+        Output::Chunks(chunks) => return Ok(chunks),
+        Output::Context(_) => "context",
+        Output::Answer(_) => "answer",
+    };
+    Err(HarnessError::UnscorableOutput {
+        query: query.clone(),
+        kind,
+    })
+}
+
 /// The ranked **documents** behind a ranked list of chunks.
 ///
 /// A metric scores documents and a pipeline returns chunks, so the list is
@@ -144,7 +160,7 @@ pub async fn evaluate(
 /// that document enters the ranking, which is the max-score-per-document rule
 /// BEIR evaluations use, expressed over a list that is already sorted by
 /// descending score.
-fn ranked_documents(output: &Output) -> Vec<DocId> {
+fn ranked_documents(output: &[ScoredChunk]) -> Vec<DocId> {
     let mut documents: Vec<DocId> = Vec::with_capacity(output.len());
     for hit in output {
         if !documents.contains(&hit.chunk.document_id) {
@@ -189,7 +205,7 @@ impl Scores {
 
 #[cfg(test)]
 mod tests {
-    use ragondin_types::{Chunk, ChunkId, ScoredChunk};
+    use ragondin_types::{Answer, Chunk, ChunkId, Context, QueryId, ScoredChunk};
 
     use super::*;
 
@@ -222,6 +238,54 @@ mod tests {
 
     #[test]
     fn an_empty_output_ranks_no_document() {
-        assert!(ranked_documents(&Output::new()).is_empty());
+        assert!(ranked_documents(&[]).is_empty());
+    }
+
+    #[test]
+    fn a_ranking_output_is_scored_as_it_is() {
+        let chunks = vec![hit("d-1#0", "d-1", 0.9)];
+
+        let ranking = ranking(&QueryId::new("q-1"), Output::Chunks(chunks.clone()))
+            .expect("a ranking is what the harness scores");
+
+        assert_eq!(ranking, chunks);
+    }
+
+    #[test]
+    fn an_output_that_is_not_a_ranking_is_refused_naming_its_kind() {
+        let outputs = [
+            (
+                Output::Context(Context {
+                    chunks: Vec::new(),
+                    text: String::new(),
+                }),
+                "context",
+            ),
+            (
+                Output::Answer(Answer {
+                    text: "yes".to_string(),
+                }),
+                "answer",
+            ),
+        ];
+        for (output, expected) in outputs {
+            let Err(err) = ranking(&QueryId::new("q-1"), output) else {
+                panic!("a {expected} is not a ranking this harness can score")
+            };
+
+            assert!(
+                matches!(
+                    &err,
+                    HarnessError::UnscorableOutput { query, kind }
+                        if query.as_str() == "q-1" && *kind == expected
+                ),
+                "expected UnscorableOutput for the {expected}, got {err:?}"
+            );
+            let message = err.to_string();
+            assert!(
+                message.contains("`q-1`") && message.contains(expected),
+                "the message names the query and the kind: {message}"
+            );
+        }
     }
 }

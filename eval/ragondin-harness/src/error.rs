@@ -46,4 +46,25 @@ pub enum HarnessError {
     /// cause here reports it while the cause is still known.
     #[error("no query of this benchmark is judged, so no metric can be computed")]
     NothingToScore,
+
+    /// A query's pipeline returned something other than a ranking of chunks —
+    /// a context or an answer — and this harness scores rankings only.
+    ///
+    /// The harness's state until it selects which ranking a generation
+    /// pipeline is scored on and scores answers themselves: the engine can
+    /// now end a pipeline on a context builder or a generator, and a run that
+    /// silently dropped those outputs, or scored a ranking the pipeline did not
+    /// return, would report numbers nobody asked for. Refused for every query,
+    /// judged or not, so the refusal does not depend on the qrels.
+    #[error(
+        "query `{}`: the pipeline's output is of kind `{kind}`, and this harness scores only a ranking of chunks",
+        query.as_str()
+    )]
+    UnscorableOutput {
+        /// The query whose output cannot be scored.
+        query: QueryId,
+        /// The kind of what the pipeline returned instead, as a configuration
+        /// names it: `"context"` or `"answer"`.
+        kind: &'static str,
+    },
 }

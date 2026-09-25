@@ -16,7 +16,9 @@
 //! data-flow edges, carries an erased `NodeValue` along each edge (ADR-C16,
 //! which confines that enum to this crate), seeds its value table from the
 //! pipeline's declared inputs (ADR-C18), and returns `(Result<Output,
-//! ExecError>, ExecutionTrace)` — the trace even on failure. `Branch` and
+//! ExecError>, ExecutionTrace)` — the trace even on failure. It plans and
+//! executes a retriever, a fusion, a reranker, a context builder and a
+//! generator; an `Extension` is refused at planning. `Branch` and
 //! `Loop` are not executed, because no such node variant exists yet.
 //!
 //! See `ARCHITECTURE.md`.
@@ -33,8 +35,11 @@ mod execute;
 mod plan;
 mod trace;
 
-pub use context::{ComponentCtor, EngineContext, FusionCtor, RerankerCtor, RetrieverCtor};
-pub use error::{ComponentFamily, ConstructionError, ExecError, PlanError};
+pub use context::{
+    ComponentCtor, ContextBuilderCtor, EngineContext, FusionCtor, GeneratorCtor, RerankerCtor,
+    RetrieverCtor,
+};
+pub use error::{ComponentFamily, ConstructionError, ExecError, ParamKind, PlanError};
 pub use execute::{Engine, Output};
 pub use plan::{plan_physical, PhysicalPipeline};
 pub use trace::{ExecutionTrace, NodeTrace, RankedChunk, ValueSummary};

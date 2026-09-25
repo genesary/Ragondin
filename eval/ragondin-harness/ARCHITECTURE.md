@@ -48,6 +48,15 @@ store holds, and files it under its query. Three consequences are deliberate:
   count alone. That ordered list is where anything needing a per-query ranking
   reads it out of a stored run; `Run` gains no per-query field, and the store's
   file layout is untouched, because the document is opaque to it.
+- **A context and an answer are named as outputs and sized as inputs**
+  ([ADR-C31](../../docs/adr/ADR-C31-generation-contracts-template-and-served-model-per-call.md)
+  § 5). A context a node produced renders as
+  `{"context": {"chunks": [{"chunk", "document", "score"}, ...], "text": ...}}`
+  — its chunks in the builder's order, each rendered as a ranked chunk is —
+  and an answer a node produced as `{"answer": {"text": ...}}`. On an input
+  port, a context renders as `{"context": {"count": ..., "text_bytes": ...}}`
+  and an answer as `{"answer": {"text_bytes": ...}}`: its chunk count and the
+  byte length of its text, the sizes the engine's trace records there.
 - **A failed query carries its trace out with the error.**
   `HarnessError::Execute` holds the rendered trace of the run that failed,
   because that is the trace worth reading and an error that dropped it would
@@ -150,10 +159,18 @@ reader can disagree with it.
    descending score by the ranking contract, so the first chunk of a document
    is its best — which makes first-occurrence the max-score-per-document rule
    BEIR evaluations use, without a second sort.
-5. **One failing query fails the whole run.** Averaging over the queries that
+5. **Only a ranking of chunks is scored.** The engine's output is one of a
+   ranking, a context or an answer, whichever the pipeline's terminal node
+   produces. A ranking is scored as described above; a context or an answer is
+   refused, for every query and judged or not, with
+   `HarnessError::UnscorableOutput` naming the query and the kind. That is this
+   crate's state until it selects which ranking a generation pipeline is scored
+   on and scores answers themselves — reporting numbers over an output nobody
+   asked to have scored would be worse than refusing.
+6. **One failing query fails the whole run.** Averaging over the queries that
    happened to succeed would report a smaller benchmark as the whole one, under
    an id that claims to name the whole one.
-6. **The pipeline arrives with its configuration text.** The harness never
+7. **The pipeline arrives with its configuration text.** The harness never
    re-serializes a `LogicalPipeline` to fill `ConfigDocument`: the store keeps
    the text whose canonical logical form hashes to `RunInputs::pipeline`
    (INV-8), and a re-serialization would file a second spelling of it.

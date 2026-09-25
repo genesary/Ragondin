@@ -24,7 +24,7 @@ use ragondin_config::{ConfigSource, LocalFile};
 use ragondin_engine::{plan_physical, Engine, EngineContext, ExecutionTrace, Output, ValueSummary};
 use ragondin_pipeline::{LogicalPipeline, ParamValue};
 use ragondin_stub::{StubFusion, StubRetriever};
-use ragondin_types::{Query, QueryId};
+use ragondin_types::{Query, QueryId, ScoredChunk};
 
 /// The checked-in fixture, read from disk rather than built in code: a
 /// hand-built pipeline would skip the half of the path this test exists for.
@@ -60,7 +60,7 @@ fn register_stubs(ctx: &mut EngineContext) {
 
 /// Loads the fixture, plans it and runs it, returning everything the
 /// assertions below read.
-async fn run_the_slice() -> (LogicalPipeline, Output, ExecutionTrace) {
+async fn run_the_slice() -> (LogicalPipeline, Vec<ScoredChunk>, ExecutionTrace) {
     let logical = LocalFile::new(fixture())
         .load()
         .await
@@ -77,14 +77,13 @@ async fn run_the_slice() -> (LogicalPipeline, Output, ExecutionTrace) {
     };
     let (output, trace) = Engine::new().execute(&plan, query).await;
 
-    (
-        logical,
-        output.expect("the stubs cannot fail on this pipeline"),
-        trace,
-    )
+    let Output::Chunks(hits) = output.expect("the stubs cannot fail on this pipeline") else {
+        panic!("the slice ends on a fusion, so its output is a ranking")
+    };
+    (logical, hits, trace)
 }
 
-fn ids(hits: &Output) -> Vec<&str> {
+fn ids(hits: &[ScoredChunk]) -> Vec<&str> {
     hits.iter().map(|hit| hit.chunk.id.as_str()).collect()
 }
 

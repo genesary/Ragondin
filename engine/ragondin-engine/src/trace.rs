@@ -18,6 +18,10 @@
 //! replay all read. A node's **input** stays a count: an input is the output of
 //! the node that produced it, already named under that node, so naming it twice
 //! would double the trace for no information.
+//!
+//! ADR-C31 § 5 extends both clauses to the generation values: a context a node
+//! produced is named by its chunks and its text, an answer by its text, and
+//! each is summarized on the consuming side by its sizes alone.
 
 use std::time::Duration;
 
@@ -69,6 +73,10 @@ pub struct NodeTrace {
 /// `ragondin-contracts` or `ragondin-types` for this (ADR-C28). The chunk's
 /// *text* is deliberately absent: it is the one field that grows with the
 /// corpus and the one no reader of a ranking needs.
+///
+/// A context's chunks are named the same way (ADR-C31 § 5), from the three
+/// fields a [`ContextChunk`](ragondin_types::ContextChunk) holds; there the
+/// score is the one the chunk carried into the builder, which assigns none.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RankedChunk {
     /// The chunk, by id.
@@ -81,12 +89,19 @@ pub struct RankedChunk {
 
 /// What travelled along one edge, reduced to what a trace records.
 ///
-/// Chunks have two entries rather than one because the two sides of a node
-/// record different things (ADR-C28), and a single variant carrying both a
-/// count and an optional list would hold the same fact twice — a count that
-/// can disagree with the list beside it. So [`Self::Chunks`] is what an input
-/// port records and [`Self::RankedChunks`] what a node produced, and the count
-/// of an output is the length of its list.
+/// Every kind a node produces has two entries rather than one, because the
+/// two sides of a node record different things (ADR-C28, ADR-C31 § 5), and a
+/// single variant carrying both a size and an optional value would hold the
+/// same fact twice — a size that can disagree with the value beside it:
+///
+/// | kind | an input port records | a node produced |
+/// |---|---|---|
+/// | chunks | [`Self::Chunks`] | [`Self::RankedChunks`] |
+/// | context | [`Self::ContextSize`] | [`Self::Context`] |
+/// | answer | [`Self::AnswerSize`] | [`Self::Answer`] |
+///
+/// The size of an output is read off its value. A query is the exception: it
+/// is recorded by its id on both sides, and no node produces one.
 #[derive(Clone, Debug, PartialEq)]
 pub enum ValueSummary {
     /// A query, named by its id.
@@ -106,6 +121,31 @@ pub enum ValueSummary {
         /// here.
         chunks: Vec<RankedChunk>,
     },
+    /// A context, sized and not named: what an **input** port records.
+    ContextSize {
+        /// How many chunks the context held.
+        chunks: usize,
+        /// The length of its rendered text, in bytes of UTF-8.
+        text_bytes: usize,
+    },
+    /// The context a node **produced** (ADR-C31 § 5).
+    Context {
+        /// The chunks it holds, in the order the builder placed them — never
+        /// sorted here.
+        chunks: Vec<RankedChunk>,
+        /// Its rendered text, whole.
+        text: String,
+    },
+    /// An answer, sized and not named: what an **input** port records.
+    AnswerSize {
+        /// The length of its text, in bytes of UTF-8.
+        text_bytes: usize,
+    },
+    /// The answer a node **produced** (ADR-C31 § 5).
+    Answer {
+        /// Its text, whole.
+        text: String,
+    },
 }
 
 impl ValueSummary {
@@ -117,6 +157,13 @@ impl ValueSummary {
             },
             NodeValue::Chunks(chunks) => Self::Chunks {
                 count: chunks.len(),
+            },
+            NodeValue::Context(context) => Self::ContextSize {
+                chunks: context.chunks.len(),
+                text_bytes: context.text.len(),
+            },
+            NodeValue::Answer(answer) => Self::AnswerSize {
+                text_bytes: answer.text.len(),
             },
         }
     }
@@ -137,6 +184,48 @@ impl ValueSummary {
                     })
                     .collect(),
             },
+            NodeValue::Context(context) => Self::Context {
+                chunks: context
+                    .chunks
+                    .iter()
+                    .map(|placed| RankedChunk {
+                        chunk: placed.id.clone(),
+                        document: placed.document_id.clone(),
+                        score: placed.score,
+                    })
+                    .collect(),
+                text: context.text.clone(),
+            },
+            NodeValue::Answer(answer) => Self::Answer {
+                text: answer.text.clone(),
+            },
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use ragondin_types::Answer;
+
+    use super::*;
+
+    #[test]
+    fn a_consumed_answer_is_sized_and_a_produced_one_is_named() {
+        // Nothing consumes an answer in any pipeline `validate` admits today,
+        // so the input side is pinned here rather than through a plan.
+        let value = NodeValue::Answer(Answer {
+            text: "forty-two".to_string(),
+        });
+
+        assert_eq!(
+            ValueSummary::of_input(&value),
+            ValueSummary::AnswerSize { text_bytes: 9 }
+        );
+        assert_eq!(
+            ValueSummary::of_output(&value),
+            ValueSummary::Answer {
+                text: "forty-two".to_string()
+            }
+        );
     }
 }

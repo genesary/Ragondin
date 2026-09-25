@@ -15,7 +15,7 @@
 
 use std::collections::BTreeMap;
 
-use ragondin_contracts::{Fusion, Reranker, Retriever};
+use ragondin_contracts::{ContextBuilder, Fusion, Generator, Reranker, Retriever};
 use ragondin_pipeline::Params;
 
 use crate::error::{ComponentFamily, ConstructionError, PlanError};
@@ -37,6 +37,10 @@ pub type RetrieverCtor = ComponentCtor<dyn Retriever>;
 pub type FusionCtor = ComponentCtor<dyn Fusion>;
 /// Constructs a [`Reranker`].
 pub type RerankerCtor = ComponentCtor<dyn Reranker>;
+/// Constructs a [`ContextBuilder`].
+pub type ContextBuilderCtor = ComponentCtor<dyn ContextBuilder>;
+/// Constructs a [`Generator`].
+pub type GeneratorCtor = ComponentCtor<dyn Generator>;
 
 /// One family's table of constructors, keyed by `impl:` name.
 ///
@@ -96,6 +100,8 @@ pub struct EngineContext {
     retrievers: Registry<dyn Retriever>,
     fusions: Registry<dyn Fusion>,
     rerankers: Registry<dyn Reranker>,
+    context_builders: Registry<dyn ContextBuilder>,
+    generators: Registry<dyn Generator>,
 }
 
 impl EngineContext {
@@ -110,6 +116,8 @@ impl EngineContext {
             retrievers: Registry::new(ComponentFamily::Retriever),
             fusions: Registry::new(ComponentFamily::Fusion),
             rerankers: Registry::new(ComponentFamily::Reranker),
+            context_builders: Registry::new(ComponentFamily::ContextBuilder),
+            generators: Registry::new(ComponentFamily::Generator),
         }
     }
 
@@ -133,6 +141,18 @@ impl EngineContext {
     /// [`register_retriever`](Self::register_retriever) on re-registration.
     pub fn register_reranker(&mut self, name: &str, ctor: RerankerCtor) {
         self.rerankers.register(name, ctor);
+    }
+
+    /// Registers a [`ContextBuilder`] constructor under `name`. See
+    /// [`register_retriever`](Self::register_retriever) on re-registration.
+    pub fn register_context_builder(&mut self, name: &str, ctor: ContextBuilderCtor) {
+        self.context_builders.register(name, ctor);
+    }
+
+    /// Registers a [`Generator`] constructor under `name`. See
+    /// [`register_retriever`](Self::register_retriever) on re-registration.
+    pub fn register_generator(&mut self, name: &str, ctor: GeneratorCtor) {
+        self.generators.register(name, ctor);
     }
 }
 
@@ -171,6 +191,24 @@ impl EngineContext {
     ) -> Result<Box<dyn Reranker>, PlanError> {
         self.rerankers.build(name, config)
     }
+
+    /// Builds the [`ContextBuilder`] registered under `name` from `config`.
+    pub(crate) fn build_context_builder(
+        &self,
+        name: &str,
+        config: &Params,
+    ) -> Result<Box<dyn ContextBuilder>, PlanError> {
+        self.context_builders.build(name, config)
+    }
+
+    /// Builds the [`Generator`] registered under `name` from `config`.
+    pub(crate) fn build_generator(
+        &self,
+        name: &str,
+        config: &Params,
+    ) -> Result<Box<dyn Generator>, PlanError> {
+        self.generators.build(name, config)
+    }
 }
 
 impl Default for EngineContext {
@@ -189,10 +227,13 @@ mod tests {
     use super::*;
     use async_trait::async_trait;
     use ragondin_contracts::{
-        ComponentError, Fusion, FusionParams, RerankParams, Reranker, RetrieveParams, Retriever,
+        ComponentError, ContextBuilder, ContextParams, Fusion, FusionParams, GenerateParams,
+        Generator, RerankParams, Reranker, RetrieveParams, Retriever,
     };
     use ragondin_pipeline::{ParamValue, Params};
-    use ragondin_types::{Chunk, ChunkId, DocId, Query, QueryId, ScoredChunk};
+    use ragondin_types::{
+        Answer, Chunk, ChunkId, Context, DocId, ModelIdentity, Query, QueryId, ScoredChunk,
+    };
 
     fn params(pairs: &[(&str, ParamValue)]) -> Params {
         pairs
@@ -454,6 +495,107 @@ mod tests {
         assert_eq!(reranked.len(), 1);
 
         assert!(ctx.build_retriever("counting", &config).is_ok());
+    }
+
+    struct EmptyBuilder;
+
+    #[async_trait]
+    impl ContextBuilder for EmptyBuilder {
+        async fn build(
+            &self,
+            _query: &Query,
+            chunks: Vec<ScoredChunk>,
+            _params: &ContextParams,
+        ) -> Result<Context, ComponentError> {
+            Ok(Context {
+                chunks: Vec::new(),
+                text: format!("{} chunks", chunks.len()),
+            })
+        }
+
+        async fn model_identity(&self) -> Result<ModelIdentity, ComponentError> {
+            Ok(ModelIdentity::new("empty"))
+        }
+    }
+
+    struct FixedGenerator;
+
+    #[async_trait]
+    impl Generator for FixedGenerator {
+        async fn generate(
+            &self,
+            _query: &Query,
+            context: &Context,
+            params: &GenerateParams,
+        ) -> Result<Answer, ComponentError> {
+            Ok(Answer {
+                text: format!("{} from {}", params.served_model, context.text),
+            })
+        }
+
+        async fn model_identity(
+            &self,
+            served_model: &str,
+        ) -> Result<ModelIdentity, ComponentError> {
+            Ok(ModelIdentity::new(served_model))
+        }
+    }
+
+    #[tokio::test]
+    async fn the_generation_families_register_and_build_through_the_same_mechanism() {
+        let mut ctx = EngineContext::new();
+        ctx.register_context_builder("empty", Box::new(|_| Ok(Box::new(EmptyBuilder))));
+        ctx.register_generator("fixed", Box::new(|_| Ok(Box::new(FixedGenerator))));
+
+        let config = Params::new();
+        let context = ctx
+            .build_context_builder("empty", &config)
+            .expect("registered")
+            .build(&query("q"), vec![scored("a", 1.0)], &ContextParams::new(1))
+            .await
+            .expect("the stub does not fail");
+        let answer = ctx
+            .build_generator("fixed", &config)
+            .expect("registered")
+            .generate(
+                &query("q"),
+                &context,
+                &GenerateParams::new("m", "{context}"),
+            )
+            .await
+            .expect("the stub does not fail");
+
+        assert_eq!(answer.text, "m from 1 chunks");
+    }
+
+    #[test]
+    fn an_unknown_generation_impl_names_its_family() {
+        let ctx = EngineContext::new();
+
+        let Err(builder) = ctx.build_context_builder("templated", &Params::new()) else {
+            panic!("nothing is registered under that name")
+        };
+        let Err(generator) = ctx.build_generator("vllm", &Params::new()) else {
+            panic!("nothing is registered under that name")
+        };
+
+        assert!(matches!(
+            &builder,
+            PlanError::UnknownImpl { family: ComponentFamily::ContextBuilder, name } if name == "templated"
+        ));
+        assert!(matches!(
+            &generator,
+            PlanError::UnknownImpl { family: ComponentFamily::Generator, name } if name == "vllm"
+        ));
+        assert_eq!(
+            builder.to_string(),
+            "no context_builder implementation is registered under `templated`",
+            "the family is named as a configuration writes its `component:`"
+        );
+        assert_eq!(
+            generator.to_string(),
+            "no generator implementation is registered under `vllm`"
+        );
     }
 
     #[test]
