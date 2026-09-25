@@ -1,0 +1,29 @@
+# `stub-generation.yaml` without its generator: a pipeline whose terminal node
+# is a context builder. Its output is a context, never an answer, so it is the
+# fixture for a benchmark carrying reference answers that the harness refuses,
+# and for the ranking read from a terminal builder's chunks port (ADR-C30 § 3).
+pipeline:
+  inputs: [question]
+  nodes:
+    - id: context
+      component: context_builder
+      impl: stub_context_builder
+      inputs: [question, fused]
+      params: { budget: 1 }
+
+    - id: fused
+      component: fusion
+      impl: stub_interleave
+      inputs: [leg_a, leg_b]
+
+    - id: leg_a
+      component: retriever
+      impl: stub_retriever
+      inputs: [question]
+      params: { top_k: 1, label: doc-a }
+
+    - id: leg_b
+      component: retriever
+      impl: stub_retriever
+      inputs: [question]
+      params: { top_k: 1, label: doc-b }

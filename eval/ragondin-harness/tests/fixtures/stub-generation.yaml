@@ -1,0 +1,45 @@
+# The pipeline the generation-regime test drives: two stub retrieval legs, the
+# stub fusion that interleaves them, the stub context builder and the stub
+# generator — retrieval → context builder → generator, with a fusion in the
+# retrieval half so that the ranking holds two documents.
+#
+# `budget: 1` keeps only the fused ranking's first chunk in the context. That is
+# the point of the fixture: the ranking the retrieval metrics read (ADR-C30 § 3,
+# the node the builder's chunks port names) holds `doc-a` then `doc-b`, while
+# the context holds `doc-a` alone, so a query judging `doc-b` scores differently
+# under the two — and the test pins which one is read.
+#
+# The stub generator answers with the context's first line, which the stub
+# context builder makes the first chunk's text: "stub chunk 0 of `doc-a` for
+# `<query text>`". The labels are document ids; nothing here measures quality.
+pipeline:
+  inputs: [question]
+  nodes:
+    - id: answer
+      component: generator
+      impl: stub_generator
+      inputs: [question, context]
+      params: { served_model: stub-model, template: "{context}" }
+
+    - id: context
+      component: context_builder
+      impl: stub_context_builder
+      inputs: [question, fused]
+      params: { budget: 1 }
+
+    - id: fused
+      component: fusion
+      impl: stub_interleave
+      inputs: [leg_a, leg_b]
+
+    - id: leg_a
+      component: retriever
+      impl: stub_retriever
+      inputs: [question]
+      params: { top_k: 1, label: doc-a }
+
+    - id: leg_b
+      component: retriever
+      impl: stub_retriever
+      inputs: [question]
+      params: { top_k: 1, label: doc-b }
