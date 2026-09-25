@@ -2,7 +2,10 @@
 
 use ragondin_contracts::{EmbedParams, EmbedRole, Embedder};
 
-use crate::failure::ConformanceFailure;
+use crate::{
+    checks::{check_identity_non_empty, check_identity_stable},
+    failure::ConformanceFailure,
+};
 
 const COMPONENT: &str = "Embedder";
 
@@ -53,6 +56,20 @@ pub enum RolePrefixes {
 ///   one every other check here passes straight through, since a
 ///   wrongly-prefixed vector is well-formed in every respect.
 ///
+/// And, whatever `prefixes` says:
+///
+/// - The **identity of `served_model` is non-empty**, and **stable across two
+///   calls** — two on one instance, and one on a second instance the same
+///   constructor built (ADR-C31 § 4, ADR-C32 § 4). A failure to report one is
+///   a well-formed call failing.
+///
+/// `served_model` is what every call the suite makes asks for — in its
+/// [`EmbedParams`] and in `model_identity` — and must be what the fixture
+/// serves: `None` for a `Local` embedder that loaded one model, a name for a
+/// `Remote` one, which refuses `None` (ADR-C32 § 4). The suite cannot know
+/// which, so the caller states it, as it states a generator's served model; a
+/// wrong statement fails `well-formed call succeeds`.
+///
 /// # What it still cannot check
 ///
 /// That a given prefix was the **right** one. The suite does not know the
@@ -73,8 +90,10 @@ pub enum RolePrefixes {
 pub async fn check_embedder_conformance(
     make: impl Fn() -> Box<dyn Embedder>,
     prefixes: RolePrefixes,
+    served_model: Option<&str>,
 ) -> Result<(), ConformanceFailure> {
     let embedder = make();
+    let params = |role| embed_params(role, served_model);
 
     // The width of the first vector seen, carried across both roles: an
     // embedder has one embedding space, not one per call.
@@ -93,7 +112,7 @@ pub async fn check_embedder_conformance(
         ] {
             let context = format!("{what} under {role:?}");
             let vectors = embedder
-                .embed(&texts, &EmbedParams::new(role))
+                .embed(&texts, &params(role))
                 .await
                 .map_err(|error| ConformanceFailure::from_call(COMPONENT, &context, &error))?;
 
@@ -159,16 +178,40 @@ pub async fn check_embedder_conformance(
     // wildcard failure `EmbedRole` is closed to prevent; the rule is worth no
     // less applied to the enum this suite owns.
     match prefixes {
-        RolePrefixes::Distinct => check_roles_are_separated(embedder.as_ref()).await?,
+        RolePrefixes::Distinct => {
+            check_roles_are_separated(embedder.as_ref(), served_model).await?
+        }
         RolePrefixes::Undeclared => {}
     }
 
-    Ok(())
+    let context = format!("model_identity({served_model:?})");
+    let first = embedder
+        .model_identity(served_model)
+        .await
+        .map_err(|error| ConformanceFailure::from_call(COMPONENT, &context, &error))?;
+    check_identity_non_empty(COMPONENT, &context, &first)?;
+
+    let context = format!("model_identity({served_model:?}), called again on the same instance");
+    let again = embedder
+        .model_identity(served_model)
+        .await
+        .map_err(|error| ConformanceFailure::from_call(COMPONENT, &context, &error))?;
+    check_identity_stable(COMPONENT, &context, &first, &again)?;
+
+    let context = format!("model_identity({served_model:?}), called on a second instance");
+    let other = make()
+        .model_identity(served_model)
+        .await
+        .map_err(|error| ConformanceFailure::from_call(COMPONENT, &context, &error))?;
+    check_identity_stable(COMPONENT, &context, &first, &other)
 }
 
 /// One text, both roles: a fixture configured with distinct prefixes owes two
 /// distinct vectors.
-async fn check_roles_are_separated(embedder: &dyn Embedder) -> Result<(), ConformanceFailure> {
+async fn check_roles_are_separated(
+    embedder: &dyn Embedder,
+    served_model: Option<&str>,
+) -> Result<(), ConformanceFailure> {
     let texts = vec!["the one text both roles are asked about".to_string()];
 
     let mut vectors = Vec::new();
@@ -176,7 +219,7 @@ async fn check_roles_are_separated(embedder: &dyn Embedder) -> Result<(), Confor
         let context = format!("embed of one text under {role:?}");
         vectors.push(
             embedder
-                .embed(&texts, &EmbedParams::new(role))
+                .embed(&texts, &embed_params(role, served_model))
                 .await
                 .map_err(|error| ConformanceFailure::from_call(COMPONENT, &context, &error))?,
         );
@@ -202,12 +245,23 @@ async fn check_roles_are_separated(embedder: &dyn Embedder) -> Result<(), Confor
     Ok(())
 }
 
+/// The params of every call the suite makes: `role`, and the served model the
+/// caller states, so that a component refusing `None` is asked for what it
+/// serves on every call and not only in `model_identity`.
+fn embed_params(role: EmbedRole, served_model: Option<&str>) -> EmbedParams {
+    match served_model {
+        None => EmbedParams::new(role),
+        Some(name) => EmbedParams::new(role).with_served_model(name),
+    }
+}
+
 /// [`check_embedder_conformance`], panicking on the first broken check.
 pub async fn assert_embedder_conformance(
     make: impl Fn() -> Box<dyn Embedder>,
     prefixes: RolePrefixes,
+    served_model: Option<&str>,
 ) {
-    if let Err(failure) = check_embedder_conformance(make, prefixes).await {
+    if let Err(failure) = check_embedder_conformance(make, prefixes, served_model).await {
         panic!("{failure}");
     }
 }

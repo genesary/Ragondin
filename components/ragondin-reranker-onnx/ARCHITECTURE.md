@@ -27,7 +27,7 @@ engine, and the binary is the composition root that puts the two together
 
 - **A component is a leaf (INV-5, CI-enforced).** The dependencies are
   `ragondin-contracts`, `ragondin-types`, `async-trait`, `thiserror` and, behind
-  the `onnx` feature, `ort`, `tokenizers` and `tokio` — never `ragondin-engine`,
+  the `onnx` feature, `ort`, `tokenizers`, `tokio` and `sha2` — never `ragondin-engine`,
   never a sibling component. The engine knows only traits, and the check walks
   the dependency graph to prove it.
 - **The heavy backend is confined and feature-gated (ADR-C14).** `ort` and
@@ -56,10 +56,27 @@ engine, and the binary is the composition root that puts the two together
   corpus of its own: the returned chunks *are* the ones handed in, carrying a
   new score, reordered and truncated. `ragondin-conformance` checks this
   (`no fabricated ids`, `no duplicate ids`, `top_k respected`).
-- **A `top_k` of zero is rejected before anything else**, including before the
-  empty-input shortcut. ADR-C19 makes an empty chunk list a valid call that does
-  nothing; it explicitly does not weaken the `top_k` rule, so the order of the
-  two checks is the order the contract states them in, not an accident.
+- **A served-model name, then a `top_k` of zero, is rejected before anything
+  else**, including before the empty-input shortcut. ADR-C19 makes an empty
+  chunk list a valid call that does nothing; it explicitly does not weaken the
+  `top_k` rule, so the order of the two checks is the order the contract states
+  them in, not an accident. The served-model check is ADR-C32 § 4's: this
+  component is configured with no served-model name, so `None` asks for the
+  model it loaded and every `Some(name)` — the empty one included — is refused
+  as `InvalidRequest`, on `rerank` and on `model_identity` alike.
+- **Its identity is `<model>+<tokenizer>`, digested once, at construction.**
+  ADR-C32 § 4 fixes the format: the lowercase hex SHA-256 of the model file's
+  bytes, `+`, and that of the tokenizer file's. The tokenizer is in it because
+  its contents decide the scores as surely as the model's do, and a path says
+  nothing about contents; `max_sequence_length` is not, being the node's
+  parameter and already in the pipeline's hash. `new` reads each file once
+  more after loading it and streams it through the hasher — synchronous work
+  in a synchronous constructor, which ADR-C25 leaves outside its rule — so
+  `model_identity` returns a stored value and does no work on the caller's
+  thread. A file that loaded and then cannot be read again is
+  `ModelError::Digest`. Reading the files again, rather than loading from
+  bytes already in memory — ADR-C32 § 4 allows either — leaves how the
+  session and the tokenizer are loaded exactly as it was.
 - **Typed errors (ADR-C13).** `ModelError` for loading and for a failed forward
   pass, `ComponentError` at the trait boundary — the latter wrapping the former
   in `Backend`, so a `Local` caller can walk `source()` to the cause. A library

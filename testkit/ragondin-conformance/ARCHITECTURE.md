@@ -6,7 +6,7 @@ check names it returns, so a rename is a break for every component crate. Treat
 the family functions and the check-name strings as fixed; the modules behind
 them are free.
 
-That has been broken **once**, deliberately, and this is the record of it.
+That has been broken **twice**, deliberately, and this is the record of it.
 ADR-C17 gave `check_embedder_conformance` / `assert_embedder_conformance` a
 second parameter, `RolePrefixes`, because the suite cannot know whether the
 fixture in front of it was configured with distinct per-role prefixes — a
@@ -16,6 +16,21 @@ already set: what the suite cannot know, the caller states in the argument
 list. No embedder crate existed when it landed, so nothing broke. The
 precedent is the *reason*, not a licence: a family function's argument shape
 changes only when a check needs a fact no fixture can supply from inside.
+
+The second break: ADR-C32 § 4 gave `Embedder` and `Reranker` a
+`model_identity(served_model: Option<&str>)`, and gave both suites the two
+identity scenarios. So `check_reranker_conformance(make, served_model)` and
+`check_embedder_conformance(make, prefixes, served_model)` — with their
+`assert_*` twins — gained a last parameter, `served_model: Option<&str>`,
+mirroring the generator suite's. Which model a fixture serves is a fact no
+suite can know: a `Local` embedder or reranker that loaded one model answers
+`None` and may refuse every name, as the ONNX ones do, while a `Remote` one
+refuses `None` and answers the names its service serves. The suite passes the
+stated value on **every** call it makes — in the `EmbedParams` or
+`RerankParams` of each call, not only to `model_identity` — because a `Remote`
+component refuses a call carrying the wrong one as surely as it refuses the
+identity. Every caller in the workspace — the two ONNX components' tests —
+was updated in the same change.
 
 `check_generator_conformance(make, served_model)` was born with that shape
 rather than changed to it, on the same reasoning. Which model a fixture serves
@@ -133,8 +148,10 @@ the suite cannot observe it without knowing the component:
   unit is the builder's own (ADR-C31 § 2); a "budget respected" check would
   have to pick a unit, and would then certify that unit rather than the
   contract.
-- **A generator refusing a model it does not serve** is not probed: no name is
-  one the suite could know every fixture refuses.
+- **A generator, an embedder or a reranker refusing a model it does not
+  serve** is not probed: no name is one the suite could know every fixture
+  refuses — and for an embedder or a reranker, `None` is refused by a
+  `Remote` fixture and answered by a `Local` one.
 - **A builder carrying each placed chunk's incoming score untouched** is on
   `ContextBuilder`'s contract, but not on ADR-C31 § 2's list of what the suite
   may check, and the suite checks what that list and ADR-C32 § 4 name, no

@@ -12,6 +12,7 @@
 mod fixture;
 
 use std::num::NonZeroUsize;
+use std::path::{Path, PathBuf};
 
 use ragondin_conformance::assert_reranker_conformance;
 use ragondin_contracts::{ComponentError, RerankParams, Reranker};
@@ -71,7 +72,9 @@ fn ids(hits: &[ScoredChunk]) -> Vec<&str> {
 
 #[tokio::test]
 async fn the_reranker_conforms() {
-    assert_reranker_conformance(|| Box::new(reranker())).await;
+    // `None`: configured with no served-model name, it serves the model it
+    // loaded and nothing else (ADR-C32 § 4).
+    assert_reranker_conformance(|| Box::new(reranker()), None).await;
 }
 
 #[tokio::test]
@@ -281,4 +284,145 @@ async fn an_empty_candidate_list_reranks_to_nothing() {
         .unwrap();
 
     assert!(reordered.is_empty());
+}
+
+/// The lowercase hex SHA-256 of a file's bytes, computed here independently of
+/// the component, so that the identity's format is pinned rather than echoed.
+fn sha256_hex(path: &Path) -> String {
+    use sha2::{Digest, Sha256};
+    let bytes = std::fs::read(path).expect("a fixture is readable");
+    format!("{:x}", Sha256::digest(bytes))
+}
+
+/// A directory of its own under cargo's scratch space for integration tests,
+/// emptied first, so a test can rewrite a file at one path.
+fn scratch(test: &str) -> PathBuf {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR"))
+        .join("ragondin-reranker-onnx")
+        .join(test);
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("the scratch directory can be created");
+    dir
+}
+
+/// A model and a tokenizer at fixed paths in `dir`, holding `model`'s bytes and
+/// `tokenizer`.
+fn place(dir: &Path, model: &Path, tokenizer: &str) -> OnnxRerankerConfig {
+    let (model_at, tokenizer_at) = (dir.join("model.onnx"), dir.join("tokenizer.json"));
+    std::fs::copy(model, &model_at).expect("the model fixture copies");
+    std::fs::write(&tokenizer_at, tokenizer).expect("the tokenizer is writable");
+    OnnxRerankerConfig::new(model_at, tokenizer_at)
+}
+
+/// The fixture tokenizer's own text.
+fn tokenizer_text() -> String {
+    std::fs::read_to_string(&fixture::cross_encoder().tokenizer).expect("the fixture tokenizer")
+}
+
+async fn identity_of(config: OnnxRerankerConfig) -> String {
+    OnnxReranker::new(config)
+        .expect("the fixture cross-encoder loads")
+        .model_identity(None)
+        .await
+        .expect("an ONNX reranker reports its identity for None")
+        .as_str()
+        .to_string()
+}
+
+/// ADR-C32 § 4 fixes the format: the model file's digest, `+`, the tokenizer
+/// file's digest, each the lowercase hex SHA-256 of the file's bytes.
+#[tokio::test]
+async fn the_identity_is_the_digest_of_the_model_then_of_the_tokenizer() {
+    let fixture = fixture::cross_encoder();
+    let expected = format!(
+        "{}+{}",
+        sha256_hex(&fixture.model),
+        sha256_hex(&fixture.tokenizer)
+    );
+    assert_eq!(identity_of(config()).await, expected);
+}
+
+/// The identity is over the files' contents, never their names: the same
+/// bytes at another path are the same model.
+#[tokio::test]
+async fn the_identity_follows_the_bytes_and_not_the_path() {
+    let moved = place(
+        &scratch("follows-the-bytes"),
+        &fixture::cross_encoder().model,
+        &tokenizer_text(),
+    );
+    assert_eq!(identity_of(moved).await, identity_of(config()).await);
+}
+
+#[tokio::test]
+async fn the_identity_changes_when_the_model_bytes_change() {
+    let fixture = fixture::cross_encoder();
+    let dir = scratch("model-bytes-change");
+    let before = identity_of(place(&dir, &fixture.model, &tokenizer_text())).await;
+    let after = identity_of(place(&dir, &fixture.two_headed_model, &tokenizer_text())).await;
+    assert_ne!(
+        before, after,
+        "another model at the same path is another model"
+    );
+    assert_eq!(
+        before.split('+').nth(1),
+        after.split('+').nth(1),
+        "the tokenizer's half does not move with the model"
+    );
+}
+
+/// The tokenizer is what ADR-C32 § 4 adds to the identity: a path alone was
+/// hashed before, and a tokenizer rewritten in place changed nothing recorded.
+#[tokio::test]
+async fn the_identity_changes_when_the_tokenizer_bytes_change() {
+    let fixture = fixture::cross_encoder();
+    let dir = scratch("tokenizer-bytes-change");
+    let original = tokenizer_text();
+    let cased = original.replace("\"lowercase\": true", "\"lowercase\": false");
+    assert_ne!(original, cased, "the edit must change the tokenizer");
+    let before = identity_of(place(&dir, &fixture.model, &original)).await;
+    let after = identity_of(place(&dir, &fixture.model, &cased)).await;
+    assert_ne!(
+        before, after,
+        "another tokenizer at the same path is another model"
+    );
+    assert_eq!(
+        before.split('+').next(),
+        after.split('+').next(),
+        "the model's half does not move with the tokenizer"
+    );
+}
+
+/// Configured with no served-model name, the component serves none: `None` is
+/// the only accepted value, on a call and in `model_identity` (ADR-C32 § 4).
+#[tokio::test]
+async fn a_served_model_name_is_refused() {
+    let reranker = reranker();
+
+    for name in ["bge-reranker", ""] {
+        let refused = reranker
+            .model_identity(Some(name))
+            .await
+            .expect_err("an ONNX reranker serves no name");
+        assert!(
+            matches!(refused, ComponentError::InvalidRequest(_)),
+            "{refused}"
+        );
+    }
+
+    for chunks in [candidates(), Vec::new()] {
+        let refused = reranker
+            .rerank(
+                &query(),
+                chunks.clone(),
+                &RerankParams::new(3).with_served_model("bge-reranker"),
+            )
+            .await
+            .expect_err("an ONNX reranker serves no name");
+        assert!(
+            matches!(refused, ComponentError::InvalidRequest(_)),
+            "{} chunks: {refused}",
+            chunks.len()
+        );
+    }
 }

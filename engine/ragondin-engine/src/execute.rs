@@ -927,6 +927,13 @@ mod tests {
             }
             Ok(chunks)
         }
+
+        async fn model_identity(
+            &self,
+            _served_model: Option<&str>,
+        ) -> Result<ragondin_types::ModelIdentity, ComponentError> {
+            Ok(ragondin_types::ModelIdentity::new("stub-reranker"))
+        }
     }
 
     /// A context registering one implementation per family a test names.

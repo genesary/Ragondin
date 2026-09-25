@@ -14,7 +14,7 @@
 //! use async_trait::async_trait;
 //! use ragondin_conformance::assert_reranker_conformance;
 //! use ragondin_contracts::{ComponentError, RerankParams, Reranker};
-//! use ragondin_types::{Query, ScoredChunk};
+//! use ragondin_types::{ModelIdentity, Query, ScoredChunk};
 //!
 //! struct MyReranker;
 //!
@@ -33,11 +33,19 @@
 //!         chunks.truncate(params.top_k);
 //!         Ok(chunks)
 //!     }
+//!
+//!     async fn model_identity(
+//!         &self,
+//!         _served_model: Option<&str>,
+//!     ) -> Result<ModelIdentity, ComponentError> {
+//!         Ok(ModelIdentity::new("my-reranker@rev1"))
+//!     }
 //! }
 //!
 //! # tokio::runtime::Runtime::new().unwrap().block_on(async {
 //! // #[tokio::test]
-//! assert_reranker_conformance(|| Box::new(MyReranker)).await;
+//! // `None`: the model the reranker loaded, since it serves no name.
+//! assert_reranker_conformance(|| Box::new(MyReranker), None).await;
 //! # });
 //! ```
 //!
@@ -70,9 +78,9 @@
 //! provenance of a context, never its content (ADR-C31 § 2): a generator
 //! answering "I do not know" to everything is conformant. A context builder's
 //! budget is refused at zero but never measured, because its unit is the
-//! builder's own. And what the suite cannot know about a generator — which
-//! model it serves — the caller states in the argument list; the template is
-//! the suite's own.
+//! builder's own. And what the suite cannot know about a generator, an
+//! embedder or a reranker — which model it serves — the caller states in the
+//! argument list; the template is the suite's own.
 //!
 //! # The check names
 //!
@@ -90,7 +98,7 @@
 //! | `empty store yields no results`, `nearest neighbour is itself`, `upsert replaces by id`, `dimensionality` | `VectorStore` |
 //! | `zero budget rejected` | `ContextBuilder` |
 //! | `empty served_model rejected`, `empty template rejected`, `malformed template rejected` | `Generator` |
-//! | `identity non-empty`, `identity stable across two calls` | `ContextBuilder`, `Generator` |
+//! | `identity non-empty`, `identity stable across two calls` | `Reranker`, `Embedder`, `ContextBuilder`, `Generator` |
 //!
 //! See `ARCHITECTURE.md` and `docs/code-architecture.md` §7.4.
 
