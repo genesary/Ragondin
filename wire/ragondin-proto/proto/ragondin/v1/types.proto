@@ -9,6 +9,22 @@
 // A message-typed field of a request is required even though proto3 lets it
 // be omitted: a request that leaves one out cannot be answered, and is
 // refused as an invalid request (ADR-C24).
+//
+// How a service reports a failure: with exactly one of three gRPC status
+// codes, and no other, even where gRPC offers a more specific one (ADR-C35).
+//
+// - INVALID_ARGUMENT for an invalid request: every refusal condition these
+//   files state, and a request that does not convert to the domain types,
+//   such as a required message left out, EMBED_ROLE_UNSPECIFIED, or an enum
+//   number the domain has no value for.
+// - UNAVAILABLE for a dependency the service cannot reach, and for overload,
+//   a rate limit or an exhausted quota: the caller's remedy is to try later.
+//   RESOURCE_EXHAUSTED is never used.
+// - INTERNAL for any other failure.
+//
+// A caller reads INVALID_ARGUMENT as an invalid request; UNAVAILABLE,
+// DEADLINE_EXCEEDED and CANCELLED as a component it could not reach; and any
+// other code as a failure of the component, keeping the code.
 
 syntax = "proto3";
 
