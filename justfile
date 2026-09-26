@@ -13,7 +13,8 @@ build:
 test:
     cargo test --workspace
 
-# Lint with warnings promoted to errors, in both feature configurations.
+# Lint with warnings promoted to errors, in both workspace feature
+# configurations, and then the binary with each of its features alone.
 #
 # `--all-features` is load-bearing, not thoroughness for its own sake: a heavy
 # backend is never a default feature, so without it clippy is `cfg`'d out of
@@ -25,9 +26,17 @@ test:
 # compiled away by the all-features run, and no other gate here denies warnings
 # — neither `build` nor `test` does — so dropping this one would leave the
 # default configuration ungated entirely.
+#
+# Neither run sees a feature of the `ragondin` binary on its own, and
+# `wiring::register` is where one feature's code reads what another's does not:
+# a binding only `bm25` reads is unused in an `onnx`-only build. The loop reads
+# the binary's features from its manifest rather than naming them, so a feature
+# added there is linted alone without anyone remembering to add it here. Only
+# the binary: it is the one crate that composes several backend features.
 clippy:
     cargo clippy --workspace --all-targets -- -D warnings
     cargo clippy --workspace --all-targets --all-features -- -D warnings
+    for f in $(cargo metadata --no-deps --format-version 1 | python3 -c 'import json, sys; print(*[f for p in json.load(sys.stdin)["packages"] if p["name"] == "ragondin" for f in p["features"] if f != "default"])'); do cargo clippy -p ragondin --all-targets --no-default-features --features "$f" -- -D warnings || exit 1; done
 
 # Verify formatting (does not modify files).
 fmt:

@@ -88,6 +88,19 @@ release.
   intention. RRF and the concatenating context builder are normal
   dependencies rather than features: rank and string arithmetic with no
   backend behind them, so gating them would buy no compile time.
+- **Each feature is linted alone, not only all together.** `register` holds
+  code that one feature reads and another does not — `chunks` is read only by
+  `bm25`, `embedded` only by `onnx` — so a build with one backend can warn where
+  the default and `--all-features` builds are clean. Each such parameter lifts
+  `unused_variables` for itself, under its own feature's absence, as an
+  `expect` rather than an `allow`, so the lifting fails the build the day the
+  parameter is read. `just clippy` and CI then run clippy on this crate once
+  per feature, with `--no-default-features`, reading the list from
+  `Cargo.toml` so a new feature is covered without editing either. A CI step
+  rather than a local recipe alone, because the failure it catches is
+  invisible from any build CI already runs; it adds three `-p ragondin` clippy
+  runs that re-check only this crate and the dependencies whose features
+  differ, a few seconds against the two workspace runs.
 - **No production `Local` generator exists, and the `stub` feature is the
   only generator a build can carry.** A generator is `Remote` by design
   (ADR-C31), and this build does not yet construct a `Remote` component, so

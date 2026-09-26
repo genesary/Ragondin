@@ -72,6 +72,17 @@ jobs:
       - name: Clippy, feature-gated paths (warnings are errors)
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
+      # The binary with each of its features alone, which neither run above
+      # builds: `wiring::register` holds code one feature reads and another
+      # does not, so a single-backend build can warn where both builds are
+      # clean. Features are read from the manifest, as `just clippy` reads
+      # them, so a new one is covered without an edit here. Cheap: only the
+      # `ragondin` crate and the few dependencies whose features differ are
+      # checked again.
+      - name: Clippy, the binary with each feature alone (warnings are errors)
+        run: |
+          for f in $(cargo metadata --no-deps --format-version 1 | python3 -c 'import json, sys; print(*[f for p in json.load(sys.stdin)["packages"] if p["name"] == "ragondin" for f in p["features"] if f != "default"])'); do cargo clippy -p ragondin --all-targets --no-default-features --features "$f" -- -D warnings || exit 1; done
+
       # The default build is lean by rule, so it never compiles what sits behind
       # a feature. Without this step a broken `#[cfg(feature = "remote")]` block
       # ships unnoticed. When heavy backends arrive and this gets slow, split it
