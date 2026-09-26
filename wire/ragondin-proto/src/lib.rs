@@ -6,7 +6,8 @@
 //! - the **component services** (the [`v1`] module, protobuf package
 //!   `ragondin.v1`) that a `Remote` component implements — face 2 of the
 //!   two-faced contract (ADR-3), mirroring the `Retriever`, `Fusion`,
-//!   `Reranker`, `Embedder` and `VectorStore` traits of `ragondin-contracts`;
+//!   `Reranker`, `Embedder`, `VectorStore`, `ContextBuilder` and `Generator`
+//!   traits of `ragondin-contracts`, their `model_identity` methods included;
 //! - the **configuration-delivery service** (the [`config`] module, package
 //!   `ragondin.config.v1`): a purpose-built, versioned gRPC service, reserved
 //!   here with no rpc yet.
@@ -18,12 +19,6 @@
 //! Rust here with `tonic-build`, with no `protoc` (ADR-C34). The conversions
 //! between the two faces are `ragondin-remote`'s, not this crate's. The wire
 //! format is versioned by its package, independently of the in-memory types.
-//!
-//! The mirror covers the traits as they were before the generation work: the
-//! `GetModelIdentity` rpcs, the `served_model` fields of the embed and rerank
-//! params, and the `ContextBuilder` and `Generator` services are not here yet.
-//! #257 adds them; until it does, a `Remote` embedder or reranker cannot be
-//! asked for a served model or report its identity over this wire.
 //!
 //! See `ARCHITECTURE.md`.
 

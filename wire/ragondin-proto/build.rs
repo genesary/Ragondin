@@ -12,6 +12,8 @@ const FILES: &[&str] = &[
     "ragondin/v1/reranker.proto",
     "ragondin/v1/embedder.proto",
     "ragondin/v1/vector_store.proto",
+    "ragondin/v1/context_builder.proto",
+    "ragondin/v1/generator.proto",
     "ragondin/config/v1/config.proto",
 ];
 

@@ -1,0 +1,68 @@
+// The ContextBuilder service: face 2 of ragondin_contracts::ContextBuilder
+// (ADR-3).
+
+syntax = "proto3";
+
+package ragondin.v1;
+
+import "ragondin/v1/types.proto";
+
+// Selects, orders and renders retrieved chunks into a context.
+service ContextBuilder {
+  // Builds the context the query is answered from, out of the chunks, capped
+  // at the budget.
+  //
+  // A builder selects, orders and renders; it does not judge relevance
+  // (ADR-C31 section 1). Every chunk of the returned context names a chunk
+  // the request carried, no id twice, in the order the builder placed them,
+  // and keeps that chunk's incoming score untouched. No chunks is a valid
+  // call, and builds a context with no chunks and any text (ADR-C19).
+  rpc Build(BuildRequest) returns (BuildResponse);
+
+  // Reports the identity of this builder's configuration: whatever decides
+  // its output and is not in the node's parameters, such as the template it
+  // renders passages with and the unit its budget is counted in (ADR-C31
+  // section 4). It takes no argument, since nothing handed to a builder per
+  // call decides its output beyond its parameters.
+  rpc GetModelIdentity(ContextBuilderModelIdentityRequest) returns (ContextBuilderModelIdentityResponse);
+}
+
+// Per-call parameters of a context builder. Mirrors
+// ragondin_contracts::ContextParams.
+message ContextParams {
+  // The cap on the size of the context, the twin of a retriever's top_k.
+  // Its unit is the implementation's own, characters or tokens or chunks,
+  // and the implementation documents it (ADR-C31 section 2). Zero is an
+  // invalid request.
+  uint64 budget = 1;
+}
+
+// The arguments of ragondin_contracts::ContextBuilder::build.
+message BuildRequest {
+  // The query the context is built for. Required, though a builder may
+  // ignore it.
+  Query query = 1;
+  // The chunks to build the context from, as the upstream node ranked them.
+  repeated ScoredChunk chunks = 2;
+  // The per-call parameters. Required.
+  ContextParams params = 3;
+}
+
+// The result of a build.
+message BuildResponse {
+  // The built context. Required.
+  Context context = 1;
+}
+
+// The arguments of ragondin_contracts::ContextBuilder::model_identity, which
+// takes none.
+//
+// Empty, and present all the same: a future argument is then an added field
+// rather than a change to the rpc's signature.
+message ContextBuilderModelIdentityRequest {}
+
+// The result of a context builder's model identity call.
+message ContextBuilderModelIdentityResponse {
+  // The identity of the builder's configuration. Required, and never empty.
+  ModelIdentity identity = 1;
+}

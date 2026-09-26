@@ -242,8 +242,13 @@ pub trait Reranker: Send + Sync {
         &self,
         query: &Query,
         chunks: Vec<ScoredChunk>,
-        params: &RerankParams,
+        params: &RerankParams, // top_k, and an optional served_model
     ) -> Result<Vec<ScoredChunk>, ComponentError>;
+
+    async fn model_identity(
+        &self,
+        served_model: Option<&str>,
+    ) -> Result<ModelIdentity, ComponentError>;
 }
 ```
 
@@ -252,6 +257,7 @@ pub trait Reranker: Send + Sync {
 ```proto
 service Reranker {
   rpc Rerank(RerankRequest) returns (RerankResponse);
+  rpc GetModelIdentity(RerankerModelIdentityRequest) returns (RerankerModelIdentityResponse);
 }
 
 message RerankRequest {
@@ -259,7 +265,14 @@ message RerankRequest {
   repeated ScoredChunk chunks = 2;
   RerankParams params = 3;
 }
+
+message RerankParams {
+  uint64 top_k = 1;
+  optional string served_model = 2;   // absent decodes as None, not as ""
+}
 ```
+
+A component whose output depends on a model reports that model's identity through its contract, on both faces: `model_identity` and `GetModelIdentity` on the embedder, the reranker, the context builder and the generator.
 
 **Two implementation natures behind one interface:**
 
@@ -274,6 +287,9 @@ impl Reranker for RemoteReranker {
     async fn rerank(&self, /* ... */) -> Result</* ... */> {
         // serialize to protobuf → gRPC call → deserialize.
         // The engine perceives NO difference from a local implementation.
+    }
+    async fn model_identity(&self, /* ... */) -> Result</* ... */> {
+        // the GetModelIdentity rpc, forwarding served_model.
     }
 }
 ```

@@ -20,6 +20,13 @@ service Embedder {
   // batch, and at least one component. No texts is a valid call, and embeds
   // to no vectors (ADR-C19).
   rpc Embed(EmbedRequest) returns (EmbedResponse);
+
+  // Reports the identity of the model this service embeds with when asked
+  // for served_model: the same name the Embed requests carry in their params
+  // (ADR-C32 section 4). A name the service does not serve is refused as an
+  // invalid request, never answered with a warning; so are an empty name and
+  // an absent one.
+  rpc GetModelIdentity(EmbedderModelIdentityRequest) returns (EmbedderModelIdentityResponse);
 }
 
 // Which side of a retrieval corpus a text is on. Mirrors
@@ -44,8 +51,21 @@ enum EmbedRole {
 // Per-call parameters of an embedder. Mirrors ragondin_contracts::EmbedParams.
 message EmbedParams {
   // The side the texts of this call are on; one role covers the whole batch.
-  // Required, and never EMBED_ROLE_UNSPECIFIED.
+  // Required, and never EMBED_ROLE_UNSPECIFIED. A service must not prefix or
+  // otherwise transform the text by the role, which the caller has already
+  // done; it may use the role for anything that is not text (ADR-C32
+  // section 4).
   EmbedRole role = 1;
+  // The name of the model the embedder is asked for, the name its backend
+  // serves the model under (ADR-C32 section 4). An identifier the backend
+  // resolves, never text added to the input.
+  //
+  // Optional with explicit presence, so an omitted name decodes as absent
+  // and never as the empty string. Absent asks for the model the component
+  // loaded; a service has no loaded model that absence could name, so a
+  // service refuses an absent served_model as an invalid request. An empty
+  // name, or one the service does not serve, is an invalid request too.
+  optional string served_model = 2;
 }
 
 // The arguments of ragondin_contracts::Embedder::embed.
@@ -60,4 +80,19 @@ message EmbedRequest {
 message EmbedResponse {
   // One vector per input text, in the order of the texts.
   repeated Embedding embeddings = 1;
+}
+
+// The argument of ragondin_contracts::Embedder::model_identity.
+message EmbedderModelIdentityRequest {
+  // The served model whose identity is asked for, as EmbedParams carries it:
+  // optional with explicit presence, and refused by a service when absent or
+  // empty.
+  optional string served_model = 1;
+}
+
+// The result of an embedder's model identity call.
+message EmbedderModelIdentityResponse {
+  // The identity of the model the service answers served_model with.
+  // Required, and never empty.
+  ModelIdentity identity = 1;
 }

@@ -42,6 +42,13 @@ impl v1::reranker_server::Reranker for Unimplemented {
     ) -> Result<Response<v1::RerankResponse>, Status> {
         Err(Status::unimplemented("rerank"))
     }
+
+    async fn get_model_identity(
+        &self,
+        _: Request<v1::RerankerModelIdentityRequest>,
+    ) -> Result<Response<v1::RerankerModelIdentityResponse>, Status> {
+        Err(Status::unimplemented("get_model_identity"))
+    }
 }
 
 #[tonic::async_trait]
@@ -51,6 +58,13 @@ impl v1::embedder_server::Embedder for Unimplemented {
         _: Request<v1::EmbedRequest>,
     ) -> Result<Response<v1::EmbedResponse>, Status> {
         Err(Status::unimplemented("embed"))
+    }
+
+    async fn get_model_identity(
+        &self,
+        _: Request<v1::EmbedderModelIdentityRequest>,
+    ) -> Result<Response<v1::EmbedderModelIdentityResponse>, Status> {
+        Err(Status::unimplemented("get_model_identity"))
     }
 }
 
@@ -71,6 +85,40 @@ impl v1::vector_store_server::VectorStore for Unimplemented {
     }
 }
 
+#[tonic::async_trait]
+impl v1::context_builder_server::ContextBuilder for Unimplemented {
+    async fn build(
+        &self,
+        _: Request<v1::BuildRequest>,
+    ) -> Result<Response<v1::BuildResponse>, Status> {
+        Err(Status::unimplemented("build"))
+    }
+
+    async fn get_model_identity(
+        &self,
+        _: Request<v1::ContextBuilderModelIdentityRequest>,
+    ) -> Result<Response<v1::ContextBuilderModelIdentityResponse>, Status> {
+        Err(Status::unimplemented("get_model_identity"))
+    }
+}
+
+#[tonic::async_trait]
+impl v1::generator_server::Generator for Unimplemented {
+    async fn generate(
+        &self,
+        _: Request<v1::GenerateRequest>,
+    ) -> Result<Response<v1::GenerateResponse>, Status> {
+        Err(Status::unimplemented("generate"))
+    }
+
+    async fn get_model_identity(
+        &self,
+        _: Request<v1::GeneratorModelIdentityRequest>,
+    ) -> Result<Response<v1::GeneratorModelIdentityResponse>, Status> {
+        Err(Status::unimplemented("get_model_identity"))
+    }
+}
+
 /// The configuration-delivery service is a reserved stub with no rpc yet, so
 /// its trait has nothing to implement.
 #[tonic::async_trait]
@@ -83,6 +131,8 @@ fn every_service_has_a_generated_server() {
     let _ = v1::reranker_server::RerankerServer::new(Unimplemented);
     let _ = v1::embedder_server::EmbedderServer::new(Unimplemented);
     let _ = v1::vector_store_server::VectorStoreServer::new(Unimplemented);
+    let _ = v1::context_builder_server::ContextBuilderServer::new(Unimplemented);
+    let _ = v1::generator_server::GeneratorServer::new(Unimplemented);
     let _ = config::v1::config_delivery_server::ConfigDeliveryServer::new(Unimplemented);
 }
 
@@ -98,6 +148,10 @@ fn every_service_has_a_generated_client() {
         v1::embedder_client::EmbedderClient::new;
     let _: fn(Channel) -> v1::vector_store_client::VectorStoreClient<Channel> =
         v1::vector_store_client::VectorStoreClient::new;
+    let _: fn(Channel) -> v1::context_builder_client::ContextBuilderClient<Channel> =
+        v1::context_builder_client::ContextBuilderClient::new;
+    let _: fn(Channel) -> v1::generator_client::GeneratorClient<Channel> =
+        v1::generator_client::GeneratorClient::new;
     let _: fn(Channel) -> config::v1::config_delivery_client::ConfigDeliveryClient<Channel> =
         config::v1::config_delivery_client::ConfigDeliveryClient::new;
 }

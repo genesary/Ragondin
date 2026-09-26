@@ -27,27 +27,20 @@ service, reserved.
 configuration-delivery messages and rpcs, and anything that serves or calls
 them, arrive with the `Stream` configuration source in M6.
 
-**Not yet here, and why the mirror is behind the traits.** The Rust traits
-already carry what M3's generation work added to them: `model_identity` on
-`Embedder` and `Reranker`, `served_model` on `EmbedParams` and `RerankParams`,
-and the `ContextBuilder` and `Generator` families. The `.proto` does not mirror
-them yet; #257 adds the `GetModelIdentity` rpcs, the two `optional string
-served_model` fields and the two services. The pointer exists so that a reader
-comparing the two faces knows the gap is known and owned, and not drift. Until
-#257 lands, a `Remote` embedder or reranker cannot be asked for a served model
-or report its identity over this wire.
-
 ## File layout
 
 ```
 proto/
   ragondin/v1/
-    types.proto          Query, Chunk, ScoredChunk, ScoredChunkList, Embedding, EmbeddedChunk
-    retriever.proto      service Retriever  + RetrieveParams, RetrieveRequest, RetrieveResponse
-    fusion.proto         service Fusion     + FusionParams, FuseRequest, FuseResponse
-    reranker.proto       service Reranker   + RerankParams, RerankRequest, RerankResponse
-    embedder.proto       service Embedder   + EmbedRole, EmbedParams, EmbedRequest, EmbedResponse
-    vector_store.proto   service VectorStore + SearchParams, Upsert*/Search* messages
+    types.proto            Query, Chunk, ScoredChunk, ScoredChunkList, Embedding, EmbeddedChunk,
+                           ContextChunk, Context, Answer, ModelIdentity
+    retriever.proto        service Retriever      + RetrieveParams, RetrieveRequest, RetrieveResponse
+    fusion.proto           service Fusion         + FusionParams, FuseRequest, FuseResponse
+    reranker.proto         service Reranker       + RerankParams, Rerank*, RerankerModelIdentity*
+    embedder.proto         service Embedder       + EmbedRole, EmbedParams, Embed*, EmbedderModelIdentity*
+    vector_store.proto     service VectorStore    + SearchParams, Upsert*/Search* messages
+    context_builder.proto  service ContextBuilder + ContextParams, Build*, ContextBuilderModelIdentity*
+    generator.proto        service Generator      + GenerateParams, Generate*, GeneratorModelIdentity*
   ragondin/config/v1/
     config.proto         service ConfigDelivery (no rpc)
 ```
@@ -116,9 +109,13 @@ reports the duplicate as a warning and passes.
   diff. The translation rules:
   - an identifier newtype (`DocId`, `ChunkId`, `QueryId`) is a `string`, as it
     is in `ragondin-types`' serialized form;
-  - a `usize` count (`top_k`) is a `uint64`; an `f32` is a `float`;
+  - a `usize` count (`top_k`, `budget`, `max_tokens`) is a `uint64`; an `f32`
+    is a `float`, an `f64` a `double`;
   - `Embedding`'s components are `repeated float components`, named after
-    `Embedding::new`'s argument;
+    `Embedding::new`'s argument, and `ModelIdentity`'s string is
+    `string identity`, after `ModelIdentity::new`'s — a message rather than a
+    bare `string`, unlike the identifier newtypes, because it is a value an
+    rpc returns and a response carries it;
   - a trait method's arguments become one request message, in the method's
     argument order, and its return value one response message.
 - **A message-typed field of a request is required**, though proto3 lets it be
@@ -130,14 +127,50 @@ reports the duplicate as a warning and passes.
   significant.
 - **Every params struct is mirrored, including the empty `FusionParams`**, so a
   future knob is an added field rather than a change to an rpc's signature.
+- **Every model-bearing service has a `GetModelIdentity` rpc** (ADR-C31
+  § 4, ADR-C32 § 4): `Embedder`, `Reranker`, `ContextBuilder`, `Generator`.
+  One package holds all four, and a message name is unique within a package,
+  so each rpc's request and response are named after the service —
+  `EmbedderModelIdentityRequest`, `…Response`, and so on — rather than
+  `GetModelIdentityRequest`. Each response wraps a `ModelIdentity` message
+  rather than being one, as every other rpc's response is its own message:
+  the response can then gain a field without the value it mirrors changing.
+  The context builder's request is empty and present all the same, under the
+  rule `FusionParams` follows.
+- **`served_model` rides in the params message, not beside it** — on
+  `EmbedParams` and `RerankParams`, as field 2 of each. ADR-C32 § 4 puts it
+  "on the Embed and Rerank requests" and, in the same section, makes it "a
+  per-call parameter of the embedder and the reranker, on both faces", with
+  `EmbedParams` and `RerankParams` gaining the field. The params message is
+  the per-call parameters' face 2, and a request carries it, so the field is
+  on the request by way of its params; a field on the request itself would
+  split one Rust struct across two messages and break the rule that each
+  params struct is mirrored field for field. The generator's required
+  `served_model` and `template` sit in `GenerateParams` for the same reason
+  (ADR-C31 § 2).
+- **Optional means explicit presence; required strings have none.** Every
+  `Option` in a mirrored struct — `served_model` on `EmbedParams` and
+  `RerankParams` and on their identity requests, and `temperature`, `seed`
+  and `max_tokens` on `GenerateParams` — is a proto3 `optional` field, so an
+  omitted one decodes as `None` and never as zero or the empty string
+  (ADR-C31 § 2): an omitted plain `double` would decode as `0.0`, which is
+  greedy decoding. The generator's required `served_model` and `template` are
+  plain strings, which have no presence; an omitted one decodes as empty, and
+  an empty one is refused as an invalid request. Both shapes are pinned in
+  `tests/mirror.rs`.
+- **Refusals are named in `ComponentError` terms** ("an invalid request"),
+  never as gRPC status codes: which status carries which refusal is not
+  decided for face 2 as a whole. Decision issue #311 owns that gap, and its
+  ADR adds the status codes; ADR-C33 fixes them for the reference generator
+  service alone.
 - **`EmbedRole` reserves the zero (ADR-C17).** `EMBED_ROLE_UNSPECIFIED = 0` is
   never valid, so the proto enum has three values where the Rust enum has two
   variants and decoding is not total. The comment in `embedder.proto` says so,
   so that nobody "fixes" the asymmetry.
 - **The Embed rpc's text is final (ADR-C32 § 4).** A service must not prefix or
   otherwise transform the text by the role; it may use the role for anything
-  that is not text. Stated on the rpc, because no conformance test can observe
-  a double prefix.
+  that is not text. Stated on the rpc and beside the role field, because no
+  conformance test can observe a double prefix.
 - **The `VectorStore` service is defined and not yet reachable** (ADR-C32 § 5):
   nothing binds a `Remote` store until the contract gains a way to scope a
   store's content to a run.
@@ -154,7 +187,9 @@ reports the duplicate as a warning and passes.
   `ragondin-contracts` are `#[non_exhaustive]` and cannot be destructured from
   here; their fields are compared instead. It also pins the two wire facts the
   `Remote` adapter's refusal of a role rests on: an omitted role decodes as
-  `EMBED_ROLE_UNSPECIFIED`, and an unknown number decodes and names no role.
+  `EMBED_ROLE_UNSPECIFIED`, and an unknown number decodes and names no role;
+  an omitted optional field decodes as `None` and a present zero as that
+  zero; and an omitted required string of the generator decodes as empty.
   The refusal itself, and its negative decode test, belong with the conversion
   in `ragondin-remote`.
 - `tests/stubs.rs` — the stubs exist. It implements every generated server

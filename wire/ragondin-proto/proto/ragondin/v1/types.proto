@@ -71,3 +71,54 @@ message EmbeddedChunk {
   // Its vector. Required.
   Embedding embedding = 2;
 }
+
+// One chunk of a Context, named by identifier. Mirrors
+// ragondin_types::ContextChunk.
+//
+// A context carries its provenance by identifier, never the chunk's text: the
+// text is already rendered into Context.text, and carrying it twice would put
+// the same bytes on the wire twice (ADR-C31 section 1).
+message ContextChunk {
+  // The chunk placed in the context.
+  string id = 1;
+  // The document that chunk was derived from.
+  string document_id = 2;
+  // The score the chunk carried in, on the scale of the node that scored it,
+  // untouched. A context builder never assigns a score of its own. Finite.
+  float score = 3;
+}
+
+// A rendered context, and the chunks it was rendered from. Mirrors
+// ragondin_types::Context.
+//
+// It does not hold the query: the generator is handed the query separately,
+// and a context that carried one could not say which query it speaks for
+// (ADR-C31 section 1).
+message Context {
+  // The chunks rendered into text, in the order the builder placed them,
+  // which makes them a ranking rather than a set. No chunk id twice.
+  repeated ContextChunk chunks = 1;
+  // The rendered context.
+  string text = 2;
+}
+
+// A generated answer: its text, and nothing else. Mirrors
+// ragondin_types::Answer.
+message Answer {
+  // The answer text.
+  string text = 1;
+}
+
+// The identity of the model behind a component, as the component reports it.
+// Mirrors ragondin_types::ModelIdentity, a newtype over a string; the field
+// is named after the argument of ModelIdentity::new.
+//
+// Opaque: nothing on the caller's side parses it. It is stable across calls
+// while nothing has changed, with no timestamp, request id or counter in it,
+// and it covers every knob that decides the component's output and is not in
+// the node's parameters (ADR-C31 section 4). An empty identity is not valid,
+// and a caller refuses it.
+message ModelIdentity {
+  // The identity. Never empty.
+  string identity = 1;
+}
