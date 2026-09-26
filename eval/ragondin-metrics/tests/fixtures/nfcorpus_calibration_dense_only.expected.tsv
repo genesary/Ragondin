@@ -2,7 +2,7 @@
 # regenerate_nfcorpus_calibration.py, which records where every value came
 # from. Do not edit a value by hand.
 #
-# What pytrec_eval scores run 5df02792921fe418538358a0c8710bfb683b1b852fecf808c666429388d0fe21:
+# What pytrec_eval scores run 4a4292e64ef9c5f4d0660c5af17a6d844c24726a3f9d203bfac305f8703912de:
 # query-id <TAB> ndcg_cut_10 <TAB> recall_10 <TAB> recip_rank.
 # recip_rank is uncut, matching trec_eval and the harness's mrr.
 PLAIN-2	0.8071038073076158	0.375	1.0

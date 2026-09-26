@@ -1,0 +1,33 @@
+{
+  "version": "1.1",
+  "data": [
+    {
+      "title": "Capitals",
+      "paragraphs": [
+        {
+          "context": "Paris\nParis is the capital city of France, on the Seine.",
+          "qas": [
+            {
+              "id": "q-france",
+              "question": "capital of France",
+              "answers": [{"answer_start": 0, "text": "Paris"}]
+            }
+          ]
+        },
+        {
+          "context": "Rome\nRome is the capital city of Italy, on the Tiber.",
+          "qas": [
+            {
+              "id": "q-italy",
+              "question": "capital of Italy",
+              "answers": [
+                {"answer_start": 0, "text": "Rome"},
+                {"answer_start": 0, "text": "Roma"}
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

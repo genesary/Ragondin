@@ -29,7 +29,7 @@ What it reads
 One run of `bin/ragondin/tests/calibration.rs`, left in the store
 `target/tmp/calibration/nfcorpus/` of the worktree the calibration ran in:
 
-  * `5df02792921fe418538358a0c8710bfb683b1b852fecf808c666429388d0fe21`
+  * `4a4292e64ef9c5f4d0660c5af17a6d844c24726a3f9d203bfac305f8703912de`
     — `bin/ragondin/tests/fixtures/calibration/nfcorpus-dense-only.yaml`,
     terminal node `vectors`, `top_k` 10.
 
@@ -112,7 +112,7 @@ JUDGED_QUERIES = 323
 RUNS = [
     (
         "dense_only",
-        "5df02792921fe418538358a0c8710bfb683b1b852fecf808c666429388d0fe21",
+        "4a4292e64ef9c5f4d0660c5af17a6d844c24726a3f9d203bfac305f8703912de",
         "vectors",
     ),
 ]

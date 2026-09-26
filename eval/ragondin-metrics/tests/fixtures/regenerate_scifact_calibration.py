@@ -17,10 +17,10 @@ What it reads
 Two runs of `bin/ragondin/tests/calibration.rs`, both left in the store
 `target/tmp/calibration/dense/` of the worktree the calibration ran in:
 
-  * `e9f178018e9974f216d6cf81ebd71bd5a7273a281e47e48d016fb1cd265382e7`
+  * `aa590151b03d4ce9d4b78c563ea0dac5d95edb4449ffb7230deaa74a48c4219d`
     — `bin/ragondin/tests/fixtures/calibration/dense-only.yaml`, terminal node
     `vectors`, `top_k` 10.
-  * `9b0e2d9419a1b5d84ed384f50ce4a100a983c0525b93636f749ac50928456238`
+  * `acf613976a8129e26e6e6e645fe99874a5ed99e9fde110c3bc80006a453b58a3`
     — `bin/ragondin/tests/fixtures/calibration/hybrid-rerank.yaml`, terminal
     node `reranked`, `top_k` 10.
 
@@ -101,12 +101,12 @@ JUDGED_QUERIES = 300
 RUNS = [
     (
         "dense_only",
-        "e9f178018e9974f216d6cf81ebd71bd5a7273a281e47e48d016fb1cd265382e7",
+        "aa590151b03d4ce9d4b78c563ea0dac5d95edb4449ffb7230deaa74a48c4219d",
         "vectors",
     ),
     (
         "hybrid_rerank",
-        "9b0e2d9419a1b5d84ed384f50ce4a100a983c0525b93636f749ac50928456238",
+        "acf613976a8129e26e6e6e645fe99874a5ed99e9fde110c3bc80006a453b58a3",
         "reranked",
     ),
 ]

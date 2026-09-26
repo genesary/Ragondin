@@ -3,16 +3,19 @@
 //! `bench` is the composition root, and a composition root is only exercised
 //! by the thing it composes: the components it registers are compiled into the
 //! binary, so a test that called a function in this crate would be registering
-//! its own. Every test here spawns the built binary over the miniature BEIR
-//! fixture beside it, and reads back what the run store holds afterwards.
+//! its own. Every test here spawns the built binary over one of the miniature
+//! fixtures beside it — BEIR (`beir-mini/`), BEIR with reference answers
+//! (`qa-mini/`), SQuAD (`squad-mini/`) — and reads back what the run store holds
+//! afterwards.
 //!
 //! # What runs when
 //!
 //! The tests are split by the feature that carries the components they need
-//! (ADR-C14): the lean build registers no retriever, so `just test` compiles
-//! those tests away and `just test-features` is where they run. The two
-//! refusals below need no component at all — a configuration is refused before
-//! anything is constructed — so they run in both.
+//! (ADR-C14): the lean build registers no retriever and no generator, so `just
+//! test` compiles those tests away and `just test-features` is where they run.
+//! The three refusals at the top — an unknown benchmark format, an extension
+//! node, a generator no build registers — need no component this build lacks,
+//! since each is refused before anything runs, so they run in both.
 
 use std::path::{Path, PathBuf};
 use std::process::Output;
@@ -103,6 +106,34 @@ fn a_configuration_holding_an_extension_node_is_refused_before_anything_runs() {
     assert!(
         error.contains("judged"),
         "the refusal names the node: {error}"
+    );
+    assert!(!store.exists(), "a refused configuration records no run");
+}
+
+/// A generator no build registers is refused by planning's unknown `impl:`,
+/// naming the family and the name — in every build, lean included: a
+/// `Remote` generator is named by an ordinary `impl:` name, and until
+/// something binds it, it is a name this composition root does not know.
+#[test]
+fn a_generator_this_build_does_not_register_is_refused_naming_family_and_name() {
+    let store = store("unregistered-generator");
+
+    let output = ragondin(&[
+        "bench",
+        &fixture("unregistered-generator.yaml"),
+        "--benchmark",
+        "beir/beir-mini",
+        "--datasets",
+        path(&fixtures()),
+        "--store",
+        path(&store),
+    ]);
+
+    assert!(!output.status.success(), "{}", stdout(&output));
+    let error = stderr(&output);
+    assert!(
+        error.contains("no generator implementation is registered under `vllm`"),
+        "{error}"
     );
     assert!(!store.exists(), "a refused configuration records no run");
 }
@@ -215,7 +246,7 @@ mod with_components {
              - id: lexical\n      component: retriever\n      impl: bm25\n      \
              inputs: [question]\n      params: {{ top_k: 10 }}\n    \
              - id: vectors\n      component: retriever\n      impl: dense\n      \
-             inputs: [question]\n      params: {{ top_k: 10, model: {model}, \
+             inputs: [question]\n      params: {{ top_k: 10, embedder: onnx, model: {model}, \
              tokenizer: {tokenizer} }}\n    \
              - id: fused\n      component: fusion\n      impl: rrf\n      \
              inputs: [lexical, vectors]\n      params: {{ k: 60 }}\n",
@@ -280,5 +311,123 @@ mod with_components {
             .get("embedder")
             .expect("a dense run records its embedder");
         assert!(summary.contains(digest), "{summary}");
+    }
+
+    /// `bench` over a generation pipeline and a miniature benchmark with
+    /// reference answers: the run carries the generation metrics beside the
+    /// retrieval ones, and the identities of the builder and the generator.
+    ///
+    /// The generator is the stub, which needs no model and no service — the
+    /// only generator a build can carry in-process, behind the `stub` feature.
+    #[cfg(feature = "stub")]
+    #[test]
+    fn bench_scores_a_generation_pipeline_by_exact_match_and_token_f1() {
+        let store = store("generation");
+
+        let output = ragondin(&[
+            "bench",
+            &fixture("stub-generation-bench.yaml"),
+            "--benchmark",
+            "beir-qa/qa-mini",
+            "--datasets",
+            path(&fixtures()),
+            "--store",
+            path(&store),
+        ]);
+
+        assert!(output.status.success(), "{}", stderr(&output));
+        let summary = stdout(&output);
+        let run = FileSystemRunStore::new(&store)
+            .load(&reported_run_id(&summary))
+            .expect("the run bench reported is the run bench saved");
+
+        // BM25 ranks each question's passage first, so the stub answers with
+        // its first line — the reference — on both queries. A pipeline whose
+        // answer never reached the harness would score zero and still exit
+        // zero; the value is what rules that out.
+        for metric in ["exact_match", "token_f1"] {
+            let value = run
+                .metrics
+                .get(metric)
+                .unwrap_or_else(|| panic!("a run over reference answers scores {metric}"));
+            assert_eq!(value, 1.0, "{metric}: {summary}");
+            assert!(summary.contains(&format!("{metric}: 1.0000")), "{summary}");
+        }
+        assert!(
+            run.metrics.get("ndcg@10").is_some(),
+            "the ranking behind the answer is still scored: {summary}"
+        );
+
+        // The identities were read before the run, by family (ADR-C31 § 4).
+        let recorded = &run.inputs.model_hashes;
+        assert_eq!(
+            recorded.get("generator").map(String::as_str),
+            Some(ragondin_stub::StubGenerator::IDENTITY)
+        );
+        assert!(recorded.contains_key("context_builder"), "{recorded:?}");
+    }
+
+    /// The same pipeline over a miniature SQuAD v1.1 dev file under
+    /// `squad/`: the question's paragraph opens with its answer on a line of
+    /// its own, so the stub answers it exactly when BM25 ranks it first. The
+    /// fixture is hand-written and quotes no SQuAD text.
+    #[cfg(feature = "stub")]
+    #[test]
+    fn bench_reads_a_squad_benchmark_and_scores_its_answers() {
+        let store = store("squad");
+
+        let output = ragondin(&[
+            "bench",
+            &fixture("stub-generation-bench.yaml"),
+            "--benchmark",
+            "squad/squad-mini",
+            "--datasets",
+            path(&fixtures()),
+            "--store",
+            path(&store),
+        ]);
+
+        assert!(output.status.success(), "{}", stderr(&output));
+        let run = FileSystemRunStore::new(&store)
+            .load(&reported_run_id(&stdout(&output)))
+            .expect("the run bench reported is the run bench saved");
+        assert_eq!(
+            run.metrics.get("exact_match"),
+            Some(1.0),
+            "{:?}",
+            run.metrics
+        );
+        assert_eq!(run.metrics.get("token_f1"), Some(1.0), "{:?}", run.metrics);
+        assert!(run.metrics.get("ndcg@10").is_some(), "{:?}", run.metrics);
+    }
+
+    /// The same fixture under `beir/`, which ignores `answers.jsonl`: the
+    /// benchmark then carries no reference answers, and the run is scored by
+    /// retrieval alone — `beir/` keeps its M2 meaning exactly (ADR-C30 § 2).
+    #[test]
+    fn the_beir_selector_ignores_the_reference_answers_beside_a_dataset() {
+        let store = store("qa-mini-as-beir");
+
+        let output = ragondin(&[
+            "bench",
+            &fixture("lexical-pipeline.yaml"),
+            "--benchmark",
+            "beir/qa-mini",
+            "--datasets",
+            path(&fixtures()),
+            "--store",
+            path(&store),
+        ]);
+
+        assert!(output.status.success(), "{}", stderr(&output));
+        let run = FileSystemRunStore::new(&store)
+            .load(&reported_run_id(&stdout(&output)))
+            .expect("the run bench reported is the run bench saved");
+        assert!(run.metrics.get("ndcg@10").is_some(), "{:?}", run.metrics);
+        assert!(
+            run.metrics.get("exact_match").is_none(),
+            "{:?}",
+            run.metrics
+        );
     }
 }

@@ -35,32 +35,37 @@ ragondin-types = { workspace = true }
 anyhow = { workspace = true }
 clap = { workspace = true }
 tokio = { workspace = true }
-# `bench` records the hash of every model a run read, by the role it played
-# (`docs/system-architecture.md` §7.1). The composition root is the only place
-# that sees every node's configuration at once, so it is where a model file is
-# read and digested. Same crate the canonical logical-form hash already uses.
-sha2 = { workspace = true }
 
 # The components this build carries. Optional to a crate, not optional to the
 # product: a lean build still parses, validates and hashes a configuration
-# naming any of them, and refuses to *run* it with the unknown `impl:` that
-# planning reports.
+# naming any of them, and refuses to *run* it with a diagnosis — the unknown
+# `impl:` that planning reports, or, for the `onnx` embedder a `dense` node
+# names, the missing feature.
 #
 # Not optional, and not an exception to ADR-C14: RRF is rank arithmetic with no
 # backend behind it, so gating it would buy no compile time and would leave the
 # lean build unable to fuse two legs it can otherwise retrieve.
 ragondin-fusion-rrf = { workspace = true }
+# Not optional either, for RRF's reason: concatenation is string arithmetic.
+ragondin-context-concat = { workspace = true }
 ragondin-retriever-bm25 = { workspace = true, optional = true }
 ragondin-retriever-dense = { workspace = true, optional = true }
 ragondin-store-memory = { workspace = true, optional = true }
 ragondin-embedder-onnx = { workspace = true, optional = true }
 ragondin-reranker-onnx = { workspace = true, optional = true }
+# The stub generator, behind the `stub` feature below: no production `Local`
+# generator exists — a generator is `Remote` by design (ADR-C31) — so a build
+# that runs a generation pipeline without an inference service needs one, and
+# the CLI tests are what need that build.
+ragondin-stub = { workspace = true, optional = true }
 
 # Test-only, and deliberately so. `ragondin-stub` is the fixture component
 # crate the vertical slice in `tests/` wires: `bench` registers the real
-# components now, and the slice keeps registering stubs, because what it exists
-# to show is the wiring rather than a retrieval result — components that
-# fabricate their answers are what make the trace it asserts on predictable.
+# components, and the slice registers stubs itself, because what it exists to
+# show is the wiring rather than a retrieval result — components that fabricate
+# their answers are what make the trace it asserts on predictable. (It is also
+# an optional normal dependency, behind `stub`, for the one stub `bench` can
+# register.)
 # `assert_cmd` spawns the built binary for the CLI tests: a subcommand's
 # contract is an exit status and what lands on stdout and stderr, and only a
 # test that runs the process observes those.
@@ -74,6 +79,11 @@ assert_cmd = { workspace = true }
 # `RawPipeline` and run the same `validate`. It is the format's own parser, not
 # a second spelling of the configuration.
 serde_yaml = { workspace = true }
+# A test in `src/wiring.rs` checks the identity `bench` records for an ONNX
+# component against the digests of the files it read — computed independently,
+# with the crate the canonical logical-form hash already uses. `bench` itself
+# digests nothing any more: each component reports its own identity.
+sha2 = { workspace = true }
 
 # Heavy backends are optional and off by default (ADR-C14): the default build
 # stays lean and compiles fast. Two features rather than one per component,
@@ -98,3 +108,9 @@ onnx = [
     "dep:ragondin-retriever-dense",
     "dep:ragondin-store-memory",
 ]
+# The stub generator, registered by `bench` as `stub_generator`: a generator
+# that needs no model and no service, for tests that drive `bench` over a
+# generation pipeline. Off by default — it is a fixture, not a product
+# component — and it gates nothing heavy, so the reason it is a feature is
+# that, and not compile time.
+stub = ["dep:ragondin-stub", "ragondin-stub/stub"]

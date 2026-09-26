@@ -24,8 +24,8 @@ charter.
 | `tests/cli.rs` | `validate` and the rest of the command line, exercised as a process |
 | `tests/compare.rs` | `compare`, exercised as a process, against runs written straight into a store |
 | `tests/calibration.rs` | The harness against a published SciFact figure, and the exit criterion on real data — ignored by default, run by `just calibrate` |
-| `tests/bench.rs` | `bench`, exercised as a process, over a miniature BEIR fixture |
-| `tests/vertical_slice.rs` | The composition root assembled for real, end to end |
+| `tests/bench.rs` | `bench`, exercised as a process, over miniature fixtures: BEIR, BEIR with reference answers, and SQuAD — the last two for a generation pipeline |
+| `tests/vertical_slice.rs` | The composition root assembled for real, end to end: a retrieval pipeline, and a generation one |
 | `tests/exit_criterion.rs` | The M2 exit criterion: hybrid retrieval with reranking beats dense-only, reproducibly, and `compare` says so |
 
 **Four subcommands are declared; three are implemented.** `validate` loads a
@@ -77,15 +77,28 @@ release.
   the dense retriever and in-memory store that compose with it). The default
   build enables neither and stays lean — and it still loads, validates and
   hashes a configuration naming a component it does not carry. What refuses it
-  depends on what the node names: a `bm25` node reaches planning, which
-  reports the unknown `impl:` against the node; a `dense` or `cross_encoder`
-  node names a model file, which is digested before anything is planned, so a
-  missing file is what refuses it first, and the unknown `impl:` only once the
-  file exists. `tests/bench.rs` asserts the `bm25` refusal in the lean build,
-  so "lean" is a tested claim rather than an intention. RRF is a normal
-  dependency rather than a feature: it is
-  rank arithmetic with no backend behind it, so gating it would buy no compile
-  time.
+  depends on what the node names. A node family's name this build cannot
+  construct — `bm25`, `cross_encoder`, a generator nothing registers — reads no
+  identity and reaches planning, which reports the unknown `impl:` against the
+  family and the name. An embedder is not a node family, and no plan ever
+  looks one up, so `wiring::check_nodes` names what is missing itself:
+  `embedder: onnx` in a build without `onnx` is refused naming the feature
+  (ADR-C32 § 4). `tests/bench.rs` asserts the `bm25` and the generator
+  refusals in the lean build, so "lean" is a tested claim rather than an
+  intention. RRF and the concatenating context builder are normal
+  dependencies rather than features: rank and string arithmetic with no
+  backend behind them, so gating them would buy no compile time.
+- **No production `Local` generator exists, and the `stub` feature is the
+  only generator a build can carry.** A generator is `Remote` by design
+  (ADR-C31), and this build does not yet construct a `Remote` component, so
+  a real generator is a name planning refuses. The `stub` feature makes
+  `ragondin-stub` a normal dependency and registers its `StubGenerator` as
+  `stub_generator`, serving the node's `served_model`: a generator with no
+  model and no service, for the tests that drive `bench` over a generation
+  pipeline. It is off by default — a fixture, not a product component — and
+  gates nothing heavy. Only the generator is registered: it is the one piece a
+  generation pipeline cannot get from this build otherwise, and the stub
+  context builder and retriever stay the vertical slice's to register.
 - **`compare` reads; it never executes (ADR-C15).** It loads two runs by
   `run_id` from `ragondin-experiments`' `FileSystemRunStore` and hands them to
   that crate's own `compare()`; the diff it prints is that function's result,
@@ -100,7 +113,9 @@ release.
   makes settling one worth doing — it is still not this issue's to settle.
 - **`bench` registers; nothing else does.** It is the subcommand that needs an
   `EngineContext`, so it is where the components this build carries are
-  registered — through the ordinary `register_*` call, one per component, with
+  registered — `rrf` and the context builder `concat` in every build, `bm25`
+  under `bm25`, `dense` and `cross_encoder` under `onnx`, `stub_generator`
+  under `stub` — through the ordinary `register_*` call, one per component, with
   no shortcut for a first-party one (INV-7). The engine depends on no component
   crate and this one depends on all of them, which is §4.3's rule made
   mechanical: break it and the arrow in `Cargo.toml` is what a reviewer sees.
@@ -120,15 +135,17 @@ release.
   root, and a second one beside it for the embedder. ADR-C26 names the
   constraint and deliberately picks neither, so the choice is recorded rather
   than silent. The seam has a cost, recorded here so nobody rediscovers it as
-  a bug: the embedder is constructed twice per run — once in `prepare`, to
-  embed the corpus, and once inside the `dense` constructor, for the queries —
-  because `DenseRetriever::new` takes a `Box<dyn Embedder>` it owns, and a
-  constructor can capture what was prepared but not await it. Two session
-  loads of one file, in sequence. Sharing one is a change to that leaf's
-  constructor signature, not to this crate.
-- **One model per role, and one embedder per pipeline, in v0.** A run records
-  its model hashes by the role each model played (§7.1), and the corpus is
-  embedded once — so two nodes on one role naming different models, or two
+  a bug: the embedder is constructed three times per run — once to read its
+  identity, once in `prepare`, to embed the corpus, and once inside the
+  `dense` constructor, for the queries — because `DenseRetriever::new` takes a
+  `Box<dyn Embedder>` it owns, and a constructor can capture what was prepared
+  but not await it; the reranker, twice. Session loads of one file, in
+  sequence, and ADR-C32's Consequences accept the identity read's share of
+  it. Sharing one is a change to that leaf's constructor signature, not to
+  this crate.
+- **One identity per role, and one embedder per pipeline, in v0.** A run
+  records its model hashes by the role each component played (§7.1), and the
+  corpus is embedded once — so two nodes on one role naming different models, or two
   `dense` nodes configured differently, are refused with a message saying to
   evaluate them as two pipelines. Embedding twice instead would leave one
   `index_version` naming neither index.
@@ -181,16 +198,57 @@ release.
     at test time around an absolute path, as `tests/bench.rs` does for its
     hybrid case — leaves nothing reviewable in the tree. Relative paths also
     keep the pipeline hash, and with it the run id, the same on every machine.
-- **A model file is hashed here.** Only the composition root sees every node's
-  configuration at once, so it is what can record which model a run read. A
-  digest is over the file's bytes: not its path, which moves between machines,
-  and not its timestamp, which a checkout resets. It is taken before the
-  benchmark is loaded, so a missing file is found before the corpus is
-  embedded; and it is keyed on the `impl:` names that read a model (`dense`,
-  `cross_encoder`), so a component registered later that reads one must be
-  added to `wiring::model_hashes` in the same change — a run over it would
-  otherwise record no hash, and two runs over two models would content-address
-  alike.
+- **The keys of the nodes this composition root reads — `dense`,
+  `cross_encoder`, `concat`, `stub_generator` — are checked before the
+  benchmark is loaded (ADR-C32 § 1)**; a node under any other name is
+  planning's to refuse.
+  A `dense` node names its embedder with `embedder:`, required and non-empty;
+  the only name this composition root knows is `onnx`, and any other is
+  refused naming the node and the name. Over `onnx` a `dense` node may carry
+  `top_k`, `embedder`, `query_prefix`, `passage_prefix`, `model`, `tokenizer`
+  and `max_sequence_length`, and a `cross_encoder` node `top_k`, `model`,
+  `tokenizer` and `max_sequence_length`; any other key — `served_model`
+  included — is refused rather than hashed as inert, since it would move the
+  run's identity while changing nothing the run did. An empty prefix is
+  refused too: absence is the only spelling of "no prefix". Those checks run
+  in step one, `wiring::check_nodes`, before any component is constructed. A
+  `concat` node's `separator` is required and may be empty — this crate's own
+  choice, for the reason `embedder:` has no default: a default would make an
+  absent key and its value two spellings of one builder with two hashes, and
+  `ConcatContextBuilder` has no default of its own to defer to. Its absence is
+  refused in step two, where the builder is first constructed to read its
+  identity, as is a generator node's missing `served_model`. `validate`
+  checks none of this: it never plans, so a configuration it hashes may still
+  be refused by `bench`.
+- **Every component's identity is read from the component, before the run
+  (ADR-C32 § 4; ADR-C31 § 4).** `bench` runs six steps in a fixed order: load
+  the configuration and check its keys; read every identity; load the
+  benchmark and build the `CorpusIndex`; embed the corpus; register; evaluate
+  and save. Step two constructs an instance of each component this build knows
+  how to construct, awaits its `model_identity`, and drops it — registration
+  constructs another — so a missing model file, or a model a generator does
+  not serve, ends the run before anything expensive has run. `model_hashes`
+  is keyed by the node's **family**, never by its `impl:` name: `embedder`
+  (the embedder a `dense` node names, read with no served model),
+  `reranker`, `context_builder` (read with no argument) and `generator` (read
+  with the node's `served_model`, which is then required; its absence is
+  refused here rather than passed on as an empty name). The ONNX components
+  report `<model>+<tokenizer>`, the SHA-256 of each file, where this crate
+  used to digest the model file itself and left the tokenizer's contents out.
+  A node whose name this build cannot construct records nothing and is left
+  to planning, as above. The answers never enter identity (P4).
+- **`--benchmark` names a format and a dataset (ADR-C30 § 2).** `beir/<dir>`
+  reads a BEIR directory by its qrels alone and ignores any `answers.jsonl`
+  beside it, so an M2 run reads exactly as it always has; `beir-qa/<dir>` reads
+  the same directory with its `answers.jsonl`, which is then required;
+  `squad/<dir>` reads the SQuAD v1.1 dev file in that directory. The selector
+  is refused on its text before the configuration is loaded. A benchmark
+  carrying reference answers is scored by `exact_match` and `token_f1` as well
+  as by the retrieval metrics, and a pipeline that produces no answer is
+  refused over it (`HarnessError::NoAnswer`, ADR-C30 § 5) — so a retrieval-only
+  configuration runs under `beir/` and not under `beir-qa/` or `squad/`. The
+  harness decides all of this from what the benchmark carries; this crate only
+  picks the adapter.
 
 ## Dependency choices made here
 
@@ -218,9 +276,12 @@ Neither duplicates a role `[workspace.dependencies]` already fills: the table
 held no CLI parser and no CLI test harness before this crate needed one.
 
 Two more entries are *used* here without being added by it, so neither is a new
-utility role and neither escalates: **`sha2`**, the crate the canonical
-logical-form hash and run identity already use, because `bench` digests the
-model files a run read; and **`serde_yaml`** as a dev-dependency, because
+utility role and neither escalates: **`sha2`** as a dev-dependency, the crate
+the canonical logical-form hash and run identity already use, because a test in
+`src/wiring.rs` checks the identity `bench` records for an ONNX embedder
+against independently computed digests of its files — `bench` itself digests
+nothing, since each component reports its own identity; and **`serde_yaml`**
+as a dev-dependency, because
 `src/wiring.rs` reads a node's parameters out of a validated pipeline and its
 tests need pipelines built the way the product builds them — the door
 `ragondin-config` puts in front of that lowering takes a path and a runtime,
@@ -247,10 +308,15 @@ anywhere else in the graph.
   `runtime/`, and a subcommand reaches them rather than restating them. `bench`
   computes no metric of its own: it hands the harness a context and a prepared
   index, and prints what comes back.
-- **No judge, no generation, no control flow.** M2 evaluates retrieval, and
-  today those would arrive as an `extension` node (ADR-C3), so `bench` refuses
-  one by name. It is the whole of that check, and it grows a case the day one
-  of them becomes a primitive.
+- **No judge, no control flow.** Retrieval and generation have primitive
+  nodes, which planning resolves by family (ADR-C31 § 3); a judge or control
+  flow would arrive as an `extension` node (ADR-C3), so `bench` refuses one by
+  name. It is the whole of that check, and it grows a case the day one of them
+  becomes a primitive.
+- **No `Remote` component yet.** Binding an `impl:` name to a service address
+  and constructing the `Remote` adapter over it is ADR-C32 § 2 and § 3, and
+  not yet built; until it is, a `Remote` component's name is one planning
+  refuses as unknown.
 
 ## Calibration against a published leaderboard
 
@@ -305,10 +371,14 @@ the run ids — are the same on every machine.
   for the embedder and `--task text-classification` for the reranker.
   `--library-name transformers` is load-bearing: a `sentence_transformers`
   export pools inside the graph and returns `[batch, hidden]`, which the
-  embedder crate refuses. The exported files digest to
+  embedder crate refuses. The exported model files digest to
   `9348202758f11c56c329d947ae359fea54be1a3d905bfcac4a3521a1eafc0414` (embedder)
   and `8b0fe5bc3c5ddc752524552d8e081baa7726e389b1d23396e56ad31d69b88d52`
-  (reranker); the test pins both.
+  (reranker), and their `tokenizer.json` files to
+  `da0e79933b9ed51798a3ae27893d3c5fa4a201126cef75586296df9b4d2c62a0` and
+  `d241a60d5e8f04cc1b2b3e9ef7a4921b27bf526d9f6050ab90f9267a1f9e5c66`. A run
+  records each component's identity, `<model>+<tokenizer>` (ADR-C32 § 4), and
+  the test pins both.
 - *Published figure:* SciFact, `test`, nDCG@10 **0.64508** on the MTEB
   leaderboard for that model and revision, read at reproduction time.
 - *Configurations:* dense-only at `top_k: 10`; hybrid at `top_k: 50` per leg,
@@ -328,9 +398,9 @@ The gap to the published figure is 0.0002 of a point against a tolerance of
 0.5; the gap to `pytrec_eval` is the last two bits of an `f64`, the summation
 order `ragondin-metrics`' parity fixture already documents. The hybrid gain is
 4.35 points of nDCG@10 and holds on recall and MRR too. Run ids, over the
-committed configurations: `e9f178018e9974f216d6cf81ebd71bd5a7273a281e47e48d016fb1cd265382e7`
+committed configurations: `aa590151b03d4ce9d4b78c563ea0dac5d95edb4449ffb7230deaa74a48c4219d`
 (dense-only) and
-`9b0e2d9419a1b5d84ed384f50ce4a100a983c0525b93636f749ac50928456238`
+`acf613976a8129e26e6e6e645fe99874a5ed99e9fde110c3bc80006a453b58a3`
 (hybrid + rerank); dense-only takes about 105 s on a laptop CPU, the hybrid
 run about 24 minutes, dominated by the cross-encoder over the fused list.
 
@@ -344,9 +414,19 @@ through the BEIR adapter, the store's cosine search and `ragondin-metrics`, and
 all three agree with `pytrec_eval` over 300 real queries: that is P1 doing its
 job, and it is what makes this a calibration rather than a second opinion.
 
+**Recalibrated once, with no metric moving.** The run ids above are the
+second set. When `bench` began reading each component's identity instead of
+digesting the model file (ADR-C32 § 4), the recorded embedder and reranker
+identities became `<model>+<tokenizer>`, and the committed configurations
+gained `embedder: onnx`, which moved their pipeline hashes; both moved every
+run id. No vector changed, so no number did: the rerun reproduced every
+metric above bit for bit — NFCorpus's below too — and the per-query fixtures
+in `eval/ragondin-metrics/tests/`, regenerated from the rerun's stores, came
+out byte-identical apart from the run ids they name.
+
 **What is frozen, and what is not.** The test pins the aggregates — every
 metric of both runs to the values above, within a tolerance for another
-machine's floating-point summation — and the dataset and model digests, so a run
+machine's floating-point summation — and the dataset digest and model identities, so a run
 over the wrong revision fails by name; and it evaluates the dense configuration
 twice into two stores and requires one run id and equal metrics (P4). The
 per-query freeze ADR-10 asks for — each query's ranking, checked against
@@ -385,8 +465,8 @@ would confirm nothing the one above has not already confirmed.
   `dataset_version` for it is
   `8046025011c86dcbac3c15f9f52e5cf0ebc534282944b50fe72884cfcb6a112b`.
 - *Embedder:* the same one, at the same revision, exported the same way and
-  digesting to the same
-  `9348202758f11c56c329d947ae359fea54be1a3d905bfcac4a3521a1eafc0414`. Holding
+  reporting the same identity,
+  `9348202758f11c56c329d947ae359fea54be1a3d905bfcac4a3521a1eafc0414+da0e79933b9ed51798a3ae27893d3c5fa4a201126cef75586296df9b4d2c62a0`. Holding
   the encoder fixed is what makes this a second measurement of the harness
   rather than a second experiment.
 - *Published figure:* NFCorpus, `test`, nDCG@10 **0.31594** for that model at
@@ -418,7 +498,7 @@ harness bit for bit. (Summed in a different order they would not: exact
 rounding over the same 323 values lands a few ulps away — three on nDCG@10,
 six on recall@10, none on MRR — which is what the recorded tolerance exists
 for.) Run id, over the committed configuration:
-`5df02792921fe418538358a0c8710bfb683b1b852fecf808c666429388d0fe21`; the two
+`4a4292e64ef9c5f4d0660c5af17a6d844c24726a3f9d203bfac305f8703912de`; the two
 evaluations the P4 check requires take about 120 s each on a laptop CPU, four
 minutes for the test.
 

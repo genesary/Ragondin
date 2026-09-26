@@ -1447,6 +1447,7 @@ dependencies = [
  "clap",
  "ragondin-benchmarks",
  "ragondin-config",
+ "ragondin-context-concat",
  "ragondin-contracts",
  "ragondin-embedder-onnx",
  "ragondin-engine",

@@ -1,6 +1,6 @@
-# A configuration v0 refuses: an extension node is how a judge, a generator or
-# a control-flow construct would arrive today (ADR-C3), and M2 evaluates
-# retrieval only.
+# A configuration v0 refuses: an extension node is how a judge or a
+# control-flow construct would arrive today (ADR-C3). Retrieval and generation
+# have primitive nodes; nothing else does, so nothing else runs.
 pipeline:
   inputs: [question]
   nodes:

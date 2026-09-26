@@ -8,15 +8,16 @@
 //! hands the harness a context and the same prepared index (ADR-C26).
 //!
 //! Thin by rule, all the same: every step below is a call into the crate that
-//! owns it. What is genuinely this module's own is the *order*, and one thing
-//! only a composition root can do — [`prepare`] embeds the corpus before any
-//! component exists, because a `ComponentCtor` is synchronous and the two
-//! calls that fill a vector store are not.
+//! owns it. What is genuinely this module's own is the *order* — ADR-C32 § 4's
+//! six steps, with the identity of every component this build knows how to
+//! construct read before the benchmark is loaded — and one thing only a composition root can do: [`prepare`] embeds
+//! the corpus before any component exists, because a `ComponentCtor` is
+//! synchronous and the two calls that fill a vector store are not.
 
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
-use ragondin_benchmarks::{BeirAdapter, BenchmarkAdapter};
+use ragondin_benchmarks::{BeirAdapter, Benchmark, BenchmarkAdapter, SquadAdapter};
 use ragondin_config::{ConfigSource, LocalFile};
 use ragondin_contracts::EmbeddedChunk;
 use ragondin_engine::EngineContext;
@@ -26,8 +27,42 @@ use ragondin_pipeline::LogicalPipeline;
 
 use crate::wiring;
 
-/// The only benchmark format this build reads.
-const BEIR: &str = "beir";
+/// A benchmark format `--benchmark` names, by the text before its `/`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Format {
+    /// `beir/<dir>`: a BEIR directory, qrels only — any `answers.jsonl`
+    /// beside it is ignored, so an M2 run reads exactly as it always has.
+    Beir,
+    /// `beir-qa/<dir>`: the same directory with its `answers.jsonl`, which is
+    /// then required (ADR-C30 § 2).
+    BeirQa,
+    /// `squad/<dir>`: the SQuAD v1.1 dev file in that directory (ADR-C30 § 2).
+    Squad,
+}
+
+impl Format {
+    /// Every format, in the order a refusal lists them.
+    const ALL: [Self; 3] = [Self::Beir, Self::BeirQa, Self::Squad];
+
+    /// The selector prefix that names the format.
+    fn name(self) -> &'static str {
+        match self {
+            Self::Beir => "beir",
+            Self::BeirQa => "beir-qa",
+            Self::Squad => "squad",
+        }
+    }
+
+    /// Loads the dataset at `root` with the adapter this format names.
+    fn load(self, root: &Path) -> Result<Benchmark> {
+        let loaded = match self {
+            Self::Beir => BeirAdapter::new(root).load(),
+            Self::BeirQa => BeirAdapter::new(root).with_reference_answers().load(),
+            Self::Squad => SquadAdapter::new(root).load(),
+        };
+        loaded.with_context(|| format!("loading the benchmark at {}", root.display()))
+    }
+}
 
 /// The rank cutoff of the metrics — the `10` of nDCG@10.
 ///
@@ -55,9 +90,10 @@ pub struct Request<'a> {
 ///
 /// # Errors
 ///
-/// Anything on the way: an unreadable or invalid configuration, a
-/// configuration v0 does not run, a selector naming no dataset this build
-/// reads, a dataset that does not load, an `impl:` this build did not register,
+/// Anything on the way: a selector naming no dataset this build reads, an
+/// unreadable or invalid configuration, a configuration v0 does not run, a node
+/// key the composition root refuses, a component whose identity cannot be
+/// read, a dataset that does not load, an `impl:` this build did not register,
 /// a query that fails, or a store that cannot be written.
 pub async fn run(request: &Request<'_>) -> Result<()> {
     // Read for the record and loaded for the run, from the same file. The run
@@ -66,26 +102,35 @@ pub async fn run(request: &Request<'_>) -> Result<()> {
     // first — so the text is what is kept and the pipeline is what is run.
     let text = std::fs::read_to_string(request.config)
         .with_context(|| format!("reading {}", request.config.display()))?;
+    let (format, root) = benchmark_root(request.benchmark, request.datasets)?;
+
+    // 1. The configuration: what v0 does not run, and the keys of every node
+    //    whose keys this composition root owns (ADR-C32 § 1).
     let pipeline = LocalFile::new(request.config).load().await?;
     wiring::refuse_unsupported(&pipeline)?;
-    // Before the benchmark is loaded and the corpus embedded: a model file
-    // that is missing is found now, not after the expensive step.
-    let model_hashes = wiring::model_hashes(&pipeline)?;
+    wiring::check_nodes(&pipeline)?;
+    // 2. Every component's identity, read from the component, before the
+    //    benchmark is loaded and the corpus embedded: a model file that is
+    //    missing, or a model a generator does not serve, is found now and not
+    //    after the expensive step. A refusal here ends the run.
+    let model_hashes = wiring::model_hashes(&pipeline).await?;
 
-    let root = benchmark_root(request.benchmark, request.datasets)?;
-    let benchmark = BeirAdapter::new(&root)
-        .load()
-        .with_context(|| format!("loading the benchmark at {}", root.display()))?;
+    // 3. The benchmark.
+    let benchmark = format.load(&root)?;
 
     // One index, built here and used twice: the components below are
     // constructed from its chunks, and the harness records its version as the
     // `index_version` of the run. Building a second one anywhere would make
     // that recorded version name a set nothing searched (ADR-C26).
     let index = CorpusIndex::build(benchmark.corpus());
+    // 4. The corpus, embedded.
     let embedded = prepare(&pipeline, &index).await?;
 
+    // 5. The components, constructed from that corpus.
     let mut ctx = EngineContext::new();
     wiring::register(&mut ctx, index.chunks(), embedded.as_deref());
+
+    // 6. Evaluate, and save.
 
     let run = evaluate(
         &Evaluation {
@@ -162,12 +207,11 @@ async fn prepare(
 
 /// The lean build's half: nothing to embed with.
 ///
-/// The configuration is checked all the same. A pipeline whose `dense` nodes
-/// disagree about the embedder is malformed whether or not this build could
-/// have run it, and a diagnosis that depends on which features were compiled in
-/// is one the person reading it cannot reproduce. What this build cannot do is
-/// *run* the node, and that is reported at planning, where the unknown `impl:`
-/// is named against the node that carries it.
+/// Nothing reaches it that needs embedding: [`wiring::check_nodes`] has already
+/// refused a `dense` node naming the `onnx` embedder in a build without the
+/// `onnx` feature, naming the feature — no planner will ever look an embedder
+/// up to name what is missing. The configuration is read all the same, so the
+/// two builds share one path through it.
 #[cfg(not(feature = "onnx"))]
 async fn prepare(
     pipeline: &LogicalPipeline,
@@ -182,21 +226,38 @@ async fn prepare(
 ///
 /// The selector names a format and a dataset; the root says where the datasets
 /// live. Two arguments rather than a path, because the format is not
-/// discoverable from the directory — a BEIR snapshot and another corpus in the
-/// same layout are told apart by what the user asked for, not by what is on
-/// disk. `--datasets` has no default for the reason `compare --store` has
-/// none: no dataset location is settled anywhere in `docs/` yet, and this
-/// crate does not invent one.
-fn benchmark_root(selector: &str, datasets: &Path) -> Result<PathBuf> {
-    let Some((format, name)) = selector.split_once('/') else {
+/// discoverable from the directory — a BEIR directory read with its reference
+/// answers (`beir-qa/`) and the same directory read without them (`beir/`) are
+/// told apart by what the user asked for, not by what is on disk. `--datasets`
+/// has no default for the reason `compare --store` has none: no dataset
+/// location is settled anywhere in `docs/` yet, and this crate does not invent
+/// one.
+///
+/// Resolved before the configuration is loaded: a selector is refused on its
+/// text alone, whatever the pipeline says.
+fn benchmark_root(selector: &str, datasets: &Path) -> Result<(Format, PathBuf)> {
+    let Some((prefix, name)) = selector.split_once('/') else {
         bail!("`{selector}` is not a benchmark: name one as `<format>/<dataset>`, e.g. `beir/scifact`");
     };
 
-    if format != BEIR {
-        bail!("`{format}` is not a benchmark format this build reads; it reads `{BEIR}`");
-    }
+    let Some(format) = Format::ALL
+        .into_iter()
+        .find(|format| format.name() == prefix)
+    else {
+        let known: Vec<String> = Format::ALL
+            .iter()
+            .map(|format| format!("`{}`", format.name()))
+            .collect();
+        bail!(
+            "`{prefix}` is not a benchmark format this build reads; it reads {}",
+            known.join(", ")
+        );
+    };
     if name.is_empty() {
-        bail!("`{selector}` names no dataset: the form is `{BEIR}/<dataset>`");
+        bail!(
+            "`{selector}` names no dataset: the form is `{}/<dataset>`",
+            format.name()
+        );
     }
     // The name is joined onto the root, so a separator in it would reach
     // outside the directory `--datasets` names. A dataset is one directory
@@ -208,7 +269,7 @@ fn benchmark_root(selector: &str, datasets: &Path) -> Result<PathBuf> {
         bail!("`{name}` is not a dataset name: it must name one directory under the datasets root");
     }
 
-    Ok(datasets.join(name))
+    Ok((format, datasets.join(name)))
 }
 
 /// Renders what a finished run scored: its identity, then one line per metric.
@@ -249,7 +310,25 @@ mod tests {
     fn a_beir_selector_names_a_directory_under_the_datasets_root() {
         assert_eq!(
             benchmark_root("beir/scifact", &datasets()).expect("beir is supported"),
-            PathBuf::from("/datasets/scifact")
+            (Format::Beir, PathBuf::from("/datasets/scifact"))
+        );
+    }
+
+    #[test]
+    fn a_beir_qa_selector_reads_the_same_directory_with_its_answers() {
+        // ADR-C30 § 2: `beir-qa/` is a BEIR directory read with its
+        // `answers.jsonl`; `beir/` over the same directory ignores the file.
+        assert_eq!(
+            benchmark_root("beir-qa/dataset", &datasets()).expect("beir-qa is supported"),
+            (Format::BeirQa, PathBuf::from("/datasets/dataset"))
+        );
+    }
+
+    #[test]
+    fn a_squad_selector_names_the_directory_its_dev_file_sits_in() {
+        assert_eq!(
+            benchmark_root("squad/squad-v1.1", &datasets()).expect("squad is supported"),
+            (Format::Squad, PathBuf::from("/datasets/squad-v1.1"))
         );
     }
 
@@ -262,18 +341,22 @@ mod tests {
 
     #[test]
     fn an_unsupported_format_names_the_formats_this_build_reads() {
-        let error = benchmark_root("trec/robust04", &datasets()).expect_err("only beir, for now");
+        let error = benchmark_root("trec/robust04", &datasets()).expect_err("not a format here");
 
         assert!(error.to_string().contains("trec"), "{error}");
-        assert!(error.to_string().contains("beir"), "{error}");
+        for format in ["`beir`", "`beir-qa`", "`squad`"] {
+            assert!(error.to_string().contains(format), "{error}");
+        }
     }
 
     #[test]
     fn a_selector_naming_no_dataset_is_refused() {
-        let error =
-            benchmark_root("beir/", &datasets()).expect_err("a format alone is not a dataset");
+        for selector in ["beir/", "squad/", "beir-qa/"] {
+            let error =
+                benchmark_root(selector, &datasets()).expect_err("a format alone is not a dataset");
 
-        assert!(error.to_string().contains("dataset"), "{error}");
+            assert!(error.to_string().contains("dataset"), "{error}");
+        }
     }
 
     #[test]
@@ -282,7 +365,7 @@ mod tests {
         // reach wherever the caller's string pointed — which is not what
         // `--datasets` means.
         let error =
-            benchmark_root("beir/../elsewhere", &datasets()).expect_err("a name is not a path");
+            benchmark_root("squad/../elsewhere", &datasets()).expect_err("a name is not a path");
 
         assert!(error.to_string().contains("../elsewhere"), "{error}");
     }

@@ -2,7 +2,7 @@
 # regenerate_scifact_calibration.py, which records where every value came
 # from. Do not edit a value by hand.
 #
-# Run e9f178018e9974f216d6cf81ebd71bd5a7273a281e47e48d016fb1cd265382e7,
+# Run aa590151b03d4ce9d4b78c563ea0dac5d95edb4449ffb7230deaa74a48c4219d,
 # node `vectors`: query-id <TAB> rank <TAB> document-id <TAB> score.
 # Best first, grouped by query, queries in benchmark order.
 1	1	29638116	0.35401347279548645

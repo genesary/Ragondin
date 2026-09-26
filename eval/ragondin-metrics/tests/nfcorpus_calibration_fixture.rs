@@ -93,7 +93,7 @@ const QRELS: &str = include_str!("fixtures/nfcorpus_calibration_qrels.tsv");
 const TOLERANCE: f64 = 1e-12;
 
 /// What `bench` called the run, so a failure names the run and not a file.
-const RUN_ID: &str = "5df02792921fe418538358a0c8710bfb683b1b852fecf808c666429388d0fe21";
+const RUN_ID: &str = "4a4292e64ef9c5f4d0660c5af17a6d844c24726a3f9d203bfac305f8703912de";
 /// Which configuration produced it, for the same reason.
 const CONFIGURATION: &str = "nfcorpus-dense-only.yaml";
 

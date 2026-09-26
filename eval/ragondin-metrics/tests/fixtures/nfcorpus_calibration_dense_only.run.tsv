@@ -2,7 +2,7 @@
 # regenerate_nfcorpus_calibration.py, which records where every value came
 # from. Do not edit a value by hand.
 #
-# Run 5df02792921fe418538358a0c8710bfb683b1b852fecf808c666429388d0fe21,
+# Run 4a4292e64ef9c5f4d0660c5af17a6d844c24726a3f9d203bfac305f8703912de,
 # node `vectors`: query-id <TAB> rank <TAB> document-id <TAB> score.
 # Best first, grouped by query, queries in benchmark order.
 PLAIN-2	1	MED-2440	0.6476142406463623

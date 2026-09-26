@@ -1,0 +1,31 @@
+# The generation pipeline `tests/bench.rs` drives `bench` over: BM25, the
+# concatenating context builder, and the stub generator, which answers with the
+# first line of the context its template places.
+#
+# Over `qa-mini/` (`beir-qa/`) and `squad-mini/` (`squad/`) alike, that is the
+# answer line of the top-ranked passage: each answer-bearing passage has no
+# title, so its text opens with the answer on a line of its own, and the
+# builder renders the first chunk first. So the answer is right exactly when
+# retrieval ranked the right passage first.
+pipeline:
+  inputs: [question]
+  nodes:
+    - id: search
+      component: retriever
+      impl: bm25
+      inputs: [question]
+      params: { top_k: 3 }
+
+    - id: prompt
+      component: context_builder
+      impl: concat
+      inputs: [question, search]
+      params: { budget: 2000, separator: "\n" }
+
+    - id: answer
+      component: generator
+      impl: stub_generator
+      inputs: [question, prompt]
+      params:
+        served_model: stub-model
+        template: "Answer from the context.\n{context}\nQuestion: {query}"
