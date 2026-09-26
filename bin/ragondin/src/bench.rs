@@ -9,8 +9,8 @@
 //!
 //! Thin by rule, all the same: every step below is a call into the crate that
 //! owns it. What is genuinely this module's own is the *order* — ADR-C32 § 4's
-//! six steps, with every component's identity read before the benchmark is
-//! loaded — and one thing only a composition root can do: [`prepare`] embeds
+//! six steps, with the identity of every component this build knows how to
+//! construct read before the benchmark is loaded — and one thing only a composition root can do: [`prepare`] embeds
 //! the corpus before any component exists, because a `ComponentCtor` is
 //! synchronous and the two calls that fill a vector store are not.
 

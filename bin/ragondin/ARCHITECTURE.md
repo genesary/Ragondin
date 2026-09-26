@@ -24,7 +24,7 @@ charter.
 | `tests/cli.rs` | `validate` and the rest of the command line, exercised as a process |
 | `tests/compare.rs` | `compare`, exercised as a process, against runs written straight into a store |
 | `tests/calibration.rs` | The harness against a published SciFact figure, and the exit criterion on real data — ignored by default, run by `just calibrate` |
-| `tests/bench.rs` | `bench`, exercised as a process, over miniature BEIR fixtures — one of them with reference answers, for a generation pipeline |
+| `tests/bench.rs` | `bench`, exercised as a process, over miniature fixtures: BEIR, BEIR with reference answers, and SQuAD — the last two for a generation pipeline |
 | `tests/vertical_slice.rs` | The composition root assembled for real, end to end: a retrieval pipeline, and a generation one |
 | `tests/exit_criterion.rs` | The M2 exit criterion: hybrid retrieval with reranking beats dense-only, reproducibly, and `compare` says so |
 
@@ -198,7 +198,10 @@ release.
     at test time around an absolute path, as `tests/bench.rs` does for its
     hybrid case — leaves nothing reviewable in the tree. Relative paths also
     keep the pipeline hash, and with it the run id, the same on every machine.
-- **Every node's keys are checked before the benchmark is loaded (ADR-C32 § 1).**
+- **The keys of the nodes this composition root reads — `dense`,
+  `cross_encoder`, `concat`, `stub_generator` — are checked before the
+  benchmark is loaded (ADR-C32 § 1)**; a node under any other name is
+  planning's to refuse.
   A `dense` node names its embedder with `embedder:`, required and non-empty;
   the only name this composition root knows is `onnx`, and any other is
   refused naming the node and the name. Over `onnx` a `dense` node may carry

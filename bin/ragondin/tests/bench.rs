@@ -3,16 +3,19 @@
 //! `bench` is the composition root, and a composition root is only exercised
 //! by the thing it composes: the components it registers are compiled into the
 //! binary, so a test that called a function in this crate would be registering
-//! its own. Every test here spawns the built binary over the miniature BEIR
-//! fixture beside it, and reads back what the run store holds afterwards.
+//! its own. Every test here spawns the built binary over one of the miniature
+//! fixtures beside it — BEIR (`beir-mini/`), BEIR with reference answers
+//! (`qa-mini/`), SQuAD (`squad-mini/`) — and reads back what the run store holds
+//! afterwards.
 //!
 //! # What runs when
 //!
 //! The tests are split by the feature that carries the components they need
-//! (ADR-C14): the lean build registers no retriever, so `just test` compiles
-//! those tests away and `just test-features` is where they run. The two
-//! refusals below need no component at all — a configuration is refused before
-//! anything is constructed — so they run in both.
+//! (ADR-C14): the lean build registers no retriever and no generator, so `just
+//! test` compiles those tests away and `just test-features` is where they run.
+//! The three refusals at the top — an unknown benchmark format, an extension
+//! node, a generator no build registers — need no component this build lacks,
+//! since each is refused before anything runs, so they run in both.
 
 use std::path::{Path, PathBuf};
 use std::process::Output;

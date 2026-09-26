@@ -2,10 +2,11 @@
 # concatenating context builder, and the stub generator, which answers with the
 # first line of the context its template places.
 #
-# Over `qa-mini/` that is the answer line of the top-ranked passage: each
-# answer-bearing passage there has no title, so its text opens with the answer
-# on a line of its own, and the builder renders the first chunk first. So the
-# answer is right exactly when retrieval ranked the right passage first.
+# Over `qa-mini/` (`beir-qa/`) and `squad-mini/` (`squad/`) alike, that is the
+# answer line of the top-ranked passage: each answer-bearing passage has no
+# title, so its text opens with the answer on a line of its own, and the
+# builder renders the first chunk first. So the answer is right exactly when
+# retrieval ranked the right passage first.
 pipeline:
   inputs: [question]
   nodes:
