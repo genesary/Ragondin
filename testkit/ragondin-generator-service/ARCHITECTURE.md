@@ -134,8 +134,11 @@ An upstream failure's status message carries the HTTP status code and, where
 the body has one, its error text: the OpenAI-shaped `error.message` when there
 is one, otherwise the body. The API key is replaced by `<redacted>` in the whole
 text **before** it is cut to 512 characters, so a key the server echoed back
-straddling the cut leaves nothing of itself behind, and the key is replaced
-again in the assembled message wherever else it appears.
+straddling the cut leaves nothing of itself behind. **Every status the
+service returns is then built by one constructor, `Relay::status`, which
+replaces the key in the whole message** — so a decode error quoting a
+mistyped value the server reflected the key into, or any other text, cannot
+carry it either.
 
 ## Dependencies and the feature
 

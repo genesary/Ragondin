@@ -763,6 +763,32 @@ async fn a_key_echoed_across_the_error_text_limit_is_redacted_whole() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_key_reflected_into_an_undecodable_2xx_body_is_redacted() {
+    const KEY: &str = "sk-REFLECTED-987654";
+    // `serde_json` quotes a mistyped string value in its error, so a body
+    // that puts the key where a list belongs would carry it into the status.
+    let cases = [
+        ("completion", json!({"choices": KEY})),
+        (
+            "completion",
+            json!({"choices": [{"message": {"content": [KEY]}}]}),
+        ),
+    ];
+    for (what, body) in cases {
+        let fake = Fake::start(move |_| reply(200, body.clone())).await;
+        let service = Service::start_with_key(&fake.base(), Some(KEY)).await;
+        let status = service
+            .client()
+            .await
+            .generate(request(params("qwen", "{query}")))
+            .await
+            .expect_err("refused");
+        assert_eq!(status.code(), Code::Internal, "{what}: {status:?}");
+        assert!(!status.message().contains(KEY), "{what}: {status:?}");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_long_json_error_message_is_cut_like_any_other_error_text() {
     let fake = Fake::start(|_| reply(500, json!({"error": {"message": "y".repeat(4000)}}))).await;
     let status = generate_status(&fake.base(), request(params("qwen", "{query}"))).await;

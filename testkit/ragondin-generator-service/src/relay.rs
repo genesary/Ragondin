@@ -100,13 +100,25 @@ impl Relay {
     }
 
     /// A status whose message never carries the API key, even where the
-    /// inference server echoed it back.
-    fn status(&self, code: Code, message: String) -> Status {
+    /// inference server echoed it back. **Every status this crate returns is
+    /// built here**, so no message — an upstream error text, a decode error
+    /// quoting a mistyped value, a caller's own input — can bypass the
+    /// redaction.
+    fn status(&self, code: Code, message: impl Into<String>) -> Status {
+        let message = message.into();
         let message = match &self.api_key {
             Some(key) => message.replace(key.as_str(), REDACTED),
             None => message,
         };
         Status::new(code, message)
+    }
+
+    fn invalid(&self, message: impl Into<String>) -> Status {
+        self.status(Code::InvalidArgument, message)
+    }
+
+    fn internal(&self, message: impl Into<String>) -> Status {
+        self.status(Code::Internal, message)
     }
 }
 
@@ -169,10 +181,6 @@ fn chain(error: &dyn std::error::Error) -> String {
     text
 }
 
-fn invalid(message: impl Into<String>) -> Status {
-    Status::invalid_argument(message)
-}
-
 /// The part of a chat-completions response the service reads.
 #[derive(Deserialize)]
 struct ChatCompletion {
@@ -223,20 +231,20 @@ impl Generator for Relay {
             context,
             params,
         } = request.into_inner();
-        let query = query.ok_or_else(|| invalid("query is required"))?;
-        let context = context.ok_or_else(|| invalid("context is required"))?;
-        let params = params.ok_or_else(|| invalid("params is required"))?;
+        let query = query.ok_or_else(|| self.invalid("query is required"))?;
+        let context = context.ok_or_else(|| self.invalid("context is required"))?;
+        let params = params.ok_or_else(|| self.invalid("params is required"))?;
         if params.served_model.is_empty() {
-            return Err(invalid("served_model is empty"));
+            return Err(self.invalid("served_model is empty"));
         }
         if params.template.is_empty() {
-            return Err(invalid("template is empty"));
+            return Err(self.invalid("template is empty"));
         }
         if let Some(t) = params.temperature.filter(|t| !t.is_finite()) {
-            return Err(invalid(format!("temperature {t} is not finite")));
+            return Err(self.invalid(format!("temperature {t} is not finite")));
         }
         let content = template::render(&params.template, &query.text, &context.text)
-            .map_err(|e| invalid(e.to_string()))?;
+            .map_err(|e| self.invalid(e.to_string()))?;
 
         let mut body = Map::new();
         body.insert("model".into(), json!(params.served_model));
@@ -263,18 +271,17 @@ impl Generator for Relay {
                 endpoint,
             )
             .await?;
-        let completion: ChatCompletion = serde_json::from_slice(&bytes).map_err(|e| {
-            Status::internal(format!("the {endpoint} response does not decode: {e}"))
-        })?;
+        let completion: ChatCompletion = serde_json::from_slice(&bytes)
+            .map_err(|e| self.internal(format!("the {endpoint} response does not decode: {e}")))?;
         let text = completion
             .choices
             .into_iter()
             .next()
-            .ok_or_else(|| Status::internal(format!("the {endpoint} response has no choice")))?
+            .ok_or_else(|| self.internal(format!("the {endpoint} response has no choice")))?
             .message
             .content
             .ok_or_else(|| {
-                Status::internal(format!(
+                self.internal(format!(
                     "the {endpoint} response's first choice has no content"
                 ))
             })?;
@@ -289,14 +296,14 @@ impl Generator for Relay {
     ) -> Result<Response<GeneratorModelIdentityResponse>, Status> {
         let served_model = request.into_inner().served_model;
         if served_model.is_empty() {
-            return Err(invalid("served_model is empty"));
+            return Err(self.invalid("served_model is empty"));
         }
         let endpoint = "/v1/models";
         let bytes = self
             .send(self.client.get(self.endpoint(endpoint)), endpoint)
             .await?;
         let malformed = || {
-            Status::internal(format!(
+            self.internal(format!(
                 "the {endpoint} response is not a list of models with string ids"
             ))
         };
@@ -319,7 +326,7 @@ impl Generator for Relay {
             .into_iter()
             .find(|(id, _)| *id == served_model)
             .ok_or_else(|| {
-                invalid(format!(
+                self.invalid(format!(
                     "the inference server does not serve {served_model:?}"
                 ))
             })?;
@@ -329,7 +336,7 @@ impl Generator for Relay {
             parent: non_empty_str(entry.get("parent")),
             max_model_len: integer(entry.get("max_model_len")),
         })
-        .map_err(|e| Status::internal(format!("the identity does not encode: {e}")))?;
+        .map_err(|e| self.internal(format!("the identity does not encode: {e}")))?;
         Ok(Response::new(GeneratorModelIdentityResponse {
             identity: Some(ModelIdentity { identity }),
         }))
