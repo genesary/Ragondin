@@ -2,25 +2,34 @@
 //! like any `Local` component, it connects nothing until called, it refuses an
 //! absent or empty `served_model` before sending, it applies the embedding
 //! prefixes, it batches the two unbounded calls within its message limit, and
-//! it maps every failure through ADR-C35's one conversion.
+//! it maps every failure through ADR-C35's one conversion. The generator's
+//! adapter also refuses an empty template before sending, sends each optional
+//! with its presence, and sends the template unrendered.
 
 mod support;
 
 use std::error::Error as _;
 
 use async_trait::async_trait;
+use std::sync::{Arc, Mutex};
+
 use ragondin_contracts::{
-    ComponentError, EmbedParams, EmbedRole, EmbeddedChunk, Embedder, Fusion, FusionParams,
-    RerankParams, Reranker, RetrieveParams, Retriever, SearchParams, VectorStore,
+    ComponentError, ContextBuilder, ContextParams, EmbedParams, EmbedRole, EmbeddedChunk, Embedder,
+    Fusion, FusionParams, GenerateParams, Generator, RerankParams, Reranker, RetrieveParams,
+    Retriever, SearchParams, VectorStore,
 };
 use ragondin_proto::v1::{
-    self, embedder_client::EmbedderClient, embedder_server, reranker_server, retriever_server,
+    self, context_builder_server, embedder_client::EmbedderClient, embedder_server,
+    generator_server, reranker_server, retriever_server,
 };
 use ragondin_remote::{
-    DecodeError, IntoProto, RemoteEmbedder, RemoteFusion, RemoteReranker, RemoteRetriever,
-    RemoteVectorStore, EMBED_BATCH, UPSERT_BATCH,
+    DecodeError, IntoProto, RemoteContextBuilder, RemoteEmbedder, RemoteFusion, RemoteGenerator,
+    RemoteReranker, RemoteRetriever, RemoteVectorStore, EMBED_BATCH, UPSERT_BATCH,
 };
-use ragondin_types::{Embedding, ModelIdentity, Query, QueryId, ScoredChunk};
+use ragondin_stub::{StubContextBuilder, StubGenerator};
+use ragondin_types::{
+    Context, ContextChunk, Embedding, ModelIdentity, Query, QueryId, ScoredChunk,
+};
 use support::stubs::{chunk, StubEmbedder, StubReranker, StubRetriever, StubStore, SERVED_MODEL};
 use tonic::transport::Server;
 use tonic::{Code, Request, Response, Status};
@@ -464,4 +473,416 @@ async fn a_batch_answered_with_the_wrong_count_is_backend() {
         .await
         .unwrap_err();
     assert!(matches!(error, ComponentError::Backend(_)), "{error:?}");
+}
+
+// --- the generation adapters (ADR-C31 § 1–§ 2, § 4) ----------------------------
+
+/// A template the stub generator places the context with, so its answer is
+/// the context's first line.
+const TEMPLATE: &str = "{context}\n\n{query}";
+
+fn context() -> Context {
+    Context {
+        chunks: vec![ContextChunk {
+            id: chunk("a").id,
+            document_id: chunk("a").document_id,
+            score: 0.5,
+        }],
+        text: "the first line\nthe second".into(),
+    }
+}
+
+fn generate_params() -> GenerateParams {
+    GenerateParams::new(SERVED_MODEL, TEMPLATE)
+}
+
+#[tokio::test]
+async fn each_generation_adapter_is_its_family_trait_object() {
+    let builder: Box<dyn ContextBuilder> = Box::new(RemoteContextBuilder::new(
+        support::serve_context_builder(StubContextBuilder),
+    ));
+    let built = builder
+        .build(
+            &query(),
+            vec![ScoredChunk {
+                chunk: chunk("a"),
+                score: 0.5,
+            }],
+            &ContextParams::new(4),
+        )
+        .await
+        .unwrap();
+    assert_eq!(built.chunks[0].id.as_str(), "a");
+    assert_eq!(built.chunks[0].score, 0.5);
+    assert_eq!(
+        builder.model_identity().await.unwrap().as_str(),
+        StubContextBuilder::IDENTITY
+    );
+
+    let generator: Box<dyn Generator> = Box::new(RemoteGenerator::new(support::serve_generator(
+        StubGenerator::new(SERVED_MODEL),
+    )));
+    let answer = generator
+        .generate(&query(), &context(), &generate_params())
+        .await
+        .unwrap();
+    assert_eq!(answer.text, "the first line");
+    assert_eq!(
+        generator
+            .model_identity(SERVED_MODEL)
+            .await
+            .unwrap()
+            .as_str(),
+        StubGenerator::IDENTITY
+    );
+}
+
+#[tokio::test]
+async fn an_unreachable_generation_service_is_unavailable() {
+    let generator = RemoteGenerator::new(support::unreachable_channel());
+    let error = generator
+        .generate(&query(), &context(), &generate_params())
+        .await
+        .unwrap_err();
+    assert!(matches!(error, ComponentError::Unavailable(_)), "{error:?}");
+    let error = generator.model_identity(SERVED_MODEL).await.unwrap_err();
+    assert!(matches!(error, ComponentError::Unavailable(_)), "{error:?}");
+
+    let builder = RemoteContextBuilder::new(support::unreachable_channel());
+    let error = builder
+        .build(&query(), vec![], &ContextParams::new(1))
+        .await
+        .unwrap_err();
+    assert!(matches!(error, ComponentError::Unavailable(_)), "{error:?}");
+    let error = builder.model_identity().await.unwrap_err();
+    assert!(matches!(error, ComponentError::Unavailable(_)), "{error:?}");
+}
+
+/// ADR-C31 § 2: the adapter refuses an empty `served_model` or template
+/// before it sends. Over a channel to nothing, a call that was sent is
+/// `Unavailable`, so `InvalidRequest` proves nothing was.
+#[tokio::test]
+async fn an_empty_served_model_or_template_is_refused_before_sending() {
+    let generator = RemoteGenerator::new(support::unreachable_channel());
+    for params in [
+        GenerateParams::new("", TEMPLATE),
+        GenerateParams::new(SERVED_MODEL, ""),
+    ] {
+        let error = generator
+            .generate(&query(), &context(), &params)
+            .await
+            .unwrap_err();
+        assert!(is_invalid_request(&error), "{params:?}: {error:?}");
+    }
+    let error = generator.model_identity("").await.unwrap_err();
+    assert!(is_invalid_request(&error), "{error:?}");
+}
+
+/// A generator service that answers every call with the status its test
+/// scripts, or, when none is scripted, with an OK answer; it records every
+/// request it receives, as received.
+#[derive(Clone, Default)]
+struct Scripted {
+    status: Option<(Code, &'static str)>,
+    received: Arc<Mutex<Vec<v1::GenerateRequest>>>,
+}
+
+impl Scripted {
+    fn failing(code: Code) -> Self {
+        Self {
+            status: Some((code, "scripted")),
+            ..Self::default()
+        }
+    }
+
+    #[allow(clippy::result_large_err)]
+    fn outcome<T>(&self, ok: T) -> Result<Response<T>, Status> {
+        match self.status {
+            Some((code, message)) => Err(Status::new(code, message)),
+            None => Ok(Response::new(ok)),
+        }
+    }
+}
+
+#[tonic::async_trait]
+impl generator_server::Generator for Scripted {
+    async fn generate(
+        &self,
+        request: Request<v1::GenerateRequest>,
+    ) -> Result<Response<v1::GenerateResponse>, Status> {
+        self.received.lock().unwrap().push(request.into_inner());
+        self.outcome(v1::GenerateResponse {
+            answer: Some(v1::Answer {
+                text: "scripted".into(),
+            }),
+        })
+    }
+
+    async fn get_model_identity(
+        &self,
+        _: Request<v1::GeneratorModelIdentityRequest>,
+    ) -> Result<Response<v1::GeneratorModelIdentityResponse>, Status> {
+        self.outcome(ModelIdentity::new("scripted@rev").into_proto())
+    }
+}
+
+#[tonic::async_trait]
+impl context_builder_server::ContextBuilder for Scripted {
+    async fn build(
+        &self,
+        _: Request<v1::BuildRequest>,
+    ) -> Result<Response<v1::BuildResponse>, Status> {
+        self.outcome(
+            Context {
+                chunks: vec![],
+                text: String::new(),
+            }
+            .into_proto(),
+        )
+    }
+
+    async fn get_model_identity(
+        &self,
+        _: Request<v1::ContextBuilderModelIdentityRequest>,
+    ) -> Result<Response<v1::ContextBuilderModelIdentityResponse>, Status> {
+        self.outcome(ModelIdentity::new("scripted@rev").into_proto())
+    }
+}
+
+fn scripted_generator(service: Scripted) -> RemoteGenerator {
+    RemoteGenerator::new(support::serve(
+        Server::builder().add_service(generator_server::GeneratorServer::new(service)),
+    ))
+}
+
+fn scripted_builder(service: Scripted) -> RemoteContextBuilder {
+    RemoteContextBuilder::new(support::serve(
+        Server::builder().add_service(context_builder_server::ContextBuilderServer::new(service)),
+    ))
+}
+
+/// ADR-C35 § 2, one status class at a time, on every call of both generation
+/// adapters: `INVALID_ARGUMENT` is `InvalidRequest`; `UNAVAILABLE`,
+/// `DEADLINE_EXCEEDED` and `CANCELLED` are `Unavailable`; `INTERNAL` and any
+/// other code are `Backend`, keeping the `Status` as the source.
+#[tokio::test]
+async fn each_status_class_maps_to_its_variant_on_the_generation_adapters() {
+    type Kept = fn(&ComponentError, Code) -> bool;
+    let classes: [(&[Code], Kept); 3] = [
+        (
+            &[Code::InvalidArgument],
+            |e, _| matches!(e, ComponentError::InvalidRequest(m) if m.contains("scripted")),
+        ),
+        (
+            &[Code::Unavailable, Code::DeadlineExceeded, Code::Cancelled],
+            |e, _| matches!(e, ComponentError::Unavailable(m) if m.contains("scripted")),
+        ),
+        (
+            &[Code::Internal, Code::NotFound, Code::ResourceExhausted],
+            |e, code| {
+                matches!(e, ComponentError::Backend(_))
+                    && e.source()
+                        .and_then(|s| s.downcast_ref::<Status>())
+                        .is_some_and(|s| s.code() == code && s.message() == "scripted")
+            },
+        ),
+    ];
+    for (codes, kept) in classes {
+        for &code in codes {
+            let generator = scripted_generator(Scripted::failing(code));
+            let errors = [
+                generator
+                    .generate(&query(), &context(), &generate_params())
+                    .await
+                    .unwrap_err(),
+                generator.model_identity(SERVED_MODEL).await.unwrap_err(),
+            ];
+            let builder = scripted_builder(Scripted::failing(code));
+            let errors = errors.into_iter().chain([
+                builder
+                    .build(&query(), vec![], &ContextParams::new(1))
+                    .await
+                    .unwrap_err(),
+                builder.model_identity().await.unwrap_err(),
+            ]);
+            for error in errors {
+                assert!(kept(&error, code), "{code:?} came back as {error:?}");
+            }
+        }
+    }
+}
+
+/// ADR-C31 § 2: an optional left `None` is omitted from the request, never
+/// sent as a zero, and one set to zero is sent as zero. The template goes
+/// out exactly as the params hold it, and the query and the context
+/// separately: the service renders, the adapter does not.
+#[tokio::test]
+async fn the_generator_adapter_sends_presence_and_the_template_unrendered() {
+    let service = Scripted::default();
+    let received = service.received.clone();
+    let generator = scripted_generator(service);
+
+    let absent = GenerateParams::new(SERVED_MODEL, "{{literal}} {query} {context}");
+    let zeros = absent
+        .clone()
+        .with_temperature(0.0)
+        .with_seed(0)
+        .with_max_tokens(0);
+    let set = absent
+        .clone()
+        .with_temperature(0.7)
+        .with_seed(42)
+        .with_max_tokens(256);
+    for params in [&absent, &zeros, &set] {
+        let answer = generator
+            .generate(&query(), &context(), params)
+            .await
+            .unwrap();
+        assert_eq!(answer.text, "scripted");
+    }
+
+    let received = received.lock().unwrap();
+    let sent: Vec<_> = received
+        .iter()
+        .map(|r| {
+            let p = r.params.as_ref().unwrap();
+            (p.temperature, p.seed, p.max_tokens)
+        })
+        .collect();
+    assert_eq!(
+        sent,
+        [
+            (None, None, None),
+            (Some(0.0), Some(0), Some(0)),
+            (Some(0.7), Some(42), Some(256)),
+        ]
+    );
+    for request in received.iter() {
+        let params = request.params.as_ref().unwrap();
+        assert_eq!(params.template, "{{literal}} {query} {context}");
+        assert_eq!(params.served_model, SERVED_MODEL);
+        assert_eq!(request.query.as_ref().unwrap().text, query().text);
+        assert_eq!(request.context.as_ref().unwrap().text, context().text);
+    }
+}
+
+/// A malformed template is the service's refusal, since only the service
+/// renders: it arrives as `INVALID_ARGUMENT` and comes back `InvalidRequest`.
+/// So does a served model the service does not serve, from either call.
+#[tokio::test]
+async fn the_services_refusals_arrive_as_invalid_request() {
+    let generator =
+        RemoteGenerator::new(support::serve_generator(StubGenerator::new(SERVED_MODEL)));
+    let error = generator
+        .generate(
+            &query(),
+            &context(),
+            &GenerateParams::new(SERVED_MODEL, "{unknown}"),
+        )
+        .await
+        .unwrap_err();
+    assert!(is_invalid_request(&error), "{error:?}");
+
+    let error = generator
+        .generate(
+            &query(),
+            &context(),
+            &GenerateParams::new("other", TEMPLATE),
+        )
+        .await
+        .unwrap_err();
+    assert!(is_invalid_request(&error), "{error:?}");
+    let error = generator.model_identity("other").await.unwrap_err();
+    assert!(is_invalid_request(&error), "{error:?}");
+
+    let builder = RemoteContextBuilder::new(support::serve_context_builder(StubContextBuilder));
+    let error = builder
+        .build(&query(), vec![], &ContextParams::new(0))
+        .await
+        .unwrap_err();
+    assert!(is_invalid_request(&error), "{error:?}");
+}
+
+/// A generation service that answers OK with what the domain cannot
+/// represent: no answer, no context, an empty identity.
+struct MalformedGeneration;
+
+#[tonic::async_trait]
+impl generator_server::Generator for MalformedGeneration {
+    async fn generate(
+        &self,
+        _: Request<v1::GenerateRequest>,
+    ) -> Result<Response<v1::GenerateResponse>, Status> {
+        Ok(Response::new(v1::GenerateResponse { answer: None }))
+    }
+
+    async fn get_model_identity(
+        &self,
+        _: Request<v1::GeneratorModelIdentityRequest>,
+    ) -> Result<Response<v1::GeneratorModelIdentityResponse>, Status> {
+        Ok(Response::new(ModelIdentity::new("").into_proto()))
+    }
+}
+
+#[tonic::async_trait]
+impl context_builder_server::ContextBuilder for MalformedGeneration {
+    async fn build(
+        &self,
+        _: Request<v1::BuildRequest>,
+    ) -> Result<Response<v1::BuildResponse>, Status> {
+        Ok(Response::new(v1::BuildResponse { context: None }))
+    }
+
+    async fn get_model_identity(
+        &self,
+        _: Request<v1::ContextBuilderModelIdentityRequest>,
+    ) -> Result<Response<v1::ContextBuilderModelIdentityResponse>, Status> {
+        Ok(Response::new(ModelIdentity::new("").into_proto()))
+    }
+}
+
+/// ADR-C35 § 2: an OK response that does not convert is `Backend`, with the
+/// `DecodeError` as its source; ADR-C31 § 1: an empty identity is
+/// `InvalidRequest`, through the same shared function as the M2 adapters.
+#[tokio::test]
+async fn a_malformed_generation_response_is_backend_and_an_empty_identity_invalid_request() {
+    let generator = RemoteGenerator::new(support::serve(
+        Server::builder().add_service(generator_server::GeneratorServer::new(MalformedGeneration)),
+    ));
+    let error = generator
+        .generate(&query(), &context(), &generate_params())
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(
+            decode_error(&error),
+            Some(DecodeError::Missing {
+                message: "GenerateResponse",
+                field: "answer"
+            })
+        ),
+        "{error:?}"
+    );
+    let error = generator.model_identity(SERVED_MODEL).await.unwrap_err();
+    assert!(is_invalid_request(&error), "{error:?}");
+
+    let builder = RemoteContextBuilder::new(support::serve(Server::builder().add_service(
+        context_builder_server::ContextBuilderServer::new(MalformedGeneration),
+    )));
+    let error = builder
+        .build(&query(), vec![], &ContextParams::new(1))
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(
+            decode_error(&error),
+            Some(DecodeError::Missing {
+                message: "BuildResponse",
+                field: "context"
+            })
+        ),
+        "{error:?}"
+    );
+    let error = builder.model_identity().await.unwrap_err();
+    assert!(is_invalid_request(&error), "{error:?}");
 }

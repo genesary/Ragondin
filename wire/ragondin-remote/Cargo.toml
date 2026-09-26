@@ -20,10 +20,13 @@ async-trait = { workspace = true } # the contract traits are `async_trait` (froz
 thiserror = { workspace = true }   # typed library errors (DecodeError)
 
 # Test-only. The conformance suite is run against each adapter over an
-# in-process tonic server on an ephemeral port, hosting an in-test `Local` stub;
-# `tokio` runs it, `async-trait` declares the stubs, `prost` encodes the
-# round-trip messages to bytes and back.
+# in-process tonic server on an ephemeral port, hosting a `Local` stub: an
+# in-test one for the five M2 families, `ragondin-stub`'s for the generator and
+# the context builder, whose generator already parses ADR-C31 § 2's whole
+# template grammar. `tokio` runs it, `async-trait` declares the stubs, `prost`
+# encodes the round-trip messages to bytes and back.
 [dev-dependencies]
 ragondin-conformance = { workspace = true }
+ragondin-stub = { workspace = true }
 tokio = { workspace = true }
 prost = { workspace = true }

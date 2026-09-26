@@ -14,21 +14,24 @@
 //!
 //! The generator draws the edges on purpose: empty collections, the empty
 //! string, non-ASCII text, `-0.0` and the extreme finite floats, and `None`
-//! and `Some` for every optional. It never draws a value the conversion
+//! and `Some` for every optional — a temperature of `Some(0.0)` among them,
+//! which must not come back as `None`. It never draws a value the conversion
 //! refuses, since the property starts from a valid domain value: an empty
-//! `served_model` and an empty `ModelIdentity` are representable and not
-//! valid, and their refusal is in `negative_decode.rs`.
+//! `served_model`, an empty template and an empty `ModelIdentity` are
+//! representable and not valid, and their refusal is in `negative_decode.rs`.
 
 use std::fmt::Debug;
 
 use prost::Message;
 use ragondin_contracts::{
-    EmbedParams, EmbedRole, EmbeddedChunk, FusionParams, RerankParams, RetrieveParams, SearchParams,
+    ContextParams, EmbedParams, EmbedRole, EmbeddedChunk, FusionParams, GenerateParams,
+    RerankParams, RetrieveParams, SearchParams,
 };
 use ragondin_proto::v1;
 use ragondin_remote::{FromProto, IntoProto};
 use ragondin_types::{
-    Chunk, ChunkId, DocId, Embedding, ModelIdentity, Query, QueryId, ScoredChunk,
+    Answer, Chunk, ChunkId, Context, ContextChunk, DocId, Embedding, ModelIdentity, Query, QueryId,
+    ScoredChunk,
 };
 
 /// How many values of each type the property is checked over.
@@ -194,6 +197,75 @@ impl Gen {
             Some(name) => params.with_served_model(name),
             None => params,
         }
+    }
+
+    /// A finite `f64`, drawn as [`float`](Self::float) draws an `f32`: zero
+    /// is among the edges, because a temperature of zero is greedy decoding
+    /// and must arrive as `Some(0.0)`, never as `None`.
+    fn double(&mut self) -> f64 {
+        const EDGES: &[f64] = &[
+            0.0,
+            -0.0,
+            1.0,
+            -1.0,
+            f64::MAX,
+            f64::MIN,
+            f64::MIN_POSITIVE,
+            f64::EPSILON,
+            5.0e-324, // the smallest subnormal
+        ];
+        if self.coin() {
+            return EDGES[self.below(EDGES.len() as u64) as usize];
+        }
+        loop {
+            let value = f64::from_bits(self.next());
+            if value.is_finite() {
+                return value;
+            }
+        }
+    }
+
+    fn seed(&mut self) -> u64 {
+        match self.below(4) {
+            0 => 0,
+            1 => u64::MAX,
+            _ => self.next(),
+        }
+    }
+
+    fn context_chunk(&mut self) -> ContextChunk {
+        ContextChunk {
+            id: ChunkId::new(self.text()),
+            document_id: DocId::new(self.text()),
+            score: self.float(),
+        }
+    }
+
+    fn context(&mut self) -> Context {
+        Context {
+            chunks: self.vec(Self::context_chunk),
+            text: self.text(),
+        }
+    }
+
+    fn answer(&mut self) -> Answer {
+        Answer { text: self.text() }
+    }
+
+    /// Each optional independently `None` or `Some`, so every combination of
+    /// presence is drawn.
+    fn generate_params(&mut self) -> GenerateParams {
+        let mut params = GenerateParams::new(self.non_empty_text(), self.non_empty_text());
+        if self.coin() {
+            params = params.with_temperature(self.double());
+        }
+        if self.coin() {
+            params = params.with_seed(self.seed());
+        }
+        if self.coin() {
+            params = params.with_max_tokens(self.count());
+        }
+        params
     }
 
     fn rerank_params(&mut self) -> RerankParams {
@@ -440,6 +512,140 @@ fn embedder_identity_response_round_trips() {
     );
 }
 
+// --- the generation families (ADR-C31 § 1–§ 2) ------------------------------
+
+#[test]
+fn context_chunk_round_trips() {
+    assert_round_trips::<ContextChunk, v1::ContextChunk>("ContextChunk", 29, Gen::context_chunk);
+}
+
+#[test]
+fn context_round_trips() {
+    assert_round_trips::<Context, v1::Context>("Context", 30, Gen::context);
+}
+
+#[test]
+fn answer_round_trips() {
+    assert_round_trips::<Answer, v1::Answer>("Answer", 31, Gen::answer);
+}
+
+#[test]
+fn context_params_round_trip() {
+    assert_round_trips::<ContextParams, v1::ContextParams>("ContextParams", 32, |g| {
+        ContextParams::new(g.count())
+    });
+}
+
+#[test]
+fn generate_params_round_trip() {
+    assert_round_trips::<GenerateParams, v1::GenerateParams>(
+        "GenerateParams",
+        33,
+        Gen::generate_params,
+    );
+}
+
+#[test]
+fn build_request_round_trips() {
+    assert_round_trips::<(Query, Vec<ScoredChunk>, ContextParams), v1::BuildRequest>(
+        "BuildRequest",
+        34,
+        |g| (g.query(), g.scored_chunks(), ContextParams::new(g.count())),
+    );
+}
+
+#[test]
+fn generate_request_round_trips() {
+    assert_round_trips::<(Query, Context, GenerateParams), v1::GenerateRequest>(
+        "GenerateRequest",
+        35,
+        |g| (g.query(), g.context(), g.generate_params()),
+    );
+}
+
+#[test]
+fn context_builder_identity_request_round_trips() {
+    assert_round_trips::<(), v1::ContextBuilderModelIdentityRequest>(
+        "ContextBuilderModelIdentityRequest",
+        36,
+        |_| (),
+    );
+}
+
+#[test]
+fn generator_identity_request_round_trips() {
+    assert_round_trips::<String, v1::GeneratorModelIdentityRequest>(
+        "GeneratorModelIdentityRequest",
+        37,
+        Gen::non_empty_text,
+    );
+}
+
+#[test]
+fn build_response_round_trips() {
+    assert_round_trips::<Context, v1::BuildResponse>("BuildResponse", 38, Gen::context);
+}
+
+#[test]
+fn generate_response_round_trips() {
+    assert_round_trips::<Answer, v1::GenerateResponse>("GenerateResponse", 39, Gen::answer);
+}
+
+#[test]
+fn context_builder_identity_response_round_trips() {
+    assert_round_trips::<ModelIdentity, v1::ContextBuilderModelIdentityResponse>(
+        "ContextBuilderModelIdentityResponse",
+        40,
+        Gen::identity,
+    );
+}
+
+#[test]
+fn generator_identity_response_round_trips() {
+    assert_round_trips::<ModelIdentity, v1::GeneratorModelIdentityResponse>(
+        "GeneratorModelIdentityResponse",
+        41,
+        Gen::identity,
+    );
+}
+
+/// ADR-C31 § 2: an optional the caller left out is absent on the wire, never
+/// a zero, and a zero the caller set is present. Checked on the bytes, not
+/// only on the value that comes back: an absent field takes no byte at all,
+/// so a `None` that came back as `None` by luck of a default would still
+/// show here as a field that was sent.
+#[test]
+fn an_absent_optional_is_left_off_the_wire_and_a_zero_is_sent() {
+    let absent = GenerateParams::new("m", "{query}");
+    let proto: v1::GenerateParams = absent.clone().into_proto();
+    assert_eq!(
+        (proto.temperature, proto.seed, proto.max_tokens),
+        (None, None, None)
+    );
+    let bytes = proto.encode_to_vec();
+    let required_only = v1::GenerateParams {
+        served_model: "m".into(),
+        template: "{query}".into(),
+        ..Default::default()
+    }
+    .encode_to_vec();
+    assert_eq!(bytes, required_only, "an absent optional takes no byte");
+    let back = GenerateParams::from_proto(v1::GenerateParams::decode(bytes.as_slice()).unwrap());
+    assert_eq!(back.unwrap(), absent);
+
+    let zeros = GenerateParams::new("m", "{query}")
+        .with_temperature(0.0)
+        .with_seed(0)
+        .with_max_tokens(0);
+    let proto: v1::GenerateParams = zeros.clone().into_proto();
+    let decoded = v1::GenerateParams::decode(proto.encode_to_vec().as_slice()).unwrap();
+    assert_eq!(
+        (decoded.temperature, decoded.seed, decoded.max_tokens),
+        (Some(0.0), Some(0), Some(0))
+    );
+    assert_eq!(GenerateParams::from_proto(decoded).unwrap(), zeros);
+}
+
 // --- the one bit the wire does not keep --------------------------------------
 
 /// A proto3 scalar equal to its default is not encoded, and `-0.0 == 0.0`, so
@@ -513,6 +719,18 @@ fn the_generator_draws_its_edges() {
             EmbedRole::Query => seen.insert("Query"),
             EmbedRole::Passage => seen.insert("Passage"),
         };
+        let params = gen.generate_params();
+        match params.temperature {
+            None => seen.insert("temperature None"),
+            Some(0.0) => seen.insert("temperature Some(0.0)"),
+            Some(_) => seen.insert("temperature Some"),
+        };
+        if params.seed == Some(u64::MAX) {
+            seen.insert("seed u64::MAX");
+        }
+        if params.max_tokens.is_none() {
+            seen.insert("max_tokens None");
+        }
     }
     let wanted = [
         "empty collection",
@@ -527,6 +745,11 @@ fn the_generator_draws_its_edges() {
         "Some",
         "Query",
         "Passage",
+        "temperature None",
+        "temperature Some(0.0)",
+        "temperature Some",
+        "seed u64::MAX",
+        "max_tokens None",
     ];
     let missed: Vec<_> = wanted.iter().filter(|w| !seen.contains(*w)).collect();
     assert!(missed.is_empty(), "the generator never drew {missed:?}");

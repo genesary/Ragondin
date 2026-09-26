@@ -15,16 +15,18 @@ pub mod stubs;
 use std::net::TcpListener as StdListener;
 
 use ragondin_contracts::{
-    EmbedParams, EmbeddedChunk, Embedder, Fusion, FusionParams, RerankParams, Reranker,
-    RetrieveParams, Retriever, SearchParams, VectorStore,
+    ContextBuilder, ContextParams, EmbedParams, EmbeddedChunk, Embedder, Fusion, FusionParams,
+    GenerateParams, Generator, RerankParams, Reranker, RetrieveParams, Retriever, SearchParams,
+    VectorStore,
 };
 use ragondin_proto::v1::{
-    self, embedder_server, fusion_server, reranker_server, retriever_server, vector_store_server,
+    self, context_builder_server, embedder_server, fusion_server, generator_server,
+    reranker_server, retriever_server, vector_store_server,
 };
 use ragondin_remote::{
     status_from_error, status_from_request, FromProto, IntoProto, MAX_MESSAGE_SIZE,
 };
-use ragondin_types::{Embedding, ModelIdentity, Query, ScoredChunk};
+use ragondin_types::{Answer, Context, Embedding, ModelIdentity, Query, ScoredChunk};
 use tonic::transport::server::{Router, TcpIncoming};
 use tonic::transport::{Channel, Endpoint, Server};
 use tonic::{Request, Response, Status};
@@ -65,7 +67,7 @@ fn decode<D: FromProto<P>, P>(request: Request<P>) -> Result<D, Status> {
     D::from_proto(request.into_inner()).map_err(status_from_request)
 }
 
-// --- the five services, each hosting a `Local` component --------------------
+// --- the seven services, each hosting a `Local` component -------------------
 
 pub struct RetrieverService(pub Box<dyn Retriever>);
 
@@ -239,6 +241,92 @@ pub fn serve_vector_store(component: impl VectorStore + 'static) -> Channel {
     serve(
         Server::builder().add_service(
             vector_store_server::VectorStoreServer::new(VectorStoreService(Box::new(component)))
+                .max_decoding_message_size(MAX_MESSAGE_SIZE)
+                .max_encoding_message_size(MAX_MESSAGE_SIZE),
+        ),
+    )
+}
+
+pub struct ContextBuilderService(pub Box<dyn ContextBuilder>);
+
+#[tonic::async_trait]
+impl context_builder_server::ContextBuilder for ContextBuilderService {
+    async fn build(
+        &self,
+        request: Request<v1::BuildRequest>,
+    ) -> Result<Response<v1::BuildResponse>, Status> {
+        let (query, chunks, params): (Query, Vec<ScoredChunk>, ContextParams) = decode(request)?;
+        let context: Context = self
+            .0
+            .build(&query, chunks, &params)
+            .await
+            .map_err(|e| status_from_error(&e))?;
+        Ok(Response::new(context.into_proto()))
+    }
+
+    async fn get_model_identity(
+        &self,
+        request: Request<v1::ContextBuilderModelIdentityRequest>,
+    ) -> Result<Response<v1::ContextBuilderModelIdentityResponse>, Status> {
+        decode::<(), _>(request)?;
+        let identity: ModelIdentity = self
+            .0
+            .model_identity()
+            .await
+            .map_err(|e| status_from_error(&e))?;
+        Ok(Response::new(identity.into_proto()))
+    }
+}
+
+pub fn serve_context_builder(component: impl ContextBuilder + 'static) -> Channel {
+    serve(
+        Server::builder().add_service(
+            context_builder_server::ContextBuilderServer::new(ContextBuilderService(Box::new(
+                component,
+            )))
+            .max_decoding_message_size(MAX_MESSAGE_SIZE)
+            .max_encoding_message_size(MAX_MESSAGE_SIZE),
+        ),
+    )
+}
+
+/// Renders nothing itself: the hosted generator renders the template, as a
+/// `Remote` service does on receipt (ADR-C31 § 2).
+pub struct GeneratorService(pub Box<dyn Generator>);
+
+#[tonic::async_trait]
+impl generator_server::Generator for GeneratorService {
+    async fn generate(
+        &self,
+        request: Request<v1::GenerateRequest>,
+    ) -> Result<Response<v1::GenerateResponse>, Status> {
+        let (query, context, params): (Query, Context, GenerateParams) = decode(request)?;
+        let answer: Answer = self
+            .0
+            .generate(&query, &context, &params)
+            .await
+            .map_err(|e| status_from_error(&e))?;
+        Ok(Response::new(answer.into_proto()))
+    }
+
+    async fn get_model_identity(
+        &self,
+        request: Request<v1::GeneratorModelIdentityRequest>,
+    ) -> Result<Response<v1::GeneratorModelIdentityResponse>, Status> {
+        let served_model: String = decode(request)?;
+        let identity: ModelIdentity = self
+            .0
+            .model_identity(&served_model)
+            .await
+            .map_err(|e| status_from_error(&e))?;
+        Ok(Response::new(identity.into_proto()))
+    }
+}
+
+pub fn serve_generator(component: impl Generator + 'static) -> Channel {
+    serve(
+        Server::builder().add_service(
+            generator_server::GeneratorServer::new(GeneratorService(Box::new(component)))
                 .max_decoding_message_size(MAX_MESSAGE_SIZE)
                 .max_encoding_message_size(MAX_MESSAGE_SIZE),
         ),

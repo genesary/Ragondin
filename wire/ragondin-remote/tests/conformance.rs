@@ -1,5 +1,6 @@
 //! Each adapter passes its family's conformance suite, against an in-process
-//! service hosting an in-test `Local` stub (`support`).
+//! service hosting a `Local` stub (`support`): an in-test one for the five M2
+//! families, and `ragondin-stub`'s for the generator and the context builder.
 //!
 //! Each stub is checked on its own first, so that a failure of the `Remote`
 //! run is the adapter's or the wire's, not the stub's. The `Remote` run then
@@ -11,12 +12,15 @@
 mod support;
 
 use ragondin_conformance::{
-    assert_embedder_conformance, assert_fusion_conformance, assert_reranker_conformance,
-    assert_retriever_conformance, assert_vector_store_conformance, RolePrefixes,
+    assert_context_builder_conformance, assert_embedder_conformance, assert_fusion_conformance,
+    assert_generator_conformance, assert_reranker_conformance, assert_retriever_conformance,
+    assert_vector_store_conformance, RolePrefixes,
 };
 use ragondin_remote::{
-    RemoteEmbedder, RemoteFusion, RemoteReranker, RemoteRetriever, RemoteVectorStore,
+    RemoteContextBuilder, RemoteEmbedder, RemoteFusion, RemoteGenerator, RemoteReranker,
+    RemoteRetriever, RemoteVectorStore,
 };
+use ragondin_stub::{StubContextBuilder, StubGenerator};
 use support::stubs::{
     StubEmbedder, StubFusion, StubReranker, StubRetriever, StubStore, SERVED_MODEL,
 };
@@ -83,6 +87,32 @@ async fn the_remote_vector_store_is_conformant() {
             )))
         },
         4,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn the_remote_context_builder_is_conformant() {
+    assert_context_builder_conformance(|| Box::new(StubContextBuilder)).await;
+
+    let channel = support::serve_context_builder(StubContextBuilder);
+    assert_context_builder_conformance(|| Box::new(RemoteContextBuilder::new(channel.clone())))
+        .await;
+}
+
+/// The suite's own template exercises the whole grammar, and its malformed
+/// ones must be refused: the adapter renders nothing, so every one of those
+/// refusals is the hosted generator's, made on receipt and carried back as
+/// `INVALID_ARGUMENT`. The empty `served_model` and the empty template never
+/// leave the adapter.
+#[tokio::test]
+async fn the_remote_generator_is_conformant() {
+    assert_generator_conformance(|| Box::new(StubGenerator::new(SERVED_MODEL)), SERVED_MODEL).await;
+
+    let channel = support::serve_generator(StubGenerator::new(SERVED_MODEL));
+    assert_generator_conformance(
+        || Box::new(RemoteGenerator::new(channel.clone())),
+        SERVED_MODEL,
     )
     .await;
 }
