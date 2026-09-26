@@ -35,8 +35,9 @@ run. Today no `protoc` is installed on a contributor's machine by anything in
 this repository, and `.github/workflows/ci.yml` installs none.
 
 The answer also changes what a build requires, which `AGENTS.md` § Rules of
-engagement escalates on two counts. First, it adds `[workspace.dependencies]`
-entries that a crate outside `components/` depends on in the same diff
+engagement escalates on two counts. First, two of the answers add
+`[workspace.dependencies]` entries that a crate outside `components/` depends
+on in the same diff
 (`ragondin-proto` lives in `wire/`). `tonic-build` itself is covered only
 because ADR-C24 names it. Second, the one alternative that adds no crate
 imposes a system tool on the default binary build, which ADR-C14 requires to
@@ -65,7 +66,8 @@ server-streaming rpcs, doc comments, and a well-known type. The results:
   for `protox`, `protox-parse`, `prost-reflect`, `logos` or `miette`, and
   every licence in the added closure is MIT and/or Apache-2.0.
 - **Cost.** `protox` adds 13 crates to `Cargo.lock` beyond what `tonic-build`
-  brings, all build-dependencies, so nothing is linked into any binary. The
+  brings, all build-dependencies, so nothing is linked into any binary the
+  workspace ships. The
   added compile time was measured on one Mac at about 5–7 s, paid once (about
   7 s in the first measurement, 5.0 s wall in the second).
 - **Upstream.** `protox` has a single maintainer. At review time it had four
@@ -94,7 +96,14 @@ Concretely:
   - Moving to `tonic` 0.14 takes this decision along in one diff.
     `tonic-build` becomes `tonic-prost-build`, which has a `compile_fds` with
     the same signature. `prost` moves to 0.14 and `protox` to 0.9 in that
-    same diff.
+    same diff. The `build.rs` shape is unchanged; the runtime dependency set
+    is not. In `tonic` 0.14 the prost codec moved out of `tonic` into the
+    `tonic-prost` crate, and the stubs `tonic-prost-build` generates name
+    `tonic_prost::ProstCodec` by default, so `ragondin-proto` gains a runtime
+    dependency on `tonic-prost`. **This decision does not sanction that
+    `[workspace.dependencies]` entry.** It is used outside `components/`, and
+    the diff that moves to `tonic` 0.14 escalates it on its own under
+    `AGENTS.md` § Rules of engagement.
   - **The `protox` 0.8 line is frozen.** Parser fixes arrive only with the
     move to `prost` 0.14 and `protox` 0.9.
 - **What is equivalent to `protoc`, and what is not.** The generated **Rust**
@@ -126,9 +135,9 @@ Concretely:
   with nothing to install. Rejected because version 3.2.0 depends
   unconditionally on eight platform crates, one per binary, about 27 MB of
   compressed crates that every fresh checkout downloads, whatever its
-  platform. Those binaries run at build time, and `cargo-deny` does not audit
-  them: it sees the wrapper crates, which declare MIT, and not the
-  executables they carry.
+  platform. The host's binary runs at build time, and `cargo-deny` audits
+  none of the eight: it sees the wrapper crates, which declare MIT, and not
+  the executables they carry.
 - **Making the `ragondin-config` → `ragondin-proto` edge optional**, behind a
   feature, so that the default binary needs no code generation. Rejected as
   orthogonal. CI and `just check` build every workspace member anyway, so a
@@ -163,24 +172,27 @@ Concretely:
   requiring a tool Cargo does not provide.
 - **One maintainer, and a bounded fallback.** `protox` has a single
   maintainer. If it stalls, or mis-compiles a file, going back to `protoc` is
-  a `build.rs` edit, calling `compile_protos` instead of `compile_fds`, not an
-  architecture change. Nothing outside `ragondin-proto`'s build script depends
-  on which compiler produced the stubs, because the generated Rust is the
-  same. Where that `protoc` would come from is the question this ADR answers,
-  so taking the fallback means superseding it.
+  a `build.rs` edit, calling `compile_protos` instead of `compile_fds`, that
+  changes nothing outside `ragondin-proto`'s build script: nothing else
+  depends on which compiler produced the stubs, because the generated Rust is
+  the same. Where that `protoc` would come from is the question this ADR
+  answers, so taking the fallback supersedes this ADR.
 - **The strongest counter-argument, and why it lost.** `protox` is a second
   implementation of the compiler's front end, not Google's. A `.proto` file
   that `protoc` rejects could therefore merge unnoticed, and fail first for a
   `Remote` author compiling it in another language. It did not win because
   that failure is loud, for the first `Remote` author it reaches, and the
   files at stake are few and all owned by this repository, so they are cheap
-  to guard. The optional CI
-  lint in the Decision is that guard, if one is wanted.
+  to guard. The optional CI lint in the Decision is that guard, if one is
+  wanted.
 - **The move to `tonic` 0.14 is known in advance.** It is one diff:
   `tonic-build` is replaced by `tonic-prost-build`, `prost` moves to 0.14,
   and `protox` moves to 0.9. The `build.rs` shape is unchanged, because
-  `compile_fds` keeps its signature. Until that move, `protox` stays
-  on the frozen 0.8 line and receives no parser fixes.
+  `compile_fds` keeps its signature. The runtime dependency set is not: the
+  generated stubs use `tonic_prost::ProstCodec`, so `ragondin-proto` gains a
+  `tonic-prost` dependency, and that new `[workspace.dependencies]` entry
+  escalates in that diff; this ADR does not sanction it. Until that move,
+  `protox` stays on the frozen 0.8 line and receives no parser fixes.
 - **A well-known type in a `.proto` needs a runtime entry.** Using one such as
   `google.protobuf.Timestamp` needs a `prost-types` entry as a normal
   dependency, whichever compiler is used. None is planned for the services
