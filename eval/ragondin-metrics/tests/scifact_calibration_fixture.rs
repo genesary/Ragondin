@@ -93,14 +93,14 @@ struct Frozen {
 
 const RUNS: [Frozen; 2] = [
     Frozen {
-        id: "e9f178018e9974f216d6cf81ebd71bd5a7273a281e47e48d016fb1cd265382e7",
+        id: "aa590151b03d4ce9d4b78c563ea0dac5d95edb4449ffb7230deaa74a48c4219d",
         configuration: "dense-only.yaml",
         run: include_str!("fixtures/scifact_calibration_dense_only.run.tsv"),
         expected: include_str!("fixtures/scifact_calibration_dense_only.expected.tsv"),
         recorded: [0.6450816521455768, 0.7833333333333333, 0.6047248677248677],
     },
     Frozen {
-        id: "9b0e2d9419a1b5d84ed384f50ce4a100a983c0525b93636f749ac50928456238",
+        id: "acf613976a8129e26e6e6e645fe99874a5ed99e9fde110c3bc80006a453b58a3",
         configuration: "hybrid-rerank.yaml",
         run: include_str!("fixtures/scifact_calibration_hybrid_rerank.run.tsv"),
         expected: include_str!("fixtures/scifact_calibration_hybrid_rerank.expected.tsv"),

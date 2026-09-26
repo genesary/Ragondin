@@ -2,7 +2,7 @@
 # regenerate_scifact_calibration.py, which records where every value came
 # from. Do not edit a value by hand.
 #
-# What pytrec_eval scores run e9f178018e9974f216d6cf81ebd71bd5a7273a281e47e48d016fb1cd265382e7:
+# What pytrec_eval scores run aa590151b03d4ce9d4b78c563ea0dac5d95edb4449ffb7230deaa74a48c4219d:
 # query-id <TAB> ndcg_cut_10 <TAB> recall_10 <TAB> recip_rank.
 # recip_rank is uncut, matching trec_eval and the harness's mrr.
 1	0.38685280723454163	1.0	0.2
