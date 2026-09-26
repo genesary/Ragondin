@@ -138,11 +138,15 @@ pub struct EmbedderSpec {
 /// the plan that names it, where planning reports it against the node
 /// (`PlanError::Construction`). Refusing here would refuse a component this
 /// configuration may never mention.
-#[cfg_attr(
-    not(any(feature = "bm25", feature = "onnx")),
-    allow(unused_variables, clippy::needless_pass_by_value)
-)]
-pub fn register(ctx: &mut EngineContext, chunks: &[Chunk], embedded: Option<&[EmbeddedChunk]>) {
+pub fn register(
+    ctx: &mut EngineContext,
+    // Each corpus argument is read by one backend feature only, so a build
+    // without that feature has nothing to hand it to. The lint is lifted on
+    // the one parameter, under the one feature's absence, and as an
+    // expectation: a build where the parameter stops being unused fails.
+    #[cfg_attr(not(feature = "bm25"), expect(unused_variables))] chunks: &[Chunk],
+    #[cfg_attr(not(feature = "onnx"), expect(unused_variables))] embedded: Option<&[EmbeddedChunk]>,
+) {
     // Always: rank arithmetic over the legs, with no backend behind it.
     ctx.register_fusion(
         RRF,
