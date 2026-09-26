@@ -35,13 +35,13 @@ run. Today no `protoc` is installed on a contributor's machine by anything in
 this repository, and `.github/workflows/ci.yml` installs none.
 
 The answer also changes what a build requires, which `AGENTS.md` § Rules of
-engagement escalates on two counts. First, two of the answers add
+engagement escalates on two counts. First, the crate-based answers add
 `[workspace.dependencies]` entries that a crate outside `components/` depends
-on in the same diff
-(`ragondin-proto` lives in `wire/`). `tonic-build` itself is covered only
-because ADR-C24 names it. Second, the one alternative that adds no crate
-imposes a system tool on the default binary build, which ADR-C14 requires to
-stay lean and fast to compile.
+on in the same diff (`ragondin-proto` lives in `wire/`). `tonic-build` itself
+is covered only because ADR-C24 names it. Second, the one alternative that
+adds no crate and keeps generation in `build.rs` imposes a system tool on the
+default binary build, which ADR-C14 requires to stay lean and fast to
+compile.
 
 The `protox` route was checked in a scratch copy of the workspace when #281
 was opened, and two independent reviews challenged it; the second re-derived
