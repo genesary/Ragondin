@@ -16,10 +16,16 @@ use std::net::TcpListener as StdListener;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use ragondin_contracts::{ComponentError, EmbedParams, Embedder, RerankParams, Reranker};
-use ragondin_proto::v1::{self, embedder_server, reranker_server};
+use ragondin_contracts::{
+    ComponentError, ContextBuilder, ContextParams, EmbedParams, Embedder, GenerateParams,
+    Generator, RerankParams, Reranker,
+};
+use ragondin_proto::v1::{
+    self, context_builder_server, embedder_server, generator_server, reranker_server,
+};
 use ragondin_remote::{status_from_error, status_from_request, FromProto, IntoProto};
-use ragondin_types::{Embedding, ModelIdentity, Query, ScoredChunk};
+use ragondin_stub::{StubContextBuilder, StubGenerator};
+use ragondin_types::{Answer, Context, Embedding, ModelIdentity, Query, ScoredChunk};
 use tonic::transport::server::{Router, TcpIncoming};
 use tonic::transport::Server;
 use tonic::{Request, Response, Status};
@@ -32,6 +38,13 @@ pub const EMBEDDER_IDENTITY: &str = "bge-small@rev1";
 pub const RERANKER_MODEL: &str = "ms-marco";
 /// What the fake reranker reports for [`RERANKER_MODEL`].
 pub const RERANKER_IDENTITY: &str = "ms-marco@rev7";
+
+/// The name the fake generator serves its model under.
+pub const GENERATOR_MODEL: &str = "qwen2.5-7b-instruct";
+/// What the fake generator reports for [`GENERATOR_MODEL`]: the stub's own.
+pub const GENERATOR_IDENTITY: &str = StubGenerator::IDENTITY;
+/// What the fake context builder reports: the stub's own.
+pub const CONTEXT_BUILDER_IDENTITY: &str = StubContextBuilder::IDENTITY;
 
 /// A running fake service, stopped when dropped.
 pub struct Service {
@@ -261,6 +274,91 @@ pub fn serve_reranker() -> Service {
     serve(
         Server::builder().add_service(reranker_server::RerankerServer::new(RerankerService(
             FakeReranker,
+        ))),
+    )
+}
+
+/// Hosts `ragondin-stub`'s context builder. It renders nothing of its own
+/// beyond what the stub does, as a Rust-hosted service would.
+struct ContextBuilderService(StubContextBuilder);
+
+#[tonic::async_trait]
+impl context_builder_server::ContextBuilder for ContextBuilderService {
+    async fn build(
+        &self,
+        request: Request<v1::BuildRequest>,
+    ) -> Result<Response<v1::BuildResponse>, Status> {
+        let (query, chunks, params): (Query, Vec<ScoredChunk>, ContextParams) = decode(request)?;
+        let context: Context = self
+            .0
+            .build(&query, chunks, &params)
+            .await
+            .map_err(|e| status_from_error(&e))?;
+        Ok(Response::new(context.into_proto()))
+    }
+
+    async fn get_model_identity(
+        &self,
+        request: Request<v1::ContextBuilderModelIdentityRequest>,
+    ) -> Result<Response<v1::ContextBuilderModelIdentityResponse>, Status> {
+        decode::<(), _>(request)?;
+        let identity = self
+            .0
+            .model_identity()
+            .await
+            .map_err(|e| status_from_error(&e))?;
+        Ok(Response::new(identity.into_proto()))
+    }
+}
+
+/// Hosts `ragondin-stub`'s generator, serving [`GENERATOR_MODEL`]: it answers
+/// with the first line of the context the template places, and refuses any
+/// other served model (ADR-C31 § 4).
+struct GeneratorService(StubGenerator);
+
+#[tonic::async_trait]
+impl generator_server::Generator for GeneratorService {
+    async fn generate(
+        &self,
+        request: Request<v1::GenerateRequest>,
+    ) -> Result<Response<v1::GenerateResponse>, Status> {
+        let (query, context, params): (Query, Context, GenerateParams) = decode(request)?;
+        let answer: Answer = self
+            .0
+            .generate(&query, &context, &params)
+            .await
+            .map_err(|e| status_from_error(&e))?;
+        Ok(Response::new(answer.into_proto()))
+    }
+
+    async fn get_model_identity(
+        &self,
+        request: Request<v1::GeneratorModelIdentityRequest>,
+    ) -> Result<Response<v1::GeneratorModelIdentityResponse>, Status> {
+        let served_model: String = decode(request)?;
+        let identity = self
+            .0
+            .model_identity(&served_model)
+            .await
+            .map_err(|e| status_from_error(&e))?;
+        Ok(Response::new(identity.into_proto()))
+    }
+}
+
+/// Serves `ragondin-stub`'s context builder.
+pub fn serve_context_builder() -> Service {
+    serve(
+        Server::builder().add_service(context_builder_server::ContextBuilderServer::new(
+            ContextBuilderService(StubContextBuilder),
+        )),
+    )
+}
+
+/// Serves `ragondin-stub`'s generator under [`GENERATOR_MODEL`].
+pub fn serve_generator() -> Service {
+    serve(
+        Server::builder().add_service(generator_server::GeneratorServer::new(GeneratorService(
+            StubGenerator::new(GENERATOR_MODEL),
         ))),
     )
 }

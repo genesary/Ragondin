@@ -108,10 +108,10 @@ release.
   runs that re-check only this crate and the dependencies whose features
   differ, a few seconds against the two workspace runs.
 - **No production `Local` generator exists, and the `stub` feature is the
-  only generator a build can carry.** A generator is `Remote` by design
-  (ADR-C31), and `ragondin-remote` carries no generator adapter for this build
-  to construct over a binding, so a real generator is a name planning
-  refuses — bound or not. The `stub` feature makes
+  only in-process generator a build can carry.** A generator is `Remote` by
+  design (ADR-C31): a real one is bound with `--remote generator/<name>=<uri>`
+  in a build with the `remote` feature, and in any other build its name is one
+  planning refuses. The `stub` feature makes
   `ragondin-stub` a normal dependency and registers its `StubGenerator` as
   `stub_generator`, serving the node's `served_model`: a generator with no
   model and no service, for the tests that drive `bench` over a generation
@@ -296,12 +296,14 @@ release.
     port, when given, is a number that fits in 16 bits; an IPv6 host is
     written in brackets. What is refused is anything that would be recorded as
     part of an address while meaning nothing to the channel.
-  - *A bound retriever and a bound fusion are registered as well*, with
-    `RemoteRetriever` and `RemoteFusion`: `--remote` accepts those families,
-    their adapters exist, and a binding accepted but never constructed would
-    leave planning to call a bound name unknown. A bound context builder or
-    generator is accepted and registered by nothing, for want of an adapter, so
-    planning refuses the name as unknown.
+  - *Every node family `--remote` accepts is registered*: a bound retriever,
+    fusion, reranker, context builder or generator with `RemoteRetriever`,
+    `RemoteFusion`, `RemoteReranker`, `RemoteContextBuilder` or
+    `RemoteGenerator`. A binding accepted but never constructed would leave
+    planning to call a bound name unknown. The identity of a bound reranker,
+    context builder and generator is read in step two — the generator's with
+    its node's required `served_model`, the context builder's with no
+    argument; a retriever and a fusion carry no identity.
   - *The binary's `remote` feature does not enable `ragondin-engine`'s.* The
     composition root constructs every adapter itself (ADR-C32 § 3), and the
     engine calls nothing in `ragondin-remote`, so turning its feature on would

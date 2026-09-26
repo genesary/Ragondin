@@ -380,6 +380,61 @@ mod with_remote_components {
     }
 
     #[test]
+    fn bench_over_a_bound_generator_records_its_identity_and_binding_and_scores_its_answers() {
+        let store = store("remote-generation");
+        let embedder = remote::serve_embedder(FakeEmbedder::default());
+        let builder = remote::serve_context_builder();
+        let generator = remote::serve_generator();
+        let bindings = [
+            format!("embedder/bge={}", embedder.uri),
+            format!("context_builder/lines={}", builder.uri),
+            format!("generator/vllm={}", generator.uri),
+        ];
+        let config = fixture("remote-generation.yaml");
+        let datasets = fixtures();
+        let mut arguments: Vec<&str> = vec![
+            "bench",
+            &config,
+            "--benchmark",
+            "beir-qa/qa-mini",
+            "--datasets",
+            path(&datasets),
+            "--store",
+            path(&store),
+        ];
+        for binding in &bindings {
+            arguments.extend(["--remote", binding.as_str()]);
+        }
+
+        let run = saved(&store, &ragondin(&arguments));
+
+        // The generator's identity was read with its node's `served_model`:
+        // the fake refuses every other name (ADR-C31 § 4).
+        assert_eq!(
+            run.inputs.model_hashes.get("generator").map(String::as_str),
+            Some(remote::GENERATOR_IDENTITY)
+        );
+        assert_eq!(
+            run.inputs
+                .model_hashes
+                .get("context_builder")
+                .map(String::as_str),
+            Some(remote::CONTEXT_BUILDER_IDENTITY)
+        );
+        let recorded: Vec<String> = run
+            .bindings
+            .iter()
+            .map(|binding| format!("{}/{}={}", binding.family, binding.name, binding.uri))
+            .collect();
+        assert_eq!(recorded, bindings);
+        // Answers came back over the wire and were scored against the
+        // references, which is what a benchmark carrying answers requires.
+        for metric in ["exact_match", "token_f1"] {
+            assert!(run.metrics.get(metric).is_some(), "{:?}", run.metrics);
+        }
+    }
+
+    #[test]
     fn a_binding_no_node_uses_is_refused_before_the_benchmark_is_loaded() {
         let store = store("remote-unused");
         let services = services();

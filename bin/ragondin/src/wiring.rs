@@ -105,8 +105,9 @@ const RERANKER_ROLE: &str = "reranker";
 /// The role of a context builder's identity (ADR-C31 § 4).
 const CONTEXT_BUILDER_ROLE: &str = "context_builder";
 /// The role of a generator's identity (ADR-C31 § 4). Read only in a build
-/// that carries a generator, which is the `stub` one.
-#[cfg(any(feature = "stub", test))]
+/// that carries a generator: the `stub` one, or one that can bind a `Remote`
+/// generator.
+#[cfg(any(feature = "stub", feature = "remote", test))]
 const GENERATOR_ROLE: &str = "generator";
 
 /// A model and the tokenizer that feeds it, as a node configures them.
@@ -372,11 +373,24 @@ pub fn register(
                     )))
                 }),
             ),
+            Family::ContextBuilder => ctx.register_context_builder(
+                name,
+                Box::new(move |_params| {
+                    Ok(Box::new(ragondin_remote::RemoteContextBuilder::new(
+                        channel.clone(),
+                    )))
+                }),
+            ),
+            Family::Generator => ctx.register_generator(
+                name,
+                Box::new(move |_params| {
+                    Ok(Box::new(ragondin_remote::RemoteGenerator::new(
+                        channel.clone(),
+                    )))
+                }),
+            ),
             // Resolved inside the `dense` closure above.
             Family::Embedder => {}
-            // `ragondin-remote` carries no adapter for either family yet, so
-            // nothing is registered and planning refuses the name as unknown.
-            Family::ContextBuilder | Family::Generator => {}
         }
     }
 }
@@ -699,6 +713,35 @@ async fn identity_of(
             CONTEXT_BUILDER_ROLE,
             concat(&node.params)?.model_identity().await?,
         ),
+        #[cfg(feature = "remote")]
+        LogicalNode::ContextBuilder(node)
+            if bound
+                .bindings()
+                .binds(Family::ContextBuilder, &node.implementation) =>
+        {
+            let builder = ragondin_remote::RemoteContextBuilder::new(
+                bound.channel(Family::ContextBuilder, &node.implementation)?,
+            );
+            (CONTEXT_BUILDER_ROLE, builder.model_identity().await?)
+        }
+        #[cfg(feature = "remote")]
+        LogicalNode::Generator(node)
+            if bound
+                .bindings()
+                .binds(Family::Generator, &node.implementation) =>
+        {
+            use ragondin_contracts::Generator;
+            // Required, and refused here rather than sent: ADR-C31 § 4 has the
+            // composition root refuse an absent `served_model` itself.
+            let served_model = required_string(&node.params, SERVED_MODEL)?;
+            let generator = ragondin_remote::RemoteGenerator::new(
+                bound.channel(Family::Generator, &node.implementation)?,
+            );
+            (
+                GENERATOR_ROLE,
+                generator.model_identity(&served_model).await?,
+            )
+        }
         #[cfg(feature = "stub")]
         LogicalNode::Generator(node) if node.implementation == STUB_GENERATOR => {
             use ragondin_contracts::Generator;
@@ -1574,5 +1617,69 @@ mod tests {
 
         assert!(chain(&error).contains("vectors"), "{error:#}");
         assert!(chain(&error).contains("unavailable"), "{error:#}");
+    }
+
+    #[cfg(feature = "remote")]
+    #[tokio::test]
+    async fn a_bound_generator_and_context_builder_record_their_services_identities() {
+        // The fake generator answers only for its served model, so an
+        // identity recorded at all was read with the node's `served_model`
+        // (ADR-C31 § 4); the context builder's is read with no argument.
+        let builder = remote::serve_context_builder();
+        let generator = remote::serve_generator();
+        let bindings = bound(&[
+            format!("context_builder/lines={}", builder.uri),
+            format!("generator/vllm={}", generator.uri),
+        ]);
+        let yaml = wrap(&format!(
+            "{}{}{}",
+            bm25_node(),
+            "    - id: prompt\n      component: context_builder\n      impl: lines\n      \
+             inputs: [question, lexical]\n      params: { budget: 100 }\n",
+            generator_node(
+                "vllm",
+                &format!(
+                    "{{ served_model: {}, template: '{{context}}' }}",
+                    remote::GENERATOR_MODEL
+                )
+            ),
+        ));
+
+        let hashes = super::model_hashes(&pipeline(&yaml), &Bound::new(bindings).expect("lazy"))
+            .await
+            .expect("both services answer");
+
+        assert_eq!(
+            hashes.get(GENERATOR_ROLE).map(String::as_str),
+            Some(remote::GENERATOR_IDENTITY)
+        );
+        assert_eq!(
+            hashes.get(CONTEXT_BUILDER_ROLE).map(String::as_str),
+            Some(remote::CONTEXT_BUILDER_IDENTITY)
+        );
+    }
+
+    #[cfg(feature = "remote")]
+    #[tokio::test]
+    async fn a_bound_generator_node_without_a_served_model_is_refused_before_any_call() {
+        let bindings = bound(&[format!("generator/vllm={}", remote::unreachable_uri())]);
+        let yaml = wrap(&format!(
+            "{}{}{}",
+            bm25_node(),
+            concat_node("prompt", "{ budget: 100, separator: \"\\n\" }"),
+            generator_node("vllm", "{ template: '{context}' }"),
+        ));
+
+        let error = super::model_hashes(&pipeline(&yaml), &Bound::new(bindings).expect("lazy"))
+            .await
+            .expect_err("`served_model` is required");
+
+        // Refused by the composition root, not reported as the unreachable
+        // service it would otherwise have called.
+        assert!(chain(&error).contains("answer"), "{error:#}");
+        assert!(
+            chain(&error).contains("`served_model` is required"),
+            "{error:#}"
+        );
     }
 }
