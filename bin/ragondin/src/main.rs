@@ -97,7 +97,7 @@ enum Command {
         `reranker`, `context_builder`, `generator` or `embedder`; `<uri>` is \
         `http://<host>` or `http://<host>:<port>`. A binding no node uses, one \
         bound twice, or one naming a component this binary carries in-process is \
-        refused. The run records its bindings, outside its identity. A build \
+        refused. A build \
         without the `remote` feature refuses every binding.\n\n\
         v0 runs retrieval and generation: a configuration holding an extension \
         node is refused. Neither `--datasets` nor `--store` has a default, because \
