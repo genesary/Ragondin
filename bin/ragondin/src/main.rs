@@ -78,7 +78,9 @@ enum Command {
         `--benchmark` names a format and a dataset: `beir/<dir>` (qrels only), \
         `beir-qa/<dir>` (the same directory with its `answers.jsonl`), or \
         `squad/<dir>` (the SQuAD v1.1 dev file). A benchmark carrying reference \
-        answers is scored by exact match and token F1 as well.\n\n\
+        answers is scored by exact match and token F1 as well, and a pipeline \
+        that produces no answer is refused over it: a retrieval-only \
+        configuration runs under `beir/`, not `beir-qa/` or `squad/`.\n\n\
         v0 runs retrieval and generation: a configuration holding an extension \
         node is refused. Neither `--datasets` nor `--store` has a default, because \
         no location for either is settled yet.")]

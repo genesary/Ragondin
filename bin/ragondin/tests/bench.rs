@@ -364,6 +364,40 @@ mod with_components {
         assert!(recorded.contains_key("context_builder"), "{recorded:?}");
     }
 
+    /// The same pipeline over a miniature SQuAD v1.1 dev file under
+    /// `squad/`: the question's paragraph opens with its answer on a line of
+    /// its own, so the stub answers it exactly when BM25 ranks it first. The
+    /// fixture is hand-written and quotes no SQuAD text.
+    #[cfg(feature = "stub")]
+    #[test]
+    fn bench_reads_a_squad_benchmark_and_scores_its_answers() {
+        let store = store("squad");
+
+        let output = ragondin(&[
+            "bench",
+            &fixture("stub-generation-bench.yaml"),
+            "--benchmark",
+            "squad/squad-mini",
+            "--datasets",
+            path(&fixtures()),
+            "--store",
+            path(&store),
+        ]);
+
+        assert!(output.status.success(), "{}", stderr(&output));
+        let run = FileSystemRunStore::new(&store)
+            .load(&reported_run_id(&stdout(&output)))
+            .expect("the run bench reported is the run bench saved");
+        assert_eq!(
+            run.metrics.get("exact_match"),
+            Some(1.0),
+            "{:?}",
+            run.metrics
+        );
+        assert_eq!(run.metrics.get("token_f1"), Some(1.0), "{:?}", run.metrics);
+        assert!(run.metrics.get("ndcg@10").is_some(), "{:?}", run.metrics);
+    }
+
     /// The same fixture under `beir/`, which ignores `answers.jsonl`: the
     /// benchmark then carries no reference answers, and the run is scored by
     /// retrieval alone — `beir/` keeps its M2 meaning exactly (ADR-C30 § 2).

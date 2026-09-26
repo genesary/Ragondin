@@ -22,7 +22,7 @@ use std::path::PathBuf;
 
 use ragondin_config::{ConfigSource, LocalFile};
 use ragondin_engine::{plan_physical, Engine, EngineContext, ExecutionTrace, Output, ValueSummary};
-use ragondin_pipeline::{LogicalPipeline, ParamValue};
+use ragondin_pipeline::{LogicalNode, LogicalPipeline, ParamValue};
 use ragondin_stub::{StubContextBuilder, StubFusion, StubGenerator, StubRetriever};
 use ragondin_types::{Answer, Query, QueryId, ScoredChunk};
 
@@ -286,6 +286,68 @@ async fn run_the_generation_slice() -> (Answer, ExecutionTrace) {
         panic!("the generation slice ends on a generator, so its output is an answer")
     };
     (answer, trace)
+}
+
+#[tokio::test]
+async fn the_generation_fixture_plans_one_node_of_each_generation_family() {
+    // `PhysicalPipeline` keeps its nodes to the engine (INV-2), so the plan is
+    // asserted where a composition root can read it: the logical pipeline it
+    // was planned from, node by node with the family each one is resolved
+    // through, and planning succeeding against the stubs registered here.
+    let logical = LocalFile::new(generation_fixture())
+        .load()
+        .await
+        .expect("the checked-in generation fixture is a valid configuration");
+
+    let nodes: Vec<(&str, &str, &str)> = logical
+        .nodes()
+        .iter()
+        .map(|node| match node {
+            LogicalNode::Retriever(node) => {
+                ("retriever", node.id.as_str(), node.implementation.as_str())
+            }
+            LogicalNode::ContextBuilder(node) => (
+                "context_builder",
+                node.id.as_str(),
+                node.implementation.as_str(),
+            ),
+            LogicalNode::Generator(node) => {
+                ("generator", node.id.as_str(), node.implementation.as_str())
+            }
+            other => panic!("the fixture holds only generation-chain nodes: {other:?}"),
+        })
+        .collect();
+    assert_eq!(
+        nodes,
+        [
+            ("generator", "answer", "stub_generator"),
+            ("context_builder", "prompt", "stub_concat"),
+            ("retriever", "search", "stub_retriever"),
+        ],
+        "one node per family of the chain, in canonical (id) order"
+    );
+    assert_eq!(
+        logical
+            .nodes()
+            .iter()
+            .map(|node| node
+                .inputs()
+                .iter()
+                .map(|id| id.as_str())
+                .collect::<Vec<_>>())
+            .collect::<Vec<_>>(),
+        [
+            vec!["question", "prompt"],
+            vec!["question", "search"],
+            vec!["question"]
+        ],
+        "each consumer takes the query and its producer, in port order (ADR-C16)"
+    );
+
+    let mut ctx = EngineContext::new();
+    register_stubs(&mut ctx);
+    plan_physical(&logical, &ctx)
+        .expect("each family's `impl:` name resolves through its own registry");
 }
 
 #[tokio::test]

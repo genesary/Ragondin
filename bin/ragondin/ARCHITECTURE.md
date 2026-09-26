@@ -115,7 +115,7 @@ release.
   `EngineContext`, so it is where the components this build carries are
   registered — `rrf` and the context builder `concat` in every build, `bm25`
   under `bm25`, `dense` and `cross_encoder` under `onnx`, `stub_generator`
-  under `stub` — — through the ordinary `register_*` call, one per component, with
+  under `stub` — through the ordinary `register_*` call, one per component, with
   no shortcut for a first-party one (INV-7). The engine depends on no component
   crate and this one depends on all of them, which is §4.3's rule made
   mechanical: break it and the arrow in `Cargo.toml` is what a reviewer sees.
@@ -198,7 +198,7 @@ release.
     at test time around an absolute path, as `tests/bench.rs` does for its
     hybrid case — leaves nothing reviewable in the tree. Relative paths also
     keep the pipeline hash, and with it the run id, the same on every machine.
-- **Every node's keys are checked before anything is loaded (ADR-C32 § 1).**
+- **Every node's keys are checked before the benchmark is loaded (ADR-C32 § 1).**
   A `dense` node names its embedder with `embedder:`, required and non-empty;
   the only name this composition root knows is `onnx`, and any other is
   refused naming the node and the name. Over `onnx` a `dense` node may carry
@@ -207,11 +207,14 @@ release.
   `tokenizer` and `max_sequence_length`; any other key — `served_model`
   included — is refused rather than hashed as inert, since it would move the
   run's identity while changing nothing the run did. An empty prefix is
-  refused too: absence is the only spelling of "no prefix". A `concat` node's
-  `separator` is required and may be empty — this crate's own choice, for the
-  same reason `embedder:` has no default: a default would make an absent key
-  and its value two spellings of one builder with two hashes, and
-  `ConcatContextBuilder` has no default of its own to defer to. `validate`
+  refused too: absence is the only spelling of "no prefix". Those checks run
+  in step one, `wiring::check_nodes`, before any component is constructed. A
+  `concat` node's `separator` is required and may be empty — this crate's own
+  choice, for the reason `embedder:` has no default: a default would make an
+  absent key and its value two spellings of one builder with two hashes, and
+  `ConcatContextBuilder` has no default of its own to defer to. Its absence is
+  refused in step two, where the builder is first constructed to read its
+  identity, as is a generator node's missing `served_model`. `validate`
   checks none of this: it never plans, so a configuration it hashes may still
   be refused by `bench`.
 - **Every component's identity is read from the component, before the run
@@ -238,8 +241,11 @@ release.
   `squad/<dir>` reads the SQuAD v1.1 dev file in that directory. The selector
   is refused on its text before the configuration is loaded. A benchmark
   carrying reference answers is scored by `exact_match` and `token_f1` as well
-  as by the retrieval metrics — the harness decides which, from what the
-  benchmark carries; this crate only picks the adapter.
+  as by the retrieval metrics, and a pipeline that produces no answer is
+  refused over it (`HarnessError::NoAnswer`, ADR-C30 § 5) — so a retrieval-only
+  configuration runs under `beir/` and not under `beir-qa/` or `squad/`. The
+  harness decides all of this from what the benchmark carries; this crate only
+  picks the adapter.
 
 ## Dependency choices made here
 

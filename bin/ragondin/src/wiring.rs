@@ -418,7 +418,7 @@ pub async fn model_hashes(pipeline: &LogicalPipeline) -> Result<BTreeMap<String,
 async fn identity_of(node: &LogicalNode) -> Result<Option<(&'static str, String)>> {
     use ragondin_contracts::ContextBuilder;
 
-    let identity = match node {
+    let (role, identity) = match node {
         #[cfg(feature = "onnx")]
         LogicalNode::Retriever(node) if node.implementation == DENSE => {
             use ragondin_contracts::Embedder;
@@ -449,7 +449,6 @@ async fn identity_of(node: &LogicalNode) -> Result<Option<(&'static str, String)
         }
         _ => return Ok(None),
     };
-    let (role, identity) = identity;
     Ok(Some((role, identity.as_str().to_owned())))
 }
 
