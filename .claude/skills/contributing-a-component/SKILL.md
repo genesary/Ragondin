@@ -29,7 +29,7 @@ Use this so contributors who write Python (or anything else) are first-class. Th
 
 1. **Implement the corresponding protobuf service from `ragondin-proto`** — the mirror of the Rust trait. Your service can be written in any language and can live entirely outside this repository.
 2. **It is reached through the generic `Remote<T>` adapter** (in `ragondin-remote`), which implements the domain trait by speaking protobuf over gRPC. The engine perceives no difference between it and a `Local` implementation.
-3. **Name it by URL in the pipeline configuration.** Physical planning resolves that reference to a `Remote<T>`.
+3. **Name it in the pipeline configuration by an ordinary `impl:` value, never by an address.** The composition root binds that name to an address from the deployment and constructs the `Remote<T>` adapter itself; the address never enters the configuration (ADR-C32 § 1–§ 3). The binding mechanism arrives with #300 — until then, this is the shape to design against, not a flag you can already run.
 
 **The non-breaking optimization path:** a `Remote` component (say, Python) that wins the benchmark can later be ported to `Local` Rust — same contract, no configuration change for any user. That path is why `Remote` is a first-class citizen, not a fallback.
 
