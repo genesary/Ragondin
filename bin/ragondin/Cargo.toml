@@ -35,16 +35,12 @@ ragondin-types = { workspace = true }
 anyhow = { workspace = true }
 clap = { workspace = true }
 tokio = { workspace = true }
-# `bench` records the hash of every model a run read, by the role it played
-# (`docs/system-architecture.md` §7.1). The composition root is the only place
-# that sees every node's configuration at once, so it is where a model file is
-# read and digested. Same crate the canonical logical-form hash already uses.
-sha2 = { workspace = true }
 
 # The components this build carries. Optional to a crate, not optional to the
 # product: a lean build still parses, validates and hashes a configuration
-# naming any of them, and refuses to *run* it with the unknown `impl:` that
-# planning reports.
+# naming any of them, and refuses to *run* it with a diagnosis — the unknown
+# `impl:` that planning reports, or, for the `onnx` embedder a `dense` node
+# names, the missing feature.
 #
 # Not optional, and not an exception to ADR-C14: RRF is rank arithmetic with no
 # backend behind it, so gating it would buy no compile time and would leave the
@@ -83,6 +79,11 @@ assert_cmd = { workspace = true }
 # `RawPipeline` and run the same `validate`. It is the format's own parser, not
 # a second spelling of the configuration.
 serde_yaml = { workspace = true }
+# A test in `src/wiring.rs` checks the identity `bench` records for an ONNX
+# component against the digests of the files it read — computed independently,
+# with the crate the canonical logical-form hash already uses. `bench` itself
+# digests nothing any more: each component reports its own identity.
+sha2 = { workspace = true }
 
 # Heavy backends are optional and off by default (ADR-C14): the default build
 # stays lean and compiles fast. Two features rather than one per component,

@@ -90,9 +90,10 @@ pub struct Request<'a> {
 ///
 /// # Errors
 ///
-/// Anything on the way: an unreadable or invalid configuration, a
-/// configuration v0 does not run, a selector naming no dataset this build
-/// reads, a dataset that does not load, an `impl:` this build did not register,
+/// Anything on the way: a selector naming no dataset this build reads, an
+/// unreadable or invalid configuration, a configuration v0 does not run, a node
+/// key the composition root refuses, a component whose identity cannot be
+/// read, a dataset that does not load, an `impl:` this build did not register,
 /// a query that fails, or a store that cannot be written.
 pub async fn run(request: &Request<'_>) -> Result<()> {
     // Read for the record and loaded for the run, from the same file. The run
@@ -206,12 +207,11 @@ async fn prepare(
 
 /// The lean build's half: nothing to embed with.
 ///
-/// The configuration is checked all the same. A pipeline whose `dense` nodes
-/// disagree about the embedder is malformed whether or not this build could
-/// have run it, and a diagnosis that depends on which features were compiled in
-/// is one the person reading it cannot reproduce. What this build cannot do is
-/// *run* the node, and that is reported at planning, where the unknown `impl:`
-/// is named against the node that carries it.
+/// Nothing reaches it that needs embedding: [`wiring::check_nodes`] has already
+/// refused a `dense` node naming the `onnx` embedder in a build without the
+/// `onnx` feature, naming the feature — no planner will ever look an embedder
+/// up to name what is missing. The configuration is read all the same, so the
+/// two builds share one path through it.
 #[cfg(not(feature = "onnx"))]
 async fn prepare(
     pipeline: &LogicalPipeline,

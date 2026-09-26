@@ -75,13 +75,18 @@ enum Command {
         constructed from it. Every query of the benchmark is executed and the \
         judged ones are scored; the run is written to the store and its \
         identity and metrics are printed.\n\n\
-        v0 evaluates retrieval only: a configuration holding an extension node \
-        is refused. Neither `--datasets` nor `--store` has a default, because \
+        `--benchmark` names a format and a dataset: `beir/<dir>` (qrels only), \
+        `beir-qa/<dir>` (the same directory with its `answers.jsonl`), or \
+        `squad/<dir>` (the SQuAD v1.1 dev file). A benchmark carrying reference \
+        answers is scored by exact match and token F1 as well.\n\n\
+        v0 runs retrieval and generation: a configuration holding an extension \
+        node is refused. Neither `--datasets` nor `--store` has a default, because \
         no location for either is settled yet.")]
     Bench {
         /// The pipeline configuration to evaluate.
         config: PathBuf,
-        /// The benchmark to evaluate it against, e.g. `beir/scifact`.
+        /// The benchmark to evaluate it against: `beir/<dir>`, `beir-qa/<dir>`
+        /// or `squad/<dir>`, e.g. `beir/scifact`.
         #[arg(long)]
         benchmark: String,
         /// Root directory the named dataset sits under.

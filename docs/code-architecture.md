@@ -547,10 +547,10 @@ flowchart LR
 The "plugin system" is **not** an exotic dynamic-loading mechanism. It is simply:
 
 - **`Local` contribution** — a new crate under `components/` implementing a trait from `ragondin-contracts`, constructed by the composition root, and registered on the `EngineContext` when its family is one a pipeline node names (§8.1); an embedder or a vector store has no table there and is built inside the dense retriever's constructor (ADR-C32 § 3). In-repository, compiled, on the hot path. **Compiles only `ragondin-contracts` and `ragondin-types`** — not the engine.
-- **`Remote` contribution** — a gRPC service **outside the repository, in any language**, honouring the protobuf service in `ragondin-proto`. Named by URL in the configuration, resolved to a `Remote<T>`.
+- **`Remote` contribution** — a gRPC service **outside the repository, in any language**, honouring the protobuf service in `ragondin-proto`. Named in the configuration by an ordinary `impl:` name, exactly as a `Local` component is; its address never enters the configuration, and the composition root binds the name to an address from the deployment and constructs the `Remote` adapter over it (ADR-C32 § 1, § 2).
 - **A genuinely new node type** — the `Extension` variant (§6.2), without touching the core.
 
-**A non-breaking optimization path:** a `Remote` component (Python) that wins the benchmark can later be ported to `Local` (Rust) — same contract, no configuration change for any user.
+**A non-breaking optimization path:** a `Remote` component (Python) that wins the benchmark can later be ported to `Local` (Rust) — same contract, no configuration change for any user. The embedder and the reranker are the exception: the keys their node carries differ by nature — `model` and `tokenizer` for the in-process ONNX one, `served_model` for a bound one — so porting one changes those keys (ADR-C32 § 1).
 
 > **A deferred option, not to be pre-paid.** A WebAssembly plugin backend — sandboxed, no recompilation — is attractive *much later*. The component contract is designed to accommodate it (a third implementation nature behind the same trait), but it is out of scope for v0.
 

@@ -309,4 +309,88 @@ mod with_components {
             .expect("a dense run records its embedder");
         assert!(summary.contains(digest), "{summary}");
     }
+
+    /// `bench` over a generation pipeline and a miniature benchmark with
+    /// reference answers: the run carries the generation metrics beside the
+    /// retrieval ones, and the identities of the builder and the generator.
+    ///
+    /// The generator is the stub, which needs no model and no service — the
+    /// only generator a build can carry in-process, behind the `stub` feature.
+    #[cfg(feature = "stub")]
+    #[test]
+    fn bench_scores_a_generation_pipeline_by_exact_match_and_token_f1() {
+        let store = store("generation");
+
+        let output = ragondin(&[
+            "bench",
+            &fixture("stub-generation-bench.yaml"),
+            "--benchmark",
+            "beir-qa/qa-mini",
+            "--datasets",
+            path(&fixtures()),
+            "--store",
+            path(&store),
+        ]);
+
+        assert!(output.status.success(), "{}", stderr(&output));
+        let summary = stdout(&output);
+        let run = FileSystemRunStore::new(&store)
+            .load(&reported_run_id(&summary))
+            .expect("the run bench reported is the run bench saved");
+
+        // BM25 ranks each question's passage first, so the stub answers with
+        // its first line — the reference — on both queries. A pipeline whose
+        // answer never reached the harness would score zero and still exit
+        // zero; the value is what rules that out.
+        for metric in ["exact_match", "token_f1"] {
+            let value = run
+                .metrics
+                .get(metric)
+                .unwrap_or_else(|| panic!("a run over reference answers scores {metric}"));
+            assert_eq!(value, 1.0, "{metric}: {summary}");
+            assert!(summary.contains(&format!("{metric}: 1.0000")), "{summary}");
+        }
+        assert!(
+            run.metrics.get("ndcg@10").is_some(),
+            "the ranking behind the answer is still scored: {summary}"
+        );
+
+        // The identities were read before the run, by family (ADR-C31 § 4).
+        let recorded = &run.inputs.model_hashes;
+        assert_eq!(
+            recorded.get("generator").map(String::as_str),
+            Some(ragondin_stub::StubGenerator::IDENTITY)
+        );
+        assert!(recorded.contains_key("context_builder"), "{recorded:?}");
+    }
+
+    /// The same fixture under `beir/`, which ignores `answers.jsonl`: the
+    /// benchmark then carries no reference answers, and the run is scored by
+    /// retrieval alone — `beir/` keeps its M2 meaning exactly (ADR-C30 § 2).
+    #[test]
+    fn the_beir_selector_ignores_the_reference_answers_beside_a_dataset() {
+        let store = store("qa-mini-as-beir");
+
+        let output = ragondin(&[
+            "bench",
+            &fixture("lexical-pipeline.yaml"),
+            "--benchmark",
+            "beir/qa-mini",
+            "--datasets",
+            path(&fixtures()),
+            "--store",
+            path(&store),
+        ]);
+
+        assert!(output.status.success(), "{}", stderr(&output));
+        let run = FileSystemRunStore::new(&store)
+            .load(&reported_run_id(&stdout(&output)))
+            .expect("the run bench reported is the run bench saved");
+        assert!(run.metrics.get("ndcg@10").is_some(), "{:?}", run.metrics);
+        assert!(
+            run.metrics.get("exact_match").is_none(),
+            "{:?}",
+            run.metrics
+        );
+    }
 }

@@ -43,8 +43,9 @@
 //! # What is frozen here, and what is not
 //!
 //! The aggregates are: each metric of every run must land within `RECORDED`'s
-//! tolerance of what the recorded run scored, and the dataset and model digests
-//! must be the recorded ones, so a run over the wrong revision fails by name.
+//! tolerance of what the recorded run scored, and the dataset digest and the
+//! model identities must be the recorded ones, so a run over the wrong revision
+//! fails by name.
 //! A per-query freeze — the ranking each query produced, checked against
 //! `pytrec_eval` — is what ADR-10 asks for as the permanent regression fixture,
 //! and it is not frozen here. The ranking is recorded: ADR-C28 has each node's
