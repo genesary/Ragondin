@@ -25,6 +25,7 @@ use ragondin_experiments::{ConfigDocument, FileSystemRunStore, Run};
 use ragondin_harness::{evaluate, CorpusIndex, Evaluation};
 use ragondin_pipeline::LogicalPipeline;
 
+use crate::binding::Bindings;
 use crate::wiring;
 
 /// A benchmark format `--benchmark` names, by the text before its `/`.
@@ -83,6 +84,8 @@ pub struct Request<'a> {
     pub datasets: &'a Path,
     /// The run store the resulting run is written to.
     pub store: &'a Path,
+    /// The `--remote <family>/<name>=<uri>` arguments, as given.
+    pub remote: &'a [String],
 }
 
 /// Evaluates the configuration against the benchmark, records the run, and
@@ -90,12 +93,16 @@ pub struct Request<'a> {
 ///
 /// # Errors
 ///
-/// Anything on the way: a selector naming no dataset this build reads, an
-/// unreadable or invalid configuration, a configuration v0 does not run, a node
-/// key the composition root refuses, a component whose identity cannot be
-/// read, a dataset that does not load, an `impl:` this build did not register,
+/// Anything on the way: a selector naming no dataset this build reads, a
+/// `--remote` argument refused, an unreadable or invalid configuration, a configuration v0 does not run, a node
+/// key the composition root refuses, a binding no node uses, a component whose
+/// identity cannot be read, a dataset that does not load, an `impl:` this build did not register,
 /// a query that fails, or a store that cannot be written.
 pub async fn run(request: &Request<'_>) -> Result<()> {
+    // Refused on their text alone: a malformed binding is found before the
+    // configuration is even read (ADR-C32 § 2).
+    let bindings = Bindings::parse(request.remote)?;
+
     // Read for the record and loaded for the run, from the same file. The run
     // store keeps the configuration **verbatim** — re-serializing the loaded
     // pipeline would file a second spelling of it beside the digest of the
@@ -104,16 +111,21 @@ pub async fn run(request: &Request<'_>) -> Result<()> {
         .with_context(|| format!("reading {}", request.config.display()))?;
     let (format, root) = benchmark_root(request.benchmark, request.datasets)?;
 
-    // 1. The configuration: what v0 does not run, and the keys of every node
-    //    whose keys this composition root owns (ADR-C32 § 1).
+    // 1. The configuration: what v0 does not run, the keys of every node
+    //    whose keys this composition root owns (ADR-C32 § 1), and a binding
+    //    no node uses (§ 2).
     let pipeline = LocalFile::new(request.config).load().await?;
     wiring::refuse_unsupported(&pipeline)?;
-    wiring::check_nodes(&pipeline)?;
+    wiring::check_nodes(&pipeline, &bindings)?;
+    bindings.refuse_unused(&pipeline)?;
+    // One lazily connecting channel per binding; nothing connects yet.
+    let bound = wiring::Bound::new(bindings)?;
     // 2. Every component's identity, read from the component, before the
     //    benchmark is loaded and the corpus embedded: a model file that is
-    //    missing, or a model a generator does not serve, is found now and not
-    //    after the expensive step. A refusal here ends the run.
-    let model_hashes = wiring::model_hashes(&pipeline).await?;
+    //    missing, a service that does not answer, or a model a service does not
+    //    serve, is found now and not after the expensive step. A refusal here
+    //    ends the run.
+    let model_hashes = wiring::model_hashes(&pipeline, &bound).await?;
 
     // 3. The benchmark.
     let benchmark = format.load(&root)?;
@@ -124,11 +136,12 @@ pub async fn run(request: &Request<'_>) -> Result<()> {
     // that recorded version name a set nothing searched (ADR-C26).
     let index = CorpusIndex::build(benchmark.corpus());
     // 4. The corpus, embedded.
-    let embedded = prepare(&pipeline, &index).await?;
+    let embedded = prepare(&pipeline, &index, &bound).await?;
 
-    // 5. The components, constructed from that corpus.
+    // 5. The components, constructed from that corpus, and one registration
+    //    per binding.
     let mut ctx = EngineContext::new();
-    wiring::register(&mut ctx, index.chunks(), embedded.as_deref());
+    wiring::register(&mut ctx, index.chunks(), embedded.as_deref(), &bound);
 
     // 6. Evaluate, and save.
 
@@ -158,28 +171,37 @@ pub async fn run(request: &Request<'_>) -> Result<()> {
 /// any component exists, and the store reaches its constructor already holding
 /// them. `None` means the pipeline names no dense node — there is then nothing
 /// to embed, and nothing downstream to search.
-#[cfg(feature = "onnx")]
+///
+/// Through whichever embedder the `dense` nodes name — the ONNX one, or a
+/// bound one — and with the served model the dense retriever will ask for, so
+/// the index and the queries come from one model (ADR-C32 § 4).
+#[cfg(any(feature = "onnx", feature = "remote"))]
 async fn prepare(
     pipeline: &LogicalPipeline,
     index: &CorpusIndex,
+    bound: &wiring::Bound,
 ) -> Result<Option<Vec<EmbeddedChunk>>> {
-    use ragondin_contracts::{EmbedParams, EmbedRole, Embedder};
+    use ragondin_contracts::{EmbedParams, EmbedRole};
 
-    let Some(spec) = wiring::embedder_spec(pipeline)? else {
+    let Some(spec) = wiring::embedder_spec(pipeline, bound.bindings())? else {
         return Ok(None);
     };
 
-    let embedder = wiring::onnx_embedder(&spec).context("constructing the corpus embedder")?;
+    let embedder = wiring::embedder(&spec, bound).context("constructing the corpus embedder")?;
+    // `Passage`, and that is the half of ADR-C17 only the indexer supplies: a
+    // corpus embedded under the query prefix is silently the wrong index.
+    let mut params = EmbedParams::new(EmbedRole::Passage);
+    if let Some(served_model) = spec.served_model() {
+        params = params.with_served_model(served_model);
+    }
     let texts: Vec<String> = index
         .chunks()
         .iter()
         .map(|chunk| chunk.text.clone())
         .collect();
 
-    // `Passage`, and that is the half of ADR-C17 only the indexer supplies: a
-    // corpus embedded under the query prefix is silently the wrong index.
     let vectors = embedder
-        .embed(&texts, &EmbedParams::new(EmbedRole::Passage))
+        .embed(&texts, &params)
         .await
         .context("embedding the corpus")?;
 
@@ -210,14 +232,16 @@ async fn prepare(
 /// Nothing reaches it that needs embedding: [`wiring::check_nodes`] has already
 /// refused a `dense` node naming the `onnx` embedder in a build without the
 /// `onnx` feature, naming the feature — no planner will ever look an embedder
-/// up to name what is missing. The configuration is read all the same, so the
-/// two builds share one path through it.
-#[cfg(not(feature = "onnx"))]
+/// up to name what is missing — and a build without `remote` refuses every
+/// binding. The configuration is read all the same, so the builds share one
+/// path through it.
+#[cfg(not(any(feature = "onnx", feature = "remote")))]
 async fn prepare(
     pipeline: &LogicalPipeline,
     index: &CorpusIndex,
+    bound: &wiring::Bound,
 ) -> Result<Option<Vec<EmbeddedChunk>>> {
-    let _ = wiring::embedder_spec(pipeline)?;
+    let _ = wiring::embedder_spec(pipeline, bound.bindings())?;
     let _ = index;
     Ok(None)
 }

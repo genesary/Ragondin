@@ -5,7 +5,8 @@
 //! file, it runs). One binary, four subcommands:
 //!
 //! ```text
-//! ragondin bench <config> --benchmark beir/scifact --datasets <dir> --store <dir>
+//! ragondin bench <config> --benchmark beir/scifact --datasets <dir> --store <dir> \
+//!                [--remote <family>/<name>=<uri>]...
 //! ragondin compare <run-a> <run-b> --store <path>   # compare two runs
 //! ragondin serve <config>                           # serve the pipeline
 //! ragondin validate <config>                        # validate a configuration
@@ -40,9 +41,16 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 mod bench;
+mod binding;
 mod compare;
 mod validate;
 mod wiring;
+
+/// The fake `Remote` services `tests/bench.rs` binds, shared with the unit
+/// tests of [`wiring`] rather than written twice.
+#[cfg(all(test, feature = "remote"))]
+#[path = "../tests/support/remote.rs"]
+mod remote_fakes;
 
 /// The command line, as `clap` parses it.
 #[derive(Debug, Parser)]
@@ -81,6 +89,16 @@ enum Command {
         answers is scored by exact match and token F1 as well, and a pipeline \
         that produces no answer is refused over it: a retrieval-only \
         configuration runs under `beir/`, not `beir-qa/` or `squad/`.\n\n\
+        `--remote <family>/<name>=<uri>`, repeatable, binds an implementation \
+        name to the service that answers under it: a node names a `Remote` \
+        component by an ordinary `impl:` (or, for a `dense` node's embedder, \
+        `embedder:`) value, and the address stays out of the configuration and \
+        out of the run's identity. `<family>` is `retriever`, `fusion`, \
+        `reranker`, `context_builder`, `generator` or `embedder`; `<uri>` is \
+        `http://<host>` or `http://<host>:<port>`. A binding no node uses, one \
+        bound twice, or one naming a component this binary carries in-process is \
+        refused. The run records its bindings, outside its identity. A build \
+        without the `remote` feature refuses every binding.\n\n\
         v0 runs retrieval and generation: a configuration holding an extension \
         node is refused. Neither `--datasets` nor `--store` has a default, because \
         no location for either is settled yet.")]
@@ -97,6 +115,9 @@ enum Command {
         /// Root directory of the run store the run is written to.
         #[arg(long)]
         store: PathBuf,
+        /// Binds a name to a service: `<family>/<name>=<uri>`, repeatable.
+        #[arg(long, value_name = "FAMILY/NAME=URI")]
+        remote: Vec<String>,
     },
     /// Compare two runs.
     #[command(long_about = "Compare two runs already recorded in a run store.\n\n\
@@ -155,12 +176,14 @@ async fn dispatch(cli: Cli) -> Result<()> {
             benchmark,
             datasets,
             store,
+            remote,
         } => {
             bench::run(&bench::Request {
                 config: &config,
                 benchmark: &benchmark,
                 datasets: &datasets,
                 store: &store,
+                remote: &remote,
             })
             .await
         }

@@ -58,6 +58,11 @@ ragondin-reranker-onnx = { workspace = true, optional = true }
 # that runs a generation pipeline without an inference service needs one, and
 # the CLI tests are what need that build.
 ragondin-stub = { workspace = true, optional = true }
+# The `Remote` adapters, and the `tonic` channel each binding is served over,
+# behind the `remote` feature below: a bound component is constructed here, by
+# the composition root, over a channel built here (ADR-C32 § 3).
+ragondin-remote = { workspace = true, optional = true }
+tonic = { workspace = true, optional = true }
 
 # Test-only, and deliberately so. `ragondin-stub` is the fixture component
 # crate the vertical slice in `tests/` wires: `bench` registers the real
@@ -84,12 +89,18 @@ serde_yaml = { workspace = true }
 # with the crate the canonical logical-form hash already uses. `bench` itself
 # digests nothing any more: each component reports its own identity.
 sha2 = { workspace = true }
+# The fake `Remote` services the `remote` tests bind: `tonic` servers over the
+# generated service traits, hosting in-test components through
+# `ragondin-remote`'s conversions, as a Rust-hosted service would. Already in
+# every build through `ragondin-config`.
+ragondin-proto = { workspace = true }
+async-trait = { workspace = true } # the fakes implement the contract traits
 
 # Heavy backends are optional and off by default (ADR-C14): the default build
-# stays lean and compiles fast. Two features rather than one per component,
-# because a component is only useful with what it composes — a dense retriever
-# with no embedder and no store retrieves nothing, and the only embedder this
-# build has is the ONNX one.
+# stays lean and compiles fast. A feature per backend rather than one per
+# component, because a component is only useful with what it composes — a dense
+# retriever with no embedder and no store retrieves nothing, so it arrives with
+# whichever feature carries an embedder: `onnx`, or `remote`.
 [features]
 default = []
 # In-process sparse retrieval. Pulls tantivy.
@@ -97,8 +108,8 @@ bm25 = ["dep:ragondin-retriever-bm25", "ragondin-retriever-bm25/bm25"]
 # In-process embeddings and cross-encoder reranking, and the dense retriever and
 # in-memory store they compose into. One feature rather than four, because the
 # three that are lean on their own have nothing to do without the one that is
-# not: the only embedder this build carries is the ONNX one, a dense retriever
-# with no embedder retrieves nothing, and the store exists to be filled by one.
+# not: a dense retriever with no embedder retrieves nothing, and the store
+# exists to be filled by one.
 # Pulls ONNX Runtime and `tokenizers`.
 onnx = [
     "dep:ragondin-embedder-onnx",
@@ -114,3 +125,14 @@ onnx = [
 # component — and it gates nothing heavy, so the reason it is a feature is
 # that, and not compile time.
 stub = ["dep:ragondin-stub", "ragondin-stub/stub"]
+# Components bound to a service with `--remote <family>/<name>=<uri>`
+# (ADR-C32 § 2, § 3): the `Remote` adapters and the `tonic` channel they speak
+# over. It carries the dense retriever and the in-memory store too, because a
+# build with `remote` and without `onnx` embeds the corpus through a bound
+# embedder and runs a `dense` node over it (ADR-C32 § 5); both are lean.
+remote = [
+    "dep:ragondin-remote",
+    "dep:tonic",
+    "dep:ragondin-retriever-dense",
+    "dep:ragondin-store-memory",
+]
