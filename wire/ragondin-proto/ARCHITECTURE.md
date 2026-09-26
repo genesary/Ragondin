@@ -99,6 +99,13 @@ chose and not this crate: `result_large_err` on `v1`, because every rpc returns
 `Result<_, tonic::Status>`; and `match_single_binding` on `config::v1`,
 because a service with no rpc routes every path to one arm.
 
+The generators bring a second `prettyplease` into the lock file: 0.2, used by
+`tonic-build` 0.12 and by `prost-build` 0.13, beside the 0.3 already there
+through `bon-macros` (tantivy's builder macros). Both copies are build-time
+only, one in a build script and one in a proc macro, so neither is linked into
+a binary. `deny.toml` sets `multiple-versions = "warn"`, so `just check-deny`
+reports the duplicate as a warning and passes.
+
 ## Local invariants
 
 - **The mirror is field for field, and hand-maintained (ADR-C24).** The domain

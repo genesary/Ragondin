@@ -7,6 +7,11 @@
 //! is destructured **exhaustively**, so a field added to one of them and not to
 //! its mirror stops this file compiling: the drift is caught here before the
 //! round-trip tests of `ragondin-remote` ever run.
+//!
+//! That guard does **not** cover the params structs of `ragondin-contracts`.
+//! They are `#[non_exhaustive]`, so a field added to one on the Rust side
+//! compiles here unnoticed; `params_mirror_the_contracts_params` compares only
+//! the fields it names.
 
 use prost::Message;
 use ragondin_contracts as contracts;
@@ -137,6 +142,11 @@ fn embedded_chunk_mirrors_the_contracts_embedded_chunk() {
 /// The params structs are `#[non_exhaustive]`, so they cannot be destructured
 /// from here; their public fields are compared instead, and the generated
 /// messages — which are exhaustive — are destructured in full.
+///
+/// A known gap, not drift: `EmbedParams::served_model` and
+/// `RerankParams::served_model` have no field on the wire yet. They arrive
+/// with #257, the issue that extends the `.proto` to the M3 additions, and
+/// this test gains their comparison then.
 #[test]
 fn params_mirror_the_contracts_params() {
     let retrieve = contracts::RetrieveParams::new(10);
@@ -207,6 +217,9 @@ fn an_unknown_role_number_decodes_and_names_no_role() {
     assert!(v1::EmbedRole::try_from(decoded.role).is_err());
 }
 
+/// Its value is at compile time, as in `tests/stubs.rs`: each request and
+/// response is destructured exhaustively, so a message that gains, loses or
+/// renames a field stops this file compiling. The run itself asserts nothing.
 #[test]
 fn requests_and_responses_carry_the_trait_arguments() {
     let query = v1::Query {
