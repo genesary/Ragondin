@@ -69,11 +69,12 @@ Each of these is this crate's own, made inside the leaf under `AGENTS.md`
   crate, so a change to the scheme is a deliberate edit rather than a silent
   change to every recorded run's identity.
 
-  The digest uses **`sha2`**, the `[workspace.dependencies]` entry the canonical
-  logical-form hash already uses and the binary uses for model-file digests. It
-  is used here, not added: no new utility role, and `std`'s `DefaultHasher` is
-  not an option because its output is not guaranteed stable across Rust
-  releases, which is the one property an identity must have.
+  The digest uses **`sha2`**, the `[workspace.dependencies]` entry the ONNX
+  embedder and reranker use for their model-file digests and the pipeline's
+  canonical logical-form hash already uses. It is used here, not added: no new
+  utility role, and `std`'s `DefaultHasher` is not an option because its
+  output is not guaranteed stable across Rust releases, which is the one
+  property an identity must have.
 
 ## Local invariants
 
