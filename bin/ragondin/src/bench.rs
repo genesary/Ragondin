@@ -157,6 +157,13 @@ pub async fn run(request: &Request<'_>) -> Result<()> {
         &ctx,
     )
     .await?;
+    // Recorded on the run, never in its identity: the harness named the run
+    // before it saw them, and where a service listened is not an input of the
+    // experiment (ADR-C32 § 2).
+    let run = Run {
+        bindings: bound.bindings().record(),
+        ..run
+    };
 
     FileSystemRunStore::new(request.store).save(&run)?;
     print!("{}", render(&run));
@@ -311,6 +318,12 @@ fn render(run: &Run) -> String {
     for (role, digest) in &run.inputs.model_hashes {
         summary.push_str(&format!("  model[{role}]  {digest}\n"));
     }
+    for binding in &run.bindings {
+        summary.push_str(&format!(
+            "  bound[{}/{}]  {}\n",
+            binding.family, binding.name, binding.uri
+        ));
+    }
     for (name, value) in run.metrics.iter() {
         summary.push_str(&format!("{name}: {value:.4}\n"));
     }
@@ -407,6 +420,7 @@ mod tests {
             metrics: metrics.iter().copied().collect(),
             config: ConfigDocument::new("pipeline:\n  inputs: []\n  nodes: []\n"),
             traces: BTreeMap::new(),
+            bindings: Vec::new(),
         }
     }
 
@@ -419,6 +433,23 @@ mod tests {
         assert!(summary.contains(&run.id.to_string()), "{summary}");
         assert!(summary.contains("ndcg@10: 0.6400"), "{summary}");
         assert!(summary.contains("recall@10: 0.7500"), "{summary}");
+    }
+
+    #[test]
+    fn the_summary_names_where_each_bound_component_answered() {
+        let mut run = a_run(&[("ndcg@10", 0.5)]);
+        run.bindings = vec![ragondin_experiments::RunBinding {
+            family: "generator".to_owned(),
+            name: "vllm".to_owned(),
+            uri: "http://localhost:8000".to_owned(),
+        }];
+
+        let summary = render(&run);
+
+        assert!(
+            summary.contains("bound[generator/vllm]  http://localhost:8000"),
+            "{summary}"
+        );
     }
 
     #[test]

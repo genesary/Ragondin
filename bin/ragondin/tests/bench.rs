@@ -321,6 +321,17 @@ mod with_remote_components {
             "the run was scored: {:?}",
             run.metrics
         );
+        // The bindings are on the run, as written on the command line, in
+        // the order given (ADR-C32 § 2).
+        let recorded: Vec<String> = run
+            .bindings
+            .iter()
+            .map(|binding| format!("{}/{}={}", binding.family, binding.name, binding.uri))
+            .collect();
+        assert_eq!(
+            recorded,
+            [services.arguments[1].clone(), services.arguments[3].clone()]
+        );
     }
 
     #[test]
@@ -363,6 +374,9 @@ mod with_remote_components {
         let second_run = saved(&second_store, &bench(&second_store, &second.arguments));
 
         assert_eq!(first_run.id, second_run.id);
+        // Each run still records where it was answered from: provenance,
+        // outside identity.
+        assert_ne!(first_run.bindings, second_run.bindings);
     }
 
     #[test]

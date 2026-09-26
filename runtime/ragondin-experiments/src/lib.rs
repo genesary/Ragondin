@@ -35,5 +35,7 @@ pub use compare::{
     compare, ConfigurationComparison, MetricComparison, ParameterDifference, ParameterKey,
     RunComparison, Side,
 };
-pub use run::{ConfigDocument, Metrics, Run, RunId, RunIdParseError, RunInputs, TraceDocument};
+pub use run::{
+    ConfigDocument, Metrics, Run, RunBinding, RunId, RunIdParseError, RunInputs, TraceDocument,
+};
 pub use store::{FileSystemRunStore, RunStoreError};

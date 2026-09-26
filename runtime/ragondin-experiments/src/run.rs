@@ -1,5 +1,5 @@
 //! What a run *is*: [`RunId`], [`RunInputs`], [`Metrics`], [`ConfigDocument`],
-//! [`TraceDocument`] and the [`Run`] record that holds them.
+//! [`TraceDocument`], [`RunBinding`] and the [`Run`] record that holds them.
 //!
 //! A run is one execution of a pipeline over a benchmark, together with its
 //! metrics and its traces, and it is named by the content-addressed tuple of
@@ -262,6 +262,25 @@ impl TraceDocument {
     }
 }
 
+/// A `Remote` component a run was bound to: the family and name the binding
+/// named, and the address the service answered at, as written on the command
+/// line (`ragondin bench --remote <family>/<name>=<uri>`, ADR-C32 § 2).
+///
+/// Provenance, not identity: it is not in [`RunInputs`], and the run id does
+/// not digest it, because where a service happened to listen is not an input
+/// of the experiment. Two runs with one id and different bindings are one
+/// experiment run twice. Plain strings, because this crate records what the
+/// composition root parsed and checks none of it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunBinding {
+    /// The family the name was bound in: `generator`, `embedder`, ….
+    pub family: String,
+    /// The implementation name a node used.
+    pub name: String,
+    /// The service's address, as written.
+    pub uri: String,
+}
+
 /// One execution of a pipeline over a benchmark: what identified it, what it
 /// scored, and what it did.
 ///
@@ -279,4 +298,8 @@ pub struct Run {
     pub config: ConfigDocument,
     /// The per-query execution traces, by query.
     pub traces: BTreeMap<QueryId, TraceDocument>,
+    /// The `Remote` bindings the run used, in the order they were given;
+    /// empty for a run bound to nothing, which is every run stored before
+    /// bindings were recorded. Outside identity: see [`RunBinding`].
+    pub bindings: Vec<RunBinding>,
 }

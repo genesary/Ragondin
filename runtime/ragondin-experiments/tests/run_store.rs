@@ -14,8 +14,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use ragondin_experiments::{
-    compare, ConfigDocument, FileSystemRunStore, Metrics, Run, RunId, RunIdParseError, RunInputs,
-    RunStoreError, TraceDocument,
+    compare, ConfigDocument, FileSystemRunStore, Metrics, Run, RunBinding, RunId, RunIdParseError,
+    RunInputs, RunStoreError, TraceDocument,
 };
 use ragondin_pipeline::PipelineHash;
 use ragondin_types::QueryId;
@@ -68,6 +68,15 @@ fn a_run(id: RunId, metrics: &[(&str, f64)]) -> Run {
         metrics: metrics.iter().copied().collect(),
         config: ConfigDocument::new("schema_version: 1\nnodes: []\n"),
         traces,
+        bindings: Vec::new(),
+    }
+}
+
+fn a_binding(family: &str, name: &str, uri: &str) -> RunBinding {
+    RunBinding {
+        family: family.to_owned(),
+        name: name.to_owned(),
+        uri: uri.to_owned(),
     }
 }
 
@@ -83,6 +92,51 @@ fn a_saved_run_reads_back_by_its_id() {
     // the run was looked up by, so `load` puts it back from the argument and
     // it cannot disagree. What round-trips here is the rest.
     assert_eq!(read, written, "a run read back is the run written");
+}
+
+#[test]
+fn a_run_s_bindings_read_back_with_it_in_the_order_they_were_given() {
+    let store = store("bindings_round_trip");
+    let mut written = a_run(run_id(0x12), &[("ndcg@10", 0.42)]);
+    written.bindings = vec![
+        a_binding("generator", "vllm", "http://localhost:8000"),
+        a_binding("embedder", "bge", "http://10.0.0.7:50051"),
+    ];
+
+    store.save(&written).expect("the run must be writable");
+    let read = store.load(&written.id).expect("the run must read back");
+
+    assert_eq!(read, written);
+    // Beside the four files a run always had, in a file of its own, so the
+    // record a person reads says where each bound component answered.
+    let bindings = fs::read_to_string(
+        store
+            .root()
+            .join(written.id.to_string())
+            .join("bindings.json"),
+    )
+    .expect("the bindings are kept");
+    assert!(bindings.contains("http://localhost:8000"), "{bindings}");
+}
+
+#[test]
+fn a_run_stored_before_bindings_were_recorded_reads_back_as_bound_to_nothing() {
+    // A run directory as a store wrote it before this field existed: the four
+    // files and no `bindings.json`. The change is additive (ADR-C32
+    // Consequences), so it is still a complete run, and it was bound to
+    // nothing.
+    let store = store("bindings_absent");
+    let run = a_run(run_id(0x13), &[("ndcg@10", 0.42)]);
+    store.save(&run).expect("the run must be writable");
+    let dir = store.root().join(run.id.to_string());
+    fs::remove_file(dir.join("bindings.json")).expect("the new file is there to remove");
+
+    let read = store.load(&run.id).expect("an older run still reads");
+
+    assert!(read.bindings.is_empty(), "{:?}", read.bindings);
+    store
+        .save(&run)
+        .expect("and it counts as stored, not as torn");
 }
 
 #[test]

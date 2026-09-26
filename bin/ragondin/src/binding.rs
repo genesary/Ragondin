@@ -13,6 +13,7 @@
 use std::fmt;
 
 use anyhow::{bail, Result};
+use ragondin_experiments::RunBinding;
 use ragondin_pipeline::{LogicalNode, LogicalPipeline, ParamValue};
 
 use crate::wiring;
@@ -120,6 +121,19 @@ impl Bindings {
         }
 
         Ok(Self { entries })
+    }
+
+    /// The bindings as the run records them: family, name and URI as
+    /// written, in the order given, outside the run's identity.
+    pub fn record(&self) -> Vec<RunBinding> {
+        self.entries
+            .iter()
+            .map(|binding| RunBinding {
+                family: binding.family.name().to_owned(),
+                name: binding.name.clone(),
+                uri: binding.uri.clone(),
+            })
+            .collect()
     }
 
     /// Whether `name` is bound in `family`.

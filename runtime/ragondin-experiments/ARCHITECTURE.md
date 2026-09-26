@@ -78,7 +78,7 @@ harness.
   saves are ordinary. It is unique among *live* writers rather than for all
   time — a recycled pid restarts the counter at zero and may name what a crashed
   process left — which is harmless, because creating the directory is
-  idempotent, all four files are written before the rename, and no other name is
+  idempotent, all five files are written before the rename, and no other name is
   ever written there. Nothing clears a staging directory on the way in, and
   nothing may: a name no live writer shares has nothing to clear, and clearing a
   shared one reaches into a directory another live writer owns. Whoever renames
@@ -94,7 +94,7 @@ harness.
   is 64 hex digits, so parsing one of these as an id fails rather than
   misreading, but only if the lister expects the convention.
 - **A torn directory is reported, never repaired.** `save` checks that a
-  destination already under the id holds all four files, and reports
+  destination already under the id holds the four files every run has, and reports
   `Incomplete` if it does not, rather than answering `Ok(())` for something
   `load` cannot read. It does not delete and rewrite: a run's metrics and traces
   are **not** determined by its id — a judge's scores are not reproducible — so
@@ -110,6 +110,26 @@ harness.
   the store root, or by a writer that predates this scheme — which is why it
   has a name of its own, `RunStoreError::Incomplete`, kept distinct from the
   `Io` a permission failure produces.
+- **A run records its `Remote` bindings, outside its identity (ADR-C32 § 2).**
+  `Run::bindings` is a list of `RunBinding` — family, name and URI, plain
+  strings as the composition root wrote them, in the order given. It is not a
+  field of `RunInputs` and the run id does not digest it: where a service
+  listened is not an input of the experiment, so two runs with one id and
+  different bindings are one experiment run twice, and `save` keeps whichever
+  record it had first, as it does for every rerun. Choices recorded here, since
+  the ADR leaves the shape to the implementation:
+  - *A file of its own, `bindings.json`*, written for every run, `[]` when
+    nothing was bound. The store keeps each other field in a file of its own,
+    so this one follows, and a person reads it with `cat` beside the rest.
+  - *Additive on disk.* A run stored before the field existed has no
+    `bindings.json`; `load` reads it as bound to nothing, and `save`'s
+    completeness check still requires only the four original files, so such a
+    run is complete rather than torn. `tests/run_store.rs` stores a run, deletes
+    its `bindings.json`, and reads it back.
+  - *Filled by the composition root, not the harness.* `ragondin-harness`
+    assembles the run with no bindings, since it never sees the command line,
+    and the binary sets the field before saving. `compare` does not show
+    bindings.
 - **The configuration is kept verbatim, and the traces are opaque.** The store
   writes the configuration document as it was handed in — the text whose
   canonical logical form hashes to the `pipeline` digest beside it — and never

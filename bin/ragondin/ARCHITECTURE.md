@@ -285,7 +285,11 @@ release.
   `embedder` binding is resolved inside the `dense` closure, with the node's
   prefixes, which the adapter applies. The dense retriever over a bound
   embedder is built `with_served_model` the node's `served_model`, and
-  `prepare` embeds the corpus under the same name. Choices recorded here, since
+  `prepare` embeds the corpus under the same name. After `evaluate`, `bench`
+  sets the run's `bindings` — family, name and URI as written — and prints
+  each as `bound[<family>/<name>]`; they are never part of the run's identity,
+  and a test runs one configuration against two addresses and gets one
+  `run_id`. Choices recorded here, since
   ADR-C32 leaves them to this crate:
   - *The URI grammar is read strictly.* The scheme is `http://` in lowercase;
     no path at all, not even `/`; no query, fragment or user information; a
