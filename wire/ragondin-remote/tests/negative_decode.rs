@@ -5,15 +5,20 @@
 //! these messages. Each is refused by `from_proto`, and each test here proves
 //! it: a required message left out, an `EmbedRole` of `UNSPECIFIED` or of a
 //! number the enum does not name (ADR-C17), an empty identity (ADR-C31 § 1),
-//! and an empty `served_model` (ADR-C32 § 4). Which `ComponentError` a refusal
-//! becomes depends on which side decoded it, and is `status.rs`'s concern.
+//! an empty `served_model` (ADR-C32 § 4), and a generator's empty
+//! `served_model` or `template`, which is what an omitted one decodes as
+//! (ADR-C31 § 2). Which `ComponentError` a refusal becomes depends on which
+//! side decoded it, and is `status.rs`'s concern.
 
 use ragondin_contracts::{
-    EmbedParams, EmbeddedChunk, FusionParams, RerankParams, RetrieveParams, SearchParams,
+    ContextParams, EmbedParams, EmbeddedChunk, FusionParams, GenerateParams, RerankParams,
+    RetrieveParams, SearchParams,
 };
 use ragondin_proto::v1;
 use ragondin_remote::{DecodeError, FromProto};
-use ragondin_types::{Chunk, Embedding, ModelIdentity, Query, ScoredChunk};
+use ragondin_types::{
+    Answer, Chunk, Context, ContextChunk, Embedding, ModelIdentity, Query, ScoredChunk,
+};
 
 fn wire_chunk() -> v1::Chunk {
     v1::Chunk {
@@ -358,6 +363,217 @@ fn chunk_carries_no_required_field_and_always_decodes() {
     // Its fields are scalars: every message decodes.
     assert_eq!(
         Chunk::from_proto(v1::Chunk::default()).unwrap().text,
+        String::new()
+    );
+}
+
+// --- the generation families (ADR-C31 § 1–§ 2) ---------------------------------
+
+fn wire_generate_params() -> v1::GenerateParams {
+    v1::GenerateParams {
+        served_model: "m".into(),
+        template: "{query}".into(),
+        ..Default::default()
+    }
+}
+
+#[test]
+fn a_build_request_without_query_or_params_is_refused() {
+    let wire = v1::BuildRequest {
+        query: None,
+        chunks: vec![],
+        params: Some(v1::ContextParams { budget: 1 }),
+    };
+    assert_missing(
+        <(Query, Vec<ScoredChunk>, ContextParams)>::from_proto(wire),
+        ("BuildRequest", "query"),
+    );
+    let wire = v1::BuildRequest {
+        query: Some(wire_query()),
+        chunks: vec![],
+        params: None,
+    };
+    assert_missing(
+        <(Query, Vec<ScoredChunk>, ContextParams)>::from_proto(wire),
+        ("BuildRequest", "params"),
+    );
+}
+
+#[test]
+fn a_build_request_carrying_a_chunkless_scored_chunk_is_refused() {
+    let wire = v1::BuildRequest {
+        query: Some(wire_query()),
+        chunks: vec![v1::ScoredChunk {
+            chunk: None,
+            score: 1.0,
+        }],
+        params: Some(v1::ContextParams { budget: 1 }),
+    };
+    assert_missing(
+        <(Query, Vec<ScoredChunk>, ContextParams)>::from_proto(wire),
+        ("ScoredChunk", "chunk"),
+    );
+}
+
+#[test]
+fn a_generate_request_without_query_context_or_params_is_refused() {
+    let full = || v1::GenerateRequest {
+        query: Some(wire_query()),
+        context: Some(v1::Context::default()),
+        params: Some(wire_generate_params()),
+    };
+    assert!(<(Query, Context, GenerateParams)>::from_proto(full()).is_ok());
+    for (field, wire) in [
+        (
+            "query",
+            v1::GenerateRequest {
+                query: None,
+                ..full()
+            },
+        ),
+        (
+            "context",
+            v1::GenerateRequest {
+                context: None,
+                ..full()
+            },
+        ),
+        (
+            "params",
+            v1::GenerateRequest {
+                params: None,
+                ..full()
+            },
+        ),
+    ] {
+        assert_missing(
+            <(Query, Context, GenerateParams)>::from_proto(wire),
+            ("GenerateRequest", field),
+        );
+    }
+}
+
+#[test]
+fn a_response_without_its_context_or_answer_is_refused() {
+    assert_missing(
+        Context::from_proto(v1::BuildResponse { context: None }),
+        ("BuildResponse", "context"),
+    );
+    assert_missing(
+        Answer::from_proto(v1::GenerateResponse { answer: None }),
+        ("GenerateResponse", "answer"),
+    );
+}
+
+#[test]
+fn a_generation_identity_response_without_or_with_an_empty_identity_is_refused() {
+    assert_missing(
+        ModelIdentity::from_proto(v1::GeneratorModelIdentityResponse { identity: None }),
+        ("GeneratorModelIdentityResponse", "identity"),
+    );
+    assert_missing(
+        ModelIdentity::from_proto(v1::ContextBuilderModelIdentityResponse { identity: None }),
+        ("ContextBuilderModelIdentityResponse", "identity"),
+    );
+    assert_empty(
+        ModelIdentity::from_proto(v1::GeneratorModelIdentityResponse {
+            identity: Some(v1::ModelIdentity::default()),
+        }),
+        ("ModelIdentity", "identity"),
+    );
+    assert_empty(
+        ModelIdentity::from_proto(v1::ContextBuilderModelIdentityResponse {
+            identity: Some(v1::ModelIdentity::default()),
+        }),
+        ("ModelIdentity", "identity"),
+    );
+}
+
+/// A proto3 `string` has no presence: an omitted `served_model` or `template`
+/// decodes as the empty string, and ADR-C31 § 2 has a service refuse it on
+/// receipt, as the adapter does before sending.
+#[test]
+fn a_generator_served_model_or_template_left_empty_is_refused() {
+    assert_empty(
+        GenerateParams::from_proto(v1::GenerateParams {
+            served_model: String::new(),
+            ..wire_generate_params()
+        }),
+        ("GenerateParams", "served_model"),
+    );
+    assert_empty(
+        GenerateParams::from_proto(v1::GenerateParams {
+            template: String::new(),
+            ..wire_generate_params()
+        }),
+        ("GenerateParams", "template"),
+    );
+    assert!(matches!(
+        GenerateParams::from_proto(v1::GenerateParams::default()),
+        Err(DecodeError::Empty { .. })
+    ));
+    assert_empty(
+        String::from_proto(v1::GeneratorModelIdentityRequest {
+            served_model: String::new(),
+        }),
+        ("GeneratorModelIdentityRequest", "served_model"),
+    );
+}
+
+#[test]
+fn a_generate_request_carrying_an_empty_template_is_refused() {
+    let wire = v1::GenerateRequest {
+        query: Some(wire_query()),
+        context: Some(v1::Context::default()),
+        params: Some(v1::GenerateParams {
+            template: String::new(),
+            ..wire_generate_params()
+        }),
+    };
+    assert_empty(
+        <(Query, Context, GenerateParams)>::from_proto(wire),
+        ("GenerateParams", "template"),
+    );
+}
+
+#[test]
+fn a_budget_or_max_tokens_is_carried_whole_or_refused() {
+    match ContextParams::from_proto(v1::ContextParams { budget: u64::MAX }) {
+        Ok(params) => assert_eq!(params.budget as u64, u64::MAX),
+        Err(DecodeError::TooLarge { value, .. }) => assert_eq!(value, u64::MAX),
+        Err(other) => panic!("unexpected {other:?}"),
+    }
+    let wire = v1::GenerateParams {
+        max_tokens: Some(u64::MAX),
+        ..wire_generate_params()
+    };
+    match GenerateParams::from_proto(wire) {
+        Ok(params) => assert_eq!(params.max_tokens.map(|n| n as u64), Some(u64::MAX)),
+        Err(DecodeError::TooLarge { value, .. }) => assert_eq!(value, u64::MAX),
+        Err(other) => panic!("unexpected {other:?}"),
+    }
+}
+
+#[test]
+fn context_and_answer_carry_no_required_field_and_always_decode() {
+    // Their fields are scalars and repeated scalar messages: every message
+    // decodes, including a context chunk whose score is not finite, which is
+    // the component's contract and not the wire's.
+    assert_eq!(
+        Context::from_proto(v1::Context::default()).unwrap(),
+        Context {
+            chunks: vec![],
+            text: String::new()
+        }
+    );
+    let chunk = ContextChunk::from_proto(v1::ContextChunk {
+        score: f32::NAN,
+        ..Default::default()
+    })
+    .unwrap();
+    assert!(chunk.score.is_nan());
+    assert_eq!(
+        Answer::from_proto(v1::Answer::default()).unwrap().text,
         String::new()
     );
 }

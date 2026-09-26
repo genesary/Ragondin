@@ -1,5 +1,6 @@
-//! The `Remote` adapters: one per M2 family, each implementing the
-//! `ragondin-contracts` trait by calling the generated client.
+//! The `Remote` adapters: one per family, the five M2 ones and the generator
+//! and context builder, each implementing the `ragondin-contracts` trait by
+//! calling the generated client.
 //!
 //! Each call is the same four steps: refuse what the adapter refuses before
 //! sending, convert the arguments to the request, call, and convert the
@@ -13,19 +14,27 @@
 //! (`Endpoint::connect_lazy`, ADR-C32 § 3), so nothing is connected at
 //! construction and an unreachable service is reported at the first call, as
 //! `ComponentError::Unavailable`.
+//!
+//! No adapter moves work off the caller's thread, and none needs to: every
+//! call awaits a `tonic` client call, which yields while the service works,
+//! so ADR-C25's obligation is met by construction.
 
 use async_trait::async_trait;
 use ragondin_contracts::{
-    ComponentError, EmbedParams, EmbedRole, EmbeddedChunk, Embedder, Fusion, FusionParams,
-    RerankParams, Reranker, RetrieveParams, Retriever, SearchParams, VectorStore,
+    ComponentError, ContextBuilder, ContextParams, EmbedParams, EmbedRole, EmbeddedChunk, Embedder,
+    Fusion, FusionParams, GenerateParams, Generator, RerankParams, Reranker, RetrieveParams,
+    Retriever, SearchParams, VectorStore,
 };
 use ragondin_proto::v1::{
-    embedder_client::EmbedderClient, fusion_client::FusionClient, reranker_client::RerankerClient,
-    retriever_client::RetrieverClient, vector_store_client::VectorStoreClient, EmbedRequest,
-    EmbedderModelIdentityRequest, FuseRequest, RerankRequest, RerankerModelIdentityRequest,
-    RetrieveRequest, SearchRequest, UpsertRequest,
+    context_builder_client::ContextBuilderClient, embedder_client::EmbedderClient,
+    fusion_client::FusionClient, generator_client::GeneratorClient,
+    reranker_client::RerankerClient, retriever_client::RetrieverClient,
+    vector_store_client::VectorStoreClient, BuildRequest, ContextBuilderModelIdentityRequest,
+    EmbedRequest, EmbedderModelIdentityRequest, FuseRequest, GenerateRequest,
+    GeneratorModelIdentityRequest, RerankRequest, RerankerModelIdentityRequest, RetrieveRequest,
+    SearchRequest, UpsertRequest,
 };
-use ragondin_types::{Embedding, ModelIdentity, Query, ScoredChunk};
+use ragondin_types::{Answer, Context, Embedding, ModelIdentity, Query, ScoredChunk};
 use tonic::transport::Channel;
 
 use crate::{
@@ -84,6 +93,18 @@ fn served_model(served_model: Option<&str>) -> Result<&str, ComponentError> {
         )),
         Some(name) => Ok(name),
     }
+}
+
+/// A generator's served model or template, which it requires non-empty:
+/// ADR-C31 § 2 has the adapter refuse an empty one before sending, the
+/// service on receipt, and a `Local` generator alike. What is empty is `field`.
+fn required_text(value: &str, field: &str) -> Result<(), ComponentError> {
+    if value.is_empty() {
+        return Err(ComponentError::InvalidRequest(format!(
+            "{field} is empty, and a generator requires one"
+        )));
+    }
+    Ok(())
 }
 
 macro_rules! client {
@@ -368,6 +389,120 @@ impl VectorStore for RemoteVectorStore {
             .await
             .map_err(error_from_status)?;
         Vec::<ScoredChunk>::from_proto(response.into_inner()).map_err(error_from_response)
+    }
+}
+
+/// A [`ContextBuilder`] served over gRPC.
+///
+/// Refuses nothing before sending: a zero budget is the service's refusal,
+/// arriving as `INVALID_ARGUMENT`, as it is a `Local` builder's.
+#[derive(Clone, Debug)]
+pub struct RemoteContextBuilder {
+    client: ContextBuilderClient<Channel>,
+}
+
+impl RemoteContextBuilder {
+    /// An adapter over `channel`. Connects nothing.
+    pub fn new(channel: Channel) -> Self {
+        Self {
+            client: client!(ContextBuilderClient, channel),
+        }
+    }
+}
+
+#[async_trait]
+impl ContextBuilder for RemoteContextBuilder {
+    async fn build(
+        &self,
+        query: &Query,
+        chunks: Vec<ScoredChunk>,
+        params: &ContextParams,
+    ) -> Result<Context, ComponentError> {
+        let request: BuildRequest = (query.clone(), chunks, params.clone()).into_proto();
+        let response = self
+            .client
+            .clone()
+            .build(request)
+            .await
+            .map_err(error_from_status)?;
+        Context::from_proto(response.into_inner()).map_err(error_from_response)
+    }
+
+    /// What the service reports for its configuration. An empty identity is
+    /// refused as `InvalidRequest` (ADR-C31 § 1), through
+    /// [`error_from_identity_response`].
+    async fn model_identity(&self) -> Result<ModelIdentity, ComponentError> {
+        let request: ContextBuilderModelIdentityRequest = ().into_proto();
+        let response = self
+            .client
+            .clone()
+            .get_model_identity(request)
+            .await
+            .map_err(error_from_status)?;
+        ModelIdentity::from_proto(response.into_inner()).map_err(error_from_identity_response)
+    }
+}
+
+/// A [`Generator`] served over gRPC.
+///
+/// **The adapter renders nothing.** The template, the query and the context
+/// go out as the call holds them, and the service renders the template on
+/// receipt (ADR-C31 § 2), so a malformed template is the service's refusal,
+/// arriving as `INVALID_ARGUMENT`.
+///
+/// **It refuses an empty `served_model` or template before sending**, as an
+/// invalid request, in `generate` and in `model_identity` alike: ADR-C31 § 2
+/// has the adapter, the service and a `Local` generator all refuse it. The
+/// optionals — `temperature`, `seed`, `max_tokens` — are sent with their
+/// presence: `None` is left off the wire, never sent as a zero.
+#[derive(Clone, Debug)]
+pub struct RemoteGenerator {
+    client: GeneratorClient<Channel>,
+}
+
+impl RemoteGenerator {
+    /// An adapter over `channel`. Connects nothing.
+    pub fn new(channel: Channel) -> Self {
+        Self {
+            client: client!(GeneratorClient, channel),
+        }
+    }
+}
+
+#[async_trait]
+impl Generator for RemoteGenerator {
+    async fn generate(
+        &self,
+        query: &Query,
+        context: &Context,
+        params: &GenerateParams,
+    ) -> Result<Answer, ComponentError> {
+        required_text(&params.served_model, "served_model")?;
+        required_text(&params.template, "template")?;
+        let request: GenerateRequest =
+            (query.clone(), context.clone(), params.clone()).into_proto();
+        let response = self
+            .client
+            .clone()
+            .generate(request)
+            .await
+            .map_err(error_from_status)?;
+        Answer::from_proto(response.into_inner()).map_err(error_from_response)
+    }
+
+    /// What the service reports for `served_model` (ADR-C31 § 4). An empty
+    /// identity is refused as `InvalidRequest` (ADR-C31 § 1), through
+    /// [`error_from_identity_response`].
+    async fn model_identity(&self, served_model: &str) -> Result<ModelIdentity, ComponentError> {
+        required_text(served_model, "served_model")?;
+        let request: GeneratorModelIdentityRequest = served_model.to_owned().into_proto();
+        let response = self
+            .client
+            .clone()
+            .get_model_identity(request)
+            .await
+            .map_err(error_from_status)?;
+        ModelIdentity::from_proto(response.into_inner()).map_err(error_from_identity_response)
     }
 }
 

@@ -24,9 +24,11 @@
 //!   in Rust, [`error_from_status`], [`error_from_response`] and
 //!   [`error_from_identity_response`] for an adapter. Every adapter maps a
 //!   failure through these and nothing else.
-//! - **The adapters** for the five M2 families: [`RemoteRetriever`],
+//! - **The adapters** for the five M2 families — [`RemoteRetriever`],
 //!   [`RemoteFusion`], [`RemoteReranker`], [`RemoteEmbedder`] and
-//!   [`RemoteVectorStore`], each over a `tonic` channel its caller builds.
+//!   [`RemoteVectorStore`] — and for the two generation families,
+//!   [`RemoteContextBuilder`] and [`RemoteGenerator`], each over a `tonic`
+//!   channel its caller builds.
 //!
 //! See `ARCHITECTURE.md`.
 
@@ -37,8 +39,8 @@ mod convert;
 mod status;
 
 pub use adapters::{
-    RemoteEmbedder, RemoteFusion, RemoteReranker, RemoteRetriever, RemoteVectorStore, EMBED_BATCH,
-    MAX_MESSAGE_SIZE, UPSERT_BATCH,
+    RemoteContextBuilder, RemoteEmbedder, RemoteFusion, RemoteGenerator, RemoteReranker,
+    RemoteRetriever, RemoteVectorStore, EMBED_BATCH, MAX_MESSAGE_SIZE, UPSERT_BATCH,
 };
 pub use convert::{DecodeError, FromProto, IntoProto};
 pub use status::{

@@ -12,14 +12,12 @@ a `Local` component.
 
 | Module | Role |
 |---|---|
-| `src/convert.rs` | `IntoProto` and `FromProto`: every domain value, params struct, request and response of the five M2 services, and `DecodeError` |
+| `src/convert.rs` | `IntoProto` and `FromProto`: every domain value, params struct, request and response of the seven component services, and `DecodeError` |
 | `src/status.rs` | ADR-C35's status conversion, both directions, and ADR-C31 § 1's refusal of an empty identity |
-| `src/adapters.rs` | `RemoteRetriever`, `RemoteFusion`, `RemoteReranker`, `RemoteEmbedder`, `RemoteVectorStore`; the message limit and the batch sizes |
+| `src/adapters.rs` | `RemoteRetriever`, `RemoteFusion`, `RemoteReranker`, `RemoteEmbedder`, `RemoteVectorStore`, `RemoteContextBuilder`, `RemoteGenerator`; the message limit and the batch sizes |
 
-**Not here.** The `Generator` and `ContextBuilder` adapters and their
-conversions come with #261, which reuses the status conversion as it stands.
-Building a channel from an address, and binding a name to it, are the
-composition root's (ADR-C32 § 2, § 3). No server-side wrapper is exported: the
+**Not here.** Building a channel from an address, and binding a name to it,
+are the composition root's (ADR-C32 § 2, § 3). No server-side wrapper is exported: the
 tests host their stubs through the same conversions a Rust-hosted service
 would use, in `tests/support`.
 
@@ -36,16 +34,28 @@ would use, in `tests/support`.
 - **A trait method's arguments convert as one tuple** to its request, in the
   method's argument order, and its return value to its response: `(Query,
   RetrieveParams)` ⇄ `RetrieveRequest`, `()` ⇄ `UpsertResponse`,
-  `Option<String>` ⇄ an identity request. One call converts a whole rpc on either side.
+  `Option<String>` ⇄ the embedder's and the reranker's identity request,
+  `String` ⇄ the generator's, whose served model is always named, and `()` ⇄
+  the context builder's, which carries nothing. One call converts a whole rpc
+  on either side.
 - **`FromProto` refuses exactly what the domain cannot represent or does not
   accept on the wire**: a required message left out (`types.proto`'s header),
   an `EmbedRole` of `UNSPECIFIED` or of a number the enum does not name
   (ADR-C17), an empty `ModelIdentity` (ADR-C31 § 1), an empty `served_model`
-  (ADR-C32 § 4: absent is a domain value, empty is not), and a count wider
-  than `usize`. It refuses nothing a component refuses by its own contract — a
-  `top_k` of zero, a non-finite score, a zero-dimensional embedding. Those
-  cross the wire intact and the component decides, so a `Local` and a `Remote`
+  (ADR-C32 § 4: absent is a domain value, empty is not), a generator's empty
+  `served_model` or `template` — what an omitted one decodes as, a proto3
+  `string` having no presence — which ADR-C31 § 2 has a service refuse on
+  receipt, and a count wider than `usize`. It refuses nothing a component
+  refuses by its own contract — a `top_k` or a `budget` of zero, a non-finite
+  score, a zero-dimensional embedding, a malformed template. Those cross the
+  wire intact and the component decides, so a `Local` and a `Remote`
   component are refused by the same rule.
+- **A generator's three optionals keep their presence** (ADR-C31 § 2).
+  `temperature`, `seed` and `max_tokens` are proto3 `optional` fields: `None`
+  is left off the wire and an absent field decodes as `None`, so a
+  temperature nobody set never arrives as `0.0`, which is greedy decoding.
+  `an_absent_optional_is_left_off_the_wire_and_a_zero_is_sent` pins it on the
+  bytes.
 - **The sign of a zero score does not cross.** `prost` leaves a scalar equal
   to its default off the wire, and `-0.0 == 0.0`, so a score of `-0.0` arrives
   as `0.0`. The round trip holds under `PartialEq`, which is ADR-C24's
@@ -73,9 +83,9 @@ that fails conversion or breaks the family's contract is `Backend` — does not
 displace it: ADR-C35 supersedes nothing. So identity responses go through one
 more shared function, `error_from_identity_response`, which makes an empty
 identity `InvalidRequest` and hands every other refusal, such as the identity
-message left out, to `error_from_response`. Both identity adapters here use
-it, as the `Generator` and `ContextBuilder` adapters will, so no adapter maps
-its own refusal.
+message left out, to `error_from_response`. All four identity adapters here
+use it — the embedder's, the reranker's, the context builder's and the
+generator's — so no adapter maps its own refusal.
 
 ## Adapters
 
@@ -97,6 +107,17 @@ its own refusal.
   `Remote` vector store until the contract can scope a store's content to a
   run; the adapter exists so that the round trip and the conformance suite
   cover the service `ragondin-proto` already defines.
+- **The generator adapter renders nothing.** The template, the query and the
+  context go out as the call holds them, and the service renders on receipt
+  (ADR-C31 § 2); a malformed template is the service's refusal, arriving as
+  `INVALID_ARGUMENT`. The adapter refuses an empty `served_model` or
+  `template` before sending, as `InvalidRequest`, in `generate` and in
+  `model_identity`: ADR-C31 § 2 has the adapter, the service and a `Local`
+  generator all refuse it. The context builder adapter refuses nothing
+  before sending; a zero budget is the service's refusal.
+- **No off-thread hop.** ADR-C25 has a component not block its caller. Every
+  adapter call awaits a `tonic` client call, which yields while the service
+  works, so the obligation is met by construction.
 - **One check beyond the conversion: each Embed batch's count.** A batch
   answered with the wrong number of vectors fails the call as `Backend`
   (ADR-C35 § 2's contract row), because batching would otherwise let a short
@@ -119,7 +140,8 @@ are done, and each covers what the other cannot:**
   bound.
 - **Embed and Upsert are batched**, `EMBED_BATCH` and `UPSERT_BATCH`, 256 each.
   They are the two rpcs whose size the caller does not bound: every other rpc's
-  response is bounded by a `top_k` or by the input it was handed. 256 vectors of
+  response is bounded by a `top_k`, by the input it was handed, or, for
+  Generate, by one answer. 256 vectors of
   16 384 components are 16 MiB, a quarter of the limit. A batch is split in
   order, answered in order, and moved rather than copied; an empty call still
   sends one empty rpc, so the service sees its parameters and refuses a bad
@@ -160,10 +182,20 @@ not the transport.
 - **`tests/status.rs`** — ADR-C35's table, over all seventeen codes.
 - **`tests/conformance.rs`** — each adapter passes its family's
   `assert_*_conformance` against an in-process `tonic` server on an ephemeral
-  port, hosting an in-test stub; each stub passes the suite on its own first.
+  port, hosting a `Local` stub; each stub passes the suite on its own first.
+  The five M2 families host in-test stubs (`tests/support/stubs.rs`). The
+  generator and the context builder host `ragondin-stub`'s `StubGenerator`
+  and `StubContextBuilder`, a dev-dependency: the generator suite owns its
+  template and probes the whole of ADR-C31 § 2's grammar, which
+  `StubGenerator` already parses, where an in-test copy would be a second
+  parser to keep in step. The edge is dev-only, so no consumer of this crate
+  reaches a component crate, and `check-invariants.py` walks no dev edge.
   The server is `tonic`'s own, from its default features; the listener is
   `tokio::net::TcpListener`, whose `net` feature `tonic`'s server enables, so no
   workspace entry's feature list changes.
 - **`tests/adapters.rs`** — the trait-object coercion of every adapter, lazy
   connection, the refusals before sending, the prefixes, batching, a batch over
-  `tonic`'s default limit, and ADR-C35's round trip over a real connection.
+  `tonic`'s default limit, and ADR-C35's round trip over a real connection;
+  for the two generation adapters, each status class of ADR-C35 § 2 on every
+  call, the optionals' presence and the unrendered template as a service
+  receives them, and the service's own refusals.

@@ -23,6 +23,9 @@
 //! - an empty `ModelIdentity` (ADR-C31 § 1);
 //! - an empty `served_model`: absent is a domain value, empty is not
 //!   (ADR-C32 § 4);
+//! - a generator's empty `served_model` or `template`, which is what an
+//!   omitted one decodes as, since a proto3 `string` has no presence
+//!   (ADR-C31 § 2);
 //! - a count wider than `usize`, which a truncation would silently change.
 //!
 //! It refuses no value the domain can represent and a component refuses by
@@ -31,11 +34,13 @@
 //! suite's to check.
 
 use ragondin_contracts::{
-    EmbedParams, EmbedRole, EmbeddedChunk, FusionParams, RerankParams, RetrieveParams, SearchParams,
+    ContextParams, EmbedParams, EmbedRole, EmbeddedChunk, FusionParams, GenerateParams,
+    RerankParams, RetrieveParams, SearchParams,
 };
 use ragondin_proto::v1;
 use ragondin_types::{
-    Chunk, ChunkId, DocId, Embedding, ModelIdentity, Query, QueryId, ScoredChunk,
+    Answer, Chunk, ChunkId, Context, ContextChunk, DocId, Embedding, ModelIdentity, Query, QueryId,
+    ScoredChunk,
 };
 use thiserror::Error;
 
@@ -144,6 +149,19 @@ fn served_model(
         }),
         other => Ok(other),
     }
+}
+
+/// A string a message requires and proto3 cannot mark absent: an omitted one
+/// decodes as the empty string, so the empty string is refused.
+fn non_empty(
+    value: String,
+    message: &'static str,
+    field: &'static str,
+) -> Result<String, DecodeError> {
+    if value.is_empty() {
+        return Err(DecodeError::Empty { message, field });
+    }
+    Ok(value)
 }
 
 // `usize` to `u64` is lossless on every target Rust supports.
@@ -287,6 +305,60 @@ impl FromProto<v1::ModelIdentity> for ModelIdentity {
     }
 }
 
+impl IntoProto<v1::ContextChunk> for ContextChunk {
+    fn into_proto(self) -> v1::ContextChunk {
+        v1::ContextChunk {
+            id: self.id.as_str().to_owned(),
+            document_id: self.document_id.as_str().to_owned(),
+            score: self.score,
+        }
+    }
+}
+
+impl FromProto<v1::ContextChunk> for ContextChunk {
+    fn from_proto(proto: v1::ContextChunk) -> Result<Self, DecodeError> {
+        Ok(ContextChunk {
+            id: ChunkId::new(proto.id),
+            document_id: DocId::new(proto.document_id),
+            score: proto.score,
+        })
+    }
+}
+
+impl IntoProto<v1::Context> for Context {
+    fn into_proto(self) -> v1::Context {
+        v1::Context {
+            chunks: self.chunks.into_iter().map(IntoProto::into_proto).collect(),
+            text: self.text,
+        }
+    }
+}
+
+impl FromProto<v1::Context> for Context {
+    fn from_proto(proto: v1::Context) -> Result<Self, DecodeError> {
+        Ok(Context {
+            chunks: proto
+                .chunks
+                .into_iter()
+                .map(ContextChunk::from_proto)
+                .collect::<Result<_, _>>()?,
+            text: proto.text,
+        })
+    }
+}
+
+impl IntoProto<v1::Answer> for Answer {
+    fn into_proto(self) -> v1::Answer {
+        v1::Answer { text: self.text }
+    }
+}
+
+impl FromProto<v1::Answer> for Answer {
+    fn from_proto(proto: v1::Answer) -> Result<Self, DecodeError> {
+        Ok(Answer { text: proto.text })
+    }
+}
+
 impl IntoProto<v1::EmbedRole> for EmbedRole {
     fn into_proto(self) -> v1::EmbedRole {
         match self {
@@ -399,6 +471,59 @@ impl FromProto<v1::SearchParams> for SearchParams {
             "SearchParams",
             "top_k",
         )?))
+    }
+}
+
+impl IntoProto<v1::ContextParams> for ContextParams {
+    fn into_proto(self) -> v1::ContextParams {
+        v1::ContextParams {
+            budget: wire_count(self.budget),
+        }
+    }
+}
+
+impl FromProto<v1::ContextParams> for ContextParams {
+    fn from_proto(proto: v1::ContextParams) -> Result<Self, DecodeError> {
+        Ok(ContextParams::new(count(
+            proto.budget,
+            "ContextParams",
+            "budget",
+        )?))
+    }
+}
+
+/// The three optionals carry presence both ways (ADR-C31 § 2): `None` is left
+/// off the wire and an absent field decodes as `None`, never as a zero, so a
+/// temperature nobody set never arrives as greedy decoding.
+impl IntoProto<v1::GenerateParams> for GenerateParams {
+    fn into_proto(self) -> v1::GenerateParams {
+        v1::GenerateParams {
+            served_model: self.served_model,
+            template: self.template,
+            temperature: self.temperature,
+            seed: self.seed,
+            max_tokens: self.max_tokens.map(wire_count),
+        }
+    }
+}
+
+impl FromProto<v1::GenerateParams> for GenerateParams {
+    fn from_proto(proto: v1::GenerateParams) -> Result<Self, DecodeError> {
+        const M: &str = "GenerateParams";
+        let mut params = GenerateParams::new(
+            non_empty(proto.served_model, M, "served_model")?,
+            non_empty(proto.template, M, "template")?,
+        );
+        if let Some(temperature) = proto.temperature {
+            params = params.with_temperature(temperature);
+        }
+        if let Some(seed) = proto.seed {
+            params = params.with_seed(seed);
+        }
+        if let Some(max_tokens) = proto.max_tokens {
+            params = params.with_max_tokens(count(max_tokens, M, "max_tokens")?);
+        }
+        Ok(params)
     }
 }
 
@@ -550,6 +675,81 @@ impl FromProto<v1::EmbedderModelIdentityRequest> for Option<String> {
     }
 }
 
+impl IntoProto<v1::BuildRequest> for (Query, Vec<ScoredChunk>, ContextParams) {
+    fn into_proto(self) -> v1::BuildRequest {
+        let (query, chunks, params) = self;
+        v1::BuildRequest {
+            query: Some(query.into_proto()),
+            chunks: scored_chunks_into(chunks),
+            params: Some(params.into_proto()),
+        }
+    }
+}
+
+impl FromProto<v1::BuildRequest> for (Query, Vec<ScoredChunk>, ContextParams) {
+    fn from_proto(proto: v1::BuildRequest) -> Result<Self, DecodeError> {
+        const M: &str = "BuildRequest";
+        Ok((
+            Query::from_proto(required(proto.query, M, "query")?)?,
+            scored_chunks_from(proto.chunks)?,
+            ContextParams::from_proto(required(proto.params, M, "params")?)?,
+        ))
+    }
+}
+
+impl IntoProto<v1::GenerateRequest> for (Query, Context, GenerateParams) {
+    fn into_proto(self) -> v1::GenerateRequest {
+        let (query, context, params) = self;
+        v1::GenerateRequest {
+            query: Some(query.into_proto()),
+            context: Some(context.into_proto()),
+            params: Some(params.into_proto()),
+        }
+    }
+}
+
+impl FromProto<v1::GenerateRequest> for (Query, Context, GenerateParams) {
+    fn from_proto(proto: v1::GenerateRequest) -> Result<Self, DecodeError> {
+        const M: &str = "GenerateRequest";
+        Ok((
+            Query::from_proto(required(proto.query, M, "query")?)?,
+            Context::from_proto(required(proto.context, M, "context")?)?,
+            GenerateParams::from_proto(required(proto.params, M, "params")?)?,
+        ))
+    }
+}
+
+/// `ContextBuilder::model_identity` takes no argument.
+impl IntoProto<v1::ContextBuilderModelIdentityRequest> for () {
+    fn into_proto(self) -> v1::ContextBuilderModelIdentityRequest {
+        v1::ContextBuilderModelIdentityRequest {}
+    }
+}
+
+impl FromProto<v1::ContextBuilderModelIdentityRequest> for () {
+    fn from_proto(_proto: v1::ContextBuilderModelIdentityRequest) -> Result<Self, DecodeError> {
+        Ok(())
+    }
+}
+
+/// A generator's served model is always named, so it is a `String` here where
+/// the embedder's and the reranker's is an `Option<String>`.
+impl IntoProto<v1::GeneratorModelIdentityRequest> for String {
+    fn into_proto(self) -> v1::GeneratorModelIdentityRequest {
+        v1::GeneratorModelIdentityRequest { served_model: self }
+    }
+}
+
+impl FromProto<v1::GeneratorModelIdentityRequest> for String {
+    fn from_proto(proto: v1::GeneratorModelIdentityRequest) -> Result<Self, DecodeError> {
+        non_empty(
+            proto.served_model,
+            "GeneratorModelIdentityRequest",
+            "served_model",
+        )
+    }
+}
+
 // --- responses: a trait method's return value --------------------------------
 
 /// The four responses that are one ranked list.
@@ -608,7 +808,35 @@ impl FromProto<v1::UpsertResponse> for () {
     }
 }
 
-/// The two identity responses, each a required `ModelIdentity`.
+impl IntoProto<v1::BuildResponse> for Context {
+    fn into_proto(self) -> v1::BuildResponse {
+        v1::BuildResponse {
+            context: Some(self.into_proto()),
+        }
+    }
+}
+
+impl FromProto<v1::BuildResponse> for Context {
+    fn from_proto(proto: v1::BuildResponse) -> Result<Self, DecodeError> {
+        Context::from_proto(required(proto.context, "BuildResponse", "context")?)
+    }
+}
+
+impl IntoProto<v1::GenerateResponse> for Answer {
+    fn into_proto(self) -> v1::GenerateResponse {
+        v1::GenerateResponse {
+            answer: Some(self.into_proto()),
+        }
+    }
+}
+
+impl FromProto<v1::GenerateResponse> for Answer {
+    fn from_proto(proto: v1::GenerateResponse) -> Result<Self, DecodeError> {
+        Answer::from_proto(required(proto.answer, "GenerateResponse", "answer")?)
+    }
+}
+
+/// The four identity responses, each a required `ModelIdentity`.
 macro_rules! identity_response {
     ($($message:ident),+) => {$(
         impl IntoProto<v1::$message> for ModelIdentity {
@@ -631,4 +859,9 @@ macro_rules! identity_response {
     )+};
 }
 
-identity_response!(RerankerModelIdentityResponse, EmbedderModelIdentityResponse);
+identity_response!(
+    RerankerModelIdentityResponse,
+    EmbedderModelIdentityResponse,
+    ContextBuilderModelIdentityResponse,
+    GeneratorModelIdentityResponse
+);
