@@ -138,9 +138,15 @@ See [`components/README.md`](components/README.md).
 ### Remote — a gRPC service in any language
 
 A service (commonly Python) implementing the corresponding protobuf service from
-`ragondin-proto`. It runs outside this repository, in any language, and is named by
-URL in the configuration; the engine reaches it through a generic `Remote<T>`
-adapter and cannot tell it apart from a `Local` component.
+`ragondin-proto`. It runs outside this repository, in any language, and is named
+in the configuration by an ordinary `impl:` value, exactly as a `Local`
+component — never by its address. The composition root binds that name to an
+address from the deployment and constructs the adapter itself; the address
+never enters the configuration
+([ADR-C32](docs/adr/ADR-C32-remote-named-by-impl-bound-by-the-composition-root.md)
+§ 1–§ 3). The binding mechanism arrives with #300. The engine reaches the
+service through a generic `Remote<T>` adapter and cannot tell it apart from a
+`Local` component.
 
 A `Remote` component that wins a benchmark can later be ported to `Local`
 (Rust) with no configuration change for any user.
