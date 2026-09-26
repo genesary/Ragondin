@@ -103,8 +103,9 @@ sources and changed it: `CANCELLED` moved from `Backend` to `Unavailable`; a
 separate rule for "a transport failure before a status" was dropped, because
 `tonic` has no such case; the inverse direction, for a Rust-hosted service,
 was added; `RESOURCE_EXHAUSTED` was named as a code a service never uses;
-and a received `UNAUTHENTICATED` or `PERMISSION_DENIED` was made `Backend`, a
-deliberate asymmetry with ADR-C33 set out below.
+and the asymmetry of a received `UNAUTHENTICATED` or `PERMISSION_DENIED`,
+already `Backend` under alternative 1, with ADR-C33's `401` and `403` was
+named as deliberate, as set out below.
 
 Decided in #311, by the repository owner on 2026-09-26: alternative 1, with
 the table as corrected by the independent review.
@@ -131,9 +132,9 @@ three codes and no other:
   are `UNAVAILABLE`, because the caller's remedy is to try later.
 - **The restriction is deliberate.** A service returns no other code, even
   where gRPC offers a more specific one.
-- **The `.proto` states the rule for authors in other languages**, in the
-  header of `types.proto`, because a `Remote` author reads the `.proto` as
-  the whole contract (ADR-C24).
+- **The rule is written into `types.proto`'s header** for authors in other
+  languages, because a `Remote` author reads the `.proto` as the whole
+  contract (ADR-C24).
 
 **ADR-C33 § 5's table is an instance of this rule, and this ADR does not
 supersede it.** Its `InvalidArgument` rows (a malformed request, any other
@@ -205,9 +206,10 @@ Both stand, because they answer different questions. ADR-C33 decides which of
 the three codes a relay returns for an upstream **HTTP** status. This ADR
 decides what an adapter makes of a **gRPC** status. A relay that follows
 ADR-C33 never returns `UNAUTHENTICATED` or `PERMISSION_DENIED`. An adapter that
-receives either got it from a service that broke § 1, or from something in
+receives either got it from a service that broke § 1, from something in
 front of the service, such as a proxy that answered `401` or `403`, which
-`tonic` maps to those two codes.
+`tonic` maps to those two codes, or from `tonic` itself, which maps an HTTP/2
+`INADEQUATE_SECURITY` error to `PERMISSION_DENIED`.
 
 ## Alternatives rejected
 
@@ -230,7 +232,7 @@ front of the service, such as a proxy that answered `401` or `403`, which
   because it changes the public API of `ragondin-contracts`, a stable
   boundary under INV-1 whose changes escalate on their own
   (`AGENTS.md` § Rules of engagement), and because no code outside the tests
-  branches on the variant today.
+  and the conformance suite branches on the variant today.
 - **Leaving it to each adapter issue.** Rejected because #13 and #261 would
   decide one shared surface separately, and their tables could diverge.
 
@@ -243,21 +245,21 @@ front of the service, such as a proxy that answered `401` or `403`, which
   sentence in `types.proto`'s header lands with #13 or #257 (the `.proto` for
   the `Generator` and `ContextBuilder` services); this ADR edits no `.proto`.
   #257 states the same three codes for its services, and #267 (the reference
-  generator service) already returns them under ADR-C33 § 5.
+  generator service) is already bound by ADR-C33 § 5 to return them.
 - **The strongest argument against, and why it lost.** gRPC's own guidance
   tells a service author to use `NOT_FOUND`, `FAILED_PRECONDITION` or
   `RESOURCE_EXHAUSTED` where they fit. Here those codes arrive as `Backend`, so
   an idiomatic service is treated as broken rather than as refusing the call.
   It lost because the mitigations cover what matters today:
   - the code survives, as the source of `Backend`;
-  - no code outside the tests branches on the variant. The conformance
-    suite asserts `InvalidRequest` where a call is refused, and a refusal is
+  - no code outside the tests and the conformance suite branches on the
+    variant. The conformance suite asserts `InvalidRequest` where a call is refused, and a refusal is
     `INVALID_ARGUMENT` under § 1, which § 2 maps back to `InvalidRequest`;
   - a `Remote` conformance check could assert that a service returns only the
     three codes. Such a check is permitted, and not required by this ADR.
 - **What `tonic` produces on its own lands in a row of § 2.** From an HTTP
   response without a `grpc-status`, `429`, `502`, `503` and `504` land as
-  `Unavailable`, and every other status as `Backend`. A connect failure and a
+  `Unavailable`, and every other non-`200` status as `Backend`. A connect failure and a
   call timeout land as `Unavailable`. A failure after the connection is made
   lands as `Unavailable` only when it arrives as `UNAVAILABLE` or `CANCELLED`;
   otherwise it is `Backend`, because the rule is stated by code and does not
