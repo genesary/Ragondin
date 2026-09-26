@@ -2,10 +2,11 @@
 //!
 //! No conversion is written here — those are `ragondin-remote`'s. Most tests
 //! build a domain value and the message a correct conversion would produce,
-//! then compare them field by field. Four do not: the two role-number decode
-//! tests pin wire facts, `requests_and_responses_carry_the_trait_arguments`
-//! checks message shapes at compile time, and
-//! `fuse_request_keeps_the_order_of_its_legs` checks a wire round trip. Every generated message, and every
+//! then compare them field by field. The rest do not: the role-number and
+//! presence decode tests pin wire facts,
+//! `requests_and_responses_carry_the_trait_arguments` checks message shapes at
+//! compile time, and `fuse_request_keeps_the_order_of_its_legs` checks a wire
+//! round trip. Every generated message, and every
 //! domain struct whose fields are public and that is not `#[non_exhaustive]`,
 //! is destructured **exhaustively**, so a field added to one of them and not to
 //! its mirror stops this file compiling: the drift is caught here before the
@@ -142,23 +143,106 @@ fn embedded_chunk_mirrors_the_contracts_embedded_chunk() {
     );
 }
 
+fn a_domain_context_chunk() -> types::ContextChunk {
+    types::ContextChunk {
+        id: types::ChunkId::new("chunk-1"),
+        document_id: types::DocId::new("doc-1"),
+        score: 0.87,
+    }
+}
+
+fn a_wire_context_chunk() -> v1::ContextChunk {
+    v1::ContextChunk {
+        id: "chunk-1".to_string(),
+        document_id: "doc-1".to_string(),
+        score: 0.87,
+    }
+}
+
+fn assert_context_chunk_parity(domain: &types::ContextChunk, wire: &v1::ContextChunk) {
+    let types::ContextChunk {
+        id,
+        document_id,
+        score,
+    } = domain;
+    let v1::ContextChunk {
+        id: wire_id,
+        document_id: wire_document_id,
+        score: wire_score,
+    } = wire;
+    assert_eq!(id.as_str(), wire_id);
+    assert_eq!(document_id.as_str(), wire_document_id);
+    assert_eq!(score, wire_score);
+}
+
+#[test]
+fn context_chunk_mirrors_the_domain_context_chunk() {
+    assert_context_chunk_parity(&a_domain_context_chunk(), &a_wire_context_chunk());
+}
+
+#[test]
+fn context_mirrors_the_domain_context() {
+    let domain = types::Context {
+        chunks: vec![a_domain_context_chunk()],
+        text: "[1] the cat sat on the mat".to_string(),
+    };
+    let wire = v1::Context {
+        chunks: vec![a_wire_context_chunk()],
+        text: "[1] the cat sat on the mat".to_string(),
+    };
+    let types::Context { chunks, text } = &domain;
+    let v1::Context {
+        chunks: wire_chunks,
+        text: wire_text,
+    } = &wire;
+    assert_eq!(chunks.len(), wire_chunks.len());
+    for (chunk, wire_chunk) in chunks.iter().zip(wire_chunks) {
+        assert_context_chunk_parity(chunk, wire_chunk);
+    }
+    assert_eq!(text, wire_text);
+}
+
+#[test]
+fn answer_mirrors_the_domain_answer() {
+    let types::Answer { text } = types::Answer {
+        text: "on the mat".to_string(),
+    };
+    let v1::Answer { text: wire_text } = v1::Answer {
+        text: "on the mat".to_string(),
+    };
+    assert_eq!(text, wire_text);
+}
+
+/// `ModelIdentity` is a newtype with a private field, so only the message is
+/// destructured; its one field is named after `ModelIdentity::new`'s argument.
+#[test]
+fn model_identity_mirrors_the_domain_model_identity() {
+    let domain = types::ModelIdentity::new(r#"{"id":"qwen"}"#);
+    let v1::ModelIdentity { identity } = v1::ModelIdentity {
+        identity: r#"{"id":"qwen"}"#.to_string(),
+    };
+    assert_eq!(domain.as_str(), identity);
+}
+
 /// The params structs are `#[non_exhaustive]`, so they cannot be destructured
 /// from here; their public fields are compared instead, and the generated
 /// messages — which are exhaustive — are destructured in full.
-///
-/// A known gap, not drift: `EmbedParams::served_model` and
-/// `RerankParams::served_model` have no field on the wire yet. They arrive
-/// with #257, the issue that extends the `.proto` to the M3 additions, and
-/// this test gains their comparison then.
 #[test]
 fn params_mirror_the_contracts_params() {
     let retrieve = contracts::RetrieveParams::new(10);
     let v1::RetrieveParams { top_k } = v1::RetrieveParams { top_k: 10 };
     assert_eq!(retrieve.top_k as u64, top_k);
 
-    let rerank = contracts::RerankParams::new(5);
-    let v1::RerankParams { top_k } = v1::RerankParams { top_k: 5 };
+    let rerank = contracts::RerankParams::new(5).with_served_model("bge-reranker");
+    let v1::RerankParams {
+        top_k,
+        served_model,
+    } = v1::RerankParams {
+        top_k: 5,
+        served_model: Some("bge-reranker".to_string()),
+    };
     assert_eq!(rerank.top_k as u64, top_k);
+    assert_eq!(rerank.served_model, served_model);
 
     let search = contracts::SearchParams::new(3);
     let v1::SearchParams { top_k } = v1::SearchParams { top_k: 3 };
@@ -169,11 +253,143 @@ fn params_mirror_the_contracts_params() {
     let _ = contracts::FusionParams::new();
     let v1::FusionParams {} = v1::FusionParams {};
 
-    let embed = contracts::EmbedParams::new(contracts::EmbedRole::Passage);
-    let v1::EmbedParams { role } = v1::EmbedParams {
+    let embed =
+        contracts::EmbedParams::new(contracts::EmbedRole::Passage).with_served_model("e5-large");
+    let v1::EmbedParams { role, served_model } = v1::EmbedParams {
         role: v1::EmbedRole::Passage as i32,
+        served_model: Some("e5-large".to_string()),
     };
     assert_eq!(mirror_role(embed.role) as i32, role);
+    assert_eq!(embed.served_model, served_model);
+
+    // No name on either face: absence, never the empty string.
+    let unnamed = contracts::EmbedParams::new(contracts::EmbedRole::Query);
+    let v1::EmbedParams {
+        role: _,
+        served_model,
+    } = v1::EmbedParams {
+        role: v1::EmbedRole::Query as i32,
+        served_model: None,
+    };
+    assert_eq!(unnamed.served_model, served_model);
+
+    let context = contracts::ContextParams::new(512);
+    let v1::ContextParams { budget } = v1::ContextParams { budget: 512 };
+    assert_eq!(context.budget as u64, budget);
+
+    let generate = contracts::GenerateParams::new("qwen", "{context}\n\n{query}")
+        .with_temperature(0.2)
+        .with_seed(7)
+        .with_max_tokens(256);
+    let v1::GenerateParams {
+        served_model,
+        template,
+        temperature,
+        seed,
+        max_tokens,
+    } = v1::GenerateParams {
+        served_model: "qwen".to_string(),
+        template: "{context}\n\n{query}".to_string(),
+        temperature: Some(0.2),
+        seed: Some(7),
+        max_tokens: Some(256),
+    };
+    assert_eq!(generate.served_model, served_model);
+    assert_eq!(generate.template, template);
+    assert_eq!(generate.temperature, temperature);
+    assert_eq!(generate.seed, seed);
+    assert_eq!(generate.max_tokens.map(|n| n as u64), max_tokens);
+}
+
+/// The three optional generation settings and every optional `served_model`
+/// carry explicit presence (ADR-C31 § 2, ADR-C32 § 4): an omitted one decodes
+/// as `None`, never as zero or the empty string. A plain proto3 `double`
+/// would decode an omitted temperature as `0.0`, which is greedy decoding —
+/// a setting nobody chose.
+#[test]
+fn an_omitted_optional_decodes_as_none() {
+    let bytes = v1::GenerateParams {
+        served_model: "qwen".to_string(),
+        template: "{query}".to_string(),
+        temperature: None,
+        seed: None,
+        max_tokens: None,
+    }
+    .encode_to_vec();
+    let decoded = v1::GenerateParams::decode(bytes.as_slice()).expect("decodes");
+    assert_eq!(decoded.temperature, None);
+    assert_eq!(decoded.seed, None);
+    assert_eq!(decoded.max_tokens, None);
+
+    let embed = v1::EmbedParams::decode(
+        v1::EmbedParams {
+            role: v1::EmbedRole::Query as i32,
+            served_model: None,
+        }
+        .encode_to_vec()
+        .as_slice(),
+    )
+    .expect("decodes");
+    assert_eq!(embed.served_model, None);
+
+    let rerank = v1::RerankParams::decode(
+        v1::RerankParams {
+            top_k: 5,
+            served_model: None,
+        }
+        .encode_to_vec()
+        .as_slice(),
+    )
+    .expect("decodes");
+    assert_eq!(rerank.served_model, None);
+
+    let embedder_identity = v1::EmbedderModelIdentityRequest::decode(&[][..]).expect("decodes");
+    assert_eq!(embedder_identity.served_model, None);
+    let reranker_identity = v1::RerankerModelIdentityRequest::decode(&[][..]).expect("decodes");
+    assert_eq!(reranker_identity.served_model, None);
+}
+
+/// The other half of presence: a value that is present and zero survives the
+/// wire as that value. A temperature of zero asked for is not the same call as
+/// no temperature.
+#[test]
+fn a_present_zero_decodes_as_that_zero() {
+    let bytes = v1::GenerateParams {
+        served_model: "qwen".to_string(),
+        template: "{query}".to_string(),
+        temperature: Some(0.0),
+        seed: Some(0),
+        max_tokens: Some(0),
+    }
+    .encode_to_vec();
+    let decoded = v1::GenerateParams::decode(bytes.as_slice()).expect("decodes");
+    assert_eq!(decoded.temperature, Some(0.0));
+    assert_eq!(decoded.seed, Some(0));
+    assert_eq!(decoded.max_tokens, Some(0));
+
+    let embed = v1::EmbedParams::decode(
+        v1::EmbedParams {
+            role: v1::EmbedRole::Query as i32,
+            served_model: Some(String::new()),
+        }
+        .encode_to_vec()
+        .as_slice(),
+    )
+    .expect("decodes");
+    assert_eq!(embed.served_model, Some(String::new()));
+}
+
+/// The generator's two required strings have no presence, the opposite shape
+/// (ADR-C31 § 2): an omitted one decodes as the empty string, which is why an
+/// empty `served_model` or `template` is an invalid request rather than an
+/// absent one. This pins the wire fact; the refusal is the component's.
+#[test]
+fn an_omitted_required_string_decodes_as_empty() {
+    let decoded = v1::GenerateParams::decode(&[][..]).expect("decodes");
+    assert_eq!(decoded.served_model, "");
+    assert_eq!(decoded.template, "");
+    let identity = v1::GeneratorModelIdentityRequest::decode(&[][..]).expect("decodes");
+    assert_eq!(identity.served_model, "");
 }
 
 /// Exhaustive over the closed Rust enum: a role added there and not here stops
@@ -252,12 +468,27 @@ fn requests_and_responses_carry_the_trait_arguments() {
         chunks: _,
         params: _,
     } = v1::RerankRequest {
-        query: Some(query),
+        query: Some(query.clone()),
         chunks: vec![scored.clone()],
-        params: Some(v1::RerankParams { top_k: 5 }),
+        params: Some(v1::RerankParams {
+            top_k: 5,
+            served_model: None,
+        }),
     };
     let v1::RerankResponse { chunks: _ } = v1::RerankResponse {
         chunks: vec![scored.clone()],
+    };
+
+    let identity = v1::ModelIdentity {
+        identity: "model@rev".to_string(),
+    };
+
+    // Reranker::model_identity(served_model) -> ModelIdentity
+    let v1::RerankerModelIdentityRequest { served_model: _ } = v1::RerankerModelIdentityRequest {
+        served_model: Some("bge-reranker".to_string()),
+    };
+    let v1::RerankerModelIdentityResponse { identity: _ } = v1::RerankerModelIdentityResponse {
+        identity: Some(identity.clone()),
     };
 
     // Embedder::embed(texts, params) -> Vec<Embedding>
@@ -268,12 +499,77 @@ fn requests_and_responses_carry_the_trait_arguments() {
         texts: vec!["a passage".to_string()],
         params: Some(v1::EmbedParams {
             role: v1::EmbedRole::Passage as i32,
+            served_model: None,
         }),
     };
     let v1::EmbedResponse { embeddings: _ } = v1::EmbedResponse {
         embeddings: vec![v1::Embedding {
             components: vec![1.0],
         }],
+    };
+
+    // Embedder::model_identity(served_model) -> ModelIdentity
+    let v1::EmbedderModelIdentityRequest { served_model: _ } = v1::EmbedderModelIdentityRequest {
+        served_model: Some("e5-large".to_string()),
+    };
+    let v1::EmbedderModelIdentityResponse { identity: _ } = v1::EmbedderModelIdentityResponse {
+        identity: Some(identity.clone()),
+    };
+
+    let context = v1::Context {
+        chunks: vec![a_wire_context_chunk()],
+        text: "[1] the cat sat on the mat".to_string(),
+    };
+
+    // ContextBuilder::build(query, chunks, params) -> Context
+    let v1::BuildRequest {
+        query: _,
+        chunks: _,
+        params: _,
+    } = v1::BuildRequest {
+        query: Some(query.clone()),
+        chunks: vec![scored.clone()],
+        params: Some(v1::ContextParams { budget: 512 }),
+    };
+    let v1::BuildResponse { context: _ } = v1::BuildResponse {
+        context: Some(context.clone()),
+    };
+
+    // ContextBuilder::model_identity() -> ModelIdentity
+    let v1::ContextBuilderModelIdentityRequest {} = v1::ContextBuilderModelIdentityRequest {};
+    let v1::ContextBuilderModelIdentityResponse { identity: _ } =
+        v1::ContextBuilderModelIdentityResponse {
+            identity: Some(identity.clone()),
+        };
+
+    // Generator::generate(query, context, params) -> Answer
+    let v1::GenerateRequest {
+        query: _,
+        context: _,
+        params: _,
+    } = v1::GenerateRequest {
+        query: Some(query),
+        context: Some(context),
+        params: Some(v1::GenerateParams {
+            served_model: "qwen".to_string(),
+            template: "{context}\n\n{query}".to_string(),
+            temperature: None,
+            seed: None,
+            max_tokens: None,
+        }),
+    };
+    let v1::GenerateResponse { answer: _ } = v1::GenerateResponse {
+        answer: Some(v1::Answer {
+            text: "on the mat".to_string(),
+        }),
+    };
+
+    // Generator::model_identity(served_model) -> ModelIdentity
+    let v1::GeneratorModelIdentityRequest { served_model: _ } = v1::GeneratorModelIdentityRequest {
+        served_model: "qwen".to_string(),
+    };
+    let v1::GeneratorModelIdentityResponse { identity: _ } = v1::GeneratorModelIdentityResponse {
+        identity: Some(identity),
     };
 
     // VectorStore::upsert(entries) -> ()

@@ -1,0 +1,106 @@
+// The Generator service: face 2 of ragondin_contracts::Generator (ADR-3).
+//
+// The generator is the family the platform expects to be Remote by default:
+// the inference server is called over the network, not reimplemented. A
+// service holds no experiment variable of its own. Every setting that decides
+// the answer, the served model and the template included, arrives in the
+// call, because constructor configuration never crosses this wire and a
+// setting a researcher varies between two runs must be in the pipeline and
+// its hash (ADR-C31 section 2).
+
+syntax = "proto3";
+
+package ragondin.v1;
+
+import "ragondin/v1/types.proto";
+
+// Answers a query from a context.
+service Generator {
+  // Answers the query from the context, with the model and the template the
+  // params name.
+  //
+  // The service renders the template and asks its model to answer the
+  // rendered text, adding no instruction text of its own (ADR-C31 section
+  // 2). An empty served_model, an empty template, a malformed template and a
+  // served model the service does not serve are each an invalid request. An
+  // empty context is a valid call: an answer of "I do not know" is conformant,
+  // and refusing the call is not (ADR-C19).
+  rpc Generate(GenerateRequest) returns (GenerateResponse);
+
+  // Reports the identity of the model this service answers served_model
+  // with: a verification of the name, not only a record of it (ADR-C31
+  // section 4). The service asks its backend what it serves under that name
+  // and returns what the backend reports. A name the backend does not serve
+  // is refused as an invalid request, never answered with a warning; so is
+  // an empty one.
+  rpc GetModelIdentity(GeneratorModelIdentityRequest) returns (GeneratorModelIdentityResponse);
+}
+
+// Per-call parameters of a generator. Mirrors
+// ragondin_contracts::GenerateParams.
+//
+// Two kinds of absence, deliberately different (ADR-C31 section 2).
+// served_model and template are required, and a proto3 string has no
+// presence: an omitted one decodes as the empty string, so an empty one is
+// refused as an invalid request. temperature, seed and max_tokens are
+// optional, and carry explicit presence: an omitted one decodes as absent,
+// never as zero, and a service passes that absence on rather than choosing a
+// value. Do not make the three plain scalars: an omitted plain double decodes
+// as 0.0, and a temperature of zero is greedy decoding, a different
+// generation that nobody asked for.
+message GenerateParams {
+  // The name the generator asks its backend for: the name its inference
+  // server serves the model under. Required, and never empty.
+  string served_model = 1;
+  // The prompt template. Required, and never empty. Its grammar is the whole
+  // of the following:
+  // {query} is replaced by the query's text, and {context} by the context's
+  // text; {{ renders a literal {, and }} a literal }; any other { or } makes
+  // the template malformed, which is an invalid request: a name other than
+  // query or context between braces, a { that no } closes, a lone }. Each
+  // placeholder may appear any number of times, including none.
+  // Substitution is a single pass, left to right, taking {{ or }} before
+  // looking for a placeholder at each position, so {{query}} renders as the
+  // text {query}; substituted text is never scanned again.
+  string template = 2;
+  // The sampling temperature, when the configuration sets one. Absent means
+  // the backend's own default applies.
+  optional double temperature = 3;
+  // The sampling seed, when the configuration sets one. Absent means none is
+  // sent.
+  optional uint64 seed = 4;
+  // The cap on the answer's length, in its model's tokens, when the
+  // configuration sets one. Absent means the backend's own cap applies.
+  optional uint64 max_tokens = 5;
+}
+
+// The arguments of ragondin_contracts::Generator::generate.
+message GenerateRequest {
+  // The query to answer. Required.
+  Query query = 1;
+  // The context to answer it from. Required; its chunks may be empty.
+  Context context = 2;
+  // The per-call parameters. Required.
+  GenerateParams params = 3;
+}
+
+// The result of a generation.
+message GenerateResponse {
+  // The answer. Required.
+  Answer answer = 1;
+}
+
+// The argument of ragondin_contracts::Generator::model_identity.
+message GeneratorModelIdentityRequest {
+  // The served model whose identity is asked for, the one a generator node's
+  // params name. Required, and never empty: unlike the embedder's and the
+  // reranker's, a generator's served model is always named.
+  string served_model = 1;
+}
+
+// The result of a generator's model identity call.
+message GeneratorModelIdentityResponse {
+  // The identity of the model the service answers served_model with.
+  // Required, and never empty.
+  ModelIdentity identity = 1;
+}

@@ -12,12 +12,28 @@ service Reranker {
   // descending score, every score finite. No chunks is a valid call, and
   // reranks to an empty list (ADR-C19).
   rpc Rerank(RerankRequest) returns (RerankResponse);
+
+  // Reports the identity of the model this service reranks with when asked
+  // for served_model: the same name the Rerank requests carry in their
+  // params (ADR-C32 section 4). A name the service does not serve is refused
+  // as an invalid request, never answered with a warning; so are an empty
+  // name and an absent one.
+  rpc GetModelIdentity(RerankerModelIdentityRequest) returns (RerankerModelIdentityResponse);
 }
 
 // Per-call parameters of a reranker. Mirrors ragondin_contracts::RerankParams.
 message RerankParams {
   // How many chunks to keep after reordering. Zero is an invalid request.
   uint64 top_k = 1;
+  // The name of the model the reranker is asked for, the name its backend
+  // serves the model under (ADR-C32 section 4).
+  //
+  // Optional with explicit presence, so an omitted name decodes as absent
+  // and never as the empty string. Absent asks for the model the component
+  // loaded; a service has no loaded model that absence could name, so a
+  // service refuses an absent served_model as an invalid request. An empty
+  // name, or one the service does not serve, is an invalid request too.
+  optional string served_model = 2;
 }
 
 // The arguments of ragondin_contracts::Reranker::rerank.
@@ -34,4 +50,19 @@ message RerankRequest {
 message RerankResponse {
   // The kept chunks, sorted by descending score.
   repeated ScoredChunk chunks = 1;
+}
+
+// The argument of ragondin_contracts::Reranker::model_identity.
+message RerankerModelIdentityRequest {
+  // The served model whose identity is asked for, as RerankParams carries
+  // it: optional with explicit presence, and refused by a service when
+  // absent or empty.
+  optional string served_model = 1;
+}
+
+// The result of a reranker's model identity call.
+message RerankerModelIdentityResponse {
+  // The identity of the model the service answers served_model with.
+  // Required, and never empty.
+  ModelIdentity identity = 1;
 }

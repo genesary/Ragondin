@@ -361,8 +361,13 @@ pub trait Reranker: Send + Sync {
         &self,
         query: &Query,
         chunks: Vec<ScoredChunk>,
-        params: &RerankParams,
+        params: &RerankParams, // top_k, and an optional served_model
     ) -> Result<Vec<ScoredChunk>, ComponentError>;
+
+    async fn model_identity(
+        &self,
+        served_model: Option<&str>,
+    ) -> Result<ModelIdentity, ComponentError>;
 }
 ```
 
@@ -371,8 +376,11 @@ pub trait Reranker: Send + Sync {
 ```proto
 service Reranker {
   rpc Rerank(RerankRequest) returns (RerankResponse);
+  rpc GetModelIdentity(RerankerModelIdentityRequest) returns (RerankerModelIdentityResponse);
 }
 ```
+
+Every model-bearing family — `Embedder`, `Reranker`, `ContextBuilder`, `Generator` — carries `model_identity` on face 1 and `GetModelIdentity` on face 2 (ADR-C31 § 4, ADR-C32 § 4). The embedder's and the reranker's take an optional `served_model`, which their per-call params carry too; the generator's takes a required one, and the context builder's takes none.
 
 **The generic `Remote<T>` adapter** (`ragondin-remote`) implements the trait by delegating over gRPC. The engine never distinguishes the two: both are `Box<dyn Reranker>`.
 
