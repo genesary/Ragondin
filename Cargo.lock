@@ -2037,7 +2037,10 @@ dependencies = [
 name = "ragondin-generator-service"
 version = "0.0.0"
 dependencies = [
+ "ragondin-contracts",
  "ragondin-proto",
+ "ragondin-remote",
+ "ragondin-types",
  "reqwest",
  "serde",
  "serde_json",

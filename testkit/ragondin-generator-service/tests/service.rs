@@ -6,24 +6,28 @@
 //! asserts on the body the service actually sent. Nothing here touches the
 //! network beyond the loopback interface, and no real model is involved.
 //!
-//! The service is driven through the generated `GeneratorClient`, so the
-//! tests assert the gRPC status each failure becomes. Which `ComponentError`
-//! a status then becomes is the `Remote` adapter's mapping, not this
-//! service's.
+//! The service is driven through `RemoteGenerator`, the `Remote` adapter a
+//! pipeline reaches it by, so each row of ADR-C33 § 5's error table is
+//! asserted as the `ComponentError` the caller finally sees (ADR-C35 § 2):
+//! `INVALID_ARGUMENT` as `InvalidRequest`, `UNAVAILABLE` as `Unavailable`,
+//! `INTERNAL` as `Backend` with the `Status` as its source. The few calls the
+//! adapter refuses before sending go through the bare generated client
+//! instead; each says why.
 
 use std::io::{BufRead, BufReader, Read};
 use std::net::SocketAddr;
 use std::process::{Child, ChildStdout, Command, Stdio};
 use std::sync::{Arc, Mutex};
 
+use ragondin_contracts::{ComponentError, GenerateParams, Generator};
+use ragondin_proto::v1;
 use ragondin_proto::v1::generator_client::GeneratorClient;
-use ragondin_proto::v1::{
-    Context, GenerateParams, GenerateRequest, GeneratorModelIdentityRequest, Query,
-};
+use ragondin_remote::RemoteGenerator;
+use ragondin_types::{Context, Query, QueryId};
 use serde_json::{json, Value};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
-use tonic::transport::Channel;
+use tonic::transport::{Channel, Endpoint};
 use tonic::Code;
 
 const BIN: &str = env!("CARGO_BIN_EXE_ragondin-generator-service");
@@ -288,57 +292,91 @@ impl Service {
         .unwrap()
     }
 
-    async fn client(&self) -> GeneratorClient<Channel> {
+    /// The `Remote` adapter over a lazily connecting channel, as the
+    /// composition root builds it (ADR-C32 § 3).
+    fn generator(&self) -> RemoteGenerator {
+        let channel = Endpoint::from_shared(format!("http://{}", self.addr))
+            .expect("a valid endpoint")
+            .connect_lazy();
+        RemoteGenerator::new(channel)
+    }
+
+    /// The generated client, bare: for the calls the adapter refuses before
+    /// sending, which the service must refuse on receipt as well.
+    async fn raw_client(&self) -> GeneratorClient<Channel> {
         GeneratorClient::connect(format!("http://{}", self.addr))
             .await
             .expect("connect to the service")
     }
 }
 
+// ---------------------------------------------------------------------------
+// Calls, and what the caller sees of a failure
+// ---------------------------------------------------------------------------
+
+fn query() -> Query {
+    Query {
+        id: QueryId::new("q1"),
+        text: "What is the capital of France?".into(),
+    }
+}
+
+fn context() -> Context {
+    Context {
+        chunks: vec![],
+        text: "Paris is the capital of France.".into(),
+    }
+}
+
 fn params(served_model: &str, template: &str) -> GenerateParams {
-    GenerateParams {
-        served_model: served_model.to_owned(),
-        template: template.to_owned(),
-        ..Default::default()
-    }
+    GenerateParams::new(served_model, template)
 }
 
-fn request(params: GenerateParams) -> GenerateRequest {
-    GenerateRequest {
-        query: Some(Query {
-            id: "q1".into(),
-            text: "What is the capital of France?".into(),
-        }),
-        context: Some(Context {
-            chunks: vec![],
-            text: "Paris is the capital of France.".into(),
-        }),
-        params: Some(params),
-    }
-}
-
-fn identity_request(served_model: &str) -> GeneratorModelIdentityRequest {
-    GeneratorModelIdentityRequest {
-        served_model: served_model.to_owned(),
-    }
-}
-
-async fn generate_status(base: &str, req: GenerateRequest) -> tonic::Status {
-    let service = Service::start(base).await;
+async fn generate(service: &Service, params: &GenerateParams) -> Result<String, ComponentError> {
     service
-        .client()
+        .generator()
+        .generate(&query(), &context(), params)
         .await
-        .generate(req)
+        .map(|answer| answer.text)
+}
+
+async fn identity(service: &Service, served_model: &str) -> Result<String, ComponentError> {
+    service
+        .generator()
+        .model_identity(served_model)
+        .await
+        .map(|identity| identity.as_str().to_owned())
+}
+
+/// The gRPC status the service returned, read back from the `ComponentError`
+/// the adapter made of it, which must be the variant ADR-C35 § 2 names for
+/// that status. Returns the message the caller can read.
+#[track_caller]
+fn assert_maps(error: &ComponentError, service_status: Code, what: &str) -> String {
+    match (service_status, error) {
+        (Code::InvalidArgument, ComponentError::InvalidRequest(message)) => message.clone(),
+        (Code::Unavailable, ComponentError::Unavailable(message)) => message.clone(),
+        (Code::Internal, ComponentError::Backend(source)) => {
+            let status = source
+                .downcast_ref::<tonic::Status>()
+                .unwrap_or_else(|| panic!("{what}: Backend's source is the Status: {error:?}"));
+            assert_eq!(status.code(), Code::Internal, "{what}: {error:?}");
+            status.message().to_owned()
+        }
+        _ => panic!("{what}: expected the variant for {service_status:?}, got {error:?}"),
+    }
+}
+
+async fn generate_error(base: &str, params: &GenerateParams) -> ComponentError {
+    let service = Service::start(base).await;
+    generate(&service, params)
         .await
         .expect_err("the call is refused")
 }
 
-async fn identity_status(base: &str, served_model: &str) -> tonic::Status {
+async fn identity_error(base: &str, served_model: &str) -> ComponentError {
     let service = Service::start(base).await;
-    service
-        .client()
-        .await
-        .get_model_identity(identity_request(served_model))
+    identity(&service, served_model)
         .await
         .expect_err("the call is refused")
 }
@@ -346,19 +384,34 @@ async fn identity_status(base: &str, served_model: &str) -> tonic::Status {
 async fn identity_of(models: Value, served_model: &str) -> String {
     let fake = Fake::start(move |_| reply(200, models.clone())).await;
     let service = Service::start(&fake.base()).await;
-    let response = service
-        .client()
+    let identity = identity(&service, served_model)
         .await
-        .get_model_identity(identity_request(served_model))
-        .await
-        .expect("a listed model is answered")
-        .into_inner();
+        .expect("a listed model is answered");
     let seen = fake.only();
     assert_eq!(
         (seen.method.as_str(), seen.path.as_str()),
         ("GET", "/v1/models")
     );
-    response.identity.expect("an identity").identity
+    identity
+}
+
+/// A well-formed request of the generated messages, for the bare client.
+fn raw_request(served_model: &str, template: &str) -> v1::GenerateRequest {
+    v1::GenerateRequest {
+        query: Some(v1::Query {
+            id: "q1".into(),
+            text: "What is the capital of France?".into(),
+        }),
+        context: Some(v1::Context {
+            chunks: vec![],
+            text: "Paris is the capital of France.".into(),
+        }),
+        params: Some(v1::GenerateParams {
+            served_model: served_model.to_owned(),
+            template: template.to_owned(),
+            ..Default::default()
+        }),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -370,15 +423,11 @@ async fn an_answer_round_trips() {
     let fake = Fake::start(|_| completion("Paris.")).await;
     let service = Service::start(&fake.base()).await;
 
-    let response = service
-        .client()
+    let answer = generate(&service, &params("qwen", "{context}\n{query}"))
         .await
-        .generate(request(params("qwen", "{context}\n{query}")))
-        .await
-        .expect("the call is answered")
-        .into_inner();
+        .expect("the call is answered");
 
-    assert_eq!(response.answer.expect("an answer").text, "Paris.");
+    assert_eq!(answer, "Paris.");
     let seen = fake.only();
     assert_eq!(seen.method, "POST");
     assert_eq!(seen.path, "/v1/chat/completions");
@@ -392,15 +441,15 @@ async fn the_body_is_one_user_message_holding_the_rendered_template() {
     let fake = Fake::start(|_| completion("ok")).await;
     let service = Service::start(&fake.base()).await;
 
-    service
-        .client()
-        .await
-        .generate(request(params(
+    generate(
+        &service,
+        &params(
             "Qwen/Qwen2.5-7B-Instruct",
             "Context: {context}\nQuestion: {query}\nReply as {{\"answer\": ...}}, not {{query}}.",
-        )))
-        .await
-        .expect("the call is answered");
+        ),
+    )
+    .await
+    .expect("the call is answered");
 
     let body = fake.only().json();
     assert_eq!(
@@ -422,18 +471,15 @@ async fn the_body_is_one_user_message_holding_the_rendered_template() {
 async fn the_optional_knobs_are_sent_as_received_when_set() {
     let fake = Fake::start(|_| completion("ok")).await;
     let service = Service::start(&fake.base()).await;
-    let mut set = params("qwen", "{query}");
-    // A zero temperature is a value, greedy decoding, and not an absence.
-    set.temperature = Some(0.0);
-    // Beyond the signed 64-bit range some servers bound a seed to: relayed as
-    // received, never clamped (ADR-C33, Consequences).
-    set.seed = Some(u64::MAX);
-    set.max_tokens = Some(128);
+    // A zero temperature is a value, greedy decoding, and not an absence. A
+    // seed beyond the signed 64-bit range some servers bound it to is relayed
+    // as received, never clamped (ADR-C33, Consequences).
+    let set = params("qwen", "{query}")
+        .with_temperature(0.0)
+        .with_seed(u64::MAX)
+        .with_max_tokens(128);
 
-    service
-        .client()
-        .await
-        .generate(request(set))
+    generate(&service, &set)
         .await
         .expect("the call is answered");
 
@@ -458,13 +504,8 @@ async fn the_optional_knobs_are_sent_as_received_when_set() {
 async fn a_fractional_temperature_is_sent_exactly() {
     let fake = Fake::start(|_| completion("ok")).await;
     let service = Service::start(&fake.base()).await;
-    let mut set = params("qwen", "{query}");
-    set.temperature = Some(0.7);
 
-    service
-        .client()
-        .await
-        .generate(request(set))
+    generate(&service, &params("qwen", "{query}").with_temperature(0.7))
         .await
         .expect("the call is answered");
 
@@ -484,16 +525,11 @@ async fn the_api_key_is_sent_as_a_bearer_token_to_both_endpoints() {
     })
     .await;
     let service = Service::start_with_key(&fake.base(), Some("sk-test")).await;
-    let mut client = service.client().await;
 
-    client
-        .generate(request(params("qwen", "{query}")))
+    generate(&service, &params("qwen", "{query}"))
         .await
         .unwrap();
-    client
-        .get_model_identity(identity_request("qwen"))
-        .await
-        .unwrap();
+    identity(&service, "qwen").await.unwrap();
 
     let seen = fake.seen();
     assert_eq!(seen.len(), 2);
@@ -512,10 +548,7 @@ async fn no_authorization_header_without_a_key_or_with_an_empty_one() {
     for key in [None, Some("")] {
         let fake = Fake::start(|_| completion("ok")).await;
         let service = Service::start_with_key(&fake.base(), key).await;
-        service
-            .client()
-            .await
-            .generate(request(params("qwen", "{query}")))
+        generate(&service, &params("qwen", "{query}"))
             .await
             .unwrap();
         assert_eq!(fake.only().header("authorization"), None, "key {key:?}");
@@ -531,10 +564,7 @@ async fn the_base_url_keeps_its_path_and_loses_one_trailing_slash() {
     ] {
         let fake = Fake::start(|_| completion("ok")).await;
         let service = Service::start(&format!("{}{suffix}", fake.base())).await;
-        service
-            .client()
-            .await
-            .generate(request(params("qwen", "{query}")))
+        generate(&service, &params("qwen", "{query}"))
             .await
             .unwrap();
         assert_eq!(fake.only().path, expected, "base suffix {suffix:?}");
@@ -545,10 +575,7 @@ async fn the_base_url_keeps_its_path_and_loses_one_trailing_slash() {
 async fn stdout_holds_the_listening_line_and_nothing_else() {
     let fake = Fake::start(|_| completion("ok")).await;
     let mut service = Service::start_with_key(&fake.base(), Some("sk-secret")).await;
-    service
-        .client()
-        .await
-        .generate(request(params("qwen", "{query}")))
+    generate(&service, &params("qwen", "{query}"))
         .await
         .unwrap();
 
@@ -565,60 +592,75 @@ async fn stdout_holds_the_listening_line_and_nothing_else() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_malformed_call_is_refused_before_any_request() {
-    let nan = GenerateParams {
-        temperature: Some(f64::NAN),
-        ..params("qwen", "{query}")
-    };
-    let inf = GenerateParams {
-        temperature: Some(f64::INFINITY),
-        ..params("qwen", "{query}")
-    };
     let cases = [
-        ("empty served_model", request(params("", "{query}"))),
-        ("empty template", request(params("qwen", ""))),
-        ("NaN temperature", request(nan)),
-        ("infinite temperature", request(inf)),
-        ("unknown placeholder", request(params("qwen", "{question}"))),
-        ("unclosed brace", request(params("qwen", "{query"))),
-        ("lone closing brace", request(params("qwen", "a } b"))),
         (
-            "no query",
-            GenerateRequest {
-                query: None,
-                ..request(params("qwen", "{query}"))
-            },
+            "NaN temperature",
+            params("qwen", "{query}").with_temperature(f64::NAN),
         ),
         (
-            "no context",
-            GenerateRequest {
-                context: None,
-                ..request(params("qwen", "{query}"))
-            },
+            "infinite temperature",
+            params("qwen", "{query}").with_temperature(f64::INFINITY),
         ),
-        (
-            "no params",
-            GenerateRequest {
-                params: None,
-                ..request(params("qwen", "{query}"))
-            },
-        ),
+        ("unknown placeholder", params("qwen", "{question}")),
+        ("unclosed brace", params("qwen", "{query")),
+        ("lone closing brace", params("qwen", "a } b")),
     ];
     let fake = Fake::start(|_| completion("never")).await;
     let service = Service::start(&fake.base()).await;
-    let mut client = service.client().await;
-    for (what, req) in cases {
-        let status = client.generate(req).await.expect_err(what);
-        assert_eq!(status.code(), Code::InvalidArgument, "{what}: {status:?}");
+    for (what, p) in cases {
+        let error = generate(&service, &p).await.expect_err(what);
+        assert_maps(&error, Code::InvalidArgument, what);
     }
     assert!(fake.seen().is_empty(), "no refused call reached the fake");
 }
 
+// The adapter refuses an empty served_model or template itself, before it
+// sends anything (ADR-C31 § 2 asks both the adapter and the service to), and
+// it always sends the three request messages. So these rows can reach the
+// service only through the bare generated client, which is also what a
+// `Remote` caller in another language would use.
 #[tokio::test(flavor = "multi_thread")]
-async fn an_empty_served_model_is_refused_by_identity_before_any_request() {
+async fn a_call_the_adapter_never_sends_is_refused_by_the_service_too() {
+    let cases = [
+        ("empty served_model", raw_request("", "{query}")),
+        ("empty template", raw_request("qwen", "")),
+        (
+            "no query",
+            v1::GenerateRequest {
+                query: None,
+                ..raw_request("qwen", "{query}")
+            },
+        ),
+        (
+            "no context",
+            v1::GenerateRequest {
+                context: None,
+                ..raw_request("qwen", "{query}")
+            },
+        ),
+        (
+            "no params",
+            v1::GenerateRequest {
+                params: None,
+                ..raw_request("qwen", "{query}")
+            },
+        ),
+    ];
     let fake = Fake::start(|_| reply(200, json!({"data": []}))).await;
-    let status = identity_status(&fake.base(), "").await;
-    assert_eq!(status.code(), Code::InvalidArgument, "{status:?}");
-    assert!(fake.seen().is_empty());
+    let service = Service::start(&fake.base()).await;
+    let mut client = service.raw_client().await;
+    for (what, req) in cases {
+        let status = client.generate(req).await.expect_err(what);
+        assert_eq!(status.code(), Code::InvalidArgument, "{what}: {status:?}");
+    }
+    let status = client
+        .get_model_identity(v1::GeneratorModelIdentityRequest {
+            served_model: String::new(),
+        })
+        .await
+        .expect_err("empty served_model");
+    assert_eq!(status.code(), Code::InvalidArgument, "identity: {status:?}");
+    assert!(fake.seen().is_empty(), "no refused call reached the fake");
 }
 
 // ---------------------------------------------------------------------------
@@ -628,19 +670,19 @@ async fn an_empty_served_model_is_refused_by_identity_before_any_request() {
 #[tokio::test(flavor = "multi_thread")]
 async fn an_unreachable_inference_server_is_unavailable() {
     let base = refused_base().await;
-    let status = generate_status(&base, request(params("qwen", "{query}"))).await;
-    assert_eq!(status.code(), Code::Unavailable, "{status:?}");
-    let status = identity_status(&base, "qwen").await;
-    assert_eq!(status.code(), Code::Unavailable, "{status:?}");
+    let error = generate_error(&base, &params("qwen", "{query}")).await;
+    assert_maps(&error, Code::Unavailable, "generate");
+    let error = identity_error(&base, "qwen").await;
+    assert_maps(&error, Code::Unavailable, "identity");
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_transport_failure_after_the_status_line_is_unavailable() {
     let fake = Fake::start(|_| Reply::CutAfterHead).await;
-    let status = generate_status(&fake.base(), request(params("qwen", "{query}"))).await;
-    assert_eq!(status.code(), Code::Unavailable, "{status:?}");
-    let status = identity_status(&fake.base(), "qwen").await;
-    assert_eq!(status.code(), Code::Unavailable, "{status:?}");
+    let error = generate_error(&fake.base(), &params("qwen", "{query}")).await;
+    assert_maps(&error, Code::Unavailable, "generate");
+    let error = identity_error(&fake.base(), "qwen").await;
+    assert_maps(&error, Code::Unavailable, "identity");
 }
 
 // ---------------------------------------------------------------------------
@@ -648,7 +690,7 @@ async fn a_transport_failure_after_the_status_line_is_unavailable() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test(flavor = "multi_thread")]
-async fn each_http_status_class_maps_to_its_grpc_status() {
+async fn each_http_status_class_maps_to_its_component_error() {
     let cases = [
         (429, Code::Unavailable),
         (503, Code::Unavailable),
@@ -672,30 +714,26 @@ async fn each_http_status_class_maps_to_its_grpc_status() {
         })
         .await;
         let service = Service::start(&fake.base()).await;
-        let mut client = service.client().await;
 
-        let status = client
-            .generate(request(params("qwen", "{query}")))
+        let error = generate(&service, &params("qwen", "{query}"))
             .await
             .expect_err("refused");
-        assert_eq!(status.code(), expected, "generate, HTTP {http}: {status:?}");
+        let what = format!("generate, HTTP {http}");
+        let message = assert_maps(&error, expected, &what);
         assert!(
-            status.message().contains(&http.to_string()),
-            "the message carries the upstream status: {status:?}"
+            message.contains(&http.to_string()),
+            "{what}: the message carries the upstream status: {message}"
         );
         // A 304 has no body by HTTP's rules, so it has no error text to carry.
         if http != 304 {
             assert!(
-                status.message().contains(&format!("upstream says {http}")),
-                "the message carries the upstream error text: {status:?}"
+                message.contains(&format!("upstream says {http}")),
+                "{what}: the message carries the upstream error text: {message}"
             );
         }
 
-        let status = client
-            .get_model_identity(identity_request("qwen"))
-            .await
-            .expect_err("refused");
-        assert_eq!(status.code(), expected, "identity, HTTP {http}: {status:?}");
+        let error = identity(&service, "qwen").await.expect_err("refused");
+        assert_maps(&error, expected, &format!("identity, HTTP {http}"));
 
         assert_eq!(
             fake.seen().len(),
@@ -717,8 +755,8 @@ async fn a_redirect_is_not_followed() {
         }
     })
     .await;
-    let status = generate_status(&fake.base(), request(params("qwen", "{query}"))).await;
-    assert_eq!(status.code(), Code::Internal, "{status:?}");
+    let error = generate_error(&fake.base(), &params("qwen", "{query}")).await;
+    assert_maps(&error, Code::Internal, "redirect");
     assert_eq!(fake.only().path, "/v1/chat/completions");
 }
 
@@ -733,15 +771,12 @@ async fn the_api_key_never_reaches_the_status_message() {
     })
     .await;
     let service = Service::start_with_key(&fake.base(), Some("sk-secret-42")).await;
-    let status = service
-        .client()
-        .await
-        .generate(request(params("qwen", "{query}")))
+    let error = generate(&service, &params("qwen", "{query}"))
         .await
         .expect_err("refused");
-    assert_eq!(status.code(), Code::InvalidArgument);
-    assert!(status.message().contains("401"), "{status:?}");
-    assert!(!status.message().contains("sk-secret-42"), "{status:?}");
+    let message = assert_maps(&error, Code::InvalidArgument, "401");
+    assert!(message.contains("401"), "{message}");
+    assert!(!message.contains("sk-secret-42"), "{message}");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -752,14 +787,11 @@ async fn a_key_echoed_across_the_error_text_limit_is_redacted_whole() {
     // let its first characters through.
     let fake = Fake::start(|_| raw(401, &format!("{}{KEY} trailing", "x".repeat(505)))).await;
     let service = Service::start_with_key(&fake.base(), Some(KEY)).await;
-    let status = service
-        .client()
-        .await
-        .generate(request(params("qwen", "{query}")))
+    let error = generate(&service, &params("qwen", "{query}"))
         .await
         .expect_err("refused");
-    assert_eq!(status.code(), Code::InvalidArgument);
-    assert!(!status.message().contains(&KEY[..6]), "{status:?}");
+    let message = assert_maps(&error, Code::InvalidArgument, "401");
+    assert!(!message.contains(&KEY[..6]), "{message}");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -768,36 +800,31 @@ async fn a_key_reflected_into_an_undecodable_2xx_body_is_redacted() {
     // `serde_json` quotes a mistyped string value in its error, so a body
     // that puts the key where a list belongs would carry it into the status.
     let cases = [
-        ("completion", json!({"choices": KEY})),
-        (
-            "completion",
-            json!({"choices": [{"message": {"content": [KEY]}}]}),
-        ),
+        json!({"choices": KEY}),
+        json!({"choices": [{"message": {"content": [KEY]}}]}),
     ];
-    for (what, body) in cases {
+    for body in cases {
         let fake = Fake::start(move |_| reply(200, body.clone())).await;
         let service = Service::start_with_key(&fake.base(), Some(KEY)).await;
-        let status = service
-            .client()
-            .await
-            .generate(request(params("qwen", "{query}")))
+        let error = generate(&service, &params("qwen", "{query}"))
             .await
             .expect_err("refused");
-        assert_eq!(status.code(), Code::Internal, "{what}: {status:?}");
-        assert!(!status.message().contains(KEY), "{what}: {status:?}");
+        let message = assert_maps(&error, Code::Internal, "reflected key");
+        assert!(!message.contains(KEY), "{message}");
+        assert!(!format!("{error:?}").contains(KEY), "{error:?}");
     }
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_long_json_error_message_is_cut_like_any_other_error_text() {
     let fake = Fake::start(|_| reply(500, json!({"error": {"message": "y".repeat(4000)}}))).await;
-    let status = generate_status(&fake.base(), request(params("qwen", "{query}"))).await;
-    assert_eq!(status.code(), Code::Internal);
-    assert!(status.message().contains("yyyy"), "{status:?}");
+    let error = generate_error(&fake.base(), &params("qwen", "{query}")).await;
+    let message = assert_maps(&error, Code::Internal, "long message");
+    assert!(message.contains("yyyy"), "{message}");
     assert!(
-        status.message().chars().count() < 700,
+        message.chars().count() < 700,
         "the upstream text is bounded: {} chars",
-        status.message().chars().count()
+        message.chars().count()
     );
 }
 
@@ -826,8 +853,8 @@ async fn an_unreadable_completion_is_internal() {
     for (what, answer) in cases {
         let answer = Arc::new(Mutex::new(Some(answer)));
         let fake = Fake::start(move |_| answer.lock().unwrap().take().unwrap()).await;
-        let status = generate_status(&fake.base(), request(params("qwen", "{query}"))).await;
-        assert_eq!(status.code(), Code::Internal, "{what}: {status:?}");
+        let error = generate_error(&fake.base(), &params("qwen", "{query}")).await;
+        assert_maps(&error, Code::Internal, what);
     }
 }
 
@@ -850,8 +877,8 @@ async fn an_unreadable_model_list_is_internal() {
     for (what, answer) in cases {
         let answer = Arc::new(Mutex::new(Some(answer)));
         let fake = Fake::start(move |_| answer.lock().unwrap().take().unwrap()).await;
-        let status = identity_status(&fake.base(), "qwen").await;
-        assert_eq!(status.code(), Code::Internal, "{what}: {status:?}");
+        let error = identity_error(&fake.base(), "qwen").await;
+        assert_maps(&error, Code::Internal, what);
     }
 }
 
@@ -929,17 +956,8 @@ async fn the_identity_is_stable_across_calls() {
     })
     .await;
     let service = Service::start(&fake.base()).await;
-    let mut client = service.client().await;
-    let a = client
-        .get_model_identity(identity_request("qwen"))
-        .await
-        .unwrap()
-        .into_inner();
-    let b = client
-        .get_model_identity(identity_request("qwen"))
-        .await
-        .unwrap()
-        .into_inner();
+    let a = identity(&service, "qwen").await.unwrap();
+    let b = identity(&service, "qwen").await.unwrap();
     assert_eq!(a, b);
 }
 
@@ -955,9 +973,9 @@ fn rand_like() -> u128 {
 async fn an_unlisted_model_is_refused() {
     let fake =
         Fake::start(|_| reply(200, json!({"data": [{"id": "qwen"}, {"id": "llama"}]}))).await;
-    let status = identity_status(&fake.base(), "mistral").await;
-    assert_eq!(status.code(), Code::InvalidArgument, "{status:?}");
-    assert!(status.message().contains("mistral"), "{status:?}");
+    let error = identity_error(&fake.base(), "mistral").await;
+    let message = assert_maps(&error, Code::InvalidArgument, "unlisted");
+    assert!(message.contains("mistral"), "{message}");
 }
 
 // ---------------------------------------------------------------------------

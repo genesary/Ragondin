@@ -212,11 +212,22 @@ it.
   records what it received, so the tests assert on the body the service sent:
   the round trip, the rendered template and its escapes, the optional knobs
   absent and present, the bearer header, the base URL's path, stdout's one
-  line, every row of the error table, the identity of a listed and of an
-  unlisted model, and the refusal of a bad command line. No test touches the
-  network beyond loopback, and none needs a real model.
+  line, every row of the error table, the redaction of the key, the identity
+  of a listed and of an unlisted model, and the refusal of a bad command line.
+  No test touches the network beyond loopback, and none needs a real model.
 
-The tests drive the service through the generated `GeneratorClient`. ADR-C33
-§ 6 has them drive it through `RemoteGenerator` from `ragondin-remote` instead,
-which asserts the `ComponentError` each status becomes; that adapter does not
-exist yet, and switching the client is the change still owed here once it does.
+**The tests drive the service through `RemoteGenerator`** from
+`ragondin-remote`, over a lazily connecting channel, as ADR-C33 § 6 requires:
+each row of the error table is asserted as the `ComponentError` a caller
+finally sees, under ADR-C35 § 2 — `INVALID_ARGUMENT` as `InvalidRequest`,
+`UNAVAILABLE` as `Unavailable`, `INTERNAL` as `Backend` whose source is the
+`Status`. `ragondin-remote`, `ragondin-contracts` and `ragondin-types` are
+dev-dependencies for that alone.
+
+**One group of calls goes through the bare generated `GeneratorClient`
+instead**: an empty `served_model` or `template`, and a request missing its
+query, context or params message. The adapter refuses the first two itself
+before sending (ADR-C31 § 2 asks both it and the service to), and always sends
+the three messages, so through it these rows would never reach the service. A
+`Remote` caller in another language can send them, and the service must refuse
+them on receipt.

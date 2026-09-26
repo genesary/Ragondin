@@ -39,3 +39,12 @@ serde_json = { workspace = true }
 thiserror = { workspace = true } # the library's typed errors
 reqwest = { workspace = true, optional = true }
 tonic = { workspace = true, optional = true }
+
+# Test-only: the tests drive the spawned binary through `RemoteGenerator`, the
+# `Remote` adapter a pipeline reaches the service by, and assert the
+# `ComponentError` each failure becomes (ADR-C33 § 6). The contract and the
+# domain types are what that adapter's calls take and return.
+[dev-dependencies]
+ragondin-remote = { workspace = true }
+ragondin-contracts = { workspace = true }
+ragondin-types = { workspace = true }
