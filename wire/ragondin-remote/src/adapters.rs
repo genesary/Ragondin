@@ -39,8 +39,9 @@ use crate::{
 /// `OUT_OF_RANGE`, which is `Backend`, in the middle of a run. The adapters
 /// set it deliberately, and in both directions, together with the batching of
 /// [`EMBED_BATCH`] and [`UPSERT_BATCH`]: a batch of the widest embeddings in
-/// common use stays several times below it. A `Remote` service accepts
-/// requests of this size, and answers within it. See `ARCHITECTURE.md`.
+/// common use stays several times below it. This is the adapter's side only:
+/// what a service accepts is governed by its own receive limit, which the
+/// `.proto` does not fix. See `ARCHITECTURE.md`.
 pub const MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
 
 /// At most this many texts go in one Embed rpc; a larger call is split, in
@@ -69,9 +70,10 @@ fn batches<T>(items: &[T], size: usize) -> impl Iterator<Item = &[T]> {
 }
 
 /// The served model a `Remote` embedder or reranker is asked for, which it
-/// requires: a service has no loaded model that `None` could name, and the
-/// adapter refuses `None` before sending, as it refuses an empty name
-/// (ADR-C32 § 4).
+/// requires: a service has no loaded model that `None` could name. ADR-C32
+/// § 4 has the service refuse `None` and both sides refuse the empty name;
+/// ADR-C32's Consequences have the adapter refuse `None` as well, before
+/// sending, so a call that cannot succeed never reaches the network.
 fn served_model(served_model: Option<&str>) -> Result<&str, ComponentError> {
     match served_model {
         None => Err(ComponentError::InvalidRequest(
@@ -161,7 +163,9 @@ impl Fusion for RemoteFusion {
 /// A [`Reranker`] served over gRPC.
 ///
 /// Every call must name its served model: the adapter refuses `None` and the
-/// empty name as an invalid request before sending (ADR-C32 § 4).
+/// empty name as an invalid request before sending. ADR-C32 § 4 has the
+/// service refuse `None` and both sides refuse the empty name; ADR-C32's
+/// Consequences have the adapter refuse `None` as well, before sending.
 #[derive(Clone, Debug)]
 pub struct RemoteReranker {
     client: RerankerClient<Channel>,
@@ -223,7 +227,9 @@ impl Reranker for RemoteReranker {
 /// the service may use it for that is not text.
 ///
 /// Every call must name its served model: the adapter refuses `None` and the
-/// empty name as an invalid request before sending (ADR-C32 § 4). A call of
+/// empty name as an invalid request before sending. ADR-C32 § 4 has the
+/// service refuse `None` and both sides refuse the empty name; ADR-C32's
+/// Consequences have the adapter refuse `None` as well, before sending. A call of
 /// more than [`EMBED_BATCH`] texts is sent as several rpcs, and each batch
 /// must come back with one vector per text, or the call fails as `Backend`.
 #[derive(Clone, Debug)]

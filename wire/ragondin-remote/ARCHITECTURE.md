@@ -35,8 +35,8 @@ would use, in `tests/support`.
   `Vec<ScoredChunk>` is the response of four rpcs.
 - **A trait method's arguments convert as one tuple** to its request, in the
   method's argument order, and its return value to its response: `(Query,
-  RetrieveParams)` ⇄ `RetrieveRequest`, `()` ⇄ `UpsertResponse`, `Option<String>`
-  ⇄ an identity request. One call converts a whole rpc on either side.
+  RetrieveParams)` ⇄ `RetrieveRequest`, `()` ⇄ `UpsertResponse`,
+  `Option<String>` ⇄ an identity request. One call converts a whole rpc on either side.
 - **`FromProto` refuses exactly what the domain cannot represent or does not
   accept on the wire**: a required message left out (`types.proto`'s header),
   an `EmbedRole` of `UNSPECIFIED` or of a number the enum does not name
@@ -60,7 +60,8 @@ would use, in `tests/support`.
 
 `src/status.rs` is ADR-C35 written down once: `status_from_error` and
 `status_from_request` for a service, `error_from_status`,
-`error_from_response` and `error_from_identity_response` for an adapter. No adapter maps a status itself.
+`error_from_response` and `error_from_identity_response` for an adapter. No
+adapter maps a status itself.
 `ComponentError` is `#[non_exhaustive]`, so `status_from_error` has a wildcard
 arm; a variant added later is `INTERNAL`, "any other failure", until ADR-C35's
 table names it.
@@ -84,8 +85,10 @@ its own refusal.
   call, as `Unavailable`: `tonic` reports a failed connect as `UNAVAILABLE`.
 - **The embedder and the reranker refuse an absent or empty `served_model`
   before sending**, as `InvalidRequest`, in every call and in
-  `model_identity` (ADR-C32 § 4). A name the service does not serve is the
-  service's refusal, arriving as `INVALID_ARGUMENT`.
+  `model_identity`. ADR-C32 § 4 has the service refuse `None` and both sides
+  refuse the empty name; ADR-C32's Consequences have the adapter refuse `None`
+  as well, before sending. A name the service does not serve is the service's
+  refusal, arriving as `INVALID_ARGUMENT`.
 - **The embedder adapter applies the prefixes** (ADR-C32 § 4). `query_prefix`
   and `passage_prefix` are constructor parameters of `RemoteEmbedder`, the
   `dense` node's two keys, which the composition root reads; the text on the
@@ -118,13 +121,16 @@ are done, and each covers what the other cannot:**
   They are the two rpcs whose size the caller does not bound: every other rpc's
   response is bounded by a `top_k` or by the input it was handed. 256 vectors of
   16 384 components are 16 MiB, a quarter of the limit. A batch is split in
-  order, answered in order, and moved rather than copied; an empty call still sends one empty rpc, so the
-  service sees its parameters and refuses a bad `served_model` as a `Local`
-  component would. A split Upsert is not atomic: a failed later batch leaves the
-  earlier ones written, as a retry would find them.
+  order, answered in order, and moved rather than copied; an empty call still
+  sends one empty rpc, so the service sees its parameters and refuses a bad
+  `served_model` as a `Local` component would. A split Upsert is not atomic: a
+  failed later batch leaves the earlier ones written, as a retry would find
+  them.
 
-A `Remote` service accepts requests up to 64 MiB and answers within it; the
-in-process test services set the same limits.
+Both limits are the adapter's side only: it sends and accepts at most 64 MiB.
+What a service accepts is governed by its own receive limit, which the `.proto`
+does not fix and many gRPC stacks default to 4 MiB; the in-process test
+services raise theirs to match.
 
 ## Feature gating
 

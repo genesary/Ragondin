@@ -22,7 +22,8 @@
 //! - **The status conversion** of ADR-C35, in both directions:
 //!   [`status_from_error`] and [`status_from_request`] for a service written
 //!   in Rust, [`error_from_status`], [`error_from_response`] and
-//!   [`error_from_identity_response`] for an adapter. Every adapter maps a failure through these and nothing else.
+//!   [`error_from_identity_response`] for an adapter. Every adapter maps a
+//!   failure through these and nothing else.
 //! - **The adapters** for the five M2 families: [`RemoteRetriever`],
 //!   [`RemoteFusion`], [`RemoteReranker`], [`RemoteEmbedder`] and
 //!   [`RemoteVectorStore`], each over a `tonic` channel its caller builds.
