@@ -1,0 +1,38 @@
+// The Fusion service: face 2 of ragondin_contracts::Fusion (ADR-3).
+
+syntax = "proto3";
+
+package ragondin.v1;
+
+import "ragondin/v1/types.proto";
+
+// Merges several retrieval results into one.
+service Fusion {
+  // Fuses the input lists into a single list, sorted by descending score,
+  // every score finite. No input lists is a valid call, and fuses to an
+  // empty list (ADR-C19).
+  rpc Fuse(FuseRequest) returns (FuseResponse);
+}
+
+// Per-call parameters of a fusion. Mirrors ragondin_contracts::FusionParams.
+//
+// Empty, like the Rust struct, and present all the same: a future knob is
+// then an added field rather than a change to the rpc's signature, which
+// would break every service implementing it.
+message FusionParams {}
+
+// The arguments of ragondin_contracts::Fusion::fuse.
+message FuseRequest {
+  // One ranked list per upstream retrieval leg, in the order the pipeline
+  // wires them. The order is significant and a service must not assume it
+  // is arbitrary.
+  repeated ScoredChunkList inputs = 1;
+  // The per-call parameters. Required.
+  FusionParams params = 2;
+}
+
+// The result of a fusion.
+message FuseResponse {
+  // The fused list, sorted by descending score.
+  repeated ScoredChunk chunks = 1;
+}

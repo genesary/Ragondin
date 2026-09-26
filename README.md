@@ -101,6 +101,7 @@ On `main` today:
 | `ragondin-engine` | `EngineContext` and the explicit component registry, physical planning (`LogicalPipeline` + registry → `PhysicalPipeline`), and an executor that returns its `ExecutionTrace` — on failure as well as on success. No `Branch` or `Loop`: no such node variant exists yet. |
 | `ragondin-conformance` | The behavioural suite every implementation of a contract must pass. |
 | `ragondin-metrics` | The deterministic metrics: nDCG@k, recall@k, precision@k, MRR and MAP@k for retrieval; exact match and token-F1, after the SQuAD v1.1 script, for generation. |
+| `ragondin-proto` | The protobuf face of the component contract: hand-maintained `.proto` files for the `Retriever`, `Fusion`, `Reranker`, `Embedder` and `VectorStore` services and the values they exchange (package `ragondin.v1`), and a reserved, empty configuration-delivery service (`ragondin.config.v1`), with the Rust stubs generated at build time and no `protoc` needed (ADR-C34). No `ContextBuilder` or `Generator` service yet. |
 | `ragondin-config` | The `ConfigSource` abstraction and its `LocalFile` implementation: a YAML file read into `RawPipeline` and compiled to a `LogicalPipeline`, with a typed error that keeps an unreadable file, an unsupported schema version, a parse fault and an invalid graph apart. No `Stream` source — that is M6. |
 | `ragondin-benchmarks` | The `BenchmarkAdapter` trait, the internal `Benchmark` structure it produces — corpus, queries, `Qrels`, `ReferenceAnswers` — with the pieces it carries reported by `Benchmark::carries`; `BeirAdapter`, which reads a BEIR dataset from disk and, on request, its `answers.jsonl` as reference answers; and `SquadAdapter`, which reads a SQuAD v1.1 file as a retrieval corpus with reference answers. |
 | `ragondin-harness` | The evaluation driver: `evaluate` takes a validated `LogicalPipeline`, a ready `EngineContext` and a loaded `Benchmark`, runs the pipeline once per query through `ragondin-engine`, scores the rankings against the qrels, and assembles the `Run` that names itself by its content-addressed identity. No execution logic of its own (ADR-4). |
@@ -120,9 +121,8 @@ binary's `bm25` feature is what pulls tantivy in, and its `onnx` feature ONNX
 Runtime and the components composed over it.
 
 Still compiling skeletons, each with a doc comment and a link test and no
-behaviour: `ragondin-proto`, `ragondin-remote` and `ragondin-server` — the
-protobuf wire layer, the generic `Remote<T>` adapters and the serving driver,
-each waiting on its own issue. A `VectorStore` over Qdrant is one of those too.
+behaviour: `ragondin-remote` and `ragondin-server` — the generic `Remote<T>`
+adapters and the serving driver, each waiting on its own issue. A `VectorStore` over Qdrant is one of those too.
 
 ### What using it will look like
 

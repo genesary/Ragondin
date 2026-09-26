@@ -1,0 +1,73 @@
+// The values the component services exchange.
+//
+// Face 2 of the component contract (ADR-3). Each message here mirrors, field
+// for field, a value in the Rust crate ragondin-types or ragondin-contracts,
+// which are the source of truth; this file is maintained by hand to follow
+// them (ADR-C24). An identifier newtype of ragondin-types (DocId, ChunkId,
+// QueryId) is a plain string here, as it is in that crate's serialized form.
+//
+// A message-typed field of a request is required even though proto3 lets it
+// be omitted: a request that leaves one out cannot be answered, and is
+// refused as an invalid request (ADR-C24).
+
+syntax = "proto3";
+
+package ragondin.v1;
+
+// A question posed to a pipeline. Mirrors ragondin_types::Query.
+message Query {
+  // Identifies this query within its benchmark.
+  string id = 1;
+  // The query text.
+  string text = 2;
+}
+
+// A passage of a document: the unit that is retrieved, ranked and scored.
+// Mirrors ragondin_types::Chunk.
+message Chunk {
+  // Identifies this chunk within its corpus.
+  string id = 1;
+  // The chunk's text.
+  string text = 2;
+  // The document this chunk was derived from.
+  string document_id = 3;
+}
+
+// A chunk with the relevance score a component gave it. Mirrors
+// ragondin_types::ScoredChunk.
+//
+// The whole chunk travels, not its id: a cross-encoder reranker scores
+// query and passage text pairs, and the contract provides no corpus lookup.
+message ScoredChunk {
+  // The chunk that was scored. Required.
+  Chunk chunk = 1;
+  // Its relevance score. Higher is more relevant; the scale is the scoring
+  // component's own, comparable only within one ranked list. Finite.
+  float score = 2;
+}
+
+// One ranked list of scored chunks.
+//
+// It has no counterpart in ragondin-types: it exists because proto3 has no
+// repeated repeated field, and the Fusion service takes one ranked list per
+// upstream retrieval leg, where the Rust trait takes a Vec of Vecs.
+message ScoredChunkList {
+  // The list, sorted by descending score.
+  repeated ScoredChunk chunks = 1;
+}
+
+// A dense vector representation of a text. Mirrors ragondin_types::Embedding.
+message Embedding {
+  // The vector's components; their count is its dimensionality. An embedder
+  // returns at least one, all finite (ADR-C20).
+  repeated float components = 1;
+}
+
+// A chunk together with its vector, as a vector store holds it. Mirrors
+// ragondin_contracts::EmbeddedChunk.
+message EmbeddedChunk {
+  // The chunk itself. Required.
+  Chunk chunk = 1;
+  // Its vector. Required.
+  Embedding embedding = 2;
+}
