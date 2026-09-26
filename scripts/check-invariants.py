@@ -64,8 +64,12 @@ undecided. INV-9 forbids deriving *the wire format* from internal IR types
 hand-maintained") — so the checkable property is that the crates reading
 configuration deserialize into `ragondin-pipeline::raw::*` and never into
 `::node::*`. Those crates are `ragondin-config` and `ragondin-proto`, which
-code-architecture.md already names as INV-9's home, and both are empty skeletons
-today. The check lands with them.
+code-architecture.md already names as INV-9's home. `ragondin-config` has had
+`LocalFile` for a while, and `ragondin-proto` now holds the `.proto` for the
+five M2 component services (#12) — neither is an empty skeleton any more. What
+stays true is narrower: neither reads configuration into a wire type yet,
+because `ragondin-proto`'s configuration-delivery service, package
+`ragondin.config.v1`, is reserved with no rpc yet. The check lands with it.
 
 A scan for `derive(Serialize)` on the IR types would NOT be that check: the
 logical node types carry those derives deliberately, for internal round-tripping
