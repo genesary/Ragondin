@@ -7,7 +7,7 @@
 //!
 //! The values come from [`Gen`], a seeded xorshift generator written here
 //! rather than `proptest`, which is not a workspace dependency (see
-//! `ARCHITECTURE.md` § Round-trip tests). It is deterministic, so a failure
+//! `ARCHITECTURE.md` § Tests). It is deterministic, so a failure
 //! names the seed and case that reproduce it. Each value also crosses the
 //! wire as bytes, `prost`-encoded and decoded, so the property covers what a
 //! `Remote` service actually receives and not only the in-memory message.
@@ -208,9 +208,9 @@ impl Gen {
 /// Checks the property for `CASES` values drawn by `draw`, each converted to
 /// `P`, encoded to bytes, decoded, and converted back.
 ///
-/// Equality is the domain's `PartialEq`. For a finite float that is equality
-/// of bits except for the sign of zero, which a score does not keep on the
-/// wire: see `a_negative_zero_score_arrives_as_zero`.
+/// Equality is the domain's `PartialEq`, which is ADR-C24's property. For a
+/// finite float that is equality of bits except for the sign of zero, which a
+/// score does not keep on the wire: see `a_negative_zero_score_arrives_as_zero`.
 fn assert_round_trips<D, P>(name: &str, seed: u64, mut draw: impl FnMut(&mut Gen) -> D)
 where
     D: Clone + PartialEq + Debug + IntoProto<P> + FromProto<P>,
@@ -443,11 +443,14 @@ fn embedder_identity_response_round_trips() {
 // --- the one bit the wire does not keep --------------------------------------
 
 /// A proto3 scalar equal to its default is not encoded, and `-0.0 == 0.0`, so
-/// `prost` leaves a score of `-0.0` off the wire and the service reads `0.0`.
-/// The domain's equality cannot tell them apart and neither can a ranking, so
-/// this is not a divergence the round-trip property forbids; it is pinned here
-/// so that it is known rather than rediscovered. An embedding's components
-/// are a packed repeated field, which encodes every element, and keep it.
+/// `prost` leaves a score of `-0.0` off the wire and the other side reads
+/// `0.0`. The round trip holds under `PartialEq`, ADR-C24's property, and a
+/// list keeps its order, since order is position and not score. But the sign
+/// is lost: `total_cmp`, which the rankings in this tree sort with, separates
+/// `-0.0` from `0.0`, so a tie-break downstream of a `Remote` component could
+/// differ from an all-`Local` composition. Pinned here so that it is known
+/// rather than rediscovered. An embedding's components are a packed repeated
+/// field, which encodes every element, and keep the sign.
 #[test]
 fn a_negative_zero_score_arrives_as_zero() {
     let chunk = ScoredChunk {
@@ -474,20 +477,57 @@ fn a_negative_zero_score_arrives_as_zero() {
 #[test]
 fn the_generator_draws_its_edges() {
     let mut gen = Gen::new(99);
-    let (mut empty_vec, mut empty_text, mut non_ascii, mut neg_zero, mut max, mut none, mut some) =
-        (false, false, false, false, false, false, false);
+    let mut seen = std::collections::BTreeSet::new();
     for _ in 0..CASES {
-        empty_vec |= gen.scored_chunks().is_empty();
-        let text = gen.text();
-        empty_text |= text.is_empty();
-        non_ascii |= !text.is_ascii();
-        let x = gen.float();
-        neg_zero |= x == 0.0 && x.is_sign_negative();
-        max |= x == f32::MAX;
-        match gen.served_model() {
-            None => none = true,
-            Some(_) => some = true,
+        if gen.scored_chunks().is_empty() {
+            seen.insert("empty collection");
         }
+        let text = gen.text();
+        if text.is_empty() {
+            seen.insert("empty text");
+        }
+        if !text.is_ascii() {
+            seen.insert("non-ASCII text");
+        }
+        let x = gen.float();
+        if x == 0.0 && x.is_sign_negative() {
+            seen.insert("-0.0");
+        }
+        if x == f32::MAX {
+            seen.insert("f32::MAX");
+        }
+        if x == f32::MIN {
+            seen.insert("f32::MIN");
+        }
+        if x != 0.0 && x.is_subnormal() {
+            seen.insert("subnormal");
+        }
+        if gen.count() == usize::MAX {
+            seen.insert("usize::MAX");
+        }
+        match gen.served_model() {
+            None => seen.insert("None"),
+            Some(_) => seen.insert("Some"),
+        };
+        match gen.role() {
+            EmbedRole::Query => seen.insert("Query"),
+            EmbedRole::Passage => seen.insert("Passage"),
+        };
     }
-    assert!(empty_vec && empty_text && non_ascii && neg_zero && max && none && some);
+    let wanted = [
+        "empty collection",
+        "empty text",
+        "non-ASCII text",
+        "-0.0",
+        "f32::MAX",
+        "f32::MIN",
+        "subnormal",
+        "usize::MAX",
+        "None",
+        "Some",
+        "Query",
+        "Passage",
+    ];
+    let missed: Vec<_> = wanted.iter().filter(|w| !seen.contains(*w)).collect();
+    assert!(missed.is_empty(), "the generator never drew {missed:?}");
 }

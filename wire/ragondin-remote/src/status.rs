@@ -1,7 +1,8 @@
 //! How a `ComponentError` crosses the wire, in both directions (ADR-C35).
 //!
 //! The one place a status is mapped. Every adapter in this crate goes through
-//! [`error_from_status`] and [`error_from_response`], and a service written in
+//! [`error_from_status`], [`error_from_response`] and
+//! [`error_from_identity_response`], and a service written in
 //! Rust over a `Local` component goes through [`status_from_error`] and
 //! [`status_from_request`]; no adapter maps a status itself (ADR-C35 § 4).
 //!
@@ -10,6 +11,10 @@
 //! | `InvalidRequest` | `INVALID_ARGUMENT` | `INVALID_ARGUMENT` |
 //! | `Unavailable` | `UNAVAILABLE` | `UNAVAILABLE`, `DEADLINE_EXCEEDED`, `CANCELLED` |
 //! | `Backend` | `INTERNAL` | every other code, with the `Status` as its source; and an OK response the adapter cannot convert |
+//!
+//! One exception on the adapter's side: an empty identity in an OK
+//! `GetModelIdentity` response is `InvalidRequest`, by ADR-C31 § 1's specific
+//! rule ([`error_from_identity_response`]).
 //!
 //! A service uses no fourth code, `RESOURCE_EXHAUSTED` included: overload and
 //! a quota are `UNAVAILABLE`, because the caller's remedy is to try later.
@@ -62,10 +67,31 @@ pub fn error_from_status(status: Status) -> ComponentError {
 }
 
 /// The `ComponentError` an adapter makes of an OK response it cannot convert
-/// to the domain types, or one that breaks the family's contract — an empty
-/// identity among them: `Backend`, with the [`DecodeError`] as its source
-/// (ADR-C35 § 2). The service answered, so the caller's request is not at
-/// fault, and nothing about it says to try later.
+/// to the domain types, or one that breaks the family's contract: `Backend`,
+/// with the [`DecodeError`] as its source (ADR-C35 § 2). The service answered,
+/// so the caller's request is not at fault, and nothing about it says to try
+/// later. An identity response goes through [`error_from_identity_response`]
+/// instead, for the one case a more specific rule governs.
 pub fn error_from_response(error: DecodeError) -> ComponentError {
     ComponentError::Backend(Box::new(error))
+}
+
+/// The `ComponentError` an adapter makes of a `GetModelIdentity` response it
+/// cannot convert.
+///
+/// An empty identity is `InvalidRequest`: ADR-C31 § 1 decides specifically
+/// that an adapter receiving one "refuses it as an `InvalidRequest`-class
+/// failure", and ADR-C35 § 2's general row for a contract-breaking response
+/// does not displace it — ADR-C35 supersedes nothing. Every other refusal of
+/// an identity response, such as the identity message left out, is
+/// [`error_from_response`]'s `Backend`. Every adapter of a model-bearing
+/// family maps its identity response through this, and through nothing else.
+pub fn error_from_identity_response(error: DecodeError) -> ComponentError {
+    match error {
+        DecodeError::Empty {
+            message: "ModelIdentity",
+            ..
+        } => ComponentError::InvalidRequest(error.to_string()),
+        other => error_from_response(other),
+    }
 }

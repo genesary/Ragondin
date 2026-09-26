@@ -14,7 +14,7 @@ use ragondin_contracts::{
     RerankParams, Reranker, RetrieveParams, Retriever, SearchParams, VectorStore,
 };
 use ragondin_proto::v1::{
-    self, embedder_client::EmbedderClient, embedder_server, retriever_server,
+    self, embedder_client::EmbedderClient, embedder_server, reranker_server, retriever_server,
 };
 use ragondin_remote::{
     DecodeError, IntoProto, RemoteEmbedder, RemoteFusion, RemoteReranker, RemoteRetriever,
@@ -345,7 +345,8 @@ async fn a_local_error_keeps_its_variant_across_the_wire() {
 }
 
 /// A service that answers every call OK, with a message the domain cannot
-/// represent.
+/// represent or that breaks its family's contract: a chunk left out, no
+/// vectors for any texts, an empty identity.
 struct Malformed;
 
 #[tonic::async_trait]
@@ -380,6 +381,23 @@ impl embedder_server::Embedder for Malformed {
     }
 }
 
+#[tonic::async_trait]
+impl reranker_server::Reranker for Malformed {
+    async fn rerank(
+        &self,
+        _: Request<v1::RerankRequest>,
+    ) -> Result<Response<v1::RerankResponse>, Status> {
+        Ok(Response::new(v1::RerankResponse::default()))
+    }
+
+    async fn get_model_identity(
+        &self,
+        _: Request<v1::RerankerModelIdentityRequest>,
+    ) -> Result<Response<v1::RerankerModelIdentityResponse>, Status> {
+        Ok(Response::new(ModelIdentity::new("").into_proto()))
+    }
+}
+
 fn decode_error(error: &ComponentError) -> Option<&DecodeError> {
     match error {
         ComponentError::Backend(source) => source.downcast_ref::<DecodeError>(),
@@ -408,10 +426,12 @@ async fn an_ok_response_the_domain_cannot_represent_is_backend() {
     );
 }
 
-/// ADR-C31 § 1: an empty identity is not valid, and the adapter refuses it.
-/// ADR-C35 § 2 makes the refusal `Backend`: the service broke its contract.
+/// ADR-C31 § 1: an empty identity is not valid, and the adapter refuses it as
+/// an `InvalidRequest`-class failure — its specific rule, which ADR-C35 § 2's
+/// general row for a contract-breaking response does not displace. Checked on
+/// both model-bearing adapters, which share `error_from_identity_response`.
 #[tokio::test]
-async fn an_empty_identity_from_the_service_is_refused_as_backend() {
+async fn an_empty_identity_from_the_service_is_refused_as_invalid_request() {
     let channel = support::serve(
         Server::builder().add_service(embedder_server::EmbedderServer::new(Malformed)),
     );
@@ -419,8 +439,29 @@ async fn an_empty_identity_from_the_service_is_refused_as_backend() {
         .model_identity(Some(SERVED_MODEL))
         .await
         .unwrap_err();
-    assert!(
-        matches!(decode_error(&error), Some(DecodeError::Empty { .. })),
-        "{error:?}"
+    assert!(is_invalid_request(&error), "{error:?}");
+
+    let channel = support::serve(
+        Server::builder().add_service(reranker_server::RerankerServer::new(Malformed)),
     );
+    let error = RemoteReranker::new(channel)
+        .model_identity(Some(SERVED_MODEL))
+        .await
+        .unwrap_err();
+    assert!(is_invalid_request(&error), "{error:?}");
+}
+
+/// An embedder answering a batch with the wrong number of vectors breaks its
+/// contract: `Backend` (ADR-C35 § 2), before a later batch's vectors could be
+/// read against the wrong texts.
+#[tokio::test]
+async fn a_batch_answered_with_the_wrong_count_is_backend() {
+    let channel = support::serve(
+        Server::builder().add_service(embedder_server::EmbedderServer::new(Malformed)),
+    );
+    let error = RemoteEmbedder::new(channel, "", "")
+        .embed(&["a".to_string()], &embed_params(EmbedRole::Query))
+        .await
+        .unwrap_err();
+    assert!(matches!(error, ComponentError::Backend(_)), "{error:?}");
 }

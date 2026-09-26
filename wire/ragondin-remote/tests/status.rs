@@ -9,7 +9,8 @@ use std::error::Error as _;
 
 use ragondin_contracts::ComponentError;
 use ragondin_remote::{
-    error_from_response, error_from_status, status_from_error, status_from_request, DecodeError,
+    error_from_identity_response, error_from_response, error_from_status, status_from_error,
+    status_from_request, DecodeError,
 };
 use tonic::{Code, Status};
 
@@ -164,11 +165,35 @@ fn a_request_the_service_cannot_decode_is_invalid_argument() {
 
 #[test]
 fn a_response_the_adapter_cannot_decode_is_backend() {
-    let decode = DecodeError::Empty {
-        message: "ModelIdentity",
-        field: "identity",
+    let decode = DecodeError::Missing {
+        message: "ScoredChunk",
+        field: "chunk",
     };
     let error = error_from_response(decode.clone());
+    assert_eq!(variant(&error), Variant::Backend);
+    let source = error.source().expect("Backend carries a source");
+    assert_eq!(source.downcast_ref::<DecodeError>(), Some(&decode));
+}
+
+/// ADR-C31 § 1: an adapter refuses an empty identity as an
+/// `InvalidRequest`-class failure.
+#[test]
+fn an_empty_identity_is_invalid_request() {
+    let error = error_from_identity_response(DecodeError::Empty {
+        message: "ModelIdentity",
+        field: "identity",
+    });
+    assert_eq!(variant(&error), Variant::InvalidRequest);
+}
+
+/// Every other refusal of an identity response is the general row: `Backend`.
+#[test]
+fn an_identity_response_without_its_identity_is_backend() {
+    let decode = DecodeError::Missing {
+        message: "EmbedderModelIdentityResponse",
+        field: "identity",
+    };
+    let error = error_from_identity_response(decode.clone());
     assert_eq!(variant(&error), Variant::Backend);
     let source = error.source().expect("Backend carries a source");
     assert_eq!(source.downcast_ref::<DecodeError>(), Some(&decode));

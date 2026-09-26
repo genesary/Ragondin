@@ -3,9 +3,10 @@
 //!
 //! Each call is the same four steps: refuse what the adapter refuses before
 //! sending, convert the arguments to the request, call, and convert the
-//! response back. A failed call is mapped by [`error_from_status`], and a
-//! response that does not convert by [`error_from_response`]: no adapter maps
-//! a status itself (ADR-C35 § 4).
+//! response back. A failed call is mapped by [`error_from_status`], a
+//! response that does not convert by [`error_from_response`], and an identity
+//! response by [`error_from_identity_response`]: no adapter maps a status or a
+//! refusal itself (ADR-C35 § 4).
 //!
 //! Every adapter is built over a `tonic` [`Channel`] its caller supplies. The
 //! composition root builds it once per binding, connecting lazily
@@ -27,7 +28,9 @@ use ragondin_proto::v1::{
 use ragondin_types::{Embedding, ModelIdentity, Query, ScoredChunk};
 use tonic::transport::Channel;
 
-use crate::{error_from_response, error_from_status, FromProto, IntoProto};
+use crate::{
+    error_from_identity_response, error_from_response, error_from_status, FromProto, IntoProto,
+};
 
 /// The largest message an adapter sends or accepts, in bytes: 64 MiB.
 ///
@@ -193,7 +196,8 @@ impl Reranker for RemoteReranker {
     }
 
     /// What the service reports for `served_model`. An empty identity is
-    /// refused, as `Backend` (ADR-C31 § 1, ADR-C35 § 2).
+    /// refused as `InvalidRequest` (ADR-C31 § 1), through
+    /// [`error_from_identity_response`].
     async fn model_identity(
         &self,
         served_model: Option<&str>,
@@ -206,7 +210,7 @@ impl Reranker for RemoteReranker {
             .get_model_identity(request)
             .await
             .map_err(error_from_status)?;
-        ModelIdentity::from_proto(response.into_inner()).map_err(error_from_response)
+        ModelIdentity::from_proto(response.into_inner()).map_err(error_from_identity_response)
     }
 }
 
@@ -220,7 +224,8 @@ impl Reranker for RemoteReranker {
 ///
 /// Every call must name its served model: the adapter refuses `None` and the
 /// empty name as an invalid request before sending (ADR-C32 § 4). A call of
-/// more than [`EMBED_BATCH`] texts is sent as several rpcs.
+/// more than [`EMBED_BATCH`] texts is sent as several rpcs, and each batch
+/// must come back with one vector per text, or the call fails as `Backend`.
 #[derive(Clone, Debug)]
 pub struct RemoteEmbedder {
     client: EmbedderClient<Channel>,
@@ -230,10 +235,11 @@ pub struct RemoteEmbedder {
 
 impl RemoteEmbedder {
     /// An adapter over `channel`, prefixing each text by its role. The
-    /// prefixes are the embedding node's `query_prefix` and `passage_prefix`,
-    /// which the composition root reads; the empty string prefixes nothing,
-    /// which is how a symmetric model is configured (ADR-C17). Connects
-    /// nothing.
+    /// prefixes are the `dense` node's `query_prefix` and `passage_prefix`,
+    /// which the composition root reads. A node spells "no prefix" only by
+    /// leaving the key out, and an empty one is refused (ADR-C32 § 1); the
+    /// composition root maps that absence to the empty string here, which
+    /// prefixes nothing. Connects nothing.
     pub fn new(
         channel: Channel,
         query_prefix: impl Into<String>,
@@ -267,15 +273,29 @@ impl Embedder for RemoteEmbedder {
             let prefixed = batch.iter().map(|text| format!("{prefix}{text}")).collect();
             let request: EmbedRequest = (prefixed, params.clone()).into_proto();
             let response = client.embed(request).await.map_err(error_from_status)?;
-            vectors.extend(
-                Vec::<Embedding>::from_proto(response.into_inner()).map_err(error_from_response)?,
-            );
+            let answered =
+                Vec::<Embedding>::from_proto(response.into_inner()).map_err(error_from_response)?;
+            // Checked per batch: a short batch would otherwise shift every
+            // later vector onto the wrong text, with no error anywhere. The
+            // service broke the family's contract, so `Backend` (ADR-C35 § 2).
+            if answered.len() != batch.len() {
+                return Err(ComponentError::Backend(
+                    format!(
+                        "the embedder answered {} texts with {} vectors",
+                        batch.len(),
+                        answered.len()
+                    )
+                    .into(),
+                ));
+            }
+            vectors.extend(answered);
         }
         Ok(vectors)
     }
 
     /// What the service reports for `served_model`. An empty identity is
-    /// refused, as `Backend` (ADR-C31 § 1, ADR-C35 § 2).
+    /// refused as `InvalidRequest` (ADR-C31 § 1), through
+    /// [`error_from_identity_response`].
     async fn model_identity(
         &self,
         served_model: Option<&str>,
@@ -288,7 +308,7 @@ impl Embedder for RemoteEmbedder {
             .get_model_identity(request)
             .await
             .map_err(error_from_status)?;
-        ModelIdentity::from_proto(response.into_inner()).map_err(error_from_response)
+        ModelIdentity::from_proto(response.into_inner()).map_err(error_from_identity_response)
     }
 }
 
@@ -315,8 +335,14 @@ impl RemoteVectorStore {
 impl VectorStore for RemoteVectorStore {
     async fn upsert(&self, entries: Vec<EmbeddedChunk>) -> Result<(), ComponentError> {
         let mut client = self.client.clone();
-        for batch in batches(&entries, UPSERT_BATCH) {
-            let request: UpsertRequest = batch.to_vec().into_proto();
+        let mut entries = entries.into_iter().peekable();
+        // At least one rpc, as `batches` gives the embedder: an empty upsert
+        // still reaches the service. The entries are moved, never copied.
+        let mut first = true;
+        while first || entries.peek().is_some() {
+            first = false;
+            let batch: Vec<EmbeddedChunk> = entries.by_ref().take(UPSERT_BATCH).collect();
+            let request: UpsertRequest = batch.into_proto();
             let response = client.upsert(request).await.map_err(error_from_status)?;
             <()>::from_proto(response.into_inner()).map_err(error_from_response)?;
         }

@@ -13,7 +13,7 @@ a `Local` component.
 | Module | Role |
 |---|---|
 | `src/convert.rs` | `IntoProto` and `FromProto`: every domain value, params struct, request and response of the five M2 services, and `DecodeError` |
-| `src/status.rs` | ADR-C35's status conversion, both directions |
+| `src/status.rs` | ADR-C35's status conversion, both directions, and ADR-C31 § 1's refusal of an empty identity |
 | `src/adapters.rs` | `RemoteRetriever`, `RemoteFusion`, `RemoteReranker`, `RemoteEmbedder`, `RemoteVectorStore`; the message limit and the batch sizes |
 
 **Not here.** The `Generator` and `ContextBuilder` adapters and their
@@ -48,26 +48,33 @@ would use, in `tests/support`.
   component are refused by the same rule.
 - **The sign of a zero score does not cross.** `prost` leaves a scalar equal
   to its default off the wire, and `-0.0 == 0.0`, so a score of `-0.0` arrives
-  as `0.0`. The domain's equality and every ranking treat them alike, so the
-  round-trip property holds; `a_negative_zero_score_arrives_as_zero` pins the
+  as `0.0`. The round trip holds under `PartialEq`, which is ADR-C24's
+  property, and a list keeps its order. The sign itself is lost, though:
+  the rankings in this tree sort with `total_cmp`, which separates `-0.0` from
+  `0.0` (`ragondin-store-memory` normalises its scores for exactly that
+  reason), so a tie-break downstream of a `Remote` component could differ from
+  an all-`Local` composition. `a_negative_zero_score_arrives_as_zero` pins the
   fact. An embedding's components are a packed repeated field and keep it.
 
 ## Status mapping
 
 `src/status.rs` is ADR-C35 written down once: `status_from_error` and
-`status_from_request` for a service, `error_from_status` and
-`error_from_response` for an adapter. No adapter maps a status itself.
+`status_from_request` for a service, `error_from_status`,
+`error_from_response` and `error_from_identity_response` for an adapter. No adapter maps a status itself.
 `ComponentError` is `#[non_exhaustive]`, so `status_from_error` has a wildcard
 arm; a variant added later is `INTERNAL`, "any other failure", until ADR-C35's
 table names it.
 
-**An empty identity from a service is `Backend`.** ADR-C31 § 1 says an adapter
-refuses an empty identity "as an `InvalidRequest`-class failure"; ADR-C35 § 2,
-the later decision and the one that decides the variant an adapter makes of
-what it receives, maps "an OK response that fails conversion to the domain
-types, or breaks the family's contract" to `Backend`. An empty identity is
-that response, and the caller's request was not what was wrong, so this crate
-follows ADR-C35 § 2.
+**An empty identity from a service is `InvalidRequest`.** ADR-C31 § 1 decides
+specifically that an adapter receiving one "refuses it as an
+`InvalidRequest`-class failure". ADR-C35 § 2's general row — an OK response
+that fails conversion or breaks the family's contract is `Backend` — does not
+displace it: ADR-C35 supersedes nothing. So identity responses go through one
+more shared function, `error_from_identity_response`, which makes an empty
+identity `InvalidRequest` and hands every other refusal, such as the identity
+message left out, to `error_from_response`. Both identity adapters here use
+it, as the `Generator` and `ContextBuilder` adapters will, so no adapter maps
+its own refusal.
 
 ## Adapters
 
@@ -87,11 +94,12 @@ follows ADR-C35 § 2.
   `Remote` vector store until the contract can scope a store's content to a
   run; the adapter exists so that the round trip and the conformance suite
   cover the service `ragondin-proto` already defines.
-- **Nothing beyond the conversion is checked on a response.** An embedder
-  returning fewer vectors than texts, or a ranking out of order, is the
-  conformance suite's to catch, as it is for a `Local` component. A caller that
-  cannot afford to trust it checks, as the corpus embedding in the binary
-  already does.
+- **One check beyond the conversion: each Embed batch's count.** A batch
+  answered with the wrong number of vectors fails the call as `Backend`
+  (ADR-C35 § 2's contract row), because batching would otherwise let a short
+  batch shift every later vector onto the wrong text, a misalignment no caller
+  could see. Nothing else is checked on a response: a ranking out of order is
+  the conformance suite's to catch, as it is for a `Local` component.
 
 ## Message size and batching
 
@@ -110,7 +118,7 @@ are done, and each covers what the other cannot:**
   They are the two rpcs whose size the caller does not bound: every other rpc's
   response is bounded by a `top_k` or by the input it was handed. 256 vectors of
   16 384 components are 16 MiB, a quarter of the limit. A batch is split in
-  order and answered in order; an empty call still sends one empty rpc, so the
+  order, answered in order, and moved rather than copied; an empty call still sends one empty rpc, so the
   service sees its parameters and refuses a bad `served_model` as a `Local`
   component would. A split Upsert is not atomic: a failed later batch leaves the
   earlier ones written, as a retry would find them.
