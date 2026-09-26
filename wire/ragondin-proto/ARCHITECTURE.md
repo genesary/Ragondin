@@ -160,8 +160,9 @@ reports the duplicate as a warning and passes.
   `tests/mirror.rs`.
 - **Refusals are named in `ComponentError` terms** ("an invalid request"),
   never as gRPC status codes: which status carries which refusal is not
-  decided for face 2 as a whole. ADR-C33 fixes it for the reference
-  generator service alone.
+  decided for face 2 as a whole. Decision issue #311 owns that gap, and its
+  ADR adds the status codes; ADR-C33 fixes them for the reference generator
+  service alone.
 - **`EmbedRole` reserves the zero (ADR-C17).** `EMBED_ROLE_UNSPECIFIED = 0` is
   never valid, so the proto enum has three values where the Rust enum has two
   variants and decoding is not total. The comment in `embedder.proto` says so,

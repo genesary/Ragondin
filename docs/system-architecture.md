@@ -288,6 +288,9 @@ impl Reranker for RemoteReranker {
         // serialize to protobuf → gRPC call → deserialize.
         // The engine perceives NO difference from a local implementation.
     }
+    async fn model_identity(&self, /* ... */) -> Result</* ... */> {
+        // the GetModelIdentity rpc, forwarding served_model.
+    }
 }
 ```
 

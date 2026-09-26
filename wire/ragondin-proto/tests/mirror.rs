@@ -273,6 +273,16 @@ fn params_mirror_the_contracts_params() {
     };
     assert_eq!(unnamed.served_model, served_model);
 
+    let unnamed = contracts::RerankParams::new(5);
+    let v1::RerankParams {
+        top_k: _,
+        served_model,
+    } = v1::RerankParams {
+        top_k: 5,
+        served_model: None,
+    };
+    assert_eq!(unnamed.served_model, served_model);
+
     let context = contracts::ContextParams::new(512);
     let v1::ContextParams { budget } = v1::ContextParams { budget: 512 };
     assert_eq!(context.budget as u64, budget);

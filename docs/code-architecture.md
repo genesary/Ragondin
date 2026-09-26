@@ -395,6 +395,12 @@ impl Reranker for RemoteReranker {
     {
         // domain → protobuf → gRPC → protobuf → domain
     }
+
+    async fn model_identity(&self, served_model: Option<&str>)
+        -> Result<ModelIdentity, ComponentError>
+    {
+        // the GetModelIdentity rpc, forwarding served_model
+    }
 }
 ```
 
