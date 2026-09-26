@@ -122,7 +122,8 @@ Runtime and the components composed over it.
 
 Still compiling skeletons, each with a doc comment and a link test and no
 behaviour: `ragondin-remote` and `ragondin-server` — the generic `Remote<T>`
-adapters and the serving driver, each waiting on its own issue. A `VectorStore` over Qdrant is one of those too.
+adapters and the serving driver, each waiting on its own issue. A
+`VectorStore` over Qdrant is one of those too.
 
 ### What using it will look like
 

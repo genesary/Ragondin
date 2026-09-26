@@ -55,8 +55,8 @@ proto/
 One file per service, beside one file of shared values. A `Remote` author
 implementing one family reads two files, and a service added later is a new
 file rather than an edit to a shared one. The directory path matches the
-package, which is what `protoc` and the other-language generators expect of an
-import path.
+package, the convention `protoc` users and `buf lint` expect of an import
+path.
 
 ## Package and versioning
 
@@ -83,10 +83,13 @@ build-dependencies of this crate only; nothing they bring is linked into a
 binary. `tonic-build` generates with its defaults: messages, a server trait and
 a client for every service.
 
-`FILES` lists every file explicitly. A file left off it would still compile if
-another file imported it, but its services would not be generated, so a new
-file is added there in the same diff, with a line in `tests/stubs.rs` naming
-its generated server and client, which fails to compile until it is.
+`FILES` lists every file explicitly. `protox` includes every imported file in
+the descriptor set, and `tonic-build` generates code for every file in the set,
+so a file left off `FILES` but imported by one on it is still generated. A file
+left off it and imported by nothing is neither compiled nor generated, and
+nothing says so. A new file is therefore added to `FILES` in the same diff,
+with a line in `tests/stubs.rs` naming its generated server and client, which
+fails to compile until the file is generated.
 
 Generated code is never committed: it lives in `OUT_DIR` and is included by
 `tonic::include_proto!`. Proto comments become the generated items' rustdoc,

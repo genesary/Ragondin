@@ -1,8 +1,11 @@
 //! Field parity between the generated messages and the values they mirror.
 //!
-//! No conversion is written here — those are `ragondin-remote`'s. Each test
-//! builds a domain value and the message a correct conversion would produce,
-//! then compares them field by field. Every generated message, and every
+//! No conversion is written here — those are `ragondin-remote`'s. Most tests
+//! build a domain value and the message a correct conversion would produce,
+//! then compare them field by field. Four do not: the two role-number decode
+//! tests pin wire facts, `requests_and_responses_carry_the_trait_arguments`
+//! checks message shapes at compile time, and
+//! `fuse_request_keeps_the_order_of_its_legs` checks a wire round trip. Every generated message, and every
 //! domain struct whose fields are public and that is not `#[non_exhaustive]`,
 //! is destructured **exhaustively**, so a field added to one of them and not to
 //! its mirror stops this file compiling: the drift is caught here before the
