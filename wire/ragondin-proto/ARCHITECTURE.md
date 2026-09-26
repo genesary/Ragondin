@@ -159,10 +159,11 @@ reports the duplicate as a warning and passes.
   an empty one is refused as an invalid request. Both shapes are pinned in
   `tests/mirror.rs`.
 - **Refusals are named in `ComponentError` terms** ("an invalid request"),
-  never as gRPC status codes: which status carries which refusal is not
-  decided for face 2 as a whole. Decision issue #311 owns that gap, and its
-  ADR adds the status codes; ADR-C33 fixes them for the reference generator
-  service alone.
+  never as gRPC status codes, beside each rpc. Which status carries each
+  variant is stated once, in `types.proto`'s header: a service returns
+  `INVALID_ARGUMENT`, `UNAVAILABLE` or `INTERNAL` and no other code
+  (ADR-C35 § 1), and a caller maps what it receives back by ADR-C35 § 2.
+  The conversion itself, both directions, is `ragondin-remote`'s.
 - **`EmbedRole` reserves the zero (ADR-C17).** `EMBED_ROLE_UNSPECIFIED = 0` is
   never valid, so the proto enum has three values where the Rust enum has two
   variants and decoding is not total. The comment in `embedder.proto` says so,
