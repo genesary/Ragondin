@@ -157,8 +157,12 @@ ignore = ["RUSTSEC-2024-0436"]
 #                  script downloads a prebuilt ONNX Runtime over HTTPS. It
 #                  licenses certificate *data*, not code, and it is permissive
 #                  with no reciprocal obligation -- the 2.0 revision dropped the
-#                  1.0 share-alike clause entirely. Nothing it covers is
-#                  redistributed by this workspace.
+#                  1.0 share-alike clause entirely. `reqwest`'s `rustls-tls`
+#                  reaches the same crate as a normal dependency of
+#                  `ragondin-generator-service` (ADR-C33 § 2), under the same
+#                  licence, so that crate needed no new entry here. Nothing it
+#                  covers is redistributed by this workspace: that crate is
+#                  `publish = false` and ships nowhere.
 #
 # The rest are on the list ahead of need, so that an ordinary permissive
 # dependency does not fail CI at the moment it is added. They are not there
@@ -211,9 +215,10 @@ multiple-versions = "warn"
 # a wildcard by the letter of the rule and carries none of its risk -- those
 # paths resolve inside this repository. cargo-deny's escape hatch for exactly
 # that case, `allow-wildcard-paths`, applies only to crates marked
-# `publish = false`, and none of these are: whether this workspace publishes to
-# crates.io is an open question, not something to answer as a side effect of
-# adding a lint. So the choice is between thirteen errors, thirteen warnings on
+# `publish = false`, and only one is: `ragondin-generator-service`, a test
+# fixture that ships nowhere (ADR-C33 § 1). For every other member, whether this
+# workspace publishes to crates.io is an open question, not something to answer
+# as a side effect of adding a lint. So the choice is between thirteen errors, thirteen warnings on
 # every run, or turning the check off.
 #
 # What that gives up is narrow: a third-party `foo = "*"` would go unreported.
