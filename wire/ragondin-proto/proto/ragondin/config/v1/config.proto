@@ -1,0 +1,13 @@
+// The configuration-delivery service: a purpose-built gRPC service, not xDS,
+// versioned and acknowledged (docs/system-architecture.md section 8).
+//
+// Reserved and empty. Its messages and rpcs arrive with the Stream
+// configuration source and its controller; this file exists so that the
+// service has its name and package, and the wire crate compiles it.
+
+syntax = "proto3";
+
+package ragondin.config.v1;
+
+// Delivers pipeline configurations to a data plane. No rpc yet.
+service ConfigDelivery {}

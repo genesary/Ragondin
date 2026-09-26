@@ -84,6 +84,8 @@ clap = { version = "4", features = ["derive"] }    # the CLI parser, in `bin/rag
 assert_cmd = "2"                                   # dev-only: spawns the built binary in `bin/ragondin`'s CLI tests
 tonic = "0.12"                                     # gRPC transport for the wire layer
 prost = "0.13"                                     # protobuf messages for the wire layer
+tonic-build = "0.12"                               # build-dependency of ragondin-proto only: generates the stubs (ADR-C24)
+protox = "0.8"                                     # build-dependency of ragondin-proto only: compiles the .proto, no protoc (ADR-C34)
 
 # The first heavy backend. It is listed here because versions are centralized
 # here and nowhere else — not because the core may reach it: `tantivy` is on the

@@ -1,0 +1,34 @@
+// The Retriever service: face 2 of ragondin_contracts::Retriever (ADR-3).
+
+syntax = "proto3";
+
+package ragondin.v1;
+
+import "ragondin/v1/types.proto";
+
+// Retrieves candidate chunks for a query.
+service Retriever {
+  // Returns the chunks most relevant to the query, sorted by descending
+  // score, every score finite.
+  rpc Retrieve(RetrieveRequest) returns (RetrieveResponse);
+}
+
+// Per-call parameters of a retriever. Mirrors ragondin_contracts::RetrieveParams.
+message RetrieveParams {
+  // How many chunks to return. Zero is an invalid request.
+  uint64 top_k = 1;
+}
+
+// The arguments of ragondin_contracts::Retriever::retrieve.
+message RetrieveRequest {
+  // The query. Required.
+  Query query = 1;
+  // The per-call parameters. Required.
+  RetrieveParams params = 2;
+}
+
+// The result of a retrieval.
+message RetrieveResponse {
+  // The retrieved chunks, sorted by descending score.
+  repeated ScoredChunk chunks = 1;
+}

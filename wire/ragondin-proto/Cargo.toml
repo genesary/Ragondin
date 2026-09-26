@@ -14,3 +14,16 @@ rust-version.workspace = true
 ragondin-types = { workspace = true }
 tonic = { workspace = true }
 prost = { workspace = true }
+
+# Code generation, at build time only (ADR-C34): `protox` compiles the
+# hand-maintained `.proto` files to a descriptor set, and `tonic-build`
+# generates the Rust stubs from it. No `protoc` is needed. Neither is linked
+# into anything this crate ships.
+[build-dependencies]
+tonic-build = { workspace = true }
+protox = { workspace = true }
+
+# The parity tests compare the generated messages with the params structs and
+# `EmbeddedChunk`, which live in the contracts crate, not in `ragondin-types`.
+[dev-dependencies]
+ragondin-contracts = { workspace = true }

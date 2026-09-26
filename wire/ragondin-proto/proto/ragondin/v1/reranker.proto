@@ -1,0 +1,37 @@
+// The Reranker service: face 2 of ragondin_contracts::Reranker (ADR-3).
+
+syntax = "proto3";
+
+package ragondin.v1;
+
+import "ragondin/v1/types.proto";
+
+// Reorders retrieved chunks against the query.
+service Reranker {
+  // Returns the chunks reordered by relevance to the query, sorted by
+  // descending score, every score finite. No chunks is a valid call, and
+  // reranks to an empty list (ADR-C19).
+  rpc Rerank(RerankRequest) returns (RerankResponse);
+}
+
+// Per-call parameters of a reranker. Mirrors ragondin_contracts::RerankParams.
+message RerankParams {
+  // How many chunks to keep after reordering. Zero is an invalid request.
+  uint64 top_k = 1;
+}
+
+// The arguments of ragondin_contracts::Reranker::rerank.
+message RerankRequest {
+  // The query the chunks are reordered against. Required.
+  Query query = 1;
+  // The chunks to reorder.
+  repeated ScoredChunk chunks = 2;
+  // The per-call parameters. Required.
+  RerankParams params = 3;
+}
+
+// The result of a rerank.
+message RerankResponse {
+  // The kept chunks, sorted by descending score.
+  repeated ScoredChunk chunks = 1;
+}

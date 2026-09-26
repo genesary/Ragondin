@@ -1,0 +1,51 @@
+// The VectorStore service: face 2 of ragondin_contracts::VectorStore (ADR-3).
+//
+// Defined, and not yet reachable: a Remote vector store is deferred until the
+// VectorStore contract gains an operation that makes a store's content
+// addressable per run (ADR-C32 section 5). Nothing binds a Remote store today.
+
+syntax = "proto3";
+
+package ragondin.v1;
+
+import "ragondin/v1/types.proto";
+
+// The vector index a dense retriever queries.
+service VectorStore {
+  // Inserts or replaces the entries, keyed by their chunk ids. No entries is
+  // a valid call, and changes nothing (ADR-C19).
+  rpc Upsert(UpsertRequest) returns (UpsertResponse);
+  // Returns the chunks nearest to the embedding, sorted by descending score,
+  // every score finite.
+  rpc Search(SearchRequest) returns (SearchResponse);
+}
+
+// Per-call parameters of a vector store search. Mirrors
+// ragondin_contracts::SearchParams.
+message SearchParams {
+  // How many nearest chunks to return. Zero is an invalid request.
+  uint64 top_k = 1;
+}
+
+// The arguments of ragondin_contracts::VectorStore::upsert.
+message UpsertRequest {
+  // The chunks to insert or replace, with their vectors.
+  repeated EmbeddedChunk entries = 1;
+}
+
+// The result of an upsert, which carries no data.
+message UpsertResponse {}
+
+// The arguments of ragondin_contracts::VectorStore::search.
+message SearchRequest {
+  // The vector to search near. Required.
+  Embedding embedding = 1;
+  // The per-call parameters. Required.
+  SearchParams params = 2;
+}
+
+// The result of a search.
+message SearchResponse {
+  // The nearest chunks, sorted by descending score.
+  repeated ScoredChunk chunks = 1;
+}

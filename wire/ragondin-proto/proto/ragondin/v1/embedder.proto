@@ -1,0 +1,63 @@
+// The Embedder service: face 2 of ragondin_contracts::Embedder (ADR-3).
+
+syntax = "proto3";
+
+package ragondin.v1;
+
+import "ragondin/v1/types.proto";
+
+// Turns text into vectors.
+service Embedder {
+  // Embeds the texts, returning one vector per text in the same order.
+  //
+  // The texts are final: the caller has already applied whatever prefix the
+  // role calls for (ADR-C32 section 4). A service must not prefix or
+  // otherwise transform the text by the role. It may use the role for
+  // anything that is not text, such as selecting a query tower or a passage
+  // tower.
+  //
+  // Every vector has the same dimensionality, whatever the role and the
+  // batch, and at least one component. No texts is a valid call, and embeds
+  // to no vectors (ADR-C19).
+  rpc Embed(EmbedRequest) returns (EmbedResponse);
+}
+
+// Which side of a retrieval corpus a text is on. Mirrors
+// ragondin_contracts::EmbedRole.
+//
+// Deliberately asymmetric with the Rust enum, which has two variants and no
+// zero: proto3 gives an omitted enum field the number 0 and has no notion of
+// absence, so 0 is reserved as EMBED_ROLE_UNSPECIFIED and is never valid
+// (ADR-C17). A request carrying it, or a number this enum does not name, is
+// an invalid request. Do not remove the zero to make the two enums match:
+// without it, a caller that forgot the role would be read as having chosen
+// one.
+enum EmbedRole {
+  // Never valid. What an omitted role decodes as.
+  EMBED_ROLE_UNSPECIFIED = 0;
+  // The text is a query being asked of the corpus.
+  EMBED_ROLE_QUERY = 1;
+  // The text is a passage of the corpus being indexed.
+  EMBED_ROLE_PASSAGE = 2;
+}
+
+// Per-call parameters of an embedder. Mirrors ragondin_contracts::EmbedParams.
+message EmbedParams {
+  // The side the texts of this call are on; one role covers the whole batch.
+  // Required, and never EMBED_ROLE_UNSPECIFIED.
+  EmbedRole role = 1;
+}
+
+// The arguments of ragondin_contracts::Embedder::embed.
+message EmbedRequest {
+  // The texts to embed.
+  repeated string texts = 1;
+  // The per-call parameters. Required.
+  EmbedParams params = 2;
+}
+
+// The result of an embedding call.
+message EmbedResponse {
+  // One vector per input text, in the order of the texts.
+  repeated Embedding embeddings = 1;
+}
