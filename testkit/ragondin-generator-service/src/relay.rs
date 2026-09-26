@@ -83,7 +83,12 @@ impl Relay {
                 )
             });
         }
-        let text = body.ok().map(|b| error_text(&b)).unwrap_or_default();
+        // A body that cannot be read leaves the status code to decide, as it
+        // does for any other non-success: the message then has no text.
+        let text = body
+            .ok()
+            .map(|b| error_text(&b, self.api_key.as_deref()))
+            .unwrap_or_default();
         Err(self.status(
             classify(http),
             format!(
@@ -98,12 +103,19 @@ impl Relay {
     /// inference server echoed it back.
     fn status(&self, code: Code, message: String) -> Status {
         let message = match &self.api_key {
-            Some(key) => message.replace(key.as_str(), "<redacted>"),
+            Some(key) => message.replace(key.as_str(), REDACTED),
             None => message,
         };
         Status::new(code, message)
     }
 }
+
+/// How many characters of the inference server's error text a status
+/// message carries.
+const ERROR_TEXT_LIMIT: usize = 512;
+
+/// What the API key is replaced by wherever it would appear in a message.
+const REDACTED: &str = "<redacted>";
 
 /// Which gRPC status an HTTP status that is not a success becomes.
 fn classify(http: StatusCode) -> Code {
@@ -116,11 +128,14 @@ fn classify(http: StatusCode) -> Code {
 }
 
 /// The inference server's error text: the OpenAI-shaped `error.message` when
-/// there is one, otherwise the body itself, shortened.
-fn error_text(body: &[u8]) -> String {
-    const LIMIT: usize = 512;
-    if let Ok(value) = serde_json::from_slice::<Value>(body) {
-        let found = [
+/// there is one, otherwise the body itself. The key is redacted from the whole
+/// text **before** it is cut to [`ERROR_TEXT_LIMIT`] characters, so a key that
+/// straddles the cut cannot leave its first characters behind.
+fn error_text(body: &[u8], api_key: Option<&str>) -> String {
+    let lossy = String::from_utf8_lossy(body);
+    let json = serde_json::from_slice::<Value>(body).ok();
+    let found = json.as_ref().and_then(|value| {
+        [
             value.pointer("/error/message"),
             value.get("error"),
             value.get("message"),
@@ -128,16 +143,16 @@ fn error_text(body: &[u8]) -> String {
         ]
         .into_iter()
         .flatten()
-        .find_map(Value::as_str);
-        if let Some(text) = found {
-            return text.to_owned();
-        }
-    }
-    let text = String::from_utf8_lossy(body);
-    let text = text.trim();
-    match text.char_indices().nth(LIMIT) {
-        Some((cut, _)) => format!("{}…", &text[..cut]),
+        .find_map(Value::as_str)
+    });
+    let text = found.unwrap_or_else(|| lossy.trim());
+    let text = match api_key {
+        Some(key) => text.replace(key, REDACTED),
         None => text.to_owned(),
+    };
+    match text.char_indices().nth(ERROR_TEXT_LIMIT) {
+        Some((cut, _)) => format!("{}…", &text[..cut]),
+        None => text,
     }
 }
 

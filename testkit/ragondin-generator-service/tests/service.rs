@@ -744,6 +744,37 @@ async fn the_api_key_never_reaches_the_status_message() {
     assert!(!status.message().contains("sk-secret-42"), "{status:?}");
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn a_key_echoed_across_the_error_text_limit_is_redacted_whole() {
+    const KEY: &str = "sk-LEAKYSECRET-123456";
+    // A plain-text body whose echo of the key straddles the point where the
+    // error text is cut: redacting after the cut would miss the whole key and
+    // let its first characters through.
+    let fake = Fake::start(|_| raw(401, &format!("{}{KEY} trailing", "x".repeat(505)))).await;
+    let service = Service::start_with_key(&fake.base(), Some(KEY)).await;
+    let status = service
+        .client()
+        .await
+        .generate(request(params("qwen", "{query}")))
+        .await
+        .expect_err("refused");
+    assert_eq!(status.code(), Code::InvalidArgument);
+    assert!(!status.message().contains(&KEY[..6]), "{status:?}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_long_json_error_message_is_cut_like_any_other_error_text() {
+    let fake = Fake::start(|_| reply(500, json!({"error": {"message": "y".repeat(4000)}}))).await;
+    let status = generate_status(&fake.base(), request(params("qwen", "{query}"))).await;
+    assert_eq!(status.code(), Code::Internal);
+    assert!(status.message().contains("yyyy"), "{status:?}");
+    assert!(
+        status.message().chars().count() < 700,
+        "the upstream text is bounded: {} chars",
+        status.message().chars().count()
+    );
+}
+
 // ---------------------------------------------------------------------------
 // The error table: a 2xx the service cannot read
 // ---------------------------------------------------------------------------
@@ -907,6 +938,31 @@ async fn an_unlisted_model_is_refused() {
 // The command line (ADR-C33 § 3)
 // ---------------------------------------------------------------------------
 
+/// Runs the binary to its exit, or kills it and fails the test: a command line
+/// wrongly accepted would otherwise leave the service serving, and the test
+/// hanging.
+fn run_to_exit(mut cmd: Command, what: &str) -> std::process::Output {
+    let mut child = cmd
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn the service binary");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while child.try_wait().expect("poll the service binary").is_none() {
+        if std::time::Instant::now() > deadline {
+            let _ = child.kill();
+            let output = child.wait_with_output().unwrap();
+            panic!(
+                "{what}: still running after 10 s, so it was accepted; stdout {:?}",
+                String::from_utf8_lossy(&output.stdout)
+            );
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    child.wait_with_output().expect("collect the output")
+}
+
 #[test]
 fn a_bad_command_line_is_refused_before_listening() {
     let cases: &[(&str, &[&str])] = &[
@@ -1008,10 +1064,7 @@ fn a_bad_command_line_is_refused_before_listening() {
         ),
     ];
     for (what, args) in cases {
-        let output = command(args, None)
-            .stdin(Stdio::null())
-            .output()
-            .expect("run the service binary");
+        let output = run_to_exit(command(args, None), what);
         assert!(!output.status.success(), "{what}: exits non-zero");
         assert!(!output.stderr.is_empty(), "{what}: says why on stderr");
         assert!(
@@ -1044,10 +1097,7 @@ fn a_refusal_never_echoes_the_api_key() {
         ),
     ];
     for (what, args, key) in cases {
-        let output = command(args, Some(key))
-            .stdin(Stdio::null())
-            .output()
-            .expect("run the service binary");
+        let output = run_to_exit(command(args, Some(key)), what);
         assert!(!output.status.success(), "{what}: exits non-zero");
         assert!(output.stdout.is_empty(), "{what}: no listening line");
         let stderr = String::from_utf8_lossy(&output.stderr);

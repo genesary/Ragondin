@@ -1,12 +1,13 @@
 //! The prompt template grammar of ADR-C31 § 2, rendered on receipt.
 
-use std::fmt;
-
 /// Why a template is malformed. The service refuses the call as
 /// `INVALID_ARGUMENT`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum TemplateError {
     /// A name between braces other than `query` or `context`.
+    #[error(
+        "malformed template: unknown placeholder {{{name}}} at byte {at}; the placeholders are {{query}} and {{context}}"
+    )]
     UnknownPlaceholder {
         /// The byte offset of the opening brace.
         at: usize,
@@ -14,36 +15,18 @@ pub enum TemplateError {
         name: String,
     },
     /// A `{` that no `}` closes.
+    #[error("malformed template: the {{ at byte {at} is never closed")]
     Unclosed {
         /// The byte offset of the opening brace.
         at: usize,
     },
     /// A `}` that is neither half of `}}` nor the end of a placeholder.
+    #[error("malformed template: lone }} at byte {at}; a literal }} is written }}}}")]
     LoneClose {
         /// The byte offset of the brace.
         at: usize,
     },
 }
-
-impl fmt::Display for TemplateError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::UnknownPlaceholder { at, name } => write!(
-                f,
-                "malformed template: unknown placeholder {{{name}}} at byte {at}; the placeholders are {{query}} and {{context}}"
-            ),
-            Self::Unclosed { at } => {
-                write!(f, "malformed template: the {{ at byte {at} is never closed")
-            }
-            Self::LoneClose { at } => write!(
-                f,
-                "malformed template: lone }} at byte {at}; a literal }} is written }}}}"
-            ),
-        }
-    }
-}
-
-impl std::error::Error for TemplateError {}
 
 /// Renders `template` with `query` and `context`, under ADR-C31 § 2.
 ///

@@ -4,7 +4,6 @@
 //! one optional environment variable. None of them is an experiment variable.
 
 use std::env::VarError;
-use std::fmt;
 use std::net::SocketAddr;
 
 use reqwest::header::HeaderValue;
@@ -28,17 +27,22 @@ pub struct Config {
 }
 
 /// Why a command line or the environment is refused at startup.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum CliError {
     /// A required flag is absent.
+    #[error("{0} is required")]
     Missing(&'static str),
     /// A flag is the last argument, with no value after it.
+    #[error("{0} needs a value")]
     NoValue(&'static str),
     /// A flag given twice.
+    #[error("{0} is given more than once")]
     Repeated(&'static str),
     /// An argument that is not one of the two flags.
+    #[error("unexpected argument {0:?}")]
     Unexpected(String),
     /// The base URL is not one the service can relay to.
+    #[error("--base-url {value:?}: {reason}")]
     BaseUrl {
         /// The value given.
         value: String,
@@ -46,6 +50,7 @@ pub enum CliError {
         reason: String,
     },
     /// The listen address is not a socket address.
+    #[error("--listen {value:?}: {reason}")]
     Listen {
         /// The value given.
         value: String,
@@ -53,24 +58,9 @@ pub enum CliError {
         reason: String,
     },
     /// The API key cannot be sent in a header. The value is never shown.
+    #[error("{API_KEY_VAR}: {0}")]
     ApiKey(&'static str),
 }
-
-impl fmt::Display for CliError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Missing(flag) => write!(f, "{flag} is required"),
-            Self::NoValue(flag) => write!(f, "{flag} needs a value"),
-            Self::Repeated(flag) => write!(f, "{flag} is given more than once"),
-            Self::Unexpected(arg) => write!(f, "unexpected argument {arg:?}"),
-            Self::BaseUrl { value, reason } => write!(f, "--base-url {value:?}: {reason}"),
-            Self::Listen { value, reason } => write!(f, "--listen {value:?}: {reason}"),
-            Self::ApiKey(reason) => write!(f, "{API_KEY_VAR}: {reason}"),
-        }
-    }
-}
-
-impl std::error::Error for CliError {}
 
 const BASE_URL: &str = "--base-url";
 const LISTEN: &str = "--listen";

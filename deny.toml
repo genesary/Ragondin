@@ -216,10 +216,10 @@ multiple-versions = "warn"
 # paths resolve inside this repository. cargo-deny's escape hatch for exactly
 # that case, `allow-wildcard-paths`, applies only to crates marked
 # `publish = false`, and only one is: `ragondin-generator-service`, a test
-# fixture that ships nowhere (ADR-C33 § 1). For every other member, whether this
-# workspace publishes to crates.io is an open question, not something to answer
-# as a side effect of adding a lint. So the choice is between thirteen errors, thirteen warnings on
-# every run, or turning the check off.
+# fixture that ships nowhere (ADR-C33 § 1). For every other member, whether
+# this workspace publishes to crates.io is an open question, not something to
+# answer as a side effect of adding a lint. So the choice is between an error
+# per member, a warning per member on every run, or turning the check off.
 #
 # What that gives up is narrow: a third-party `foo = "*"` would go unreported.
 # It would still have to be written into [workspace.dependencies], where

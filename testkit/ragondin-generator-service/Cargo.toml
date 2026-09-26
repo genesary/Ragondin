@@ -29,11 +29,13 @@ required-features = ["service"]
 
 # `ragondin-proto` for the generated `Generator` server trait; `serde` and
 # `serde_json` for the inference server's JSON; `tokio` for the runtime and the
-# listener. Never `ragondin-engine`, never a crate under `components/`.
+# listener; `thiserror` for the library's typed errors. Never
+# `ragondin-engine`, never a crate under `components/`.
 [dependencies]
 ragondin-proto = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+thiserror = { workspace = true } # the library's typed errors
 reqwest = { workspace = true, optional = true }
 tonic = { workspace = true, optional = true }

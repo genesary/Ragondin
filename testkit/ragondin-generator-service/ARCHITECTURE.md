@@ -95,8 +95,10 @@ is refused, never warned about.
 
 ## Errors
 
-The service returns exactly one of three gRPC codes, `INVALID_ARGUMENT`,
-`UNAVAILABLE` and `INTERNAL`, under ADR-C33 § 5's table:
+A `Remote` service returns exactly one of three gRPC codes —
+`INVALID_ARGUMENT`, `UNAVAILABLE` and `INTERNAL` — and no other
+(ADR-C35 § 1). ADR-C33 § 5's table, which this service applies, is an
+instance of that rule:
 
 | What happened | Status |
 |---|---|
@@ -111,10 +113,29 @@ The service returns exactly one of three gRPC codes, `INVALID_ARGUMENT`,
 | `served_model` absent from `/v1/models` | `INVALID_ARGUMENT` |
 
 The client **follows no redirect** (`Policy::none()`), so a `3xx` is a
-non-success status like any other rather than a `POST` resent as a `GET`. An
-upstream failure's status message carries the HTTP status code and, where the
-body has one, its error text; the API key is replaced by `<redacted>` wherever
-it appears in a message, including where the server echoed it back.
+non-success status like any other rather than a `POST` resent as a `GET`.
+
+**A non-success whose body cannot be read is classified by its status code**,
+like any other non-success; the message then carries no error text. Only a
+`2xx` whose body fails is `UNAVAILABLE` for that reason.
+
+**The transport rows are decided by phase, not by cause.** Every error
+`reqwest` returns from sending is `UNAVAILABLE`, and so is every error reading a
+`2xx` body. `reqwest`'s public error kinds (`is_connect`, `is_request`,
+`is_body`) do not separate a connection dropped by the server from a response
+that is not valid HTTP: both reach this crate as the same kind with a `hyper`
+error as the source, which it could tell apart only by depending on `hyper`
+directly — a new `[workspace.dependencies]` entry, which escalates — or by
+matching error text. So a malformed response is reported as `UNAVAILABLE`,
+which is ADR-C33 § 5's classification of both phases, rather than the
+`INTERNAL` ADR-C35 § 1 gives "any other failure".
+
+An upstream failure's status message carries the HTTP status code and, where
+the body has one, its error text: the OpenAI-shaped `error.message` when there
+is one, otherwise the body. The API key is replaced by `<redacted>` in the whole
+text **before** it is cut to 512 characters, so a key the server echoed back
+straddling the cut leaves nothing of itself behind, and the key is replaced
+again in the assembled message wherever else it appears.
 
 ## Dependencies and the feature
 
@@ -123,6 +144,7 @@ it appears in a message, including where the server echoed it back.
 | `ragondin-proto` | the generated `Generator` server trait and messages |
 | `tokio` | the runtime and the listener |
 | `serde`, `serde_json` | the inference server's JSON, and the identity's encoding |
+| `thiserror` | the library's typed errors, `TemplateError` and `CliError` |
 | `reqwest` (optional) | the HTTP client — the workspace's one, decided in ADR-C33 § 2: `0.12`, `rustls-tls` and `json`, no native TLS |
 | `tonic` (optional) | the gRPC server |
 
@@ -144,10 +166,10 @@ it.
   crate may depend on; the relay handles only the generated messages, so it has
   no use for the domain types, and an unused dependency would be one more edge
   for nothing.
-- **No `thiserror`.** The library's two error types, `TemplateError` and
-  `CliError`, implement `Display` and `Error` by hand. ADR-C33 § 1 enumerates
-  the crate's dependencies and `thiserror` is not among them; two small enums
-  do not need it.
+- **`thiserror`, which ADR-C33 § 1 does not list.** The library exports two
+  error types, `TemplateError` and `CliError`, and the **Errors** row of
+  `AGENTS.md` § Frozen decisions puts typed `thiserror` errors in a library.
+  It is an existing workspace entry, so no new dependency enters the graph.
 - **A library beside the binary.** `src/template.rs` is compiled in every
   configuration and unit-tested by `just test`; `src/cli.rs` and
   `src/relay.rs` are compiled under `service`. `src/main.rs` only wires them.
@@ -163,13 +185,15 @@ it.
   value) is refused at startup, with a message that does not show it, rather
   than failing every request later.
 - **Error text** is `error.message` when the body is OpenAI-shaped JSON, then
-  `error`, `message` or `detail` as a string, then the body itself cut to 512
-  characters.
+  `error`, `message` or `detail` as a string, then the body itself; whichever
+  it is, the key is redacted and then the text is cut to 512 characters.
 - **Proxies.** The client keeps `reqwest`'s reading of `HTTP_PROXY`,
   `HTTPS_PROXY` and `ALL_PROXY`; with `default-features = false` it does not
-  read the platform's system proxy settings. The tests clear those variables
-  for the binary they spawn, so a proxy on the test machine cannot stand
-  between the service and the loopback fake.
+  read the platform's system proxy settings. A proxy those variables name
+  receives every request, the `Authorization: Bearer` header with the API key
+  included, so the key is only as private as that proxy. The tests clear those
+  variables for the binary they spawn, so a proxy on the test machine cannot
+  stand between the service and the loopback fake.
 - **`clippy::result_large_err` is allowed in `src/relay.rs`**, for the reason
   `ragondin-proto` allows it on the generated code: every rpc returns
   `Result<_, tonic::Status>`, and `Status` is as large as `tonic` makes it.
