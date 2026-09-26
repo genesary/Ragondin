@@ -1825,9 +1825,14 @@ dependencies = [
 name = "ragondin-remote"
 version = "0.0.0"
 dependencies = [
+ "async-trait",
+ "prost",
+ "ragondin-conformance",
  "ragondin-contracts",
  "ragondin-proto",
  "ragondin-types",
+ "thiserror",
+ "tokio",
  "tonic",
 ]
 

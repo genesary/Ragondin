@@ -406,7 +406,7 @@ impl Reranker for RemoteReranker {
 
 ### 7.2 Source of truth and face synchronization
 
-**Decision.** The **domain types (`ragondin-types`) are the source of truth**, hand-written for Rust ergonomics. The `.proto` files in `ragondin-proto` are hand-maintained to mirror them; `tonic-build` generates the Rust stubs from those files, never the other way round. `ragondin-remote` supplies the `From`/`Into` conversions (ADR-C24, superseding ADR-C7).
+**Decision.** The **domain types (`ragondin-types`) are the source of truth**, hand-written for Rust ergonomics. The `.proto` files in `ragondin-proto` are hand-maintained to mirror them; `tonic-build` generates the Rust stubs from those files, never the other way round. `ragondin-remote` supplies the conversions, as its own `IntoProto` and `FromProto` traits rather than `From`/`Into`, which the orphan rule forbids between two foreign types (ADR-C24, superseding ADR-C7).
 
 The two faces are kept in lockstep by **round-trip property tests**:
 

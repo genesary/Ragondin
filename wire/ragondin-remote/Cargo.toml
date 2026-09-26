@@ -9,8 +9,21 @@ rust-version.workspace = true
 
 # Implements the domain traits (`ragondin-contracts`) over the wire (`ragondin-proto`),
 # converting domain <-> protobuf. `tonic` provides the client transport.
+# Not feature-gated inside: the whole crate is the heavy backend, and a consumer
+# makes it optional (see ARCHITECTURE.md § Feature gating).
 [dependencies]
 ragondin-contracts = { workspace = true }
 ragondin-types = { workspace = true }
 ragondin-proto = { workspace = true }
 tonic = { workspace = true }
+async-trait = { workspace = true } # the contract traits are `async_trait` (frozen)
+thiserror = { workspace = true }   # typed library errors (DecodeError)
+
+# Test-only. The conformance suite is run against each adapter over an
+# in-process tonic server on an ephemeral port, hosting an in-test `Local` stub;
+# `tokio` runs it, `async-trait` declares the stubs, `prost` encodes the
+# round-trip messages to bytes and back.
+[dev-dependencies]
+ragondin-conformance = { workspace = true }
+tokio = { workspace = true }
+prost = { workspace = true }
