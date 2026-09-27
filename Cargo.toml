@@ -22,6 +22,7 @@ members = [
     "components/ragondin-stub",
     "components/ragondin-context-concat",
     "testkit/ragondin-conformance",
+    "testkit/ragondin-generator-service",
     "bin/ragondin",
 ]
 
@@ -86,6 +87,18 @@ tonic = "0.12"                                     # gRPC transport for the wire
 prost = "0.13"                                     # protobuf messages for the wire layer
 tonic-build = "0.12"                               # build-dependency of ragondin-proto only: generates the stubs (ADR-C24)
 protox = "0.8"                                     # build-dependency of ragondin-proto only: compiles the .proto, no protoc (ADR-C34)
+
+# The workspace's HTTP client, decided in ADR-C33 § 2, and today reached by one
+# crate only: `testkit/ragondin-generator-service`, optional, behind its
+# `service` feature. `default-features = false` drops the native TLS stack, so
+# TLS runs on `rustls` with `ring` and `webpki-roots`, the precedent ADR-C27
+# set for `ort`; `json` is the request and response bodies. A second HTTP
+# client, or a move to the 0.13 line, whose feature names differ, escalates.
+# `reqwest` is on the INV-4 deny-list, so the core cannot reach it.
+reqwest = { version = "0.12", default-features = false, features = [
+    "rustls-tls",
+    "json",
+] }
 
 # The first heavy backend. It is listed here because versions are centralized
 # here and nowhere else — not because the core may reach it: `tantivy` is on the

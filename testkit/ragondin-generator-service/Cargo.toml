@@ -1,0 +1,50 @@
+[package]
+name = "ragondin-generator-service"
+description = "The reference Remote generator service: a stateless gRPC relay to an OpenAI-compatible inference server."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+# A worked example and a calibration fixture, never product surface (ADR-C33
+# § 1): it ships nowhere.
+publish = false
+
+# The one binary compiles only under `service`, so a workspace build without
+# the feature compiles no HTTP client, and `tonic` only as far as
+# `ragondin-proto` already does (ADR-C33 § 1).
+[features]
+service = ["dep:reqwest", "dep:tonic"]
+
+[[bin]]
+name = "ragondin-generator-service"
+path = "src/main.rs"
+required-features = ["service"]
+
+# The tests spawn the binary, so they need what it needs.
+[[test]]
+name = "service"
+path = "tests/service.rs"
+required-features = ["service"]
+
+# `ragondin-proto` for the generated `Generator` server trait; `serde` and
+# `serde_json` for the inference server's JSON; `tokio` for the runtime and the
+# listener; `thiserror` for the library's typed errors. Never
+# `ragondin-engine`, never a crate under `components/`.
+[dependencies]
+ragondin-proto = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true } # the library's typed errors
+reqwest = { workspace = true, optional = true }
+tonic = { workspace = true, optional = true }
+
+# Test-only: the tests drive the spawned binary through `RemoteGenerator`, the
+# `Remote` adapter a pipeline reaches the service by, and assert the
+# `ComponentError` each failure becomes (ADR-C33 § 6). The contract and the
+# domain types are what that adapter's calls take and return.
+[dev-dependencies]
+ragondin-remote = { workspace = true }
+ragondin-contracts = { workspace = true }
+ragondin-types = { workspace = true }
