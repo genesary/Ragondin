@@ -67,7 +67,8 @@ just check             # build + test + clippy + fmt + architecture invariants
 **Pre-alpha.** Milestones M0 — *Foundations* — M1 — *Core contracts & engine
 skeleton* — and M2 — *First defensible deliverable (BEIR retrieval bench)* —
 have every one of their issues closed. M3 — *Generation & end-to-end RAG* — is
-next. The issues open outside any milestone are decisions reserved for a human,
+the current milestone, and its exit criterion is asserted by
+`bin/ragondin/tests/exit_criterion_generation.rs` (below). The issues open outside any milestone are decisions reserved for a human,
 work blocked on one of those decisions, ADR follow-ups, documentation defects,
 and one dependency advisory exception.
 

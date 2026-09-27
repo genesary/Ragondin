@@ -236,10 +236,14 @@ fn the_same_configuration_evaluated_twice_is_the_same_run() {
     // ports, since where a component is answered from is provenance, outside
     // a run's identity (ADR-C32 § 2).
     for config in [DENSE_ONLY, HYBRID_RERANK] {
+        let stem = Path::new(config)
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .expect("a configuration file has a UTF-8 stem");
         let first_service = remote::serve_generator();
         let second_service = remote::serve_generator();
-        let first = bench(config, &store(&format!("first-{config}")), &first_service);
-        let second = bench(config, &store(&format!("second-{config}")), &second_service);
+        let first = bench(config, &store(&format!("first-{stem}")), &first_service);
+        let second = bench(config, &store(&format!("second-{stem}")), &second_service);
 
         assert_eq!(first.id, second.id, "{config}: two run ids for one input");
         assert_eq!(first.inputs, second.inputs, "{config}");
@@ -299,7 +303,11 @@ fn retrieval_metrics_are_still_reported_and_read_the_ranking_behind_the_answer()
             "{generation} reads another ranking than {retrieval} returns"
         );
         for name in [EXACT_MATCH, TOKEN_F1] {
-            metric(&answered, name);
+            let value = metric(&answered, name);
+            assert!(
+                value.is_finite() && (0.0..=1.0).contains(&value),
+                "{generation}: {name} is {value}, outside [0, 1]"
+            );
         }
     }
 }

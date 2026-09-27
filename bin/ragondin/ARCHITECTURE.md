@@ -362,8 +362,9 @@ release.
     compile an edge nothing walks.
   - *The fake services are one file*, `tests/support/remote.rs`, included by
     `tests/bench.rs`, by `tests/exit_criterion_generation.rs` and, through
-    `#[path]` in `src/main.rs`, by the unit tests of `src/wiring.rs`: two copies of a test server would drift, and a
-    library target for test code alone would be a second crate.
+    `#[path]` in `src/main.rs`, by the unit tests of `src/wiring.rs`: two
+    copies of a test server would drift, and a library target for test code
+    alone would be a second crate.
 - **`--benchmark` names a format and a dataset (ADR-C30 § 2).** `beir/<dir>`
   reads a BEIR directory by its qrels alone and ignores any `answers.jsonl`
   beside it, so an M2 run reads exactly as it always has; `beir-qa/<dir>` reads
