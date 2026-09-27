@@ -140,9 +140,9 @@ actually look like is not settled, so neither variant exists yet.
   share it.** They are data carriers, not vocabularies the compiler must
   defend: nothing silently does the wrong thing on meeting a parameter kind it
   cannot read, so ADR-C22 makes them extensible instead. Neither carries the
-  attribute *today* — it lands with that ADR's implementation, together with
-  the correction to `AGENTS.md`'s INV-1 row, whose "none of these types is
-  `#[non_exhaustive]`" is still true until it does. Tracked as #178.
+  attribute *today* — it lands with that ADR's implementation, and `AGENTS.md`'s
+  INV-1 row already says the two join its `#[non_exhaustive]` list then.
+  Tracked as #178.
   `ValueKind`, `PortSpec` and
   `ValidationError` join the same stable surface under `LogicalNode`'s stance
   and not the parameter enums': an added `ValueKind` variant, a
