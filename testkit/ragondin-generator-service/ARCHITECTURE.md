@@ -16,10 +16,11 @@ opposite shapes, and the difference is deliberate:
 
 - `ragondin-conformance` is a library a component crate pulls into its
   dev-dependencies, so it stays light.
-- This crate is a `Remote` service. It depends on `ragondin-proto` for the
-  generated `Generator` server trait and on no other workspace crate — never
-  `ragondin-engine`, never a crate under `components/` — so its HTTP client
-  reaches nobody else's graph.
+- This crate is a `Remote` service. Its one normal dependency in the
+  workspace is `ragondin-proto`, for the generated `Generator` server trait —
+  never `ragondin-engine`, never a crate under `components/` — so its HTTP
+  client reaches nobody else's graph. Its tests add `ragondin-remote`,
+  `ragondin-contracts` and `ragondin-types` as dev-dependencies (§ Tests).
 
 ## What it does
 
@@ -65,9 +66,9 @@ Three values, none of them an experiment variable (ADR-C33 § 3):
 
 | | |
 |---|---|
-| `--base-url <url>` | required; an absolute `http` or `https` URL, the server's root **without** `/v1`; no query, no fragment |
+| `--base-url <url>` | required; an absolute `http` or `https` URL, the server's root **without** `/v1`; no user or password, no query, no fragment |
 | `--listen <socket address>` | required; `127.0.0.1:0` asks the operating system for a port |
-| `RAGONDIN_INFERENCE_API_KEY` | optional; when non-empty, every request carries `Authorization: Bearer <key>`. Unset and empty are the same. Never a flag, never written to any output |
+| `RAGONDIN_INFERENCE_API_KEY` | optional; printable ASCII other than `"` and `\`; when non-empty, every request carries `Authorization: Bearer <key>`. Unset and empty are the same. Never a flag, never written to any output |
 
 The flags are read from `std::env::args` without `clap`, which the root
 manifest reserves to `bin/ragondin`. A bad command line — a missing, repeated
@@ -104,7 +105,7 @@ instance of that rule:
 |---|---|
 | an absent request message; empty `served_model` or `template`; a non-finite `temperature`; a malformed template | `INVALID_ARGUMENT` |
 | the request failed before any response (connection refused, a connect error) | `UNAVAILABLE` |
-| the transport failed after the status line (the body could not be read) | `UNAVAILABLE` |
+| the transport failed after the status line of a `2xx` (its body could not be read) | `UNAVAILABLE` |
 | HTTP `429` or `503` | `UNAVAILABLE` |
 | any other `4xx`, from either endpoint, a model the server does not serve included | `INVALID_ARGUMENT` |
 | any other `5xx`, and any other non-success status, a `3xx` included | `INTERNAL` |
@@ -184,9 +185,19 @@ it.
 - **Repeated flags and positional arguments are refused**, as unknown
   arguments are: a command line that could mean two things is refused rather
   than resolved by position.
-- **An API key that cannot be a header value** (a line break, a non-UTF-8
-  value) is refused at startup, with a message that does not show it, rather
-  than failing every request later.
+- **The API key must be printable ASCII other than `"` and `\`**, and any
+  other key is refused at startup, with a message that does not show it.
+  Those are exactly the characters neither a JSON string nor a
+  `{:?}`-quoted one escapes, so a key the inference server reflects into an
+  error or a mistyped field is found verbatim in the text that quotes it, and
+  redacted; a key with an escaped character would slip past the literal
+  replacement. Such a key is also always a valid header value.
+- **A base URL carrying a user or a password is refused**, without showing
+  it: a credential belongs in `RAGONDIN_INFERENCE_API_KEY`, never on the
+  command line. The client's error text is also taken `without_url`, so no
+  URL reaches a status message; the message names the endpoint by its path.
+- **A decode error is redacted and cut** like an upstream error text:
+  `serde_json` quotes a mistyped value whole.
 - **Error text** is `error.message` when the body is OpenAI-shaped JSON, then
   `error`, `message` or `detail` as a string, then the body itself; whichever
   it is, the key is redacted and then the text is cut to 512 characters.

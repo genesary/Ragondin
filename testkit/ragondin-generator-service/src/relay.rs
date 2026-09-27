@@ -65,7 +65,7 @@ impl Relay {
                 Code::Unavailable,
                 format!(
                     "the inference server could not be reached at {endpoint}: {}",
-                    chain(&e)
+                    chain(&e.without_url())
                 ),
             )
         })?;
@@ -78,7 +78,7 @@ impl Relay {
                     format!(
                         "the inference server's {endpoint} response failed after HTTP {}: {}",
                         http.as_u16(),
-                        chain(&e)
+                        chain(&e.without_url())
                     ),
                 )
             });
@@ -105,12 +105,7 @@ impl Relay {
     /// quoting a mistyped value, a caller's own input — can bypass the
     /// redaction.
     fn status(&self, code: Code, message: impl Into<String>) -> Status {
-        let message = message.into();
-        let message = match &self.api_key {
-            Some(key) => message.replace(key.as_str(), REDACTED),
-            None => message,
-        };
-        Status::new(code, message)
+        Status::new(code, redact(&message.into(), self.api_key.as_deref()))
     }
 
     fn invalid(&self, message: impl Into<String>) -> Status {
@@ -158,12 +153,22 @@ fn error_text(body: &[u8], api_key: Option<&str>) -> String {
         .find_map(Value::as_str)
     });
     let text = found.unwrap_or_else(|| lossy.trim());
-    let text = match api_key {
+    cut(redact(text, api_key))
+}
+
+/// `text` with every occurrence of the key replaced.
+fn redact(text: &str, api_key: Option<&str>) -> String {
+    match api_key {
         Some(key) => text.replace(key, REDACTED),
         None => text.to_owned(),
-    };
+    }
+}
+
+/// `text` cut to [`ERROR_TEXT_LIMIT`] characters. Called only on text already
+/// redacted, so a key straddling the cut leaves nothing of itself behind.
+fn cut(text: String) -> String {
     match text.char_indices().nth(ERROR_TEXT_LIMIT) {
-        Some((cut, _)) => format!("{}…", &text[..cut]),
+        Some((at, _)) => format!("{}…", &text[..at]),
         None => text,
     }
 }
@@ -271,8 +276,12 @@ impl Generator for Relay {
                 endpoint,
             )
             .await?;
-        let completion: ChatCompletion = serde_json::from_slice(&bytes)
-            .map_err(|e| self.internal(format!("the {endpoint} response does not decode: {e}")))?;
+        let completion: ChatCompletion = serde_json::from_slice(&bytes).map_err(|e| {
+            // A decode error quotes the mistyped value whole: redacted,
+            // then cut like any other error text.
+            let detail = cut(redact(&e.to_string(), self.api_key.as_deref()));
+            self.internal(format!("the {endpoint} response does not decode: {detail}"))
+        })?;
         let text = completion
             .choices
             .into_iter()

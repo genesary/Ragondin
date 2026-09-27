@@ -6,7 +6,6 @@
 use std::env::VarError;
 use std::net::SocketAddr;
 
-use reqwest::header::HeaderValue;
 use reqwest::Url;
 
 /// The environment variable holding the inference server's API key.
@@ -49,6 +48,11 @@ pub enum CliError {
         /// What is wrong with it.
         reason: String,
     },
+    /// The base URL carries a user or a password. The value is never shown.
+    #[error(
+        "--base-url carries a user or a password, which is refused and not shown; the key goes in {API_KEY_VAR}"
+    )]
+    BaseUrlCredentials,
     /// The listen address is not a socket address.
     #[error("--listen {value:?}: {reason}")]
     Listen {
@@ -57,7 +61,7 @@ pub enum CliError {
         /// What is wrong with it.
         reason: String,
     },
-    /// The API key cannot be sent in a header. The value is never shown.
+    /// The API key is refused. The value is never shown.
     #[error("{API_KEY_VAR}: {0}")]
     ApiKey(&'static str),
 }
@@ -100,6 +104,10 @@ fn check_base_url(value: String) -> Result<String, CliError> {
         reason: reason.to_owned(),
     };
     let url = Url::parse(&value).map_err(|e| refuse(&format!("not an absolute URL ({e})")))?;
+    // Checked first, and the value never shown: it holds a credential.
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err(CliError::BaseUrlCredentials);
+    }
     if !matches!(url.scheme(), "http" | "https") {
         return Err(refuse("the scheme must be http or https"));
     }
@@ -125,10 +133,19 @@ pub fn api_key(var: Result<String, VarError>) -> Result<Option<String>, CliError
         Err(VarError::NotPresent) => Ok(None),
         Err(VarError::NotUnicode(_)) => Err(CliError::ApiKey("not valid UTF-8")),
         Ok(key) if key.is_empty() => Ok(None),
-        Ok(key) => {
-            HeaderValue::from_str(&format!("Bearer {key}"))
-                .map_err(|_| CliError::ApiKey("not a valid HTTP header value"))?;
-            Ok(Some(key))
+        // Printable ASCII other than `"` and `\` is exactly what neither a
+        // JSON string nor a `{:?}`-quoted one escapes, so the key is found,
+        // and redacted, verbatim in any error text that quotes it back. It is
+        // also always a valid header value.
+        Ok(key)
+            if !key
+                .bytes()
+                .all(|b| matches!(b, b' '..=b'~') && b != b'"' && b != b'\\') =>
+        {
+            Err(CliError::ApiKey(
+                "only printable ASCII other than \" and \\ is accepted",
+            ))
         }
+        Ok(key) => Ok(Some(key)),
     }
 }

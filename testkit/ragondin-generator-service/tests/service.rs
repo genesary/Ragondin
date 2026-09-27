@@ -671,7 +671,10 @@ async fn a_call_the_adapter_never_sends_is_refused_by_the_service_too() {
 async fn an_unreachable_inference_server_is_unavailable() {
     let base = refused_base().await;
     let error = generate_error(&base, &params("qwen", "{query}")).await;
-    assert_maps(&error, Code::Unavailable, "generate");
+    let message = assert_maps(&error, Code::Unavailable, "generate");
+    // The message names the endpoint by its path; the URL, which could carry
+    // credentials, is not repeated from the client's error.
+    assert!(!message.contains(&base), "{message}");
     let error = identity_error(&base, "qwen").await;
     assert_maps(&error, Code::Unavailable, "identity");
 }
@@ -824,6 +827,19 @@ async fn a_long_json_error_message_is_cut_like_any_other_error_text() {
     assert!(
         message.chars().count() < 700,
         "the upstream text is bounded: {} chars",
+        message.chars().count()
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_long_decode_error_is_cut_like_any_other_error_text() {
+    let fake = Fake::start(|_| reply(200, json!({"choices": "z".repeat(4000)}))).await;
+    let error = generate_error(&fake.base(), &params("qwen", "{query}")).await;
+    let message = assert_maps(&error, Code::Internal, "long decode error");
+    assert!(message.contains("zzzz"), "{message}");
+    assert!(
+        message.chars().count() < 700,
+        "the decode error is bounded: {} chars",
         message.chars().count()
     );
 }
@@ -1098,6 +1114,24 @@ fn a_bad_command_line_is_refused_before_listening() {
             ],
         ),
         (
+            "a base URL with a user and a password",
+            &[
+                "--base-url",
+                "http://user:secret@127.0.0.1:8000",
+                "--listen",
+                "127.0.0.1:0",
+            ],
+        ),
+        (
+            "a base URL with a user",
+            &[
+                "--base-url",
+                "http://user@127.0.0.1:8000",
+                "--listen",
+                "127.0.0.1:0",
+            ],
+        ),
+        (
             "a listen address that is not a socket address",
             &[
                 "--base-url",
@@ -1127,7 +1161,7 @@ fn a_refusal_never_echoes_the_api_key() {
         "--listen",
         "127.0.0.1:0",
     ];
-    let cases: [(&str, &[&str], &str); 2] = [
+    let cases: [(&str, &[&str], &str); 6] = [
         (
             "a bad command line",
             &["--listen", "127.0.0.1:0"],
@@ -1138,6 +1172,16 @@ fn a_refusal_never_echoes_the_api_key() {
             "a key with a line break",
             &good,
             "sk-secret-42\nX-Injected: 1",
+        ),
+        // A key a decode error or a JSON body would escape could no longer
+        // be found, and so redacted, in the text that quotes it.
+        ("a key with a quote", &good, "sk-secret-42\"x"),
+        ("a key with a backslash", &good, "sk-secret-42\\x"),
+        ("a key with a tab", &good, "sk-secret-42\tx"),
+        (
+            "a key with a non-ASCII character",
+            &good,
+            "sk-secret-42\u{e9}",
         ),
     ];
     for (what, args, key) in cases {
