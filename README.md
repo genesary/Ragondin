@@ -79,6 +79,13 @@ Beside it, `bin/ragondin/tests/calibration.rs` — ignored by default, run by
 reproduces the nDCG@10 that MTEB publishes for a pinned sentence encoder on BEIR
 SciFact, and measures the same criterion on that real data.
 
+M3's exit criterion is asserted mechanically in the same way:
+`bin/ragondin/tests/exit_criterion_generation.rs` runs the same curated fixture,
+with a reference answer per question, through a context builder and a `Remote`
+generator served in-process by the test, and requires the hybrid pipeline with
+reranking to answer more questions than the dense-only one — on exact match and
+token F1 — reproducibly.
+
 **Three of the four subcommands are implemented.**
 `bin/ragondin/ARCHITECTURE.md` § What lives here carries the current list and what each one does; `serve` is the one that parses
 its arguments and then reports that this build does not implement it. `bench` is

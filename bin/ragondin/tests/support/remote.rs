@@ -8,7 +8,8 @@
 //!
 //! Each service runs on a runtime of its own, so it keeps answering while a
 //! test blocks on the spawned binary, and it stops when its [`Service`] is
-//! dropped. Shared by `src/wiring.rs`'s tests and `tests/bench.rs`.
+//! dropped. Shared by `src/wiring.rs`'s tests, `tests/bench.rs` and
+//! `tests/exit_criterion_generation.rs`.
 
 #![allow(dead_code)] // each includer uses the part it needs
 

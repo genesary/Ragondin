@@ -28,6 +28,7 @@ charter.
 | `tests/bench.rs` | `bench`, exercised as a process, over miniature fixtures: BEIR, BEIR with reference answers, and SQuAD — the last two for a generation pipeline |
 | `tests/vertical_slice.rs` | The composition root assembled for real, end to end: a retrieval pipeline, and a generation one |
 | `tests/exit_criterion.rs` | The M2 exit criterion: hybrid retrieval with reranking beats dense-only, reproducibly, and `compare` says so |
+| `tests/exit_criterion_generation.rs` | The M3 exit criterion: the same two retrieval pipelines ending in a context builder and a `Remote` generator — hybrid with reranking answers more questions than dense-only, on exact match and F1, reproducibly, and `compare` says so |
 | `tests/support/remote.rs` | Fake `Remote` services, `tonic` servers over in-test components, for the tests that bind one; shared with `src/wiring.rs`'s tests |
 
 **Four subcommands are declared; three are implemented.** `validate` loads a
@@ -220,6 +221,53 @@ release.
     at test time around an absolute path, as `tests/bench.rs` does for its
     hybrid case — leaves nothing reviewable in the tree. Relative paths also
     keep the pipeline hash, and with it the run id, the same on every machine.
+- **The M3 exit criterion is a second test over the same fixture, carried
+  through to an answer.** `tests/exit_criterion_generation.rs` drives `bench`
+  and `compare` as processes over the configurations in
+  `tests/fixtures/exit-criterion/generation/`, each of which is one of M2's
+  retrieval pipelines followed by a `concat` context builder and a generator,
+  and asserts the milestone's claims: hybrid retrieval with reranking beats
+  dense-only on `exact_match` and on `token_f1`, the same configuration
+  evaluated twice is one run (P4), `compare` reports the win on `exact_match`,
+  the retrieval metrics are still reported beside the answer metrics and read
+  the ranking M2's retrieval-only configuration returns (ADR-C30 § 3), and
+  removing each leg or the reranker costs a question. The generator is
+  `Remote`: an ordinary `impl:` name, `answerer`, bound with `--remote
+  generator/answerer=<uri>` (ADR-C32 § 2) to a `tonic` server the test starts
+  on a loopback port, hosting `ragondin-stub`'s `StubGenerator` through
+  `ragondin-remote`'s conversions (`tests/support/remote.rs`). The test needs
+  `bm25`, `onnx` and `remote`, and is compiled only under all three. Four
+  choices are recorded here:
+  - *A new file, not an extension of `tests/exit_criterion.rs`.* The M2
+    criterion is left untouched, as the issue that defines this one requires,
+    and it runs without `remote`; one file gated on three features would
+    compile M2's criterion away in a build that can run it.
+  - *M2's dataset, plus reference answers, and nothing else changed*
+    (ADR-C30 § 4). `dataset/answers.jsonl` holds, for each query, the text of
+    its one relevant passage. The stub answers with the first line of the
+    context its template places; `concat` joins passages with `"\n"`, the
+    budget holds every passage whole, and no passage of the corpus holds a
+    newline or a BEIR title, so the first line is the text of the passage
+    ranked first — and a pipeline answers a question exactly when it ranks the
+    right passage first. The gap is therefore M2's, read at the first rank,
+    and is by construction for the reasons `models/generate.py` gives:
+    dense-only ranks a distractor first on three questions of five. The
+    generation runs read the directory as `beir-qa/dataset`; M2's still read
+    it as `beir/dataset`, which ignores the new file.
+  - *The ablations are M2's four, each ending in the same builder and
+    generator, and the builder's budget is not ablated.* The stub reads only
+    the first line, which is the top passage's whatever the budget lets in
+    after it, so no budget that holds the top passage changes an answer on
+    this fixture: an ablation of it could not cost a question, and would
+    prove nothing. Making the budget decide answers would take a separator
+    that does not start with a newline and a budget sized to one passage —
+    a fixture built against the stub's answer function rather than for the
+    criterion — so it was not done. The reranker ablation is the one that
+    shows a stage decides an answer rather than only a ranking.
+  - *The reproducibility test binds two services on two ports.* Where a
+    component is answered from is recorded on the run and kept out of its
+    identity (ADR-C32 § 2), so the two runs must share one run id while their
+    bindings differ, and the test asserts both.
 - **The keys of the nodes this composition root reads — `dense`,
   `cross_encoder`, a reranker under a bound name, `concat`, `stub_generator` —
   are checked before the benchmark is loaded (ADR-C32 § 1)**; a node under any
@@ -313,8 +361,8 @@ release.
     engine calls nothing in `ragondin-remote`, so turning its feature on would
     compile an edge nothing walks.
   - *The fake services are one file*, `tests/support/remote.rs`, included by
-    `tests/bench.rs` and, through `#[path]` in `src/main.rs`, by the unit tests
-    of `src/wiring.rs`: two copies of a test server would drift, and a
+    `tests/bench.rs`, by `tests/exit_criterion_generation.rs` and, through
+    `#[path]` in `src/main.rs`, by the unit tests of `src/wiring.rs`: two copies of a test server would drift, and a
     library target for test code alone would be a second crate.
 - **`--benchmark` names a format and a dataset (ADR-C30 § 2).** `beir/<dir>`
   reads a BEIR directory by its qrels alone and ignores any `answers.jsonl`

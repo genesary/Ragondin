@@ -1,0 +1,39 @@
+# Ablation: both legs fused, no reranker, then an answer. The fused list ranks
+# the short distractor first on `q-river` and `q-wren`'s passage third, so
+# both questions go unanswered: the reranker is the stage that decides them.
+# The retrieval stages are `../../ablations/fused-no-rerank.yaml`'s; the
+# context builder and the generator are `../dense-only.yaml`'s.
+pipeline:
+  inputs: [question]
+  nodes:
+    - id: lexical
+      component: retriever
+      impl: bm25
+      inputs: [question]
+      params: { top_k: 3 }
+    - id: vectors
+      component: retriever
+      impl: dense
+      inputs: [question]
+      params:
+        top_k: 3
+        embedder: onnx
+        model: models/embedder.onnx
+        tokenizer: models/tokenizer.json
+    - id: fused
+      component: fusion
+      impl: rrf
+      inputs: [lexical, vectors]
+      params: { k: 60 }
+    - id: prompt
+      component: context_builder
+      impl: concat
+      inputs: [question, fused]
+      params: { budget: 2000, separator: "\n" }
+    - id: answer
+      component: generator
+      impl: answerer
+      inputs: [question, prompt]
+      params:
+        served_model: qwen2.5-7b-instruct
+        template: "Answer from the context.\n{context}\nQuestion: {query}"

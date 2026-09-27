@@ -1,0 +1,46 @@
+# Hybrid retrieval with reranking, then an answer: the configuration the M3
+# exit criterion says must answer more questions. The retrieval stages are
+# `../hybrid-rerank.yaml`'s, node for node; the context builder and the
+# generator are `dense-only.yaml`'s, for the reasons it gives.
+pipeline:
+  inputs: [question]
+  nodes:
+    - id: lexical
+      component: retriever
+      impl: bm25
+      inputs: [question]
+      params: { top_k: 3 }
+    - id: vectors
+      component: retriever
+      impl: dense
+      inputs: [question]
+      params:
+        top_k: 3
+        embedder: onnx
+        model: models/embedder.onnx
+        tokenizer: models/tokenizer.json
+    - id: fused
+      component: fusion
+      impl: rrf
+      inputs: [lexical, vectors]
+      params: { k: 60 }
+    - id: reranked
+      component: reranker
+      impl: cross_encoder
+      inputs: [question, fused]
+      params:
+        top_k: 10
+        model: models/cross-encoder.onnx
+        tokenizer: models/tokenizer.json
+    - id: prompt
+      component: context_builder
+      impl: concat
+      inputs: [question, reranked]
+      params: { budget: 2000, separator: "\n" }
+    - id: answer
+      component: generator
+      impl: answerer
+      inputs: [question, prompt]
+      params:
+        served_model: qwen2.5-7b-instruct
+        template: "Answer from the context.\n{context}\nQuestion: {query}"
