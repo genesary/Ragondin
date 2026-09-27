@@ -294,7 +294,11 @@ release.
   - *The URI grammar is read strictly.* The scheme is `http://` in lowercase;
     no path at all, not even `/`; no query, fragment or user information; a
     port, when given, is a number that fits in 16 bits; an IPv6 host is
-    written in brackets. What is refused is anything that would be recorded as
+    written in brackets and must parse as one, and any other host is spelt in
+    letters, digits, `-` and `.` alone, with no percent-encoding. The host is
+    checked on the argument, in every build, rather than left to the channel,
+    which is built after the configuration is loaded and would name the
+    binding rather than the argument. What is refused is anything that would be recorded as
     part of an address while meaning nothing to the channel.
   - *Every node family `--remote` accepts is registered*: a bound retriever,
     fusion, reranker, context builder or generator with `RemoteRetriever`,

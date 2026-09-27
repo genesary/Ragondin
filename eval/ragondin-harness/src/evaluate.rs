@@ -185,7 +185,6 @@ pub async fn evaluate(
         inputs,
         config: evaluation.config.clone(),
         traces,
-        // Filled by the composition root, which holds them; never identity.
         bindings: Vec::new(),
     })
 }

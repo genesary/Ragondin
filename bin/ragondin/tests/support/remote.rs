@@ -84,13 +84,11 @@ fn serve(router: Router) -> Service {
     }
 }
 
-/// An address nothing listens on: the port of a listener bound and dropped.
+/// An address nothing listens on: port 1 of the loopback interface, which is
+/// reserved and which no test binds. Fixed rather than a port bound and
+/// dropped, which another process could take in between.
 pub fn unreachable_uri() -> String {
-    let address = StdListener::bind("127.0.0.1:0")
-        .expect("bind an ephemeral port")
-        .local_addr()
-        .expect("local address");
-    format!("http://{address}")
+    "http://127.0.0.1:1".to_owned()
 }
 
 // `Status` is as large as `tonic` makes it, and every generated rpc returns it.

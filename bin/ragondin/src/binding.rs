@@ -287,6 +287,23 @@ fn check_uri(uri: &str) -> Result<(), &'static str> {
     if host.is_empty() {
         return Err("names no host");
     }
+    // Checked here, on the argument, rather than left to the channel: the
+    // channel is built after the configuration is loaded, and would name the
+    // binding rather than the argument. A bracketed host is an IPv6 address;
+    // any other is a name or an IPv4 address, spelt in the characters DNS
+    // allows. No percent-encoding: a host that needs it names nothing a
+    // channel can reach.
+    let bracketed = authority.starts_with('[');
+    if bracketed {
+        if host.parse::<std::net::Ipv6Addr>().is_err() {
+            return Err("brackets something that is not an IPv6 address");
+        }
+    } else if !host
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'.')
+    {
+        return Err("has a host that is not a name or an address");
+    }
     if let Some(port) = port {
         if port.is_empty() || !port.bytes().all(|byte| byte.is_ascii_digit()) {
             return Err("has a port that is not a number");
@@ -396,9 +413,18 @@ mod tests {
             "http://host:port",
             "http://host:99999",
             "http://user@host",
+            "http://[zz]:80",
+            "http://a b",
+            "http://a%zz",
+            "http://[::1",
+            "http://host.:",
         ] {
             let argument = format!("embedder/bge={uri}");
-            assert_names(&refusal(&[&argument]), &argument);
+            let error = refusal(&[&argument]);
+            assert_names(&error, &argument);
+            // The URI's own refusal, in every build — not the lean build's
+            // refusal of every binding, which would name the argument too.
+            assert!(error.contains("`http://<host>:<port>`"), "{error}");
         }
     }
 

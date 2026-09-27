@@ -219,6 +219,7 @@ flowchart TB
   EXP --> PIP & TYP
   ENG --> CON & PIP & TYP
   ENG -->|"optional, feature = remote"| REM
+  RAG -->|"optional, feature = remote"| REM
   CNF --> CON & TYP
   REM --> CON & TYP & PRO
   MET --> TYP
@@ -239,7 +240,7 @@ flowchart TB
 - `ragondin-types` is the ultimate leaf: everything depends on it; it depends on almost nothing.
 - A **dashed** arrow is an edge the architecture sanctions but that no `Cargo.toml` declares today. `ragondin-contracts → ragondin-pipeline` is the only one: a component receives values, not graphs, so no contract references a `ragondin-pipeline` type yet. The arrow stays because the day one does, adding the dependency needs no architectural argument. Solid arrows are edges that exist.
 - Every box names a member listed in the root `Cargo.toml`, except `components/`, which stands for eight; nothing here is reserved any more. That box covers — `ragondin-retriever-bm25`, `ragondin-retriever-dense`, `ragondin-store-memory`, `ragondin-fusion-rrf`, `ragondin-embedder-onnx`, `ragondin-reranker-onnx`, `ragondin-context-concat` and `ragondin-stub`, the deterministic fixture the end-to-end tests are wired with — and they are drawn as one box because their edges are identical. §4.1's rule is now a fact and not a forecast: `cargo metadata` gives each of the eight exactly `ragondin-contracts` and `ragondin-types` as normal dependencies, and nothing else in the workspace. Each also carries `ragondin-conformance` as a **dev**-dependency, which is how a component proves it satisfies its contract; the graph draws normal dependencies only, so that edge is deliberately absent.
-- One solid edge carries a condition. `ragondin-engine → ragondin-remote` is declared `optional = true` in `engine/ragondin-engine/Cargo.toml` and pulled in by the `remote` feature, so it is a real Cargo edge that the default build does not walk. It is drawn solid because the manifest declares it, and labelled because `cargo tree -p ragondin-engine -e normal --depth 1` does not show it without `--features remote`.
+- Two solid edges carry a condition. `ragondin-engine → ragondin-remote` and `ragondin → ragondin-remote` are each declared `optional = true` — in `engine/ragondin-engine/Cargo.toml` and `bin/ragondin/Cargo.toml` — and pulled in by that crate's own `remote` feature, so each is a real Cargo edge that the default build does not walk. They are drawn solid because the manifests declare them, and labelled because `cargo tree -e normal --depth 1` on either crate does not show them without `--features remote`. The binary's is the one that is used: it constructs the `Remote` adapters over a `--remote` binding (ADR-C32 § 3), and the engine calls nothing in `ragondin-remote`.
 
 ---
 
