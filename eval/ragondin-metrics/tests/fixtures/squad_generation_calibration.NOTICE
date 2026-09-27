@@ -1,0 +1,21 @@
+SQuAD v1.1 — licence notice for the squad_generation_calibration fixture
+
+The files squad_generation_calibration_qrels.tsv,
+squad_generation_calibration.run.tsv, squad_generation_calibration.answers.tsv
+and squad_generation_calibration.expected.tsv in this directory quote material
+from the Stanford Question Answering Dataset (SQuAD) v1.1, development set:
+question identifiers, paragraph identifiers derived from article titles, and
+the reference answers.
+
+SQuAD is by Pranav Rajpurkar, Jian Zhang, Konstantin Lopyrev and Percy Liang,
+"SQuAD: 100,000+ Questions for Machine Comprehension of Text", EMNLP 2016,
+https://rajpurkar.github.io/SQuAD-explorer/, and is distributed under the
+Creative Commons Attribution-ShareAlike 4.0 International licence (CC BY-SA
+4.0), https://creativecommons.org/licenses/by-sa/4.0/.
+
+The quoted material was taken from the file dev-v1.1.json, SHA-256
+95aa6a52d5d6a735563366753ca50492a658031da74f301ac5238b03966972c9, and is
+arranged here — selected (the first 1 000 questions in file order), reordered
+into tab-separated rows and escaped — beside answers a language model gave to
+those questions. That adaptation of the quoted material is distributed under
+the same licence, CC BY-SA 4.0.
