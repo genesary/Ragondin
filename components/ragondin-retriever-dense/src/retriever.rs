@@ -33,19 +33,46 @@ use ragondin_types::{Query, ScoredChunk};
 /// an embedder with an index built by a different model is a wiring mistake,
 /// and this component cannot see it — a width is all it would have to compare,
 /// and two models frequently share one.
+///
+/// # The served model
+///
+/// Every query is embedded with the served model the retriever was built with
+/// (ADR-C32 § 4): `None` by default, which asks the embedder for the model it
+/// loaded, or the name given to [`with_served_model`](Self::with_served_model),
+/// which asks for the model it serves under that name. It is constructor
+/// configuration and not a per-call parameter, because nothing on
+/// [`RetrieveParams`] carries it and one retriever always embeds with one
+/// model.
 pub struct DenseRetriever {
     embedder: Box<dyn Embedder>,
     store: Box<dyn VectorStore>,
+    served_model: Option<String>,
 }
 
 impl DenseRetriever {
-    /// A retriever that embeds with `embedder` and searches `store`.
+    /// A retriever that embeds with `embedder` and searches `store`, asking
+    /// the embedder for the model it loaded.
     ///
     /// Infallible and cheap: nothing is loaded or connected here. Whatever the
     /// two backends need — a model session, a client — they acquired before
     /// they were handed over.
     pub fn new(embedder: Box<dyn Embedder>, store: Box<dyn VectorStore>) -> Self {
-        Self { embedder, store }
+        Self {
+            embedder,
+            store,
+            served_model: None,
+        }
+    }
+
+    /// Embeds every query with the model the embedder serves under
+    /// `served_model`, passed in the [`EmbedParams`] of each call.
+    ///
+    /// A `Remote` embedder has no loaded model for `None` to name and refuses
+    /// it, so a retriever over one is built with the name the service serves
+    /// the model under — the same name the corpus was embedded with.
+    pub fn with_served_model(mut self, served_model: impl Into<String>) -> Self {
+        self.served_model = Some(served_model.into());
+        self
     }
 }
 
@@ -71,12 +98,13 @@ impl Retriever for DenseRetriever {
         // a query, and an asymmetric model prefixes it accordingly. Passing the
         // passage role here would raise no error anywhere and simply score
         // worse.
+        let mut embed = EmbedParams::new(EmbedRole::Query);
+        if let Some(served_model) = &self.served_model {
+            embed = embed.with_served_model(served_model.as_str());
+        }
         let mut embeddings = self
             .embedder
-            .embed(
-                std::slice::from_ref(&query.text),
-                &EmbedParams::new(EmbedRole::Query),
-            )
+            .embed(std::slice::from_ref(&query.text), &embed)
             .await?;
 
         // One text in, one vector out is the `Embedder` contract. An

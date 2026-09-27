@@ -20,13 +20,15 @@ charter.
 | `src/validate.rs` | Loads a configuration and prints its content hash |
 | `src/compare.rs` | Reads two stored runs and prints their diff: metric by metric, then the configuration parameters they differ in |
 | `src/bench.rs` | Evaluates a configuration against a benchmark and records the run |
-| `src/wiring.rs` | A node's `Params` on one side, a constructed component on the other |
+| `src/binding.rs` | `--remote <family>/<name>=<uri>`: the bindings, parsed and checked (ADR-C32 § 2) |
+| `src/wiring.rs` | A node's `Params` on one side, a constructed component on the other; a binding's channel, and the `Remote` adapter over it |
 | `tests/cli.rs` | `validate` and the rest of the command line, exercised as a process |
 | `tests/compare.rs` | `compare`, exercised as a process, against runs written straight into a store |
 | `tests/calibration.rs` | The harness against a published SciFact figure, and the exit criterion on real data — ignored by default, run by `just calibrate` |
 | `tests/bench.rs` | `bench`, exercised as a process, over miniature fixtures: BEIR, BEIR with reference answers, and SQuAD — the last two for a generation pipeline |
 | `tests/vertical_slice.rs` | The composition root assembled for real, end to end: a retrieval pipeline, and a generation one |
 | `tests/exit_criterion.rs` | The M2 exit criterion: hybrid retrieval with reranking beats dense-only, reproducibly, and `compare` says so |
+| `tests/support/remote.rs` | Fake `Remote` services, `tonic` servers over in-test components, for the tests that bind one; shared with `src/wiring.rs`'s tests |
 
 **Four subcommands are declared; three are implemented.** `validate` loads a
 configuration and prints its content hash. `compare` reads two runs already in
@@ -72,10 +74,14 @@ release.
   reaches the user as an exit status and a message naming the file. There is no
   `unwrap` on the load path, and `tests/cli.rs` asserts the absence of a panic
   rather than trusting it.
-- **Heavy backends arrive optional and feature-gated (ADR-C14).** Two features
-  carry them: `bm25` (tantivy) and `onnx` (ONNX Runtime and `tokenizers`, and
-  the dense retriever and in-memory store that compose with it). The default
-  build enables neither and stays lean — and it still loads, validates and
+- **Heavy backends arrive optional and feature-gated (ADR-C14).** Three
+  features carry them: `bm25` (tantivy), `onnx` (ONNX Runtime and `tokenizers`,
+  and the dense retriever and in-memory store that compose with it) and
+  `remote` (`ragondin-remote` and the `tonic` channel a binding is served
+  over, and the same dense retriever and store, so that a build with `remote`
+  and without `onnx` embeds the corpus through a bound embedder and runs a
+  `dense` node over it — ADR-C32 § 5). The default build enables none and
+  stays lean — and it still loads, validates and
   hashes a configuration naming a component it does not carry. What refuses it
   depends on what the node names. A node family's name this build cannot
   construct — `bm25`, `cross_encoder`, a generator nothing registers — reads no
@@ -102,9 +108,10 @@ release.
   runs that re-check only this crate and the dependencies whose features
   differ, a few seconds against the two workspace runs.
 - **No production `Local` generator exists, and the `stub` feature is the
-  only generator a build can carry.** A generator is `Remote` by design
-  (ADR-C31), and this build does not yet construct a `Remote` component, so
-  a real generator is a name planning refuses. The `stub` feature makes
+  only in-process generator a build can carry.** A generator is `Remote` by
+  design (ADR-C31): a real one is bound with `--remote generator/<name>=<uri>`
+  in a build with the `remote` feature, and in any other build its name is one
+  planning refuses. The `stub` feature makes
   `ragondin-stub` a normal dependency and registers its `StubGenerator` as
   `stub_generator`, serving the node's `served_model`: a generator with no
   model and no service, for the tests that drive `bench` over a generation
@@ -127,9 +134,10 @@ release.
 - **`bench` registers; nothing else does.** It is the subcommand that needs an
   `EngineContext`, so it is where the components this build carries are
   registered — `rrf` and the context builder `concat` in every build, `bm25`
-  under `bm25`, `dense` and `cross_encoder` under `onnx`, `stub_generator`
-  under `stub` — through the ordinary `register_*` call, one per component, with
-  no shortcut for a first-party one (INV-7). The engine depends on no component
+  under `bm25`, `dense` under `onnx` or `remote`, `cross_encoder` under
+  `onnx`, `stub_generator` under `stub`, and under `remote` one per binding of
+  a node family — through the ordinary `register_*` call, one per component,
+  with no shortcut for a first-party one and none for a bound one (INV-7). The engine depends on no component
   crate and this one depends on all of them, which is §4.3's rule made
   mechanical: break it and the arrow in `Cargo.toml` is what a reviewer sees.
 - **The corpus is prepared here, and the components are constructed from it**
@@ -154,7 +162,8 @@ release.
   `Box<dyn Embedder>` it owns, and a constructor can capture what was prepared
   but not await it; the reranker, twice. Session loads of one file, in
   sequence, and ADR-C32's Consequences accept the identity read's share of
-  it. Sharing one is a change to that leaf's constructor signature, not to
+  it. A bound embedder or reranker is constructed as often, and costs nothing
+  to construct: each is an adapter over the binding's one channel. Sharing one is a change to that leaf's constructor signature, not to
   this crate.
 - **One identity per role, and one embedder per pipeline, in v0.** A run
   records its model hashes by the role each component played (§7.1), and the
@@ -212,16 +221,20 @@ release.
     hybrid case — leaves nothing reviewable in the tree. Relative paths also
     keep the pipeline hash, and with it the run id, the same on every machine.
 - **The keys of the nodes this composition root reads — `dense`,
-  `cross_encoder`, `concat`, `stub_generator` — are checked before the
-  benchmark is loaded (ADR-C32 § 1)**; a node under any other name is
-  planning's to refuse.
+  `cross_encoder`, a reranker under a bound name, `concat`, `stub_generator` —
+  are checked before the benchmark is loaded (ADR-C32 § 1)**; a node under any
+  other name is planning's to refuse.
   A `dense` node names its embedder with `embedder:`, required and non-empty;
-  the only name this composition root knows is `onnx`, and any other is
-  refused naming the node and the name. Over `onnx` a `dense` node may carry
-  `top_k`, `embedder`, `query_prefix`, `passage_prefix`, `model`, `tokenizer`
-  and `max_sequence_length`, and a `cross_encoder` node `top_k`, `model`,
-  `tokenizer` and `max_sequence_length`; any other key — `served_model`
-  included — is refused rather than hashed as inert, since it would move the
+  the names this composition root knows are `onnx` and the names bound with
+  `--remote embedder/<name>=<uri>`, and any other is refused naming the node
+  and the name. Over `onnx` a `dense` node may carry `top_k`, `embedder`,
+  `query_prefix`, `passage_prefix`, `model`, `tokenizer` and
+  `max_sequence_length`, and a `cross_encoder` node `top_k`, `model`,
+  `tokenizer` and `max_sequence_length`; over a bound embedder a `dense` node
+  carries `served_model`, required, in place of the three ONNX keys, and a
+  reranker node under a bound name `top_k` and a required `served_model` and
+  nothing else. Any other key — `served_model` on an ONNX node, `model` on a
+  bound one — is refused rather than hashed as inert, since it would move the
   run's identity while changing nothing the run did. An empty prefix is
   refused too: absence is the only spelling of "no prefix". Those checks run
   in step one, `wiring::check_nodes`, before any component is constructed. A
@@ -242,14 +255,67 @@ release.
   constructs another — so a missing model file, or a model a generator does
   not serve, ends the run before anything expensive has run. `model_hashes`
   is keyed by the node's **family**, never by its `impl:` name: `embedder`
-  (the embedder a `dense` node names, read with no served model),
-  `reranker`, `context_builder` (read with no argument) and `generator` (read
+  (the embedder a `dense` node names), `reranker` — each read with no served
+  model over the ONNX component and with the node's `served_model` over a bound
+  one — `context_builder` (read with no argument) and `generator` (read
   with the node's `served_model`, which is then required; its absence is
-  refused here rather than passed on as an empty name). The ONNX components
+  refused here rather than passed on as an empty name). A bound component's
+  identity is what its service reports, and its first call is this one: an
+  unreachable service ends the run here, as `ComponentError::Unavailable`,
+  and so does a model the service does not serve. The ONNX components
   report `<model>+<tokenizer>`, the SHA-256 of each file, where this crate
   used to digest the model file itself and left the tokenizer's contents out.
   A node whose name this build cannot construct records nothing and is left
   to planning, as above. The answers never enter identity (P4).
+- **A `Remote` component is bound on the command line, never in the
+  configuration (ADR-C32 § 1–§ 3).** `bench --remote <family>/<name>=<uri>`,
+  repeatable, binds an `impl:` name — or, for `embedder`, an `embedder:`
+  name — to a service. `binding::Bindings::parse` runs first, before the
+  configuration is read, and refuses an argument missing its `/` or its `=` or
+  a part, a family outside `retriever`, `fusion`, `reranker`,
+  `context_builder`, `generator` and `embedder`, a URI that is not
+  `http://<host>[:<port>]`, a family and name bound twice, and a name this
+  composition root gives a `Local` component of that family — in any build,
+  from the one table `wiring::LOCAL`, so a command line is refused alike by
+  every build. A build without `remote` then refuses whatever passed, naming
+  the feature. Once the configuration is loaded, a binding no node uses is
+  refused. `wiring::Bound` then builds one lazily connecting channel per
+  binding, which connects nothing, and registration makes one `register_*`
+  call per binding of a node family with the `Remote` adapter over it; an
+  `embedder` binding is resolved inside the `dense` closure, with the node's
+  prefixes, which the adapter applies. The dense retriever over a bound
+  embedder is built `with_served_model` the node's `served_model`, and
+  `prepare` embeds the corpus under the same name. After `evaluate`, `bench`
+  sets the run's `bindings` — family, name and URI as written — and prints
+  each as `bound[<family>/<name>]`; they are never part of the run's identity,
+  and a test runs one configuration against two addresses and gets one
+  `run_id`. Choices recorded here, since
+  ADR-C32 leaves them to this crate:
+  - *The URI grammar is read strictly.* The scheme is `http://` in lowercase;
+    no path at all, not even `/`; no query, fragment or user information; a
+    port, when given, is a number that fits in 16 bits; an IPv6 host is
+    written in brackets and must parse as one, and any other host is spelt in
+    letters, digits, `-` and `.` alone, with no percent-encoding. The host is
+    checked on the argument, in every build, rather than left to the channel,
+    which is built after the configuration is loaded and would name the
+    binding rather than the argument. What is refused is anything that would be recorded as
+    part of an address while meaning nothing to the channel.
+  - *Every node family `--remote` accepts is registered*: a bound retriever,
+    fusion, reranker, context builder or generator with `RemoteRetriever`,
+    `RemoteFusion`, `RemoteReranker`, `RemoteContextBuilder` or
+    `RemoteGenerator`. A binding accepted but never constructed would leave
+    planning to call a bound name unknown. The identity of a bound reranker,
+    context builder and generator is read in step two — the generator's with
+    its node's required `served_model`, the context builder's with no
+    argument; a retriever and a fusion carry no identity.
+  - *The binary's `remote` feature does not enable `ragondin-engine`'s.* The
+    composition root constructs every adapter itself (ADR-C32 § 3), and the
+    engine calls nothing in `ragondin-remote`, so turning its feature on would
+    compile an edge nothing walks.
+  - *The fake services are one file*, `tests/support/remote.rs`, included by
+    `tests/bench.rs` and, through `#[path]` in `src/main.rs`, by the unit tests
+    of `src/wiring.rs`: two copies of a test server would drift, and a
+    library target for test code alone would be a second crate.
 - **`--benchmark` names a format and a dataset (ADR-C30 § 2).** `beir/<dir>`
   reads a BEIR directory by its qrels alone and ignores any `answers.jsonl`
   beside it, so an M2 run reads exactly as it always has; `beir-qa/<dir>` reads
@@ -288,8 +354,15 @@ both are reachable only from it.
 Neither duplicates a role `[workspace.dependencies]` already fills: the table
 held no CLI parser and no CLI test harness before this crate needed one.
 
-Two more entries are *used* here without being added by it, so neither is a new
-utility role and neither escalates: **`sha2`** as a dev-dependency, the crate
+Six more entries are *used* here without being added by it, so none is a new
+utility role and none escalates. Four came with `--remote`. **`tonic`** and **`ragondin-remote`** are
+optional normal dependencies behind `remote`: the channel a binding is served
+over, and the adapters constructed over it — `tonic` already in every build
+through `ragondin-config`, and neither entry's feature list touched.
+**`ragondin-proto`** and **`async-trait`** are dev-dependencies, for the fake
+`Remote` services in `tests/support/remote.rs`: the generated server traits,
+and the attribute the contract traits the fakes implement are declared with.
+The other two: **`sha2`** as a dev-dependency, the crate
 the canonical logical-form hash and run identity already use, because a test in
 `src/wiring.rs` checks the identity `bench` records for an ONNX embedder
 against independently computed digests of its files — `bench` itself digests
@@ -326,10 +399,9 @@ anywhere else in the graph.
   flow would arrive as an `extension` node (ADR-C3), so `bench` refuses one by
   name. It is the whole of that check, and it grows a case the day one of them
   becomes a primitive.
-- **No `Remote` component yet.** Binding an `impl:` name to a service address
-  and constructing the `Remote` adapter over it is ADR-C32 § 2 and § 3, and
-  not yet built; until it is, a `Remote` component's name is one planning
-  refuses as unknown.
+- **No `Remote` vector store.** ADR-C32 § 5 defers it until the contract can
+  scope a store's content to a run, so `store` is not a family `--remote`
+  accepts, and the corpus is always searched in the in-memory store.
 
 ## Calibration against a published leaderboard
 

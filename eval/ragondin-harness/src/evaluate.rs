@@ -185,6 +185,7 @@ pub async fn evaluate(
         inputs,
         config: evaluation.config.clone(),
         traces,
+        bindings: Vec::new(),
     })
 }
 

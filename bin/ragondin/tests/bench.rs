@@ -15,12 +15,21 @@
 //! test` compiles those tests away and `just test-features` is where they run.
 //! The three refusals at the top — an unknown benchmark format, an extension
 //! node, a generator no build registers — need no component this build lacks,
-//! since each is refused before anything runs, so they run in both.
+//! since each is refused before anything runs, so they run in both. So does
+//! the refusal of a malformed `--remote` argument.
+//!
+//! The tests that bind a component with `--remote` run under the `remote`
+//! feature, against fake services this process starts (`support/remote.rs`):
+//! `tonic` servers hosting in-test components, and no inference server.
 
 use std::path::{Path, PathBuf};
 use std::process::Output;
 
 use assert_cmd::Command;
+
+#[cfg(feature = "remote")]
+#[path = "support/remote.rs"]
+mod remote;
 
 fn ragondin(args: &[&str]) -> Output {
     Command::cargo_bin("ragondin")
@@ -164,20 +173,312 @@ fn a_build_without_the_component_names_the_impl_it_cannot_resolve() {
     assert!(error.contains("bm25"), "{error}");
 }
 
-#[cfg(feature = "bm25")]
-mod with_components {
-    use ragondin_experiments::{FileSystemRunStore, RunId};
+/// The `run <id>` line `bench` prints first.
+#[cfg(any(feature = "bm25", feature = "remote"))]
+fn reported_run_id(summary: &str) -> ragondin_experiments::RunId {
+    let first = summary.lines().next().expect("a summary has a first line");
+    let id = first
+        .strip_prefix("run ")
+        .unwrap_or_else(|| panic!("the summary opens with the run id: {summary}"));
+    id.parse().expect("the printed id is a run id")
+}
 
+/// A malformed binding is refused on its text, in every build, before the
+/// configuration is read (ADR-C32 § 2): the configuration named here does not
+/// exist, and it is not what the refusal is about.
+#[test]
+fn a_malformed_remote_argument_is_refused_naming_it_before_anything_is_read() {
+    let store = store("malformed-remote");
+
+    let output = ragondin(&[
+        "bench",
+        &fixture("no-such-configuration.yaml"),
+        "--benchmark",
+        "beir/beir-mini",
+        "--datasets",
+        path(&fixtures()),
+        "--store",
+        path(&store),
+        "--remote",
+        "embedder/bge=https://embedder.internal",
+    ]);
+
+    assert!(!output.status.success(), "{}", stdout(&output));
+    let error = stderr(&output);
+    assert!(
+        error.contains("--remote embedder/bge=https://embedder.internal"),
+        "{error}"
+    );
+    assert!(!error.contains("no-such-configuration"), "{error}");
+    assert!(!store.exists(), "a refused binding records no run");
+}
+
+/// A build without the `remote` feature parses a binding and then refuses it,
+/// naming the feature, so a lean build never runs a configuration whose
+/// bound component it would silently lack (ADR-C32 § 2).
+#[cfg(not(feature = "remote"))]
+#[test]
+fn a_build_without_the_remote_feature_refuses_a_binding_naming_the_feature() {
+    let store = store("lean-remote");
+
+    let output = ragondin(&[
+        "bench",
+        &fixture("remote-dense-rerank.yaml"),
+        "--benchmark",
+        "beir/beir-mini",
+        "--datasets",
+        path(&fixtures()),
+        "--store",
+        path(&store),
+        "--remote",
+        "embedder/bge=http://127.0.0.1:50051",
+    ]);
+
+    assert!(!output.status.success(), "{}", stdout(&output));
+    assert!(
+        stderr(&output).contains("`remote` feature"),
+        "{}",
+        stderr(&output)
+    );
+    assert!(!store.exists(), "a refused binding records no run");
+}
+
+#[cfg(feature = "remote")]
+mod with_remote_components {
+    use ragondin_experiments::{FileSystemRunStore, Run};
+
+    use super::remote::{self, FakeEmbedder, Service};
     use super::*;
 
-    /// The `run <id>` line `bench` prints first.
-    fn reported_run_id(summary: &str) -> RunId {
-        let first = summary.lines().next().expect("a summary has a first line");
-        let id = first
-            .strip_prefix("run ")
-            .unwrap_or_else(|| panic!("the summary opens with the run id: {summary}"));
-        id.parse().expect("the printed id is a run id")
+    /// The embedder and reranker services the fixture's two bound names are
+    /// bound to, and the `--remote` arguments that bind them.
+    struct Services {
+        embedder: FakeEmbedder,
+        _services: [Service; 2],
+        arguments: Vec<String>,
     }
+
+    fn services() -> Services {
+        let embedder = FakeEmbedder::default();
+        let embedder_service = remote::serve_embedder(embedder.clone());
+        let reranker_service = remote::serve_reranker();
+        let arguments = vec![
+            "--remote".to_owned(),
+            format!("embedder/bge={}", embedder_service.uri),
+            "--remote".to_owned(),
+            format!("reranker/bge-reranker={}", reranker_service.uri),
+        ];
+        Services {
+            embedder,
+            _services: [embedder_service, reranker_service],
+            arguments,
+        }
+    }
+
+    fn bench(store: &Path, remote: &[String]) -> Output {
+        let config = fixture("remote-dense-rerank.yaml");
+        let datasets = fixtures();
+        let mut arguments: Vec<&str> = vec![
+            "bench",
+            &config,
+            "--benchmark",
+            "beir/beir-mini",
+            "--datasets",
+            path(&datasets),
+            "--store",
+            path(store),
+        ];
+        arguments.extend(remote.iter().map(String::as_str));
+        ragondin(&arguments)
+    }
+
+    fn saved(store: &Path, output: &Output) -> Run {
+        assert!(output.status.success(), "{}", stderr(output));
+        FileSystemRunStore::new(store)
+            .load(&reported_run_id(&stdout(output)))
+            .expect("the run bench reported is the run bench saved")
+    }
+
+    #[test]
+    fn bench_over_a_bound_embedder_and_reranker_records_the_identities_their_services_report() {
+        let store = store("remote-dense-rerank");
+        let services = services();
+
+        let run = saved(&store, &bench(&store, &services.arguments));
+
+        // The fakes answer only for the served model each node names, so an
+        // identity recorded at all was read with that name (ADR-C32 § 4).
+        assert_eq!(
+            run.inputs.model_hashes.get("embedder").map(String::as_str),
+            Some(remote::EMBEDDER_IDENTITY)
+        );
+        assert_eq!(
+            run.inputs.model_hashes.get("reranker").map(String::as_str),
+            Some(remote::RERANKER_IDENTITY)
+        );
+        assert!(
+            run.metrics.get("ndcg@10").is_some(),
+            "the run was scored: {:?}",
+            run.metrics
+        );
+        // The bindings are on the run, as written on the command line, in
+        // the order given (ADR-C32 § 2).
+        let recorded: Vec<String> = run
+            .bindings
+            .iter()
+            .map(|binding| format!("{}/{}={}", binding.family, binding.name, binding.uri))
+            .collect();
+        assert_eq!(
+            recorded,
+            [services.arguments[1].clone(), services.arguments[3].clone()]
+        );
+    }
+
+    #[test]
+    fn the_corpus_and_the_queries_go_through_the_bound_embedder_with_the_node_s_prefixes() {
+        let store = store("remote-prefixes");
+        let services = services();
+
+        saved(&store, &bench(&store, &services.arguments));
+
+        // The adapter applies the prefixes, and the text on the wire is final
+        // (ADR-C32 § 4): the service sees the passage prefix on the corpus,
+        // which `prepare` embedded, and the query prefix on every query the
+        // dense retriever embedded. Every call named the served model, or the
+        // fake would have refused it and the run failed.
+        let texts = services.embedder.texts();
+        let passages = texts
+            .iter()
+            .filter(|text| text.starts_with("passage: "))
+            .count();
+        let queries = texts
+            .iter()
+            .filter(|text| text.starts_with("query: "))
+            .count();
+        assert!(passages > 0, "the corpus was embedded remotely: {texts:?}");
+        assert!(queries > 0, "the queries were embedded remotely: {texts:?}");
+        assert_eq!(passages + queries, texts.len(), "{texts:?}");
+    }
+
+    #[test]
+    fn where_a_service_listens_is_not_part_of_the_run_s_identity() {
+        // Two benches of one configuration against two pairs of services on
+        // two pairs of ports: one experiment, so one `run_id` (ADR-C32 § 2).
+        let first_store = store("remote-identity-first");
+        let second_store = store("remote-identity-second");
+        let first = services();
+        let second = services();
+        assert_ne!(first.arguments, second.arguments);
+
+        let first_run = saved(&first_store, &bench(&first_store, &first.arguments));
+        let second_run = saved(&second_store, &bench(&second_store, &second.arguments));
+
+        assert_eq!(first_run.id, second_run.id);
+        // Each run still records where it was answered from: provenance,
+        // outside identity.
+        assert_ne!(first_run.bindings, second_run.bindings);
+    }
+
+    #[test]
+    fn bench_over_a_bound_generator_records_its_identity_and_binding_and_scores_its_answers() {
+        let store = store("remote-generation");
+        let embedder = remote::serve_embedder(FakeEmbedder::default());
+        let builder = remote::serve_context_builder();
+        let generator = remote::serve_generator();
+        let bindings = [
+            format!("embedder/bge={}", embedder.uri),
+            format!("context_builder/lines={}", builder.uri),
+            format!("generator/vllm={}", generator.uri),
+        ];
+        let config = fixture("remote-generation.yaml");
+        let datasets = fixtures();
+        let mut arguments: Vec<&str> = vec![
+            "bench",
+            &config,
+            "--benchmark",
+            "beir-qa/qa-mini",
+            "--datasets",
+            path(&datasets),
+            "--store",
+            path(&store),
+        ];
+        for binding in &bindings {
+            arguments.extend(["--remote", binding.as_str()]);
+        }
+
+        let run = saved(&store, &ragondin(&arguments));
+
+        // The generator's identity was read with its node's `served_model`:
+        // the fake refuses every other name (ADR-C31 § 4).
+        assert_eq!(
+            run.inputs.model_hashes.get("generator").map(String::as_str),
+            Some(remote::GENERATOR_IDENTITY)
+        );
+        assert_eq!(
+            run.inputs
+                .model_hashes
+                .get("context_builder")
+                .map(String::as_str),
+            Some(remote::CONTEXT_BUILDER_IDENTITY)
+        );
+        let recorded: Vec<String> = run
+            .bindings
+            .iter()
+            .map(|binding| format!("{}/{}={}", binding.family, binding.name, binding.uri))
+            .collect();
+        assert_eq!(recorded, bindings);
+        // Answers came back over the wire and were scored against the
+        // references, which is what a benchmark carrying answers requires.
+        for metric in ["exact_match", "token_f1"] {
+            assert!(run.metrics.get(metric).is_some(), "{:?}", run.metrics);
+        }
+    }
+
+    #[test]
+    fn a_binding_no_node_uses_is_refused_before_the_benchmark_is_loaded() {
+        let store = store("remote-unused");
+        let services = services();
+        let mut arguments = services.arguments.clone();
+        arguments.extend([
+            "--remote".to_owned(),
+            "generator/vllm=http://127.0.0.1:1".to_owned(),
+        ]);
+
+        let output = bench(&store, &arguments);
+
+        assert!(!output.status.success(), "{}", stdout(&output));
+        let error = stderr(&output);
+        assert!(error.contains("generator/vllm"), "{error}");
+        assert!(error.contains("no node"), "{error}");
+        assert!(!store.exists(), "a refused binding records no run");
+    }
+
+    #[test]
+    fn an_unreachable_service_ends_the_run_at_the_identity_read_naming_the_node() {
+        let store = store("remote-unreachable");
+        let services = services();
+        let arguments = vec![
+            services.arguments[0].clone(),
+            services.arguments[1].clone(),
+            "--remote".to_owned(),
+            format!("reranker/bge-reranker={}", remote::unreachable_uri()),
+        ];
+
+        let output = bench(&store, &arguments);
+
+        assert!(!output.status.success(), "{}", stdout(&output));
+        let error = stderr(&output);
+        assert!(error.contains("reranked"), "{error}");
+        assert!(error.contains("unavailable"), "{error}");
+        assert!(!store.exists(), "a refused run records nothing");
+    }
+}
+
+#[cfg(feature = "bm25")]
+mod with_components {
+    use ragondin_experiments::FileSystemRunStore;
+
+    use super::*;
 
     #[test]
     fn bench_scores_the_pipeline_prints_the_run_and_records_it() {

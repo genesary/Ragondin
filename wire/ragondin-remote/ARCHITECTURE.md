@@ -2,8 +2,9 @@
 
 **Status: internal, not an INV-1 boundary.** ADR-C21 places it there: what a
 `Remote` author mirrors is the `.proto` text in `ragondin-proto`, never this
-crate's Rust API. The one consumer in the tree is `ragondin-engine`, behind its
-`remote` feature.
+crate's Rust API. Two crates in the tree depend on it, each behind its own
+`remote` feature: `ragondin-engine`, which calls nothing in it, and the
+`ragondin` binary, which constructs the adapters over a `--remote` binding.
 
 ## What lives here
 
@@ -159,9 +160,8 @@ services raise theirs to match.
 **No feature inside this crate.** The whole crate is the heavy backend —
 `tonic` and everything it pulls — so a feature gating its contents would leave
 an empty crate behind it. ADR-C14 names `remote` as the feature, and it is the
-consumer's: `ragondin-engine` depends on this crate optionally, behind
-`remote`, and the binary's `remote` feature is decided by the issue that binds
-`Remote` components into it. `ragondin-proto`, and with it `tonic`, is already
+consumer's: `ragondin-engine` and the `ragondin` binary each depend on this
+crate optionally, behind a `remote` feature of their own. `ragondin-proto`, and with it `tonic`, is already
 in the default build through `ragondin-config`; this crate adds the adapters,
 not the transport.
 

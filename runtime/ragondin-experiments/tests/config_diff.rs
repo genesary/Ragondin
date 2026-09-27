@@ -26,6 +26,7 @@ fn a_run(byte: u8, config: &str) -> Run {
         metrics: [("ndcg@10", 0.5)].into_iter().collect(),
         config: ConfigDocument::new(config),
         traces: BTreeMap::new(),
+        bindings: Vec::new(),
     }
 }
 

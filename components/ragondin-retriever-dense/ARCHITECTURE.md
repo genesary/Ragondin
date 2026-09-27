@@ -39,6 +39,17 @@ elsewhere, with the same code and the same configuration.
   This crate is one of the two production call sites that ADR names, and it
   knows its side statically, so the role is a constant here rather than
   anything a caller can set.
+- **The served model is constructor configuration, passed on every call**
+  ([ADR-C32](../../docs/adr/ADR-C32-remote-named-by-impl-bound-by-the-composition-root.md)
+  § 4). `DenseRetriever::new` asks the embedder for the model it loaded
+  (`served_model: None`), which is what an in-process embedder answers for;
+  `with_served_model` names the model a `Remote` embedder serves, which
+  refuses `None`. Whichever it is goes in the `EmbedParams` of every query.
+  A builder method rather than a third argument to `new` is this crate's
+  choice: the two-argument constructor is what every in-process caller and the
+  conformance suite already write, and `None` is the right value for all of
+  them. The corpus is embedded by the composition root, which passes the same
+  name there, so the index and the queries come from one model.
 - **A `top_k` of zero is refused here, not delegated.** It is this component's
   obligation under the `Retriever` contract; a store may answer a search of zero
   however it likes, so delegating the check would make conformance depend on

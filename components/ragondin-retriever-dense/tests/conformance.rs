@@ -24,13 +24,14 @@ use ragondin_types::{Chunk, ChunkId, DocId, Embedding, Query, QueryId, ScoredChu
 /// An [`Embedder`] whose whole model is a lookup table, so a test states the
 /// query's vector instead of inferring it.
 ///
-/// It records the [`EmbedRole`] of every call: the role is the one fact only
-/// the caller knows (ADR-C17), and nothing else in a result would reveal that
-/// the retriever passed the wrong one.
+/// It records the [`EmbedRole`] and the served model of every call: each is a
+/// fact only the caller knows (ADR-C17, ADR-C32 § 4), and nothing else in a
+/// result would reveal that the retriever passed the wrong one.
 #[derive(Default)]
 struct FakeEmbedder {
     known: Vec<(String, Vec<f32>)>,
     roles: Mutex<Vec<EmbedRole>>,
+    served: Mutex<Vec<Option<String>>>,
 }
 
 impl FakeEmbedder {
@@ -41,11 +42,16 @@ impl FakeEmbedder {
                 .map(|(text, vector)| ((*text).to_string(), vector.to_vec()))
                 .collect(),
             roles: Mutex::new(Vec::new()),
+            served: Mutex::new(Vec::new()),
         }
     }
 
     fn roles(&self) -> Vec<EmbedRole> {
         self.roles.lock().expect("the fake's lock").clone()
+    }
+
+    fn served(&self) -> Vec<Option<String>> {
+        self.served.lock().expect("the fake's lock").clone()
     }
 }
 
@@ -61,6 +67,10 @@ impl SharedEmbedder {
 
     fn roles(&self) -> Vec<EmbedRole> {
         self.0.roles()
+    }
+
+    fn served(&self) -> Vec<Option<String>> {
+        self.0.served()
     }
 }
 
@@ -93,6 +103,10 @@ impl Embedder for FakeEmbedder {
             .lock()
             .expect("the fake's lock")
             .push(params.role);
+        self.served
+            .lock()
+            .expect("the fake's lock")
+            .push(params.served_model.clone());
         Ok(texts
             .iter()
             .map(|text| {
@@ -261,6 +275,43 @@ async fn embeds_the_query_under_the_query_role() {
     // (ADR-C17), and passing the wrong role costs points without failing
     // anything — so the role is asserted rather than the result it produced.
     assert_eq!(embedder.roles(), [EmbedRole::Query]);
+}
+
+#[tokio::test]
+async fn asks_for_the_loaded_model_when_built_without_a_served_model() {
+    let embedder = SharedEmbedder::default();
+    let retriever = DenseRetriever::new(Box::new(embedder.clone()), Box::new(full_store()));
+
+    retriever
+        .retrieve(&query("who asks this"), &RetrieveParams::new(1))
+        .await
+        .expect("a well-formed query retrieves");
+
+    // `None` asks for the model the embedder loaded (ADR-C32 § 4), which is
+    // what an in-process embedder answers for.
+    assert_eq!(embedder.served(), [None]);
+}
+
+#[tokio::test]
+async fn passes_its_served_model_on_every_query_it_embeds() {
+    let embedder = SharedEmbedder::default();
+    let retriever = DenseRetriever::new(Box::new(embedder.clone()), Box::new(full_store()))
+        .with_served_model("bge-small");
+
+    for text in ["who asks this", "and this"] {
+        retriever
+            .retrieve(&query(text), &RetrieveParams::new(1))
+            .await
+            .expect("a well-formed query retrieves");
+    }
+
+    // A `Remote` embedder refuses a call that names no served model, so the
+    // name is constructor configuration passed on every call, never the first
+    // one only (ADR-C32 § 3, § 4).
+    assert_eq!(
+        embedder.served(),
+        [Some("bge-small".to_owned()), Some("bge-small".to_owned())]
+    );
 }
 
 #[tokio::test]

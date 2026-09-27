@@ -1,0 +1,28 @@
+# What `bench` evaluates over bound components: a dense leg whose embedder is
+# `bge` and a reranker named `bge-reranker`, neither of which this binary
+# carries in-process. `tests/bench.rs` binds both with `--remote` to fake
+# services it starts itself, so the addresses are on the command line and
+# nowhere here (ADR-C32 § 1): the same file runs against any address, as the
+# same run.
+#
+# A wiring fixture: the numbers are real, but they are a fake embedder's over
+# six documents, and say nothing about retrieval quality.
+pipeline:
+  inputs: [question]
+  nodes:
+    - id: vectors
+      component: retriever
+      impl: dense
+      inputs: [question]
+      params:
+        top_k: 5
+        embedder: bge
+        served_model: bge-small
+        query_prefix: "query: "
+        passage_prefix: "passage: "
+
+    - id: reranked
+      component: reranker
+      impl: bge-reranker
+      inputs: [question, vectors]
+      params: { top_k: 3, served_model: ms-marco }

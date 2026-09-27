@@ -21,6 +21,16 @@
 //! so [`check_nodes`] names what is missing itself: an `embedder:` name it
 //! does not know, or the feature that would have carried the one it does
 //! (ADR-C32 § 4).
+//!
+//! # Bound components
+//!
+//! A name bound with `--remote <family>/<name>=<uri>` ([`crate::binding`]) is
+//! one this composition root knows as well as its `Local` ones: [`Bound`]
+//! holds one lazily connecting channel per binding, [`register`] makes one
+//! `register_*` call per binding of a node family, and a bound embedder is
+//! resolved inside the `dense` constructor closure (ADR-C32 § 3). A build
+//! without the `remote` feature refuses every binding when it is parsed, so
+//! in that build nothing here is ever bound.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -31,15 +41,12 @@ use ragondin_engine::EngineContext;
 use ragondin_pipeline::{LogicalNode, LogicalPipeline, ParamValue, Params};
 use ragondin_types::Chunk;
 
+use crate::binding::{Bindings, Family};
+
 /// The `impl:` name of the in-process BM25 retriever.
-///
-/// Gated, where the others are not: nothing reads a BM25 node's
-/// configuration — its constructor takes the corpus and no parameter — so this
-/// name is used only where the component is registered.
-#[cfg(feature = "bm25")]
 const BM25: &str = "bm25";
 /// The `impl:` name of the dense retriever (an embedder over a vector store).
-const DENSE: &str = "dense";
+pub const DENSE: &str = "dense";
 /// The `impl:` name of Reciprocal Rank Fusion.
 const RRF: &str = "rrf";
 /// The `impl:` name of the ONNX cross-encoder reranker.
@@ -49,11 +56,31 @@ const CONCAT: &str = "concat";
 /// The `impl:` name of the stub generator, the one generator a build of this
 /// binary can carry in-process. It exists for tests: no production `Local`
 /// generator exists, a generator being `Remote` by design (ADR-C31).
-#[cfg(feature = "stub")]
 const STUB_GENERATOR: &str = "stub_generator";
 
 /// The `embedder:` name of the in-process ONNX embedder (ADR-C32 § 1).
 const ONNX_EMBEDDER: &str = "onnx";
+
+/// Every name this composition root gives a `Local` component, by family, in
+/// **any** build of it — whatever features this one carries. `--remote`
+/// refuses to bind one (ADR-C32 § 2): the registry's last registration wins,
+/// so a binding would silently replace the `Local` component, and a list that
+/// followed this build's features would let one command line mean two things.
+const LOCAL: [(Family, &str); 7] = [
+    (Family::Retriever, BM25),
+    (Family::Retriever, DENSE),
+    (Family::Fusion, RRF),
+    (Family::Reranker, CROSS_ENCODER),
+    (Family::ContextBuilder, CONCAT),
+    (Family::Generator, STUB_GENERATOR),
+    (Family::Embedder, ONNX_EMBEDDER),
+];
+
+/// Whether this composition root gives `name` to a `Local` component of
+/// `family` in any build of it.
+pub fn is_local(family: Family, name: &str) -> bool {
+    LOCAL.contains(&(family, name))
+}
 
 /// The keys every `dense` node may carry, whatever embedder it names
 /// (ADR-C32 § 1). `top_k` is the executor's; the rest are this file's.
@@ -62,20 +89,25 @@ const DENSE_KEYS: [&str; 4] = ["top_k", "embedder", "query_prefix", "passage_pre
 /// token budget. Shared by a `dense` node over the ONNX embedder and a
 /// `cross_encoder` node, which read the same three.
 const ONNX_KEYS: [&str; 3] = ["model", "tokenizer", "max_sequence_length"];
+/// The key a node over a bound embedder or reranker adds, and requires: the
+/// name its service serves the model under (ADR-C32 § 1).
+const SERVED_MODEL: &str = "served_model";
 
 /// The role an embedder's model plays in run identity
-/// (`docs/system-architecture.md` §7.1). Only a build that can construct the
-/// ONNX components reads an identity under this role or the next.
-#[cfg(feature = "onnx")]
+/// (`docs/system-architecture.md` §7.1). Only a build that can construct an
+/// embedder or a reranker — the ONNX ones, or bound ones — reads an identity
+/// under this role or the next.
+#[cfg(any(feature = "onnx", feature = "remote"))]
 const EMBEDDER_ROLE: &str = "embedder";
 /// The role a reranker's model plays in run identity.
-#[cfg(feature = "onnx")]
+#[cfg(any(feature = "onnx", feature = "remote"))]
 const RERANKER_ROLE: &str = "reranker";
 /// The role of a context builder's identity (ADR-C31 § 4).
 const CONTEXT_BUILDER_ROLE: &str = "context_builder";
 /// The role of a generator's identity (ADR-C31 § 4). Read only in a build
-/// that carries a generator, which is the `stub` one.
-#[cfg(any(feature = "stub", test))]
+/// that carries a generator: the `stub` one, or one that can bind a `Remote`
+/// generator.
+#[cfg(any(feature = "stub", feature = "remote", test))]
 const GENERATOR_ROLE: &str = "generator";
 
 /// A model and the tokenizer that feeds it, as a node configures them.
@@ -97,24 +129,102 @@ pub struct ModelSpec {
     pub max_sequence_length: Option<usize>,
 }
 
-/// What a `dense` node says about the embedder it retrieves through.
+/// What a `dense` node says about the embedder it retrieves through, by the
+/// nature of the embedder its `embedder:` names (ADR-C32 § 1).
 ///
-/// The only embedder this composition root knows is the ONNX one
-/// (`embedder: onnx`), so the spec is that embedder's. The prefixes travel
-/// with the model because they decide the vectors: two nodes naming one model
-/// under different prefixes are two embedders, and the corpus one of them
-/// indexed is not the corpus the other would search (ADR-C17).
+/// The prefixes travel with the embedder because they decide the vectors: two
+/// nodes naming one model under different prefixes are two embedders, and the
+/// corpus one of them indexed is not the corpus the other would search
+/// (ADR-C17). Each prefix is empty when the node carries none, which is the
+/// only spelling of "none" — an empty value is refused when the node is read.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct EmbedderSpec {
-    /// The model and its tokenizer.
-    pub model: ModelSpec,
-    /// Prepended to a query before it is embedded; empty when the node
-    /// carries no `query_prefix`, which is the only spelling of "none" — an
-    /// empty value is refused when the node is read.
-    pub query_prefix: String,
-    /// Prepended to a passage before it is embedded; empty as `query_prefix`
-    /// is.
-    pub passage_prefix: String,
+pub enum EmbedderSpec {
+    /// `embedder: onnx`, the in-process ONNX embedder.
+    Onnx {
+        /// The model and its tokenizer.
+        model: ModelSpec,
+        /// Prepended to a query before it is embedded.
+        query_prefix: String,
+        /// Prepended to a passage before it is embedded.
+        passage_prefix: String,
+    },
+    /// A name bound with `--remote embedder/<name>=<uri>`: the `Remote`
+    /// embedder over that binding, which applies the prefixes itself.
+    Bound {
+        /// The `embedder:` name, and the binding's.
+        name: String,
+        /// The name the service serves the model under.
+        served_model: String,
+        /// Prepended to a query before it is sent.
+        query_prefix: String,
+        /// Prepended to a passage before it is sent.
+        passage_prefix: String,
+    },
+}
+
+impl EmbedderSpec {
+    /// The served model every call to this embedder names: `None` for the
+    /// ONNX embedder, which answers only for the model it loaded, and the
+    /// node's `served_model` for a bound one (ADR-C32 § 4). Compiled only
+    /// where an embedder can be constructed, which is where it is read.
+    #[cfg(any(feature = "onnx", feature = "remote"))]
+    pub fn served_model(&self) -> Option<&str> {
+        match self {
+            Self::Onnx { .. } => None,
+            Self::Bound { served_model, .. } => Some(served_model),
+        }
+    }
+}
+
+/// The bindings of one `bench`, and — in a build with the `remote` feature —
+/// the channel each one is served over.
+///
+/// One channel per binding, built once, lazily connecting, and cloned into
+/// every constructor that names the binding, so every node naming it shares
+/// it (ADR-C32 § 3). Nothing connects here: an unreachable service is reported
+/// at its first call, which is the identity read of [`model_hashes`].
+#[derive(Clone, Debug)]
+pub struct Bound {
+    bindings: Bindings,
+    #[cfg(feature = "remote")]
+    channels: BTreeMap<(Family, String), tonic::transport::Channel>,
+}
+
+impl Bound {
+    /// Builds a lazily connecting channel for each binding. With the
+    /// `remote` feature, it must be called inside a Tokio runtime, because a
+    /// lazy channel spawns the task that will connect it.
+    pub fn new(bindings: Bindings) -> Result<Self> {
+        #[cfg(feature = "remote")]
+        let channels = bindings
+            .iter()
+            .map(|binding| {
+                let channel = tonic::transport::Endpoint::from_shared(binding.uri.clone())
+                    .with_context(|| format!("`{}/{}`", binding.family, binding.name))?
+                    .connect_lazy();
+                Ok(((binding.family, binding.name.clone()), channel))
+            })
+            .collect::<Result<_>>()?;
+        Ok(Self {
+            bindings,
+            #[cfg(feature = "remote")]
+            channels,
+        })
+    }
+
+    /// The bindings.
+    pub fn bindings(&self) -> &Bindings {
+        &self.bindings
+    }
+
+    /// The channel `name` is bound to in `family`.
+    #[cfg(feature = "remote")]
+    fn channel(&self, family: Family, name: &str) -> Result<tonic::transport::Channel> {
+        self.channels
+            .get(&(family, name.to_owned()))
+            .cloned()
+            .with_context(|| format!("`{family}/{name}` is not bound"))
+    }
 }
 
 /// Registers the components this build carries, over the corpus the caller
@@ -134,6 +244,11 @@ pub struct EmbedderSpec {
 /// (ADR-C26): a `ComponentCtor` is synchronous, so a store that has to be
 /// filled by an `async` upsert cannot be filled inside one.
 ///
+/// `bound` adds one registration per binding of a node family, under the
+/// bound name, of the `Remote` adapter over the binding's channel; an
+/// `embedder` binding is resolved inside the `dense` closure instead, since no
+/// plan ever looks an embedder up.
+///
 /// Registration is infallible on purpose: a constructor's failure belongs to
 /// the plan that names it, where planning reports it against the node
 /// (`PlanError::Construction`). Refusing here would refuse a component this
@@ -145,7 +260,16 @@ pub fn register(
     // the one parameter, under the one feature's absence, and as an
     // expectation: a build where the parameter stops being unused fails.
     #[cfg_attr(not(feature = "bm25"), expect(unused_variables))] chunks: &[Chunk],
-    #[cfg_attr(not(feature = "onnx"), expect(unused_variables))] embedded: Option<&[EmbeddedChunk]>,
+    #[cfg_attr(
+        not(any(feature = "onnx", feature = "remote")),
+        expect(unused_variables)
+    )]
+    embedded: Option<&[EmbeddedChunk]>,
+    #[cfg_attr(
+        not(any(feature = "onnx", feature = "remote")),
+        expect(unused_variables)
+    )]
+    bound: &Bound,
 ) {
     // Always: rank arithmetic over the legs, with no backend behind it.
     ctx.register_fusion(
@@ -184,44 +308,150 @@ pub fn register(
         );
     }
 
+    // Registered only when the corpus was embedded: a dense retriever over an
+    // empty store answers every query with nothing, which is a wrong number
+    // rather than an error. With no entries there is no dense node to answer,
+    // and planning says so by name.
+    #[cfg(any(feature = "onnx", feature = "remote"))]
+    if let Some(entries) = embedded {
+        let entries = entries.to_vec();
+        let bound = bound.clone();
+        ctx.register_retriever(
+            DENSE,
+            Box::new(move |params| {
+                // The `embedder:` name is resolved here, inside the closure
+                // this composition root writes (ADR-C32 § 3): `onnx`, or a
+                // name bound with `--remote embedder/<name>=<uri>`.
+                let spec = embedder_of(params, bound.bindings())?;
+                let store = ragondin_store_memory::MemoryVectorStore::seeded(entries.clone())?;
+                let retriever = ragondin_retriever_dense::DenseRetriever::new(
+                    embedder(&spec, &bound)?,
+                    Box::new(store),
+                );
+                Ok(Box::new(match spec.served_model() {
+                    Some(served_model) => retriever.with_served_model(served_model),
+                    None => retriever,
+                }))
+            }),
+        );
+    }
+
     #[cfg(feature = "onnx")]
-    {
-        // Registered only when the corpus was embedded: a dense retriever over
-        // an empty store answers every query with nothing, which is a wrong
-        // number rather than an error. With no entries there is no dense node
-        // to answer, and planning says so by name.
-        if let Some(entries) = embedded {
-            let entries = entries.to_vec();
-            ctx.register_retriever(
-                DENSE,
-                Box::new(move |params| {
-                    // The `embedder:` name is resolved here, inside the
-                    // closure this composition root writes (ADR-C32 § 3):
-                    // `embedder_of` knows `onnx` and refuses anything else.
-                    let spec = embedder_of(params)?;
-                    let store = ragondin_store_memory::MemoryVectorStore::seeded(entries.clone())?;
-                    Ok(Box::new(ragondin_retriever_dense::DenseRetriever::new(
-                        Box::new(onnx_embedder(&spec)?),
-                        Box::new(store),
+    ctx.register_reranker(
+        CROSS_ENCODER,
+        Box::new(|params| Ok(Box::new(onnx_reranker(params)?))),
+    );
+
+    // One registration per binding of a node family, through the call a
+    // `Local` component uses (INV-7). The adapter reads no parameter: the
+    // executor hands a bound node its `top_k` and `served_model` per call.
+    #[cfg(feature = "remote")]
+    for ((family, name), channel) in &bound.channels {
+        let channel = channel.clone();
+        match family {
+            Family::Retriever => ctx.register_retriever(
+                name,
+                Box::new(move |_params| {
+                    Ok(Box::new(ragondin_remote::RemoteRetriever::new(
+                        channel.clone(),
                     )))
                 }),
-            );
+            ),
+            Family::Fusion => ctx.register_fusion(
+                name,
+                Box::new(move |_params| {
+                    Ok(Box::new(ragondin_remote::RemoteFusion::new(
+                        channel.clone(),
+                    )))
+                }),
+            ),
+            Family::Reranker => ctx.register_reranker(
+                name,
+                Box::new(move |_params| {
+                    Ok(Box::new(ragondin_remote::RemoteReranker::new(
+                        channel.clone(),
+                    )))
+                }),
+            ),
+            Family::ContextBuilder => ctx.register_context_builder(
+                name,
+                Box::new(move |_params| {
+                    Ok(Box::new(ragondin_remote::RemoteContextBuilder::new(
+                        channel.clone(),
+                    )))
+                }),
+            ),
+            Family::Generator => ctx.register_generator(
+                name,
+                Box::new(move |_params| {
+                    Ok(Box::new(ragondin_remote::RemoteGenerator::new(
+                        channel.clone(),
+                    )))
+                }),
+            ),
+            // Resolved inside the `dense` closure above.
+            Family::Embedder => {}
         }
-
-        ctx.register_reranker(
-            CROSS_ENCODER,
-            Box::new(|params| Ok(Box::new(onnx_reranker(params)?))),
-        );
     }
 }
 
-/// The embedder `spec` describes, with its model session loaded.
+/// The embedder `spec` describes: the ONNX one with its model session loaded,
+/// or the `Remote` adapter over the binding's channel with the node's prefixes.
+///
+/// A spec this build cannot construct is refused, naming the feature; neither
+/// case is reached from `bench`, since [`check_nodes`] refuses the `onnx`
+/// embedder in a build without it and a build without `remote` refuses every
+/// binding.
+#[cfg(any(feature = "onnx", feature = "remote"))]
+pub fn embedder(
+    spec: &EmbedderSpec,
+    #[cfg_attr(not(feature = "remote"), expect(unused_variables))] bound: &Bound,
+) -> Result<Box<dyn ragondin_contracts::Embedder>> {
+    match spec {
+        #[cfg(feature = "onnx")]
+        EmbedderSpec::Onnx {
+            model,
+            query_prefix,
+            passage_prefix,
+        } => Ok(Box::new(onnx_embedder(
+            model,
+            query_prefix,
+            passage_prefix,
+        )?)),
+        #[cfg(not(feature = "onnx"))]
+        EmbedderSpec::Onnx { .. } => bail!(
+            "the `{ONNX_EMBEDDER}` embedder is not in this build: rebuild with the `onnx` feature"
+        ),
+        #[cfg(feature = "remote")]
+        EmbedderSpec::Bound {
+            name,
+            query_prefix,
+            passage_prefix,
+            ..
+        } => Ok(Box::new(ragondin_remote::RemoteEmbedder::new(
+            bound.channel(Family::Embedder, name)?,
+            query_prefix.as_str(),
+            passage_prefix.as_str(),
+        ))),
+        #[cfg(not(feature = "remote"))]
+        EmbedderSpec::Bound { name, .. } => bail!(
+            "the embedder `{name}` is bound, and this build cannot construct a `Remote` \
+             component: rebuild with the `remote` feature"
+        ),
+    }
+}
+
+/// The ONNX embedder over `model`, with its session loaded.
 #[cfg(feature = "onnx")]
-pub fn onnx_embedder(spec: &EmbedderSpec) -> Result<ragondin_embedder_onnx::OnnxEmbedder> {
+fn onnx_embedder(
+    model: &ModelSpec,
+    query_prefix: &str,
+    passage_prefix: &str,
+) -> Result<ragondin_embedder_onnx::OnnxEmbedder> {
     let mut config =
-        ragondin_embedder_onnx::OnnxEmbedderConfig::new(&spec.model.model, &spec.model.tokenizer)
-            .with_prefixes(spec.query_prefix.as_str(), spec.passage_prefix.as_str());
-    if let Some(tokens) = spec.model.max_sequence_length {
+        ragondin_embedder_onnx::OnnxEmbedderConfig::new(&model.model, &model.tokenizer)
+            .with_prefixes(query_prefix, passage_prefix);
+    if let Some(tokens) = model.max_sequence_length {
         config = config.with_max_sequence_length(nonzero(tokens, "max_sequence_length")?);
     }
     Ok(ragondin_embedder_onnx::OnnxEmbedder::new(config)?)
@@ -257,7 +487,7 @@ fn concat(params: &Params) -> Result<ragondin_context_concat::ConcatContextBuild
 fn stub_generator(params: &Params) -> Result<ragondin_stub::StubGenerator> {
     Ok(ragondin_stub::StubGenerator::new(required_string(
         params,
-        "served_model",
+        SERVED_MODEL,
     )?))
 }
 
@@ -300,16 +530,18 @@ pub fn refuse_unsupported(pipeline: &LogicalPipeline) -> Result<()> {
 /// Checks the keys of every node whose keys this composition root owns,
 /// before anything is loaded (ADR-C32 § 1, and step 1 of its § 4).
 ///
-/// A `dense` node must name its embedder with `embedder:`, carry only the keys
-/// that embedder's nature reads, and never an empty prefix; a `cross_encoder`
-/// node only the keys the ONNX reranker reads. A key outside those sets is
-/// refused rather than hashed as inert: it would move the run's identity while
-/// changing nothing the run did. Build-independent, except for one refusal:
-/// `embedder: onnx` in a build without the `onnx` feature is named here,
-/// because no planner will ever look an embedder up to name it.
-pub fn check_nodes(pipeline: &LogicalPipeline) -> Result<()> {
-    let embedder = embedder_spec(pipeline)?;
-    if embedder.is_some() && !cfg!(feature = "onnx") {
+/// A `dense` node must name its embedder with `embedder:` — `onnx`, or a name
+/// in `bindings` — carry only the keys that embedder's nature reads, and never
+/// an empty prefix; a `cross_encoder` node only the keys the ONNX reranker
+/// reads, and a reranker node under a bound name only `top_k` and its required
+/// `served_model`. A key outside those sets is refused rather than hashed as
+/// inert: it would move the run's identity while changing nothing the run did.
+/// Build-independent, except for one refusal: `embedder: onnx` in a build
+/// without the `onnx` feature is named here, because no planner will ever look
+/// an embedder up to name it.
+pub fn check_nodes(pipeline: &LogicalPipeline, bindings: &Bindings) -> Result<()> {
+    let embedder = embedder_spec(pipeline, bindings)?;
+    if matches!(embedder, Some(EmbedderSpec::Onnx { .. })) && !cfg!(feature = "onnx") {
         let node = pipeline
             .nodes()
             .iter()
@@ -328,10 +560,14 @@ pub fn check_nodes(pipeline: &LogicalPipeline) -> Result<()> {
 
     for node in pipeline.nodes() {
         if let LogicalNode::Reranker(node) = node {
-            if node.implementation == CROSS_ENCODER {
-                reranker_of(&node.params)
-                    .with_context(|| format!("node `{}`", node.id.as_str()))?;
-            }
+            let checked = if node.implementation == CROSS_ENCODER {
+                reranker_of(&node.params).map(drop)
+            } else if bindings.binds(Family::Reranker, &node.implementation) {
+                bound_reranker_of(&node.params, &node.implementation).map(drop)
+            } else {
+                Ok(())
+            };
+            checked.with_context(|| format!("node `{}`", node.id.as_str()))?;
         }
     }
     Ok(())
@@ -345,7 +581,10 @@ pub fn check_nodes(pipeline: &LogicalPipeline) -> Result<()> {
 /// model, the tokenizer or a prefix would need two indexes — and a run that
 /// searched two indexes has one `index_version` naming neither. Refusing it
 /// says so; embedding twice would quietly make the recorded identity false.
-pub fn embedder_spec(pipeline: &LogicalPipeline) -> Result<Option<EmbedderSpec>> {
+pub fn embedder_spec(
+    pipeline: &LogicalPipeline,
+    bindings: &Bindings,
+) -> Result<Option<EmbedderSpec>> {
     let mut found: Option<(&str, EmbedderSpec)> = None;
 
     for node in pipeline.nodes() {
@@ -356,8 +595,8 @@ pub fn embedder_spec(pipeline: &LogicalPipeline) -> Result<Option<EmbedderSpec>>
             continue;
         }
 
-        let spec =
-            embedder_of(&node.params).with_context(|| format!("node `{}`", node.id.as_str()))?;
+        let spec = embedder_of(&node.params, bindings)
+            .with_context(|| format!("node `{}`", node.id.as_str()))?;
 
         match &found {
             Some((first, seen)) if *seen != spec => bail!(
@@ -386,17 +625,24 @@ pub fn embedder_spec(pipeline: &LogicalPipeline) -> Result<Option<EmbedderSpec>>
 /// same identity — the rule [`embedder_spec`] states for the corpus, seen from
 /// the identity side.
 ///
-/// A generator's identity is read with its node's `served_model` (ADR-C31
-/// § 4), which is required: its absence is refused here, before the run,
-/// rather than passed on as an empty name for the component to refuse. Any
-/// refusal here ends the run before anything expensive has been done — which
-/// is also what finds a missing model file early.
-pub async fn model_hashes(pipeline: &LogicalPipeline) -> Result<BTreeMap<String, String>> {
+/// The names this build knows are its `Local` ones and those in `bound`. An
+/// embedder or reranker is read with its node's served model — `None` over
+/// the ONNX ones, the node's `served_model` over a bound one — and a
+/// generator's identity with its node's `served_model` (ADR-C31 § 4), which is
+/// required: its absence is refused here, before the run, rather than passed
+/// on as an empty name for the component to refuse. Any refusal here ends the
+/// run before anything expensive has been done — which is also what finds a
+/// missing model file, an unreachable service or a model a service does not
+/// serve early.
+pub async fn model_hashes(
+    pipeline: &LogicalPipeline,
+    bound: &Bound,
+) -> Result<BTreeMap<String, String>> {
     let mut hashes: BTreeMap<String, String> = BTreeMap::new();
 
     for node in pipeline.nodes() {
         let id = node.id().as_str();
-        let Some((role, identity)) = identity_of(node)
+        let Some((role, identity)) = identity_of(node, bound)
             .await
             .with_context(|| format!("node `{id}`"))?
         else {
@@ -419,15 +665,25 @@ pub async fn model_hashes(pipeline: &LogicalPipeline) -> Result<BTreeMap<String,
 
 /// The role and identity of one node's component, or `None` when this build
 /// constructs no component under the node's name.
-async fn identity_of(node: &LogicalNode) -> Result<Option<(&'static str, String)>> {
+async fn identity_of(
+    node: &LogicalNode,
+    #[cfg_attr(
+        not(any(feature = "onnx", feature = "remote")),
+        expect(unused_variables)
+    )]
+    bound: &Bound,
+) -> Result<Option<(&'static str, String)>> {
     use ragondin_contracts::ContextBuilder;
 
     let (role, identity) = match node {
-        #[cfg(feature = "onnx")]
+        #[cfg(any(feature = "onnx", feature = "remote"))]
         LogicalNode::Retriever(node) if node.implementation == DENSE => {
-            use ragondin_contracts::Embedder;
-            let embedder = onnx_embedder(&embedder_of(&node.params)?)?;
-            (EMBEDDER_ROLE, embedder.model_identity(None).await?)
+            let spec = embedder_of(&node.params, bound.bindings())?;
+            let embedder = embedder(&spec, bound)?;
+            (
+                EMBEDDER_ROLE,
+                embedder.model_identity(spec.served_model()).await?,
+            )
         }
         #[cfg(feature = "onnx")]
         LogicalNode::Reranker(node) if node.implementation == CROSS_ENCODER => {
@@ -437,14 +693,59 @@ async fn identity_of(node: &LogicalNode) -> Result<Option<(&'static str, String)
             let reranker = onnx_reranker(&node.params)?;
             (RERANKER_ROLE, reranker.model_identity(None).await?)
         }
+        #[cfg(feature = "remote")]
+        LogicalNode::Reranker(node)
+            if bound
+                .bindings()
+                .binds(Family::Reranker, &node.implementation) =>
+        {
+            use ragondin_contracts::Reranker;
+            let served_model = required_string(&node.params, SERVED_MODEL)?;
+            let reranker = ragondin_remote::RemoteReranker::new(
+                bound.channel(Family::Reranker, &node.implementation)?,
+            );
+            (
+                RERANKER_ROLE,
+                reranker.model_identity(Some(&served_model)).await?,
+            )
+        }
         LogicalNode::ContextBuilder(node) if node.implementation == CONCAT => (
             CONTEXT_BUILDER_ROLE,
             concat(&node.params)?.model_identity().await?,
         ),
+        #[cfg(feature = "remote")]
+        LogicalNode::ContextBuilder(node)
+            if bound
+                .bindings()
+                .binds(Family::ContextBuilder, &node.implementation) =>
+        {
+            let builder = ragondin_remote::RemoteContextBuilder::new(
+                bound.channel(Family::ContextBuilder, &node.implementation)?,
+            );
+            (CONTEXT_BUILDER_ROLE, builder.model_identity().await?)
+        }
+        #[cfg(feature = "remote")]
+        LogicalNode::Generator(node)
+            if bound
+                .bindings()
+                .binds(Family::Generator, &node.implementation) =>
+        {
+            use ragondin_contracts::Generator;
+            // Required, and refused here rather than sent: ADR-C31 § 4 has the
+            // composition root refuse an absent `served_model` itself.
+            let served_model = required_string(&node.params, SERVED_MODEL)?;
+            let generator = ragondin_remote::RemoteGenerator::new(
+                bound.channel(Family::Generator, &node.implementation)?,
+            );
+            (
+                GENERATOR_ROLE,
+                generator.model_identity(&served_model).await?,
+            )
+        }
         #[cfg(feature = "stub")]
         LogicalNode::Generator(node) if node.implementation == STUB_GENERATOR => {
             use ragondin_contracts::Generator;
-            let served_model = required_string(&node.params, "served_model")?;
+            let served_model = required_string(&node.params, SERVED_MODEL)?;
             let generator = stub_generator(&node.params)?;
             (
                 GENERATOR_ROLE,
@@ -484,27 +785,53 @@ fn reranker_of(params: &Params) -> Result<ModelSpec> {
     model_of(params)
 }
 
-/// The embedder a `dense` node configures, resolved from its `embedder:` name.
-fn embedder_of(params: &Params) -> Result<EmbedderSpec> {
+/// The served model a reranker node under the bound name `name` configures,
+/// once its keys are checked: `top_k` and `served_model`, which is required
+/// because a service has no loaded model for `None` to name (ADR-C32 § 1).
+fn bound_reranker_of(params: &Params, name: &str) -> Result<String> {
+    refuse_keys_outside(
+        params,
+        &[&["top_k", SERVED_MODEL]],
+        &format!("the bound reranker `{name}`"),
+    )?;
+    required_string(params, SERVED_MODEL)
+}
+
+/// The embedder a `dense` node configures, resolved from its `embedder:` name:
+/// `onnx`, or a name `bindings` binds in the `embedder` family.
+fn embedder_of(params: &Params, bindings: &Bindings) -> Result<EmbedderSpec> {
     let name = required_string(params, "embedder")?;
     if name.is_empty() {
         bail!("`embedder` must name an embedder, and an empty name names none");
     }
-    if name != ONNX_EMBEDDER {
+    if name == ONNX_EMBEDDER {
+        refuse_keys_outside(
+            params,
+            &[&DENSE_KEYS, &ONNX_KEYS],
+            "a dense node over the `onnx` embedder",
+        )?;
+        return Ok(EmbedderSpec::Onnx {
+            model: model_of(params)?,
+            query_prefix: prefix(params, "query_prefix")?,
+            passage_prefix: prefix(params, "passage_prefix")?,
+        });
+    }
+    if !bindings.binds(Family::Embedder, &name) {
         bail!(
-            "`embedder` names `{name}`, and the only embedder this composition root knows is \
-             `{ONNX_EMBEDDER}`"
+            "`embedder` names `{name}`, which is neither `{ONNX_EMBEDDER}` nor bound with \
+             `--remote embedder/{name}=<uri>`"
         );
     }
     refuse_keys_outside(
         params,
-        &[&DENSE_KEYS, &ONNX_KEYS],
-        "a dense node over the `onnx` embedder",
+        &[&DENSE_KEYS, &[SERVED_MODEL]],
+        &format!("a dense node over the bound embedder `{name}`"),
     )?;
-    Ok(EmbedderSpec {
-        model: model_of(params)?,
+    Ok(EmbedderSpec::Bound {
+        served_model: required_string(params, SERVED_MODEL)?,
         query_prefix: prefix(params, "query_prefix")?,
         passage_prefix: prefix(params, "passage_prefix")?,
+        name,
     })
 }
 
@@ -558,6 +885,8 @@ mod tests {
     use ragondin_pipeline::{validate, LogicalPipeline, RawPipeline};
 
     use super::*;
+    #[cfg(feature = "remote")]
+    use crate::remote_fakes as remote;
 
     /// Loads a pipeline from YAML, through the same lowering `ragondin-config`
     /// runs: a hand-built `LogicalPipeline` would skip the validation that
@@ -565,6 +894,40 @@ mod tests {
     fn pipeline(yaml: &str) -> LogicalPipeline {
         let raw: RawPipeline = serde_yaml::from_str(yaml).expect("the fixture parses");
         validate(raw).expect("the fixture validates")
+    }
+
+    /// No `--remote` argument, as every test before bindings existed ran.
+    fn unbound() -> Bindings {
+        Bindings::default()
+    }
+
+    /// [`model_hashes`] with nothing bound.
+    async fn model_hashes(pipeline: &LogicalPipeline) -> Result<BTreeMap<String, String>> {
+        super::model_hashes(
+            pipeline,
+            &Bound::new(unbound()).expect("nothing to connect"),
+        )
+        .await
+    }
+
+    fn embedder_spec(pipeline: &LogicalPipeline) -> Result<Option<EmbedderSpec>> {
+        super::embedder_spec(pipeline, &unbound())
+    }
+
+    fn check_nodes(pipeline: &LogicalPipeline) -> Result<()> {
+        super::check_nodes(pipeline, &unbound())
+    }
+
+    /// The ONNX half of a spec, which every unbound `dense` node configures.
+    fn onnx(spec: EmbedderSpec) -> (ModelSpec, String, String) {
+        match spec {
+            EmbedderSpec::Onnx {
+                model,
+                query_prefix,
+                passage_prefix,
+            } => (model, query_prefix, passage_prefix),
+            other => panic!("an unbound dense node names the onnx embedder: {other:?}"),
+        }
     }
 
     fn dense_node(id: &str, params: &str) -> String {
@@ -622,15 +985,17 @@ mod tests {
              passage_prefix: 'passage: ' }",
         ));
 
-        let spec = embedder_spec(&pipeline(&yaml))
-            .expect("the node is complete")
-            .expect("there is a dense node");
+        let (model, query_prefix, passage_prefix) = onnx(
+            embedder_spec(&pipeline(&yaml))
+                .expect("the node is complete")
+                .expect("there is a dense node"),
+        );
 
-        assert_eq!(spec.model.model, PathBuf::from("m.onnx"));
-        assert_eq!(spec.model.tokenizer, PathBuf::from("t.json"));
-        assert_eq!(spec.model.max_sequence_length, None);
-        assert_eq!(spec.query_prefix, "query: ");
-        assert_eq!(spec.passage_prefix, "passage: ");
+        assert_eq!(model.model, PathBuf::from("m.onnx"));
+        assert_eq!(model.tokenizer, PathBuf::from("t.json"));
+        assert_eq!(model.max_sequence_length, None);
+        assert_eq!(query_prefix, "query: ");
+        assert_eq!(passage_prefix, "passage: ");
     }
 
     #[test]
@@ -663,11 +1028,13 @@ mod tests {
             ),
         ));
 
-        let spec = embedder_spec(&pipeline(&yaml))
-            .expect("both name one embedder")
-            .expect("there are dense nodes");
+        let (model, _, _) = onnx(
+            embedder_spec(&pipeline(&yaml))
+                .expect("both name one embedder")
+                .expect("there are dense nodes"),
+        );
 
-        assert_eq!(spec.model.model, PathBuf::from("m.onnx"));
+        assert_eq!(model.model, PathBuf::from("m.onnx"));
     }
 
     #[test]
@@ -1054,6 +1421,265 @@ mod tests {
         assert_eq!(
             hashes.get(EMBEDDER_ROLE),
             Some(&format!("{}+{}", digest(&model), digest(&tokenizer)))
+        );
+    }
+
+    /// `--remote` arguments, parsed the way `bench` parses them.
+    #[cfg(feature = "remote")]
+    fn bound(arguments: &[String]) -> Bindings {
+        Bindings::parse(arguments).expect("well-formed bindings")
+    }
+
+    #[cfg(feature = "remote")]
+    fn bound_reranker_node(input: &str, params: &str) -> String {
+        format!(
+            "    - id: reranked\n      component: reranker\n      impl: bge-reranker\n      \
+             inputs: [question, {input}]\n      params: {params}\n"
+        )
+    }
+
+    #[cfg(feature = "remote")]
+    #[test]
+    fn a_dense_node_over_a_bound_embedder_carries_its_name_served_model_and_prefixes() {
+        let bindings = bound(&["embedder/bge=http://localhost:1".to_owned()]);
+        let yaml = wrap(&dense_node(
+            "vectors",
+            "{ top_k: 10, embedder: bge, served_model: bge-small, query_prefix: 'q: ' }",
+        ));
+
+        super::check_nodes(&pipeline(&yaml), &bindings).expect("every key is one it reads");
+        let spec = super::embedder_spec(&pipeline(&yaml), &bindings)
+            .expect("the node is complete")
+            .expect("there is a dense node");
+
+        assert_eq!(
+            spec,
+            EmbedderSpec::Bound {
+                name: "bge".to_owned(),
+                served_model: "bge-small".to_owned(),
+                query_prefix: "q: ".to_owned(),
+                passage_prefix: String::new(),
+            }
+        );
+        assert_eq!(spec.served_model(), Some("bge-small"));
+    }
+
+    #[cfg(feature = "remote")]
+    #[test]
+    fn a_dense_node_over_a_bound_embedder_without_a_served_model_is_refused() {
+        // ADR-C32 § 1: a service has no loaded model for `None` to name.
+        let bindings = bound(&["embedder/bge=http://localhost:1".to_owned()]);
+        let yaml = wrap(&dense_node("vectors", "{ top_k: 10, embedder: bge }"));
+
+        let error = super::check_nodes(&pipeline(&yaml), &bindings)
+            .expect_err("`served_model` is required");
+
+        assert!(chain(&error).contains("vectors"), "{error:#}");
+        assert!(
+            chain(&error).contains("`served_model` is required"),
+            "{error:#}"
+        );
+    }
+
+    #[cfg(feature = "remote")]
+    #[test]
+    fn an_onnx_key_on_a_dense_node_over_a_bound_embedder_is_refused_not_hashed() {
+        let bindings = bound(&["embedder/bge=http://localhost:1".to_owned()]);
+        for key in [
+            "model: m.onnx",
+            "tokenizer: t.json",
+            "max_sequence_length: 8",
+        ] {
+            let yaml = wrap(&dense_node(
+                "vectors",
+                &format!("{{ top_k: 10, embedder: bge, served_model: bge-small, {key} }}"),
+            ));
+
+            let error = super::check_nodes(&pipeline(&yaml), &bindings)
+                .expect_err("an inert key is refused");
+
+            let name = key.split(':').next().expect("a key");
+            assert!(chain(&error).contains(&format!("`{name}`")), "{error:#}");
+            assert!(chain(&error).contains("vectors"), "{error:#}");
+        }
+    }
+
+    #[cfg(feature = "remote")]
+    #[test]
+    fn a_bound_reranker_node_carries_top_k_and_a_required_served_model_and_nothing_else() {
+        let bindings = bound(&["reranker/bge-reranker=http://localhost:1".to_owned()]);
+        let with = |params: &str| {
+            wrap(&format!(
+                "{}{}",
+                bm25_node(),
+                bound_reranker_node("lexical", params)
+            ))
+        };
+
+        super::check_nodes(
+            &pipeline(&with("{ top_k: 5, served_model: ms-marco }")),
+            &bindings,
+        )
+        .expect("both keys are read");
+        let missing = super::check_nodes(&pipeline(&with("{ top_k: 5 }")), &bindings)
+            .expect_err("`served_model` is required");
+        let inert = super::check_nodes(
+            &pipeline(&with(
+                "{ top_k: 5, served_model: ms-marco, tokenizer: t.json }",
+            )),
+            &bindings,
+        )
+        .expect_err("an inert key is refused");
+
+        assert!(chain(&missing).contains("reranked"), "{missing:#}");
+        assert!(
+            chain(&missing).contains("`served_model` is required"),
+            "{missing:#}"
+        );
+        assert!(chain(&inert).contains("`tokenizer`"), "{inert:#}");
+    }
+
+    #[cfg(feature = "remote")]
+    fn remote_pipeline() -> String {
+        wrap(&format!(
+            "{}{}",
+            dense_node(
+                "vectors",
+                "{ top_k: 10, embedder: bge, served_model: bge-small }"
+            ),
+            bound_reranker_node("vectors", "{ top_k: 5, served_model: ms-marco }"),
+        ))
+    }
+
+    #[cfg(feature = "remote")]
+    #[tokio::test]
+    async fn bound_components_record_the_identity_their_service_reports_for_the_node_s_model() {
+        // The fakes answer only for the name each node gives, so an identity
+        // recorded at all is an identity read with that `served_model`.
+        let embedder = remote::serve_embedder(remote::FakeEmbedder::default());
+        let reranker = remote::serve_reranker();
+        let bindings = bound(&[
+            format!("embedder/bge={}", embedder.uri),
+            format!("reranker/bge-reranker={}", reranker.uri),
+        ]);
+
+        let hashes = super::model_hashes(
+            &pipeline(&remote_pipeline()),
+            &Bound::new(bindings).expect("lazy channels"),
+        )
+        .await
+        .expect("both services answer");
+
+        assert_eq!(
+            hashes.get(EMBEDDER_ROLE).map(String::as_str),
+            Some(remote::EMBEDDER_IDENTITY)
+        );
+        assert_eq!(
+            hashes.get(RERANKER_ROLE).map(String::as_str),
+            Some(remote::RERANKER_IDENTITY)
+        );
+    }
+
+    #[cfg(feature = "remote")]
+    #[tokio::test]
+    async fn a_model_the_service_does_not_serve_ends_the_run_before_it_starts() {
+        let embedder = remote::serve_embedder(remote::FakeEmbedder::default());
+        let reranker = remote::serve_reranker();
+        let bindings = bound(&[
+            format!("embedder/bge={}", embedder.uri),
+            format!("reranker/bge-reranker={}", reranker.uri),
+        ]);
+        let yaml = remote_pipeline().replace("served_model: ms-marco", "served_model: minilm");
+
+        let error = super::model_hashes(&pipeline(&yaml), &Bound::new(bindings).expect("lazy"))
+            .await
+            .expect_err("the reranker does not serve `minilm`");
+
+        assert!(chain(&error).contains("reranked"), "{error:#}");
+        assert!(chain(&error).contains("minilm"), "{error:#}");
+    }
+
+    #[cfg(feature = "remote")]
+    #[tokio::test]
+    async fn an_unreachable_service_is_found_at_the_identity_read_as_unavailable() {
+        // No connection is attempted when the channel is built (ADR-C32 § 3):
+        // the identity call is the first call, and it reports the failure.
+        let bindings = bound(&[format!("embedder/bge={}", remote::unreachable_uri())]);
+        let yaml = wrap(&dense_node(
+            "vectors",
+            "{ top_k: 10, embedder: bge, served_model: bge-small }",
+        ));
+        let bound = Bound::new(bindings).expect("building a lazy channel connects nothing");
+
+        let error = super::model_hashes(&pipeline(&yaml), &bound)
+            .await
+            .expect_err("nothing listens there");
+
+        assert!(chain(&error).contains("vectors"), "{error:#}");
+        assert!(chain(&error).contains("unavailable"), "{error:#}");
+    }
+
+    #[cfg(feature = "remote")]
+    #[tokio::test]
+    async fn a_bound_generator_and_context_builder_record_their_services_identities() {
+        // The fake generator answers only for its served model, so an
+        // identity recorded at all was read with the node's `served_model`
+        // (ADR-C31 § 4); the context builder's is read with no argument.
+        let builder = remote::serve_context_builder();
+        let generator = remote::serve_generator();
+        let bindings = bound(&[
+            format!("context_builder/lines={}", builder.uri),
+            format!("generator/vllm={}", generator.uri),
+        ]);
+        let yaml = wrap(&format!(
+            "{}{}{}",
+            bm25_node(),
+            "    - id: prompt\n      component: context_builder\n      impl: lines\n      \
+             inputs: [question, lexical]\n      params: { budget: 100 }\n",
+            generator_node(
+                "vllm",
+                &format!(
+                    "{{ served_model: {}, template: '{{context}}' }}",
+                    remote::GENERATOR_MODEL
+                )
+            ),
+        ));
+
+        let hashes = super::model_hashes(&pipeline(&yaml), &Bound::new(bindings).expect("lazy"))
+            .await
+            .expect("both services answer");
+
+        assert_eq!(
+            hashes.get(GENERATOR_ROLE).map(String::as_str),
+            Some(remote::GENERATOR_IDENTITY)
+        );
+        assert_eq!(
+            hashes.get(CONTEXT_BUILDER_ROLE).map(String::as_str),
+            Some(remote::CONTEXT_BUILDER_IDENTITY)
+        );
+    }
+
+    #[cfg(feature = "remote")]
+    #[tokio::test]
+    async fn a_bound_generator_node_without_a_served_model_is_refused_before_any_call() {
+        let bindings = bound(&[format!("generator/vllm={}", remote::unreachable_uri())]);
+        let yaml = wrap(&format!(
+            "{}{}{}",
+            bm25_node(),
+            concat_node("prompt", "{ budget: 100, separator: \"\\n\" }"),
+            generator_node("vllm", "{ template: '{context}' }"),
+        ));
+
+        let error = super::model_hashes(&pipeline(&yaml), &Bound::new(bindings).expect("lazy"))
+            .await
+            .expect_err("`served_model` is required");
+
+        // Refused by the composition root, not reported as the unreachable
+        // service it would otherwise have called.
+        assert!(chain(&error).contains("answer"), "{error:#}");
+        assert!(
+            chain(&error).contains("`served_model` is required"),
+            "{error:#}"
         );
     }
 }

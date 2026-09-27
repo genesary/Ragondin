@@ -1,0 +1,33 @@
+# A generation pipeline every component of which is bound with `--remote`:
+# the dense leg's embedder `bge`, the context builder `lines` and the
+# generator `vllm`. `tests/bench.rs` binds them to fake services it starts —
+# `ragondin-stub`'s context builder and generator behind `tonic`, and a fake
+# embedder — so the addresses are on its command line and nowhere here
+# (ADR-C32 § 1). The generator's `served_model` is the name its service
+# serves; its identity is read with it (ADR-C31 § 4).
+#
+# A wiring fixture: the stub generator answers with the first line of the
+# context, so the scores say which passage ranked first, not how well a model
+# answers.
+pipeline:
+  inputs: [question]
+  nodes:
+    - id: search
+      component: retriever
+      impl: dense
+      inputs: [question]
+      params: { top_k: 3, embedder: bge, served_model: bge-small }
+
+    - id: prompt
+      component: context_builder
+      impl: lines
+      inputs: [question, search]
+      params: { budget: 2000 }
+
+    - id: answer
+      component: generator
+      impl: vllm
+      inputs: [question, prompt]
+      params:
+        served_model: qwen2.5-7b-instruct
+        template: "Answer from the context.\n{context}\nQuestion: {query}"

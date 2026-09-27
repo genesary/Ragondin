@@ -26,7 +26,13 @@
 //!     metrics.json   what the run scored
 //!     config.yaml    the configuration document, verbatim
 //!     traces.json    the per-query execution traces, by query id
+//!     bindings.json  the `Remote` bindings the run used, outside its identity
 //! ```
+//!
+//! `bindings.json` arrived after the other four, and a run directory without
+//! it is a run stored before then: it reads back bound to nothing, and it is
+//! not incomplete. So a run is *complete* when it holds the four original
+//! files, and `bindings.json` is written for every run but required of none.
 //!
 //! The directory name is the run id, so a run is found without an index, and
 //! the id is a digest, so no run id can name a directory outside the root.
@@ -43,7 +49,7 @@
 //!
 //! # A run directory appears whole or not at all
 //!
-//! [`FileSystemRunStore::save`] writes the four files into a staging directory
+//! [`FileSystemRunStore::save`] writes the five files into a staging directory
 //! beside the destination and then renames it into place, which is atomic
 //! within one filesystem. That is not tidiness: a caller asks *is this run
 //! already stored* to decide whether to execute it at all, and a directory
@@ -62,7 +68,7 @@
 //! that is an ordinary thing to do — never meet in it. It is not unique for all
 //! time: a process the operating system gives a recycled pid starts its counter
 //! at zero again and may name a directory a crashed one left. That is harmless
-//! rather than merely unlikely — creating the directory is idempotent, all four
+//! rather than merely unlikely — creating the directory is idempotent, all five
 //! files are written before the rename, and no other name is ever written there
 //! — so what is left of an abandoned run is overwritten rather than mixed with.
 //! Nothing clears a staging directory on the way in: a name no live writer
@@ -104,12 +110,14 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 
 use crate::compare::{compare, RunComparison};
-use crate::run::{ConfigDocument, Metrics, Run, RunId, RunInputs, TraceDocument};
+use crate::run::{ConfigDocument, Metrics, Run, RunBinding, RunId, RunInputs, TraceDocument};
 
 const INPUTS_FILE: &str = "inputs.json";
 const METRICS_FILE: &str = "metrics.json";
 const CONFIG_FILE: &str = "config.yaml";
 const TRACES_FILE: &str = "traces.json";
+/// Optional, unlike the four above: see the module's *The layout*.
+const BINDINGS_FILE: &str = "bindings.json";
 
 /// A run store backed by a directory tree.
 #[derive(Clone, Debug)]
@@ -133,7 +141,7 @@ impl FileSystemRunStore {
     ///
     /// The run appears under its id whole or not at all — see the module's
     /// *A run directory appears whole or not at all*. `Ok(())` therefore means
-    /// *this run is in the store, with all four of its files*; a directory
+    /// *this run is in the store, with the four files every run has*; a directory
     /// under the id that is missing one is reported as
     /// [`Incomplete`](RunStoreError::Incomplete) rather than passed over as
     /// stored. Present is as far as that check goes: a file corrupted in place
@@ -166,6 +174,7 @@ impl FileSystemRunStore {
         write_json(&dir.join(METRICS_FILE), &run.metrics)?;
         write_text(&dir.join(CONFIG_FILE), run.config.as_str())?;
         write_json(&dir.join(TRACES_FILE), &run.traces)?;
+        write_json(&dir.join(BINDINGS_FILE), &run.bindings)?;
 
         publish(staging, &destination)
     }
@@ -181,6 +190,14 @@ impl FileSystemRunStore {
         let metrics: Metrics = read_json(&dir.join(METRICS_FILE))?;
         let traces: BTreeMap<QueryId, TraceDocument> = read_json(&dir.join(TRACES_FILE))?;
         let config = ConfigDocument::new(read_text(&dir.join(CONFIG_FILE))?);
+        // Absent in a run stored before bindings were recorded, which was
+        // bound to nothing.
+        let bindings_file = dir.join(BINDINGS_FILE);
+        let bindings: Vec<RunBinding> = if bindings_file.is_file() {
+            read_json(&bindings_file)?
+        } else {
+            Vec::new()
+        };
 
         Ok(Run {
             id: *id,
@@ -188,6 +205,7 @@ impl FileSystemRunStore {
             metrics,
             config,
             traces,
+            bindings,
         })
     }
 
