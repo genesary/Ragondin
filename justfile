@@ -154,5 +154,22 @@ map *ARGS:
 calibrate:
     cargo test -p ragondin --features bm25,onnx --test calibration -- --ignored --nocapture --test-threads=1
 
+# The generation chain calibrated on real data with a real model
+# (bin/ragondin/tests/calibration_generation.rs): SciFact dense-only through a
+# generation pipeline, SQuAD v1.1 dev's retrieval leg over every question, and
+# its generation leg over the first 1 000 through the reference Remote
+# generator service and a local inference server. Needs the material
+# `calibrate` needs plus squad/dev-v1.1.json, and
+# RAGONDIN_CALIBRATION_INFERENCE_URL naming a running OpenAI-compatible server;
+# bin/ragondin/ARCHITECTURE.md § Calibrating the generation chain records how
+# each is obtained and started. The service is built first and its path passed
+# in, since Cargo gives a test the binaries of its own package only. Release
+# mode, because the retrieval leg reranks for 10 570 questions: about three
+# hours in all, and deliberately not part of `check`.
+calibrate-generation:
+    cargo build -p ragondin-generator-service --features service
+    RAGONDIN_GENERATOR_SERVICE_BIN="{{ env_var_or_default("CARGO_TARGET_DIR", justfile_directory() / "target") }}/debug/ragondin-generator-service" \
+        cargo test --release -p ragondin --features bm25,onnx,stub,remote --test calibration_generation -- --ignored --nocapture --test-threads=1
+
 # Everything CI runs, in one command. Run this before declaring work done.
 check: fmt build test test-features clippy check-features doc test-check-invariants check-invariants test-check-doc-links check-doc-links check-adr-index check-deny

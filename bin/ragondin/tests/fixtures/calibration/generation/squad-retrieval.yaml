@@ -1,0 +1,60 @@
+# The retrieval leg of the SQuAD calibration, over all 10 570 dev questions
+# (ADR-C30 § 4): hybrid retrieval with reranking, the concatenating context
+# builder, and the stub generator in place of the model.
+#
+# Every node up to `prompt` is `squad-generation.yaml`'s, byte for byte, so the
+# ranking the retrieval metrics read (ADR-C30 § 3, the `reranked` node) is the
+# one the generation leg reads for each question it answers. The stub is here
+# only because a benchmark carrying reference answers refuses a pipeline that
+# produces none (ADR-C30 § 5); its answer is the first line of the context,
+# and the exact match and F1 it scores are recorded and describe nothing.
+#
+# Twenty per leg makes the fused list at most forty, reranked to the ten the
+# metrics are cut at; `tests/calibration_generation.rs` says why not SciFact's
+# fifty. The builder keeps whole passages, best first, while their text stays
+# within 4 096 characters: the longest dev paragraph is 4 063, so the context
+# is never empty. Paths are relative to `RAGONDIN_CALIBRATION_MODELS`.
+pipeline:
+  inputs: [question]
+  nodes:
+    - id: lexical
+      component: retriever
+      impl: bm25
+      inputs: [question]
+      params: { top_k: 20 }
+    - id: vectors
+      component: retriever
+      impl: dense
+      inputs: [question]
+      params:
+        top_k: 20
+        embedder: onnx
+        model: all-MiniLM-L6-v2/model.onnx
+        tokenizer: all-MiniLM-L6-v2/tokenizer.json
+        max_sequence_length: 256
+    - id: fused
+      component: fusion
+      impl: rrf
+      inputs: [lexical, vectors]
+      params: { k: 60 }
+    - id: reranked
+      component: reranker
+      impl: cross_encoder
+      inputs: [question, fused]
+      params:
+        top_k: 10
+        model: ms-marco-MiniLM-L6-v2/model.onnx
+        tokenizer: ms-marco-MiniLM-L6-v2/tokenizer.json
+        max_sequence_length: 512
+    - id: prompt
+      component: context_builder
+      impl: concat
+      inputs: [question, reranked]
+      params: { budget: 4096, separator: "\n\n" }
+    - id: answer
+      component: generator
+      impl: stub_generator
+      inputs: [question, prompt]
+      params:
+        served_model: stub-model
+        template: "{context}\n\nQuestion: {query}"

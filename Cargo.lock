@@ -1919,6 +1919,7 @@ dependencies = [
  "ragondin-store-memory",
  "ragondin-stub",
  "ragondin-types",
+ "serde_json",
  "serde_yaml",
  "sha2",
  "tokio",
