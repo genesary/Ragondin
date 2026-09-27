@@ -1,0 +1,37 @@
+# Ablation: the dense leg reranked, no lexical leg, then an answer. The dense
+# leg never surfaces `q-greek`'s passage, so the reranker never sees it and the
+# question goes unanswered. The retrieval stages are
+# `../../ablations/dense-rerank.yaml`'s; the context builder and the generator
+# are `../dense-only.yaml`'s.
+pipeline:
+  inputs: [question]
+  nodes:
+    - id: vectors
+      component: retriever
+      impl: dense
+      inputs: [question]
+      params:
+        top_k: 3
+        embedder: onnx
+        model: models/embedder.onnx
+        tokenizer: models/tokenizer.json
+    - id: reranked
+      component: reranker
+      impl: cross_encoder
+      inputs: [question, vectors]
+      params:
+        top_k: 10
+        model: models/cross-encoder.onnx
+        tokenizer: models/tokenizer.json
+    - id: prompt
+      component: context_builder
+      impl: concat
+      inputs: [question, reranked]
+      params: { budget: 2000, separator: "\n" }
+    - id: answer
+      component: generator
+      impl: answerer
+      inputs: [question, prompt]
+      params:
+        served_model: qwen2.5-7b-instruct
+        template: "Answer from the context.\n{context}\nQuestion: {query}"

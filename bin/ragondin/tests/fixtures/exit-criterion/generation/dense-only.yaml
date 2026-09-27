@@ -1,0 +1,38 @@
+# Dense-only retrieval, then an answer: the baseline the M3 exit criterion is
+# measured against. The retrieval stage is `../dense-only.yaml`'s, node for
+# node; after it, the concatenating context builder and the generator every
+# generation configuration here shares.
+#
+# The context builder joins passages with "\n" and the budget holds every
+# passage whole, so the context's first line is the text of the passage ranked
+# first. The generator is named `answerer`, an ordinary `impl:` name that
+# `tests/exit_criterion_generation.rs` binds with `--remote
+# generator/answerer=<uri>` to the stub generator it serves in-process, which
+# answers with that first line; the address is on the command line and
+# nowhere here (ADR-C32 § 1). `served_model` is the name that service serves,
+# and the template places `{context}`, without which the stub answers nothing.
+# The model paths are relative to `..`, where the test runs the binary.
+pipeline:
+  inputs: [question]
+  nodes:
+    - id: vectors
+      component: retriever
+      impl: dense
+      inputs: [question]
+      params:
+        top_k: 3
+        embedder: onnx
+        model: models/embedder.onnx
+        tokenizer: models/tokenizer.json
+    - id: prompt
+      component: context_builder
+      impl: concat
+      inputs: [question, vectors]
+      params: { budget: 2000, separator: "\n" }
+    - id: answer
+      component: generator
+      impl: answerer
+      inputs: [question, prompt]
+      params:
+        served_model: qwen2.5-7b-instruct
+        template: "Answer from the context.\n{context}\nQuestion: {query}"

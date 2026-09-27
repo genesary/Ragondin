@@ -67,9 +67,11 @@ just check             # build + test + clippy + fmt + architecture invariants
 **Pre-alpha.** Milestones M0 — *Foundations* — M1 — *Core contracts & engine
 skeleton* — and M2 — *First defensible deliverable (BEIR retrieval bench)* —
 have every one of their issues closed. M3 — *Generation & end-to-end RAG* — is
-next. The issues open outside any milestone are decisions reserved for a human,
-work blocked on one of those decisions, ADR follow-ups, documentation defects,
-and one dependency advisory exception.
+the current milestone, and its exit criterion is asserted by
+`bin/ragondin/tests/exit_criterion_generation.rs` (below). The issues open
+outside any milestone are decisions reserved for a human, work blocked on one of
+those decisions, ADR follow-ups, documentation defects, and one dependency
+advisory exception.
 
 M2's exit criterion is asserted mechanically rather than claimed:
 `bin/ragondin/tests/exit_criterion.rs` drives the binary over a curated fixture
@@ -78,6 +80,13 @@ Beside it, `bin/ragondin/tests/calibration.rs` — ignored by default, run by
 `just calibrate` against models and a dataset that live outside the tree —
 reproduces the nDCG@10 that MTEB publishes for a pinned sentence encoder on BEIR
 SciFact, and measures the same criterion on that real data.
+
+M3's exit criterion is asserted mechanically in the same way:
+`bin/ragondin/tests/exit_criterion_generation.rs` runs the same curated fixture,
+with a reference answer per question, through a context builder and a `Remote`
+generator served in-process by the test, and requires the hybrid pipeline with
+reranking to answer more questions than the dense-only one — on exact match and
+token F1 — reproducibly.
 
 **Three of the four subcommands are implemented.**
 `bin/ragondin/ARCHITECTURE.md` § What lives here carries the current list and what each one does; `serve` is the one that parses
