@@ -781,7 +781,20 @@ leg's run id is
 run to a median of two words, and the reranker puts the right paragraph first
 for 804 of the thousand questions.
 
-**The rerun.** TODO(#269)
+**The rerun.** `just calibrate-generation` was run a second time, from the
+committed test, against the same server process: all three tests passed in
+11 481 s. Every leg reproduced its run id and every metric bit for bit —
+the generation leg's mean exact match and F1 moved by 0 against a tolerance of
+0.01, its retrieval figures and the retrieval leg's by 0 against
+`RECORDED_TOLERANCE` — and **0 of the 1 000 answers changed their text**. So on
+this server, with one slot, no prompt cache and temperature zero, the model
+answered deterministically. That is an observation about this configuration on
+this machine, not a promise: ADR-15's premise — that batching moves an LLM's
+answers even at a fixed seed — is exactly what `--parallel 1` removes, and a
+rerun on another machine, another Metal build or another server version is
+held to the tolerance, not to equality. The generation leg's wall time rose
+from 3 032 s to 3 855 s because `just check` shared the machine during it; no
+figure moved.
 
 **What is frozen, and what is not.** The generation leg, query by query:
 `eval/ragondin-metrics/tests/squad_generation_calibration_fixture.rs`, over
