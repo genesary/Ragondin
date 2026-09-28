@@ -10,10 +10,10 @@
 # and the exact match and F1 it scores are recorded and describe nothing.
 #
 # Twenty per leg makes the fused list at most forty, reranked to the ten the
-# metrics are cut at; `tests/calibration_generation.rs` says why not SciFact's
-# fifty. The builder keeps whole passages, best first, while their text stays
-# within 4 096 characters: the longest dev paragraph is 4 063, so the context
-# is never empty. Paths are relative to `RAGONDIN_CALIBRATION_MODELS`.
+# metrics are cut at; `bin/ragondin/ARCHITECTURE.md` § Calibrating the
+# generation chain says why not SciFact's fifty. The builder keeps whole
+# passages, best first, while their text stays within 4 096 characters: the
+# longest dev paragraph is 4 063, so the context is never empty. Paths are relative to `RAGONDIN_CALIBRATION_MODELS`.
 pipeline:
   inputs: [question]
   nodes:

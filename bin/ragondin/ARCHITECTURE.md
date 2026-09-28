@@ -727,7 +727,14 @@ one run id and bit-identical metrics under both profiles.
   `dfce12e3862a5283ccfb88221b48480e58745165de856439950d0f22590580db`, and
   `qwen2.5-7b-instruct-q4_k_m-00002-of-00002.gguf`, SHA-256
   `539cf93f78e887edea1c04e2d7d8cdaca9d01dae9c9025bcb8accbe29df3d72a` — the
-  digests Hugging Face publishes for that revision. Apache-2.0.
+  digests Hugging Face publishes for that revision. Apache-2.0. Pulled with
+
+  ```sh
+  R=bb5d59e06d9551d752d08b292a50eb208b07ab1f
+  for part in 00001 00002; do
+    curl -fL -O "https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF/resolve/$R/qwen2.5-7b-instruct-q4_k_m-$part-of-00002.gguf"
+  done
+  ```
 - *Inference server:* llama.cpp's `llama-server`, installed with Homebrew as
   `llama.cpp`; `llama-server --version` prints
   `version: 0.5.0 (build 11146, commit 7fe450e19)`. Started by hand, on
