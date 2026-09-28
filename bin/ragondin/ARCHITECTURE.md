@@ -756,8 +756,9 @@ one run id and bit-identical metrics under both profiles.
   the alias in `/v1/models` with none of `root`, `parent` or `max_model_len`
   beside it, so the identity the service reads (ADR-C33 § 4) names the alias
   and not the weights. **That is a finding:** a run's identity does not tell
-  this model from another served under the same alias, and only the GGUF
-  digests above pin it. The test pins the identity and the run id all the same,
+  this model from another served under the same alias. The GGUF digests above
+  pin what this record names, and the run does not check them: nothing in a
+  run ties it to those files. The test pins the identity and the run id all the same,
   so a server reporting more, or another alias, fails by name.
 
 **What the recorded run scored.**
@@ -787,11 +788,11 @@ committed test, against the same server process: all three tests passed in
 the generation leg's mean exact match and F1 moved by 0 against a tolerance of
 0.01, its retrieval figures and the retrieval leg's by 0 against
 `RECORDED_TOLERANCE` — and **0 of the 1 000 answers changed their text**. So on
-this server, with one slot, no prompt cache and temperature zero, the model
-answered deterministically. That is an observation about this configuration on
-this machine, not a promise: ADR-15's premise — that batching moves an LLM's
-answers even at a fixed seed — is exactly what `--parallel 1` removes, and a
-rerun on another machine, another Metal build or another server version is
+this server, with one slot, no prompt cache and temperature zero, the rerun
+reproduced every answer. Those are the settings under which it was identical;
+which of them, if any, it depended on was not tested. It is an observation
+about this configuration on this machine, not a promise — ADR-15's premise is
+that an LLM's answers move even at a fixed seed — and a rerun on another machine, another Metal build or another server version is
 held to the tolerance, not to equality. The generation leg's wall time rose
 from 3 032 s to 3 855 s because `just check` shared the machine during it; no
 figure moved.

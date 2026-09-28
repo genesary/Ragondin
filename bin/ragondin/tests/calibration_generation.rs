@@ -174,6 +174,11 @@ const RECORDED_SQUAD_RETRIEVAL: [(&str, f64); 3] = [
 
 /// The generation leg over the subset: its run id, its retrieval figures, and
 /// its exact match and F1.
+///
+/// The run id digests `engine_version` beside the other inputs, and the
+/// harness fills that with its own `CARGO_PKG_VERSION`, so a workspace version
+/// bump changes the id with nothing else moved. The answer then is to re-record
+/// the calibration and regenerate the fixture, never to loosen this check.
 const RECORDED_GENERATION_RUN: &str =
     "9e64e3de18d2be0dc14b9c2c4672fad042c55c735d777f5695fee821c865250e";
 const RECORDED_GENERATION_RETRIEVAL: [(&str, f64); 3] = [
@@ -452,7 +457,7 @@ fn squad_dev_generation_over_the_first_thousand_questions_reruns_within_toleranc
     assert_eq!(
         model(&run, "generator"),
         Some(RECORDED_GENERATOR),
-        "the inference server serves another model under the alias"
+        "the inference server does not serve the recorded alias, or reports more beside it"
     );
     // Every input the run's identity digests is the recorded one, so this is
     // a rerun of the run the CI fixture froze, and not another experiment.

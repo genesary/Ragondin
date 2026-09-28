@@ -195,7 +195,7 @@ fn questions() -> Vec<Question> {
         "questions in the expected file"
     );
 
-    rankings
+    let questions: Vec<Question> = rankings
         .into_iter()
         .zip(answers)
         .zip(expected)
@@ -226,7 +226,16 @@ fn questions() -> Vec<Question> {
                 expected: values,
             }
         })
-        .collect()
+        .collect();
+
+    // Each question took its own rows out; any left belong to no question in
+    // the fixture, so the qrels file and the run disagree on the subset.
+    assert!(
+        judgments.is_empty(),
+        "qrels rows for questions the fixture does not hold: {:?}",
+        judgments.keys().collect::<Vec<_>>()
+    );
+    questions
 }
 
 #[test]
