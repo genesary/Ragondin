@@ -1,0 +1,36 @@
+# The first assertion of the generation calibration (ADR-C30 § 4): SciFact's
+# dense-only retrieval, node for node `../dense-only.yaml`'s, followed by the
+# concatenating context builder and the stub generator. SciFact carries qrels
+# and no reference answer, so the run scores retrieval alone, and it reads the
+# ranking through the generator's context port and the builder's chunks port
+# (ADR-C30 § 3) — the `vectors` node, the node the retrieval-only run ends in.
+# Its nDCG@10 must therefore be that run's.
+#
+# The stub needs no model and no service: it answers with the first line of
+# the context, an answer nothing here scores. Paths are relative to
+# `RAGONDIN_CALIBRATION_MODELS`, for the reason `../dense-only.yaml` gives.
+pipeline:
+  inputs: [question]
+  nodes:
+    - id: vectors
+      component: retriever
+      impl: dense
+      inputs: [question]
+      params:
+        top_k: 10
+        embedder: onnx
+        model: all-MiniLM-L6-v2/model.onnx
+        tokenizer: all-MiniLM-L6-v2/tokenizer.json
+        max_sequence_length: 256
+    - id: prompt
+      component: context_builder
+      impl: concat
+      inputs: [question, vectors]
+      params: { budget: 4096, separator: "\n\n" }
+    - id: answer
+      component: generator
+      impl: stub_generator
+      inputs: [question, prompt]
+      params:
+        served_model: stub-model
+        template: "{context}\n\nQuestion: {query}"

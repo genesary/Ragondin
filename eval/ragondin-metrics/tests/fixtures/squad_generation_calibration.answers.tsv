@@ -1,0 +1,1012 @@
+# Frozen SQuAD generation calibration fixture (ADR-C30 § 4) — regenerated
+# by regenerate_squad_generation_calibration.py, which records where every
+# value came from. Do not edit a value by hand. The question ids, reference
+# answers and paragraph ids are from SQuAD v1.1, CC BY-SA 4.0: see
+# squad_generation_calibration.NOTICE.
+# Run 9e64e3de18d2be0dc14b9c2c4672fad042c55c735d777f5695fee821c865250e, node `answer`:
+# question-id <TAB> answer <TAB> reference [<TAB> reference ...].
+# The answer as the generator returned it; the references in file
+# order, repeats kept. Fields are escaped: `\\` is a backslash,
+# `\u{hex}` a non-printable character or a space at either end of a
+# field, and `\e` an empty field. No line ends in whitespace.
+# Written under Python 3.14.7 (Unicode 16.0.0).
+56be4db0acb8001400a502ec	Denver Broncos	Denver Broncos	Denver Broncos	Denver Broncos
+56be4db0acb8001400a502ed	Carolina Panthers	Carolina Panthers	Carolina Panthers	Carolina Panthers
+56be4db0acb8001400a502ee	Levi's Stadium in the San Francisco Bay Area at Santa Clara, California.	Santa Clara, California	Levi's Stadium	Levi's Stadium in the San Francisco Bay Area at Santa Clara, California.
+56be4db0acb8001400a502ef	Denver Broncos	Denver Broncos	Denver Broncos	Denver Broncos
+56be4db0acb8001400a502f0	gold	gold	gold	gold
+56be8e613aeaaa14008c90d1	The league emphasized the "golden anniversary" with various gold-themed initiatives.	"golden anniversary"	gold-themed	"golden anniversary
+56be8e613aeaaa14008c90d2	February 7, 2016	February 7, 2016	February 7	February 7, 2016
+56be8e613aeaaa14008c90d3	American Football Conference	American Football Conference	American Football Conference	American Football Conference
+56bea9923aeaaa14008c91b9	The league emphasized the "golden anniversary" with various gold-themed initiatives.	"golden anniversary"	gold-themed	gold
+56bea9923aeaaa14008c91ba	American Football Conference	American Football Conference	American Football Conference	American Football Conference
+56bea9923aeaaa14008c91bb	February 7, 2016	February 7, 2016	February 7	February 7, 2016
+56beace93aeaaa14008c91df	Denver Broncos	Denver Broncos	Denver Broncos	Denver Broncos
+56beace93aeaaa14008c91e0	Levi's Stadium	Levi's Stadium	Levi's Stadium	Levi's Stadium in the San Francisco Bay Area at Santa Clara
+56beace93aeaaa14008c91e1	Santa Clara, California.	Santa Clara	Santa Clara	Santa Clara
+56beace93aeaaa14008c91e2	Super Bowl L	Super Bowl L	L	Super Bowl L
+56beace93aeaaa14008c91e3	2015 season	2015	the 2015 season	2015
+56bf10f43aeaaa14008c94fd	2015	2015	2016	2015
+56bf10f43aeaaa14008c94fe	Santa Clara, California.	Santa Clara	Santa Clara	Santa Clara
+56bf10f43aeaaa14008c94ff	Levi's Stadium	Levi's Stadium	Levi's Stadium	Levi's Stadium
+56bf10f43aeaaa14008c9500	24–10	24–10	24–10	24–10
+56bf10f43aeaaa14008c9501	February 7, 2016	February 7, 2016	February 7, 2016	February 7, 2016
+56d20362e7d4791d009025e8	2016	2015	2016	2016
+56d20362e7d4791d009025e9	Denver Broncos	Denver Broncos	Denver Broncos	Denver Broncos
+56d20362e7d4791d009025ea	Carolina Panthers	Carolina Panthers	Carolina Panthers	Carolina Panthers
+56d20362e7d4791d009025eb	Denver Broncos	Denver Broncos	Denver Broncos	Denver Broncos
+56d600e31c85041400946eae	2015 season	2015	the 2015 season	2015
+56d600e31c85041400946eb0	Denver Broncos	Denver Broncos	Denver Broncos	Denver Broncos
+56d600e31c85041400946eb1	Levi's Stadium in the San Francisco Bay Area at Santa Clara, California.	Santa Clara, California.	Levi's Stadium	Levi's Stadium
+56d9895ddc89441400fdb50e	Super Bowl 50	Super Bowl	Super Bowl	Super Bowl
+56d9895ddc89441400fdb510	Denver Broncos	Denver Broncos	Denver Broncos	Denver Broncos
+56be4e1facb8001400a502f6	Cam Newton	Cam Newton	Cam Newton	Cam Newton
+56be4e1facb8001400a502f9	four	8	eight	eight
+56be4e1facb8001400a502fa	1995	1995	1995	1995
+56beaa4a3aeaaa14008c91c2	the Arizona Cardinals	Arizona Cardinals	the Arizona Cardinals	Arizona Cardinals
+56beaa4a3aeaaa14008c91c3	the New England Patriots	New England Patriots	the New England Patriots	New England Patriots
+56bead5a3aeaaa14008c91e9	The Arizona Cardinals	Arizona Cardinals	the Arizona Cardinals	Arizona Cardinals
+56bead5a3aeaaa14008c91ea	New England Patriots	New England Patriots	the New England Patriots	New England Patriots
+56bead5a3aeaaa14008c91eb	New England Patriots	New England Patriots	the New England Patriots	New England Patriots
+56bead5a3aeaaa14008c91ec	four	four	four	four
+56bead5a3aeaaa14008c91ed	Cam Newton	Cam Newton	Cam Newton	Cam Newton
+56bf159b3aeaaa14008c9507	15–1	15–1	15–1	15–1
+56bf159b3aeaaa14008c9508	Cam Newton	Cam Newton	Cam Newton	Cam Newton
+56bf159b3aeaaa14008c9509	12–4	12–4	12–4	12–4
+56bf159b3aeaaa14008c950a	four	4	four	four
+56bf159b3aeaaa14008c950b	The Broncos defeated the New England Patriots in the AFC Championship Game, 20–18, by intercepting a pass on New England's 2-point	New England Patriots	the New England Patriots	New England Patriots
+56d2045de7d4791d009025f3	Cam Newton	Cam Newton	Cam Newton	Cam Newton
+56d2045de7d4791d009025f4	The Panthers then blew out the Arizona Cardinals in the NFC Championship Game, 49–15, racking up 487 yards and forcing seven	Arizona Cardinals	the Arizona Cardinals	Arizona Cardinals
+56d2045de7d4791d009025f5	their second Super Bowl appearance since the franchise was founded in 1995.	2	second	second
+56d2045de7d4791d009025f6	New England Patriots	New England Patriots	the New England Patriots	New England Patriots
+56d6017d1c85041400946ebe	Cam Newton	Cam Newton	Cam Newton	Cam Newton
+56d6017d1c85041400946ec1	New England Patriots	New England Patriots	the New England Patriots	New England Patriots
+56d6017d1c85041400946ec2	The Arizona Cardinals	Arizona Cardinals	the Arizona Cardinals	Arizona Cardinals
+56d98a59dc89441400fdb52a	Cam Newton	Cam Newton	Cam Newton	Cam Newton
+56d98a59dc89441400fdb52b	The Arizona Cardinals	Arizona Cardinals	the Arizona Cardinals	Arizona Cardinals
+56d98a59dc89441400fdb52e	1995	1995.	1995	1995
+56be4eafacb8001400a50302	Denver linebacker Von Miller was named Super Bowl MVP, recording five solo tackles, 2½ sacks, and two forced fumbles.	Von Miller	Von Miller	Miller
+56be4eafacb8001400a50303	two	2	two	two
+56be4eafacb8001400a50304	Denver	Broncos	The Broncos	Broncos
+56beab833aeaaa14008c91d2	Von Miller	linebacker Von Miller	Von Miller	Miller
+56beab833aeaaa14008c91d3	five	five solo tackles	five	five
+56beab833aeaaa14008c91d4	Newton was limited by Denver's defense, which sacked him seven times and forced him into three turnovers, including a fumble which they recovered for a touchdown.	Newton was limited by Denver's defense	Newton	Newton
+56beae423aeaaa14008c91f4	2	seven	seven	seven
+56beae423aeaaa14008c91f5	Denver linebacker Von Miller was named Super Bowl MVP, recording five solo tackles, 2½ sacks, and two forced fumbles.	Von Miller	The Broncos	Miller
+56beae423aeaaa14008c91f6	three turnovers	three	three	three
+56beae423aeaaa14008c91f7	two	two	two	two
+56bf17653aeaaa14008c9511	Denver linebacker Von Miller was named Super Bowl MVP, recording five solo tackles, 2½ sacks, and two forced fumbles.	Von Miller	Von Miller	Miller
+56bf17653aeaaa14008c9513	linebacker	linebacker	linebacker	linebacker
+56bf17653aeaaa14008c9514	five	5	five	five
+56bf17653aeaaa14008c9515	two	2	two	two
+56d204ade7d4791d00902603	Denver linebacker Von Miller was named Super Bowl MVP, recording five solo tackles, 2½ sacks, and two forced fumbles.	Von Miller	Von Miller	Von Miller
+56d204ade7d4791d00902604	five solo	5	five	five
+56d601e41c85041400946ece	seven times	seven	seven	seven
+56d601e41c85041400946ecf	including a fumble which they recovered for a touchdown.	three	three	three
+56d601e41c85041400946ed0	a fumble which they recovered for a touchdown.	a fumble	a fumble	fumble
+56d601e41c85041400946ed1	Von Miller	Von Miller	Von Miller	Von Miller
+56d601e41c85041400946ed2	linebacker	linebacker	linebacker	linebacker
+56d98b33dc89441400fdb53b	seven times	seven	seven	seven
+56d98b33dc89441400fdb53c	seven times	three	three	three
+56d98b33dc89441400fdb53d	T. J. Ward	Von Miller	Von Miller	Von Miller
+56d98b33dc89441400fdb53e	five	five	five	five
+56be5333acb8001400a5030a	CBS	CBS	CBS	CBS
+56be5333acb8001400a5030b	$5 million	$5 million	$5 million	$5 million
+56be5333acb8001400a5030c	Coldplay	Coldplay	Coldplay	Coldplay
+56be5333acb8001400a5030d	Beyoncé and Bruno Mars	Beyoncé and Bruno Mars	Beyoncé and Bruno Mars	Beyoncé and Bruno Mars
+56be5333acb8001400a5030e	Super Bowl XLVII	Super Bowl XLVII	Super Bowl XLVII	XLVII
+56beaf5e3aeaaa14008c91fd	CBS broadcast Super Bowl 50 in the U.S., and the network's lead broadcast team of Jim Nantz and Phil Simms called the contest.	CBS	CBS	CBS
+56beaf5e3aeaaa14008c91fe	$5,000,000	$5 million	$5 million	$5 million
+56beaf5e3aeaaa14008c91ff	Beyoncé	Beyoncé	Beyoncé	Beyoncé
+56beaf5e3aeaaa14008c9200	Bruno Mars	Bruno Mars	Bruno Mars	Mars
+56beaf5e3aeaaa14008c9201	Coldplay with special guest performers Beyoncé and Bruno Mars	Coldplay	Coldplay	Coldplay
+56bf1ae93aeaaa14008c951b	CBS	CBS	CBS	CBS
+56bf1ae93aeaaa14008c951c	$5 million	$5 million	$5 million	$5 million
+56bf1ae93aeaaa14008c951e	Beyoncé	Bruno Mars	Bruno Mars	Bruno Mars,
+56bf1ae93aeaaa14008c951f	the third-most watched U.S. broadcast ever.	third	third	third
+56d2051ce7d4791d00902608	CBS	CBS	CBS	CBS
+56d2051ce7d4791d00902609	$5,000,000	$5 million	$5 million	$5 million
+56d2051ce7d4791d0090260a	Coldplay	Coldplay	Coldplay	Coldplay
+56d2051ce7d4791d0090260b	Beyoncé and Bruno Mars	Beyoncé and Bruno Mars	Beyoncé and Bruno Mars	Beyoncé and Bruno Mars
+56d602631c85041400946ed8	CBS	CBS	CBS	CBS
+56d602631c85041400946eda	Coldplay with special guest performers Beyoncé and Bruno Mars	Coldplay	Coldplay	Coldplay
+56d602631c85041400946edb	Beyoncé and Bruno Mars	Beyoncé and Bruno Mars	Beyoncé and Bruno Mars	Beyoncé and Bruno Mars
+56d602631c85041400946edc	Super Bowl XLVII halftime show	Super Bowl XLVII	Super Bowl XLVII	Super Bowl XLVII
+56d98c53dc89441400fdb544	The cost for a half minute ad is not mentioned in the given context.	$5 million	$5 million	$5 million for a 30-second
+56d98c53dc89441400fdb545	Coldplay with special guest performers Beyoncé and Bruno Mars	Coldplay	Coldplay	Coldplay
+56d98c53dc89441400fdb546	Beyoncé and Bruno Mars	Beyoncé and Bruno Mars	Beyoncé and Bruno Mars	Beyoncé and Bruno Mars
+56d98c53dc89441400fdb548	Bruno Mars	Bruno Mars	Coldplay	Coldplay
+56be53b8acb8001400a50314	Roger Goodell	Roger Goodell	Roger Goodell	Goodell
+56be53b8acb8001400a50315	Super Bowl 50	the 50th Super Bowl	the 50th	50th
+56be53b8acb8001400a50316	2012	2012	2012	2012
+56beafca3aeaaa14008c9207	Roger Goodell	Roger Goodell	Roger Goodell	Goodell
+56beafca3aeaaa14008c9208	On June 4, 2014, the NFL announced that the practice of branding Super Bowl games with Roman numerals, a practice established at Super	early 2012	In early 2012	2012
+56bf42f53aeaaa14008c95a3	Roger Goodell	Roger Goodell	Roger Goodell	Goodell
+56d2053ae7d4791d00902610	Roger Goodell	Roger Goodell	Roger Goodell	Goodell
+56d6edd00d65d21400198250	Roger Goodell	Roger Goodell	Roger Goodell	Goodell
+56d6edd00d65d21400198251	an important game for us as a league	spectacular	an important game for us as a league	spectacular
+56d98d0adc89441400fdb54e	spectacular	spectacular	spectacular	spectacular
+56d98d0adc89441400fdb54f	2012	2012	2012	2012
+56be5438acb8001400a5031a	Mercedes-Benz Superdome	New Orleans' Mercedes-Benz Superdome	New Orleans' Mercedes-Benz Superdome	Mercedes-Benz Superdome
+56be5438acb8001400a5031b	Sun Life Stadium	Miami's Sun Life Stadium	Miami's Sun Life Stadium	Sun Life Stadium
+56be5438acb8001400a5031c	Levi's Stadium	San Francisco Bay Area's Levi's Stadium	San Francisco Bay Area's Levi's Stadium	Levi's Stadium
+56beb03c3aeaaa14008c920b	Sun Life Stadium	Sun Life Stadium	Sun Life Stadium	Sun Life Stadium
+56beb03c3aeaaa14008c920d	Levi's Stadium	Levi's Stadium	Levi's Stadium	Levi's Stadium
+56bf3c633aeaaa14008c9580	Levi's Stadium	Levi's Stadium	Levi's Stadium	Levi's Stadium.
+56bf3c633aeaaa14008c9581	Mercedes-Benz Superdome	Mercedes-Benz Superdome	Mercedes-Benz Superdome	Mercedes-Benz Superdome
+56bf3c633aeaaa14008c9582	Sun Life Stadium	Sun Life Stadium	Sun Life Stadium	Sun Life Stadium
+56d20564e7d4791d00902612	New Orleans' Mercedes-Benz Superdome, Miami's Sun Life Stadium, and the San Francisco Bay Area's Levi's Stadium.	New Orleans' Mercedes-Benz Superdome, Miami's Sun Life Stadium, and the San Francisco Bay Area's Levi's Stadium	New Orleans' Mercedes-Benz Superdome, Miami's Sun Life Stadium, and the San Francisco Bay Area's Levi's Stadium.	New Orleans' Mercedes-Benz Superdome, Miami's Sun Life Stadium, and the San Francisco Bay Area's Levi's Stadium.
+56d6ee6e0d65d21400198254	three sites	three	three	three
+56d6ee6e0d65d21400198255	New Orleans' Mercedes-Benz Superdome	New Orleans	New Orleans	New Orleans'
+56d6ee6e0d65d21400198256	Sun Life Stadium	Sun Life Stadium	Sun Life Stadium	Sun Life Stadium
+56d6ee6e0d65d21400198257	New Rochelle	San Francisco	San Francisco	San Francisco Bay Area's
+56d6ee6e0d65d21400198258	Levi's Stadium	Levi's Stadium.	Levi's Stadium	Levi's Stadium.
+56d98db6dc89441400fdb552	Sun Life Stadium	Sun Life Stadium	Sun Life Stadium	Sun Life Stadium
+56d98db6dc89441400fdb553	Mercedes-Benz Superdome	Mercedes-Benz Superdome	Mercedes-Benz Superdome	Mercedes-Benz Superdome,
+56d98db6dc89441400fdb554	Levi's Stadium	Levi's Stadium.	Levi's Stadium	Levi's Stadium.
+56be54bdacb8001400a50322	The league announced on October 16, 2012, that the two finalists were Sun Life Stadium and Levi's Stadium.	October 16, 2012	October 16, 2012,	October 16, 2012
+56be54bdacb8001400a50323	10 times	10	10	10
+56be54bdacb8001400a50324	Super Bowl XLIV in 2010.	Super Bowl XLIV	Super Bowl XLIV	2010
+56be54bdacb8001400a50325	Super Bowl XLIV in 2010.	2010	2010	2010
+56be54bdacb8001400a50326	Super Bowl XIX in 1985	1985	1985	1985
+56beb0f43aeaaa14008c921b	Sun Life Stadium	Sun Life Stadium	Sun Life Stadium	Sun Life Stadium
+56beb0f43aeaaa14008c921c	The league announced on October 16, 2012, that the two finalists were Sun Life Stadium and Levi's Stadium.	October 16, 2012	October 16, 2012	October 16, 2012,
+56beb0f43aeaaa14008c921d	Stanford Stadium in Stanford, California	Stanford Stadium	Stanford Stadium	Stanford Stadium
+56beb0f43aeaaa14008c921e	May 3, 2013	May 3, 2013	May 3, 2013	May 3, 2013
+56beb0f43aeaaa14008c921f	2010	2010	2010	2010
+56bf21b43aeaaa14008c9525	The context does not provide a specific number of times a Super Bowl has taken place at Miami's Sun Life Stadium. Therefore, there is no answer within the given	two	10	10
+56bf21b43aeaaa14008c9526	Super Bowl XLIV in 2010.	Super Bowl XLIV	Super Bowl XLIV	2010
+56bf21b43aeaaa14008c9528	three	two	two	two
+56bf21b43aeaaa14008c9529	Florida legislature	Florida legislature	the Florida legislature	Florida legislature
+56d6ef6a0d65d21400198260	Super Bowl XIX in 1985	1985	1985	1985
+56d6ef6a0d65d21400198262	New Orleans	New Orleans	New Orleans	New Orleans
+56d98f0ddc89441400fdb558	October 16, 2012	October 16, 2012	October 16, 2012	October 16, 2012,
+56d98f0ddc89441400fdb559	The South Florida/Miami area has previously hosted the event 10 times (tied for most with New Orleans), with the most recent one being Super Bowl	10.	10	10 times
+56d98f0ddc89441400fdb55a	New Orleans	New Orleans	New Orleans	New Orleans
+56d98f0ddc89441400fdb55b	Super Bowl XIX in 1985	1985	1985	1985
+56d98f0ddc89441400fdb55c	Florida legislature	Florida legislature	the Florida legislature	Florida legislature
+56be5523acb8001400a5032c	On May 21, 2013, NFL owners at their spring meetings in Boston voted and awarded the game to Levi's Stadium.	May 21, 2013	May 21, 2013	May 21, 2013,
+56be5523acb8001400a5032d	NFL owners at their spring meetings in Boston voted and awarded the game to Levi's Stadium.	NFL owners	NFL owners	NFL owners
+56be5523acb8001400a5032e	The $1.2 billion stadium opened in 2014.	2014	in 2014	2014
+56be5523acb8001400a5032f	$1.2 billion	$1.2 billion	$1.2 billion	$1.2 billion
+56be5523acb8001400a50330	San Diego	San Diego	San Diego	San Diego
+56beb2153aeaaa14008c9225	Boston	Boston	in Boston	May 21, 2013
+56beb2153aeaaa14008c9226	May 21, 2013	May 21, 2013	May 21, 2013	May 21, 2013,
+56beb2153aeaaa14008c9227	$1.2 billion	$1.2 billion	$1.2 billion	$1.2 billion
+56beb2153aeaaa14008c9228	Super Bowl XXXVII took place in San Diego in 2003.	Super Bowl XXXVII	Super Bowl XXXVII	XXXVII
+56beb2153aeaaa14008c9229	San Diego	San Diego	San Diego	San Diego
+56bf23363aeaaa14008c952f	2014	2013	2013	2013
+56bf23363aeaaa14008c9530	The $1.2 billion stadium opened in 2014.	2014	2014	2014
+56bf23363aeaaa14008c9531	The $1.2 billion stadium opened in 2014.	$1.2 billion	$1.2 billion	$1.2 billion
+56bf23363aeaaa14008c9532	1985	1985	1985	1985
+56bf23363aeaaa14008c9533	Super Bowl XXXVII	Super Bowl XXXVII	Super Bowl XXXVII	XXXVII
+56d6f0770d65d21400198268	On May 21, 2013, NFL owners at their spring meetings in Boston voted and awarded the game to Levi's Stadium.	May 21, 2013	May 21, 2013,	May 21, 2013
+56d6f0770d65d21400198269	The $1.2 billion stadium opened in 2014.	2014	in 2014	2014
+56d6f0770d65d2140019826a	Super Bowl XXXVII took place in San Diego in 2003.	2003	in 2003	2003
+56d6f0770d65d2140019826c	Boston	Boston	in Boston	Boston
+56d98fbfdc89441400fdb562	May 21, 2013	May 21, 2013	May 21, 2013	May 21, 2013
+56d98fbfdc89441400fdb563	The $1.2 billion stadium opened in 2014.	2014.	in 2014	2014
+56d98fbfdc89441400fdb564	$1.2 billion	$1.2 billion	$1.2 billion	$1.2 billion
+56d98fbfdc89441400fdb565	Super Bowl XXXVII took place in San Diego in 2003.	2003.	2003	2003
+56be572b3aeaaa14008c9052	Both teams were coached by John Fox in their last Super Bowl appearance prior to Super Bowl 50.	John Fox	John Fox	Fox
+56beb2a03aeaaa14008c922f	one of only ten teams	ten	ten	six
+56beb2a03aeaaa14008c9230	one of only six teams	six	six	six
+56beb2a03aeaaa14008c9231	Carolina Panthers	Carolina Panthers	The Carolina Panthers	Panthers
+56beb2a03aeaaa14008c9232	Super Bowl XLVIII.	Super Bowl XLVIII	Super Bowl XLVIII	XLVIII
+56beb2a03aeaaa14008c9233	John Fox	John Fox	John Fox	Fox
+56bf28c73aeaaa14008c9539	eight	eight	eight	eight
+56bf28c73aeaaa14008c953a	one of only ten teams	ten	ten	ten
+56bf28c73aeaaa14008c953c	Super Bowl XXXVIII.	Super Bowl XXXVIII	Super Bowl XXXVIII	XXXVIII
+56bf28c73aeaaa14008c953d	one of only six teams	six	ten	ten
+56d6f1190d65d21400198272	number one seeds	number one	number one	one
+56d6f1190d65d21400198273	number one	number one	number one	one
+56d6f1190d65d21400198274	Super Bowl XLVIII	Super Bowl XLVIII	Super Bowl XLVIII	Super Bowl XLVIII
+56d6f1190d65d21400198275	Super Bowl XXXVIII.	Super Bowl XXXVIII.	Super Bowl XXXVIII	Super Bowl XXXVIII
+56d6f1190d65d21400198276	one	six	ten	ten
+56d99179dc89441400fdb56c	1	one	1	1
+56d99179dc89441400fdb56d	four	four	four	four
+56d99179dc89441400fdb570	John Fox	John Fox	John Fox	John Fox
+56be59683aeaaa14008c9058	DeAngelo Williams	DeAngelo Williams	DeAngelo Williams	Williams
+56be59683aeaaa14008c9059	Kelvin Benjamin	Kelvin Benjamin	Kelvin Benjamin	Benjamin
+56be59683aeaaa14008c905a	the seventh team	7	seventh	seventh
+56beb3083aeaaa14008c923d	1978	1978	1978	1978
+56beb3083aeaaa14008c923e	Carolina started the season 14–0, not only setting franchise records for the best start and the longest single-season winning streak, but also posting the	Carolina Panthers	the Panthers	Carolina
+56beb3083aeaaa14008c923f	Ten players were selected to the Pro Bowl (the most in franchise history) along with eight All-Pro selections.	Ten	Ten	Ten
+56beb3083aeaaa14008c9240	eight	eight	eight	eight
+56beb3083aeaaa14008c9241	Kelvin Benjamin	Kelvin Benjamin	Kelvin Benjamin	Benjamin
+56bf2afe3aeaaa14008c9543	1978	1978	1978	1978
+56bf2afe3aeaaa14008c9544	2009	2009	2009	2009
+56bf2afe3aeaaa14008c9545	The context does not mention the Packers arriving at a record of 13-0. Therefore, there is no answer to the question within the given context.	2011	2011	2011
+56bf2afe3aeaaa14008c9547	torn ACL	torn ACL	a torn ACL	torn ACL
+56d6f2000d65d2140019827c	Kelvin Benjamin	Kelvin Benjamin	Kelvin Benjamin	Benjamin
+56d6f2000d65d2140019827d	DeAngelo Williams	DeAngelo Williams	DeAngelo Williams	Williams
+56d6f2000d65d2140019827e	1978	1978	1978	1978
+56d6f2000d65d2140019827f	Ten players were selected to the Pro Bowl (the most in franchise history) along with eight All-Pro selections.	Ten	Ten	Ten
+56d9943fdc89441400fdb576	the Carolina Panthers	Carolina Panthers	the Panthers	Carolina
+56d9943fdc89441400fdb577	1978	1978.	1978	1978
+56d9943fdc89441400fdb578	Carolina Panthers	Carolina Panthers	the Panthers	Carolina
+56d9943fdc89441400fdb57a	Ten players were selected to the Pro Bowl (the most in franchise history) along with eight All-Pro selections.	Ten	Ten	Ten
+56beb3a03aeaaa14008c9247	six	six	six	six
+56beb3a03aeaaa14008c9248	45 total touchdowns	45	45	45
+56beb3a03aeaaa14008c9249	a career-low 10 interceptions	10	10	10
+56beb3a03aeaaa14008c924a	27	27	27	27
+56beb3a03aeaaa14008c924b	Greg Olsen	Greg Olsen	Greg Olsen	Olsen
+56bf6b303aeaaa14008c960b	45 total touchdowns (35 passing, 10 rushing)	45	45	45
+56bf6b303aeaaa14008c960c	a career-best quarterback rating of 99.4.	99.4	99.4	99.4.
+56bf6b303aeaaa14008c960d	77	77 passes	77	77
+56bf6b303aeaaa14008c960e	wide receiver	receivers	receivers	receivers
+56bf6b303aeaaa14008c960f	Jonathan Stewart	Jonathan Stewart	Jonathan Stewart	Jonathan Stewart
+56d6f2960d65d21400198286	six	six	six	six
+56d6f2960d65d21400198287	Cam Newton	Cam Newton	Cam Newton	Cam Newton
+56d6f2960d65d21400198288	3,837 yards	3,837	3,837	3,837
+56d6f2960d65d21400198289	45 total touchdowns (35 passing, 10 rushing)	45	45	45
+56d6f2960d65d2140019828a	six touchdowns	six	six	six
+56d997cddc89441400fdb586	500 points	500	500	500
+56d997cddc89441400fdb587	3,837	3,837	3,837	3,837
+56d997cddc89441400fdb588	45 total touchdowns (35 passing, 10 rushing)	45	45	45
+56d997cddc89441400fdb589	99.4	99.4.	99.4	99.4.
+56d997cddc89441400fdb58a	39 receptions	39	39	39
+56beb4343aeaaa14008c925b	308	308	308	308
+56beb4343aeaaa14008c925c	136	136	136	136
+56beb4343aeaaa14008c925d	11	118	118	118
+56beb4343aeaaa14008c925e	four	four	four	four
+56beb4343aeaaa14008c925f	Von Miller led the team with 11 sacks.	Kawann Short	Kawann Short	Short
+56d6f3500d65d21400198290	24	24	24	24
+56d6f3500d65d21400198291	Kawann Short led the team in sacks with 11, while also forcing three fumbles and recovering two.	Kawann Short	Kawann Short	Short
+56d6f3500d65d21400198292	four	four	four	four
+56d6f3500d65d21400198293	four	four	5½	four
+56d6f3500d65d21400198294	Manning finished the game 13 of 23 for 141 yards with one interception and zero touchdowns.	Kurt Coleman	Kurt Coleman	Coleman
+56d9992fdc89441400fdb59c	24	24	24	24
+56d9992fdc89441400fdb59e	Mario Addison added 6½ sacks.	Kony Ealy	Kony Ealy
+56d9992fdc89441400fdb59f	Thomas Davis	Luke Kuechly.	Luke Kuechly	Short
+56d9992fdc89441400fdb5a0	two	two.	two	24
+56beb4e43aeaaa14008c9265	Gary Kubiak	Gary Kubiak	Gary Kubiak	Kubiak
+56beb4e43aeaaa14008c9266	Brock Osweiler	Brock Osweiler	Brock Osweiler	Osweiler
+56beb4e43aeaaa14008c9267	Indianapolis Colts	Indianapolis Colts	the Indianapolis Colts	Colts
+56beb4e43aeaaa14008c9268	San Diego Chargers	San Diego Chargers	San Diego Chargers	Chargers
+56beb4e43aeaaa14008c9269	Wade Phillips	Wade Phillips	Wade Phillips	Phillips
+56bf301c3aeaaa14008c954d	four years	four	four	four
+56bf301c3aeaaa14008c954e	Gary Kubiak	Gary Kubiak	Gary Kubiak	Kubiak
+56bf301c3aeaaa14008c954f	Indianapolis Colts	Indianapolis Colts	the Indianapolis Colts	1998
+56bf301c3aeaaa14008c9550	39	39	39	39
+56bf301c3aeaaa14008c9551	plantar fasciitis injury in his heel that he had suffered since the summer	plantar fasciitis	a partial tear of the plantar fasciitis
+56d6f4030d65d2140019829a	Gary Kubiak replaced John Fox as head coach for the Broncos.	Gary Kubiak	Gary Kubiak	Kubiak
+56d6f4030d65d2140019829b	Peyton Manning	Peyton Manning	Peyton Manning	Manning
+56d6f4030d65d2140019829c	plantar fasciitis injury in his heel	a plantar fasciitis injury	a plantar fasciitis injury	plantar fasciitis
+56d6f4030d65d2140019829d	39	39	39	39
+56d6f4030d65d2140019829e	4	four	4	4
+56d99b7bdc89441400fdb5c8	John Fox	John Fox	John Fox	Fox
+56d99b7bdc89441400fdb5c9	Peyton Manning became the first quarterback ever to lead two different teams to multiple Super Bowls. He is also the oldest quarterback ever to play in a Super	Peyton Manning	Peyton Manning	Manning
+56d99b7bdc89441400fdb5ca	Gary Kubiak	Gary Kubiak	Gary Kubiak	Kubiak
+56d99b7bdc89441400fdb5cb	left foot	left foot.	left	left
+56d99b7bdc89441400fdb5cc	Wade Phillips	Wade Phillips	Wade Phillips	Phillips
+56beb57b3aeaaa14008c9279	67.9	67.9	67.9	67.9
+56beb57b3aeaaa14008c927a	17	17	17	17
+56beb57b3aeaaa14008c927b	Demaryius Thomas led the team with 105 receptions for 1,304 yards and six touchdowns, while Emmanuel Sanders caught 76	Demaryius Thomas	Demaryius Thomas	Thomas
+56beb57b3aeaaa14008c927c	Chris Harris, Jr.	C. J. Anderson	C. J. Anderson	Anderson
+56beb57b3aeaaa14008c927d	10	10	10	10
+56bf38383aeaaa14008c956b	67.9	67.9	67.9	67.9
+56bf38383aeaaa14008c956c	141	2,249	2,249	2,249
+56bf38383aeaaa14008c956d	17 interceptions	nine	17	career-low 67.9 passer rating,
+56bf38383aeaaa14008c956e	Demaryius Thomas led the team with 105 receptions for 1,304 yards and six touchdowns, while Emmanuel Sanders caught 76	Demaryius Thomas	Demaryius Thomas	Thomas
+56bf38383aeaaa14008c956f	receiver	receiver	receiver	Thomas
+56d6fe0b0d65d214001982a4	67.9	67.9	67.9	67.9
+56d6fe0b0d65d214001982a5	17	17	17	17
+56d6fe0b0d65d214001982a6	Demaryius Thomas	Demaryius Thomas	Demaryius Thomas	Thomas
+56d6fe0b0d65d214001982a7	five touchdowns	5	five	five
+56d99c44dc89441400fdb5d6	67.9	67.9	67.9	67.9
+56d99c44dc89441400fdb5d7	17	17	17	17
+56d99c44dc89441400fdb5d8	The context provided does not contain information about any Denver player catching the ball 76 times in the 2015 season. Therefore, there is no	Emmanuel Sanders	Emmanuel Sanders	Sanders
+56d99c44dc89441400fdb5d9	The context does not provide information about the Broncos' leading rusher for the 2015 season.	C. J. Anderson	C. J. Anderson	Anderson
+56d99c44dc89441400fdb5da	4.7 yards per carry	4.7	4.7	4.7
+56beb6533aeaaa14008c928d	4,530	4,530	4,530	4,530
+56beb6533aeaaa14008c928e	5½ sacks.	5½	5½	5½
+56beb6533aeaaa14008c9290	Kuechly led the team in tackles (118)	Brandon Marshall	Brandon Marshall	Marshall
+56beb6533aeaaa14008c9291	three	three	three	three
+56bf3e803aeaaa14008c9588	linebacker	Linebacker	Linebacker	Linebacker
+56bf3e803aeaaa14008c9589	linebacker	Linebacker	Linebacker	Linebacker
+56bf3e803aeaaa14008c958b	defensive ends	Defensive ends	Defensive ends	Defensive ends
+56d6fea90d65d214001982ae	296	296	296	296
+56d6fea90d65d214001982af	DeMarcus Ware was selected to play in the Pro Bowl for the ninth time in his career, ranking second on the team with 7½ sacks.	Von Miller	Von Miller	Miller
+56d6fea90d65d214001982b0	Danny Trevathan	Brandon Marshall	Brandon Marshall	Marshall
+56d6fea90d65d214001982b2	three	three.	three	three
+56d99da8dc89441400fdb5fd	Von Miller led the team with 11 sacks, forced four fumbles, and recovered three.	Von Miller	Von Miller	Miller
+56d99da8dc89441400fdb5ff	Brandon Marshall led the team in total tackles with 109, while Danny Trevathan ranked second with 102.	Linebacker Brandon Marshall	Brandon Marshall	Marshall
+56d99da8dc89441400fdb600	Defensive ends Derek Wolfe and Malik Jackson each had 5½ sacks.	Derek Wolfe and Malik Jackson	Derek Wolfe and Malik Jackson
+56beb6f23aeaaa14008c92a1	The Steelers lost to the Panthers in the divisional round of the playoffs.	Seattle Seahawks	the Seattle Seahawks	Seahawks
+56beb6f23aeaaa14008c92a2	Arizona Cardinals	Arizona Cardinals	Arizona Cardinals	Cardinals
+56beb6f23aeaaa14008c92a3	487	487	487	487
+56beb6f23aeaaa14008c92a4	seven turnovers	seven	seven	seven
+56beb6f23aeaaa14008c92a5	31–24	31–24	31–24	31–24
+56bf34293aeaaa14008c9559	Arizona Cardinals	Seattle Seahawks	the Seattle Seahawks	Seahawks
+56bf34293aeaaa14008c955a	31–24	31–24	31–24	31–24,
+56bf34293aeaaa14008c955b	487	487	487	487
+56d701280d65d214001982b8	The Panthers beat the Seattle Seahawks in the divisional round.	Seattle Seahawks	the Seattle Seahawks	Seahawks
+56d701280d65d214001982ba	Seattle Seahawks	Arizona Cardinals	the Arizona Cardinals	Cardinals
+56d701280d65d214001982bc	7	seven	seven	seven
+56d99e78dc89441400fdb616	The Panthers beat the Seattle Seahawks in the divisional round.	Seattle Seahawks	the Seattle Seahawks	Seahawks
+56d99e78dc89441400fdb618	Carolina 49, Arizona 15	49–15	49–15	49–15,
+56d99e78dc89441400fdb619	The Seattle Seahawks	Arizona Cardinals	the Seattle Seahawks	Cardinals
+56d99e78dc89441400fdb61a	49	487	487
+56beb7953aeaaa14008c92ab	The Panthers beat the Seattle Seahawks in the divisional round, running up a 31–0 halftime lead and then holding off a furious second half comeback attempt	Pittsburgh Steelers	the Pittsburgh Steelers	Steelers
+56beb7953aeaaa14008c92ac	11	11	11	11
+56beb7953aeaaa14008c92ad	New England Patriots	New England Patriots	New England Patriots	Patriots
+56beb7953aeaaa14008c92ae	20–18	20–18	20–18	20–18,
+56beb7953aeaaa14008c92af	with 17 seconds left on the clock.	17 seconds	17 seconds	17
+56bf36b93aeaaa14008c9561	The Broncos defeated the Pittsburgh Steelers in the divisional round, 23–16.	Broncos	The Broncos	Broncos
+56bf36b93aeaaa14008c9562	23–16	23–16	23–16	, 23–16,
+56bf36b93aeaaa14008c9563	New England Patriots	New England Patriots	New England Patriots	Patriots
+56bf36b93aeaaa14008c9564	17 seconds	17	17 seconds	17
+56bf36b93aeaaa14008c9565	he didn't throw any in their two playoff games.	Manning	Manning
+56d7018a0d65d214001982c2	The Broncos defeated the Pittsburgh Steelers in the divisional round, 23–16.	Pittsburgh Steelers	the Pittsburgh Steelers	Steelers
+56d7018a0d65d214001982c3	11	11	11	11
+56d7018a0d65d214001982c5	New England Patriots	New England Patriots	New England Patriots	Patriots
+56d99f99dc89441400fdb628	The Pittsburgh Steelers	Pittsburgh Steelers	Pittsburgh Steelers	Steelers
+56d99f99dc89441400fdb629	New England Patriots	New England Patriots	New England Patriots	Patriots
+56d99f99dc89441400fdb62c	17 seconds	17	17	17
+56beb7fd3aeaaa14008c92b5	Thomas Davis	Thomas Davis	Thomas Davis,	Davis
+56beb7fd3aeaaa14008c92b6	a broken arm	a broken arm	a broken arm	broken arm
+56beb7fd3aeaaa14008c92b7	three	three	three	three
+56beb7fd3aeaaa14008c92b8	11	11	11	11
+56bf3a223aeaaa14008c9575	ACL tears	ACL tears	ACL tears	ACL
+56bf3a223aeaaa14008c9576	broken arm	arm	arm	arm
+56bf3a223aeaaa14008c9577	11	11	11	11
+56bf3a223aeaaa14008c9579	the Super Bowl	Super Bowl	the Super Bowl	Super Bowl
+56d703d10d65d214001982d6	three	three	three	three
+56d703d10d65d214001982d7	broken arm	broken arm	a broken arm	broken arm
+56d703d10d65d214001982d8	11	11	11	11
+56d9a026dc89441400fdb632	Thomas Davis	Thomas Davis	Thomas Davis	Davis
+56beb86b3aeaaa14008c92bd	39	39	39	39	39
+56beb86b3aeaaa14008c92be	John Elway	John Elway	John Elway	Elway	Elway
+56beb86b3aeaaa14008c92bf	38	38	38	38	38
+56beb86b3aeaaa14008c92c0	Denver's Executive Vice President of Football Operations and General Manager.	Executive Vice President of Football Operations and General Manager	Executive Vice President of Football Operations and General Manager	Executive Vice President of Football Operations and General Manager.	Executive Vice President of Football Operations and General Manager.
+56beb86b3aeaaa14008c92c1	Denver Broncos	Broncos	the Broncos	Broncos	Broncos
+56bf3fd53aeaaa14008c9591	Denver Broncos	Broncos	the Broncos	Broncos	Broncos
+56bf3fd53aeaaa14008c9592	Denver's Executive Vice President of Football Operations and General Manager.	John Elway	John Elway	Elway	Elway
+56bf3fd53aeaaa14008c9593	38	38	38	38	38
+56bf3fd53aeaaa14008c9594	Peyton Manning became the oldest quarterback ever to win a Super Bowl at age 39.	Peyton Manning	Peyton Manning	Manning	Manning
+56bf3fd53aeaaa14008c9595	two	two	two	two	two
+56d704430d65d214001982de	Peyton Manning took two different teams to the Super Bowl.	two	two	two	two
+56d704430d65d214001982e0	Peyton Manning	Peyton Manning	Peyton Manning	Manning	Manning
+56d704430d65d214001982e1	John Elway	John Elway	John Elway	Elway	Elway
+56d704430d65d214001982e2	Super Bowl XXXIII	Super Bowl XXXIII	Super Bowl XXXIII	XXXIII	XXXIII
+56d9a0eadc89441400fdb63e	Peyton Manning	Peyton Manning	Peyton Manning	Manning	Manning
+56d9a0eadc89441400fdb63f	39	39.	39	39	39
+56d9a0eadc89441400fdb640	John Elway	John Elway	John Elway	Elway	Elway
+56beb90c3aeaaa14008c92c7	Manning was the #1 selection of the 1998 NFL draft, while Newton was picked first in 2011.	1998	1998	1998
+56beb90c3aeaaa14008c92c8	2011	2011	2011	2011
+56beb90c3aeaaa14008c92c9	26	26	26	26
+56beb90c3aeaaa14008c92ca	13 years and 48 days	13 years and 48 days	13 years and 48 days	13 years
+56beb90c3aeaaa14008c92cb	Von Miller	Von Miller	Von Miller	Miller
+56bf41013aeaaa14008c959b	Manning was the #1 selection of the 1998 NFL draft.	Manning	Manning	Manning
+56bf41013aeaaa14008c959c	Newton was picked first in 2011.	Newton	Newton	Newton
+56bf41013aeaaa14008c959d	26	26	26	26
+56bf41013aeaaa14008c959e	quarterback	quarterback	quarterbacks	quarterback
+56d7096b0d65d214001982fc	Manning was the #1 selection of the 1998 NFL draft.	1998	1998	1998
+56d7096b0d65d214001982fd	2011	2011	2011	2011
+56d7096b0d65d214001982fe	Von Miller	Von Miller	Von Miller	Miller
+56d9a199dc89441400fdb647	2011	2011.	2011	2011
+56d9a199dc89441400fdb648	26	26	26	26
+56d9a199dc89441400fdb649	13 years and 48 days	13 years and 48 days	13 years and 48 days	13 years and 48 days
+56beb97c3aeaaa14008c92db	Super Bowl XX	Super Bowl XX	Super Bowl XX	XX
+56beb97c3aeaaa14008c92dc	Chicago Bears	Chicago Bears	the Chicago Bears	Bears
+56beb97c3aeaaa14008c92dd	linebacker	linebacker	linebacker	linebacker
+56beb97c3aeaaa14008c92de	Elway	Elway	Elway	Elway
+56beb97c3aeaaa14008c92df	Broncos	Broncos	the Broncos	Broncos
+56bf6c3e3aeaaa14008c9615	linebacker	linebacker	linebacker	linebacker
+56bf6c3e3aeaaa14008c9617	Elway	Elway	Elway	Elway
+56d709ef0d65d21400198306	John Fox	Rivera	Rivera	Rivera
+56d709ef0d65d21400198307	Super Bowl XX	Super Bowl XX	Super Bowl XX	XX
+56beba103aeaaa14008c92e5	Baltimore Ravens kicker Justin Tucker	Justin Tucker	Justin Tucker	Tucker
+56beba103aeaaa14008c92e6	hybrid Bermuda 419 turf.	Bermuda 419	Bermuda 419	hybrid Bermuda 419
+56beba103aeaaa14008c92e7	Ed Mangan	Ed Mangan	Ed Mangan	Mangan
+56beba103aeaaa14008c92e8	Baltimore Ravens	Baltimore Ravens	Baltimore Ravens	Ravens
+56beba103aeaaa14008c92e9	kicker	kicker	kicker	kicker
+56bf467d3aeaaa14008c95a5	Baltimore Ravens kicker Justin Tucker	Justin Tucker	Justin Tucker	Tucker
+56bf467d3aeaaa14008c95a6	kicker	kicker	kicker	kicker
+56bf467d3aeaaa14008c95a7	a hybrid Bermuda 419 turf.	hybrid Bermuda 419 turf	Bermuda 419 turf	hybrid Bermuda 419
+56d70adc0d65d21400198311	Justin Tucker	Justin Tucker	Justin Tucker	Tucker
+56d70adc0d65d21400198312	NFL and Atlanta Braves field director Ed Mangan stated that the field was in "great shape" for gameday. However, the turf showed problem throughout the	a new playing surface	re-sodded	re-sodded
+56d70adc0d65d21400198313	a hybrid Bermuda 419 turf.	a hybrid Bermuda 419 turf.	Bermuda 419 turf	hybrid Bermuda 419 turf
+56d70adc0d65d21400198314	a number of players needing to change their cleats during the game	their cleats	cleats	cleats
+56d9a419dc89441400fdb678	Justin Tucker	Justin Tucker	Tucker
+56d9a419dc89441400fdb679	natural grass stadiums	natural grass	natural grass	grass
+56bebad93aeaaa14008c92f9	the Broncos	Broncos	the Broncos	Broncos
+56bebad93aeaaa14008c92fa	Super Bowl XXXIII, Denver Broncos defeated the Atlanta Falcons 34–19.	34–19	34–19	34–19
+56bebad93aeaaa14008c92fb	Atlanta Falcons	Atlanta Falcons	the Atlanta Falcons	Falcons
+56bebad93aeaaa14008c92fc	white	white	white	white
+56bebad93aeaaa14008c92fd	Super Bowl XXXIII	Super Bowl XXXIII	Super Bowl XXXIII	Super Bowl XXXIII
+56bf48cc3aeaaa14008c95ab	Super Bowl XXXIII	Super Bowl XXXIII	Super Bowl XXXIII	Super Bowl XXXIII
+56bf48cc3aeaaa14008c95ac	Super Bowl XXXIII, Denver Broncos defeated the Atlanta Falcons 34–19.	34–19	34–19	34–19
+56bf48cc3aeaaa14008c95ae	Atlanta Falcons	Atlanta Falcons	the Atlanta Falcons	Falcons
+56bf48cc3aeaaa14008c95af	white jerseys with matching white pants.	white	matching white jerseys	white
+56d70ccc0d65d2140019831d	white jerseys with matching white pants.	road white jerseys	matching white	white
+56d70ccc0d65d2140019831f	the Pittsburgh Steelers	Pittsburgh Steelers	the Pittsburgh Steelers	Steelers
+56d9a637dc89441400fdb697	Super Bowl XXXIII	Super Bowl XXXIII	Super Bowl XXXIII	XXXIII
+56d9a637dc89441400fdb698	blue jerseys	blue	blue	white
+56d9a637dc89441400fdb699	orange jerseys	orange	orange	orange
+56d9a637dc89441400fdb69a	black jerseys with silver pants	black jerseys with silver pants.	black jerseys with silver pants	black
+56bebb293aeaaa14008c9303	The Panthers practiced at the San Jose State practice facility.	San Jose State	San Jose State	San Jose State
+56bebb293aeaaa14008c9304	Stanford University	Stanford University	Stanford University	Stanford
+56bebb293aeaaa14008c9305	San Jose Marriott	San Jose	San Jose	San Jose
+56bebb293aeaaa14008c9306	Santa Clara	Santa Clara	Santa Clara	Santa Clara
+56bf49993aeaaa14008c95b5	San Jose Marriott.	San Jose Marriott	the San Jose Marriott	San Jose State practice facility and stayed at the San Jose Marriott.
+56bf49993aeaaa14008c95b6	San Jose Marriott	Santa Clara Marriott	the San Jose Marriott	Marriott
+56bf49993aeaaa14008c95b7	Stanford University	San Jose State practice facility	the San Jose State practice facility	San Jose State
+56bf49993aeaaa14008c95b8	Stanford University	Stanford University	at Stanford University	Stanford
+56d70d240d65d21400198326	The Panthers practiced at the San Jose State practice facility.	San Jose State practice facility	the San Jose State practice facility	San Jose State
+56d70d240d65d21400198327	San Jose Marriott	San Jose Marriott.	the San Jose Marriott	San Jose Marriott
+56d70d240d65d21400198328	Stanford University	Stanford University	at Stanford University	Stanford
+56d70d240d65d21400198329	the Santa Clara Marriott.	Santa Clara Marriott.	the Santa Clara Marriott	Santa Clara Marriott.
+56d9a6b4dc89441400fdb6a0	The Panthers used the San Jose State practice facility and stayed at the San Jose Marriott.	San Jose	the San Jose State practice facility	San Jose State
+56d9a6b4dc89441400fdb6a1	San Jose Marriott.	San Jose Marriott.	the San Jose Marriott	San Jose Marriott.
+56d9a6b4dc89441400fdb6a2	Stanford University	Stanford University	at Stanford University	Stanford
+56d9a6b4dc89441400fdb6a3	the Santa Clara Marriott.	Santa Clara Marriott.	the Santa Clara Marriott	Santa Clara Marriott.
+56bebbbf3aeaaa14008c9315	On June 4, 2014, the NFL announced that the practice of branding Super Bowl games with Roman numerals, a practice established at Super	June 4, 2014	On June 4, 2014	2014
+56bebbbf3aeaaa14008c9316	Super Bowl V	Super Bowl V	Super Bowl V	V
+56bebbbf3aeaaa14008c9317	Jaime Weston	Jaime Weston	Jaime Weston	Weston
+56bebbbf3aeaaa14008c9318	Super Bowl XLV	Super Bowl XLV	Super Bowl XLV	V
+56bebbbf3aeaaa14008c9319	Vince Lombardi	Vince Lombardi	Vince Lombardi Trophy	Lombardi
+56bf4e1b3aeaaa14008c95bd	2014	2014	2014	2014
+56bf4e1b3aeaaa14008c95be	Super Bowl LI.	Super Bowl LI	LI	LI
+56bf4e1b3aeaaa14008c95c0	L	L	L	L
+56bf4e1b3aeaaa14008c95c1	gold	gold	gold	gold
+56d70daa0d65d21400198332	On June 4, 2014, the NFL announced that the practice of branding Super Bowl games with Roman numerals, a practice established at Super	June 4, 2014	On June 4, 2014	2014
+56d70daa0d65d21400198333	Arabic numerals	Arabic numerals	Arabic numerals	Arabic
+56d70daa0d65d21400198334	L	L.	L	L
+56d70daa0d65d21400198335	gold	gold	gold	gold
+56d70daa0d65d21400198336	for Super Bowl LI.	Super Bowl LI.	Super Bowl LI	Super Bowl LI
+56d9a7addc89441400fdb6a8	Arabic numerals	Arabic	Arabic numerals	Arabic
+56d9a7addc89441400fdb6ab	LII	LI.	LI	LI
+56bebc383aeaaa14008c931f	gold	gold	gold	gold
+56bebc383aeaaa14008c9320	beginning on week 7, all sideline jackets and hats featured gold-trimmed logos.	week 7	2015	week 7,
+56bebc383aeaaa14008c9321	50-yard line	50	50-yard line	50
+56bf52483aeaaa14008c95c7	gold	gold	gold	gold
+56bf52483aeaaa14008c95c8	gold-trimmed	gold	gold	Gold
+56d70e570d65d2140019833c	Super Bowl 50	Golden Super Bowl	the "Golden Super Bowl"	Golden Super Bowl
+56d70e570d65d2140019833e	Gold footballs were given to each high school that has had a player or coach appear in the Super Bowl, and "homecoming" events were also held by	Gold footballs	Gold footballs	Gold footballs
+56d70e570d65d2140019833f	50-yard line	the 50-yard line	the 50	50
+56d9b01fdc89441400fdb6d4	gold	gold	gold	gold
+56bebcbe3aeaaa14008c9325	The annual NFL Experience was held at the Moscone Center in San Francisco.	Moscone Center	the Moscone Center	Moscone Center
+56bebcbe3aeaaa14008c9326	San Francisco	San Francisco	San Francisco	San Francisco
+56bebcbe3aeaaa14008c9327	Ed Lee	Ed Lee	Ed Lee	Lee
+56bebcbe3aeaaa14008c9328	Jane Kim	Jane Kim	Jane Kim	Kim
+56bebcbe3aeaaa14008c9329	January 30	January 30	January 30	January 30
+56bf53e73aeaaa14008c95cb	More than 1 million people are expected to attend the festivities in San Francisco during Super Bowl Week.	1 million	More than 1 million	1 million
+56bf53e73aeaaa14008c95cc	Ed Lee	Ed Lee	Ed Lee	Lee
+56bf53e73aeaaa14008c95cd	Moscone Center	Moscone Center	the Moscone Center	Moscone Center
+56bf53e73aeaaa14008c95ce	Super Bowl City	Super Bowl City	Super Bowl City	Super Bowl City
+56d7145c0d65d2140019834c	The annual NFL Experience was held at the Moscone Center in San Francisco.	Moscone Center	at the Moscone Center	Moscone Center
+56d7145c0d65d2140019834d	"Super Bowl City"	Super Bowl City	Super Bowl City" opened	"Super Bowl City
+56d7145c0d65d2140019834f	Ed Lee	Ed Lee	Ed Lee	Lee
+56d9b389dc89441400fdb6ec	"Super Bowl City"	Super Bowl City	"Super Bowl City"	Super Bowl City
+56d9b389dc89441400fdb6ed	more than 1 million people	More than 1 million	More than 1 million	1 million
+56d9b389dc89441400fdb6ee	San Francisco mayor Ed Lee said of the highly visible homeless presence in this area "they are going to have to leave".	mayor Ed Lee	Ed Lee	mayor Ed Lee
+56d9b389dc89441400fdb6ef	San Francisco mayor Ed Lee said of the highly visible homeless presence in this area "they are going to have to leave". San Francisco city supervisor Jane Kim unsuccessfully l	$5 million.	0	$5 million
+56d9b389dc89441400fdb6f0	The annual NFL Experience was held at the Moscone Center in San Francisco.	The annual NFL Experience	The annual NFL Experience	NFL Experience
+56bebd713aeaaa14008c932f	Bellomy Field at Santa Clara University	Santa Clara University	Santa Clara University	Santa Clara University
+56bebd713aeaaa14008c9330	$2 million worth of other ancillary events, including a week-long event at the Santa Clara Convention Center, a beer, wine and food festival at Bellomy	$2 million	$2 million	$2 million
+56bebd713aeaaa14008c9331	a week-long event	a week	a week	week
+56bf555e3aeaaa14008c95d3	More than 1 million people are expected to attend the festivities in San Francisco during Super Bowl Week.	$2 million	$2 million	$2 million
+56bf555e3aeaaa14008c95d4	Safari Rally	pep rally	pep	pep
+56bf555e3aeaaa14008c95d5	the city council	city council	the city council	city council
+56d714cd0d65d21400198356	Bellomy Field at Santa Clara University	Bellomy Field	Bellomy Field	Santa Clara Convention Center
+56d714cd0d65d21400198358	A professional fundraiser will aid in finding business sponsors and individual donors, but still may need the city council to help fund the event.	A professional fundraiser	A professional fundraiser	professional fundraiser
+56d714cd0d65d21400198359	the city council	city council	the city council	city council
+56d9b43edc89441400fdb700	The context does not provide specific costs for other Super Bowl events in the San Francisco area.	$2 million	$2 million	$2 million
+56d9b43edc89441400fdb701	the city council	city council	the city council	city council
+56bebde53aeaaa14008c9335	February 1, 2016	Monday	February 1, 2016	Monday
+56bebde53aeaaa14008c9336	typically held on the Tuesday afternoon prior to the game	Tuesday	Tuesday afternoon prior to the game	Tuesday
+56bebde53aeaaa14008c9337	SAP Center in San Jose.	SAP Center	SAP Center	SAP Center
+56bebde53aeaaa14008c9338	San Jose	San Jose	San Jose	San Jose.
+56bebde53aeaaa14008c9339	the Golden Gate Bridge	the Golden Gate Bridge	the Golden Gate Bridge	Golden Gate Bridge.
+56bf57043aeaaa14008c95d9	Tuesday	Tuesday	Tuesday afternoon prior to the game	Tuesday
+56bf57043aeaaa14008c95da	Monday	Monday	Monday	Monday
+56bf57043aeaaa14008c95db	Super Bowl Opening Night	Super Bowl Opening Night	Super Bowl Opening Night	Super Bowl Opening Night.
+56bf57043aeaaa14008c95dc	SAP Center in San Jose.	SAP Center	SAP Center	SAP Center
+56bf57043aeaaa14008c95dd	San Jose	San Jose	San Jose	San Jose.
+56d71bd80d65d2140019835e	typically held on the Tuesday afternoon prior to the game	the Tuesday afternoon prior to the game	Tuesday afternoon prior to the game	Tuesday
+56d71bd80d65d21400198360	Super Bowl Opening Night	Super Bowl Opening Night.	Super Bowl Opening Night	Super Bowl Opening Night.
+56d71bd80d65d21400198361	SAP Center in San Jose.	SAP Center in San Jose.	at SAP Center in San Jose	San Jose
+56d71bd80d65d21400198362	a replica of the Golden Gate Bridge	the Golden Gate Bridge.	the Golden Gate Bridge	Golden Gate Bridge.
+56d9b4ebdc89441400fdb708	Monday evening	Monday	Monday	Monday
+56d9b4ebdc89441400fdb709	Super Bowl Opening Night	Super Bowl Opening Night.	Super Bowl Opening Night	Super Bowl Opening Night
+56d9b4ebdc89441400fdb70a	SAP Center in San Jose.	SAP Center in San Jose.	SAP Center	SAP Center
+56d9b4ebdc89441400fdb70b	Golden Gate Bridge	Golden Gate Bridge.	the Golden Gate	Golden Gate Bridge.
+56d9b4ebdc89441400fdb70c	February 1, 2016	February 1, 2016	February 1, 2016	February 1, 2016
+56bebe873aeaaa14008c933f	Business Connect	Business Connect	Business Connect	Business Connect
+56bebe873aeaaa14008c9340	over $40 million	$40 million	over $40 million	$40 million
+56bebe873aeaaa14008c9341	Chevron	Dignity Health	Dignity Health	Dignity
+56bebe873aeaaa14008c9342	Gap	Gap	Gap	Gap
+56bebe873aeaaa14008c9343	Chevron	Chevron	Chevron	Chevron
+56bf59523aeaaa14008c95e3	The Super Bowl 50 Host Committee and the NFL have openly sought disabled veteran and lesbian, gay, bisexual and transgender-owned businesses in Business Connect.	Super Bowl 50 Host Committee	the Super Bowl 50 Host Committee	Super Bowl 50 Host Committee
+56bf59523aeaaa14008c95e4	over $40 million	over $40 million	over $40 million	over $40 million
+56bf59523aeaaa14008c95e5	The host committee has already raised over $40 million through sponsors including Apple, Google, Yahoo!, Intel, Gap, Chevron, and Dignity Health.	sponsors	through sponsors	sponsors
+56d71cb60d65d21400198368	Business Connect	Business Connect	Business Connect	Business Connect
+56d9b5ffdc89441400fdb720	Business Connect	Business Connect	Business Connect	Business Connect
+56d9b5ffdc89441400fdb721	over $40 million	over $40 million	over $40 million	$40 million
+56bebec43aeaaa14008c9349	25 percent	25	25 percent	25
+56bebec43aeaaa14008c934a	50 fund	the 50 fund	the 50 fund	50 fund
+56bf5abc3aeaaa14008c95e9	25 percent	25 percent	25 percent	25
+56bf5abc3aeaaa14008c95ea	50 fund	50 fund	the 50 fund	50 fund
+56d71d150d65d2140019836e	the most giving Super Bowl ever	the most giving Super Bowl ever	giving Super Bowl	giving
+56d71d150d65d2140019836f	25 percent	25 percent	25 percent of all money	25
+56d71d150d65d21400198370	50 fund	the 50 fund	the 50 fund	50 fund
+56d9b6a3dc89441400fdb72f	25 percent	25 percent	25 percent	25
+56d9b6a3dc89441400fdb730	50 fund	50 fund	the 50 fund	50 fund
+56bec0353aeaaa14008c934d	50	Vince Lombardi	Vince Lombardi	Lombardi
+56bec0353aeaaa14008c934e	18-karat gold-plated	18	18	18
+56bec0353aeaaa14008c934f	66 lb (30 kg)	66	66 lb	33
+56bec0353aeaaa14008c9350	Tiffany & Co.	Tiffany & Co.	Tiffany & Co	Tiffany & Co.
+56bec0353aeaaa14008c9351	Tiffany & Co.	Tiffany & Co.	Tiffany & Co	Tiffany & Co
+56bf5b933aeaaa14008c95ed	Vince Lombardi Trophy	Vince Lombardi Trophy	the Vince Lombardi Trophy	Vince Lombardi Trophy
+56bf5b933aeaaa14008c95ef	18-karat gold-plated	18-karat gold-plated	18-karat gold	gold
+56bf5b933aeaaa14008c95f1	Tiffany & Co.	Tiffany & Co	Tiffany & Co	Tiffany & Co
+56d71d9d0d65d21400198374	Vince Lombardi Trophy	the Vince Lombardi Trophy	the Vince Lombardi Trophy	Vince Lombardi Trophy
+56d71d9d0d65d21400198377	Tiffany & Co.	Tiffany & Co.	Tiffany & Co	Tiffany & Co.
+56bec0dd3aeaaa14008c9357	CBS	CBS	CBS	CBS
+56bec0dd3aeaaa14008c9358	Phil Simms	Phil Simms	Phil Simms	Phil Simms
+56bec0dd3aeaaa14008c9359	Tracy Wolfson	Tracy Wolfson	Tracy Wolfson	Tracy Wolfson
+56bec0dd3aeaaa14008c935a	36	36	36	36
+56bec0dd3aeaaa14008c935b	5K resolution.	5K	5K	5K
+56bf5e7b3aeaaa14008c95f7	the three main broadcast television partners	three	three	three
+56bf5e7b3aeaaa14008c95f8	on the sidelines	sidelines	the sidelines	sidelines
+56bf5e7b3aeaaa14008c95f9	360-degree view	360-degree	360	360
+56bf5e7b3aeaaa14008c95fa	5K resolution.	5K resolution	5K	5K
+56bf5e7b3aeaaa14008c95fb	on the sidelines	sidelines	the sidelines	sidelines
+56d71ed50d65d2140019837c	CBS	CBS	CBS	CBS
+56d71ed50d65d2140019837d	three	three	three	three
+56d9b7dcdc89441400fdb740	CBS	CBS	CBS	CBS
+56d9b7dcdc89441400fdb741	Jim Nantz and Phil Simms called the contest.	Jim Nantz and Phil Simms	Jim Nantz and Phil Simms	Jim Nantz and Phil Simms
+56d9b7dcdc89441400fdb742	James Lofton and Mark Malone	Tracy Wolfson and Evan Washburn	Tracy Wolfson and Evan Washburn	Tracy Wolfson and Evan Washburn
+56d9b7dcdc89441400fdb743	5K resolution.	5K	5K	5K
+56d9b7dcdc89441400fdb744	pylon cameras and microphones	cameras	cameras	cameras
+56bec1823aeaaa14008c9361	ESPN Deportes	ESPN Deportes	ESPN Deportes	ESPN Deportes
+56bec1823aeaaa14008c9362	John Sutcliffe	John Sutcliffe	John Sutcliffe	Sutcliffe
+56bec1823aeaaa14008c9363	Alvaro Martin	Alvaro Martin	Alvaro Martin	Alvaro Martin
+56bec1823aeaaa14008c9364	On December 28, 2015,	December 28, 2015	December 28, 2015	December 28, 2015,
+56bec1823aeaaa14008c9365	Spanish-language	Spanish	Spanish	Spanish
+56bf6d343aeaaa14008c961b	ESPN Deportes	CBS	ESPN Deportes	ESPN Deportes
+56d71fc00d65d21400198386	ESPN Deportes	ESPN Deportes	ESPN Deportes	ESPN Deportes
+56d71fc00d65d21400198389	John Sutcliffe	John Sutcliffe.	John Sutcliffe	Sutcliffe
+56d9ba95dc89441400fdb754	ESPN Deportes	ESPN Deportes	ESPN Deportes	ESPN Deportes
+56d9ba95dc89441400fdb757	Alvaro Martin and Raul Allegre	Alvaro Martin and Raul Allegre	Alvaro Martin and Raul Allegre	Alvaro Martin and Raul Allegre
+56d9ba95dc89441400fdb758	John Sutcliffe	John Sutcliffe.	John Sutcliffe	Sutcliffe
+56bec2013aeaaa14008c9371	NFL Mobile service	NFL Mobile	NFL Mobile	NFL Mobile service.
+56bec2013aeaaa14008c9372	WatchESPN	WatchESPN	WatchESPN	WatchESPN
+56bec2013aeaaa14008c9373	CBSSports.com	CBSSports.com	CBSSports.com	CBSSports
+56bec2013aeaaa14008c9374	Xbox One	Xbox One	Xbox One	Xbox One
+56bec2013aeaaa14008c9375	Windows 10	10	10	10
+56bf6e7a3aeaaa14008c961f	The context does not provide the domain name of the site that streamed Super Bowl 50.	CBSSports.com	CBSSports.com	CBSSports.com
+56bf6e7a3aeaaa14008c9620	Xbox One	Xbox One	Xbox One	Xbox
+56bf6e7a3aeaaa14008c9621	Verizon Wireless customers via the NFL Mobile service.	Verizon Wireless customers	Verizon	Verizon
+56bf6e7a3aeaaa14008c9622	NFL Mobile service.	NFL Mobile service	the CBS Sports apps	NFL
+56d7205e0d65d21400198391	Verizon Communications exclusivity, streaming on smartphones was only provided to Verizon Wireless customers via the NFL Mobile service.	Verizon	Verizon	Verizon
+56d7205e0d65d21400198392	NFL Mobile service	NFL Mobile service.	NFL Mobile	NFL
+56d9bc13dc89441400fdb75e	CBS provided digital streams of the game via CBSSports.com, and the CBS Sports apps on tablets, Windows 10, Xbox One and other digital media	digital streams of the game	digital streams	digital streams
+56d9bc13dc89441400fdb75f	Verizon Wireless	Verizon	Verizon	Verizon
+56d9bc13dc89441400fdb760	WatchESPN.	WatchESPN.	through WatchESPN	WatchESPN
+56bec2573aeaaa14008c937b	The Late Show with Stephen Colbert	The Late Show with Stephen Colbert	The Late Show with Stephen Colbert	Late Show with Stephen Colbert
+56bec2573aeaaa14008c937c	a special episode of The Late Late Show with James Corden.	The Late Late Show with James Corden	The Late Late Show with James Corden	Late Late Show with James Corden
+56bf6f743aeaaa14008c9631	The Late Show with Stephen Colbert	The Late Show with Stephen Colbert	The Late Show with Stephen Colbert	Colbert
+56bf6f743aeaaa14008c9632	The Late Late Show with James Corden.	The Late Late Show with James Corden	The Late Late Show with James Corden	Late Late Show with James Corden
+56d720c70d65d21400198396	The Late Show with Stephen Colbert	The Late Show with Stephen Colbert	The Late Show with Stephen Colbert	Late Show with Stephen Colbert
+56d720c70d65d21400198397	a special episode of The Late Late Show with James Corden.	late local programming	late local programming	late local programming
+56d720c70d65d21400198398	a special episode of The Late Late Show with James Corden.	The Late Late Show with James Corden.	The Late Late Show with James Corden	The Late Late Show with James Corden.
+56bec3153aeaaa14008c9389	$5,000,000	$5,000,000	$5,000,000	$5,000,000,
+56bec3153aeaaa14008c938a	Anheuser-Busch InBev	Anheuser-Busch InBev	Anheuser-Busch InBev	Anheuser-Busch InBev
+56bec3153aeaaa14008c938b	Doritos	Doritos	Doritos	Doritos
+56bec3153aeaaa14008c938c	20th anniversary	20th	the 20th	20th
+56bf717d3aeaaa14008c9635	$5,000,000	$5,000,000	$5,000,000	$5,000,000
+56bf717d3aeaaa14008c9637	Anheuser-Busch InBev	Anheuser-Busch InBev	Anheuser-Busch InBev	Anheuser-Busch InBev
+56bf717d3aeaaa14008c9638	Death Wish Coffee	Doritos	Doritos	Doritos
+56bf717d3aeaaa14008c9639	Nintendo and The Pokémon Company also made their Super Bowl debut, promoting the 20th anniversary of the Pokémon video game and media franchise.	Nintendo	Nintendo	Nintendo
+56d721af0d65d2140019839e	Nintendo and The Pokémon Company also made their Super Bowl debut, promoting the 20th anniversary of the Pokémon video game and media franchise.	The Pokémon Company	The Pokémon Company	The Pokémon Company
+56d721af0d65d2140019839f	Anheuser-Busch InBev	Anheuser-Busch InBev	Anheuser-Busch InBev	Anheuser-Busch InBev
+56d721af0d65d214001983a0	Doritos, a longtime sponsor of the game, held its "Crash the Super Bowl" contest that allowed viewers to create their own Doritos ads for	Doritos	Doritos	Doritos
+56d9bdc1dc89441400fdb768	Anheuser-Busch InBev	Anheuser-Busch InBev	Anheuser-Busch InBev	Anheuser-Busch InBev
+56d9bdc1dc89441400fdb769	Doritos	Doritos	Doritos	Doritos
+56d9bdc1dc89441400fdb76a	Crash the Super Bowl	Crash the Super Bowl	Crash the Super Bowl	Crash the Super Bowl
+56bec38b3aeaaa14008c9397	Small Business Big Game	"Small Business Big Game"	Small Business Big Game	Small Business Big Game
+56bec38b3aeaaa14008c9398	Death Wish Coffee	Death Wish Coffee	Death Wish Coffee	Death Wish Coffee
+56bec38b3aeaaa14008c9399	30-second commercial	30-second	30-second	30-second
+56bec38b3aeaaa14008c939a	nine	nine	nine	nine
+56bf71e73aeaaa14008c963f	Death Wish Coffee	Death Wish Coffee	Death Wish Coffee	Death Wish Coffee
+56bf71e73aeaaa14008c9640	nine	nine	nine	nine
+56d722330d65d214001983a6	QuickBooks	QuickBooks.	QuickBooks	QuickBooks
+56d722330d65d214001983a7	Death Wish Coffee	Death Wish Coffee	Death Wish Coffee	Death Wish Coffee
+56d722330d65d214001983a8	Death Wish Coffee beat out nine other contenders from across the United States for the free advertisement.	ten	nine	nine
+56d9be16dc89441400fdb770	QuickBooks sponsored a "Small Business Big Game" contest, in which Death Wish Coffee had a 30-second commercial aired free of charge courtesy of QuickBooks	QuickBooks.	QuickBooks	QuickBooks
+56d9be16dc89441400fdb771	Death Wish Coffee beat out nine other contenders from across the United States for the free advertisement.	Death Wish Coffee	Death Wish Coffee	Death Wish Coffee
+56bec4343aeaaa14008c93a9	The Secret Life of Pets	Jason Bourne	Jason Bourne	Jason Bourne
+56bec4343aeaaa14008c93aa	Gods of Egypt	Gods of Egypt	Gods of Egypt	Gods of Egypt,
+56bec4343aeaaa14008c93ab	Teenage Mutant Ninja Turtles: Out of the Shadows	Teenage Mutant Ninja Turtles: Out of the Shadows	Teenage Mutant Ninja Turtles: Out of the Shadows	Teenage Mutant Ninja Turtles: Out of the Shadows
+56bec4343aeaaa14008c93ac	Resurgence	Resurgence	Resurgence	Resurgence
+56d723560d65d214001983ac	Gods of Egypt	Gods of Egypt	Gods of Egypt	Gods of Egypt
+56d723560d65d214001983ad	Teenage Mutant Ninja Turtles: Out of the Shadows	Teenage Mutant Ninja Turtles: Out of the Shadows	Teenage Mutant Ninja Turtles: Out of the Shadows	Teenage Mutant Ninja Turtles
+56d723560d65d214001983ae	The Secret Life of Pets and the debut trailer for Jason Bourne	Jason Bourne	Jason Bourne	Jason Bourne
+56d723560d65d214001983af	Captain America: Civil War	Captain America: Civil War	Captain America: Civil War	Captain America: Civil War
+56d9bf70dc89441400fdb77b	Independence Day: Resurgence	Independence Day	Independence Day	Independence Day: Resurgence
+56d9bf70dc89441400fdb77c	Universal Studios	Universal	Universal	Universal
+56d9bf70dc89441400fdb77d	Fox	Fox	Fox	Disney
+56bec4a33aeaaa14008c93b1	The flagship stations of each station in the markets of each team will carry their local play-by-play calls.	Westwood One	Westwood One	Westwood One
+56bec4a33aeaaa14008c93b2	Kevin Harlan	Kevin Harlan	Kevin Harlan	Kevin Harlan
+56bec4a33aeaaa14008c93b3	Jim Gray will anchor the pre-game and halftime coverage.	Jim Gray	Jim Gray	. Jim Gray
+56bec4a33aeaaa14008c93b4	Boomer Esiason	Boomer Esiason	Boomer Esiason	Boomer Esiason
+56bec4a33aeaaa14008c93b5	James Lofton	James Lofton	James Lofton	James Lofton and Mark Malone
+56bf738b3aeaaa14008c9655	Boomer Esiason and Dan Fouts	two	Boomer Esiason and Dan Fouts
+56bf738b3aeaaa14008c9656	Jim Nantz and Phil Simms	Kevin Harlan	Kevin Harlan	Kevin Harlan
+56d723ad0d65d214001983b4	Westwood One will carry the game throughout North America, with Kevin Harlan as play-by-play announcer, Boomer Esiason and Dan Fouts as	Westwood One	Westwood One	Westwood One
+56d723ad0d65d214001983b5	Dave Logan	Kevin Harlan	Kevin Harlan	Kevin Harlan
+56d723ad0d65d214001983b8	CBS broadcast Super Bowl 50 in the U.S., and charged an average of $5 million for a 30-second commercial during the game. The	Jim Gray	Jim Gray	Jim Gray
+56d9c049dc89441400fdb78e	Kevin Harlan	Kevin Harlan	Kevin Harlan	Kevin Harlan
+56d9c049dc89441400fdb78f	Boomer Esiason and Dan Fouts	Boomer Esiason and Dan Fouts	Boomer Esiason and Dan Fouts	Boomer Esiason and Dan Fouts
+56d9c049dc89441400fdb790	James Lofton and Mark Malone as sideline reporters.	James Lofton and Mark Malone	James Lofton and Mark Malone	James Lofton and Mark Malone
+56d9c049dc89441400fdb791	Jim Gray will anchor the pre-game and halftime coverage.	pre-game and halftime coverage.	halftime	anchor the pre-game and halftime coverage
+56d9c049dc89441400fdb792	throughout North America	North America	North America	North America
+56bec5233aeaaa14008c93cf	KRFX (103.5 FM)	KRFX	KRFX	KRFX
+56bec5233aeaaa14008c93d0	Dave Logan	Dave Logan	KOA (850 AM) and KRFX (103.5 FM)	Dave Logan
+56bec5233aeaaa14008c93d1	1110 AM	1110 AM	1110 AM	(1110 AM)
+56bec5233aeaaa14008c93d2	Chester, South Carolina	Chester, South Carolina	Chester	Chester, South Carolina
+56bec5233aeaaa14008c93d3	Mick Mixon	Mick Mixon	Mick Mixon	Mick Mixon
+56d724620d65d214001983be	Dave Logan	Dave Logan	Dave Logan	Dave Logan
+56d724620d65d214001983bf	Ed McCaffrey	Ed McCaffrey	Ed McCaffrey	Ed McCaffrey
+56d724620d65d214001983c0	WBT (1110 AM)	WBT	WBT (1110 AM)	WBT (1110 AM)
+56d724620d65d214001983c1	Mick Mixon	Mick Mixon	Mick Mixon	Mick Mixon
+56d9c203dc89441400fdb7a0	KOA (850 AM) and KRFX (103.5 FM)	KOA (850 AM) and KRFX (103.5 FM)	KOA (850 AM) and KRFX (103.5 FM)	KOA (850 AM) and KRFX (103.5 FM)
+56d9c203dc89441400fdb7a3	WBT-FM (99.3 FM)	WBT-FM (99.3 FM)	WBT (1110 AM)	WBT-FM
+56bec5ff3aeaaa14008c93e3	BBC Radio 5 Live and 5 Live Sports Extra will carry the contest.	BBC Radio 5	Radio 5 Live	BBC Radio 5 Live
+56bec5ff3aeaaa14008c93e4	KOA (850 AM) and KRFX (103.5 FM)	5 Live Sports Extra	5 Live Sports Extra	5 Live Sports Extra
+56bec5ff3aeaaa14008c93e5	Darren Fletcher	Darren Fletcher	Darren Fletcher	Darren Fletcher
+56d724ea0d65d214001983c8	ESPN Deportes	BBC	BBC	BBC
+56d724ea0d65d214001983c9	Greg Brady	Greg Brady	Greg Brady	Greg Brady
+56bec6573aeaaa14008c93e9	Bart Starr	Bart Starr	Bart Starr	Starr
+56bec6573aeaaa14008c93ea	Chuck Howley	Chuck Howley	Chuck Howley	Howley
+56bec6573aeaaa14008c93eb	Peyton Manning	Peyton Manning	Peyton Manning	Manning
+56bec6573aeaaa14008c93ec	2001	2001	2001	2001
+56bec6573aeaaa14008c93ed	Peyton Manning	Peyton Manning	Peyton Manning	Manning
+56d7251d0d65d214001983cc	39	39	39	39
+56d7251d0d65d214001983cd	Peyton Manning (MVP of Super Bowl XLI and current Broncos quarterback) was shown in the locker room preparing for the game.	Peyton Manning	Peyton Manning	Manning
+56d7251d0d65d214001983cf	Harvey Martin, co-MVP of Super Bowl XII, who died in 2001.	Harvey Martin	Harvey Martin	Martin
+56d9c3a6dc89441400fdb7b4	43	43	43	43
+56d9c3a6dc89441400fdb7b5	39	39	39	39
+56d9c3a6dc89441400fdb7b6	Bart Starr	Bart Starr	Bart Starr	Starr
+56d9c3a6dc89441400fdb7b7	Peyton Manning	Peyton Manning	Peyton Manning	Manning
+56d9c3a6dc89441400fdb7b8	Harvey Martin	Harvey Martin	Harvey Martin	Harvey Martin
+56bec6ac3aeaaa14008c93fd	Six-time Grammy winner	Six	Six	Six
+56bec6ac3aeaaa14008c93fe	Six-time Grammy winner and Academy Award nominee Lady Gaga performed the national anthem, while Academy Award winner Marlee Matlin provided American Sign Language (ASL) translation	the national anthem	the national anthem	national anthem
+56bec6ac3aeaaa14008c93ff	Academy Award winner Marlee Matlin provided American Sign Language (ASL) translation.	Academy Award	Academy Award	Academy Award
+56bec6ac3aeaaa14008c9400	American Sign Language (ASL) translation.	the national anthem	the national anthem	national anthem
+56bec6ac3aeaaa14008c9401	American Sign Language (ASL)	American Sign Language	American Sign Language	American Sign Language
+56d20650e7d4791d00902614	Lady Gaga performed the national anthem.	Lady Gaga	Lady Gaga	Lady Gaga
+56d20650e7d4791d00902615	Marlee Matlin provided American Sign Language (ASL) translation.	Marlee Matlin	Marlee Matlin	Marlee Matlin
+56d7253b0d65d214001983d4	The context does not provide information about who performed the National Anthem at Super Bowl 50.	Lady Gaga	Lady Gaga	Lady Gaga
+56d7253b0d65d214001983d5	Marlee Matlin provided American Sign Language (ASL) translation.	Marlee Matlin	Marlee Matlin	Marlee Matlin
+56d9c455dc89441400fdb7c4	Six-time Grammy winner and Academy Award nominee Lady Gaga performed the national anthem,	Lady Gaga	Lady Gaga	Lady Gaga
+56d9c455dc89441400fdb7c5	Six-time Grammy winner	Six	Six	Six
+56d9c455dc89441400fdb7c6	Marlee Matlin provided American Sign Language (ASL) translation.	Marlee Matlin	Marlee Matlin	Marlee Matlin
+56bec7353aeaaa14008c940d	December 3, 2015	December 3	December 3	December 3
+56bec7353aeaaa14008c940e	British	British	British	British
+56bec7353aeaaa14008c940f	Super Bowl XLVII	Super Bowl XLVII	Super Bowl XLVII	XLVII
+56bec7353aeaaa14008c9410	"Hymn for the Weekend"	"Hymn for the Weekend"	Hymn for the Weekend	Hymn for the Weekend
+56bec7353aeaaa14008c9411	Super Bowl XLVIII	Super Bowl XLVIII	Super Bowl XLVIII	XLVIII
+56d725790d65d214001983d8	Coldplay	Coldplay.	Coldplay	Coldplay
+56d725790d65d214001983da	PepsiconfirmedtotheAssociatedPressthatBeyoncé,whoheadlinedtheSuperBowlXLVIIhalftime showandcollaboratedwithCold	Pepsi	Pepsi	Pepsi
+56d725790d65d214001983db	"Hymn for the Weekend"	"Hymn for the Weekend"	Hymn for the Weekend	Hymn for the Weekend
+56d9c551dc89441400fdb7d0	Coldplay with special guest performers Beyoncé and Bruno Mars	Coldplay.	Coldplay	Coldplay
+56d9c551dc89441400fdb7d1	Beyoncé	Beyoncé	Beyoncé	Beyoncé
+56d9c551dc89441400fdb7d2	"Hymn for the Weekend"	Hymn for the Weekend	Hymn for the Weekend	Mars
+56d9c551dc89441400fdb7d3	Bruno Mars	Bruno Mars	Bruno Mars	Bruno Mars,
+56bec7a63aeaaa14008c9417	Denver	Denver	Denver	Denver
+56bec7a63aeaaa14008c9418	Andre Caldwell	Andre Caldwell	Andre Caldwell	Caldwell
+56bec7a63aeaaa14008c9419	Ronnie Hillman	Ronnie Hillman	Ronnie Hillman	Hillman
+56bec7a63aeaaa14008c941a	Brandon McManus	Brandon McManus	Brandon McManus	McManus
+56bec7a63aeaaa14008c941b	C. J. Anderson	C. J. Anderson	C. J. Anderson	Anderson
+56d728a10d65d21400198413	45-yard	18	18	22-yard
+56d728a10d65d21400198414	Shaq Thompson tackled Ronnie Hillman for a 3-yard loss.	Shaq Thompson	Shaq Thompson	Thompson
+56d728a10d65d21400198415	Brandon McManus	Brandon McManus	Brandon McManus	McManus
+56d728a10d65d21400198416	a deficit	a deficit.	a deficit	deficit
+56d9c5e7dc89441400fdb7d8	Denver	Denver	Carolina	Denver
+56d9c5e7dc89441400fdb7d9	Owen Daniels	Owen Daniels	Owen Daniels	Daniels
+56d9c5e7dc89441400fdb7da	C. J. Anderson	C. J. Anderson	C. J. Anderson	Anderson
+56d9c5e7dc89441400fdb7db	Brandon McManus 34-yard field goal	Brandon McManus	Brandon McManus	McManus
+56d9c5e7dc89441400fdb7dc	a deficit	a deficit.	a deficit	deficit
+56bec8243aeaaa14008c942b	Mike Carey	Mike Carey	Mike Carey	Carey
+56bec8243aeaaa14008c942c	Panthers quarterback Cam Newton appeared to complete a 24-yard pass Jerricho Cotchery, but the call was ruled an incompletion and upheld after	Cam Newton	Cam Newton	Newton
+56bec8243aeaaa14008c942d	Von Miller	Von Miller	Von Miller	Miller
+56bec8243aeaaa14008c942e	Malik Jackson recovered it in the end zone for a Broncos touchdown.	Malik Jackson	Malik Jackson	Jackson
+56bec8243aeaaa14008c942f	Super Bowl XXVIII	Super Bowl XXVIII	Super Bowl XXVIII	XXVIII
+56d728e00d65d2140019841c	Jerricho Cotchery	Jerricho Cotchery	Jerricho Cotchery	Cotchery
+56d728e00d65d2140019841d	CBS analyst and retired referee Mike Carey stated he disagreed with the call and felt the review clearly showed the pass was complete. However, he did not explicitly disagree with	Mike Carey	Mike Carey	Carey
+56d728e00d65d2140019841e	Darian Stewart	Von Miller	Von Miller	Miller
+56d728e00d65d2140019841f	Malik Jackson	Malik Jackson	Malik Jackson	Jackson
+56d728e00d65d21400198420	1993	1993	1993	1993
+56d9c660dc89441400fdb7e7	Mike Carey stated he disagreed with the call and felt the review clearly showed the pass was complete.	Mike Carey	Mike Carey	Carey
+56d9c660dc89441400fdb7e8	Von Miller	Von Miller	Von Miller	Miller
+56d9c660dc89441400fdb7e9	Malik Jackson recovered the fumble and ran the ball in for a touchdown.	Malik Jackson	Malik Jackson	Jackson
+56d9c660dc89441400fdb7ea	Super Bowl XXVIII at the end of the 1993 season.	Super Bowl XXVIII	the end of the 1993 season	1993
+56bec8a13aeaaa14008c9435	Jonathan Stewart finished the drive with a 1-yard touchdown run, cutting the score to 10–7 with 11:28 left in the	Jonathan Stewart	Jonathan Stewart	Stewart
+56bec8a13aeaaa14008c9436	Brad Nortman	Brad Nortman	Brad Nortman	Nortman
+56bec8a13aeaaa14008c9437	28-yard	28	28	28
+56bec8a13aeaaa14008c9438	61-yard	61	61	61
+56bec8a13aeaaa14008c9439	33	33	33	33
+56d729180d65d21400198426	51 yards	51	51	51
+56d729180d65d21400198427	Jonathan Stewart finished the drive with a 1-yard touchdown run, cutting the score to 10–7 with 11:28 left in the	Jonathan Stewart	Jonathan Stewart	Stewart
+56d729180d65d21400198428	3:08 left and essentially putting the game away.	11:28	11:28	11:28
+56d729180d65d21400198429	Norwood	Jordan Norwood	Jordan Norwood	Norwood
+56d729180d65d2140019842a	33-yard	33	33	33
+56d9c6e0dc89441400fdb7f0	Jonathan Stewart finished the drive with a 1-yard touchdown run, cutting the score to 10–7 with 11:28 left in the	Jonathan Stewart	Jonathan Stewart	Stewart
+56d9c6e0dc89441400fdb7f4	Anderson scored on a 2-yard touchdown run and Manning completed a pass to Bennie Fowler for a 2-point conversion, giving Denver a 24–	field goal	field goal	field goal
+56bec9133aeaaa14008c9445	Darian Stewart	Darian Stewart	Darian Stewart	Stewart
+56bec9133aeaaa14008c9446	linebacker	linebacker	linebacker	linebacker
+56bec9133aeaaa14008c9447	Kony Ealy tipped a Manning pass to himself and then intercepted it.	Kony Ealy	Kony Ealy	Ealy
+56bec9133aeaaa14008c9448	Newton was sacked by DeMarcus Ware as time expired in the half.	Newton	Newton	Newton
+56bec9133aeaaa14008c9449	DeMarcus Ware	DeMarcus Ware	DeMarcus Ware	Ware
+56d729ec0d65d21400198430	Mike Tolbert	Mike Tolbert	Mike Tolbert	Tolbert
+56d729ec0d65d21400198431	Kony Ealy tipped a Manning pass to himself and then intercepted it.	Kony Ealy	Kony Ealy	Ealy
+56d729ec0d65d21400198432	16 yards	19	19	19
+56d729ec0d65d21400198434	Von Miller	DeMarcus Ware	DeMarcus Ware	Ware
+56d9c79edc89441400fdb804	Mike Tolbert lost a fumble while being tackled by safety Darian Stewart, which linebacker Danny Trevathan recovered on the Broncos 40-yard line.	Mike Tolbert	Mike Tolbert	Tolbert
+56d9c79edc89441400fdb805	Danny Trevathan	Danny Trevathan	Danny Trevathan	Stewart
+56d9c79edc89441400fdb806	Kony Ealy	Kony Ealy	Kony Ealy	Ealy
+56d9c79edc89441400fdb807	with 11 seconds left, Newton was sacked by DeMarcus Ware as time expired in the half.	punt	Newton was sacked	sacked
+56d9c79edc89441400fdb808	DeMarcus Ware	DeMarcus Ware	DeMarcus Ware	Ware
+56bec98e3aeaaa14008c9455	Ted Ginn Jr.	Ted Ginn Jr.	Ted Ginn Jr	Ted Ginn Jr
+56bec98e3aeaaa14008c9456	Graham Gano hit the uprights on a 44-yard field goal attempt.	Graham Gano	Graham Gano	Gano
+56bec98e3aeaaa14008c9457	44	44	44	44
+56bec98e3aeaaa14008c9458	Graham Gano	McManus	McManus	McManus
+56bec98e3aeaaa14008c9459	Ward	T. J. Ward	T. J. Ward	Ward
+56d7282f0d65d21400198408	Ted Ginn Jr.	Ted Ginn Jr.	Ted Ginn Jr.	Ted Ginn Jr
+56d7282f0d65d21400198409	the uprights	the uprights	the uprights	uprights
+56d7282f0d65d2140019840a	T. J. Ward	T. J. Ward.	T. J. Ward	Ward
+56d7282f0d65d2140019840c	Trevathan	Trevathan	Trevathan	Trevathan
+56d9c92bdc89441400fdb80e	Ted Ginn Jr.	Ted Ginn Jr.	Ted Ginn Jr
+56d9c92bdc89441400fdb80f	the Broncos defense halted the drive on the 26-yard line	26-yard line	26
+56d9c92bdc89441400fdb810	Graham Gano hit the uprights on a 44-yard field goal attempt.	Graham Gano	Graham Gano	Gano
+56d9c92bdc89441400fdb811	Owen Daniels, Andre Caldwell	Emmanuel Sanders	Emmanuel Sanders	Sanders
+56bec9e83aeaaa14008c945f	Trevathan	Ealy	Ealy	Ealy
+56bec9e83aeaaa14008c9460	44-yard	39	39	39
+56bec9e83aeaaa14008c9461	Devin Funchess	Devin Funchess	Devin Funchess	Funchess
+56bec9e83aeaaa14008c9462	Stewart	Stewart	Stewart	Stewart
+56d7261e0d65d214001983e0	Panthers 41-yard line.	41-yard line.	41	41
+56d7261e0d65d214001983e1	Ealy knocked the ball out of Manning's hands.	Ealy	Ealy	Ealy
+56d7261e0d65d214001983e2	the Panthers 4-yard line	50-yard line.	on the 50-yard line	50
+56d7261e0d65d214001983e4	the next three drives of the game would end in punts.	punts.	punts	punts
+56d9ca0adc89441400fdb820	Ealy	Ealy	Ealy	Ealy
+56d9ca0adc89441400fdb821	the Broncos 50-yard line	50-yard line.	41	50
+56d9ca0adc89441400fdb822	39	39-yard	39	39
+56d9ca0adc89441400fdb823	3	three	three	The next three drives
+56beca913aeaaa14008c946d	24-yard line	24	their own 24	24
+56beca913aeaaa14008c946e	Newton	Newton	Newton	Newton
+56beca913aeaaa14008c946f	Josh Norman	Josh Norman	Josh Norman	Norman
+56beca913aeaaa14008c9470	Ealy knocked the ball out of Manning's hand as he was winding up for a pass, and then recovered it for Carolina on the 50-yard line	Anderson	Anderson	Anderson
+56beca913aeaaa14008c9471	Bennie Fowler	Bennie Fowler	Bennie Fowler	Fowler
+56d726b60d65d214001983ea	Miller stripped the ball away from Newton, and after several players dove for it, it took a long bounce backwards and was recovered by Ward, who returned it five	Miller	Miller	Miller
+56d726b60d65d214001983eb	Ward	wards	Ward	Ward
+56d726b60d65d214001983ec	Newton did not and his lack of aggression later earned him heavy criticism.	Newton	Newton	Newton
+56d726b60d65d214001983ed	Josh Norman	Josh Norman	Josh Norman	Norman
+56d726b60d65d214001983ee	With 3:08 left and essentially putting the game away.	3:08	3:08	3:08
+56d9cb47dc89441400fdb832	With 4:51 left in regulation, Carolina got the ball on their own 24-yard line with a chance to mount a game-winning drive,	4:51	4:51	4:51
+56d9cb47dc89441400fdb833	Ward	Miller	Miller	Miller
+56d9cb47dc89441400fdb834	Jackson	wards	Ward	Ward
+56d9cb47dc89441400fdb835	three plays	three	three	three
+56d9cb47dc89441400fdb836	Anderson	Anderson	Anderson	Anderson
+56becaf93aeaaa14008c9481	five	five	2½	2
+56becaf93aeaaa14008c9482	zero touchdowns	zero	zero	zero
+56becaf93aeaaa14008c9483	four	four	four	four
+56becaf93aeaaa14008c9484	Thomas Davis	Thomas Davis	Thomas Davis	Davis
+56becaf93aeaaa14008c9485	35	one	one	one
+56d7270c0d65d214001983f4	zero	one	one	one
+56d7270c0d65d214001983f5	zero touchdowns.	zero	zero	zero
+56d7270c0d65d214001983f6	Anderson was the game's leading rusher with 90 yards and a touchdown, along with four receptions for 10 yards.	Anderson	Anderson	Anderson
+56d7270c0d65d214001983f7	Sanders was his top receiver with six receptions for 83 yards.	Sanders	Sanders	Sanders
+56d7270c0d65d214001983f8	Thomas Davis	Thomas Davis	Thomas Davis	Davis
+56d9ccacdc89441400fdb842	Sanders	Sanders	Sanders	Sanders
+56d9ccacdc89441400fdb843	Manning	Anderson	Anderson	Anderson
+56d9ccacdc89441400fdb844	all four	all four	all four	four
+56d9ccacdc89441400fdb845	three turnovers, including a fumble which they recovered for a touchdown.	one	one	one
+56d9ccacdc89441400fdb846	four total tackles	four	four	four
+56becb823aeaaa14008c948b	315	194	194	194
+56becb823aeaaa14008c948c	21	11	11	11
+56becb823aeaaa14008c948d	Baltimore Ravens	Baltimore Ravens	the Baltimore Ravens	Ravens
+56becb823aeaaa14008c948e	Jordan Norwood received Brad Nortman's short 28-yard punt surrounded by Panthers players, but none of them attempted to make a tackle, apparently thinking	Jordan Norwood	Jordan Norwood	Norwood
+56becb823aeaaa14008c948f	Peyton Manning	Manning	Manning	Manning
+56d7277c0d65d214001983fe	315	194	194	194
+56d7277c0d65d214001983ff	11	11	11	11
+56d7277c0d65d21400198401	Chicago Bears in Super Bowl XX.	Chicago Bears	the Chicago Bears	Bears
+56d7277c0d65d21400198402	Chicago Bears	Broncos	Denver	Denver
+56d9cd9adc89441400fdb84c	11	21	21	21
+56d9cd9adc89441400fdb84d	11	11	11	11
+56d9cd9adc89441400fdb84e	Denver	The Broncos	Denver	Denver
+56d9cd9adc89441400fdb84f	Chicago Bears	Chicago Bears	the Chicago Bears	Bears
+56d9cd9adc89441400fdb850	two	two	two	two
+5733a5f54776f41900660f45	the Nobel Prize	Nobel Prize	Nobel Prize	Nobel Prize
+5733a5f54776f41900660f48	1745	1745	1745	1745
+5733a5f54776f41900660f44	Maria Skłodowska-Curie	Maria Skłodowska-Curie	Maria Skłodowska-Curie	Maria Skłodowska-Curie
+5733a5f54776f41900660f46	Fryderyk Chopin the oldest and largest music school in Poland, and one of the largest in Europe	Famous musicians	musicians	Famous musicians
+5733a5f54776f41900660f47	seven months old	seven months old	seven months old	seven months old
+57336755d058e614000b5a3d	over 100 different species of trees	100	over 100	100
+57336755d058e614000b5a3f	The Krasiński Palace Garden is a popular strolling destination for the Varsovians.	Krasiński Palace Garden	Krasiński Palace Garden	Krasiński Palace Garden
+57336755d058e614000b5a3c	The Saxon Garden, covering the area of 15.5 ha, was formally a royal garden.	The Saxon Garden	Saxon Garden	The Saxon Garden
+57336755d058e614000b5a3e	At the east end of the park, the Tomb of the Unknown Soldier is situated.	east end	east	east
+57336755d058e614000b5a40	Łazienki Park covers the area of 76 ha.	Łazienki	Łazienki Park	Łazienki Park
+57337ddc4776f41900660bbb	About 15 kilometres (9 miles) from Warsaw, the Vistula river's environment changes strikingly and features a perfectly preserved ecosystem, with a habitat	15 kilometres	15 kilometres	About 15 kilometres
+57337ddc4776f41900660bbc	the otter, beaver and hundreds of bird species.	otter, beaver and hundreds of bird species	otter, beaver and hundreds of bird species	otter, beaver and hundreds of bird species.
+57337ddc4776f41900660bba	There are 13 natural reserves in Warsaw – among others, Bielany Forest, Kabaty Woods, Czerniaków Lake.	13	13	13
+57337ddc4776f41900660bbd	mainly the oxbow lakes, like Czerniaków Lake, the lakes in the Łazienki or Wilanów Parks, Kam	several	several	several
+57337ddc4776f41900660bbe	the majority are emptied before winter to clean them of plants and sediments.	to clean them	clean them	to clean them of plants and sediments
+57337ea24776f41900660bd0	Demographically, it was the most diverse city in Poland, with significant numbers of foreign-born inhabitants.	city	Demographically	city
+57337ea24776f41900660bd3	833,500 were of Polish mother tongue.	833,500	833,500	833,500
+57337ea24776f41900660bd2	219,000 (around 34% percent).	around 34%	34	34%
+57337ea24776f41900660bd1	Jews构成219,000（大约34%）。	Jewish	Jewish	Jewish
+57337ea24776f41900660bd4	internal migration and urbanisation.	migration and urbanisation	internal migration and urbanisation	internal migration and urbanisation.
+57339555d058e614000b5df4	Warsaw University of Technology	Warsaw University of Technology	Warsaw University of Technology	Warsaw University of Technology
+57339555d058e614000b5df5	2,000 professors.	2,000	2,000	2,000
+57339555d058e614000b5df6	the Medical University of Warsaw, the largest medical school in Poland and one of the most prestigious,	Medical University of Warsaw	National Defence University	Medical University of Warsaw
+57339555d058e614000b5df3	1816	1816	1816	1816
+57339555d058e614000b5df7	the Fryderyk Chopin University of Music	Fryderyk Chopin University of Music	Fryderyk Chopin University of Music	Fryderyk Chopin University of Music
+57339902d058e614000b5e70	1816	1816	1816	1816
+57339902d058e614000b5e71	over two million items.	over two million	over two million	over two million
+57339902d058e614000b5e72	architects	architects	architects	architects
+57339902d058e614000b5e73	Irena Bajerska	Irena Bajerska	Irena Bajerska	Irena Bajerska
+57339902d058e614000b5e74	with an area of more than 10,000 m2 (107,639.10 sq ft)	10,000 m2	more than 10,000 m2	10,000 m2
+573399b54776f41900660e64	infrastructure	infrastructure	infrastructure	infrastructure
+573399b54776f41900660e65	the initial Three-Year Plan to rebuild Poland (especially Warsaw)	Three-Year Plan	Three-Year Plan	Three-Year Plan
+573399b54776f41900660e66	Over the past decade Warsaw has seen many improvements due to solid economic growth, an increase in foreign investment as well as funding from the European Union.	solid economic growth	solid economic growth	economic growth
+573399b54776f41900660e67	improved markedly	improved markedly	improved markedly	improved markedly
+57339a554776f41900660e74	Today, Warsaw has some of the best medical facilities in Poland and East-Central Europe. The city is home to the Children's Memorial Health Institute (CMHI	Warsaw	Warsaw	Warsaw
+57339a554776f41900660e75	The Children's Memorial Health Institute (CMHI)	Children's Memorial Health Institute	Children's Memorial Health Institute	Children's Memorial Health Institute
+57339a554776f41900660e76	The Maria Skłodowska-Curie Institute of Oncology	Maria Skłodowska-Curie Institute of Oncology	Maria Skłodowska-Curie Institute of Oncology	Maria Skłodowska-Curie Institute of Oncology
+57339a554776f41900660e77	700 beds	700	700	700
+57339a554776f41900660e78	The infrastructure has developed a lot over the past years.	developed	developed	developed
+57339ad74776f41900660e86	musical venue	musical	musical	musical
+57339ad74776f41900660e87	events and festivals	events and festivals	events and festivals	events and festivals
+57339ad74776f41900660e88	Palace of Culture and Science	in the Palace of Culture and Science	Palace of Culture and Science	Palace of Culture and Science
+57339ad74776f41900660e89	Jazz Jamboree, Warsaw Summer Jazz Days	Warsaw	Warsaw	Warsaw
+57339ad74776f41900660e8a	events and festivals	festivals	events
+57339c16d058e614000b5ec5	Ogród Saski	Ogród Saski	Ogród Saski	Ogród Saski
+57339c16d058e614000b5ec6	Ogród Saski (the Saxon Garden)	Saxon Garden	the Saxon Garden	Saxon Garden
+57339c16d058e614000b5ec7	from 1870 to 1939	1870 to 1939	1870 to 1939	1870 to 1939
+57339c16d058e614000b5ec8	Momus, Warsaw's first literary cabaret,	Momus	Momus	Momus
+57339c16d058e614000b5ec9	Wojciech Bogusławski Theatre (1922–26), was the best example of "Polish monumental theatre".	Wojciech Bogusławski Theatre	Wojciech Bogusławski Theatre	Wojciech Bogusławski Theatre
+57339dd94776f41900660ecc	Wianki	Wianki	Wianki	Wianki
+57339dd94776f41900660ecd	Gatherings of thousands of people	thousands	thousands	thousands
+57339dd94776f41900660ece	Midsummer’s Night	Midsummer’s Night	Midsummer’s Night	Midsummer’s Night
+57339dd94776f41900660ecf	when they would be married, and to whom.	when they would be married	when they would be married, and to whom	when they would be married,
+57339dd94776f41900660ed0	fern flower	the fern	fern	fern
+57339eb9d058e614000b5ef6	art posters	art posters	art posters	art posters
+57339eb9d058e614000b5ef7	Warsaw's 60 museums, the most prestigious ones are National Museum and Museum of the Polish Army.	60	60	60
+57339eb9d058e614000b5ef8	most prestigious ones	prestigious	prestigious	prestigious
+57339eb9d058e614000b5ef9	including some paintings from Adolf Hitler's private collection	some paintings	paintings	paintings
+57339eb9d058e614000b5efa	the history of arms.	arms	history of arms	arms
+5733a1854776f41900660f0a	in the Warsaw Uprising Museum and in the Katyń Museum which preserves the memory of the crime.	Warsaw Uprising Museum	Warsaw Uprising Museum	Warsaw Uprising Museum
+5733a1854776f41900660f0b	Katyń Museum	Katyń	Katyń Museum	Katyń Museum
+5733a1854776f41900660f0c	the Warsaw Fotoplastikon. The Museum of Independence preserves patriotic and political objects connected with Poland's struggles for independence. Dating back to 1936 Warsaw	stereoscopic	stereoscopic theatre	stereoscopic
+5733a1854776f41900660f0d	The Museum of Independence preserves patriotic and political objects connected with Poland's struggles for independence.	Museum of Independence	Museum of Independence	Museum of Independence
+5733a1854776f41900660f0e	60 rooms	60	60	60
+5733a2a9d058e614000b5f28	The 17th century Royal Ujazdów Castle currently houses Centre for Contemporary Art, with some permanent and temporary exhibitions, concerts, shows and creative	Royal Ujazdów Castle	Royal Ujazdów Castle	Royal Ujazdów
+5733a2a9d058e614000b5f29	about 500 projects a year.	about 500	500	about 500
+5733a2a9d058e614000b5f2a	Zachęta National Gallery of Art	Zachęta National Gallery of Art	Zachęta National Gallery of Art	Zachęta National Gallery of Art
+5733a2a9d058e614000b5f2b	modern art by Polish and international artists	Polish and international artists	modern art by Polish and international artists	Polish and international artists a
+5733a2a9d058e614000b5f2c	on last weekend of September.	last weekend of September	last weekend of September	last weekend of September
+5733a32bd058e614000b5f32	Polonia Warsaw	Polonia Warsaw	Polonia Warsaw	Polonia Warsaw
+5733a32bd058e614000b5f33	1946	1946	1946	1946
+5733a32bd058e614000b5f34	Polonia's home venue is located at Konwiktorska Street, a ten-minute walk north from the Old Town. Polonia was relegated from the country	twice	twice	twice
+5733a32bd058e614000b5f35	Konwiktorska Street, a ten-minute walk north from the Old Town.	at Konwiktorska Street	Konwiktorska Street	Konwiktorska Street
+5733a32bd058e614000b5f36	because of their disastrous financial situation.	disastrous financial situation	their disastrous financial situation	disastrous financial situation.
+5733a45d4776f41900660f23	syrenka	syrenka	syrenka	syrenka
+5733a45d4776f41900660f24	The mermaid (syrenka)	The mermaid	mermaid	The mermaid
+5733a45d4776f41900660f25	since at least the mid-14th century.	since at least the mid-14th century	mid-14th century	at least the mid-14th century
+5733a45d4776f41900660f26	The oldest existing armed seal of Warsaw is from the year 1390.	1390	1390	1390
+5733a45d4776f41900660f27	a sword	a sword	sword	sword
+5733a560d058e614000b5f77	The best-known legend, by Artur Oppman, is that long ago two of Triton's daughters set out on a journey through the depths of the oceans	legend	The best-known legend	legend
+5733a560d058e614000b5f78	the depths of the oceans and seas.	depths of the oceans and seas	depths of the oceans and seas	depths of the oceans and seas
+5733a560d058e614000b5f79	the coast of Denmark	coast of Denmark	coast of Denmark	coast of Denmark
+5733a560d058e614000b5f7a	Warszowa	Warszowa	village of Warszowa	Warszowa
+5733a560d058e614000b5f7b	he followed the fishermen and captured the mermaid.	captured	captured the mermaid	captured
+5733a6ac4776f41900660f58	Warsaw	Warsaw	Warsaw	Warsaw
+5733a6ac4776f41900660f59	She was born Maria Górska in Warsaw to wealthy parents and in 1916 married a Polish lawyer Tadeusz Łempicki.	1916	1916	1916
+5733a6ac4776f41900660f5a	the Art Deco style in painting and art.	the Art Deco style	Art Deco style in painting and art	Art Deco style
+5733a6ac4776f41900660f5b	Israeli poet	poet	poet	poet
+5733a6ac4776f41900660f5c	Isaac Bashevis Singer	Isaac Bashevis Singer	Isaac Bashevis Singer	Isaac Bashevis Singer
+573312fcd058e614000b56e6	In 2012 the Economist Intelligence Unit ranked Warsaw as the 32nd most liveable city in the world.	Economist Intelligence Unit	Economist Intelligence Unit	Economist Intelligence Unit
+573312fcd058e614000b56e7	In 2012 the Economist Intelligence Unit ranked Warsaw as the 32nd most liveable city in the world.	2012	2012	2012
+573312fcd058e614000b56e8	FMCG manufacturing, metal processing, steel and electronic manufacturing and food processing.	wide variety of industries	FMCG manufacturing, metal processing, steel and electronic manufacturing and food processing	FMCG manufacturing
+573312fcd058e614000b56e9	Warsaw Stock Exchange (WSE)	Stock	Warsaw Stock Exchange	Warsaw Stock Exchange
+573312fcd058e614000b56ea	Frontex	Frontex	Frontex	Frontex
+5733140a4776f419006606e0	The first historical reference to Warsaw dates back to the year 1313,	1313	1313	1313
+5733140a4776f419006606e1	Kraków	Kraków	Kraków	Kraków
+5733140a4776f419006606e2	when King Sigismund III Vasa moved his court from Kraków to Warsaw in 1596.	1596	1596	1596
+5733140a4776f419006606e3	King Sigismund III Vasa moved his court from Kraków to Warsaw in 1596.	King Sigismund III Vasa	King Sigismund III Vasa	King Sigismund III Vasa
+5733140a4776f419006606e4	because it has survived many wars, conflicts and invasions throughout its long history.	survived many wars, conflicts and invasions	it has survived many wars, conflicts and invasions	because it has survived many wars, conflicts and invasions throughout its long history
+573314e3d058e614000b56f0	The city is the seat of a Roman Catholic archdiocese (left bank of the Vistula) and diocese (right bank),	Roman Catholic	Roman Catholic	Roman Catholic
+573314e3d058e614000b56f1	Warsaw University of Technology	Polish Academy of Sciences	Polish Academy of Sciences	Polish Academy of Sciences
+573314e3d058e614000b56f2	UNESCO World Heritage Site	a UNESCO World Heritage Site	UNESCO World Heritage Site	UNESCO World Heritage Site
+573314e3d058e614000b56f3	the iconic King Sigismund's Column	architectural	architectural	architectural
+573314e3d058e614000b56f4	luxurious parks and royal gardens.	luxurious parks and royal gardens	luxurious parks and royal gardens	luxurious parks and royal gardens
+57332442d058e614000b5720	Warszawa	Warszawa	Warszawa	Warszawa
+57332442d058e614000b5721	Warszawa, meaning "belonging to Warsz", Warsz being a shortened form of the masculine name of Slavic origin Warcisław.	belonging to Warsz	belonging to Warsz	belonging to Warsz
+57332442d058e614000b5722	Warsz was a 12th/13th-century nobleman who owned a village located at the modern-day site of Mariensztat neighbourhood.	12th/13th-century nobleman	shortened form of the masculine name of Slavic origin Warcisław	nobleman
+57332442d058e614000b5723	a village located at the modern-day site of Mariensztat neighbourhood.	a village	village
+57332442d058e614000b5724	miasto stołeczne Warszawa	miasto stołeczne Warszawa	miasto stołeczne Warszawa	miasto stołeczne Warszawa
+57332562d058e614000b5730	Jazdów	Jazdów	Jazdów	Jazdów
+57332562d058e614000b5731	Bolesław II of Masovia, Prince of Płock, established the settlement that became modern-day Warsaw in about 1300.	The Prince of Płock	Prince of Płock	Prince of Płock
+57332562d058e614000b5732	In about 1300.	1300	1300	1300
+57332562d058e614000b5733	1413	1413	1413	1413
+57332562d058e614000b5734	1526	1526	1526	1526
+5733266d4776f41900660712	In 1529, Warsaw for the first time became the seat of the General Sejm, permanent from 1569.	General Sejm	General Sejm	General Sejm
+5733266d4776f41900660713	1569.	1569	1569	1569
+5733266d4776f41900660714	religious freedom	religious freedom	religious freedom in the Polish–Lithuanian Commonwealth	religious freedom
+5733266d4776f41900660715	Due to its central location between the Commonwealth's capitals of Kraków and Vilnius, Warsaw became the capital of the Commonwealth and the Crown of the Kingdom of	Due to its central location	its central location	central location
+5733266d4776f41900660716	1596	1596	1596	1596
+57332a734776f41900660726	until 1796	until 1796	until 1796
+57332a734776f41900660727	Kingdom of Prussia	Prussia	Kingdom of Prussia	Prussia
+57332a734776f41900660728	Napoleon's army	Napoleon's	Napoleon's	Napoleon's
+57332a734776f41900660729	Following the Congress of Vienna of 1815, Warsaw became the centre of the Congress Poland, a constitutional monarchy under a personal union with Imperial Russia.	1815	1815	1815
+57332a734776f4190066072a	1816	1816	1816	1816
+57332b66d058e614000b5758	from 4 August 1915 until November 1918	from 4 August 1915 until November 1918	4 August 1915 until November 1918	from 4 August 1915 until November 1918
+57332b66d058e614000b5759	areas controlled by Russia in 1914, which included Warsaw.	areas controlled by Russia in 1914	areas controlled by Russia in 1914	areas controlled by Russia
+57332b66d058e614000b575a	Piłsudski returned to Warsaw on 11 November and set up what became the Second Polish Republic, with Warsaw the capital.	underground leader Piłsudski	Piłsudski	Piłsudski
+57332b66d058e614000b575b	1920	1920	1920	1920
+57332b66d058e614000b575c	the Red Army	the Red Army	Red Army	Red Army
+57332c1e4776f4190066073a	1 September 1939	September 1939	1 September 1939	1 September 1939
+57332c1e4776f4190066073b	a German Nazi colonial administration.	a German Nazi colonial administration	German Nazi	German Nazi colonial administration
+57332c1e4776f4190066073c	out of the total population of 638,000, Jews constituted 219,000 (around 34% percent	some 30% of the city	30%	30%
+57332c1e4776f4190066073d	On 19 April 1943.	April 1943	19 April 1943	19 April 1943
+57332c1e4776f4190066073e	almost a month	almost a month	almost a month	almost a month
+57332e48d058e614000b5762	Red Army	the Red Army	Red Army	e Red Army
+57332e48d058e614000b5763	Knowing that Stalin was hostile to the idea of an independent Poland, the Polish government-in-exile in London gave orders to the underground Home Army (AK) to	Stalin was hostile to the idea of an independent Poland	Stalin was hostile to the idea of an independent Poland	Stalin was hostile to the idea of an independent Poland
+57332e48d058e614000b5764	on 1 August 1944	August 1944	the Red Army was nearing the city	1 August 1944
+57332e48d058e614000b5765	63 days.	63 days	63	63 days
+57332e48d058e614000b5766	between 150,000 and 200,000	between 150,000 and 200,000	between 150,000 and 200,000	between 150,000 and 200,000
+57332f81d058e614000b5776	"Bricks for Warsaw" campaign	"Bricks for Warsaw"	Bricks for Warsaw	Bricks for Warsaw
+57332f81d058e614000b5777	large prefabricated housing projects	prefabricated	prefabricated	prefabricated
+57332f81d058e614000b5778	the Palace of Culture and Science, a gift from the Soviet Union.	an Eastern Bloc city	an Eastern Bloc city
+57332f81d058e614000b5779	Palace of Culture and Science	Palace of Culture and Science	Palace of Culture and Science	Palace of Culture and Science
+57332f81d058e614000b577a	UNESCO's World Heritage list.	UNESCO's World Heritage list	UNESCO's World Heritage	UNESCO's World Heritage
+573330444776f41900660758	John Paul II	John Paul II	John Paul II	John Paul II
+573330444776f41900660759	encouraged the growing anti-communist fervor there.	growing anti-communist fervor	anti-communist fervor	growing anti-communist fervor
+573330444776f4190066075a	less than a year	less than a year	less than a year	less than a year
+573330444776f4190066075b	Victory Square	Victory Square	Victory Square	1979
+573330444776f4190066075c	the incentive for the democratic changes.	incentive for the democratic changes	incentive for the democratic changes	democratic changes
+5733314e4776f4190066076a	300 km	about 300	300	300
+5733314e4776f4190066076b	523 km (325 mi) east of Berlin, Germany.	325	325	325
+5733314e4776f4190066076c	Vistula River	Vistula River	Vistula	Vistula
+5733314e4776f4190066076d	122.1 metres (400.6 ft)	452.8 ft	115.7 metres	115.7 metres
+5733314e4776f4190066076e	at a height 75.6 metres (248.0 ft) (at the right bank of the Vistula, by the eastern border	at the right bank of the Vistula	at the right bank of the Vistula, by the eastern border of Warsaw	by the eastern border
+57335c20d058e614000b58f9	the plain moraine plateau and the Vistula Valley with its asymmetrical pattern of different terraces.	two	two	two
+57335c20d058e614000b58fa	The Vistula terraces is asymmetrical.	Vistula Valley	geomorphologic	Vistula Valley
+57335c20d058e614000b58fc	the moraine plateau (10 to 25 m (32.8 to 82.0 ft) above Vistula level)	moraine	moraine	moraine
+57335c20d058e614000b58fb	The Vistula River is the specific axis of Warsaw, which divides the city into two parts.	Vistula River	Vistula River	Vistula River
+57335c20d058e614000b58fd	Warsaw Escarpment	Warsaw Escarpment	Warsaw Escarpment	Warsaw Escarpment
+57335ddbd058e614000b592f	The plain moraine plateau has only a few natural and artificial ponds and also groups of clay pits.	moraine	moraine	moraine
+57335ddbd058e614000b5930	former flooded terraces	former flooded terraces	former flooded terraces	peat swamps or small ponds
+57335ddbd058e614000b5931	visible valleys and ground depressions with water systems coming from the Vistula old – riverbed.	valleys	valleys and ground depressions	valleys
+57335ddbd058e614000b5932	Aeolian sand with a number of dunes cover the highest terrace.	plain Vistula terraces	highest terrace	highest terrace
+57335ddbd058e614000b5933	Aeolian sand with a number of dunes parted by peat swamps or small ponds cover the highest terrace. These are mainly forested areas (pine	pine	pine	pine
+57335fcad058e614000b5970	Warsaw's mixture of architectural styles reflects the turbulent history of the city and country.	turbulent history of the city	turbulent history of the city and country	turbulent history of the city
+57335fcad058e614000b5971	During the Second World War, Warsaw was razed to the ground by bombing raids and planned destruction.	During the Second World War	Second World War	During the Second World War
+57335fcad058e614000b5972	After liberation, rebuilding began as in other cities of the communist-ruled PRL.	After liberation	After liberation	After liberation
+57335fcad058e614000b5973	Leopold Kronenberg Palace	Leopold Kronenberg Palace	Leopold Kronenberg Palace	Leopold Kronenberg Palace
+57335fcad058e614000b5974	basic design typical of Eastern bloc countries.	typical of Eastern bloc countries	basic design typical of Eastern bloc countries	design typical of Eastern bloc countries
+573361404776f4190066093c	Gothic architecture	Gothic	Gothic	Gothic
+573361404776f4190066093d	14th century	14th century	14th century	14th century
+573361404776f4190066093e	St. John's Cathedral (14th century), the temple is a typical example of the so-called Masovian gothic style,	Masovian gothic	Gothic architecture	Masovian gothic
+573361404776f4190066093f	Renaissance architecture	Renaissance	Renaissance	Renaissance
+573361404776f41900660940	mannerist architecture	mannerist architecture	mannerist architecture	mannerist
+573362b94776f41900660974	during the later decades of the 17th century.	17th century	17th century	17th century.
+573362b94776f41900660975	1688–1692	1688–1692	1677–1683	1688–1692
+573362b94776f41900660976	rococo	rococo	rococo	rococo
+573362b94776f41900660977	The neoclassical style	neoclassical architecture	neoclassical architecture	neoclassical architecture
+573362b94776f41900660978	rebuilt 1775–1795	1775–1795	1696	1775–1795
+5733638fd058e614000b59e8	Bourgeois architecture	bourgeois	bourgeois	bourgeois
+5733638fd058e614000b59e9	Exceptional examples of the bourgeois architecture of the later periods were not restored by the communist authorities after the war (like mentioned Kronenberg Palace and Insurance Company Rosja	not restored by the communist authorities	were not restored	not restored by the communist authorities after the war
+5733638fd058e614000b59ea	socialist realism style	socialist realism	socialist realism	socialist realism
+5733638fd058e614000b59eb	Warsaw University of Technology building (1899–1902)	Warsaw University of Technology building	Warsaw University of Technology building	Warsaw University of Technology
+5733638fd058e614000b59ec	the most distinctive buildings in prewar Warsaw.	the most distinctive buildings	the most distinctive buildings	most distinctive buildings
+5733647e4776f419006609ae	There are also many places commemorating the heroic history of Warsaw.	many places	many places
+5733647e4776f419006609af	Pawiak	Pawiak	Pawiak	Pawiak
+5733647e4776f419006609b0	The Warsaw Citadel, an impressive 19th-century fortification built after the defeat of the November Uprising, was a place of martyr for the Poles	The Warsaw Citadel	Warsaw Citadel	The Warsaw Citadel
+5733647e4776f419006609b1	the children who served as messengers and frontline troops in the Warsaw Uprising	children	children who served as messengers and frontline troops in the Warsaw Uprising	children
+5733647e4776f419006609b2	the Warsaw Uprising Monument by Wincenty Kućma	Warsaw Uprising Monument	Warsaw Uprising Monument	Warsaw Uprising Monument
+573368044776f41900660a29	green spaces	green	green	green

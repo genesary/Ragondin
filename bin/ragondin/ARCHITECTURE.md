@@ -25,6 +25,7 @@ charter.
 | `tests/cli.rs` | `validate` and the rest of the command line, exercised as a process |
 | `tests/compare.rs` | `compare`, exercised as a process, against runs written straight into a store |
 | `tests/calibration.rs` | The harness against a published SciFact figure, and the exit criterion on real data — ignored by default, run by `just calibrate` |
+| `tests/calibration_generation.rs` | The generation chain on real data with a real model: SciFact dense-only through a generation pipeline, and SQuAD v1.1 dev's retrieval and generation legs through the reference `Remote` generator service — ignored by default, run by `just calibrate-generation` |
 | `tests/bench.rs` | `bench`, exercised as a process, over miniature fixtures: BEIR, BEIR with reference answers, and SQuAD — the last two for a generation pipeline |
 | `tests/vertical_slice.rs` | The composition root assembled for real, end to end: a retrieval pipeline, and a generation one |
 | `tests/exit_criterion.rs` | The M2 exit criterion: hybrid retrieval with reranking beats dense-only, reproducibly, and `compare` says so |
@@ -403,7 +404,7 @@ both are reachable only from it.
 Neither duplicates a role `[workspace.dependencies]` already fills: the table
 held no CLI parser and no CLI test harness before this crate needed one.
 
-Six more entries are *used* here without being added by it, so none is a new
+Seven more entries are *used* here without being added by it, so none is a new
 utility role and none escalates. Four came with `--remote`. **`tonic`** and **`ragondin-remote`** are
 optional normal dependencies behind `remote`: the channel a binding is served
 over, and the adapters constructed over it — `tonic` already in every build
@@ -411,6 +412,9 @@ through `ragondin-config`, and neither entry's feature list touched.
 **`ragondin-proto`** and **`async-trait`** are dev-dependencies, for the fake
 `Remote` services in `tests/support/remote.rs`: the generated server traits,
 and the attribute the contract traits the fakes implement are declared with.
+**`serde_json`** is a dev-dependency for `tests/calibration_generation.rs`
+alone, which derives its SQuAD subset from the dev file and reads a stored
+run's `traces.json`; the entry is the JSON codec every other crate here uses.
 The other two: **`sha2`** as a dev-dependency, the crate
 the canonical logical-form hash and run identity already use, because a test in
 `src/wiring.rs` checks the identity `bench` records for an ONNX embedder
@@ -658,3 +662,167 @@ was not run here. And nothing about NFCorpus being an easy corpus: an nDCG@10
 of 0.32 with a recall@10 of 0.15 is what the leaderboard reports for this model
 on this dataset, and reproducing a modest figure is the same evidence as
 reproducing a strong one.
+
+## Calibrating the generation chain
+
+The section above reproduces published retrieval figures. This one records the
+chain that ends in an answer, on real data with a real model, as ADR-C30 § 4
+decides it: the retrieval side is held to a recorded figure, and the generation
+side — which no seed makes deterministic, ADR-15 — is recorded, frozen query by
+query, and held to a tolerance on a rerun. `tests/calibration_generation.rs`
+holds three tests, run by `just calibrate-generation` and ignored otherwise:
+
+1. **SciFact dense-only through a generation pipeline**,
+   `tests/fixtures/calibration/generation/scifact-dense-stub.yaml`: the dense
+   leg of `dense-only.yaml`, then the concatenating builder and the stub
+   generator, over `beir/scifact`, which carries qrels and no reference answer.
+   Its retrieval metrics are read through the walk of ADR-C30 § 3, from the
+   generator to the builder to the ranking node, and must land on the
+   dense-only figures recorded above.
+2. **SQuAD v1.1 dev, the retrieval leg**, over all 10 570 questions,
+   `generation/squad-retrieval.yaml`: BM25 and the dense leg at `top_k: 20`
+   each, RRF `k: 60`, the cross-encoder to `top_k: 10`, the builder, and the
+   stub in place of the model — a benchmark carrying reference answers refuses
+   a pipeline that produces none (ADR-C30 § 5). Twenty per leg rather than
+   SciFact's fifty because the cross-encoder runs on one core and reranks for
+   every question: forty candidates at most keep the leg to about two hours.
+3. **SQuAD v1.1 dev, the generation leg**, over the first 1 000 questions in
+   file order, `generation/squad-generation.yaml`: every node up to the
+   builder identical to the retrieval leg's, then the generator `answerer`,
+   bound with `--remote generator/answerer=http://<address>` (ADR-C32 § 2) to a
+   `ragondin-generator-service` the test spawns with `--listen 127.0.0.1:0`,
+   whose `listening on` line gives the address, and `--base-url` the inference
+   server's root. The subset is derived by the test from the dev file into its
+   own scratch directory: every article and paragraph kept, the questions
+   after the thousandth dropped, so the corpus — and each question's ranking —
+   is the full file's.
+
+Four environment variables name the material, and a test fails naming the one
+it needs when it is unset: `RAGONDIN_CALIBRATION_DATASETS` (which must also hold
+`squad/dev-v1.1.json`), `RAGONDIN_CALIBRATION_MODELS`,
+`RAGONDIN_CALIBRATION_INFERENCE_URL` (the inference server's root, without
+`/v1`) and `RAGONDIN_GENERATOR_SERVICE_BIN`, which the recipe sets after
+building the service, since Cargo hands a test the binaries of its own package
+only. No API key is set: `llama-server` asks for none, and the service sends no
+`Authorization` header when `RAGONDIN_INFERENCE_API_KEY` is unset. The recipe
+runs under `--release`: the cross-encoder and the tokenizers are two and a half
+times slower unoptimised, and a 200-question probe of the retrieval leg gave
+one run id and bit-identical metrics under both profiles.
+
+**The reference, so that the calibration can be redone from this section.**
+
+- *Dataset:* SQuAD v1.1 dev, `https://rajpurkar.github.io/SQuAD-explorer/dataset/dev-v1.1.json`,
+  SHA-256 `95aa6a52d5d6a735563366753ca50492a658031da74f301ac5238b03966972c9`
+  (4 854 279 bytes), the file ADR-C30 § 2 pins, under
+  `$RAGONDIN_CALIBRATION_DATASETS/squad/`. CC BY-SA 4.0. The SQuAD adapter's
+  `dataset_version` for it is
+  `e4e3b7605b66545c91fdfb2ac8b4ddb177df1b1b34e7f8e557f63f0dcf074010`, and for the thousand-question subset
+  `0ad9e48a5cc958c047533f5fa714b0c4c64ec87e347e478493e6c152e870b865`. SciFact
+  is the archive recorded above.
+- *Embedder and reranker:* the two exports recorded above, reporting the same
+  identities.
+- *Language model:* `Qwen/Qwen2.5-7B-Instruct-GGUF` at revision
+  `bb5d59e06d9551d752d08b292a50eb208b07ab1f`, the `q4_k_m` quantisation, split
+  in two files: `qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf`, SHA-256
+  `dfce12e3862a5283ccfb88221b48480e58745165de856439950d0f22590580db`, and
+  `qwen2.5-7b-instruct-q4_k_m-00002-of-00002.gguf`, SHA-256
+  `539cf93f78e887edea1c04e2d7d8cdaca9d01dae9c9025bcb8accbe29df3d72a` — the
+  digests Hugging Face publishes for that revision. Apache-2.0. Pulled with
+
+  ```sh
+  R=bb5d59e06d9551d752d08b292a50eb208b07ab1f
+  for part in 00001 00002; do
+    curl -fL -O "https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF/resolve/$R/qwen2.5-7b-instruct-q4_k_m-$part-of-00002.gguf"
+  done
+  ```
+- *Inference server:* llama.cpp's `llama-server`, installed with Homebrew as
+  `llama.cpp`; `llama-server --version` prints
+  `version: 0.5.0 (build 11146, commit 7fe450e19)`. Started by hand, on
+  loopback, on an Apple Silicon machine with 24 GB of memory, Metal offloading
+  every layer:
+
+  ```text
+  llama-server -m <dir>/qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf \
+    --alias qwen2.5-7b-instruct --host 127.0.0.1 --port 8089 \
+    --ctx-size 4096 --n-gpu-layers 99 --parallel 1 --no-cache-prompt
+  ```
+
+  The first split file names the second. `--alias` is the `served_model` the
+  configuration names. A context of 4 096 tokens holds the longest prompt the
+  builder's 4 096-character budget allows; one slot, so no two requests share
+  a batch; no prompt cache, so no answer depends on the one before it. Then
+  `RAGONDIN_CALIBRATION_INFERENCE_URL=http://127.0.0.1:8089`.
+- *Generation settings:* in the configuration, carried per call and relayed as
+  received (ADR-C33 § 3): `temperature: 0.0`, `seed: 20260927`,
+  `max_tokens: 32`, and a template asking for the shortest span of the context
+  that answers, copied exactly — exact match scores the answer as returned and
+  extracts nothing (ADR-C30 § 1). The builder joins whole passages, best first,
+  with a blank line, under 4 096 characters; the longest dev paragraph is
+  4 063, so no context is empty.
+- *Generator identity:* `{"id":"qwen2.5-7b-instruct"}`. `llama-server` lists
+  the alias in `/v1/models` with none of `root`, `parent` or `max_model_len`
+  beside it, so the identity the service reads (ADR-C33 § 4) names the alias
+  and not the weights. **That is a finding:** a run's identity does not tell
+  this model from another served under the same alias. The GGUF digests above
+  pin what this record names, and the run does not check them: nothing in a
+  run ties it to those files. The test pins the identity and the run id all the same,
+  so a server reporting more, or another alias, fails by name.
+
+**What the recorded run scored.**
+
+| | nDCG@10 | recall@10 | MRR | exact match | token F1 |
+|---|---|---|---|---|---|
+| SciFact, dense → builder → stub | 0.6450816521455768 | 0.7833333333333333 | 0.6047248677248677 | — | — |
+| SQuAD dev, retrieval leg, 10 570 questions | 0.935018599326266 | 0.9859981078524125 | 0.9180896442462196 | 0.0 (stub) | 0.06072526576629443 (stub) |
+| SQuAD dev, generation leg, first 1 000 | 0.9050833556297418 | 0.988 | 0.8773896825396829 | 0.568 | 0.7146161833448988 |
+
+The SciFact row is the dense-only row recorded above, bit for bit: the walk
+reads the node the retrieval-only run ends in. On the retrieval leg the exact
+match and F1 are the stub's — the first line of the context — and describe
+nothing but that: the stub answers with a whole paragraph. The retrieval
+leg's run id is
+`f61ef833e90e6fc772089f28fca3d7dd5045910064c8bbddb8cb2976a7be0731`; it took
+7 524 s, nearly all of it the cross-encoder. The generation leg's run id is
+`9e64e3de18d2be0dc14b9c2c4672fad042c55c735d777f5695fee821c865250e`; it took
+3 032 s, of which the inference server's own timings account for 2 253 s,
+2.25 s a question; the model's answers
+run to a median of two words, and the reranker puts the right paragraph first
+for 804 of the thousand questions.
+
+**The rerun.** `just calibrate-generation` was run a second time, from the
+committed test, against the same server process: all three tests passed in
+11 481 s. Every leg reproduced its run id and every metric bit for bit —
+the generation leg's mean exact match and F1 moved by 0 against a tolerance of
+0.01, its retrieval figures and the retrieval leg's by 0 against
+`RECORDED_TOLERANCE` — and **0 of the 1 000 answers changed their text**. So on
+this server, with one slot, no prompt cache and temperature zero, the rerun
+reproduced every answer. Those are the settings under which it was identical;
+which of them, if any, it depended on was not tested. It is an observation
+about this configuration on this machine, not a promise — ADR-15's premise is
+that an LLM's answers move even at a fixed seed — and a rerun on another
+machine, another Metal build or another server version is
+held to the tolerance, not to equality. The generation leg's wall time rose
+from 3 032 s to 3 855 s because `just check` shared the machine during it; no
+figure moved.
+
+**What is frozen, and what is not.** The generation leg, query by query:
+`eval/ragondin-metrics/tests/squad_generation_calibration_fixture.rs`, over
+files regenerated from the recorded run's store by
+`tests/fixtures/regenerate_squad_generation_calibration.py` beside it — the
+ranking the metrics read, the answer as text, the qrels row and the reference
+answers, and the values the official SQuAD v1.1 script and `pytrec_eval`
+score, with the CC BY-SA 4.0 notice beside them. The test re-scores every
+question and requires those values (exact match exactly, the rest within
+1e-12) and the recorded means. The retrieval leg is asserted by its aggregates
+only, as ADR-C30 § 4 decides. A rerun of the calibration is held to 0.01 on the
+generation leg's mean exact match and F1, and to `RECORDED_TOLERANCE` on every
+retrieval figure; the number of answers whose text changed is printed, never
+bounded.
+
+**What this calibration does not claim.** No published generation figure is
+reproduced: ADR-C30 § 4 rejects that, because sampling, batching and the
+serving stack all move it. The exact match of 0.568 is this model at this
+quantisation, behind this prompt, over this retrieval — a recorded fact, not
+a quality claim about any of them. And the retrieval figures on SQuAD are not
+comparable to a leaderboard: the dev paragraphs are the whole corpus, a far
+smaller haystack than open-domain retrieval searches.

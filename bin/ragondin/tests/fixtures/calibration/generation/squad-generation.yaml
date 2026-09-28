@@ -1,0 +1,61 @@
+# The generation leg of the SQuAD calibration, over the first 1 000 dev
+# questions in file order (ADR-C30 § 4): `squad-retrieval.yaml`'s retrieval
+# and context builder, node for node, and a real model behind the reference
+# `Remote` generator service.
+#
+# The generator is named `answerer`, an ordinary `impl:` name that
+# `tests/calibration_generation.rs` binds with `--remote
+# generator/answerer=<uri>` to the `ragondin-generator-service` it spawns; the
+# address stays on the command line (ADR-C32 § 2). `served_model` is the alias
+# the inference server serves the model under. Temperature zero and a fixed
+# seed are the calibration's (ADR-C30 § 4), carried per call and relayed as
+# received (ADR-C33 § 3); `max_tokens` caps an answer that forgets to stop.
+# The template asks for a span, because exact match scores the answer as
+# returned and never extracts one (ADR-C30 § 1).
+pipeline:
+  inputs: [question]
+  nodes:
+    - id: lexical
+      component: retriever
+      impl: bm25
+      inputs: [question]
+      params: { top_k: 20 }
+    - id: vectors
+      component: retriever
+      impl: dense
+      inputs: [question]
+      params:
+        top_k: 20
+        embedder: onnx
+        model: all-MiniLM-L6-v2/model.onnx
+        tokenizer: all-MiniLM-L6-v2/tokenizer.json
+        max_sequence_length: 256
+    - id: fused
+      component: fusion
+      impl: rrf
+      inputs: [lexical, vectors]
+      params: { k: 60 }
+    - id: reranked
+      component: reranker
+      impl: cross_encoder
+      inputs: [question, fused]
+      params:
+        top_k: 10
+        model: ms-marco-MiniLM-L6-v2/model.onnx
+        tokenizer: ms-marco-MiniLM-L6-v2/tokenizer.json
+        max_sequence_length: 512
+    - id: prompt
+      component: context_builder
+      impl: concat
+      inputs: [question, reranked]
+      params: { budget: 4096, separator: "\n\n" }
+    - id: answer
+      component: generator
+      impl: answerer
+      inputs: [question, prompt]
+      params:
+        served_model: qwen2.5-7b-instruct
+        template: "Answer the question from the context. Reply with the shortest span of the context that answers it, copied exactly, and nothing else.\n\nContext:\n{context}\n\nQuestion: {query}\nAnswer:"
+        temperature: 0.0
+        seed: 20260927
+        max_tokens: 32

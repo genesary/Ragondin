@@ -89,6 +89,7 @@ serde_yaml = { workspace = true }
 # with the crate the canonical logical-form hash already uses. `bench` itself
 # digests nothing any more: each component reports its own identity.
 sha2 = { workspace = true }
+serde_json = { workspace = true } # the generation calibration derives its SQuAD subset and reads traces
 # The fake `Remote` services the `remote` tests bind: `tonic` servers over the
 # generated service traits, hosting in-test components through
 # `ragondin-remote`'s conversions, as a Rust-hosted service would. Already in
