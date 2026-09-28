@@ -792,7 +792,8 @@ this server, with one slot, no prompt cache and temperature zero, the rerun
 reproduced every answer. Those are the settings under which it was identical;
 which of them, if any, it depended on was not tested. It is an observation
 about this configuration on this machine, not a promise — ADR-15's premise is
-that an LLM's answers move even at a fixed seed — and a rerun on another machine, another Metal build or another server version is
+that an LLM's answers move even at a fixed seed — and a rerun on another
+machine, another Metal build or another server version is
 held to the tolerance, not to equality. The generation leg's wall time rose
 from 3 032 s to 3 855 s because `just check` shared the machine during it; no
 figure moved.
