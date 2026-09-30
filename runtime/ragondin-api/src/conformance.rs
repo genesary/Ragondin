@@ -41,6 +41,10 @@
 //!    again is `benchmark_exists`, and importing a path that does not exist,
 //!    or under a name that is not one, is `import_refused` and registers
 //!    nothing.
+//! 7. **A run's dataset.** [`Registry::dataset`] finds a downloaded
+//!    benchmark, and an imported one, by the `dataset_version` it is pinned
+//!    to, loaded and digesting to it; the same digest before anything is on
+//!    disk is `Absent`, and a digest nothing is pinned to is `Unknown`.
 //!
 //! # Why a fixture
 //!
@@ -59,7 +63,9 @@ use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
-use crate::backends::{DownloadProgress, Registry};
+use ragondin_benchmarks::identity::dataset_version;
+
+use crate::backends::{DownloadProgress, Registry, RunDataset};
 use crate::error::ApiError;
 use crate::response::{BenchmarkEntry, BenchmarkState, GroundTruth};
 
@@ -89,6 +95,7 @@ where
     cancelled_download(fresh()).await;
     unknown_names(fresh()).await;
     import(fresh()).await;
+    run_dataset(fresh(), fresh()).await;
 }
 
 fn not_cancelled() -> Arc<AtomicBool> {
@@ -302,6 +309,71 @@ async fn import<R: Registry>(fixture: RegistryFixture<R>) {
         listed, after,
         "import: a refused import registered something"
     );
+}
+
+async fn run_dataset<R: Registry>(fixture: RegistryFixture<R>, untouched: RegistryFixture<R>) {
+    let name = fixture.obtainable.as_str();
+    let downloaded = fixture
+        .registry
+        .download(name, Arc::new(|_| {}), not_cancelled())
+        .await
+        .unwrap_or_else(|error| panic!("dataset: {name} does not download: {error}"));
+    let BenchmarkState::Ready {
+        dataset_version: version,
+    } = &downloaded.state
+    else {
+        panic!("dataset: {name} is {:?}, not ready", downloaded.state);
+    };
+    assert_verified(
+        &fixture.registry,
+        version,
+        "dataset: a downloaded benchmark",
+    )
+    .await;
+
+    let imported = fixture
+        .registry
+        .import("run-dataset", &fixture.importable)
+        .await
+        .unwrap_or_else(|error| panic!("dataset: the fixture does not import: {error}"));
+    let BenchmarkState::Local {
+        dataset_version: imported_version,
+    } = &imported.state
+    else {
+        panic!("dataset: {:?} is not local", imported.state);
+    };
+    assert_verified(&fixture.registry, imported_version, "dataset: an import").await;
+
+    let absent = untouched
+        .registry
+        .dataset(version)
+        .await
+        .expect("dataset: a fresh registry answers");
+    assert!(
+        matches!(&absent, RunDataset::Absent { .. }),
+        "dataset: {name}'s digest before any download is {absent:?}, not absent"
+    );
+    let nowhere = "0".repeat(64);
+    let unknown = fixture
+        .registry
+        .dataset(&nowhere)
+        .await
+        .expect("dataset: answers");
+    assert!(
+        matches!(unknown, RunDataset::Unknown),
+        "dataset: a digest nothing is pinned to is {unknown:?}, not unknown"
+    );
+}
+
+async fn assert_verified<R: Registry>(registry: &R, version: &str, case: &str) {
+    match registry.dataset(version).await {
+        Ok(RunDataset::Verified { benchmark, .. }) => assert_eq!(
+            dataset_version(&benchmark),
+            version,
+            "{case}: the dataset handed back digests to another value"
+        ),
+        other => panic!("{case}: {other:?}, not verified"),
+    }
 }
 
 fn find<'a>(listed: &'a [BenchmarkEntry], name: &str) -> Option<&'a BenchmarkEntry> {

@@ -97,10 +97,13 @@ async fn every_described_operation_is_routed() {
     for operation in ragondin_api::description::OPERATIONS {
         assert_eq!(operation.method, "get", "only reads are routed yet");
         // An axum path parameter is spelled `:id`, the description's `{id}`.
-        let path = operation.path.replace(
-            "{id}",
-            "b41e0752792e728f5dd893043b42d2a2d71f0b0039157a177e0a267e0420ea6f",
-        );
+        let path = operation
+            .path
+            .replace(
+                "{id}",
+                "b41e0752792e728f5dd893043b42d2a2d71f0b0039157a177e0a267e0420ea6f",
+            )
+            .replace("{query}", "q-1");
         let response = send(
             app(FakeRunStore::holding([support::fixture_run()])),
             get(&format!("/api/v1{path}")),
@@ -108,4 +111,35 @@ async fn every_described_operation_is_routed() {
         .await;
         assert_eq!(response.status(), StatusCode::OK, "{path}");
     }
+}
+
+/// Every parameter an operation reads is declared: each `{name}` of its path,
+/// and the query parameters it takes.
+#[test]
+fn every_parameter_is_declared() {
+    let description: serde_json::Value =
+        serde_json::from_str(&ragondin_api::description::render()).unwrap();
+    let declared = |path: &str| -> Vec<(String, String)> {
+        description["paths"][path]["get"]["parameters"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|parameter| {
+                (
+                    parameter["name"].as_str().unwrap().to_owned(),
+                    parameter["in"].as_str().unwrap().to_owned(),
+                )
+            })
+            .collect()
+    };
+    let pair = |name: &str, place: &str| (name.to_owned(), place.to_owned());
+    assert_eq!(
+        declared("/runs/{id}/trace/{query}"),
+        [pair("id", "path"), pair("query", "path")]
+    );
+    assert_eq!(
+        declared("/runs/{id}/queries"),
+        [pair("id", "path"), pair("missing_gold_at", "query")]
+    );
+    assert_eq!(declared("/runs"), Vec::<(String, String)>::new());
 }

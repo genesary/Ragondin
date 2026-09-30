@@ -1,0 +1,441 @@
+//! `GET /api/v1/runs/{id}/trace/{query}`: one query's trace, node by node,
+//! with passage text resolved only against the run's own dataset (ADR-C36
+//! § 4) — through the `Registry` file backend, over a copy of
+//! `ragondin-benchmarks`' miniature BEIR fixture on disk.
+
+mod support;
+
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+use axum::http::StatusCode;
+use ragondin_api::fs::FsRegistry;
+use ragondin_benchmarks::manifest::Format;
+use ragondin_benchmarks::Benchmark;
+use ragondin_experiments::{Run, Trace};
+use serde_json::Value;
+use support::datasets::{beir_mini_entry, benchmark_fixture, copy_dir, scratch, version_of};
+use support::runs::{
+    chunk, documents, failed, generation_trace, query, ranked, run_over, GENERATION,
+};
+use support::{app_over, get, json, send, FakeRunStore};
+
+/// The manifest name the run's dataset is pinned under, and its directory.
+const NAME: &str = "beir/mini";
+const DIR: &str = "mini";
+
+fn beir_mini() -> Benchmark {
+    Format::Beir
+        .load(&benchmark_fixture("beir-mini"))
+        .expect("the fixture loads")
+}
+
+/// A generation run over the miniature fixture: `q-1` runs to its answer;
+/// `q-2`'s reranker failed, so the trace stops there.
+fn the_run() -> Run {
+    let q1 = generation_trace(
+        "q-1",
+        documents(&["4983", "MED-10"]),
+        documents(&["MED-10", "4983", "MED-12"]),
+        2,
+        "on the mat",
+    );
+    let q2 = Trace {
+        nodes: vec![
+            support::runs::node("leg", vec![query("q-2")], ranked(documents(&["4983"])), 500),
+            failed(
+                "reranked",
+                vec![query("q-2"), support::runs::counted(1)],
+                "the reranker timed out",
+                700,
+            ),
+        ],
+    };
+    run_over(
+        0x41,
+        GENERATION,
+        &beir_mini(),
+        vec![("q-1", q1), ("q-2", q2)],
+        &[
+            ("exact_match", 0.0),
+            ("mrr", 0.5),
+            ("ndcg@10", 0.5),
+            ("recall@10", 0.5),
+            ("token_f1", 0.0),
+        ],
+    )
+}
+
+/// A workspace whose datasets directory holds the fixture under [`DIR`]
+/// when `on_disk`, and a registry whose manifest pins [`NAME`] to the
+/// fixture's digest.
+fn workspace(test: &str, on_disk: bool) -> (PathBuf, FsRegistry) {
+    let workspace = scratch(test);
+    let datasets = workspace.join("datasets");
+    fs::create_dir_all(&datasets).unwrap();
+    let fixture = benchmark_fixture("beir-mini");
+    if on_disk {
+        copy_dir(&fixture, &datasets.join(DIR));
+    }
+    let version = version_of(Format::Beir, &fixture);
+    let registry = FsRegistry::new(
+        datasets,
+        vec![beir_mini_entry(NAME, "https://example.invalid", &version)],
+    );
+    (workspace, registry)
+}
+
+async fn trace_of(
+    workspace: &Path,
+    registry: FsRegistry,
+    run: &Run,
+    query: &str,
+) -> (StatusCode, Value) {
+    let response = send(
+        app_over(
+            FakeRunStore::holding([run.clone()]),
+            Arc::new(registry),
+            workspace,
+        ),
+        get(&format!("/api/v1/runs/{}/trace/{query}", run.id)),
+    )
+    .await;
+    (response.status(), json(response).await)
+}
+
+fn node<'a>(body: &'a Value, id: &str) -> &'a Value {
+    body["nodes"]
+        .as_array()
+        .expect("the trace lists its nodes")
+        .iter()
+        .find(|node| node["node"] == id)
+        .unwrap_or_else(|| panic!("node {id} is in the trace"))
+}
+
+/// Every chunk the trace names, ranking and context alike.
+fn chunks(body: &Value) -> Vec<&Value> {
+    body["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|node| node["output"]["chunks"].as_array())
+        .flatten()
+        .collect()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_verified_dataset_resolves_the_text_of_every_named_chunk() {
+    let (workspace, registry) = workspace("replay_verified", true);
+    let run = the_run();
+
+    let (status, body) = trace_of(&workspace, registry, &run, "q-1").await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["run"], run.id.to_string());
+    assert_eq!(body["query"], "q-1");
+    assert_eq!(body["passages"]["status"], "verified");
+    assert_eq!(body["passages"]["benchmark"], NAME);
+    let named = chunks(&body);
+    assert_eq!(named.len(), 2 + 3 + 2, "two rankings and a context");
+    for chunk in &named {
+        assert!(
+            chunk["text"].is_string(),
+            "every named chunk has its text: {chunk}"
+        );
+    }
+    let med_10 = &node(&body, "reranked")["output"]["chunks"][0];
+    assert_eq!(med_10["chunk"], "MED-10");
+    assert!(med_10["text"]
+        .as_str()
+        .unwrap()
+        .contains("The cat sat on the mat."));
+    assert_eq!(node(&body, "prompt")["output"]["kind"], "context");
+    assert!(node(&body, "prompt")["output"]["chunks"][1]["text"]
+        .as_str()
+        .unwrap()
+        .contains("no title field"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_absent_dataset_is_flagged_and_the_ids_are_kept_without_text() {
+    let (workspace, registry) = workspace("replay_absent", false);
+    let run = the_run();
+
+    let (status, body) = trace_of(&workspace, registry, &run, "q-1").await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["passages"]["status"], "dataset_absent");
+    assert_eq!(body["passages"]["benchmark"], NAME);
+    assert_eq!(
+        body["passages"]["expected"]["dataset_version"],
+        run.inputs.dataset_version
+    );
+    assert!(body["passages"]["found"].is_null());
+    let named = chunks(&body);
+    assert_eq!(named.len(), 7);
+    for chunk in &named {
+        assert!(
+            chunk["text"].is_null(),
+            "no text without the dataset: {chunk}"
+        );
+    }
+    let ids: Vec<&str> = node(&body, "reranked")["output"]["chunks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|chunk| chunk["chunk"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, ["MED-10", "4983", "MED-12"], "the ids are intact");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn one_altered_byte_makes_the_dataset_differ_and_both_digests_are_reported() {
+    let (workspace, registry) = workspace("replay_differs", true);
+    let corpus = workspace.join("datasets").join(DIR).join("corpus.jsonl");
+    let original = fs::read_to_string(&corpus).unwrap();
+    let altered = original.replacen("The cat sat", "The bat sat", 1);
+    assert_eq!(
+        altered.len(),
+        original.len(),
+        "one byte, not a length change"
+    );
+    assert_ne!(altered, original);
+    fs::write(&corpus, altered).unwrap();
+    let run = the_run();
+
+    let (status, body) = trace_of(&workspace, registry, &run, "q-1").await;
+
+    assert_eq!(status, StatusCode::OK);
+    let passages = &body["passages"];
+    assert_eq!(passages["status"], "dataset_differs");
+    assert_eq!(passages["benchmark"], NAME);
+    assert_eq!(
+        passages["expected"]["dataset_version"],
+        run.inputs.dataset_version
+    );
+    assert_eq!(
+        passages["expected"]["index_version"],
+        run.inputs.index_version
+    );
+    let found = passages["found"]["dataset_version"].as_str().unwrap();
+    assert_eq!(found.len(), 64);
+    assert_ne!(found, run.inputs.dataset_version);
+    for chunk in chunks(&body) {
+        assert!(
+            chunk["text"].is_null(),
+            "no text from another corpus: {chunk}"
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_dataset_on_disk_that_does_not_load_differs_with_nothing_found() {
+    let (workspace, registry) = workspace("replay_unreadable_dataset", true);
+    fs::remove_file(workspace.join("datasets").join(DIR).join("corpus.jsonl")).unwrap();
+
+    let (status, body) = trace_of(&workspace, registry, &the_run(), "q-1").await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["passages"]["status"], "dataset_differs");
+    assert!(body["passages"]["found"].is_null());
+    assert!(body["passages"]["detail"]
+        .as_str()
+        .unwrap()
+        .contains("does not load"));
+}
+
+/// The dataset is the run's, but the chunk set this build derives from it is
+/// not the one the run retrieved over — the derivation moved. No text, and
+/// the chunk set's two digests side by side.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_chunk_set_that_is_not_the_runs_differs_though_the_dataset_verifies() {
+    let (workspace, registry) = workspace("replay_index_differs", true);
+    let mut run = the_run();
+    run.inputs.index_version = "f".repeat(64);
+
+    let (status, body) = trace_of(&workspace, registry.clone(), &run, "q-1").await;
+
+    assert_eq!(status, StatusCode::OK);
+    let passages = &body["passages"];
+    assert_eq!(passages["status"], "dataset_differs");
+    assert_eq!(
+        passages["found"]["dataset_version"],
+        run.inputs.dataset_version
+    );
+    let found = passages["found"]["index_version"].as_str().unwrap();
+    assert_ne!(found, run.inputs.index_version);
+    assert_eq!(
+        passages["expected"]["index_version"],
+        run.inputs.index_version
+    );
+    for chunk in chunks(&body) {
+        assert!(chunk["text"].is_null(), "{chunk}");
+    }
+
+    // The listing degrades the same way, twice — the second time from the
+    // cache — and a filter, which needs the ground truth, is refused.
+    let app = || {
+        app_over(
+            FakeRunStore::holding([run.clone()]),
+            Arc::new(registry.clone()),
+            &workspace,
+        )
+    };
+    for _ in 0..2 {
+        let body = json(send(app(), get(&format!("/api/v1/runs/{}/queries", run.id))).await).await;
+        assert_eq!(body["ground_truth"]["status"], "dataset_differs");
+        assert_eq!(body["ground_truth"]["found"]["index_version"], found);
+        assert_eq!(body["queries"][0]["scores"], serde_json::json!({}));
+    }
+    let response = send(
+        app(),
+        get(&format!(
+            "/api/v1/runs/{}/queries?missing_gold_at=3",
+            run.id
+        )),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    let problem = json(response).await;
+    assert_eq!(problem["code"], "dataset_differs");
+    assert!(problem["detail"].as_str().unwrap().contains(found));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_node_that_produced_no_ranking_or_failed_has_no_ranking_metric() {
+    let (workspace, registry) = workspace("replay_nodes", true);
+    let run = the_run();
+
+    let (_, body) = trace_of(&workspace, registry.clone(), &run, "q-1").await;
+    for ranking in ["leg", "reranked"] {
+        assert!(node(&body, ranking)["metrics"].is_object(), "{ranking}");
+        assert_eq!(node(&body, ranking)["output"]["kind"], "ranking");
+    }
+    for other in ["prompt", "answer"] {
+        assert!(node(&body, other)["metrics"].is_null(), "{other}");
+    }
+    assert_eq!(node(&body, "answer")["output"]["text"], "on the mat");
+    assert_eq!(node(&body, "answer")["duration_nanos"], 4_000);
+
+    let (_, body) = trace_of(&workspace, registry, &run, "q-2").await;
+    let reranked = node(&body, "reranked");
+    assert!(reranked["output"].is_null());
+    assert_eq!(reranked["error"], "the reranker timed out");
+    assert!(reranked["metrics"].is_null(), "a failed node has no metric");
+    assert!(node(&body, "leg")["metrics"].is_object());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_query_the_run_did_not_execute_is_query_not_found() {
+    let (workspace, registry) = workspace("replay_unknown_query", true);
+    let (status, body) = trace_of(&workspace, registry, &the_run(), "q-9").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(body["code"], "query_not_found");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_unknown_run_is_run_not_found() {
+    let (workspace, registry) = workspace("replay_unknown_run", true);
+    let response = send(
+        app_over(FakeRunStore::default(), Arc::new(registry), &workspace),
+        get(&format!("/api/v1/runs/{}/trace/q-1", "ab".repeat(32))),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    assert_eq!(json(response).await["code"], "run_not_found");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_trace_that_does_not_read_is_run_unreadable_not_repaired() {
+    let (workspace, registry) = workspace("replay_unreadable", true);
+    let mut run = the_run();
+    run.traces.insert(
+        ragondin_types::QueryId::new("q-1"),
+        ragondin_experiments::TraceDocument::new(
+            serde_json::json!({ "nodes": [{ "node": "leg" }] }),
+        ),
+    );
+    let (status, body) = trace_of(&workspace, registry, &run, "q-1").await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(body["code"], "run_unreadable");
+    assert!(body["detail"].as_str().unwrap().contains("leg"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_cache_is_reconstructible_every_response_is_identical_without_it() {
+    let (workspace, registry) = workspace("replay_cache", true);
+    let run = the_run();
+    let app = || {
+        app_over(
+            FakeRunStore::holding([run.clone()]),
+            Arc::new(registry.clone()),
+            &workspace,
+        )
+    };
+    let paths = [
+        format!("/api/v1/runs/{}/queries", run.id),
+        format!("/api/v1/runs/{}/queries?missing_gold_at=1", run.id),
+        format!("/api/v1/runs/{}/trace/q-1", run.id),
+        format!("/api/v1/runs/{}/trace/q-2", run.id),
+    ];
+    let mut first = Vec::new();
+    for path in &paths {
+        let response = send(app(), get(path)).await;
+        assert_eq!(response.status(), StatusCode::OK, "{path}");
+        first.push(json(response).await);
+    }
+    let cache = workspace.join("cache").join(run.id.to_string());
+    assert!(
+        cache.is_dir(),
+        "the derived data is cached under cache/<run_id>/"
+    );
+
+    // Served from the cache, then from nothing: the same answers both times.
+    for (path, before) in paths.iter().zip(&first) {
+        assert_eq!(
+            &json(send(app(), get(path)).await).await,
+            before,
+            "{path}, cached"
+        );
+    }
+    fs::remove_dir_all(workspace.join("cache")).unwrap();
+    for (path, before) in paths.iter().zip(&first) {
+        assert_eq!(
+            &json(send(app(), get(path)).await).await,
+            before,
+            "{path}, rebuilt"
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_chunk_the_derived_chunk_set_does_not_hold_has_no_text() {
+    let (workspace, registry) = workspace("replay_unknown_chunk", true);
+    let trace = Trace {
+        nodes: vec![support::runs::node(
+            "leg",
+            vec![query("q-1")],
+            ranked(vec![
+                chunk("MED-10#7", "MED-10", 0.9),
+                chunk("MED-10", "MED-10", 0.8),
+            ]),
+            10,
+        )],
+    };
+    let run = run_over(
+        0x42,
+        "pipeline:\n  inputs: [question]\n  nodes:\n    - id: leg\n      component: retriever\n      impl: dense\n      inputs: [question]\n",
+        &beir_mini(),
+        vec![("q-1", trace)],
+        &[("mrr", 1.0), ("ndcg@10", 1.0), ("recall@10", 1.0)],
+    );
+    let (_, body) = trace_of(&workspace, registry, &run, "q-1").await;
+    assert_eq!(body["passages"]["status"], "verified");
+    let named = &node(&body, "leg")["output"]["chunks"];
+    assert!(
+        named[0]["text"].is_null(),
+        "an id the chunk set does not hold resolves to nothing"
+    );
+    assert!(named[1]["text"].is_string());
+}

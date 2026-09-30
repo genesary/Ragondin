@@ -64,14 +64,32 @@ pub enum ApiError {
         /// The id as the request spelled it.
         id: String,
     },
-    /// Passage text asked for, and no dataset on disk to resolve it from.
+    /// A query the run did not execute: its traces hold none under this id.
+    #[error("run {run_id} executed no query {query}")]
+    QueryNotFound {
+        /// The run's id.
+        run_id: String,
+        /// The query id as the request spelled it.
+        query: String,
+    },
+    /// A request parameter this endpoint does not take, or a value it cannot
+    /// read.
+    #[error("the parameter `{name}` is invalid: {reason}")]
+    ParameterInvalid {
+        /// The parameter as the request spelled it.
+        name: String,
+        /// What is wrong with it.
+        reason: String,
+    },
+    /// Passage text or scores asked for, and no dataset on disk to resolve
+    /// them from.
     #[error("the dataset {dataset} is not on disk")]
     DatasetAbsent {
         /// The benchmark the run was evaluated on.
         dataset: String,
     },
-    /// Passage text asked for, and the dataset on disk is not the run's: its
-    /// digest is not the one the run recorded.
+    /// Passage text or scores asked for, and the dataset on disk is not the
+    /// run's: a digest is not the one the run recorded.
     #[error(
         "the dataset {dataset} on disk digests to {found}, the run was evaluated on {expected}"
     )]
@@ -165,6 +183,8 @@ impl ApiError {
         "run_exists",
         "run_unreadable",
         "run_not_found",
+        "query_not_found",
+        "parameter_invalid",
         "dataset_absent",
         "dataset_differs",
         "benchmark_not_found",
@@ -190,6 +210,7 @@ impl ApiError {
             Self::PipelineInvalid { .. }
             | Self::ImplNotInBuild { .. }
             | Self::ImportRefused { .. } => StatusCode::UNPROCESSABLE_ENTITY,
+            Self::ParameterInvalid { .. } => StatusCode::BAD_REQUEST,
             Self::ServiceUnreachable { .. } | Self::DownloadFailed { .. } => {
                 StatusCode::BAD_GATEWAY
             }
@@ -201,6 +222,7 @@ impl ApiError {
                 StatusCode::INTERNAL_SERVER_ERROR
             }
             Self::RunNotFound { .. }
+            | Self::QueryNotFound { .. }
             | Self::DatasetAbsent { .. }
             | Self::BenchmarkNotFound { .. }
             | Self::RouteNotFound { .. } => StatusCode::NOT_FOUND,
@@ -235,18 +257,20 @@ impl ApiError {
             Self::RunExists { .. } => 3,
             Self::RunUnreadable { .. } => 4,
             Self::RunNotFound { .. } => 5,
-            Self::DatasetAbsent { .. } => 6,
-            Self::DatasetDiffers { .. } => 7,
-            Self::BenchmarkNotFound { .. } => 8,
-            Self::BenchmarkExists { .. } => 9,
-            Self::DownloadFailed { .. } => 10,
-            Self::DownloadCancelled { .. } => 11,
-            Self::ImportRefused { .. } => 12,
-            Self::BackendFailed { .. } => 13,
-            Self::HostRefused { .. } => 14,
-            Self::OriginRefused { .. } => 15,
-            Self::RouteNotFound { .. } => 16,
-            Self::MethodNotAllowed { .. } => 17,
+            Self::QueryNotFound { .. } => 6,
+            Self::ParameterInvalid { .. } => 7,
+            Self::DatasetAbsent { .. } => 8,
+            Self::DatasetDiffers { .. } => 9,
+            Self::BenchmarkNotFound { .. } => 10,
+            Self::BenchmarkExists { .. } => 11,
+            Self::DownloadFailed { .. } => 12,
+            Self::DownloadCancelled { .. } => 13,
+            Self::ImportRefused { .. } => 14,
+            Self::BackendFailed { .. } => 15,
+            Self::HostRefused { .. } => 16,
+            Self::OriginRefused { .. } => 17,
+            Self::RouteNotFound { .. } => 18,
+            Self::MethodNotAllowed { .. } => 19,
         }
     }
 
@@ -258,6 +282,8 @@ impl ApiError {
             Self::RunExists { .. } => "The run already exists",
             Self::RunUnreadable { .. } => "The run cannot be read",
             Self::RunNotFound { .. } => "No such run",
+            Self::QueryNotFound { .. } => "No such query in this run",
+            Self::ParameterInvalid { .. } => "A parameter is invalid",
             Self::DatasetAbsent { .. } => "The dataset is absent",
             Self::DatasetDiffers { .. } => "The dataset differs from the run's",
             Self::BenchmarkNotFound { .. } => "No such benchmark",
@@ -294,11 +320,17 @@ impl ApiError {
             Self::RunNotFound { .. } => {
                 "Check the run id: a run is named by 64 lowercase hex digits.".to_owned()
             }
+            Self::QueryNotFound { run_id, .. } => {
+                format!("Pick a query from GET /runs/{run_id}/queries.")
+            }
+            Self::ParameterInvalid { .. } => {
+                "Check the parameter against the API description, api/v1.json.".to_owned()
+            }
             Self::DatasetAbsent { dataset } => {
-                format!("Download or import {dataset} to see passage text; ids are shown meanwhile.")
+                format!("Download or import {dataset} to read passage text and scores against it; ids are shown meanwhile.")
             }
             Self::DatasetDiffers { dataset, .. } => format!(
-                "Restore the version of {dataset} this run was evaluated on to see passage text; ids are shown meanwhile."
+                "Restore the version of {dataset} this run was evaluated on to read passage text and scores against it; ids are shown meanwhile."
             ),
             Self::BenchmarkNotFound { .. } => {
                 "Check the name against the benchmark list: `<format>/<name>`.".to_owned()
@@ -379,6 +411,14 @@ mod tests {
                 reason: String::new(),
             },
             ApiError::RunNotFound { id: String::new() },
+            ApiError::QueryNotFound {
+                run_id: String::new(),
+                query: String::new(),
+            },
+            ApiError::ParameterInvalid {
+                name: String::new(),
+                reason: String::new(),
+            },
             ApiError::DatasetAbsent {
                 dataset: String::new(),
             },

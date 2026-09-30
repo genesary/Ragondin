@@ -31,8 +31,12 @@
 //! - `conformance` — behind the `conformance` feature, the suite every
 //!   [`Registry`] backend passes.
 //!
-//! Every path is under `/api/v1`: `GET /workspace`, `GET /runs` and
-//! `GET /runs/{id}`.
+//! Every path is under `/api/v1`: `GET /workspace`, `GET /runs`,
+//! `GET /runs/{id}`, `GET /runs/{id}/queries` and
+//! `GET /runs/{id}/trace/{query}`. The last two serve derived data — per-query
+//! scores, per-node metrics, passage text — computed on read against the run's
+//! own dataset, cached under the workspace's `cache/`, and never written into
+//! the run (`ARCHITECTURE.md` § Derived data).
 
 #![warn(missing_docs)]
 
@@ -57,15 +61,17 @@ pub mod error;
 pub mod fs;
 pub mod response;
 
+mod cache;
 mod convert;
+mod derived;
 mod handlers;
 mod layers;
 
 pub use assets::{content_type_for, Asset, Assets, NoAssets};
 pub use backends::{
     Backends, DownloadProgress, Job, JobState, Launcher, PipelineEntry, PipelineFile,
-    PipelineSource, ProgressSink, Registry, Revision, ServiceIdentity, Settings, Submission,
-    WorkspaceSettings,
+    PipelineSource, ProgressSink, Registry, Revision, RunDataset, ServiceIdentity, Settings,
+    Submission, WorkspaceSettings,
 };
 pub use error::ApiError;
 pub use layers::BUILD_HEADER;
@@ -121,6 +127,14 @@ pub fn router(backends: Backends, config: ServerConfig, assets: Arc<dyn Assets>)
         .route(
             "/v1/runs/:id",
             get(handlers::run).fallback(handlers::method_not_allowed),
+        )
+        .route(
+            "/v1/runs/:id/queries",
+            get(handlers::queries).fallback(handlers::method_not_allowed),
+        )
+        .route(
+            "/v1/runs/:id/trace/:query",
+            get(handlers::trace).fallback(handlers::method_not_allowed),
         )
         .fallback(handlers::route_not_found)
         .with_state(handlers::AppState {

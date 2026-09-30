@@ -22,6 +22,7 @@ use std::sync::Arc;
 use std::time::SystemTime;
 
 use async_trait::async_trait;
+use ragondin_benchmarks::Benchmark;
 use ragondin_experiments::{RunId, RunStore};
 
 use crate::error::ApiError;
@@ -170,6 +171,57 @@ pub trait Registry: Send + Sync {
     /// that cannot be read, or a corpus its adapter refuses — the adapter's
     /// error in the detail; `benchmark_exists` for a name already taken.
     async fn import(&self, name: &str, path: &Path) -> Result<BenchmarkEntry, ApiError>;
+
+    /// The dataset a run was evaluated on, located by the `dataset_version`
+    /// the run recorded, and loaded when the disk still holds exactly it.
+    ///
+    /// A run names no benchmark, only the digest of the one it was evaluated
+    /// on; so a backend locates it as the benchmark *pinned* to that digest —
+    /// a manifest entry whose `dataset_version` it is, or an import that
+    /// recorded it — and then reads what the disk holds under that name.
+    /// Nothing is ever resolved by closeness: a digest no benchmark is pinned
+    /// to is [`RunDataset::Unknown`], whatever is on disk (ADR-C36 § 4).
+    ///
+    /// # Errors
+    ///
+    /// `backend_failed` when the datasets directory cannot be read. A dataset
+    /// that is absent, differs or does not load is an answer, not an error.
+    async fn dataset(&self, dataset_version: &str) -> Result<RunDataset, ApiError>;
+}
+
+/// What the registry holds for the `dataset_version` a run recorded.
+#[derive(Clone, Debug)]
+pub enum RunDataset {
+    /// The benchmark pinned to the digest is on disk, loads, and digests to
+    /// it: the run's own dataset, loaded.
+    Verified {
+        /// The benchmark's selector, `<format>/<dir>`.
+        name: String,
+        /// The dataset, loaded whole.
+        benchmark: Arc<Benchmark>,
+    },
+    /// The benchmark pinned to the digest is not on disk.
+    Absent {
+        /// The benchmark's selector.
+        name: String,
+    },
+    /// The benchmark pinned to the digest is on disk and digests to another
+    /// value.
+    Differs {
+        /// The benchmark's selector.
+        name: String,
+        /// What the dataset on disk digests to.
+        found: String,
+    },
+    /// The benchmark pinned to the digest is on disk and does not load.
+    Unreadable {
+        /// The benchmark's selector.
+        name: String,
+        /// The adapter's error, with its causes.
+        error: String,
+    },
+    /// No benchmark the registry knows is pinned to the digest.
+    Unknown,
 }
 
 /// Where a download stands: bytes received of the snapshot's total.

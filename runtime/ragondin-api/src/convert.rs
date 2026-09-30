@@ -2,18 +2,29 @@
 //! crate's response types — the one module where both sides are named, so
 //! that `response.rs` names neither (ADR-C36 § 2).
 
+use std::collections::{BTreeMap, HashMap};
+
 use ragondin_benchmarks::datasets::{
     DiskState, DownloadError, ImportError, Imported, LocalEntry, MarkerError,
 };
 use ragondin_benchmarks::manifest::ManifestEntry;
 use ragondin_benchmarks::CarriedPieces;
-use ragondin_experiments::{lower_configuration, Run, RunBinding, RunInputs as StoredInputs};
-use ragondin_pipeline::{produced_kind, LogicalNode, LogicalPipeline, ParamValue, ValueKind};
+use ragondin_experiments::{
+    lower_configuration, Run, RunBinding, RunInputs as StoredInputs, Trace, TraceChunk,
+    TraceSummary,
+};
+use ragondin_pipeline::{
+    produced_kind, LogicalNode, LogicalPipeline, NodeId, ParamValue, ValueKind,
+};
 
+use crate::backends::RunDataset;
+use crate::derived::NodeFigures;
 use crate::error::ApiError;
 use crate::response::{
-    BenchmarkEntry, BenchmarkState, EdgeKind, Graph, GraphEdge, GraphInput, GraphNode, GroundTruth,
-    ParameterValue, RunDetail, RunInputs, RunSummary, ServiceBinding,
+    BenchmarkEntry, BenchmarkState, DatasetCheck, DatasetStatus, DatasetVersions, EdgeKind,
+    FoundVersions, Graph, GraphEdge, GraphInput, GraphNode, GroundTruth, NodeMetrics,
+    ParameterValue, RunDetail, RunInputs, RunSummary, ServiceBinding, TraceNodeView, TracePassage,
+    TraceValue,
 };
 
 /// One run, as the listing shows it.
@@ -328,4 +339,194 @@ pub(crate) fn causes(error: &dyn std::error::Error) -> String {
         source = cause.source();
     }
     text
+}
+
+/// The verdict for a run whose dataset and chunk set both verified.
+pub(crate) fn verified(name: &str, inputs: &StoredInputs) -> DatasetCheck {
+    DatasetCheck {
+        status: DatasetStatus::Verified,
+        benchmark: Some(name.to_owned()),
+        expected: expected(inputs),
+        found: Some(FoundVersions {
+            dataset_version: inputs.dataset_version.clone(),
+            index_version: Some(inputs.index_version.clone()),
+        }),
+        detail: format!(
+            "{name} on disk digests to the run's dataset_version, and its derived chunk set to the run's index_version"
+        ),
+    }
+}
+
+/// The verdict for a run whose dataset verified and whose chunk set, derived
+/// from it by this build, digests to another value: the derivation moved.
+pub(crate) fn index_differs(name: &str, inputs: &StoredInputs, found: &str) -> DatasetCheck {
+    DatasetCheck {
+        status: DatasetStatus::DatasetDiffers,
+        benchmark: Some(name.to_owned()),
+        expected: expected(inputs),
+        found: Some(FoundVersions {
+            dataset_version: inputs.dataset_version.clone(),
+            index_version: Some(found.to_owned()),
+        }),
+        detail: format!(
+            "{name} on disk is the run's dataset, but the chunk set this build derives from it digests to {found}, and the run retrieved over {}",
+            inputs.index_version
+        ),
+    }
+}
+
+/// The verdict for every answer of the registry but a verified dataset.
+pub(crate) fn unverified(dataset: &RunDataset, inputs: &StoredInputs) -> DatasetCheck {
+    let (status, benchmark, found, detail) = match dataset {
+        RunDataset::Unknown => (
+            DatasetStatus::DatasetAbsent,
+            None,
+            None,
+            format!(
+                "no benchmark the registry knows is pinned to the run's dataset_version {}",
+                inputs.dataset_version
+            ),
+        ),
+        RunDataset::Absent { name } => (
+            DatasetStatus::DatasetAbsent,
+            Some(name.clone()),
+            None,
+            format!("{name} is not on disk"),
+        ),
+        RunDataset::Differs { name, found } => (
+            DatasetStatus::DatasetDiffers,
+            Some(name.clone()),
+            Some(FoundVersions {
+                dataset_version: found.clone(),
+                index_version: None,
+            }),
+            format!(
+                "{name} on disk digests to {found}; the run was evaluated on {}",
+                inputs.dataset_version
+            ),
+        ),
+        RunDataset::Unreadable { name, error } => (
+            DatasetStatus::DatasetDiffers,
+            Some(name.clone()),
+            None,
+            format!("{name} is on disk and does not load: {error}"),
+        ),
+        RunDataset::Verified { name, .. } => unreachable!(
+            "{name} verified: the caller checks its chunk set with `verified` or `index_differs`"
+        ),
+    };
+    DatasetCheck {
+        status,
+        benchmark,
+        expected: expected(inputs),
+        found,
+        detail,
+    }
+}
+
+fn expected(inputs: &StoredInputs) -> DatasetVersions {
+    DatasetVersions {
+        dataset_version: inputs.dataset_version.clone(),
+        index_version: inputs.index_version.clone(),
+    }
+}
+
+/// What an endpoint that cannot degrade answers when the dataset is not the
+/// run's: `dataset_absent` or `dataset_differs`, naming what was compared.
+pub(crate) fn dataset_error(check: &DatasetCheck) -> ApiError {
+    let dataset = check
+        .benchmark
+        .clone()
+        .unwrap_or_else(|| format!("with dataset_version {}", check.expected.dataset_version));
+    match (check.status, &check.found) {
+        (DatasetStatus::DatasetAbsent | DatasetStatus::Verified, _) => {
+            ApiError::DatasetAbsent { dataset }
+        }
+        (DatasetStatus::DatasetDiffers, Some(found)) => match &found.index_version {
+            Some(index) if found.dataset_version == check.expected.dataset_version => {
+                ApiError::DatasetDiffers {
+                    dataset,
+                    expected: format!("index_version {}", check.expected.index_version),
+                    found: format!("index_version {index}"),
+                }
+            }
+            _ => ApiError::DatasetDiffers {
+                dataset,
+                expected: check.expected.dataset_version.clone(),
+                found: found.dataset_version.clone(),
+            },
+        },
+        (DatasetStatus::DatasetDiffers, None) => ApiError::DatasetDiffers {
+            dataset,
+            expected: check.expected.dataset_version.clone(),
+            found: "nothing: it does not load".to_owned(),
+        },
+    }
+}
+
+/// A query's trace as the API shows it. `texts` holds the passage text of
+/// each chunk id the run's verified chunk set resolves; `None` when the
+/// dataset is not verified, and then no chunk has text. `metrics` gives a
+/// node's ranking metrics for this query, when it has any.
+pub(crate) fn trace_view(
+    trace: &Trace,
+    texts: Option<&HashMap<String, String>>,
+    metrics: impl Fn(&NodeId) -> Option<BTreeMap<String, f64>>,
+) -> Vec<TraceNodeView> {
+    let passages = |chunks: &[TraceChunk]| -> Vec<TracePassage> {
+        chunks
+            .iter()
+            .map(|chunk| TracePassage {
+                chunk: chunk.chunk.as_str().to_owned(),
+                document: chunk.document.as_str().to_owned(),
+                score: chunk.score,
+                text: texts.and_then(|texts| texts.get(chunk.chunk.as_str()).cloned()),
+            })
+            .collect()
+    };
+    let value = |summary: &TraceSummary| -> TraceValue {
+        match summary {
+            TraceSummary::Query { id } => TraceValue::Query {
+                id: id.as_str().to_owned(),
+            },
+            TraceSummary::Chunks { count } => TraceValue::ChunkCount { count: *count },
+            TraceSummary::RankedChunks { chunks } => TraceValue::Ranking {
+                chunks: passages(chunks),
+            },
+            TraceSummary::ContextSize { count, text_bytes } => TraceValue::ContextSize {
+                count: *count,
+                text_bytes: *text_bytes,
+            },
+            TraceSummary::Context { chunks, text } => TraceValue::Context {
+                chunks: passages(chunks),
+                text: text.clone(),
+            },
+            TraceSummary::AnswerSize { text_bytes } => TraceValue::AnswerSize {
+                text_bytes: *text_bytes,
+            },
+            TraceSummary::Answer { text } => TraceValue::Answer { text: text.clone() },
+        }
+    };
+    trace
+        .nodes
+        .iter()
+        .map(|node| TraceNodeView {
+            node: node.node.as_str().to_owned(),
+            inputs: node.inputs.iter().map(value).collect(),
+            output: node.output.as_ref().map(value),
+            duration_nanos: node.duration_nanos,
+            error: node.error.clone(),
+            metrics: metrics(&node.node),
+        })
+        .collect()
+}
+
+/// One node's figures over the run, as the API shows them.
+pub(crate) fn node_metrics(figures: &NodeFigures) -> NodeMetrics {
+    NodeMetrics {
+        node: figures.node.clone(),
+        produces_ranking: figures.produces_ranking,
+        judged_queries: figures.judged_queries,
+        metrics: figures.metrics.clone(),
+    }
 }
