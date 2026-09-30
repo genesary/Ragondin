@@ -2,6 +2,7 @@
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import { declared } from '../../testing/css.ts';
+import dotCss from '../StatusDot/StatusDot.css?raw';
 import css from './TopBar.css?raw';
 import { TopBar } from './TopBar.tsx';
 
@@ -46,7 +47,8 @@ describe('TopBar services', () => {
     const service = container.querySelector('.rg-service') as HTMLElement;
     expect(service.textContent).toBe('qwen2.5-7b');
     expect(service.getAttribute('data-connected')).toBe('true');
-    expect(declared(css, '.rg-dot', 'background')).toBe('var(--good)');
+    expect(service.querySelector('.rg-dot')?.getAttribute('data-connected')).toBe('true');
+    expect(declared(dotCss, '.rg-dot', 'background')).toBe('var(--good)');
   });
 
   it('shows an unreachable service as a hollow ring and the word "unreachable": shape and word, not colour', () => {
@@ -54,8 +56,25 @@ describe('TopBar services', () => {
     const service = container.querySelector('.rg-service') as HTMLElement;
     expect(service.textContent).toBe('bge-embedder unreachable');
     expect(service.getAttribute('data-connected')).toBe('false');
-    expect(declared(css, '.rg-service[data-connected="false"] .rg-dot', 'background')).toBe('transparent');
+    expect(service.querySelector('.rg-dot')?.getAttribute('data-connected')).toBe('false');
+    expect(declared(dotCss, '.rg-dot[data-connected="false"]', 'background')).toBe('transparent');
     expect(css).not.toMatch(/\.is-[a-z]/);
+  });
+
+  it('shows the application’s status — a stream, say — as a live pill with its dot and its word', () => {
+    const { container, rerender } = render(<TopBar workspace="w" links={links} services={[]} status={{ label: 'connected', connected: true }} />);
+    const pill = container.querySelector('[role="status"]') as HTMLElement;
+    expect(pill.classList.contains('rg-service')).toBe(true);
+    expect(pill.textContent).toBe('connected');
+    expect(pill.querySelector('.rg-dot')?.getAttribute('data-connected')).toBe('true');
+    rerender(<TopBar workspace="w" links={links} services={[]} status={{ label: 'disconnected — retrying', connected: false }} />);
+    expect(pill.textContent).toBe('disconnected — retrying');
+    expect(pill.querySelector('.rg-dot')?.getAttribute('data-connected')).toBe('false');
+  });
+
+  it('shows no status pill without a status', () => {
+    const { container } = render(<TopBar workspace="w" links={links} services={[]} />);
+    expect(container.querySelector('[role="status"]')).toBeNull();
   });
 
   it('keeps a slot at the end for the theme switch', () => {

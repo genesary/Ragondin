@@ -3,7 +3,7 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { declared } from '../../testing/css.ts';
 import css from './Button.css?raw';
-import { Button, type ButtonKind } from './Button.tsx';
+import { Button, ButtonLink, type ButtonKind } from './Button.tsx';
 
 const KINDS: ButtonKind[] = ['primary', 'secondary', 'quiet', 'destructive'];
 
@@ -200,6 +200,9 @@ describe('Button disabled inside a form', () => {
       onTouchStart: vi.fn(),
       onTouchEnd: vi.fn(),
       onSubmit: vi.fn(),
+      onKeyPress: vi.fn(),
+      onAuxClick: vi.fn(),
+      onContextMenu: vi.fn(),
     };
     render(
       <Button disabled disabledReason="Not yet" {...handlers}>
@@ -214,6 +217,9 @@ describe('Button disabled inside a form', () => {
     fireEvent.touchStart(button);
     fireEvent.touchEnd(button);
     fireEvent.submit(button);
+    fireEvent.keyPress(button, { key: 'Enter', charCode: 13 });
+    fireEvent(button, new MouseEvent('auxclick', { bubbles: true, button: 1 }));
+    fireEvent.contextMenu(button);
     for (const handler of Object.values(handlers)) expect(handler).not.toHaveBeenCalled();
   });
 
@@ -254,5 +260,26 @@ describe('Button disabled inside a form', () => {
     );
     const ids = (screen.getByRole('button').getAttribute('aria-describedby') ?? '').split(' ');
     expect(ids.map((id) => document.getElementById(id)?.textContent)).toEqual(['Runs take about a minute.', 'Not yet']);
+  });
+});
+
+describe('ButtonLink', () => {
+  // A move to another view is a link, so middle-click, a new tab and "copy
+  // link" work; it looks like the button of its kind and size.
+  it('is a real link drawn as a button of its kind and size', () => {
+    render(
+      <ButtonLink kind="primary" size="l" href="#runs">
+        Open Runs
+      </ButtonLink>,
+    );
+    const link = screen.getByRole('link', { name: 'Open Runs' });
+    expect(link.getAttribute('href')).toBe('#runs');
+    expect([...link.classList]).toEqual(['rg-btn', 'rg-btn--primary', 'rg-btn--l']);
+    expect(declared(css, 'a.rg-btn', 'text-decoration')).toBe('none');
+  });
+
+  it('is secondary and medium unless told otherwise', () => {
+    render(<ButtonLink href="#setup">Open Setup</ButtonLink>);
+    expect([...screen.getByRole('link').classList]).toEqual(['rg-btn', 'rg-btn--secondary']);
   });
 });

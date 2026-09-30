@@ -2,7 +2,7 @@
 // loaded once by the application's entry.
 export { FamilyTile } from './glyphs/FamilyTile.tsx';
 export { FAMILIES, FAMILY_LABEL, GLYPH_NAMES, Glyph, type Family, type GlyphName } from './glyphs/Glyph.tsx';
-export { Button, type ButtonKind } from './components/Button/Button.tsx';
+export { Button, ButtonLink, type ButtonKind } from './components/Button/Button.tsx';
 export { Checkbox } from './components/Checkbox/Checkbox.tsx';
 export { EmptyState } from './components/EmptyState/EmptyState.tsx';
 export { FilterChip } from './components/FilterChip/FilterChip.tsx';
@@ -17,6 +17,7 @@ export { SegmentedControl } from './components/SegmentedControl/SegmentedControl
 export { Select } from './components/Select/Select.tsx';
 export { Section, Sheet } from './components/Sheet/Sheet.tsx';
 export { StatusChip, type Status } from './components/StatusChip/StatusChip.tsx';
+export { StatusDot } from './components/StatusDot/StatusDot.tsx';
 export { Table, type TableColumn, type TableRow } from './components/Table/Table.tsx';
 export { Tabs } from './components/Tabs/Tabs.tsx';
 export { Toast } from './components/Toast/Toast.tsx';
