@@ -24,7 +24,7 @@ The dependency graph is a **topological order**. An agent cannot implement:
 - the engine before the pipeline representation it executes (`ragondin-pipeline`),
 - a driver before the engine it drives (`ragondin-engine`).
 
-Two issues may run **in parallel** when they touch **disjoint crates** — for example, two different `components/` leaves, each depending only on `ragondin-contracts` and `ragondin-types`, cannot conflict. `ui/`, the front end, is not a crate but counts as one such unit: an issue confined to `ui/` is disjoint from every crate, and is governed by `ui/ARCHITECTURE.md`. Two issues must be **serialized** when one depends on an artifact the other produces. When in doubt, read the crate dependency graph in `AGENTS.md` and serialize.
+Two issues may run **in parallel** when they touch **disjoint crates** — for example, two different `components/` leaves, each depending only on `ragondin-contracts` and `ragondin-types`, cannot conflict. `ui/`, the front end, is not a crate but counts as one such unit: an issue confined to `ui/` is disjoint in files from every crate, and is governed by `ui/ARCHITECTURE.md`. Two issues must be **serialized** when one depends on an artifact the other produces. When in doubt, read the crate dependency graph in `AGENTS.md` and serialize.
 
 ## When to escalate to a human
 

@@ -177,9 +177,17 @@ calibrate-generation:
 # does, and none may: the Rust build stays Rust-only (ADR-C36 § 5), so
 # everything above runs on a machine without Node, and only `check`, which
 # covers both worlds, needs it.
-check-ui:
+check-ui: check-node
     cd ui && npm ci && npm run check
 
+# Fails at once, and says why, when Node is missing -- rather than as exit 127
+# at the end of `check`, after the whole cargo pipeline has run. Like
+# `check-deny`, it names what to install rather than failing on an unknown
+# command.
+check-node:
+    @command -v npm >/dev/null 2>&1 || { echo "error: check-ui needs Node {{ trim(read('ui/.node-version')) }} (the major pinned in ui/.node-version), with npm."; exit 1; }
+
 # Everything CI runs, in one command. Run this before declaring work done. It
-# needs Node, for `check-ui`; every other recipe it runs is cargo or Python.
-check: fmt build test test-features clippy check-features doc test-check-invariants check-invariants test-check-doc-links check-doc-links check-adr-index check-deny check-ui
+# needs Node, for `check-ui`, and checks for it first; every other recipe it
+# runs is cargo or Python.
+check: check-node fmt build test test-features clippy check-features doc test-check-invariants check-invariants test-check-doc-links check-doc-links check-adr-index check-deny check-ui
