@@ -66,6 +66,48 @@ store holds, and files it under its query. Four consequences are deliberate:
   reading and an error that dropped it would discard exactly the evidence
   INV-10 exists to preserve.
 
+### The observer is the second reader of a trace
+
+`evaluate_observed` hands every rendered `TraceDocument` to a caller-supplied
+observer, as a `QueryProgress` that also names the query, its position from 1,
+the benchmark's total, and the time `Engine::execute` took around the call.
+The run store is the first reader of a trace, once the run completes; the
+observer is the second, while it runs. What it receives is the document the
+run files under that query — rendered once, the same value — never a log line
+and never a `tracing` event: progress is a return value in the same sense the
+trace is (INV-10), and no `tracing` macro stands in for it here. The trace
+itself carries nothing it did not carry before.
+
+The loop's contract, which a caller that tracks jobs builds on:
+
+- **The observer is called once per executed query, in benchmark order,
+  immediately after the trace is rendered** — before the query is scored and
+  before any error can return. A query whose execution fails, or whose output
+  is refused (`NoAnswer`, `NoRanking`), reaches the observer before the error
+  does, so the traces the observer holds are every trace the run produced,
+  however the run stops. `HarnessError::Execute` still carries its trace: a
+  caller with no observer keeps the evidence.
+- **The observer is synchronous.** It runs on the loop, between one query and
+  the next, so whatever it does is added to every query's turn: a caller that
+  writes files or pushes progress from inside it holds the executor for that
+  long. Do cheap work there, or send the `QueryProgress`'s contents over a
+  channel to a consumer that does the rest.
+- **The cancellation signal is read at the top of each iteration and nowhere
+  else**: between two queries, never inside one. A query in flight runs to its
+  end — a `Remote` call finishes or times out under its own rules — and is
+  observed; a signal read set returns `HarnessError::Cancelled` naming how many
+  queries ran, which is not a failure of the pipeline. A signal set before the
+  first query runs nothing and reports 0; one set after the last query finds
+  no boundary left and the run completes. A benchmark with no query never
+  enters the loop, so it never reads the signal: it ends as it did before,
+  in `HarnessError::NothingToScore`.
+- **Queries stay sequential.** One worker is the caller's rule, and the loop
+  does not grow a second.
+
+`evaluate` is `evaluate_observed` with an observer that does nothing and a
+signal nobody sets, so a caller that wants neither — `ragondin bench` — calls
+it unchanged.
+
 ## The regime, and where each family reads its input
 
 Which metric families a run reports follows the pieces the benchmark carries
@@ -225,6 +267,23 @@ reader can disagree with it.
    the text whose canonical logical form hashes to `RunInputs::pipeline`
    (INV-8), and a re-serialization would file a second spelling of it.
 
+8. **The observer is a closure; the signal is a borrowed `AtomicBool`.**
+   `evaluate_observed` takes `O: FnMut(QueryProgress<'_>) + Send` by value
+   (a caller that keeps its observer passes `&mut observer`) and `&AtomicBool`. A
+   one-method trait would add a name and an impl for what a closure already
+   is; a crate-owned token type would wrap one `AtomicBool` and gain nothing
+   the standard library does not give — a caller on another thread holds an
+   `Arc<AtomicBool>` and passes `&*arc`. A cancellation-token crate would be a
+   new `[workspace.dependencies]` entry, which escalates, for a job the
+   standard library already does. `SeqCst` on both sides: one load per query
+   costs nothing worth reasoning about a weaker ordering for. The observer is
+   `Send` so the returned future is, across the loop's await points.
+9. **Every executed query is observed, refused ones included.** The observer
+   call sits right after the trace is rendered, ahead of the execution error
+   and both refusals, rather than beside the `traces.insert` of a query that
+   passed: a partial record that dropped the query which stopped the run
+   would drop the one trace worth replaying.
+
 ## Tests
 
 `tests/harness_over_beir_mini.rs` drives the whole crate over the **miniature
@@ -241,9 +300,16 @@ ranking, so a query judging the second document scores differently over the
 ranking and over the context — which is what pins the ranking ADR-C30 § 3 names
 as the one read.
 
-The expected metrics in both files are derived by hand in a comment, from the
-fixture's qrels and from what the stub components fabricate. That is the point
-of stubs: the arithmetic is checkable by a reader, and **no number the test
-asserts is a measurement of retrieval quality**. The pipeline fixture labels its
+`tests/progress_and_cancellation.rs` drives `evaluate_observed` over the BEIR
+fixture, with a retriever that wraps the stub's and counts its calls — the
+proof that no query ran past a cancellation — and, for the signal set while a
+query is in flight, sets it from inside that query's first retrieval leg.
+
+The expected metrics in the first two files are derived by hand in a
+comment, from the fixture's qrels and from what the stub components fabricate;
+the third reuses the first file's to pin that the new entry point scores what
+`evaluate` scored before it was rerouted. That is the point of stubs: the
+arithmetic is checkable by a reader, and **no number the test asserts is a
+measurement of retrieval quality**. The pipeline fixture labels its
 two legs with corpus document ids so that the fabricated ranking lands on judged
 documents; that is a fixture trick, not a retrieval claim.
