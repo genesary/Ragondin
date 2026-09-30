@@ -114,6 +114,16 @@ describe('auditFonts', () => {
     expect(auditFonts(root, allow)).toEqual([{ file: 'design/fonts/A.woff2', problem: `licence text ${text} is outside ui/design/fonts/` }]);
   });
 
+  it('fails a pinned licence text whose file is missing, even when no font names it', () => {
+    const root = ui({ ...good, 'design/fonts/LICENSES.md': manifest([fontRow('A.woff2', 'font-a')], [textRow('OFL.txt', 'licence'), textRow('OFL-Gone.txt', 'x')]) });
+    expect(auditFonts(root, allow)).toEqual([{ file: 'design/fonts/OFL-Gone.txt', problem: 'is pinned in LICENSES.md but absent' }]);
+  });
+
+  it.each(['../OFL.txt', 'sub/OFL.txt'])('fails a pinned licence text named with a path, %s', (name) => {
+    const root = ui({ ...good, 'design/fonts/LICENSES.md': manifest([fontRow('A.woff2', 'font-a')], [textRow('OFL.txt', 'licence'), textRow(name, 'licence')]) });
+    expect(auditFonts(root, allow)).toEqual([{ file: `design/fonts/${name}`, problem: 'is a licence text outside ui/design/fonts/' }]);
+  });
+
   it('fails a file that differs from the digest recorded for it', () => {
     const root = ui({ ...good, 'design/fonts/A.woff2': 'edited', 'design/fonts/LICENSES.md': goodManifest });
     expect(auditFonts(root, allow)).toEqual([{ file: 'design/fonts/A.woff2', problem: 'differs from the SHA-256 recorded in LICENSES.md' }]);

@@ -101,7 +101,8 @@ describe.each(KINDS)('Button %s disabled', (kind) => {
     expect(document.activeElement).toBe(button);
     const reason = document.getElementById(button.getAttribute('aria-describedby') ?? '');
     expect(reason?.textContent).toBe('Select runs on one benchmark to compare');
-    expect(button.getAttribute('title')).toBe('Select runs on one benchmark to compare');
+    // One accessible path for the reason: the description, not a title as well.
+    expect(button.getAttribute('title')).toBeNull();
     fireEvent.click(button);
     expect(onClick).not.toHaveBeenCalled();
     expect(declared(css, '.rg-btn[aria-disabled="true"]', '--btn-fg')).toBe('var(--ink-disabled)');
@@ -121,5 +122,85 @@ describe.each(KINDS)('Button %s loading', (kind) => {
     fireEvent.click(button);
     expect(onClick).not.toHaveBeenCalled();
     expect(css).toMatch(/\.rg-btn\[aria-busy="true"\]::after/);
+  });
+});
+
+describe('Button disabled inside a form', () => {
+  it('does not submit, by click or by Enter or Space, even when the caller asks for a submit button', () => {
+    const onSubmit = vi.fn((e: { preventDefault: () => void }) => e.preventDefault());
+    render(
+      <form onSubmit={onSubmit}>
+        <Button type="submit" kind="primary" disabled disabledReason="Fix 2 fields first">
+          Launch run
+        </Button>
+      </form>,
+    );
+    const button = screen.getByRole('button', { name: 'Launch run' }) as HTMLButtonElement;
+    expect(button.type).toBe('button');
+    fireEvent.click(button);
+    for (const key of ['Enter', ' ']) {
+      fireEvent.keyDown(button, { key });
+      fireEvent.keyUp(button, { key });
+    }
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it('submits once enabled again, keeping the type the caller asked for', () => {
+    const onSubmit = vi.fn((e: { preventDefault: () => void }) => e.preventDefault());
+    render(
+      <form onSubmit={onSubmit}>
+        <Button type="submit" kind="primary">
+          Launch run
+        </Button>
+      </form>,
+    );
+    const button = screen.getByRole('button', { name: 'Launch run' }) as HTMLButtonElement;
+    expect(button.type).toBe('submit');
+    fireEvent.click(button);
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not submit a second time while busy', () => {
+    const onSubmit = vi.fn((e: { preventDefault: () => void }) => e.preventDefault());
+    render(
+      <form onSubmit={onSubmit}>
+        <Button type="submit" kind="primary" busy busyLabel="Launching">
+          Launch run
+        </Button>
+      </form>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Launching' }));
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it('runs none of the caller’s handlers while disabled', () => {
+    const onKeyDown = vi.fn();
+    const onPointerDown = vi.fn();
+    const onMouseUp = vi.fn();
+    render(
+      <Button disabled disabledReason="Not yet" onKeyDown={onKeyDown} onPointerDown={onPointerDown} onMouseUp={onMouseUp}>
+        Launch run
+      </Button>,
+    );
+    const button = screen.getByRole('button', { name: 'Launch run' });
+    fireEvent.keyDown(button, { key: 'Enter' });
+    fireEvent.pointerDown(button);
+    fireEvent.mouseUp(button);
+    expect(onKeyDown).not.toHaveBeenCalled();
+    expect(onPointerDown).not.toHaveBeenCalled();
+    expect(onMouseUp).not.toHaveBeenCalled();
+  });
+
+  it('keeps the caller’s own description beside the reason', () => {
+    render(
+      <>
+        <p id="hint">Runs take about a minute.</p>
+        <Button disabled disabledReason="Not yet" aria-describedby="hint">
+          Launch run
+        </Button>
+      </>,
+    );
+    const ids = (screen.getByRole('button').getAttribute('aria-describedby') ?? '').split(' ');
+    expect(ids.map((id) => document.getElementById(id)?.textContent)).toEqual(['Runs take about a minute.', 'Not yet']);
   });
 });

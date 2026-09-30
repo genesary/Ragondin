@@ -16,8 +16,10 @@ describe('EmptyState', () => {
     expect(screen.getByText('The starter pipeline needs no service.')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Run the starter pipeline' }).closest('.rg-empty__actions')).toBeTruthy();
     expect(declared(css, '.rg-empty p', 'max-width')).toBe('52ch');
-    expect(declared(css, '.rg-empty h3', 'font')).toBe('600 17px/24px var(--font-display)');
-    expect(declared(css, '.rg-empty h3', 'letter-spacing')).toBe('-0.006em');
+    // The verdict style's role, at 600: a component names a role, never a value.
+    expect(declared(css, '.rg-empty h3', 'font')).toBe('var(--type-verdict)');
+    expect(declared(css, '.rg-empty h3', 'letter-spacing')).toBe('var(--type-verdict-tracking)');
+    expect(declared(css, '.rg-empty h3', 'font-weight')).toBe('600');
   });
 
   it('draws the product’s own instrument as its art: an empty rank strip', () => {

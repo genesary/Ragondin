@@ -128,7 +128,11 @@ export function auditFonts(root, allow) {
   }
   for (const text of texts) {
     const path = join(dir, text.file);
-    if (!text.file.includes('/') && existsSync(path) && digest(path) !== text.sha256) {
+    if (text.file.includes('/') || text.file.includes('\\')) {
+      problems.push({ file: at(text.file), problem: 'is a licence text outside ui/design/fonts/' });
+    } else if (!existsSync(path)) {
+      problems.push({ file: at(text.file), problem: 'is pinned in LICENSES.md but absent' });
+    } else if (digest(path) !== text.sha256) {
       problems.push({ file: at(text.file), problem: 'differs from the SHA-256 recorded in LICENSES.md' });
     }
   }
