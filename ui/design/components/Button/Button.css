@@ -76,3 +76,5 @@
 @media (prefers-reduced-motion: reduce) {
   .rg-btn[aria-busy="true"]::after { animation: none; width: 100%; opacity: 0.25; }
 }
+/* ButtonLink: the same drawing on a link, which a browser underlines by default. */
+a.rg-btn { text-decoration: none; }

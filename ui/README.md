@@ -19,7 +19,7 @@ npm ci          # never `npm install`: the lockfile is the pin
 npm run dev     # http://localhost:5173
 ```
 
-There is no API to talk to yet; the page is a placeholder.
+The dev server serves the UI alone, with no API behind it: the shell renders, and the workspace shows as unreachable. The UI talks to the API of the `ragondin ui` binary that serves it.
 
 The design system's preview — every primitive in every state, in both themes — is served by the same dev server at <http://localhost:5173/design/preview/>. It never ships: the production build leaves it out.
 
@@ -31,10 +31,18 @@ Tokens are written in [`design/tokens.json`](design/tokens.json) only. After cha
 npm run tokens  # regenerates design/tokens.css; a test fails until you do
 ```
 
+## Regenerate the API types
+
+`src/api/types.ts` is generated from the API's description, `runtime/ragondin-api/api/v1.json`, and never edited by hand. After the description changes (`just gen-api-description`), from the repository root:
+
+```bash
+just gen-ui-types   # regenerates src/api/types.ts; `npm run check` fails until you do
+```
+
 ## Run the gates
 
 ```bash
-npm run check   # lint, typecheck, test, build, audit — what CI runs
+npm run check   # API types, lint, typecheck, test, build, audit — what CI runs
 ```
 
-Or one at a time: `npm run lint`, `npm run typecheck`, `npm run test`, `npm run build`, `npm run audit`. From the repository root, `just check-ui` runs `npm ci` and then `npm run check`, and `just check` includes it. The audit queries the npm registry, so it needs the network.
+Or one at a time: `npm run types:check`, `npm run lint`, `npm run typecheck`, `npm run test`, `npm run build`, `npm run audit`. From the repository root, `just check-ui` runs `npm ci` and then `npm run check`, and `just check` includes it. The audit queries the npm registry, so it needs the network.

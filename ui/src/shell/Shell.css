@@ -1,0 +1,21 @@
+/* The shell's own layout. Every value is a token (ARCHITECTURE.md § The
+   design system); the dot is design/'s StatusDot. */
+.rg-workspace {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: inherit;
+  text-decoration: none;
+  border-radius: var(--radius-s);
+}
+.rg-workspace:hover { color: var(--ink); }
+.rg-shell__main {
+  display: grid;
+  gap: var(--space-4);
+  padding: var(--space-6);
+}
+/* A focused screen heading is focused by the shell, not by the user: no ring. */
+.rg-shell__main h1:focus { outline: none; }
+@media (max-width: 640px) {
+  .rg-shell__main { padding: var(--space-4); }
+}

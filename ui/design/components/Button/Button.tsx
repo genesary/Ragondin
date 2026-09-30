@@ -1,4 +1,4 @@
-import { useId, type ButtonHTMLAttributes, type ReactNode } from 'react';
+import { useId, type AnchorHTMLAttributes, type ButtonHTMLAttributes, type ReactNode } from 'react';
 import { Glyph, type GlyphName } from '../../glyphs/Glyph.tsx';
 import './Button.css';
 
@@ -22,8 +22,14 @@ export type ButtonProps = {
 } & Disabled &
   Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'disabled' | 'children'>;
 
-/** The props that are event handlers (`onClick`, `onKeyDown`, …), which a disabled button must not run. */
-const isHandler = (key: string) => /^on[A-Z]/.test(key);
+/**
+ * The handlers that act — a click (primary, auxiliary or for the context
+ * menu), a key, a press, a touch, a submission, in the bubble or the capture
+ * phase — which a disabled button must not run.
+ * Focus and hover handlers are not among them: a tooltip saying why the button
+ * refuses is wired through those, and is needed most while it refuses.
+ */
+const isActivation = (key: string) => /^on(Click|DoubleClick|AuxClick|ContextMenu|KeyDown|KeyUp|KeyPress|PointerDown|PointerUp|MouseDown|MouseUp|TouchStart|TouchEnd|Submit)(Capture)?$/.test(key);
 
 export function Button({ kind = 'secondary', size = 'm', icon, busy = false, busyLabel, disabled, disabledReason, className, onClick, children, ...rest }: ButtonProps) {
   const reasonId = useId();
@@ -32,9 +38,10 @@ export function Button({ kind = 'secondary', size = 'm', icon, busy = false, bus
   // the tab order, so a keyboard or screen-reader user reaches it and hears
   // why it refuses. aria-disabled stops nothing by itself, so while disabled
   // the button is forced to type="button" (no form submission, by click,
-  // Enter or Space) and none of the caller's handlers is passed through.
-  // Busy, it is forced to type="button" too, so it does not submit twice.
-  const passed = disabled ? Object.fromEntries(Object.entries(rest).filter(([key]) => !isHandler(key))) : rest;
+  // Enter or Space) and none of the caller's activation handlers is passed
+  // through. Busy, it is forced to type="button" too, so it does not submit
+  // twice.
+  const passed = disabled ? Object.fromEntries(Object.entries(rest).filter(([key]) => !isActivation(key))) : rest;
   const describedBy = [rest['aria-describedby'], disabled ? reasonId : undefined].filter(Boolean).join(' ');
   return (
     <>
@@ -60,5 +67,28 @@ export function Button({ kind = 'secondary', size = 'm', icon, busy = false, bus
         </span>
       ) : null}
     </>
+  );
+}
+
+export type ButtonLinkProps = {
+  kind?: ButtonKind;
+  size?: 's' | 'm' | 'l';
+  icon?: GlyphName;
+  href: string;
+  children: ReactNode;
+} & Omit<AnchorHTMLAttributes<HTMLAnchorElement>, 'href' | 'children' | 'className'>;
+
+/**
+ * A move to another view, drawn as the button of its kind and size. A real
+ * link, so middle-click, a new tab and "copy link" work as they do for any
+ * address; an action that changes something stays a `Button`.
+ */
+export function ButtonLink({ kind = 'secondary', size = 'm', icon, href, children, ...rest }: ButtonLinkProps) {
+  const classes = ['rg-btn', `rg-btn--${kind}`, size === 'm' ? '' : `rg-btn--${size}`].filter(Boolean).join(' ');
+  return (
+    <a {...rest} href={href} className={classes}>
+      {icon === undefined ? null : <Glyph name={icon} />}
+      {children}
+    </a>
   );
 }

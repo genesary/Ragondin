@@ -22,6 +22,7 @@ import {
   Select,
   Sheet,
   StatusChip,
+  StatusDot,
   Table,
   Tabs,
   Toast,
@@ -34,6 +35,7 @@ import './preview.css';
 export const COMPONENTS = [
   'Glyph', 'Button', 'Input', 'Select', 'Checkbox', 'StatusChip', 'MetricChip', 'FilterChip', 'RunSwatch', 'Table',
   'Sheet', 'Inspector', 'Toast', 'InlineMessage', 'Progress', 'EmptyState', 'RankStrip', 'SegmentedControl', 'Tabs', 'TopBar',
+  'StatusDot',
 ] as const;
 
 const KINDS: ButtonKind[] = ['primary', 'secondary', 'quiet', 'destructive'];
@@ -326,12 +328,20 @@ function Column({ theme }: { theme: 'light' | 'dark' }) {
             { name: 'qwen2.5-7b', connected: true },
             { name: 'bge-embedder', connected: false },
           ]}
+          status={{ label: 'disconnected — retrying', connected: false }}
           end={
             <Button kind="quiet" size="s" icon="sun">
               Theme
             </Button>
           }
         />
+      </Block>
+
+      <Block name="StatusDot">
+        <div className="rg-preview__row">
+          <StatusDot connected />
+          <StatusDot connected={false} />
+        </div>
       </Block>
     </div>
   );

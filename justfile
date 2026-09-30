@@ -129,6 +129,14 @@ check-adr-index:
 gen-api-description:
     cargo run -q -p ragondin-api --example gen-api-description
 
+# Regenerate the UI's API types, ui/src/api/types.ts, from that golden
+# description (ADR-C36 § 2: generated, never written by hand). Run it after
+# `gen-api-description`; `npm run check`, and so `check-ui`, fails while the
+# types are stale. It needs Node but no `npm ci`: the generator is a script of
+# ui/ with no dependency (ui/ARCHITECTURE.md § The generated types).
+gen-ui-types: check-node
+    cd ui && node scripts/gen-api-types.mjs
+
 # Audit the dependency graph: RustSec advisories, licences, duplicate versions
 # and source registries. The policy is deny.toml at the workspace root, not
 # cargo-deny's defaults. Unlike the checks above, this one needs a tool that is

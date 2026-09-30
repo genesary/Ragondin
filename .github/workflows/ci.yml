@@ -188,5 +188,5 @@ jobs:
       - name: Install (lockfile only)
         run: npm ci
 
-      - name: Lint, typecheck, test, build, audit
+      - name: API types, lint, typecheck, test, build, audit
         run: npm run check
