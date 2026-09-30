@@ -5,15 +5,20 @@
 //! Each answers a listing with nothing and anything else with "not available
 //! in this build yet", naming the issue that replaces it. **They carry no
 //! behaviour and must not grow any**: each is deleted, not extended, by the
-//! issue it names — the workspace on disk (#342) for the pipelines and the
-//! settings, the benchmark manifest (#341) for the registry.
+//! issue it names. The workspace on disk (#342) replaces all three: the
+//! pipelines and the settings with its file backends, and the registry with
+//! `ragondin-api`'s `FsRegistry`, which exists but needs what that issue
+//! settles — the datasets directory the settings name, and the one call to
+//! `FsRegistry::sweep_staging` at startup before any download runs.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use ragondin_api::{
-    ApiError, BenchmarkEntry, PipelineEntry, PipelineFile, PipelineSource, Registry, Revision,
-    Settings, WorkspaceSettings,
+    ApiError, BenchmarkEntry, PipelineEntry, PipelineFile, PipelineSource, ProgressSink, Registry,
+    Revision, Settings, WorkspaceSettings,
 };
 
 fn not_yet(what: &str, issue: &str) -> ApiError {
@@ -46,8 +51,7 @@ impl PipelineSource for NoPipelines {
     }
 }
 
-/// No benchmark: the manifest and the datasets directory are read by the
-/// registry's issue (#341).
+/// No benchmark: `FsRegistry` is wired by the workspace's issue (#342).
 pub struct NoBenchmarks;
 
 #[async_trait]
@@ -56,12 +60,21 @@ impl Registry for NoBenchmarks {
         Ok(Vec::new())
     }
 
-    async fn download(&self, _name: &str) -> Result<(), ApiError> {
-        Err(not_yet("downloading a benchmark", "#341"))
+    async fn verify(&self, _name: &str) -> Result<BenchmarkEntry, ApiError> {
+        Err(not_yet("verifying a benchmark", "#342"))
     }
 
-    async fn import(&self, _name: &str, _path: &Path) -> Result<(), ApiError> {
-        Err(not_yet("importing a benchmark", "#341"))
+    async fn download(
+        &self,
+        _name: &str,
+        _progress: ProgressSink,
+        _cancel: Arc<AtomicBool>,
+    ) -> Result<BenchmarkEntry, ApiError> {
+        Err(not_yet("downloading a benchmark", "#342"))
+    }
+
+    async fn import(&self, _name: &str, _path: &Path) -> Result<BenchmarkEntry, ApiError> {
+        Err(not_yet("importing a benchmark", "#342"))
     }
 }
 
@@ -110,16 +123,22 @@ mod tests {
     #[tokio::test]
     async fn the_registry_knows_no_benchmark_and_fetches_none() {
         assert_eq!(NoBenchmarks.benchmarks().await, Ok(Vec::new()));
+        let verify = NoBenchmarks.verify("beir/scifact").await.expect_err("none");
+        assert!(is_not_yet(&verify, "#342"), "{verify:?}");
         let download = NoBenchmarks
-            .download("beir/scifact")
+            .download(
+                "beir/scifact",
+                Arc::new(|_| {}),
+                Arc::new(AtomicBool::new(false)),
+            )
             .await
             .expect_err("none");
-        assert!(is_not_yet(&download, "#341"), "{download:?}");
+        assert!(is_not_yet(&download, "#342"), "{download:?}");
         let import = NoBenchmarks
             .import("mine", Path::new("/data/mine"))
             .await
             .expect_err("none");
-        assert!(is_not_yet(&import, "#341"), "{import:?}");
+        assert!(is_not_yet(&import, "#342"), "{import:?}");
     }
 
     #[tokio::test]

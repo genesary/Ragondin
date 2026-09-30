@@ -22,7 +22,7 @@ charter.
 | `src/bench.rs` | Evaluates a configuration against a benchmark and records the run |
 | `src/binding.rs` | `--remote <family>/<name>=<uri>`: the bindings, parsed and checked (ADR-C32 § 2) |
 | `src/wiring.rs` | A node's `Params` on one side, a constructed component on the other; a binding's channel, and the `Remote` adapter over it |
-| `src/ui/` | `ragondin ui`, behind the `ui` feature: the loopback rule (`address.rs`), the embedded assets (`assets.rs`), `Launcher` (`launcher.rs`), the temporary empty backends (`stopgap.rs`), and the handler that wires them (`mod.rs`) |
+| `src/ui/` | `ragondin ui`, behind the `ui` feature: the loopback rule (`address.rs`), the embedded asset table `ragondin-api` serves (`assets.rs`), `Launcher` (`launcher.rs`), the temporary empty backends (`stopgap.rs`), and the handler that wires them (`mod.rs`) |
 | `build.rs` | Under `ui`: what `rust-embed` embeds — `ui/dist/`, or a generated notice page — and the commit the build identity names |
 | `tests/cli.rs` | `validate` and the rest of the command line, exercised as a process |
 | `tests/compare.rs` | `compare`, exercised as a process, against runs written straight into a store |
@@ -35,7 +35,6 @@ charter.
 | `tests/ui.rs` | `ragondin ui`, exercised as a process: the loopback refusal, the assets and the API over a real connection, the capabilities, the release assertion; and the lean build's refusal |
 | `tests/support/remote.rs` | Fake `Remote` services, `tonic` servers over in-test components, for the tests that bind one; shared with `src/wiring.rs`'s tests |
 | `tests/support/ui.rs` | A running `ragondin ui` and a hand-written HTTP/1.1 client, for `tests/ui.rs` |
-| `tests/fixtures/ui-dist/` | A built UI as `vite build` lays one out, for `src/ui/assets.rs`'s tests |
 
 **Five subcommands are declared; four are implemented.** `validate` loads a
 configuration and prints its content hash. `compare` reads two runs already in
@@ -325,7 +324,10 @@ release.
   to planning, as above. The answers never enter identity (P4). A bound
   reranker's, context builder's and generator's read is
   `wiring::service_identity`, the function `ragondin ui`'s probe calls too,
-  so the probe and the run read an identity by one code path.
+  so for those three families the probe and the run read an identity by one
+  code path. A bound embedder's run-time read goes through `wiring::embedder`
+  instead, the adapter the `dense` node is built over, and the probe's
+  embedder arm is its own.
 - **A `Remote` component is bound on the command line, never in the
   configuration (ADR-C32 § 1–§ 3).** `bench --remote <family>/<name>=<uri>`,
   repeatable, binds an `impl:` name — or, for `embedder`, an `embedder:`
@@ -401,7 +403,7 @@ browser.
 - **The lean build declares it and refuses it.** `Command::Ui` exists in
   every build, so the subcommand set is one surface (ADR-C15); without the
   feature its arm bails with *this build does not carry the UI; rebuild with
-  `--features ui`*, and nothing else of the UI is compiled — no `axum`, no
+  `--features ui`*, and nothing else of the UI is compiled — no
   `rust-embed`, no `ragondin-api`. `tests/ui.rs` asserts the refusal in the
   default build.
 - **Loopback only, and a refusal that names the way round it.** `--bind`
@@ -430,22 +432,29 @@ browser.
   command does, keeps the printed address working. Nothing needs the set
   today. If one does, it is that crate's change, with its `Host` and `Origin`
   checks taking a list.
-- **The router is `ragondin-api`'s, and served as it is.** The handler builds
-  `Backends`, a `ServerConfig` and the assets `Router`, calls
-  `ragondin_api::router`, and hands the returned `Server` to `axum::serve`.
-  That function nests the API beside the assets and applies its four layers
-  — build identity, content security policy, `Host`, `Origin` — last, over
-  both. This crate adds no route and never wraps the `Server` in a router of
-  its own, which is the one way to answer outside those layers
-  (`runtime/ragondin-api/ARCHITECTURE.md` § The layers).
-- **The build identity is `<crate version>+<commit>`**, the commit being
-  `git rev-parse --short=12 HEAD` as `build.rs` read it, or `unknown` outside
-  a git checkout. A commit, rather than a digest of the embedded assets,
-  because the UI compares builds to know whether the API it talks to is the
-  one it was built with, and a commit moves with either side; a version alone
-  would not move at all between releases. What a commit does not see is an
-  uncommitted change, which only a developer's own build carries. `build.rs`
-  reruns when `HEAD`, the branch it names or `packed-refs` changes.
+- **The server is `ragondin-api`'s, end to end, and this crate names no HTTP
+  stack.** The handler builds `Backends`, a `ServerConfig` and the embedded
+  asset table (`assets::Embedded`, implementing `ragondin_api::Assets`), calls
+  `ragondin_api::router`, and hands the returned `Server` and the listener to
+  `ragondin_api::serve`. That crate writes every route — the API, and the
+  single-page fallback over the assets — and applies its four layers (build
+  identity, content security policy, `Host`, `Origin`) last, over all of
+  them (`runtime/ragondin-api/ARCHITECTURE.md` § The assets). `axum` is not a
+  dependency of this crate, as ADR-C36 § 6 keeps it to `ragondin-api` — the
+  product owner's ruling on this issue's review — so no route can be added
+  here outside the envelope without a manifest change a reviewer sees.
+- **The build identity is `<crate version>+<commit>`, with `-dirty` when the
+  tree had uncommitted changes**, the commit being `git rev-parse --short=12
+  HEAD` as `build.rs` read it, or `unknown` outside a git checkout. A commit,
+  rather than a digest of the embedded assets, because the UI compares builds
+  to know whether the API it talks to is the one it was built with, and a
+  commit moves with either side; a version alone would not move at all
+  between releases. `-dirty` is `git status --porcelain` printing anything —
+  a modified, staged or untracked-and-not-ignored file — when `build.rs` ran:
+  it marks the identity a commit cannot vouch for. `build.rs` reruns when
+  `HEAD`, the branch it names, `packed-refs` or the index changes, so a commit
+  or a `git add` refreshes both parts; an edit left unstaged after the last
+  run does not, and a developer's build can then say clean while it is not.
 
 ### The assets and the notice page
 
@@ -471,17 +480,18 @@ than the assets.
   and a rebuilt or deleted `dist/` reruns the script. Without it, `build.rs`
   watches `ui/`, since `dist/` appearing is a change there, and a path that
   does not exist would rerun the script — and recompile this crate — on every
-  build.
-- **Serving.** `/` is `index.html`. A path naming an embedded file is that
-  file, with its content type from a table of the extensions a Vite build
-  emits (`text/html`, `text/javascript` and `text/css` with `charset=utf-8`,
-  `image/svg+xml`, `font/woff2`, …; anything else is
-  `application/octet-stream`) — a table, not `rust-embed`'s `mime-guess`, the
-  set being small and fixed. Any other path whose last segment has no `.` is
-  a client-side route, answered with `index.html` so the UI routes itself;
-  any other path is a missing file and a `404`, since answering a `<script>`
-  tag with HTML hides the error. `GET` and `HEAD` only. Lookups are in the
-  embedded table, never on disk.
+  build. **The cost**: cargo scans a watched directory recursively and cannot
+  watch a directory's own entry, so while `dist/` is absent each build walks
+  `ui/node_modules/` too, when it is installed. Narrowing to `ui/index.html`
+  and `ui/package.json` would miss `dist/` appearing, since `npm run build`
+  touches neither. The walk happens only in the window between `npm ci` and
+  `npm run build`, and never in CI's Rust job, which installs no Node module.
+- **Serving is `ragondin-api`'s.** This crate hands over the table:
+  `Embedded::get(path)` answers the embedded file at `path` with
+  `ragondin_api::content_type_for(path)`. The single-page fallback, the `404`
+  for a missing file, `GET` and `HEAD` only, and the lookup of the path as
+  sent, never resolved, are that crate's, and tested there against a fake
+  table.
 - **The notice page** carries no `<style>` and no `style=`, which the content
   security policy would refuse, and a `<meta name="ragondin-ui"
   content="not-built">` marker: the release assertion's test for it.
@@ -501,14 +511,17 @@ The backends `ragondin-api` consumes, constructed here:
 |---|---|---|
 | `RunStore` | `FileSystemRunStore` over `<workspace>/runs`, where `bench --store <workspace>/runs` writes | — |
 | `PipelineSource` | `stopgap::NoPipelines`: lists nothing, refuses a read or a write | the workspace on disk (#342) |
-| `Registry` | `stopgap::NoBenchmarks`: lists nothing, refuses a download or an import | the benchmark manifest (#341) |
+| `Registry` | `stopgap::NoBenchmarks`: lists nothing, refuses a verification, a download or an import | `ragondin-api`'s `FsRegistry`, wired by the workspace on disk (#342) |
 | `WorkspaceSettings` | `stopgap::NoSettings`: no datasets directory, no binding; refuses a write | the workspace on disk (#342) |
 | `Launcher` | `launcher::BinaryLauncher` | extended by the launcher (#353) |
 
 **The three stopgaps are temporary, and carry no behaviour**: a listing is
 empty, anything else is `backend_failed` saying it is not available in this
 build yet and naming the issue that replaces it. Each is deleted by that
-issue, not extended. `--workspace` is required, and must be a directory; the
+issue, not extended. `FsRegistry` exists (#341), but is not wired here:
+it needs the datasets directory the workspace's settings name, and one call
+to `FsRegistry::sweep_staging` at startup before any download runs — both
+#342's, and no route calls the registry yet. `--workspace` is required, and must be a directory; the
 argument-less default and `workspace.toml` are #342's.
 
 ### What `Launcher` answers here
@@ -568,24 +581,19 @@ held no CLI parser and no CLI test harness before this crate needed one.
 A third enters with `ragondin ui`, admitted by ADR-C36 § 6 by name:
 
 - **`rust-embed`, the UI's assets embedded in the binary**, behind the `ui`
-  feature and nowhere else. `default-features = false` with `debug-embed`
-  alone, so a debug build embeds as a release build does (§ The ui
-  subcommand). No `interpolate-folder-path` (its dependencies' licence is not
-  allowed; the build script writes the derive instead) and no `mime-guess`
-  (the content types are a table here). No other entry embeds files. It
-  brings a second `sha2`, 0.11 beside the workspace's 0.10, through
-  `rust-embed-utils`; `deny.toml` warns on duplicate versions and does not
-  refuse them, and the copy is reached from this binary's `ui` build only.
+  feature and nowhere else. `~8.11`, `default-features = false` with
+  `debug-embed` alone, so a debug build embeds as a release build does
+  (§ The ui subcommand). No `interpolate-folder-path` (its dependencies'
+  licence is not allowed; the build script writes the derive instead) and no
+  `mime-guess` (no runtime MIME guesser; `ragondin-api`'s fixed table). No
+  other entry embeds files. **Held below 8.12** until the workspace's `sha2`
+  moves to 0.11: 8.12's `rust-embed-utils` depends on `sha2` 0.11, a second
+  copy of the `digest` family beside the 0.10 every other crate uses, and
+  8.11 brings no duplicate (`cargo tree -d` lists no `sha2`).
 
-Three existing entries become optional normal dependencies behind `ui`, none
-with its feature list touched. **`ragondin-api`**, the crate whose router the
-subcommand serves and whose traits `src/ui/` implements. **`axum`**, for the
-two things that router leaves to the binary: the assets `Router` it takes and
-`axum::serve`, which listens with the `Server` it returns. ADR-C36 § 6 admits
-the entry "used by `ragondin-api` only"; the binary names it for those two
-things and no route, handler or layer of its own, which is the shape
-`ragondin-api`'s `router` and `Server` prescribe — the root `Cargo.toml`
-comment says so beside the entry. **`async-trait`**, already a
+Two existing entries become optional normal dependencies behind `ui`, none
+with its feature list touched. **`ragondin-api`**, the crate that builds and
+serves the server and whose traits `src/ui/` implements. **`async-trait`**, already a
 dev-dependency for the fakes, because `Launcher` and the three stopgap traits
 are `async_trait` traits (frozen decision). `tokio` gains no feature: the
 workspace entry's `net` carries the listener.

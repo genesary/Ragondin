@@ -3,14 +3,15 @@
 //!
 //! The handler is the composition root's, and thin: it checks the address,
 //! binds the listener, constructs the backends `ragondin-api` consumes, hands
-//! them in with the embedded assets, and serves what comes back. The router,
-//! its endpoints and its four security layers are `ragondin-api`'s, applied
-//! last over the API and the assets alike; the `Server` it returns is served
-//! as it is, never wrapped in a router of this crate's, which would answer
-//! outside those layers.
+//! them in with the embedded assets as data, and hands what comes back to
+//! `ragondin_api::serve`. The router, its endpoints, the routes that serve
+//! the assets and the four security layers are all `ragondin-api`'s, applied
+//! last over the API and the assets alike; this crate names no HTTP stack at
+//! all, so it cannot add a route outside them.
 //!
 //! - [`address`] — the loopback rule, and its refusal.
-//! - [`assets`] — the embedded UI, or the notice page, at `/`.
+//! - [`assets`] — the embedded UI, or the notice page, as `ragondin-api`'s
+//!   asset table.
 //! - [`launcher`] — `Launcher`: capabilities, the identity probe.
 //! - [`stopgap`] — the empty backends the file backends replace.
 
@@ -78,29 +79,39 @@ pub async fn run(request: &Request<'_>) -> Result<()> {
             build: build_identity(),
             workspace: request.workspace.to_path_buf(),
         },
-        assets::router(),
+        Arc::new(assets::Embedded),
     );
 
     println!(
         "ragondin ui: serving {} at http://{served}/",
         request.workspace.display()
     );
-    axum::serve(listener, server.into_make_service())
+    ragondin_api::serve(listener, server)
         .await
         .context("the server stopped")
 }
 
 /// The build's identity: the crate version, then the commit `build.rs` read,
-/// e.g. `0.0.0+3f9a1c2b7d4e`, or `0.0.0+unknown` outside a git checkout. The
-/// UI compares it with the one it loaded under and reloads when they differ
-/// (ADR-C36 § 1); a commit changes with any committed change to the API or to
-/// the UI it embeds, which a version alone would not.
+/// with `-dirty` when the tree had uncommitted changes as it ran — e.g.
+/// `0.0.0+3f9a1c2b7d4e` or `0.0.0+3f9a1c2b7d4e-dirty` — or `0.0.0+unknown`
+/// outside a git checkout. The UI compares it with the one it loaded under
+/// and reloads when they differ (ADR-C36 § 1); a commit changes with any
+/// committed change to the API or to the UI it embeds, which a version alone
+/// would not, and `-dirty` says when it cannot be trusted to.
 fn build_identity() -> String {
-    format!(
-        "{}+{}",
+    identity(
         env!("CARGO_PKG_VERSION"),
-        env!("RAGONDIN_BUILD_COMMIT")
+        env!("RAGONDIN_BUILD_COMMIT"),
+        env!("RAGONDIN_BUILD_DIRTY") == "true",
     )
+}
+
+/// `<version>+<commit>`, with `-dirty` appended when `dirty`.
+fn identity(version: &str, commit: &str, dirty: bool) -> String {
+    match dirty {
+        true => format!("{version}+{commit}-dirty"),
+        false => format!("{version}+{commit}"),
+    }
 }
 
 #[cfg(test)]
@@ -132,8 +143,25 @@ mod tests {
         assert_eq!(version, env!("CARGO_PKG_VERSION"));
         assert!(
             commit == "unknown"
-                || (commit.len() == 12 && commit.bytes().all(|byte| byte.is_ascii_hexdigit())),
+                || (commit.len() == 12 && commit.bytes().all(|byte| byte.is_ascii_hexdigit()))
+                || commit
+                    .strip_suffix("-dirty")
+                    .is_some_and(|sha| sha.len() == 12),
             "{commit}"
         );
+    }
+
+    #[test]
+    fn a_tree_with_uncommitted_changes_is_marked_dirty() {
+        assert_eq!(
+            identity("1.2.3", "3f9a1c2b7d4e", false),
+            "1.2.3+3f9a1c2b7d4e"
+        );
+        assert_eq!(
+            identity("1.2.3", "3f9a1c2b7d4e", true),
+            "1.2.3+3f9a1c2b7d4e-dirty"
+        );
+        // Outside a checkout there is no tree to call dirty.
+        assert_eq!(identity("1.2.3", "unknown", false), "1.2.3+unknown");
     }
 }

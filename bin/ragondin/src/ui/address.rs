@@ -36,6 +36,11 @@ const LOOPBACK: [(&str, IpAddr); 2] = [
 pub fn listen_address(bind: Option<&str>, port: Option<u16>) -> Result<SocketAddr> {
     let port = port.unwrap_or(DEFAULT_PORT);
     let bind = bind.unwrap_or(LOOPBACK[0].0);
+    // Under `--port 0` no port is known yet, and `ssh -L 0:…` forwards none.
+    let shown = match port {
+        0 => "<port>".to_owned(),
+        port => port.to_string(),
+    };
     match LOOPBACK.iter().find(|(spelling, _)| *spelling == bind) {
         Some((_, ip)) => Ok(SocketAddr::new(*ip, port)),
         None => bail!(
@@ -43,7 +48,7 @@ pub fn listen_address(bind: Option<&str>, port: Option<u16>) -> Result<SocketAdd
              or `::1`), because it has no authentication yet, and anyone who could reach \
              another address could read the workspace and launch runs. To use it from another \
              machine, run it there on loopback and forward the port over SSH: \
-             `ssh -L {port}:127.0.0.1:{port} <host>`, then open http://127.0.0.1:{port}/ \
+             `ssh -L {shown}:127.0.0.1:{shown} <host>`, then open http://127.0.0.1:{shown}/ \
              here"
         ),
     }
@@ -104,6 +109,18 @@ mod tests {
                 "{error}"
             );
         }
+    }
+
+    #[test]
+    fn under_port_zero_the_tunnel_names_a_placeholder_rather_than_port_zero() {
+        let error = refusal("0.0.0.0", Some(0));
+
+        assert!(
+            error.contains("ssh -L <port>:127.0.0.1:<port> <host>"),
+            "{error}"
+        );
+        assert!(error.contains("http://127.0.0.1:<port>/"), "{error}");
+        assert!(!error.contains(":0"), "{error}");
     }
 
     #[test]

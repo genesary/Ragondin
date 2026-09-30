@@ -102,10 +102,15 @@ impl Response {
 
 /// `GET path` from the server at `authority`, with `Host: authority`.
 pub fn get(authority: &str, path: &str) -> Response {
+    get_as(authority, authority, path)
+}
+
+/// `GET path` from the server at `authority`, naming `host` as the `Host`.
+pub fn get_as(authority: &str, host: &str, path: &str) -> Response {
     let mut stream = TcpStream::connect(authority).expect("the server accepts a connection");
     write!(
         stream,
-        "GET {path} HTTP/1.1\r\nHost: {authority}\r\nConnection: close\r\n\r\n"
+        "GET {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n"
     )
     .expect("the request is written");
     let mut raw = Vec::new();

@@ -95,19 +95,16 @@ prost = "0.13"                                     # protobuf messages for the w
 tonic-build = "0.12"                               # build-dependency of ragondin-proto only: generates the stubs (ADR-C24)
 protox = "0.8"                                     # build-dependency of ragondin-proto only: compiles the .proto, no protoc (ADR-C34)
 
-# The UI server's router, admitted by ADR-C36 § 6. `ragondin-api` builds the
-# router with it; `bin/ragondin`, behind its `ui` feature, names it for the two
-# things `ragondin-api` leaves to the binary — the embedded assets, handed in
-# as a `Router`, and `axum::serve` over the loopback listener — and adds no
-# route of its own (`bin/ragondin/ARCHITECTURE.md` § The ui subcommand). The 0.7 line, because `tonic` 0.12 already resolves `axum` 0.7.9 and
+# The UI server's router, admitted by ADR-C36 § 6 and used by `ragondin-api`
+# only. The 0.7 line, because `tonic` 0.12 already resolves `axum` 0.7.9 and
 # `hyper` 1 — `cargo tree -i hyper` shows one `hyper` in `Cargo.lock` with this
 # entry in place, so no second server stack enters the lockfile. Moving to
 # another line moves with `tonic`, and escalates. `default-features = false`,
 # and three features:
 #
 #   - `json`: the extractor and response every endpoint uses;
-#   - `tokio` and `http1`: `axum::serve`, the listener `ragondin ui` binds on
-#     the loopback. They are named now, in the pull request that creates the
+#   - `tokio` and `http1`: `axum::serve`, inside `ragondin_api::serve`, over
+#     the listener `ragondin ui` binds on the loopback. They are named now, in the pull request that creates the
 #     entry, because appending a feature to an existing entry later is a
 #     change to every crate naming it and escalates (AGENTS.md § Rules of
 #     engagement), while ADR-C36 § 6 leaves each entry's features to this
@@ -141,9 +138,14 @@ schemars = "1"
 # `option-ext`, whose MPL-2.0 is not on `deny.toml`'s allow list. The binary's
 # build script writes the derive, with the folder it chose — `ui/dist/`, or a
 # generated notice page — as a literal (ADR-C36 § 5: the Rust build never needs
-# Node). No `mime-guess`: the binary maps the extensions a Vite build emits to
-# their content types itself, and one table is less than a feature.
-rust-embed = { version = "8", default-features = false, features = ["debug-embed"] }
+# Node). No `mime-guess` feature: no runtime `mime_guess`, but a fixed table
+# `ragondin-api` controls (`content_type_for`). (8.12's `rust-embed-impl`
+# pulls `mime_guess` at build time whatever the features; 8.11's does not.)
+#
+# Held below 8.12 until the workspace's `sha2` moves to 0.11: 8.12's
+# `rust-embed-utils` depends on `sha2` 0.11, a second copy of the whole
+# `digest` family beside the 0.10 every other crate here uses.
+rust-embed = { version = "~8.11", default-features = false, features = ["debug-embed"] }
 
 # The workspace's HTTP client, decided in ADR-C33 § 2, and today reached by two
 # crates: `testkit/ragondin-generator-service`, optional, behind its `service`

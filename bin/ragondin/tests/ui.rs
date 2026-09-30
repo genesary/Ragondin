@@ -159,6 +159,24 @@ mod with_the_feature {
         assert_eq!(runs.body, r#"{"runs":[],"unreadable":[]}"#);
     }
 
+    /// The envelope `ragondin-api` applies reaches the page this binary
+    /// embeds: the content security policy and the build identity on `/`, and
+    /// a foreign `Host` refused there as on the API.
+    #[test]
+    fn the_embedded_page_is_served_inside_the_envelope() {
+        let server = Server::start(&workspace("envelope"), &[]);
+
+        let page = http::get(server.authority(), "/");
+        assert_eq!(
+            page.header("content-security-policy"),
+            Some("default-src 'self'; frame-ancestors 'none'")
+        );
+        assert!(page.header("x-ragondin-build").is_some(), "{page:?}");
+
+        let refused = http::get_as(server.authority(), "evil.example", "/");
+        assert_eq!(refused.status, 421, "{refused:?}");
+    }
+
     #[test]
     fn every_response_carries_the_build_identity_the_workspace_reports() {
         let server = Server::start(&workspace("build_identity"), &[]);

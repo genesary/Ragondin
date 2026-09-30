@@ -17,11 +17,11 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use axum::body::Body;
 use axum::http::{Request, Response};
-use axum::Router;
 use ragondin_api::{
-    router, ApiError, Backends, BenchmarkEntry, Capabilities, FamilyCapabilities, Job, JobState,
-    Launcher, PipelineEntry, PipelineFile, PipelineSource, ProgressSink, Registry, Revision,
-    Server, ServerConfig, ServiceBinding, ServiceIdentity, Settings, Submission, WorkspaceSettings,
+    content_type_for, router, ApiError, Asset, Assets, Backends, BenchmarkEntry, Capabilities,
+    FamilyCapabilities, Job, JobState, Launcher, PipelineEntry, PipelineFile, PipelineSource,
+    ProgressSink, Registry, Revision, Server, ServerConfig, ServiceBinding, ServiceIdentity,
+    Settings, Submission, WorkspaceSettings,
 };
 use ragondin_experiments::{FileSystemRunStore, Run, RunId, RunStore, RunStoreError};
 
@@ -246,16 +246,20 @@ pub fn app(store: FakeRunStore) -> Server {
 }
 
 pub fn app_with(store: FakeRunStore, launcher: FakeLauncher) -> Server {
-    app_serving(store, launcher, Router::new())
+    app_serving(store, launcher, Arc::new(ragondin_api::NoAssets))
 }
 
-/// The router with `assets` mounted beside the API, as the binary mounts the
+/// The router with `assets` served beside the API, as the binary serves the
 /// UI's pages.
-pub fn app_with_assets(assets: Router) -> Server {
-    app_serving(FakeRunStore::default(), FakeLauncher::default(), assets)
+pub fn app_with_assets(assets: impl Assets + 'static) -> Server {
+    app_serving(
+        FakeRunStore::default(),
+        FakeLauncher::default(),
+        Arc::new(assets),
+    )
 }
 
-fn app_serving(store: FakeRunStore, launcher: FakeLauncher, assets: Router) -> Server {
+fn app_serving(store: FakeRunStore, launcher: FakeLauncher, assets: Arc<dyn Assets>) -> Server {
     router(
         Backends {
             runs: Arc::new(store),
@@ -286,6 +290,54 @@ pub async fn send(app: Server, request: Request<Body>) -> Response<Body> {
     app.oneshot(request)
         .await
         .expect("the server is infallible")
+}
+
+/// The page [`FakeAssets::built`] holds at `index.html`.
+pub const INDEX_PAGE: &str = "<!doctype html><title>fixture</title><div id=\"root\"></div>";
+
+/// An asset table in memory, as `vite build` lays one out, recording every
+/// path it was asked for.
+#[derive(Clone, Default)]
+pub struct FakeAssets {
+    files: BTreeMap<&'static str, &'static str>,
+    asked: Arc<Mutex<Vec<String>>>,
+}
+
+impl FakeAssets {
+    /// A built UI: an index page, a script, a stylesheet and an icon.
+    pub fn built() -> Self {
+        Self {
+            files: BTreeMap::from([
+                ("index.html", INDEX_PAGE),
+                ("assets/index-abc123.js", "console.log(1);"),
+                ("assets/index-abc123.css", "body{}"),
+                ("favicon.svg", "<svg/>"),
+            ]),
+            asked: Arc::default(),
+        }
+    }
+
+    /// Every path the router asked for, in order.
+    pub fn asked(&self) -> Vec<String> {
+        self.asked.lock().unwrap().clone()
+    }
+}
+
+impl Assets for FakeAssets {
+    fn get(&self, path: &str) -> Option<Asset> {
+        self.asked.lock().unwrap().push(path.to_owned());
+        self.files.get(path).map(|text| Asset {
+            bytes: text.as_bytes().into(),
+            content_type: content_type_for(path),
+        })
+    }
+}
+
+pub async fn body(response: Response<Body>) -> String {
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    String::from_utf8(bytes.to_vec()).expect("the body is UTF-8")
 }
 
 pub async fn json(response: Response<Body>) -> serde_json::Value {

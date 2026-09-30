@@ -19,8 +19,10 @@ the response types, the typed errors, and the traits the service consumes.
 
 | Piece | Role |
 |---|---|
-| `router` | Builds the whole server from `Backends`, a `ServerConfig` and the assets `Router`, all passed in by the binary, wraps it in the layers last, and returns a `Server` |
-| `Server` | The enveloped server: what `axum::serve` listens with, and nothing a route can be added to |
+| `router` | Builds the whole server from `Backends`, a `ServerConfig` and the UI's `Assets`, all passed in by the binary, wraps it in the layers last, and returns a `Server` |
+| `Server` | The enveloped server: what `serve` listens with, and nothing a route can be added to |
+| `serve` | Listens with a `Server` on the listener the binary bound: the one place the server meets a socket, so the binary names no HTTP stack |
+| `assets` | `Assets`, the table of the UI's files the binary hands in as data, and the routes that serve it: the single-page fallback, `GET`/`HEAD` only, `content_type_for` |
 | `Backends` | The five backends, each an `Arc<dyn …>`: `RunStore`, `PipelineSource`, `Registry`, `WorkspaceSettings`, `Launcher` |
 | `backends` | The four traits this crate defines, and the values they exchange |
 | `response` | Every type the API serializes — the response bodies and `Problem` |
@@ -40,7 +42,8 @@ explicitly; `tests/layers.rs` pins both spellings.) A path that only begins
 with the same letters, such as `/apix`, is not under `/api`, and the assets
 answer it. Nothing here binds a port:
 the listener, the loopback-only rule and the embedded assets themselves are
-the binary's, which hands the assets in as a `Router`.
+the binary's, which hands the listener to `serve` and the assets in as data
+(§ The assets).
 
 ## INV-12: this crate reaches no engine and no component
 
@@ -279,6 +282,41 @@ document § 8 lists seven codes and leaves the rest to the implementation:
   ids instead, the design document § 8 makes them a flag in a `200` response,
   not an error; that endpoint decides which it is.
 
+## The assets
+
+The UI's files reach the server as **data, not as a `Router`**: an `Assets`
+table — `get(path) -> Option<Asset>`, an `Asset` being bytes and a content
+type — that the binary implements over its `rust-embed` table (or its notice
+page) and hands to `router`. The routes that serve it are written here, beside
+the envelope that must cover them, and `serve` owns `axum::serve`. So `axum`
+is used by this crate only, as ADR-C36 § 6 says — the product owner's ruling
+on #339's review, which had first handed the assets in as a `Router` and so
+put `axum` in the binary — and the binary, naming no HTTP stack, has no way
+to add a route outside the layers short of a manifest change a reviewer sees.
+
+What a request outside `/api` gets, from `src/assets.rs`:
+
+- **`GET` and `HEAD` only.** Any other method is `405` with `Allow: GET, HEAD`
+  (a plain response, not a problem body: it is not the API's).
+- **`/` is `index.html`.** A path naming a file of the table is that file,
+  with the content type the table gives — the binary's gives
+  `content_type_for(path)`, a fixed table of the extensions a Vite build emits,
+  text types in UTF-8, anything else `application/octet-stream`.
+- **The single-page fallback**: any other path whose last segment has no `.`
+  is a client-side route and is answered with `index.html`, so the UI routes
+  itself. Any other path is a missing file and a `404`: a `<script>` tag
+  answered with HTML would hide the error.
+- **The path is looked up as sent**, without its leading `/`, never resolved
+  or percent-decoded: `..` is a key the table does not hold, so a table in
+  memory cannot be walked out of. `/assets/../../etc/passwd` has no `.` in its
+  last segment and is answered with the index page, never a file.
+- **`/api` never falls through**: every path under it is the API's
+  (§ What lives here), whatever the table holds.
+- **`NoAssets`** is the empty table: every path outside `/api` is a `404`.
+
+`tests/assets.rs` pins each rule against a fake table; `tests/server.rs`
+serves one over a real loopback listener with `serve`.
+
 ## The layers
 
 The server's defence of its origin (ADR-C36 § 1), as Tower layers on the
@@ -286,10 +324,9 @@ router — the network envelope, which is where ADR-C10 puts Tower, and the only
 place this crate uses it: no handler and no trait is a `tower::Service`
 (INV-11). Each is `axum::middleware::from_fn_with_state`, outermost first.
 
-**This crate owns the whole envelope, and applies it last.** `router` takes
-the assets — the UI's pages and the fallback that serves them on every
-client-side route — as a `Router`, nests the API under `/api` beside them, and
-only then wraps the result in the four layers. The reason is how axum's
+**This crate owns the whole envelope, and applies it last.** `router` builds
+the routes that serve the UI's assets (§ The assets), nests the API under
+`/api` beside them, and only then wraps the result in the four layers. The reason is how axum's
 `Router::layer` works: it wraps the routes that exist when it is called, and a
 route merged or a fallback set afterwards answers outside the layers — a
 foreign `Host` accepted, no content security policy, no build identity. The
@@ -300,19 +337,21 @@ to be remembered.
 **And it returns a `Server`, not a `Router`**, so the order cannot be undone
 after the fact. `Server` is a newtype with no method that adds a route,
 merges a router or sets a fallback, and no conversion back into a `Router`;
-it offers `into_make_service()` for `axum::serve`, and `tower::Service` over
-one request, which is what a connection calls (the envelope, where ADR-C10
-puts Tower; INV-11 is about components). Two `compile_fail` doc tests on
-`Server` prove that `.route(…)` and `Router::merge(server)` do not compile,
-and `tests/server.rs` proves by compiling that `axum::serve` accepts it. The
+it offers `into_make_service()`, which `serve` hands to `axum::serve`, and
+`tower::Service` over one request, which is what a connection calls (the
+envelope, where ADR-C10 puts Tower; INV-11 is about components). Two
+`compile_fail` doc tests on `Server` prove that `.route(…)` and
+`Router::merge(server)` do not compile, and `tests/server.rs` serves one with
+`serve` over a real connection. The
 alternative, a public `envelope(Router, &ServerConfig)` documented as "apply
 last", was rejected because it is correct only while the binary never adds a
 route after calling it, and nothing would say when it did — the same hole a
-returned `Router` leaves. What remains possible is deliberate: the binary can
+returned `Router` leaves. What remains possible is deliberate: a caller can
 write a second router of its own around a `Server` and answer routes it adds
-itself, which is a new server outside this envelope written by hand, and a
-diff a reviewer sees. `tests/layers.rs` checks that a route and a fallback in
-the assets carry both headers and are refused on a foreign `Host`.
+itself — a new server outside this envelope written by hand, which in the
+binary would first need `axum` in its manifest. `tests/layers.rs` checks that
+the index page and a client-side route carry both headers and are refused on
+a foreign `Host`.
 
 1. **The build identity**, `x-ragondin-build: <ServerConfig::build>`, on every
    response — refusals and 404s included — so the UI can compare builds on
@@ -335,8 +374,10 @@ the assets carry both headers and are refused on a foreign `Host`.
    This is the defence against DNS rebinding. **One authority, today**: a
    browser reaching the server through an SSH tunnel as `localhost:<port>`, or
    on a local port other than the one served, sends a `Host` the check
-   refuses. Whether `ServerConfig::served` becomes a set of authorities is the
-   binary's to decide when it binds the listener (#339).
+   refuses. The binary decided to keep one (#339): the served authority is the
+   listener's own address, the one `ragondin ui` prints, and a tunnel that
+   forwards the same port keeps it (`bin/ragondin/ARCHITECTURE.md` § The ui
+   subcommand says why a set is not needed yet).
 4. **The `Origin` check**, on `POST`, `PUT`, `PATCH` and `DELETE`: `Origin`
    must be `http://` followed by `ServerConfig::served`; otherwise
    `origin_refused`. **A missing `Origin` is refused**, a choice made here: a
@@ -365,6 +406,7 @@ beside it: the two cannot drift silently.
 All admitted by ADR-C36 § 6, each argued in its root `Cargo.toml` comment:
 `axum` on the 0.7 line `tonic` 0.12 already resolves (`default-features =
 false`; `json` for the endpoints, and `tokio` and `http1` for `axum::serve`,
+inside `serve`,
 named now because appending a feature to the entry later would escalate — one
 `hyper` in `Cargo.lock`, which no core crate reaches), `schemars`, and `tokio`,
 whose workspace entry now names `net`, `sync` and `time`. `tower`, the

@@ -68,12 +68,12 @@ ragondin-stub = { workspace = true, optional = true }
 # the composition root, over a channel built here (ADR-C32 § 3).
 ragondin-remote = { workspace = true, optional = true }
 tonic = { workspace = true, optional = true }
-# The UI server, behind the `ui` feature below (ADR-C36 § 1): the API crate
-# whose router this binary listens with, `axum` for the two things that router
-# leaves to the binary — the assets `Router` and `axum::serve` — and
-# `rust-embed` for the assets themselves (ADR-C36 § 6).
+# The UI server, behind the `ui` feature below (ADR-C36 § 1): the API crate,
+# which builds the server and listens with it (`ragondin_api::serve`), and
+# `rust-embed` for the assets it serves, handed in as data (ADR-C36 § 6). No
+# `axum`: ADR-C36 § 6 keeps it to `ragondin-api`, and this crate names no HTTP
+# stack at all.
 ragondin-api = { workspace = true, optional = true }
-axum = { workspace = true, optional = true }
 rust-embed = { workspace = true, optional = true }
 # `Launcher` is an `async_trait` trait (frozen decision), and the binary
 # implements it under `ui`. Also a dev-dependency, below, for the fakes.
@@ -157,4 +157,4 @@ remote = [
 # the subcommand and refuses it, naming the feature. It gates no component, so
 # the capabilities it reports are the other features'. No `tokio` feature
 # beyond the workspace entry's: `net` already carries the listener.
-ui = ["dep:ragondin-api", "dep:axum", "dep:rust-embed", "dep:async-trait"]
+ui = ["dep:ragondin-api", "dep:rust-embed", "dep:async-trait"]
