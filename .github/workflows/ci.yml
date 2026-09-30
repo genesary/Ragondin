@@ -162,3 +162,31 @@ jobs:
         uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
         with:
           arguments: --all-features
+
+  # The front end's gates (ui/ARCHITECTURE.md § The gates), in a job of their
+  # own beside `check` rather than inside it: the Rust job's runtime is
+  # unchanged, and it never needs Node (ADR-C36 § 5). `npm run check` is the
+  # same script `just check-ui` and a contributor run.
+  ui:
+    name: ui · lint · typecheck · test · build · audit
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ui
+    steps:
+      - uses: actions/checkout@v4
+
+      # The Node major is pinned once, in ui/.node-version. The cache is npm's
+      # download cache (~/.npm), keyed on the lockfile; node_modules is never
+      # cached, so `npm ci` always installs exactly what the lockfile says.
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: ui/.node-version
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Install (lockfile only)
+        run: npm ci
+
+      - name: Lint, typecheck, test, build, audit
+        run: npm run check

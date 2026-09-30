@@ -171,5 +171,15 @@ calibrate-generation:
     RAGONDIN_GENERATOR_SERVICE_BIN="{{ env_var_or_default("CARGO_TARGET_DIR", justfile_directory() / "target") }}/debug/ragondin-generator-service" \
         cargo test --release -p ragondin --features bm25,onnx,stub,remote --test calibration_generation -- --ignored --nocapture --test-threads=1
 
-# Everything CI runs, in one command. Run this before declaring work done.
-check: fmt build test test-features clippy check-features doc test-check-invariants check-invariants test-check-doc-links check-doc-links check-adr-index check-deny
+# The front end's gates: install exactly the lockfile, then lint, typecheck,
+# test, build and audit it (ui/ARCHITECTURE.md § The gates). The one recipe here
+# that needs Node -- the version pinned in ui/.node-version. No cargo recipe
+# does, and none may: the Rust build stays Rust-only (ADR-C36 § 5), so
+# everything above runs on a machine without Node, and only `check`, which
+# covers both worlds, needs it.
+check-ui:
+    cd ui && npm ci && npm run check
+
+# Everything CI runs, in one command. Run this before declaring work done. It
+# needs Node, for `check-ui`; every other recipe it runs is cargo or Python.
+check: fmt build test test-features clippy check-features doc test-check-invariants check-invariants test-check-doc-links check-doc-links check-adr-index check-deny check-ui
