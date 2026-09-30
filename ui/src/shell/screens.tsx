@@ -57,18 +57,18 @@ function emptyOf(route: Route): Empty {
 }
 
 /**
- * Moves focus to `heading` whenever `address` changes after the first render,
- * so a screen reader announces the new view and the keyboard starts from it.
- * The first render keeps the browser's own focus: a deep link opens where
- * the browser puts it.
+ * Moves focus to `heading` whenever `address` changes from the one the page
+ * loaded at, so a screen reader announces the new view and the keyboard starts
+ * from it. The load itself keeps the browser's own focus: a deep link opens
+ * where the browser puts it. The skip compares addresses rather than counting
+ * renders, because StrictMode runs a mount's effects twice.
  */
 export function useFocusOnChange(heading: RefObject<HTMLElement | null>, address: string) {
-  const first = useRef(true);
+  const loadedAt = useRef(address);
+  const moved = useRef(false);
   useEffect(() => {
-    if (first.current) {
-      first.current = false;
-      return;
-    }
+    if (!moved.current && address === loadedAt.current) return;
+    moved.current = true;
     heading.current?.focus();
   }, [heading, address]);
 }

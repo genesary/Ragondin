@@ -1,5 +1,6 @@
 /** @vitest-environment happy-dom */
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { StrictMode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createApiClient } from './api/client.ts';
 import { FakeEventSource, installFakeEventSource, mockApi } from './api/testing.ts';
@@ -99,6 +100,20 @@ describe('the shell’s screens', () => {
     const heading = within(main()).getByRole('heading', { level: 1 });
     expect(document.activeElement).toBe(heading);
     expect(heading.getAttribute('tabindex')).toBe('-1');
+  });
+
+  it('moves no focus on load under StrictMode either, whose effects run twice on mount', async () => {
+    mockApi({ 'GET /workspace': { body: WORKSPACE } }, { build: BUILD });
+    window.history.replaceState(null, '', '/#pipeline/hybrid-rrf');
+    render(
+      <StrictMode>
+        <App client={createApiClient()} build={BUILD} reload={vi.fn()} />
+      </StrictMode>,
+    );
+    await screen.findByText(WORKSPACE.path);
+    expect(document.activeElement).toBe(document.body);
+    fireEvent.click(within(main()).getByRole('link', { name: 'Open Runs' }));
+    await waitFor(() => expect(document.activeElement).toBe(within(main()).getByRole('heading', { level: 1 })));
   });
 
   it('says so, and offers Runs, for an address that names no screen', async () => {

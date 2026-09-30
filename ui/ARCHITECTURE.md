@@ -119,10 +119,10 @@ Adding a dependency is governed by `DEPENDENCIES.md`, whose rule is `AGENTS.md` 
 
 `src/api/client.ts` is the one client over the API: `get`, `post`, `put`, `patch` and `del` on the relative base address, typed by `Paths`. **Every outcome is a value**, `{ ok: true, value }` or `{ ok: false, problem }`, never an exception a caller could forget to catch, so a result whose failure goes unhandled is visible at the call site (the front-end design, § 8).
 
-A failure is an `ApiProblem`: `code`, `message`, `hint`, `location` (a validation failure's node or edge, else null) and `status` (null when no answer arrived). An `application/problem+json` answer is read into one as the API sent it, its `code` one of the description's enum. A problem body is shape-checked — an object with a string `code`, `detail` and `hint` — before it is believed. Four failures never reach the API's error handling, and the client names them itself:
+A failure is an `ApiProblem`: `code`, `message`, `hint`, `location` (a validation failure's node or edge, else null) and `status` (null when no answer arrived). An `application/problem+json` answer is read into one as the API sent it, its `code` one of the description's enum. A problem body is shape-checked — an object with a string `code`, `detail` and `hint`, and a `location` that is absent, null, or a node (a string or null) and an edge (null, or its two ends and its port) — before it is believed, so the error state never renders a location that is not one. Four failures never reach the API's error handling, and the client names them itself:
 
 - `network_failed`: no answer — the server is down or unreachable — or an answer whose body broke off while being read;
-- `response_unreadable`: an error status without a problem body; a problem body that is not JSON or fails the shape check; a success body that is not JSON; or an empty success body where the description declares one — only a 204, or an operation listed in `EMPTY_ANSWERS`, may answer empty. Each means the two sides disagree on the API;
+- `response_unreadable`: an error status without a problem body; a problem body that is not JSON or fails the shape check; a success body that is not JSON; or an empty success body, a 204 included, from an operation that declares a body — only an operation listed in `EMPTY_ANSWERS` may answer empty, or a `null` would stand in for a type it is not. Each means the two sides disagree on the API;
 - `build_mismatch` (§ The build identity handshake);
 - `request_invalid`: a request refused before it is sent, because a path parameter is `.` or `..`, which encoding leaves as it is and a URL resolves as another path.
 
@@ -130,7 +130,7 @@ Each message names the request, `GET /api/v1/workspace`, so the inline error say
 
 **The build identity travels with its answer**: every `ApiResult` carries `build`, the `x-ragondin-build` header of the answer it came from, problems included, or null when no answer arrived or it carried none. It is not state on the client, so two requests in flight never report each other's identity. The description declares no header, so that one name, `BUILD_HEADER`, is written in `client.ts` rather than generated.
 
-Tests mock the network at the request level: `src/api/testing.ts`'s `mockApi` replaces `fetch` with answers keyed by the description's own method and path template — `'GET /workspace'` — and typed by the generated body, so a mock of a path the API does not have, or a body of the wrong shape, does not compile. No server is started in a unit test. **The doubles never reach the bundle**: an ESLint `no-restricted-imports` rule refuses an import of `src/api/testing.ts` from anything but a test, and `tests/test-doubles.test.ts` checks the rule and reads the production build for the doubles' strings.
+Tests mock the network at the request level: `src/api/testing.ts`'s `mockApi` replaces `fetch` with answers keyed by the description's own method and path template — `'GET /workspace'` — and typed by the generated body, so a mock of a path the API does not have, or a body of the wrong shape, does not compile. No server is started in a unit test. **The doubles never reach the bundle**: an ESLint `no-restricted-imports` rule refuses an import of `src/api/testing.ts` from anything but a test — through a path naming `api/testing` from anywhere, and as a sibling or parent (`./testing`, `../testing`) from inside `src/api/` — and `tests/test-doubles.test.ts` checks the rule and reads the production build for the doubles' strings.
 
 ## The router and the URL state
 
@@ -176,7 +176,7 @@ The indicator shows no benchmark count: `GET /workspace` does not report one, an
 
 Below the bar is the screen the address shows (`src/shell/screens.tsx`), each today in its empty state: the screen's name as the page's heading, then one sentence on the default path and the one action that leads on — a real link to the screen it names (design/'s `ButtonLink`), so middle-click and "copy link" work. A failed workspace read is shown above it as a section error with Retry.
 
-**A route change moves focus to the new screen's heading** — an `<h1>` with `tabIndex={-1}`, the no-route message's included — so a screen reader announces the view and the keyboard starts from it. The first render moves nothing: a deep link keeps the browser's own focus.
+**A route change moves focus to the new screen's heading** — an `<h1>` with `tabIndex={-1}`, the no-route message's included — so a screen reader announces the view and the keyboard starts from it. The load moves nothing: a deep link keeps the browser's own focus. The hook compares the address with the one the page loaded at rather than counting renders, because StrictMode runs a mount's effects twice; a test mounts the shell under `StrictMode` to hold it.
 
 The shell reads the workspace, and opens the stream, again only when its client, its build or the stream's path change; the `reload` it is given is kept in a ref, so a parent passing a new function does not refetch or reopen anything.
 
