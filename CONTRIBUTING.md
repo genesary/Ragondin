@@ -17,8 +17,12 @@ just check                  # everything CI runs, in one command
 
 `just check` runs build, tests, `clippy` (warnings are errors), `cargo fmt
 --check`, `cargo doc` (rustdoc warnings are errors), the architecture invariant
-checks, the documentation link check, the ADR index staleness check, and the
-dependency audit. **A change is not done
+checks, the documentation link check, the ADR index staleness check, the
+dependency audit, and the front end's gates (`just check-ui`: `npm ci`, then
+lint, typecheck, tests, build and the npm audit inside `ui/`). That last step
+makes `just check` need **Node**, the major pinned in `ui/.node-version`; the
+Rust build itself never does, and every cargo command and every other recipe
+runs without it (`ui/README.md` covers the front end). **A change is not done
 until `just check` passes.** The toolchain is pinned to stable
 (`rust-toolchain.toml`); never rely on nightly.
 

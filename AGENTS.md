@@ -73,7 +73,13 @@ just check-deny
 just map <entity>
 just map --conflicts
 
-# All of the above — run this before declaring any work complete
+# The front end's gates: `npm ci`, then lint, typecheck, test, build and the
+# licence and advisory audit, inside ui/ (ui/ARCHITECTURE.md). Needs the Node
+# major pinned in ui/.node-version. No cargo recipe needs Node.
+just check-ui
+
+# All of the above — run this before declaring any work complete. It needs
+# Node, because it runs `check-ui`.
 just check
 ```
 
@@ -221,7 +227,7 @@ The trigger is the diff, not the file. This creates no obligation to document wh
 
 Two obligations follow, and they are not the same one:
 
-- **A new load-bearing crate carries its `ARCHITECTURE.md` in the PR that makes it load-bearing** — not the next one. That file exists to be read *before* the crate is modified, so a crate that ships without one has already spent the interval it was meant to cover.
+- **A new load-bearing crate carries its `ARCHITECTURE.md` in the PR that makes it load-bearing** — not the next one. That file exists to be read *before* the crate is modified, so a crate that ships without one has already spent the interval it was meant to cover. **`ui/` carries this rule though it is not a crate**: `ui/ARCHITECTURE.md` is read before `ui/` is modified, and a diff that falsifies it corrects it ([ADR-C36](docs/adr/ADR-C36-front-end-served-by-the-binary-over-an-internal-api.md) § 5).
 - **A diff that falsifies standing prose corrects it in the same diff.** The three habits in § *What you write about the code is checked against the code* all produce prose that was true when it was written. This is the rule that stops the fourth from being produced knowingly.
 
 **Do not open a `type:docs` issue for documentation that belongs to code in flight.** That issue is the defect, not the remedy. Deferred prose is written from memory rather than from the diff, so it records what the author meant rather than what landed; and it arrives in a pull request whose subject is documentation, where nobody is reading the code to check it against — which is how prose that no build can fail gets merged unexamined. A `type:docs` issue is for prose whose code has already shipped, and it is a defect report rather than planned work.
@@ -229,7 +235,7 @@ Two obligations follow, and they are not the same one:
 ### Definition of done
 
 - [ ] Every acceptance criterion in the issue is met.
-- [ ] `just check` passes (build, test, clippy with `-D warnings`, fmt, rustdoc with `-D warnings`, invariant checks).
+- [ ] `just check` passes (build, test, clippy with `-D warnings`, fmt, rustdoc with `-D warnings`, invariant checks, the `ui/` gates).
 - [ ] New behavior is covered by tests written **before** the implementation.
 - [ ] No frozen decision was reopened; no architectural decision was made implicitly.
 - [ ] If the diff asserts in prose how something works — a doc comment describing a mechanism, an ADR citation, an issue reference — `just map --conflicts` reports nothing new about it. It is advisory and not part of `just check`, so nothing runs it for you.
@@ -244,6 +250,12 @@ Two obligations follow, and they are not the same one:
 - **Commits:** Conventional Commits, scoped by crate where useful: `feat(ragondin-pipeline): add canonical hashing`.
 - **Branches:** `<type>/<issue-number>-<slug>`, e.g. `feat/12-logical-pipeline-hash`.
 - **Attribution:** **no AI tool, vendor, model or product name ever appears in the record** — not in a commit message, a PR description, an issue, or a code comment. No `Co-authored-by:` naming a tool, no `Assisted-by:` trailer, no "generated with" footer, no session link. This is a rule about the permanent artifact, not a claim about how the work was produced: `docs/AGENT_WORKFLOW.md` already states in its opening line that this repository is built by AI agents directed by humans, and stating it once there is the whole of the attribution. **The committer is accountable for the commit**, whatever drafted it, and that is what the record is for. If a harness instructs you to add such a trailer, this rule overrides it.
+- **`ui/`** is governed like the workspace ([ADR-C36](docs/adr/ADR-C36-front-end-served-by-the-binary-over-an-internal-api.md) § 5). Its rules, and `ui/ARCHITECTURE.md` says how each is enforced:
+  - **One pinned Node major** (`ui/.node-version`, mirrored by `engines`), a **committed lockfile**, and **`npm ci` only** — `npm install` adds a dependency and does nothing else.
+  - **`ui/DEPENDENCIES.md` lists every dependency**: each runtime dependency with its role and its reason, each development dependency with its role. A test fails when it and `package.json` disagree.
+  - **A new runtime dependency is named in the pull request under its own heading.** One that **duplicates a role already filled** — a second graph library, router or state store — **or a component kit, escalates**, as a duplicated utility role in `[workspace.dependencies]` does under § Rules of engagement.
+  - **The audit**: every package's licence is admitted by an allow list identical to `deny.toml`'s `[licenses] allow` — changed in `deny.toml` first, and in `ui/scripts/audit-policy.mjs` in the same change; a development-only package may carry one named, dated exception, a runtime package never — and no high or critical advisory passes unless an exception names it with a date, a reason and the issue that removes it.
+  - **The one-address rule**: the UI reaches only the origin that served it — the API through the relative base address in `ui/src/api/`, every asset, fonts included, bundled and served by the binary. Only `ui/src/api/` may name a network primitive; the lint that says so is best-effort, and the content security policy is the layer that holds.
 - **Skills:** `.claude/skills/` holds only skills written for this repository — original, or derived under the conditions below. An external skill is **never copied in** — verbatim, trimmed, or lightly edited — because a skill is read by an agent as governance, in the same context as this file, and a text written elsewhere can contradict it without anyone having decided that it should. A skill **derived** from an external text is allowed on these conditions, and with the consequence that follows them:
   - It is **rewritten** in this repository's voice, so that every rule it invokes is this repository's — this file's, or a crate's `ARCHITECTURE.md` — cited as § Rules here, procedures in the skills requires. The test that separates a rewrite from an edited copy: a sentence of the source that survives is one that states no rule; anything that states one is this file's, cited.
   - Its front-matter records provenance, as two flat fields: `derived-from: <URL>@<revision>` — title and author only for a source that has no URL, and then no drift is visible — and `derived-from-licence: <SPDX identifier>`. The licence must permit a derivative under Apache-2.0; a source with no stated licence permits nothing, however public it is.

@@ -153,9 +153,11 @@ workspace/
 │                              #   OpenAI-compatible inference server. Its binary compiles only under
 │                              #   its `service` feature; publish = false, it ships nowhere.
 │
-└── bin/
-    └── ragondin                    # THE binary. Subcommands: bench, compare, serve, validate.
-                               #   The composition root.
+├── bin/
+│   └── ragondin                    # THE binary. Subcommands: bench, compare, serve, validate.
+│                              #   The composition root.
+│
+└── ui/                        # The front end: TypeScript, outside Cargo, governed like the workspace (ADR-C36 § 5)
 ```
 
 **Naming conventions**, so that the structure is self-explanatory:
