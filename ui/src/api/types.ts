@@ -108,7 +108,7 @@ export type Problem = {
    * The stable code a client matches on: one of `ApiError::CODES`, which
    * the schema lists as an enum so a generated client can narrow on it.
    */
-  code: 'pipeline_invalid' | 'impl_not_in_build' | 'service_unreachable' | 'run_exists' | 'run_unreadable' | 'run_not_found' | 'dataset_absent' | 'dataset_differs' | 'backend_failed' | 'host_refused' | 'origin_refused' | 'route_not_found' | 'method_not_allowed';
+  code: 'pipeline_invalid' | 'impl_not_in_build' | 'service_unreachable' | 'run_exists' | 'run_unreadable' | 'run_not_found' | 'dataset_absent' | 'dataset_differs' | 'benchmark_not_found' | 'benchmark_exists' | 'download_failed' | 'download_cancelled' | 'import_refused' | 'backend_failed' | 'host_refused' | 'origin_refused' | 'route_not_found' | 'method_not_allowed';
   /** What happened, in this occurrence's words. */
   detail: string;
   /** The action that would resolve it. */
