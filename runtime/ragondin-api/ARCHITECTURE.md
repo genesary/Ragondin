@@ -19,7 +19,8 @@ the response types, the typed errors, and the traits the service consumes.
 
 | Piece | Role |
 |---|---|
-| `router` | Builds the whole server from `Backends`, a `ServerConfig` and the assets `Router`, all passed in by the binary, and wraps it in the layers last |
+| `router` | Builds the whole server from `Backends`, a `ServerConfig` and the assets `Router`, all passed in by the binary, wraps it in the layers last, and returns a `Server` |
+| `Server` | The enveloped server: what `axum::serve` listens with, and nothing a route can be added to |
 | `Backends` | The five backends, each an `Arc<dyn …>`: `RunStore`, `PipelineSource`, `Registry`, `WorkspaceSettings`, `Launcher` |
 | `backends` | The four traits this crate defines, and the values they exchange |
 | `response` | Every type the API serializes — the response bodies and `Problem` |
@@ -29,10 +30,14 @@ the response types, the typed errors, and the traits the service consumes.
 | `fs` | The home of the file backends — empty today |
 
 Served today: `GET /api/v1/workspace`, `GET /api/v1/runs`,
-`GET /api/v1/runs/{id}`. Every other path under `/api` is the API's too: an
-unknown one answers `route_not_found`, and a method an endpoint does not
-serve answers `method_not_allowed` with axum's `Allow` header — problem bodies
-both, never an empty 404 or the assets' fallback. Nothing here binds a port:
+`GET /api/v1/runs/{id}`. `/api`, `/api/` and every other path below them are
+the API's too: an unknown one answers `route_not_found`, and a method an
+endpoint does not serve answers `method_not_allowed` with axum's `Allow`
+header — problem bodies both, never an empty 404 or the assets' fallback.
+(axum 0.7's `nest` leaves `/api/` to the outer router, so it is routed there
+explicitly; `tests/layers.rs` pins both spellings.) A path that only begins
+with the same letters, such as `/apix`, is not under `/api`, and the assets
+answer it. Nothing here binds a port:
 the listener, the loopback-only rule and the embedded assets themselves are
 the binary's, which hands the assets in as a `Router`.
 
@@ -185,11 +190,24 @@ route merged or a fallback set afterwards answers outside the layers — a
 foreign `Host` accepted, no content security policy, no build identity. The
 UI's own page is exactly what the policy must reach (ADR-C36 § 5 makes it the
 layer that holds), so leaving the order to the caller would leave the defence
-to be remembered. The alternative, a public `envelope(Router, &ServerConfig)`
-documented as "apply last", was rejected for that reason: it is correct only
-if the binary never adds a route after calling it, and nothing would say when
-it did. `tests/layers.rs` checks that a route and a fallback in the assets
-carry both headers and are refused on a foreign `Host`.
+to be remembered.
+
+**And it returns a `Server`, not a `Router`**, so the order cannot be undone
+after the fact. `Server` is a newtype with no method that adds a route,
+merges a router or sets a fallback, and no conversion back into a `Router`;
+it offers `into_make_service()` for `axum::serve`, and `tower::Service` over
+one request, which is what a connection calls (the envelope, where ADR-C10
+puts Tower; INV-11 is about components). Two `compile_fail` doc tests on
+`Server` prove that `.route(…)` and `Router::merge(server)` do not compile,
+and `tests/server.rs` proves by compiling that `axum::serve` accepts it. The
+alternative, a public `envelope(Router, &ServerConfig)` documented as "apply
+last", was rejected because it is correct only while the binary never adds a
+route after calling it, and nothing would say when it did — the same hole a
+returned `Router` leaves. What remains possible is deliberate: the binary can
+write a second router of its own around a `Server` and answer routes it adds
+itself, which is a new server outside this envelope written by hand, and a
+diff a reviewer sees. `tests/layers.rs` checks that a route and a fallback in
+the assets carry both headers and are refused on a foreign `Host`.
 
 1. **The build identity**, `x-ragondin-build: <ServerConfig::build>`, on every
    response — refusals and 404s included — so the UI can compare builds on
@@ -244,8 +262,10 @@ All admitted by ADR-C36 § 6, each argued in its root `Cargo.toml` comment:
 false`; `json` for the endpoints, and `tokio` and `http1` for `axum::serve`,
 named now because appending a feature to the entry later would escalate — one
 `hyper` in `Cargo.lock`, which no core crate reaches), `schemars`, and `tokio`,
-whose workspace entry now names `net`, `sync` and `time`. `tower` is a
-dev-dependency, for `ServiceExt::oneshot` in the tests; its `util` feature
-comes from `axum`'s own requirement on the same `tower`, unified by Cargo,
-rather than from a feature appended to the workspace entry. `hyper` is on the
+whose workspace entry now names `net`, `sync` and `time`. `tower`, the
+workspace's serving-envelope entry, is a dependency for the `Service` trait
+`Server` implements, which needs no feature; the tests also use
+`ServiceExt::oneshot`, whose `util` feature comes from `axum`'s own
+requirement on the same `tower`, unified by Cargo, rather than from a feature
+appended to the workspace entry. `hyper` is on the
 INV-4 deny-list, so the core cannot reach any of this.

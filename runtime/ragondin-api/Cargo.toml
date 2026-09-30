@@ -29,9 +29,9 @@ thiserror = { workspace = true }   # typed errors (ADR-C13): no anyhow in this c
 # `spawn_blocking`: `RunStore` is synchronous and its file backend blocks, so a
 # handler moves the call off the async workers rather than stalling one.
 tokio = { workspace = true }
-
-[dev-dependencies]
-# `ServiceExt::oneshot` drives the router in the tests. Its `util` feature is
-# not asked for here: `axum` requires it of the same `tower` 0.5, and Cargo
-# unifies the two.
+# The serving envelope (INV-11): `Server` implements `tower::Service` over one
+# request, so that `axum::serve` can listen with it while no route can be
+# added to it. The trait itself needs no feature. The tests also use
+# `ServiceExt::oneshot`, behind `util`, which is not asked for here: `axum`
+# requires it of the same `tower` 0.5, and Cargo unifies the two.
 tower = { workspace = true }

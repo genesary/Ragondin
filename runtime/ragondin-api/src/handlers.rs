@@ -92,8 +92,18 @@ pub(crate) const API_PREFIX: &str = "/api";
 
 /// Any path under `/api` that names no endpoint.
 pub(crate) async fn route_not_found(uri: Uri) -> ApiError {
+    // A request for the bare prefix reaches the nest as `/`.
+    let path = match uri.path() {
+        "/" => API_PREFIX.to_owned(),
+        below => format!("{API_PREFIX}{below}"),
+    };
+    ApiError::RouteNotFound { path }
+}
+
+/// The prefix itself, routed outside the nest, where the path arrives whole.
+pub(crate) async fn prefix_not_found(uri: Uri) -> ApiError {
     ApiError::RouteNotFound {
-        path: format!("{API_PREFIX}{}", uri.path()),
+        path: uri.path().to_owned(),
     }
 }
 

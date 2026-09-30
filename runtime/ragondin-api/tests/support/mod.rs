@@ -17,8 +17,8 @@ use axum::http::{Request, Response};
 use axum::Router;
 use ragondin_api::{
     router, ApiError, Backends, BenchmarkEntry, Capabilities, FamilyCapabilities, Job, JobState,
-    Launcher, PipelineEntry, PipelineFile, PipelineSource, Registry, Revision, ServerConfig,
-    ServiceBinding, ServiceIdentity, Settings, Submission, WorkspaceSettings,
+    Launcher, PipelineEntry, PipelineFile, PipelineSource, Registry, Revision, Server,
+    ServerConfig, ServiceBinding, ServiceIdentity, Settings, Submission, WorkspaceSettings,
 };
 use ragondin_experiments::{FileSystemRunStore, Run, RunId, RunStore, RunStoreError};
 
@@ -224,21 +224,21 @@ impl Registry for FakeRegistry {
 }
 
 /// The router over the given store, and default fakes for the rest.
-pub fn app(store: FakeRunStore) -> Router {
+pub fn app(store: FakeRunStore) -> Server {
     app_with(store, FakeLauncher::default())
 }
 
-pub fn app_with(store: FakeRunStore, launcher: FakeLauncher) -> Router {
+pub fn app_with(store: FakeRunStore, launcher: FakeLauncher) -> Server {
     app_serving(store, launcher, Router::new())
 }
 
 /// The router with `assets` mounted beside the API, as the binary mounts the
 /// UI's pages.
-pub fn app_with_assets(assets: Router) -> Router {
+pub fn app_with_assets(assets: Router) -> Server {
     app_serving(FakeRunStore::default(), FakeLauncher::default(), assets)
 }
 
-fn app_serving(store: FakeRunStore, launcher: FakeLauncher, assets: Router) -> Router {
+fn app_serving(store: FakeRunStore, launcher: FakeLauncher, assets: Router) -> Server {
     router(
         Backends {
             runs: Arc::new(store),
@@ -264,11 +264,11 @@ pub fn get(path: &str) -> Request<Body> {
         .unwrap()
 }
 
-pub async fn send(app: Router, request: Request<Body>) -> Response<Body> {
+pub async fn send(app: Server, request: Request<Body>) -> Response<Body> {
     use tower::ServiceExt;
     app.oneshot(request)
         .await
-        .expect("the router is infallible")
+        .expect("the server is infallible")
 }
 
 pub async fn json(response: Response<Body>) -> serde_json::Value {

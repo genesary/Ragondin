@@ -12,10 +12,11 @@
 //! the UI to the data plane is [`Launcher`], implemented by the binary.
 //!
 //! [`router`] builds the whole server from [`Backends`], a [`ServerConfig`]
-//! and the assets `Router`, all passed in by the binary, and applies the
-//! server's layers last so that nothing it answers is outside them. Nothing
-//! here is a static or a global, and nothing binds a port — the listener is
-//! the binary's.
+//! and the assets `Router`, all passed in by the binary, applies the server's
+//! layers last, and returns a [`Server`]: something `axum::serve` listens
+//! with and no route can be added to, so every route it answers is one the
+//! layers wrap. Nothing here is a static or a global, and nothing binds a
+//! port — the listener is the binary's.
 //!
 //! The modules:
 //!
@@ -31,11 +32,17 @@
 
 #![warn(missing_docs)]
 
+use std::convert::Infallible;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::task::{Context, Poll};
 
-use axum::routing::get;
-use axum::Router;
+use axum::body::Body;
+use axum::extract::Request;
+use axum::response::Response;
+use axum::routing::{any, get, IntoMakeService};
+use axum::{Router, ServiceExt};
+use tower::Service;
 
 pub mod backends;
 pub mod description;
@@ -77,17 +84,17 @@ pub struct ServerConfig {
 /// server's layers around both.
 ///
 /// `assets` is whatever else the server answers — the UI's pages, and the
-/// fallback that serves them on every client-side route. It is taken here,
-/// rather than merged by the caller into what this returns, because
-/// `Router::layer` wraps only the routes that exist when it is called: a
-/// route or a fallback added afterwards would answer a foreign `Host`
-/// without the content security policy or the build identity. The envelope
-/// is applied last, here, so nothing the server answers is outside it. Pass
-/// `Router::new()` for none.
+/// fallback that serves them on every client-side route. It is taken here
+/// because `Router::layer` wraps only the routes that exist when it is
+/// called: the envelope is applied last, here, over everything the server
+/// answers, and what comes back is a [`Server`], which has no method that
+/// adds a route. Pass `Router::new()` for no assets.
 ///
-/// Every path under `/api` is the API's: an unknown one is a
-/// `route_not_found` problem, never the assets' fallback.
-pub fn router(backends: Backends, config: ServerConfig, assets: Router) -> Router {
+/// `/api`, `/api/` and every path below them are the API's: an unknown one
+/// is a `route_not_found` problem, never the assets' fallback. A path that
+/// merely starts with the same letters, such as `/apix`, is not under `/api`
+/// and is the assets' to answer.
+pub fn router(backends: Backends, config: ServerConfig, assets: Router) -> Server {
     let (served, build) = (config.served.clone(), config.build.clone());
     // Each route answers a method it does not serve with a problem body;
     // axum still sets `Allow`.
@@ -110,6 +117,77 @@ pub fn router(backends: Backends, config: ServerConfig, assets: Router) -> Route
             backends,
             config: Arc::new(config),
         });
-    let server = Router::new().nest(handlers::API_PREFIX, api).merge(assets);
-    layers::wrap(server, &served, &build)
+    let server = Router::new()
+        .nest(handlers::API_PREFIX, api)
+        // axum 0.7's `nest` leaves the prefix with a trailing slash to the
+        // outer router, where the assets' fallback would answer it.
+        .route("/api/", any(handlers::prefix_not_found))
+        .merge(assets);
+    Server {
+        router: layers::wrap(server, &served, &build),
+    }
+}
+
+/// The server [`router`] builds, enveloped: what `axum::serve` listens with,
+/// and nothing more.
+///
+/// Opaque on purpose. A `Router` can be extended, and a route added to it
+/// after the layers would answer outside them; a `Server` has no method that
+/// adds a route, merges a router or sets a fallback, and does not convert
+/// back into a `Router`. What it offers is what serving needs:
+/// [`into_make_service`](Self::into_make_service) for `axum::serve`, and
+/// `tower::Service` over one request, which is what a connection calls —
+/// the network envelope, where ADR-C10 puts Tower (INV-11 is about
+/// components, and this is none).
+///
+/// ```
+/// # fn serve(server: ragondin_api::Server, listener: tokio::net::TcpListener) {
+/// let _serving = axum::serve(listener, server.into_make_service());
+/// # }
+/// ```
+///
+/// No route can be added to it:
+///
+/// ```compile_fail,E0599
+/// # fn extend(server: ragondin_api::Server) {
+/// let _ = server.route("/", axum::routing::get(|| async { "outside" }));
+/// # }
+/// ```
+///
+/// nor can it be merged into a router, which would take it as one:
+///
+/// ```compile_fail,E0277
+/// # fn merge(server: ragondin_api::Server) {
+/// let _ = axum::Router::new().merge(server);
+/// # }
+/// ```
+///
+/// A caller can still write a second router of its own around a `Server`,
+/// answering routes it adds itself. That is a new server outside this
+/// envelope, written by hand in the binary — a diff a reviewer sees, not a
+/// method call that looks like extending this one.
+#[derive(Clone)]
+pub struct Server {
+    router: Router,
+}
+
+impl Server {
+    /// The server as `axum::serve` takes it: each connection gets a clone.
+    pub fn into_make_service(self) -> IntoMakeService<Server> {
+        ServiceExt::<Request<Body>>::into_make_service(self)
+    }
+}
+
+impl Service<Request<Body>> for Server {
+    type Response = Response;
+    type Error = Infallible;
+    type Future = <Router as Service<Request<Body>>>::Future;
+
+    fn poll_ready(&mut self, context: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Service::<Request<Body>>::poll_ready(&mut self.router, context)
+    }
+
+    fn call(&mut self, request: Request<Body>) -> Self::Future {
+        self.router.call(request)
+    }
 }

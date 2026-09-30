@@ -234,6 +234,27 @@ async fn an_unknown_api_path_is_a_problem_even_beside_an_assets_fallback() {
     assert_eq!(json(response).await["code"], "route_not_found");
 }
 
+/// axum 0.7's `nest` leaves the prefix itself, with and without a trailing
+/// slash, to the outer router — where the assets' fallback would answer it
+/// with a page. Both are the API's.
+#[tokio::test]
+async fn the_api_prefix_itself_is_route_not_found_beside_an_assets_fallback() {
+    for path in ["/api/", "/api"] {
+        let response = send(app_with_assets(assets()), get(path)).await;
+        assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}");
+        let body = json(response).await;
+        assert_eq!(body["code"], "route_not_found", "{path}");
+        assert_eq!(body["detail"], format!("no endpoint at {path}"), "{path}");
+    }
+}
+
+/// `/apix` is not under `/api`: it is the assets' to answer.
+#[tokio::test]
+async fn a_path_that_only_starts_with_the_prefix_is_not_the_apis() {
+    let response = send(app_with_assets(assets()), get("/apix")).await;
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
 #[tokio::test]
 async fn an_unknown_api_path_is_route_not_found() {
     let response = send(app(FakeRunStore::default()), get("/api/v1/nowhere")).await;
