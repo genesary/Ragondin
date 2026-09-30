@@ -1,11 +1,11 @@
 # The front end — design
 
-**Status: design, approved in conversation on 2026-09-29; not yet decided.** This document records what the front end is, how it is built and why, as the input to two things that must happen before implementation: the resolution of decision issue #327 (which this design answers, and which a human owns), and the milestone that carries the work. Nothing here is binding until #327 resolves into an ADR. `AGENTS.md` § Rules of engagement applies: an agent implementing from this document does not get to reopen its choices, and does not get to make the ones it leaves to the decider.
+**Status: design, approved on 2026-09-29; decided on 2026-09-30.** This document records what the front end is, how it is built and why. Decision issue #327 resolved into ADR-C36, which decides the answers of § 10 and the invariant INV-12; ADR-016 supersedes ADR-014; the roadmap change is governance and has no ADR. Where this document and an ADR differ, the ADR wins — the amendments the decision brought are folded in below. `AGENTS.md` § Rules of engagement applies: an agent implementing from this document does not get to reopen its choices, and does not get to make the ones it leaves to the decider.
 
 Two artifacts accompany it and are not repeated here:
 
-- **The design system** — https://claude.ai/artifact/8TKoodhCxBix8vSSRiycAn — tokens, type, 30-odd components with live previews, guidelines, and composed screens in both themes. The visual and interaction reference every UI issue cites.
-- **The functional mockup** — https://claude.ai/artifact/RyGmCW6eW8oRi24AT2hpcj — the six screens with sample data, kept as a reference for *what* each screen does. Its visual style is superseded by the design system and is not a reference for anything.
+- **The design system** — delivered separately, and committed into `ui/` by sub-project 0 as its tokens, components and guidelines, so that every UI issue can cite it from the tree: type, colour in both themes, thirty-odd components with their states, and composed screens.
+- **The functional mockup** — delivered separately: the six screens with sample data, kept as a reference for *what* each screen does. Its visual style is superseded by the design system and is not a reference for anything.
 
 ## 1. What this is, and why now
 
@@ -15,7 +15,7 @@ Two arguments carried the ordering. Every milestone so far shipped its user-faci
 
 Two things this design changes about accepted decisions, and which therefore need their own ADRs:
 
-- **ADR-014** places visual graph *editing* in a later trajectory and makes YAML-first authoring the v0 path. This milestone builds the editor now. YAML stays the source of truth and the git-able object (§ 5 below); what changes is *when* the canvas arrives, not what it edits. A superseding ADR records that, in its own PR (`docs/adr/README.md` process rule 2).
+- **ADR-014** places visual graph *editing* in a later trajectory and makes YAML-first authoring the v0 path. This milestone builds the editor now. YAML stays the source of truth and the git-able object (§ 5 below); what changes is *when* the canvas arrives, not what it edits. ADR-016 supersedes it, in its own PR (`docs/adr/README.md` process rules 3 and 4).
 - **#327** asked four coupled questions about the front end. § 10 lists the answers this design gives.
 
 **Roadmap rule**, to be written into `docs/AGENT_WORKFLOW.md`: *every milestone that adds a user-visible capability includes its UI slice in its exit criterion.* M5 brings judged metrics and their intervals into Compare and the judge into the palette; M6 brings Branch and Loop into the canvas and the branch taken into Replay — and resolves `docs/OPEN_QUESTIONS.md` § 7 at that point, not before.
@@ -66,13 +66,13 @@ The design system carries the detail; this section records what it commits the p
 - **Prefix runs** ("Run up to this node", from the node menu or the inspector, stating what is skipped and the cost avoided) live in their parent pipeline's group, labelled.
 - Adding a judge changes a run's identity, on purpose (ADR-009; the judge's model, prompt and seed are experiment variables). The UI shows the judge as an evaluation node, distinct in the palette.
 
-**The canvas.** One component in read mode (Replay) and write mode (Editor) — ADR-014 made literal. Node cards in fifteen states; ports typed **by shape**, not colour; an invalid edge refused during the drag, with the reason; a parameter error on the node *and* in the inspector; Branch and Loop neutral, on a diamond tile; a reserved slot for the judge. Pan, zoom, automatic layout on first open, positions remembered after. **No Save button**: continuous saving, every change undoable; the implementation debounces and rewrites the YAML file only when it validates, so git does not see every keystroke.
+**The canvas.** One component in read mode (Replay) and write mode (Editor) — ADR-014 made literal. Node cards in fifteen states; ports typed **by shape**, not colour; an invalid edge refused during the drag, with the reason; a parameter error on the node *and* in the inspector; Branch and Loop neutral, on a diamond tile; a reserved slot for the judge. Pan, zoom, automatic layout on first open, positions remembered after. **No Save button**: continuous saving, every change undoable; the implementation debounces and rewrites the YAML file only when it validates, so git does not see every keystroke. The editor **never overwrites a file changed on disk** since it last read it, and before the first canonical rewrite of a hand-written file (comments, formatting) it says so and offers a new file instead. Fonts and every other asset are served by the binary.
 
 **Colour and data.** Two palettes separated by lightness: node families are quiet pigments (contrast deliberately under 3:1, always beside a glyph and a name), runs are inks with a letter A–D, the baseline a dashed neutral outline. **No chart mixes the two.** Better/worse and good/warning/critical are reserved. One scale per chart, never two axes; a legend always present; colour never the sole carrier (★, strikethrough, dashes).
 
 **Type.** Wix Madefor Display and Text as an optical pair; Atkinson Hyperlegible Mono for hashes and ids; tabular figures; 13–14 px body. No logo yet — the name is set in type.
 
-**States.** Empty (one sentence and the action), in progress (real progress, never a bare spinner), error (what failed, where, what to do — inline, section or toast, never a modal), loaded. A failed run is a first-class object. The application's only confirmation dialog: deleting a workspace.
+**States.** Empty (one sentence and the action), in progress (real progress, never a bare spinner), error (what failed, where, what to do — inline, section or toast, never a modal), loaded. A failed run is a first-class object. The application's two confirmation dialogs: deleting a workspace, and the first canonical rewrite of a hand-written pipeline file.
 
 **Accessibility, keyboard, motion.** Visible focus everywhere; the canvas navigable by keyboard (tab, enter, Shift+F10); `prefers-reduced-motion`; motion only answers an action and explains a change. Readable on a phone; editing made for a wide screen, and says so.
 
@@ -90,7 +90,7 @@ ui/ (TypeScript) ──HTTP /api/v1──▶ runtime/ragondin-api ──traits�
 
 **`runtime/ragondin-api`** — a new, internal crate: the axum router, the handlers, the response types (`serde` + `schemars`), and the **traits** the service consumes: `RunStore`, `PipelineSource`, `Registry`, `Launcher`, `WorkspaceSettings`. It depends on `ragondin-experiments` (the store), `ragondin-pipeline` and `ragondin-config` (lowering a YAML to a graph, validating), `ragondin-benchmarks` (the registry, the qrels), `ragondin-metrics` (per-node metrics recomputed from traces). **Never** on `ragondin-engine`, never on anything under `components/`.
 
-**A new invariant, CI-enforced by closure like INV-5**: *`ragondin-api` reaches no crate under `engine/` or `components/`.* This is ADR-012 made mechanical: the API crate cannot execute anything; only the binary, by implementing `Launcher`, connects the UI to the data plane.
+**INV-12, CI-enforced by closure like INV-5** (ADR-C36 § 3): *`ragondin-api` reaches no crate under `engine/` or `components/`, nor `wire/ragondin-remote`* — that crate calls a component over the wire. Its `AGENTS.md` row, its check and the invariant counts land in the PR that creates the crate, so no rule describes a check that does not exist yet. Known blind spot, left to review: `ragondin-proto` is reachable through `ragondin-config`. This is ADR-012 made mechanical: the API crate cannot execute anything; only the binary, by implementing `Launcher`, connects the UI to the data plane.
 
 **`ragondin-experiments`** — extract a `RunStore` trait; `FileSystemRunStore` becomes its first implementation (today it is the only type, with no trait behind it); extend `compare` to N runs with a baseline. **`ragondin-harness`** — a per-query progress observer and a cancellation token, checked between queries; the harness runs as one block today and the launcher needs to see it advance and stop it. This is the only change to the harness. **`bin/ragondin`** — a fifth subcommand `ui` behind a `ui` feature (ADR-C15; `serve` stays the data plane), the `Launcher` implementation reusing `bench`'s path, the assets embedded with `rust-embed`; a lean build's `ragondin ui` says the build does not carry the UI.
 
@@ -109,11 +109,11 @@ ui/ (TypeScript) ──HTTP /api/v1──▶ runtime/ragondin-api ──traits�
 
 **Rule**: `ragondin-api` depends only on traits; the binary picks the backends. Nothing in the API crate knows whether it runs on a laptop or in a pod. M7 is a set of backends, not a rewrite.
 
-**Dependencies added to `[workspace.dependencies]`**, all escalated through #327: `axum` (the HTTP server — Tower, consistent with ADR-C10 and with what `tonic` already brings), `schemars`, `rust-embed`.
+**Dependencies admitted by ADR-C36**: `axum` on the 0.7 line (the one `tonic` 0.12 already resolves, so no second server stack enters the lockfile), `schemars`, `rust-embed` (the binary only), the `tokio` features `net`, `sync` and `time`, and one stream utility already in the lockfile. Anything else is a new decision. **Build capabilities, the identity probe and the submission `run_id` all go through `Launcher`**: the API crate never touches a component itself.
 
 ## 5. The API — `/api/v1`
 
-**Principles.** JSON, `snake_case`; every response type derives `serde` and `schemars`; `GET /api/v1/openapi.json` is generated; `just gen-ui-types` produces the TypeScript types and a CI recipe checks they are current, as `check-adr-index` does for the ADR index. Errors are `application/problem+json` with a stable `code`, a message, a `hint` naming the action, and — for a validation error — the **location** (node, edge). The server serves the assets at `/` and the API only under `/api/`; it listens on `127.0.0.1` unless `--bind` says otherwise.
+**Principles.** JSON, `snake_case`; every response type derives `serde` and `schemars`; the API description is assembled from the `schemars` output, kept as a golden file, with no description-generator crate; `just gen-ui-types` produces the TypeScript types and a CI recipe checks they are current, as `check-adr-index` does for the ADR index. Errors are `application/problem+json` with a stable `code`, a message, a `hint` naming the action, and — for a validation error — the **location** (node, edge). The server serves the assets at `/` and the API only under `/api/`. **It listens on loopback only**: binding to any other address is refused until an authentication layer exists (cloud-native, M7); a remote machine is reached through an SSH tunnel, which keeps the loopback and brings its own authentication. The server answers only requests whose `Host` names the address it serves, refuses a state-changing request whose `Origin` is not its own, and sends a `Content-Security-Policy` whose default source is `'self'` — the main enforcement of ADR-012 in the browser, since it also covers bundled dependencies. The API reports the build's identity; the UI compares it with its own at load and on every reconnection, and reloads rather than keep talking to a different build.
 
 **Status of the API.** Built as a contract — versioned, generated, no ad hoc types — and **not yet promised**: it changes with the UI in the same PR, like everything in-workspace. The CLI and the YAML are the scriptable contract meanwhile. Publishing the API is a later decision, not a migration.
 
@@ -125,7 +125,7 @@ ui/ (TypeScript) ──HTTP /api/v1──▶ runtime/ragondin-api ──traits�
 | `GET /runs` · `GET /runs/{id}` | list; detail = inputs, metrics, config, bindings, the **lowered graph** (nodes, edges, kinds — computed by `ragondin-pipeline`, never by the browser), per-node metrics, prefix-of relation | `bench` (read side) |
 | `GET /pipelines/{name}/matrix` | the node × benchmark matrix over that pipeline's runs | — |
 | `GET /runs/{id}/queries` | the queries with their per-query scores, computed from traces and qrels | — |
-| `GET /runs/{id}/trace/{query}` | one query's trace, node by node, with **chunk text resolved** from the dataset when present, ids alone otherwise (and a flag the UI shows) | — |
+| `GET /runs/{id}/trace/{query}` | one query's trace, node by node, with **passage text resolved** from the dataset only when the dataset on disk digests to the run's `dataset_version` and the chunk set to its `index_version`; ids alone otherwise, flagged, saying whether the dataset is absent or different | — |
 | `POST /compare` | `{run_ids, baseline, pairing?}` → table, parameter matrix, per-query deltas, per-stage metrics with the pairing used | `compare` |
 | `GET/PUT /pipelines/{name}` · `GET/PUT …/layout` | the YAML and its layout | — |
 | `POST /pipelines/validate` | canonical hash and located errors, without running | `validate` |
@@ -134,7 +134,9 @@ ui/ (TypeScript) ──HTTP /api/v1──▶ runtime/ragondin-api ──traits�
 | `GET /benchmarks` · `POST /benchmarks/{name}/download` · `POST /benchmarks/import` | the registry: ready, available (manifest), local import; a download is a job that verifies the digest | — |
 | `GET/PUT /services/{family}/{name}` · `POST …/probe` | the bindings and the **identity read** — the same code the composition root runs before a run | `--remote` |
 
-The `run_id` is **computed at submission**, before anything runs: the identity requires constructing the components and reading the `Remote` identities (ADR-C32), so an unreachable service fails at once, not after an hour.
+The `run_id` is **announced at submission and decided at execution**: computing it at submission requires constructing the components and reading the `Remote` identities (ADR-C32), so an existing run is refused and an unreachable service fails at once, not after an hour; the id the store receives is the one the harness computes from what actually ran, and if it differs from the announced one the job reports the difference and never files a run under the announced id (P4).
+
+**The trace document** keeps its hand-rendered shape and gets no version now, under three rules (ADR-C36): its shape has one Rust definition in `ragondin-experiments`, which both the harness and `ragondin-api` compile against; a stored trace that cannot be read is reported, never repaired; the first change to the shape that a stored trace could not satisfy adds a version in the same change.
 
 ## 6. Storage — the workspace
 
@@ -183,22 +185,22 @@ The `run_id` is **computed at submission**, before anything runs: the identity r
 | `impl_not_in_build` | an `impl:` this binary lacks | "rebuild with the feature, or bind a Remote under this name" |
 | `service_unreachable` | probe or submission | the address, the network error, the identity last read |
 | `run_exists` (409) | submitting a present `run_id` | the link to the run or the job |
-| `store_version_unreadable` | a run written by a newer build | the version read and the one expected — **reported, never repaired** |
-| `dataset_missing` | chunk text not resolvable | not an error: a degraded response with a flag; the UI shows ids and a banner |
+| `run_unreadable` | a run whose configuration carries a schema version this build does not read, or whose trace does not parse | what was read and what this build expects — **reported, never repaired** |
+| `dataset_absent` · `dataset_differs` | passage text not resolvable: no dataset on disk, or one whose digests are not the run's | not an error: a degraded response with a flag; the UI shows ids and a banner naming which of the two it is |
 
 **UI** — three levels and never a modal: *inline* (a field, a node, an edge — where one corrects), *section* (a panel that could not load, with retry), *toast* for an asynchronous outcome ("Run failed at `rerank` — open"). An error that needs action does not dismiss itself. A broken SSE stream shows ("disconnected, retrying") and reconnects; the state never pretends to be current.
 
-**Forbidden**: a swallowing `catch`, a `fetch` without a rendered error path, a spinner without real progress, an `unwrap` in `ragondin-api`. API-crate PRs go through the review toolkit's silent-failure hunter.
+**Forbidden**: a swallowing `catch`, a `fetch` without a rendered error path, a spinner without real progress, an `unwrap` in `ragondin-api`. API-crate PRs are reviewed for silent failures specifically: every error path is read for what it swallows.
 
 ## 9. Tests, CI and governance
 
 ### Rust — test-driven by the repository's rule
 
-- **`ragondin-api`**: handlers tested against in-memory trait implementations (`FakeRunStore`, `FakeLauncher`) with `tower::ServiceExt::oneshot`; `openapi.json` as a **golden** — an API change is a reviewed diff; a `problem+json` contract test per code.
+- **`ragondin-api`**: handlers tested against in-memory trait implementations (`FakeRunStore`, `FakeLauncher`) with `tower::ServiceExt::oneshot`; the API description as a **golden** — an API change is a reviewed diff; a `problem+json` contract test per code.
 - **Backend conformance**: `RunStore`, `PipelineSource`, `Registry` each get a conformance suite on the model of `ragondin-conformance`; `FileSystemRunStore` passes it; M7's object-store backend will. This is what makes "M7 is a set of backends" checkable rather than promised.
 - **Launcher**: the state machine against a fake harness — progress, cancellation between queries, recovery on restart by re-reading `jobs/`, refusal of an unreachable service at submission.
 - **Per-node metrics**: an invariant test — nDCG recomputed from the trace at the last node **equals** the metric the harness recorded, on the `pytrec_eval`-checked fixtures of #235. A divergence means the trace or the metric lies.
-- **Binary** (`assert_cmd`): `ragondin ui` in a lean build answers its message; `--bind`. And **the parity test, the exit criterion mechanised**: a pipeline written through `PUT /pipelines` then exported hashes identically under `ragondin validate`.
+- **Binary** (`assert_cmd`): `ragondin ui` in a lean build answers its message; a `ui` build without built assets compiles and serves a notice, and the release job asserts the real assets are present; a non-loopback bind is refused. And **the parity test, the exit criterion mechanised**: a pipeline written through `PUT /pipelines` then exported hashes identically under `ragondin validate`.
 - **End to end**: submission through the API → run → compare, with the in-process generator service #326 already uses, under `--features ui,remote`, `#[ignore]` like the calibrations.
 
 ### UI
@@ -226,16 +228,17 @@ The `run_id` is **computed at submission**, before anything runs: the identity r
 |---|---|
 | 1. Where the front end runs | 1a — `ragondin ui`: the binary serves a JSON API and embedded assets; the browser never reads files; the graph is lowered by `ragondin-pipeline` on the server |
 | 2. What it consumes | 2b, with 2c's stance — an API layer with its own versioned, generated types stands between the on-disk files and the UI; the UI is in-workspace and the API is not yet promised |
-| 3. What replay shows for a ranking | 3b — ids, documents, scores and the stored context text from the record; passages resolved against the dataset at read time when present, degraded and flagged otherwise; ADR-C28 stands |
+| 3. What replay shows for a ranking | 3b, amended — ids, documents, scores and the stored context text from the record; passages resolved against the dataset at read time only when its digests are the run's, degraded and flagged otherwise; ADR-C28 stands. Recorded trigger: once a chunker component produces chunks inside the pipeline, this stops working and needs a new decision |
 | 4. Toolchain and governance | 4a — TypeScript under `ui/`, with the governance of § 9 |
 
 Plus two decisions the issue did not ask and this design needs: **the roadmap change** (M4 is the front end; the judge and everything after shift by one; the milestone rule) — governance, resolved by amending `docs/AGENT_WORKFLOW.md` and the GitHub milestones, no ADR; and **the supersession of ADR-014**'s trajectory — its own ADR.
 
-The decider's outcome is one ADR for #327, one superseding ADR-014, the roadmap amendment, and the M4 milestone with the exit criterion of § 2.
+The decision produced ADR-C36 (questions 1–4 and INV-12), ADR-016 (superseding ADR-014), the roadmap amendment, and the M4 milestone with the exit criterion of § 2. The M4 journey is mechanised against a locally served fixture benchmark, with one `#[ignore]` run over the real SciFact download like the calibrations. `just check` requires Node from now on; `cargo build` never does.
 
 ## 11. Deliberately left open
 
 - **Where the benchmark manifest's URLs point** for each dataset (BEIR's public server, Hugging Face mirrors): a sub-project 1b question, answered per entry with a licence check.
-- **Whether prefix runs land in M4 or M5**: designed here so the API and the Runs grouping leave room; the editor issue decides.
+- **Whether prefix runs land in M4 or M5**: designed here so the API and the Runs grouping leave room; the editor issue decides. If they need any change to `ragondin-pipeline`'s public API, that change escalates under INV-1.
+- **The editor is part of M4, without a time-box.** The product owner decided that M4 does not close without the editor: composing a pipeline in the UI is in the exit criterion, and the judge waits if the editor is late. No viewer issue may depend on an editor issue all the same — the viewer's renderer is the editor's base, never the reverse.
 - **The pairing-by-hand persistence format**: a sub-project 2 leaf choice, recorded in `ragondin-api`'s `ARCHITECTURE.md`.
 - **A logo**: the design system sets the name in type; a mark is later work.

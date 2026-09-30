@@ -117,9 +117,11 @@ carries the governance the Rust workspace already has, transposed.**
   the one the harness computes from what actually ran; if it differs from the
   one announced, the job reports the difference and never files a run under an
   id computed from something other than what ran (P4).
-- **The server is local by default and defends its origin.** It listens on a
-  loopback address unless the operator names another, and binding elsewhere is an
-  explicit act the command announces as unauthenticated. It answers only requests
+- **The server is local and defends its origin.** It listens on a loopback
+  address only; a request to bind anywhere else is refused until an
+  authentication layer exists, which the cloud-native milestone brings. A machine
+  elsewhere is reached through an SSH tunnel, which keeps the loopback and brings
+  its own authentication. It answers only requests
   whose `Host` names the address it serves, and refuses a state-changing request
   whose `Origin` is not its own — a local server that writes files and launches
   runs is otherwise reachable from any page the user's browser opens. It sends a
