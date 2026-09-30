@@ -2,17 +2,19 @@
 //!
 //! The platform binary and the **composition root** — the single place that
 //! assembles the engine and the concrete components (P2: one binary, one config
-//! file, it runs). One binary, four subcommands:
+//! file, it runs). One binary, five subcommands:
 //!
 //! ```text
 //! ragondin bench <config> --benchmark beir/scifact --datasets <dir> --store <dir> \
 //!                [--remote <family>/<name>=<uri>]...
 //! ragondin compare <run-a> <run-b> --store <path>   # compare two runs
 //! ragondin serve <config>                           # serve the pipeline
+//! ragondin ui --workspace <dir> [--port <port>] [--bind <loopback>]  # the UI
 //! ragondin validate <config>                        # validate a configuration
 //! ```
 //!
-//! All four are **declared**; three are implemented. `validate` loads a
+//! All five are **declared**; four are implemented, one of them behind a
+//! feature. `validate` loads a
 //! configuration through `ragondin-config`, stops at the `LogicalPipeline`, and
 //! prints its content hash — the config→logical→hash path end to end, with no
 //! registry and no execution. `compare` reads two runs already recorded in a
@@ -21,7 +23,9 @@
 //! re-execution and no new metric, a packaging-only handler over that
 //! crate's comparison (ADR-C15). `bench` evaluates a configuration against a
 //! benchmark and records the run. `serve` parses its arguments and then
-//! reports that this build does not implement it.
+//! reports that this build does not implement it. `ui`, behind the `ui`
+//! feature, serves the front end and its JSON API on a loopback address
+//! (ADR-C36 § 1); a build without the feature refuses it, naming the feature.
 //!
 //! **`bench` is where the composition root does its job** (§4.3): it is the one
 //! subcommand that registers concrete components on an `EngineContext`, which
@@ -43,6 +47,8 @@ use clap::{Parser, Subcommand};
 mod bench;
 mod binding;
 mod compare;
+#[cfg(feature = "ui")]
+mod ui;
 mod validate;
 mod wiring;
 
@@ -57,7 +63,7 @@ mod remote_fakes;
 #[command(
     name = "ragondin",
     version,
-    about = "Evaluate, compare, serve and validate RAG pipelines.",
+    about = "Evaluate, compare, serve and validate RAG pipelines, and browse them in a UI.",
     long_about = "One binary, one configuration file, it runs.\n\n\
                   A pipeline is described by a single YAML file. `validate` \
                   checks one without running it; the other subcommands take \
@@ -68,7 +74,7 @@ struct Cli {
     command: Command,
 }
 
-/// The four subcommands of `docs/code-architecture.md` §4.2.
+/// The five subcommands of `docs/code-architecture.md` §4.2.
 ///
 /// They are one binary's doors onto crates that stay distinct behind them: the
 /// serving driver and the evaluation harness are separate crates over the same
@@ -141,6 +147,33 @@ enum Command {
         /// The pipeline configuration to serve.
         config: PathBuf,
     },
+    /// Serve the UI and its API on a loopback address.
+    #[command(
+        long_about = "Serve the UI and its JSON API on a loopback address.\n\n\
+        The UI's pages are served at `/` and the API under `/api/v1/`, over the \
+        workspace given with `--workspace`; its runs are read from \
+        `<workspace>/runs`, where `bench --store <workspace>/runs` writes them. \
+        The address is printed on start. Nothing opens a browser.\n\n\
+        The server listens on loopback only: `--bind` accepts `127.0.0.1` (the \
+        default) or `::1`, and refuses any other address, because the server has \
+        no authentication yet. To use it from another machine, run it there and \
+        forward its port over SSH (`ssh -L <port>:127.0.0.1:<port> <host>`), \
+        then open the printed address on this one.\n\n\
+        `--port 0` asks the system for a free port. A build without the `ui` \
+        feature refuses this subcommand."
+    )]
+    Ui {
+        /// The workspace directory the server reads.
+        #[arg(long)]
+        workspace: PathBuf,
+        /// The port to listen on; 0 for any free port. [default: 7341]
+        #[arg(long)]
+        port: Option<u16>,
+        /// The loopback address to listen on: `127.0.0.1` or `::1`.
+        /// [default: 127.0.0.1]
+        #[arg(long)]
+        bind: Option<String>,
+    },
     /// Check a configuration and print its content hash, without running it.
     #[command(long_about = "Check a configuration and print its content hash, \
         without running it.\n\n\
@@ -188,6 +221,23 @@ async fn dispatch(cli: Cli) -> Result<()> {
             .await
         }
         Command::Serve { .. } => anyhow::bail!("serving is not available in v0"),
+        #[cfg(feature = "ui")]
+        Command::Ui {
+            workspace,
+            port,
+            bind,
+        } => {
+            ui::run(&ui::Request {
+                workspace: &workspace,
+                port,
+                bind: bind.as_deref(),
+            })
+            .await
+        }
+        #[cfg(not(feature = "ui"))]
+        Command::Ui { .. } => {
+            anyhow::bail!("this build does not carry the UI; rebuild with `--features ui`")
+        }
     }
 }
 

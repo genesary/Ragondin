@@ -169,9 +169,10 @@ fn validate_refuses_a_file_that_is_not_there_readably_rather_than_panicking() {
 
 #[test]
 fn every_subcommand_of_the_documented_surface_is_declared() {
-    // `docs/code-architecture.md` §4.2 lists four, and ADR-C15 makes one binary
-    // carrying all four the entire user-facing surface. A subcommand missing
-    // from the help is missing from that surface.
+    // `docs/code-architecture.md` §4.2 lists five, and ADR-C15 makes one binary
+    // carrying all five the entire user-facing surface — `ui` included in a
+    // build without its feature, which declares it and refuses it. A
+    // subcommand missing from the help is missing from that surface.
     let output = ragondin(&["--help"]);
     let help = stdout(&output);
 
@@ -182,7 +183,7 @@ fn every_subcommand_of_the_documented_surface_is_declared() {
     );
 
     let declared = declared_subcommands(&help);
-    for subcommand in ["bench", "compare", "serve", "validate"] {
+    for subcommand in ["bench", "compare", "serve", "ui", "validate"] {
         assert!(
             declared.contains(&subcommand),
             "`{subcommand}` must be a declared subcommand, found {declared:?} in:\n{help}"

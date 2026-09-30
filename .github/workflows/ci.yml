@@ -190,3 +190,26 @@ jobs:
 
       - name: API types, lint, typecheck, test, build, audit
         run: npm run check
+
+      # The release assertion (ADR-C36 § 5): `npm run check` has just built
+      # `ui/dist/`, so the binary built here embeds the real UI, and under
+      # `RAGONDIN_REQUIRE_UI_ASSETS` `tests/ui.rs` fails if it embedded the
+      # notice page instead. The shipped shape, exercised on every pull
+      # request, in this job rather than in `check`, which never runs Node.
+      # rust-toolchain.toml pins the toolchain, as in `check`; the cache is
+      # this job's own, since it builds one crate with one feature.
+      - name: Cache cargo registry and build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-ui-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
+          restore-keys: ${{ runner.os }}-cargo-ui-
+
+      - name: The binary embeds the built UI (release assertion)
+        working-directory: .
+        run: cargo test -p ragondin --features ui
+        env:
+          RAGONDIN_REQUIRE_UI_ASSETS: "1"

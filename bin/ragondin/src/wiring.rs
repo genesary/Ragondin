@@ -82,6 +82,26 @@ pub fn is_local(family: Family, name: &str) -> bool {
     LOCAL.contains(&(family, name))
 }
 
+/// The `Local` components **this** build carries, by family, in [`LOCAL`]'s
+/// order: its entries whose feature is on. What `ragondin ui` reports as the
+/// build's capabilities. `dense` is carried by a build that can construct an
+/// embedder for it, `onnx` or `remote`, which is when [`register`] can
+/// register it.
+#[cfg(feature = "ui")]
+pub fn carried() -> impl Iterator<Item = (Family, &'static str)> {
+    LOCAL.into_iter().filter(|(_, name)| match *name {
+        BM25 => cfg!(feature = "bm25"),
+        DENSE => cfg!(any(feature = "onnx", feature = "remote")),
+        CROSS_ENCODER | ONNX_EMBEDDER => cfg!(feature = "onnx"),
+        STUB_GENERATOR => cfg!(feature = "stub"),
+        // Normal dependencies, in every build.
+        RRF | CONCAT => true,
+        // An entry added to `LOCAL` and not here is reported by no build;
+        // the `--all-features` capabilities test lists every entry.
+        _ => false,
+    })
+}
+
 /// The keys every `dense` node may carry, whatever embedder it names
 /// (ADR-C32 § 1). `top_k` is the executor's; the rest are this file's.
 const DENSE_KEYS: [&str; 4] = ["top_k", "embedder", "query_prefix", "passage_prefix"];
@@ -699,14 +719,16 @@ async fn identity_of(
                 .bindings()
                 .binds(Family::Reranker, &node.implementation) =>
         {
-            use ragondin_contracts::Reranker;
             let served_model = required_string(&node.params, SERVED_MODEL)?;
-            let reranker = ragondin_remote::RemoteReranker::new(
-                bound.channel(Family::Reranker, &node.implementation)?,
-            );
             (
                 RERANKER_ROLE,
-                reranker.model_identity(Some(&served_model)).await?,
+                service_identity(
+                    bound,
+                    Family::Reranker,
+                    &node.implementation,
+                    Some(&served_model),
+                )
+                .await?,
             )
         }
         LogicalNode::ContextBuilder(node) if node.implementation == CONCAT => (
@@ -719,10 +741,10 @@ async fn identity_of(
                 .bindings()
                 .binds(Family::ContextBuilder, &node.implementation) =>
         {
-            let builder = ragondin_remote::RemoteContextBuilder::new(
-                bound.channel(Family::ContextBuilder, &node.implementation)?,
-            );
-            (CONTEXT_BUILDER_ROLE, builder.model_identity().await?)
+            (
+                CONTEXT_BUILDER_ROLE,
+                service_identity(bound, Family::ContextBuilder, &node.implementation, None).await?,
+            )
         }
         #[cfg(feature = "remote")]
         LogicalNode::Generator(node)
@@ -730,16 +752,18 @@ async fn identity_of(
                 .bindings()
                 .binds(Family::Generator, &node.implementation) =>
         {
-            use ragondin_contracts::Generator;
             // Required, and refused here rather than sent: ADR-C31 § 4 has the
             // composition root refuse an absent `served_model` itself.
             let served_model = required_string(&node.params, SERVED_MODEL)?;
-            let generator = ragondin_remote::RemoteGenerator::new(
-                bound.channel(Family::Generator, &node.implementation)?,
-            );
             (
                 GENERATOR_ROLE,
-                generator.model_identity(&served_model).await?,
+                service_identity(
+                    bound,
+                    Family::Generator,
+                    &node.implementation,
+                    Some(&served_model),
+                )
+                .await?,
             )
         }
         #[cfg(feature = "stub")]
@@ -755,6 +779,64 @@ async fn identity_of(
         _ => return Ok(None),
     };
     Ok(Some((role, identity.as_str().to_owned())))
+}
+
+/// The identity the service bound as `family`/`name` in `bound` reports,
+/// read with `served_model` — the identity read of [`model_hashes`] for a
+/// bound reranker, context builder or generator, and the whole of `ragondin
+/// ui`'s probe (ADR-C36 § 1), which calls it with no served model.
+///
+/// An embedder, a reranker and a generator report an identity for a served
+/// model only (ADR-C32 § 4, ADR-C31 § 4), so without one it is refused before
+/// any call. A retriever's and a fusion's services have no identity rpc, and
+/// are refused as such. A service that cannot be reached fails at this call —
+/// the channel connects lazily — as the adapter's `Unavailable`.
+#[cfg(feature = "remote")]
+pub async fn service_identity(
+    bound: &Bound,
+    family: Family,
+    name: &str,
+    served_model: Option<&str>,
+) -> Result<ragondin_types::ModelIdentity> {
+    use ragondin_contracts::{ContextBuilder, Embedder, Generator, Reranker};
+
+    let needed = || {
+        anyhow::anyhow!(
+            "`{family}/{name}`: a {family} reports an identity for a served model, and none \
+             was given"
+        )
+    };
+    let channel = bound.channel(family, name)?;
+    Ok(match family {
+        Family::Retriever | Family::Fusion => bail!(
+            "`{family}/{name}`: a `Remote` {family} reports no identity; its service has no \
+             identity rpc"
+        ),
+        Family::Embedder => {
+            let served_model = served_model.ok_or_else(needed)?;
+            // The prefixes are applied to texts, and an identity names none.
+            ragondin_remote::RemoteEmbedder::new(channel, "", "")
+                .model_identity(Some(served_model))
+                .await?
+        }
+        Family::Reranker => {
+            let served_model = served_model.ok_or_else(needed)?;
+            ragondin_remote::RemoteReranker::new(channel)
+                .model_identity(Some(served_model))
+                .await?
+        }
+        Family::Generator => {
+            let served_model = served_model.ok_or_else(needed)?;
+            ragondin_remote::RemoteGenerator::new(channel)
+                .model_identity(served_model)
+                .await?
+        }
+        Family::ContextBuilder => {
+            ragondin_remote::RemoteContextBuilder::new(channel)
+                .model_identity()
+                .await?
+        }
+    })
 }
 
 /// Refuses every key of `params` that is not in one of `allowed`, naming it.

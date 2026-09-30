@@ -19,7 +19,7 @@ npm ci          # never `npm install`: the lockfile is the pin
 npm run dev     # http://localhost:5173
 ```
 
-The dev server serves the UI alone, with no API behind it: the shell renders, and the workspace shows as unreachable. The UI talks to the API of the `ragondin ui` binary that serves it.
+The dev server serves the UI alone, with no API behind it: the shell renders, and the workspace shows as unreachable. The UI talks to the API of the `ragondin ui` binary that serves it. To see it served by the binary, beside its API, build it and then the binary: `npm run build`, then, from the repository root, `cargo run -p ragondin --features ui -- ui --workspace <dir>`.
 
 The design system's preview — every primitive in every state, in both themes — is served by the same dev server at <http://localhost:5173/design/preview/>. It never ships: the production build leaves it out.
 
