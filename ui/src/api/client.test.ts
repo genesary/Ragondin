@@ -48,6 +48,29 @@ describe('the API client, on success', () => {
     await client.get('/workspace');
     expect(client.build()).toBe('9.9.9+fedcba987654');
   });
+
+  it('reports no identity after an answer that carried none, rather than an earlier one', async () => {
+    const replies = [json(WORKSPACE, { build: '9.9.9+fedcba987654' }), json(WORKSPACE, { build: null })];
+    stubFetch(async () => replies.shift() as Response);
+    const client = createApiClient();
+    await client.get('/workspace');
+    await client.get('/workspace');
+    expect(client.build()).toBeNull();
+  });
+
+  it('keeps the last identity through a request that got no answer at all', async () => {
+    const replies: (() => Response)[] = [
+      () => json(WORKSPACE, { build: '9.9.9+fedcba987654' }),
+      () => {
+        throw new TypeError('Failed to fetch');
+      },
+    ];
+    stubFetch(async () => (replies.shift() as () => Response)());
+    const client = createApiClient();
+    await client.get('/workspace');
+    await client.get('/workspace');
+    expect(client.build()).toBe('9.9.9+fedcba987654');
+  });
 });
 
 describe('the API client, on a problem', () => {

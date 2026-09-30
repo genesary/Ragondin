@@ -48,7 +48,7 @@ export type ApiClient = {
   put<P extends PathWith<'put'>>(path: P, body: Body<P, 'put'>, ...params: ParamsArg<P, 'put'>): Promise<ApiResult<Answer<P, 'put'>>>;
   patch<P extends PathWith<'patch'>>(path: P, body: Body<P, 'patch'>, ...params: ParamsArg<P, 'patch'>): Promise<ApiResult<Answer<P, 'patch'>>>;
   del<P extends PathWith<'delete'>>(path: P, ...params: ParamsArg<P, 'delete'>): Promise<ApiResult<Answer<P, 'delete'>>>;
-  /** The build identity the last response carried, or null before any response. */
+  /** The build identity the last answer carried; null before any answer, or when the last carried none. */
   build(): string | null;
 };
 
@@ -99,7 +99,9 @@ export function createApiClient(): ApiClient {
       };
     }
 
-    lastBuild = response.headers.get(BUILD_HEADER) ?? lastBuild;
+    // Every answer replaces the identity, an absent header included: the
+    // handshake must see "no identity", never an earlier answer's.
+    lastBuild = response.headers.get(BUILD_HEADER);
     const type = response.headers.get('content-type') ?? '';
     const text = await response.text();
 
