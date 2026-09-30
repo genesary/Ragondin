@@ -2,10 +2,13 @@
 //! handler and layer tests share: a router over the fakes, a request builder
 //! that passes the `Host` check, and a body reader.
 //!
-//! No file backend exists in this crate yet, and none is needed: the fakes are
-//! what the router is tested against, the way the design document § 9 asks.
+//! The router is tested against the fakes, the way the design document § 9
+//! asks; the file backends are tested on their own, and `datasets` holds what
+//! the registry's tests share.
 
 #![allow(dead_code)] // each test binary uses a different part of this module
+
+pub mod datasets;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -17,8 +20,8 @@ use axum::http::{Request, Response};
 use axum::Router;
 use ragondin_api::{
     router, ApiError, Backends, BenchmarkEntry, Capabilities, FamilyCapabilities, Job, JobState,
-    Launcher, PipelineEntry, PipelineFile, PipelineSource, Registry, Revision, Server,
-    ServerConfig, ServiceBinding, ServiceIdentity, Settings, Submission, WorkspaceSettings,
+    Launcher, PipelineEntry, PipelineFile, PipelineSource, ProgressSink, Registry, Revision,
+    Server, ServerConfig, ServiceBinding, ServiceIdentity, Settings, Submission, WorkspaceSettings,
 };
 use ragondin_experiments::{FileSystemRunStore, Run, RunId, RunStore, RunStoreError};
 
@@ -212,14 +215,27 @@ impl Registry for FakeRegistry {
         Ok(Vec::new())
     }
 
-    async fn download(&self, name: &str) -> Result<(), ApiError> {
-        Err(ApiError::BackendFailed {
-            detail: format!("the fake registry downloads nothing, {name} included"),
+    async fn verify(&self, name: &str) -> Result<BenchmarkEntry, ApiError> {
+        Err(ApiError::BenchmarkNotFound {
+            name: name.to_owned(),
         })
     }
 
-    async fn import(&self, _name: &str, _path: &Path) -> Result<(), ApiError> {
-        Ok(())
+    async fn download(
+        &self,
+        name: &str,
+        _progress: ProgressSink,
+    ) -> Result<BenchmarkEntry, ApiError> {
+        Err(ApiError::BenchmarkNotFound {
+            name: name.to_owned(),
+        })
+    }
+
+    async fn import(&self, name: &str, _path: &Path) -> Result<BenchmarkEntry, ApiError> {
+        Err(ApiError::ImportRefused {
+            name: name.to_owned(),
+            reason: "the fake registry imports nothing".to_owned(),
+        })
     }
 }
 

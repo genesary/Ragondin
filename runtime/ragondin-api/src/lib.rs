@@ -25,7 +25,9 @@
 //!   core type serialized directly.
 //! - [`error`] — [`ApiError`] and its `application/problem+json` rendering.
 //! - [`description`] — the API description, kept as a golden file.
-//! - [`fs`] — the home of the file backends, empty today.
+//! - [`fs`] — the file backends: [`fs::FsRegistry`] today.
+//! - `conformance` — behind the `conformance` feature, the suite every
+//!   [`Registry`] backend passes.
 //!
 //! Every path is under `/api/v1`: `GET /workspace`, `GET /runs` and
 //! `GET /runs/{id}`.
@@ -45,6 +47,8 @@ use axum::{Router, ServiceExt};
 use tower::Service;
 
 pub mod backends;
+#[cfg(feature = "conformance")]
+pub mod conformance;
 pub mod description;
 pub mod error;
 pub mod fs;
@@ -55,14 +59,15 @@ mod handlers;
 mod layers;
 
 pub use backends::{
-    Backends, BenchmarkEntry, BenchmarkStatus, Job, JobState, Launcher, PipelineEntry,
-    PipelineFile, PipelineSource, Registry, Revision, ServiceIdentity, Settings, Submission,
+    Backends, DownloadProgress, Job, JobState, Launcher, PipelineEntry, PipelineFile,
+    PipelineSource, ProgressSink, Registry, Revision, ServiceIdentity, Settings, Submission,
     WorkspaceSettings,
 };
 pub use error::ApiError;
 pub use layers::BUILD_HEADER;
 pub use response::{
-    Capabilities, EdgeLocation, FamilyCapabilities, Location, Problem, ServiceBinding,
+    BenchmarkEntry, BenchmarkState, Capabilities, EdgeLocation, FamilyCapabilities, GroundTruth,
+    Location, Problem, ServiceBinding,
 };
 
 /// What the binary fixes when it builds the router.

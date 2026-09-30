@@ -10,14 +10,17 @@ rust-version.workspace = true
 # The crate that answers the browser (ADR-C36 § 2). INV-12: it reaches no
 # crate under `engine/` or `components/`, nor `ragondin-remote`, directly or
 # through any other crate — `scripts/check-invariants.py` walks the closure.
-# Its workspace dependencies are therefore the experiment plane and the core:
-# `ragondin-experiments` for the `RunStore` trait, the run record and the
-# lowering of a stored configuration, and `ragondin-pipeline` for the
-# `LogicalPipeline` that lowering yields, which the handlers convert into this
-# crate's own graph type. `ragondin-config`, `ragondin-benchmarks` and
-# `ragondin-metrics` are allowed by INV-12 and arrive with the endpoints that
-# read them.
+# Its workspace dependencies are therefore the experiment plane, the core and
+# the benchmarks: `ragondin-experiments` for the `RunStore` trait, the run
+# record and the lowering of a stored configuration; `ragondin-pipeline` for
+# the `LogicalPipeline` that lowering yields, which the handlers convert into
+# this crate's own graph type; and `ragondin-benchmarks` for the manifest, the
+# digest-verified download and the import the `Registry` file backend
+# (`src/fs/registry.rs`) is written over. Its closure holds no engine and no
+# component. `ragondin-config` and `ragondin-metrics` are allowed by INV-12
+# and arrive with the endpoints that read them.
 [dependencies]
+ragondin-benchmarks = { workspace = true }
 ragondin-experiments = { workspace = true }
 ragondin-pipeline = { workspace = true }
 async-trait = { workspace = true } # dyn-compatible async traits (frozen: async_trait, not RPITIT)
@@ -35,3 +38,18 @@ tokio = { workspace = true }
 # `ServiceExt::oneshot`, behind `util`, which is not asked for here: `axum`
 # requires it of the same `tower` 0.5, and Cargo unifies the two.
 tower = { workspace = true }
+
+[dev-dependencies]
+# The digests of the files a test's local server serves, for the manifest
+# entries the registry tests build.
+sha2 = { workspace = true }
+
+[features]
+# The conformance suite for `Registry` backends (`src/conformance.rs`): a
+# backend's tests turn it on, and a production build of this crate does not
+# carry it.
+conformance = []
+
+[[test]]
+name = "registry_conformance"
+required-features = ["conformance"]

@@ -24,7 +24,7 @@ use async_trait::async_trait;
 use ragondin_experiments::{RunId, RunStore};
 
 use crate::error::ApiError;
-use crate::response::{Capabilities, ServiceBinding};
+use crate::response::{BenchmarkEntry, Capabilities, ServiceBinding};
 
 /// Every backend the router consumes, constructed by the binary and passed in.
 #[derive(Clone)]
@@ -45,7 +45,7 @@ pub struct Backends {
 /// The workspace's pipeline documents and their layouts.
 ///
 /// Locally, `pipelines/<name>.yaml` beside `<name>.layout.json`, a backend whose
-/// home is this crate's `fs` module, empty today; in a cluster, custom resources with the
+/// home is this crate's `fs` module, not written yet; in a cluster, custom resources with the
 /// layout as an annotation. The document is the source of truth and is never
 /// rewritten by the API: what `write` receives is what the file holds.
 #[async_trait]
@@ -108,58 +108,79 @@ impl Revision {
 }
 
 /// The benchmarks: those present with their digests verified, those
-/// available from the manifest the binary carries, and a local import.
+/// available from the manifest the binary carries, and those imported.
 ///
-/// Locally, a directory and the manifest `ragondin-benchmarks` holds; in a
-/// cluster, an object store and the same manifest. The digest is a
-/// benchmark's identity everywhere, and "verified" means the digest on disk
-/// is the manifest's.
+/// Locally, a directory and the manifest `ragondin-benchmarks` holds
+/// ([`FsRegistry`](crate::fs::FsRegistry)); in a cluster, an object store and
+/// the same manifest. The digest is a benchmark's identity everywhere:
+/// "ready" means the dataset on disk digests to the manifest's
+/// `dataset_version`, the value a run over it records. Every method reads or
+/// writes the datasets and may block on them, so a backend moves that work off
+/// the async workers. `conformance::assert_registry_conformance`, behind this
+/// crate's `conformance` feature, checks a backend against this contract.
 #[async_trait]
 pub trait Registry: Send + Sync {
-    /// Every benchmark the registry knows, present or available.
+    /// Every benchmark the registry knows — those the manifest names, then
+    /// those imported — each with its state.
     async fn benchmarks(&self) -> Result<Vec<BenchmarkEntry>, ApiError>;
 
-    /// Fetches a benchmark the manifest names, and verifies its digest
-    /// before it counts as present.
+    /// One benchmark, by its selector, verified against the digest expected
+    /// of it now.
     ///
-    /// **Provisional shape.** A download is a job with progress, run on its
-    /// own queue beside the run queue (the design document § 7); this
-    /// signature carries none of that, and the issue that brings the manifest
-    /// and the digest-verified download (#341) settles it. Nothing calls it
-    /// yet.
-    async fn download(&self, name: &str) -> Result<(), ApiError>;
+    /// # Errors
+    ///
+    /// `benchmark_not_found` for a name the registry does not know.
+    async fn verify(&self, name: &str) -> Result<BenchmarkEntry, ApiError>;
 
-    /// Imports a benchmark from a local path under `name`.
-    async fn import(&self, name: &str, path: &Path) -> Result<(), ApiError>;
+    /// Fetches a benchmark the manifest names, reporting progress to
+    /// `progress`, and returns it once its digests verified — each file's,
+    /// then the loaded dataset's. A download that fails leaves nothing on
+    /// disk, and one that succeeds is `ready`.
+    ///
+    /// It runs to its end once started: the download it drives offers no
+    /// cancellation, and the queue that schedules it (the design document
+    /// § 7) reads its progress from `progress`.
+    ///
+    /// # Errors
+    ///
+    /// `benchmark_not_found` for a name the manifest does not hold,
+    /// `benchmark_exists` when its directory is already there,
+    /// `download_failed` for a fetch that failed or bytes whose digest is not
+    /// the manifest's.
+    async fn download(
+        &self,
+        name: &str,
+        progress: ProgressSink,
+    ) -> Result<BenchmarkEntry, ApiError>;
+
+    /// Imports the corpus at `path`, which carries its own ground truth, as
+    /// the local benchmark `name`, and returns it.
+    ///
+    /// # Errors
+    ///
+    /// `import_refused` for a name that is not one directory name, a path
+    /// that cannot be read, or a corpus its adapter refuses — the adapter's
+    /// error in the detail; `benchmark_exists` for a name already taken.
+    async fn import(&self, name: &str, path: &Path) -> Result<BenchmarkEntry, ApiError>;
 }
 
-/// One benchmark, as the registry knows it.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct BenchmarkEntry {
-    /// Its name, e.g. `beir/scifact`.
-    pub name: String,
-    /// The digest that is its identity: the manifest's, for one it names.
-    pub digest: String,
-    /// Whether it is on disk.
-    pub status: BenchmarkStatus,
-}
-
-/// Whether a benchmark is on disk.
+/// Where a download stands: bytes received of the snapshot's total.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum BenchmarkStatus {
-    /// On disk. `verified` is whether its digest is the one expected.
-    Present {
-        /// Whether the digest on disk matches.
-        verified: bool,
-    },
-    /// Named by the manifest, not on disk.
-    Available,
+pub struct DownloadProgress {
+    /// Bytes received so far.
+    pub received: u64,
+    /// The snapshot's size, as the manifest states it.
+    pub total: u64,
 }
+
+/// What a download reports its progress to. Called from the thread the
+/// download runs on, after every chunk received.
+pub type ProgressSink = Arc<dyn Fn(DownloadProgress) + Send + Sync>;
 
 /// The workspace's deployment settings — data about where things run, never
 /// hashed into a run (ADR-C32).
 ///
-/// Locally, `workspace.toml`, a backend whose home is this crate's `fs` module, empty today; in a
+/// Locally, `workspace.toml`, a backend whose home is this crate's `fs` module, not written yet; in a
 /// cluster, the deployment's bindings, read-only.
 #[async_trait]
 pub trait WorkspaceSettings: Send + Sync {

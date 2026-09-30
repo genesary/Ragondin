@@ -1943,11 +1943,13 @@ version = "0.0.0"
 dependencies = [
  "async-trait",
  "axum",
+ "ragondin-benchmarks",
  "ragondin-experiments",
  "ragondin-pipeline",
  "schemars",
  "serde",
  "serde_json",
+ "sha2",
  "thiserror",
  "tokio",
  "tower 0.5.3",
@@ -1959,10 +1961,12 @@ version = "0.0.0"
 dependencies = [
  "csv",
  "ragondin-types",
+ "reqwest",
  "serde",
  "serde_json",
  "sha2",
  "thiserror",
+ "tokio",
 ]
 
 [[package]]

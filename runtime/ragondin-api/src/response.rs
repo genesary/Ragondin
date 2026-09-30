@@ -229,6 +229,76 @@ pub enum EdgeKind {
     Opaque,
 }
 
+/// One benchmark the registry knows: named by the manifest, or imported.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+#[schemars(transform = every_property_required)]
+pub struct BenchmarkEntry {
+    /// Its selector, `<format>/<dir>` — `beir/scifact` — as `ragondin bench
+    /// --benchmark` takes it.
+    pub name: String,
+    /// The format that reads it: `beir`, `beir-qa` or `squad`.
+    pub format: String,
+    /// Where it stands against the digest expected of it.
+    pub state: BenchmarkState,
+    /// The ground truth it carries, read off the loaded dataset; `null` when
+    /// nothing on disk loaded.
+    pub ground_truth: Option<GroundTruth>,
+}
+
+/// Where a benchmark stands. Every verdict is a statement about digests: the
+/// dataset on disk is loaded and its `dataset_version` compared with the one
+/// expected — the manifest's, or the one recorded at import.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum BenchmarkState {
+    /// On disk, and its digest is the manifest's.
+    Ready {
+        /// What it digests to.
+        dataset_version: String,
+    },
+    /// Named by the manifest, not on disk.
+    Available {
+        /// The snapshot's size.
+        size_bytes: u64,
+        /// The dataset's licence, shown before it is downloaded.
+        licence: String,
+        /// Where the licence is stated.
+        licence_url: String,
+    },
+    /// On disk, and its digest is another.
+    Differs {
+        /// The digest expected.
+        expected: String,
+        /// The digest on disk.
+        found: String,
+    },
+    /// On disk, and it does not load.
+    Unreadable {
+        /// The adapter's error.
+        error: String,
+    },
+    /// Imported, and its digest is the one recorded at import.
+    Local {
+        /// What it digests to.
+        dataset_version: String,
+    },
+}
+
+/// The ground truth a benchmark carries: which metric families a run over it
+/// can compute.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum GroundTruth {
+    /// Neither qrels nor reference answers.
+    None,
+    /// Qrels: the retrieval metrics.
+    Qrels,
+    /// Reference answers: the generation metrics against reference.
+    ReferenceAnswers,
+    /// Both.
+    Both,
+}
+
 /// An error, as `application/problem+json` (RFC 9457) with this API's own
 /// members: a stable `code`, a `hint` naming the action, and a `location` for
 /// a validation failure.

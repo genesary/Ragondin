@@ -83,6 +83,38 @@ pub enum ApiError {
         /// The digest the dataset on disk has.
         found: String,
     },
+    /// A benchmark name the registry does not know — or, for a download, one
+    /// the manifest does not hold.
+    #[error("no benchmark {name}")]
+    BenchmarkNotFound {
+        /// The name as the request spelled it.
+        name: String,
+    },
+    /// A download or an import whose destination is already a dataset.
+    #[error("the benchmark {name} is already on disk")]
+    BenchmarkExists {
+        /// The benchmark's name.
+        name: String,
+    },
+    /// A download that did not verify: a fetch that failed, or bytes whose
+    /// digest is not the manifest's. Nothing was left on disk.
+    #[error("downloading {name} failed: {reason}")]
+    DownloadFailed {
+        /// The benchmark.
+        name: String,
+        /// What failed, digests included when one differed.
+        reason: String,
+    },
+    /// An import refused: a name that is not one directory name, a path that
+    /// cannot be read, or a corpus its adapter does not load. Nothing was
+    /// registered.
+    #[error("importing {name} was refused: {reason}")]
+    ImportRefused {
+        /// The name the import asked for.
+        name: String,
+        /// Why, in the adapter's words when it refused the corpus.
+        reason: String,
+    },
     /// A backend failed for a reason that is none of the above — an I/O
     /// error listing the store, say.
     #[error("{detail}")]
@@ -129,6 +161,10 @@ impl ApiError {
         "run_not_found",
         "dataset_absent",
         "dataset_differs",
+        "benchmark_not_found",
+        "benchmark_exists",
+        "download_failed",
+        "import_refused",
         "backend_failed",
         "host_refused",
         "origin_refused",
@@ -144,17 +180,22 @@ impl ApiError {
     /// The HTTP status this error is answered with.
     pub fn status(&self) -> StatusCode {
         match self {
-            Self::PipelineInvalid { .. } | Self::ImplNotInBuild { .. } => {
-                StatusCode::UNPROCESSABLE_ENTITY
+            Self::PipelineInvalid { .. }
+            | Self::ImplNotInBuild { .. }
+            | Self::ImportRefused { .. } => StatusCode::UNPROCESSABLE_ENTITY,
+            Self::ServiceUnreachable { .. } | Self::DownloadFailed { .. } => {
+                StatusCode::BAD_GATEWAY
             }
-            Self::ServiceUnreachable { .. } => StatusCode::BAD_GATEWAY,
-            Self::RunExists { .. } | Self::DatasetDiffers { .. } => StatusCode::CONFLICT,
+            Self::RunExists { .. } | Self::DatasetDiffers { .. } | Self::BenchmarkExists { .. } => {
+                StatusCode::CONFLICT
+            }
             Self::RunUnreadable { .. } | Self::BackendFailed { .. } => {
                 StatusCode::INTERNAL_SERVER_ERROR
             }
-            Self::RunNotFound { .. } | Self::DatasetAbsent { .. } | Self::RouteNotFound { .. } => {
-                StatusCode::NOT_FOUND
-            }
+            Self::RunNotFound { .. }
+            | Self::DatasetAbsent { .. }
+            | Self::BenchmarkNotFound { .. }
+            | Self::RouteNotFound { .. } => StatusCode::NOT_FOUND,
             Self::HostRefused { .. } => StatusCode::MISDIRECTED_REQUEST,
             Self::OriginRefused { .. } => StatusCode::FORBIDDEN,
             Self::MethodNotAllowed { .. } => StatusCode::METHOD_NOT_ALLOWED,
@@ -188,11 +229,15 @@ impl ApiError {
             Self::RunNotFound { .. } => 5,
             Self::DatasetAbsent { .. } => 6,
             Self::DatasetDiffers { .. } => 7,
-            Self::BackendFailed { .. } => 8,
-            Self::HostRefused { .. } => 9,
-            Self::OriginRefused { .. } => 10,
-            Self::RouteNotFound { .. } => 11,
-            Self::MethodNotAllowed { .. } => 12,
+            Self::BenchmarkNotFound { .. } => 8,
+            Self::BenchmarkExists { .. } => 9,
+            Self::DownloadFailed { .. } => 10,
+            Self::ImportRefused { .. } => 11,
+            Self::BackendFailed { .. } => 12,
+            Self::HostRefused { .. } => 13,
+            Self::OriginRefused { .. } => 14,
+            Self::RouteNotFound { .. } => 15,
+            Self::MethodNotAllowed { .. } => 16,
         }
     }
 
@@ -206,6 +251,10 @@ impl ApiError {
             Self::RunNotFound { .. } => "No such run",
             Self::DatasetAbsent { .. } => "The dataset is absent",
             Self::DatasetDiffers { .. } => "The dataset differs from the run's",
+            Self::BenchmarkNotFound { .. } => "No such benchmark",
+            Self::BenchmarkExists { .. } => "The benchmark is already on disk",
+            Self::DownloadFailed { .. } => "The download did not verify",
+            Self::ImportRefused { .. } => "The import was refused",
             Self::BackendFailed { .. } => "A backend failed",
             Self::HostRefused { .. } => "Host refused",
             Self::OriginRefused { .. } => "Origin refused",
@@ -241,6 +290,20 @@ impl ApiError {
             Self::DatasetDiffers { dataset, .. } => format!(
                 "Restore the version of {dataset} this run was evaluated on to see passage text; ids are shown meanwhile."
             ),
+            Self::BenchmarkNotFound { .. } => {
+                "Check the name against the benchmark list: `<format>/<name>`.".to_owned()
+            }
+            Self::BenchmarkExists { name } => format!(
+                "Use {name} as it is, or remove its directory from the datasets directory first."
+            ),
+            Self::DownloadFailed { .. } => {
+                "Retry the download; if the digest differs again, the source changed and this build's manifest no longer matches it."
+                    .to_owned()
+            }
+            Self::ImportRefused { .. } => {
+                "Correct what the detail names — the name, the path, or the dataset's files — and import again."
+                    .to_owned()
+            }
             Self::BackendFailed { .. } => {
                 "Check the workspace on disk: the detail names what failed.".to_owned()
             }
@@ -310,6 +373,20 @@ mod tests {
                 dataset: String::new(),
                 expected: String::new(),
                 found: String::new(),
+            },
+            ApiError::BenchmarkNotFound {
+                name: String::new(),
+            },
+            ApiError::BenchmarkExists {
+                name: String::new(),
+            },
+            ApiError::DownloadFailed {
+                name: String::new(),
+                reason: String::new(),
+            },
+            ApiError::ImportRefused {
+                name: String::new(),
+                reason: String::new(),
             },
             ApiError::BackendFailed {
                 detail: String::new(),

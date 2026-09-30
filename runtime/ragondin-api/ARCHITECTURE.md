@@ -27,7 +27,8 @@ the response types, the typed errors, and the traits the service consumes.
 | `error` | `ApiError`, its stable codes, its `application/problem+json` rendering |
 | `layers` | The server's defence of its origin, as Tower layers on the router |
 | `description` | The API description, assembled from the declared operations and the `schemars` schemas |
-| `fs` | The home of the file backends — empty today |
+| `fs` | The file backends: `FsRegistry` today |
+| `conformance` | The suite every `Registry` backend passes, behind the `conformance` feature |
 
 Served today: `GET /api/v1/workspace`, `GET /api/v1/runs`,
 `GET /api/v1/runs/{id}`. `/api`, `/api/` and every other path below them are
@@ -59,10 +60,14 @@ would not see it. The sign in a diff is a `tonic` channel or a generated
 client type in this crate.
 
 Its workspace dependencies today are `ragondin-experiments` — the `RunStore`
-trait, the `Run` record, and `lower_configuration` — and `ragondin-pipeline`,
-for the `LogicalPipeline` that lowering yields. `ragondin-config`,
-`ragondin-benchmarks` and `ragondin-metrics` are within INV-12 and arrive with
-the endpoints that read them.
+trait, the `Run` record, and `lower_configuration` — `ragondin-pipeline`, for
+the `LogicalPipeline` that lowering yields, and `ragondin-benchmarks`, for the
+manifest, the download, the verification and the import the `Registry` file
+backend is written over. `ragondin-benchmarks` reaches no engine and no
+component: its closure is the core's `ragondin-types`, its readers, and the
+workspace's HTTP client, and `just check-invariants` walks it. `ragondin-config`
+and `ragondin-metrics` are within INV-12 and arrive with the endpoints that read
+them.
 
 ## The traits and their backends
 
@@ -76,7 +81,7 @@ cluster: the binary picks each backend.
 | `RunStore` | `ragondin-experiments` | `FileSystemRunStore` there | an object store or volume |
 | `PipelineSource` | here | `fs`, over `pipelines/<name>.yaml` and its layout — not written yet | custom resources |
 | `WorkspaceSettings` | here | `fs`, over `workspace.toml` — not written yet | the deployment's bindings, read-only |
-| `Registry` | here | `fs`, over the benchmark manifest and the datasets directory — not written yet | an object store and the same manifest |
+| `Registry` | here | `fs::FsRegistry`, over the benchmark manifest and the datasets directory | an object store and the same manifest |
 | `Launcher` | here | the binary, over the composition root | a run custom resource and the controller |
 
 - **Async with `async_trait`** for the four defined here (frozen decision): a
@@ -88,13 +93,50 @@ cluster: the binary picks each backend.
 - **`Launcher` carries the shapes the design document § 7 gives**: `probe`
   returns the identity a `Remote` service reports, `identity` the run id a
   `Submission` announces, and `execute` a `Job`'s terminal `JobState`.
-  **`execute` and `Registry::download` are provisional**, and their doc
-  comments say so: the job model and its queue (#349) settle `execute`'s
-  progress and cancellation, and the manifest's issue (#341) settles a
-  download as a job. Nothing calls either yet, and the crate is internal, so
-  widening them owes no one a deprecation.
+  **`execute` is provisional**, and its doc comment says so: the job model
+  and its queue (#349) settle its progress and cancellation. Nothing calls it
+  yet, and the crate is internal, so widening it owes no one a deprecation.
+  `Registry::download` is settled — § *The `Registry` file backend* says
+  how.
 - **The backends return `ApiError`.** They live in this crate or are written
   for it, and an error that already carries its code needs no second mapping.
+
+## The `Registry` file backend
+
+`fs::FsRegistry` is the `Registry` over a datasets directory and a manifest —
+`ragondin_benchmarks::manifest::manifest()` in the binary, entries a local
+server serves in a test. It holds no logic of its own about datasets: the
+download, the verification, the import and the digest are
+`ragondin_benchmarks::datasets` and `ragondin_benchmarks::identity`, the one
+definition ADR-C36 § 4 allows, and this backend finds the entry a name means,
+runs the call on a blocking thread — each loads a dataset whole or writes one —
+and converts what comes back in `convert.rs`.
+
+- **The listing** is the manifest's entries in manifest order, then the local
+  imports by name. A manifest entry is `ready` when `<datasets>/<dir>`
+  digests to its `dataset_version`, `available` (with its size, licence and
+  the licence's URL) when nothing is there, `differs` with both digests, or
+  `unreadable` with the adapter's error. An import is `local` when it still
+  digests to what it digested to at import, and `differs` or `unreadable`
+  otherwise. The ground truth — `qrels`, `reference_answers`, `both` — is read
+  off the loaded dataset's `CarriedPieces`, and is `null` when nothing loaded.
+- **What the trait gained**, since the backend showed the trait lacked it:
+  `verify`, one entry by name; `download` now takes a `ProgressSink` and
+  returns the verified entry, settling its provisional shape — a download runs
+  to its end once started, since the download it drives offers no
+  cancellation, and reports bytes received of the snapshot's total after
+  every chunk; `import` returns the entry it registered. `BenchmarkEntry`,
+  which the trait exchanges, moved to `response.rs` as a response type — the
+  way `Settings` already carries `ServiceBinding` — and `BenchmarkStatus` is
+  gone, replaced by `BenchmarkState`'s five states.
+- **The conformance suite** (`src/conformance.rs`, behind the `conformance`
+  feature, the model `ragondin-experiments` set for `RunStore`) checks the
+  contract `Registry`'s documentation states: a fresh listing, a download
+  reported `ready` by the listing and by `verify`, unknown names, and an
+  import. `tests/registry_conformance.rs` runs it against `FsRegistry`, with
+  the obtainable benchmark served by a dependency-free local HTTP server —
+  no test touches the network. No route calls the registry yet: the endpoints
+  that do are the workspace's (#342).
 
 ## Response types are this crate's own
 
@@ -149,6 +191,10 @@ code.
 | `run_not_found` | 404 | no run under this id, or a string that is not a run id | `GET /runs/{id}` |
 | `dataset_absent` | 404 | passage text asked for, no dataset on disk | no |
 | `dataset_differs` | 409 | passage text asked for, the dataset on disk is not the run's | no |
+| `benchmark_not_found` | 404 | a benchmark name the registry does not know, or a download of one the manifest does not hold | `FsRegistry` |
+| `benchmark_exists` | 409 | a download or an import whose directory is already there | `FsRegistry` |
+| `download_failed` | 502 | a fetch that failed, or bytes or a loaded dataset whose digest is not the manifest's; the detail names both digests | `FsRegistry` |
+| `import_refused` | 422 | an import name that is not one directory name, a path that cannot be read, or a corpus its adapter refuses — the adapter's error in the detail | `FsRegistry` |
 | `backend_failed` | 500 | a backend failed otherwise — listing the store, say | `GET /runs`, `GET /workspace` |
 | `host_refused` | 421 | the `Host` layer refused the request | every path |
 | `origin_refused` | 403 | the `Origin` layer refused the request | every path |
@@ -162,13 +208,21 @@ document § 8 lists seven codes and leaves the rest to the implementation:
   two are different facts — nothing is there, versus something is there this
   build cannot read — and a client acts differently on each. A string that
   cannot be a run id names no run either, and gets the same answer.
-- **Six codes beyond the design's seven**: `run_not_found` for the above;
+- **Ten codes beyond the design's seven**: `run_not_found` for the above;
   `backend_failed`, because a backend's I/O failure is none of the seven and
   a problem body must carry some code; `host_refused` and `origin_refused`,
   so that the layers' refusals are problem bodies like every other error;
   `route_not_found` and `method_not_allowed`, so that axum's own empty 404
   and 405 never reach the UI. `run_not_found` would be wrong for an unknown
-  path: it tells the client a run is missing, and a client acts on that.
+  path: it tells the client a run is missing, and a client acts on that. And
+  four for the registry: `benchmark_not_found`, `benchmark_exists`,
+  `download_failed` and `import_refused`. `dataset_differs` is not reused for
+  a download whose digest differs: it says the run's dataset is not the one on
+  disk, and its hint tells the reader to restore a run's version — the wrong
+  action for a download, which left nothing on disk. A digest refused is a
+  502, the upstream having served other bytes than the pinned ones; a refused
+  import is a 422, the request's to correct. A disk that cannot be written is
+  `backend_failed`, whichever of the two hit it.
 - **`dataset_absent` and `dataset_differs` have statuses**, 404 and 409, for
   an endpoint that needs the text and cannot degrade. Where replay can show
   ids instead, the design document § 8 makes them a flag in a `200` response,
@@ -269,3 +323,9 @@ workspace's serving-envelope entry, is a dependency for the `Service` trait
 requirement on the same `tower`, unified by Cargo, rather than from a feature
 appended to the workspace entry. `hyper` is on the
 INV-4 deny-list, so the core cannot reach any of this.
+
+`ragondin-benchmarks` brings `reqwest`, with its workspace entry's features
+and none appended, into this crate's closure: the client that entry's comment
+names, on the one `hyper` already in `Cargo.lock`. `sha2` is a
+dev-dependency, for the digests of what a test's local server serves. Neither
+is a new `[workspace.dependencies]` entry.
