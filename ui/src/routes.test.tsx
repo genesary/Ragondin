@@ -125,7 +125,25 @@ describe('#setup', () => {
 });
 
 describe('the address', () => {
-  it.each(['#nowhere', '#pipeline/', '#pipeline/a/b', '#replay/aaa', '#replay/aaa/1395', '#replay?with=bbb', '#runs/extra', '#editor/%E0%A4%A'])(
+  it.each([
+    '#nowhere',
+    '#pipeline/',
+    '#pipeline/a/b',
+    '#replay/aaa',
+    '#replay/aaa/1395',
+    '#replay?with=bbb',
+    '#runs/extra',
+    '#editor/%E0%A4%A',
+    // A value of `.` or `..`, typed or escaped, would name another API path.
+    '#pipeline/..',
+    '#editor/%2E%2E',
+    '#replay/%2e/q/1',
+    '#replay/aaa/q/..',
+    '#compare/aaa+..',
+    // An empty baseline or companion run is no value.
+    '#compare/aaa+bbb?baseline=',
+    '#replay/aaa/q/1395?with=',
+  ])(
     'reads %s as no route rather than a guess',
     (hash) => {
       expect(parseHash(hash)).toBeNull();
@@ -137,6 +155,17 @@ describe('the address', () => {
     act(() => navigate({ screen: 'editor', name: 'starter' }));
     expect(window.location.hash).toBe('#editor/starter');
     // The browser announces a hash change after the fact, as an event.
+    await waitFor(() => expect(JSON.parse(screen.getByRole('status').textContent ?? 'null')).toEqual({ screen: 'editor', name: 'starter' }));
+  });
+
+  it('replaces the current history entry when asked, so Back skips it', async () => {
+    load('#runs');
+    act(() => navigate({ screen: 'setup' }));
+    await waitFor(() => expect(window.location.hash).toBe('#setup'));
+    const length = window.history.length;
+    act(() => navigate({ screen: 'editor', name: 'starter' }, { replace: true }));
+    expect(window.location.hash).toBe('#editor/starter');
+    expect(window.history.length).toBe(length);
     await waitFor(() => expect(JSON.parse(screen.getByRole('status').textContent ?? 'null')).toEqual({ screen: 'editor', name: 'starter' }));
   });
 

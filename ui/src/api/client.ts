@@ -1,5 +1,5 @@
 import { API_BASE } from './base.ts';
-import type { Paths, Problem } from './types.ts';
+import { EMPTY_ANSWERS, type Paths, type Problem } from './types.ts';
 
 /**
  * The header every response carries the answering build's identity in —
@@ -10,10 +10,10 @@ export const BUILD_HEADER = 'x-ragondin-build';
 
 /**
  * The codes the client itself reports, for failures that never reached the
- * API's own error handling: no answer at all, an answer it cannot read, and a
- * different build answering.
+ * API's own error handling: no answer at all, an answer it cannot read, a
+ * different build answering, and a request it refused to send.
  */
-export type ClientCode = 'network_failed' | 'response_unreadable' | 'build_mismatch';
+export type ClientCode = 'network_failed' | 'response_unreadable' | 'build_mismatch' | 'request_invalid';
 
 /** Every failure a screen renders, whether the API or the client reported it. */
 export type ApiProblem = {
@@ -28,7 +28,13 @@ export type ApiProblem = {
   status: number | null;
 };
 
-export type ApiResult<T> = { ok: true; value: T } | { ok: false; problem: ApiProblem };
+/**
+ * A request's outcome, with the build identity its answer carried — null when
+ * no answer arrived, or when it carried none. The identity travels with its
+ * answer rather than living on the client, so two requests in flight never
+ * report each other's.
+ */
+export type ApiResult<T> = ({ ok: true; value: T } | { ok: false; problem: ApiProblem }) & { build: string | null };
 
 export type Method = 'get' | 'post' | 'put' | 'patch' | 'delete';
 export type PathWith<M extends Method> = { [P in keyof Paths]: M extends keyof Paths[P] ? P : never }[keyof Paths];
@@ -48,14 +54,31 @@ export type ApiClient = {
   put<P extends PathWith<'put'>>(path: P, body: Body<P, 'put'>, ...params: ParamsArg<P, 'put'>): Promise<ApiResult<Answer<P, 'put'>>>;
   patch<P extends PathWith<'patch'>>(path: P, body: Body<P, 'patch'>, ...params: ParamsArg<P, 'patch'>): Promise<ApiResult<Answer<P, 'patch'>>>;
   del<P extends PathWith<'delete'>>(path: P, ...params: ParamsArg<P, 'delete'>): Promise<ApiResult<Answer<P, 'delete'>>>;
-  /** The build identity the last answer carried; null before any answer, or when the last carried none. */
-  build(): string | null;
 };
 
-/** A path template of the description, its `{name}` segments filled and encoded. */
-function fill(template: string, params: Record<string, string> | undefined): string {
-  return template.replace(/\{([^}]+)\}/g, (_, name: string) => encodeURIComponent(params?.[name] ?? ''));
+/**
+ * A path template of the description, its `{name}` segments filled and
+ * encoded; null when a value is `.` or `..`, which encoding leaves as it is
+ * and a URL resolves as another path.
+ */
+function fill(template: string, params: Record<string, string> | undefined): string | null {
+  let refused = false;
+  const path = template.replace(/\{([^}]+)\}/g, (_, name: string) => {
+    const value = params?.[name] ?? '';
+    if (value === '.' || value === '..') refused = true;
+    return encodeURIComponent(value);
+  });
+  return refused ? null : path;
 }
+
+/** Whether a parsed problem body has the members every problem carries. */
+const isProblem = (value: unknown): value is Problem =>
+  typeof value === 'object' &&
+  value !== null &&
+  !Array.isArray(value) &&
+  typeof (value as Problem).code === 'string' &&
+  typeof (value as Problem).detail === 'string' &&
+  typeof (value as Problem).hint === 'string';
 
 const unreadable = (request: string, status: number, why: string): ApiProblem => ({
   code: 'response_unreadable',
@@ -72,57 +95,83 @@ const unreadable = (request: string, status: number, why: string): ApiProblem =>
  * `ApiProblem` the caller must render, never an exception it could forget.
  */
 export function createApiClient(): ApiClient {
-  let lastBuild: string | null = null;
-
   async function request(method: Method, template: string, body: unknown, params: Record<string, string> | undefined): Promise<ApiResult<never>> {
-    const url = `${API_BASE}${fill(template, params)}`;
-    const name = `${method.toUpperCase()} ${url}`;
-    const init: RequestInit = { method: method.toUpperCase(), headers: { accept: 'application/json, application/problem+json' } };
-    if (body !== undefined) {
-      init.body = JSON.stringify(body);
-      init.headers = { ...init.headers, 'content-type': 'application/json' };
-    }
-
-    let response: Response;
-    try {
-      response = await fetch(url, init);
-    } catch (e) {
+    const verb = method.toUpperCase();
+    const path = fill(template, params);
+    if (path === null) {
       return {
         ok: false,
+        build: null,
         problem: {
-          code: 'network_failed',
-          message: `${name} failed before any answer: ${e instanceof Error ? e.message : String(e)}.`,
-          hint: 'Check that `ragondin ui` is still running and reachable, then retry.',
+          code: 'request_invalid',
+          message: `${verb} ${API_BASE}${template} was not sent: a path parameter is \`.\` or \`..\`, which would name another path.`,
+          hint: 'Check the address this view was opened from; an id is never `.` or `..`.',
           location: null,
           status: null,
         },
       };
     }
+    const url = `${API_BASE}${path}`;
+    const name = `${verb} ${url}`;
+    const init: RequestInit = { method: verb, headers: { accept: 'application/json, application/problem+json' } };
+    if (body !== undefined) {
+      init.body = JSON.stringify(body);
+      init.headers = { ...init.headers, 'content-type': 'application/json' };
+    }
+    const networkFailed = (e: unknown, status: number | null, what: string): ApiResult<never> => ({
+      ok: false,
+      build: null,
+      problem: {
+        code: 'network_failed',
+        message: `${name} ${what}: ${e instanceof Error ? e.message : String(e)}.`,
+        hint: 'Check that `ragondin ui` is still running and reachable, then retry.',
+        location: null,
+        status,
+      },
+    });
 
-    // Every answer replaces the identity, an absent header included: the
-    // handshake must see "no identity", never an earlier answer's.
-    lastBuild = response.headers.get(BUILD_HEADER);
+    let response: Response;
+    try {
+      response = await fetch(url, init);
+    } catch (e) {
+      return networkFailed(e, null, 'failed before any answer');
+    }
+    const build = response.headers.get(BUILD_HEADER);
+    let text: string;
+    try {
+      text = await response.text();
+    } catch (e) {
+      // The answer began and its body broke off: the connection, not the API.
+      return { ...networkFailed(e, response.status, `answered ${response.status}, and its body broke off`), build };
+    }
     const type = response.headers.get('content-type') ?? '';
-    const text = await response.text();
+    const failed = (why: string): ApiResult<never> => ({ ok: false, build, problem: unreadable(name, response.status, why) });
 
     if (type.startsWith('application/problem+json')) {
-      let problem: Problem;
+      let parsed: unknown;
       try {
-        problem = JSON.parse(text) as Problem;
+        parsed = JSON.parse(text);
       } catch {
-        return { ok: false, problem: unreadable(name, response.status, 'its problem body is not JSON') };
+        return failed('its problem body is not JSON');
       }
+      if (!isProblem(parsed)) return failed('its problem body lacks a string code, detail or hint');
       return {
         ok: false,
-        problem: { code: problem.code, message: problem.detail, hint: problem.hint, location: problem.location ?? null, status: response.status },
+        build,
+        problem: { code: parsed.code, message: parsed.detail, hint: parsed.hint, location: parsed.location ?? null, status: response.status },
       };
     }
-    if (!response.ok) return { ok: false, problem: unreadable(name, response.status, `its body is ${type === '' ? 'untyped' : type}, not a problem`) };
-    if (text === '') return { ok: true, value: null as never };
+    if (!response.ok) return failed(`its body is ${type === '' ? 'untyped' : type}, not a problem`);
+    if (text === '') {
+      // Only an answer the description declares empty may be: a 204, or an
+      // operation whose success response has no body.
+      const empty = response.status === 204 || EMPTY_ANSWERS.includes(`${verb} ${template}`);
+      return empty ? { ok: true, build, value: null as never } : failed('its body is empty where the description declares one');
+    }
     try {
-      return { ok: true, value: JSON.parse(text) as never };
+      return { ok: true, build, value: JSON.parse(text) as never };
     } catch {
-      return { ok: false, problem: unreadable(name, response.status, 'its body is not JSON') };
+      return failed('its body is not JSON');
     }
   }
 
@@ -133,6 +182,5 @@ export function createApiClient(): ApiClient {
     put: (path, body, ...rest) => request('put', path, body, params(rest)),
     patch: (path, body, ...rest) => request('patch', path, body, params(rest)),
     del: (path, ...rest) => request('delete', path, undefined, params(rest)),
-    build: () => lastBuild,
   };
 }

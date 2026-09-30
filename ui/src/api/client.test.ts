@@ -32,7 +32,7 @@ describe('the API client, on success', () => {
     expect(spy).toHaveBeenCalledTimes(1);
     expect(spy.mock.calls[0]?.[0]).toBe('/api/v1/workspace');
     expect(spy.mock.calls[0]?.[1]?.method).toBe('GET');
-    expect(result).toEqual({ ok: true, value: WORKSPACE });
+    expect(result).toEqual({ ok: true, value: WORKSPACE, build: '0.0.0+0123456789ab' });
   });
 
   it('fills a path parameter, encoded', async () => {
@@ -41,35 +41,47 @@ describe('the API client, on success', () => {
     expect(spy.mock.calls[0]?.[0]).toBe('/api/v1/runs/a%2Fb%20c');
   });
 
-  it('keeps the build identity of the last response, and none before one', async () => {
+  it('returns the build identity each answer carried, with that answer', async () => {
     stubFetch(async () => json(WORKSPACE, { build: '9.9.9+fedcba987654' }));
-    const client = createApiClient();
-    expect(client.build()).toBeNull();
-    await client.get('/workspace');
-    expect(client.build()).toBe('9.9.9+fedcba987654');
+    const result = await createApiClient().get('/workspace');
+    expect(result.build).toBe('9.9.9+fedcba987654');
   });
 
-  it('reports no identity after an answer that carried none, rather than an earlier one', async () => {
-    const replies = [json(WORKSPACE, { build: '9.9.9+fedcba987654' }), json(WORKSPACE, { build: null })];
-    stubFetch(async () => replies.shift() as Response);
-    const client = createApiClient();
-    await client.get('/workspace');
-    await client.get('/workspace');
-    expect(client.build()).toBeNull();
+  it('returns no identity for an answer that carried none', async () => {
+    stubFetch(async () => json(WORKSPACE, { build: null }));
+    expect((await createApiClient().get('/workspace')).build).toBeNull();
   });
 
-  it('keeps the last identity through a request that got no answer at all', async () => {
-    const replies: (() => Response)[] = [
-      () => json(WORKSPACE, { build: '9.9.9+fedcba987654' }),
-      () => {
-        throw new TypeError('Failed to fetch');
-      },
-    ];
-    stubFetch(async () => (replies.shift() as () => Response)());
+  it('gives each of two concurrent requests its own answer’s identity, whatever order they finish in', async () => {
+    let releaseFirst = () => {};
+    const firstHeld = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let call = 0;
+    stubFetch(async () => {
+      call += 1;
+      if (call === 1) {
+        await firstHeld;
+        return json(WORKSPACE, { build: '1.0.0+aaaaaaaaaaaa' });
+      }
+      return json(WORKSPACE, { build: '2.0.0+bbbbbbbbbbbb' });
+    });
     const client = createApiClient();
-    await client.get('/workspace');
-    await client.get('/workspace');
-    expect(client.build()).toBe('9.9.9+fedcba987654');
+    const first = client.get('/workspace');
+    const second = await client.get('/workspace');
+    releaseFirst();
+    expect(second.build).toBe('2.0.0+bbbbbbbbbbbb');
+    expect((await first).build).toBe('1.0.0+aaaaaaaaaaaa');
+  });
+
+  it('refuses a path parameter of `.` or `..` before any request, which would name another path', async () => {
+    const spy = stubFetch(async () => json({}));
+    for (const id of ['.', '..']) {
+      const result = await createApiClient().get('/runs/{id}', { id });
+      expect(result.ok ? null : result.problem.code).toBe('request_invalid');
+      expect(result.ok ? null : result.problem.message).toMatch(/GET \/api\/v1\/runs\/\{id\}/);
+    }
+    expect(spy).not.toHaveBeenCalled();
   });
 });
 
@@ -95,6 +107,7 @@ describe('the API client, on a problem', () => {
         location: null,
         status: 404,
       },
+      build: '0.0.0+0123456789ab',
     });
   });
 
@@ -107,9 +120,7 @@ describe('the API client, on a problem', () => {
 
   it('keeps the build identity a problem response carries too', async () => {
     stubFetch(async () => json(problem, { status: 404, type: 'application/problem+json', build: '1.0.0+aaaaaaaaaaaa' }));
-    const client = createApiClient();
-    await client.get('/workspace');
-    expect(client.build()).toBe('1.0.0+aaaaaaaaaaaa');
+    expect((await createApiClient().get('/workspace')).build).toBe('1.0.0+aaaaaaaaaaaa');
   });
 
   it('reports an error status without a problem body as unreadable, naming the request and the status', async () => {
@@ -121,6 +132,36 @@ describe('the API client, on a problem', () => {
     expect(result.problem.status).toBe(502);
     expect(result.problem.message).toMatch(/GET \/api\/v1\/workspace/);
     expect(result.problem.message).toMatch(/502/);
+  });
+
+  it.each([
+    ['null', 'null'],
+    ['an empty object', '{}'],
+    ['a code that is not a string', '{"code":1,"detail":"d","hint":"h"}'],
+    ['a list', '[]'],
+  ])('reports a problem body that is %s as unreadable, never as a problem with missing fields', async (_, body) => {
+    stubFetch(async () => new Response(body, { status: 500, headers: { 'content-type': 'application/problem+json' } }));
+    const result = await createApiClient().get('/workspace');
+    expect(result.ok ? null : result.problem.code).toBe('response_unreadable');
+    expect(result.ok ? null : result.problem.status).toBe(500);
+  });
+
+  it('reports a body that fails while being read as a network failure, never throws', async () => {
+    const broken = new ReadableStream({
+      start(controller) {
+        controller.error(new TypeError('connection reset'));
+      },
+    });
+    stubFetch(async () => new Response(broken, { status: 200, headers: { 'content-type': 'application/json' } }));
+    const result = await createApiClient().get('/workspace');
+    expect(result.ok ? null : result.problem.code).toBe('network_failed');
+    expect(result.ok ? null : result.problem.message).toMatch(/connection reset/);
+  });
+
+  it('reports an empty success body as unreadable unless the answer is 204', async () => {
+    stubFetch(async () => new Response('', { status: 200, headers: { 'content-type': 'application/json' } }));
+    const result = await createApiClient().get('/workspace');
+    expect(result.ok ? null : result.problem.code).toBe('response_unreadable');
   });
 
   it('reports a success whose body is not JSON as unreadable', async () => {
@@ -140,6 +181,7 @@ describe('the API client, on a network failure', () => {
     if (result.ok) return;
     expect(result.problem.code).toBe('network_failed');
     expect(result.problem.status).toBeNull();
+    expect(result.build).toBeNull();
     expect(result.problem.message).toMatch(/GET \/api\/v1\/workspace/);
     expect(result.problem.message).toMatch(/Failed to fetch/);
     expect(result.problem.hint).toMatch(/ragondin ui/);
@@ -161,7 +203,7 @@ describe('the API client, writing', () => {
     expect(init?.method).toBe(verb);
     expect(init?.body).toBe('{"pipeline":"p"}');
     expect(new Headers(init?.headers).get('content-type')).toBe('application/json');
-    expect(result).toEqual({ ok: true, value: { job_id: 'j1' } });
+    expect(result).toEqual({ ok: true, value: { job_id: 'j1' }, build: '0.0.0+0123456789ab' });
   });
 
   it('del sends DELETE and reads an empty answer as null', async () => {
@@ -170,6 +212,6 @@ describe('the API client, writing', () => {
     const result = await del('/runs/{id}', { id: 'j1' });
     expect(spy.mock.calls[0]?.[0]).toBe('/api/v1/runs/j1');
     expect(spy.mock.calls[0]?.[1]?.method).toBe('DELETE');
-    expect(result).toEqual({ ok: true, value: null });
+    expect(result).toEqual({ ok: true, value: null, build: 'b' });
   });
 });

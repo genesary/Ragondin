@@ -51,6 +51,12 @@ export function formatHash(route: Route): string {
 }
 
 /**
+ * Whether a decoded value can name something: not empty, and not `.` or `..`,
+ * which a screen would pass into an API path where they name another path.
+ */
+const isValue = (value: string) => value !== '' && value !== '.' && value !== '..';
+
+/**
  * The route a hash shows, or null for one that names no screen. Never a
  * guess: a malformed address is no route, and the shell says so.
  */
@@ -66,7 +72,7 @@ export function parseHash(hash: string): Route | null {
     return null;
   }
   const [screen, ...rest] = segments;
-  const nonEmpty = rest.every((s) => s !== '');
+  const nonEmpty = rest.every(isValue);
 
   switch (screen) {
     case undefined:
@@ -81,15 +87,16 @@ export function parseHash(hash: string): Route | null {
     case 'compare': {
       const baseline = query.get('baseline');
       if (rest.length === 0) return baseline === null ? { screen, ids: [] } : null;
+      if (baseline !== null && !isValue(baseline)) return null;
       // Split before decoding, so an encoded `+` stays inside its id.
       const ids = (path.split('/')[1] ?? '').split('+').map((id) => decodeURIComponent(id));
-      if (rest.length !== 1 || ids.some((id) => id === '')) return null;
+      if (rest.length !== 1 || !ids.every(isValue)) return null;
       return baseline === null ? { screen, ids } : { screen, ids, baseline };
     }
     case 'replay': {
       const other = query.get('with');
       if (rest.length === 0) return other === null ? { screen } : null;
-      if (rest.length !== 3 || rest[1] !== 'q' || !nonEmpty) return null;
+      if (rest.length !== 3 || rest[1] !== 'q' || !nonEmpty || (other !== null && !isValue(other))) return null;
       const [run, , q] = rest as [string, string, string];
       return other === null ? { screen, run, query: q } : { screen, run, query: q, with: other };
     }
@@ -109,7 +116,20 @@ export function useRoute(): Route | null {
   return parseHash(useSyncExternalStore(subscribe, currentHash));
 }
 
-/** Shows `route`, as a new entry in the browser's history. */
-export function navigate(route: Route) {
-  window.location.hash = formatHash(route);
+/**
+ * Shows `route`: as a new entry in the browser's history, or with `replace`
+ * in place of the current one, so Back skips it — for a correction such as a
+ * default filled in, not for a move the user made.
+ */
+export function navigate(route: Route, { replace = false }: { replace?: boolean } = {}) {
+  const hash = formatHash(route);
+  if (!replace) {
+    window.location.hash = hash;
+    return;
+  }
+  const oldURL = window.location.href;
+  window.history.replaceState(window.history.state, '', hash);
+  // Replacing the entry announces nothing by itself; the router follows the
+  // hash through this event, as it does after a user's edit.
+  window.dispatchEvent(new HashChangeEvent('hashchange', { oldURL, newURL: window.location.href }));
 }
