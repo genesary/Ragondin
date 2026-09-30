@@ -2,7 +2,7 @@
 
 The front end: a TypeScript application, built with Vite and React, that the `ragondin ui` subcommand serves (ADR-C36). It is **not a crate** and sits outside Cargo, but it is **load-bearing** in the sense `AGENTS.md` § Documentation ships with the code it describes means: this file is read before `ui/` is modified, and a diff that falsifies it corrects it in the same pull request (ADR-C36 § 5).
 
-Today it is the governed, empty application: one placeholder page, every gate green, every rule written. No screen, no design token and no API call exist yet.
+Today it is the governed application with its design system: one placeholder page, every gate green, every rule written, and the tokens, faces, glyphs and primitive components every screen will be built from under `design/` (§ The design system). No screen and no API call exist yet.
 
 ## What lives here
 
@@ -13,20 +13,33 @@ ui/
 ├── package.json         # scripts, runtime and development dependencies
 ├── package-lock.json    # committed; installed with `npm ci` only
 ├── DEPENDENCIES.md      # every dependency, with its role (and, if runtime, its reason)
-├── index.html           # the single entry
+├── index.html           # the single entry of the production build
 ├── eslint.config.js     # lint, including the network-confinement rule
 ├── vite.config.ts       # build and test runner configuration
 ├── tsconfig*.json       # strict TypeScript: app code (DOM) and tooling (Node) apart
+├── design/              # the design system as code (§ The design system)
+│   ├── tokens.json      # the token source: colours, type, space, radius, depth, motion, sizes
+│   ├── tokens.css       # generated from tokens.json (`npm run tokens`), committed
+│   ├── fonts.css        # @font-face for the committed faces
+│   ├── base.css         # reset, body ground and ink, focus, reduced motion; imports the two above
+│   ├── fonts/           # the woff2 files, their OFL texts, LICENSES.md (also the font audit's manifest)
+│   ├── glyphs/          # one SVG per glyph, Glyph and FamilyTile
+│   ├── forms/           # what the form fields share: the label stack and the helper line
+│   ├── components/      # one directory per primitive: Component.tsx, Component.css, Component.test.tsx
+│   ├── roving.ts        # the arrow-key rule of a one-tab-stop group
+│   ├── index.ts         # what a screen imports
+│   ├── preview/         # the dev-only preview page, never a build input
+│   └── testing/         # the CSS reader the design tests use; nothing in the bundle imports it
 ├── src/
-│   ├── main.tsx         # mounts the application
+│   ├── main.tsx         # mounts the application, loading design/base.css once
 │   ├── App.tsx          # the placeholder page
 │   └── api/             # the only module that may touch the network
 │       └── base.ts      # the API's base address, '/api/v1'
-├── scripts/             # the dependency audit: policy, licence check, advisory check
-└── tests/               # tests of the governance itself: lint rule, audit, DEPENDENCIES.md
+├── scripts/             # the dependency audit (npm and fonts), and the token generator
+└── tests/               # tests of the governance itself: lint rule, audit, DEPENDENCIES.md, tokens, one origin, preview
 ```
 
-A component's test sits beside it in `src/`; a test of a rule about `ui/` sits in `tests/`. `tests/setup.ts` unmounts what each test rendered: Vitest's globals are off, so Testing Library cannot register that cleanup itself.
+A component's test sits beside it, in `src/` or `design/`; a test of a rule about `ui/` sits in `tests/`. `tests/setup.ts` unmounts what each test rendered: Vitest's globals are off, so Testing Library cannot register that cleanup itself.
 
 ## The gates
 
@@ -38,7 +51,7 @@ A component's test sits beside it in `src/`; a test of a rule about `ui/` sits i
 | `typecheck` | `tsc -b` over the application and the tooling, both strict. |
 | `test` | Vitest: component tests in a DOM, governance tests in Node. |
 | `build` | `vite build` into `dist/`. |
-| `audit` | The licence audit, then the advisory audit (§ The dependency audit). |
+| `audit` | The font licence audit, the npm licence audit, then the advisory audit (§ The dependency audit). |
 
 `just check-ui` runs `npm ci` first, so the gate always installs exactly the lockfile. **The Rust build does not need Node** (ADR-C36 § 5): no cargo command and no cargo-based `just` recipe reads anything under `ui/`. Only `just check`, which covers both worlds, does.
 
@@ -69,6 +82,8 @@ A green lint is evidence, not proof. **The layer that holds is the content secur
 
 **There is one policy and no per-package licence exception.** A licence outside the list is refused whatever the package's role, runtime or development. A dependency that needs another licence is admitted by adding that licence to `deny.toml`, for the reasons its comments give, and to the copy in the same change — as `BlueOak-1.0.0` was, for `minimatch`, which ESLint depends on unconditionally.
 
+**Fonts** (`scripts/check-font-licenses.mjs`, logic in `scripts/font-licenses.mjs`). A font is a committed file, not a package, so no lockfile names it and the npm audit above never sees it. This check holds it to the same list: every font file under `design/fonts/` needs a row in `design/fonts/LICENSES.md`, which is the manifest, naming its licence — on `LICENSE_ALLOW` — and its licence text, which must sit beside it, and the SHA-256 the file had when it was committed, so a file edited after the fact fails; a row whose file is gone fails too. It reads files only, so it needs no network. `OFL-1.1` entered `deny.toml` and its copy for the design system's typefaces, as the comment there says.
+
 **Advisories** (`scripts/check-advisories.mjs`, logic in `scripts/advisories.mjs`). Runs `npm audit --audit-level=high --json` and fails on any high or critical advisory that `ADVISORY_EXCEPTIONS` does not name. npm has no ignore list, which is why the report is read rather than npm's exit code trusted; a missing or unrecognised report fails. Every exception carries:
 
 | Field | Content |
@@ -96,3 +111,33 @@ The choices ADR-C36 § 5 left to the implementation, and why each was made:
 ## How the assets reach the binary
 
 `npm run build` writes `dist/`, which is ignored by git: nothing here commits built assets. Embedding `dist/` into `bin/ragondin` behind its `ui` feature, and what a build does when `dist/` is absent, belong to the `ragondin ui` subcommand's issue (#339) and to ADR-C36 § 1 and § 5; nothing on the Rust side reads `ui/` yet.
+
+## The design system
+
+`design/` is the design system as code, and the only place a colour, a type style, a space, a radius, a shadow or a duration is written. Issues cite `ui/design/` the way a Rust issue cites an ADR, and a change to it is reviewed that way: it is the reference every screen is checked against, not an implementation detail of one. Where the design system's source and a later need disagree, the change lands here first, with its test.
+
+**Tokens are the only source of colour, type and spacing.** A component names a role — `var(--ink-2)`, `var(--surface)`, `var(--type-dense)`, `var(--space-3)` — never a value, and takes every colour from the token set of the surface behind it: a chip on a `surface` uses the inks and washes defined for surfaces, and the same markup under a dark subtree reads the dark values without a line changing. Tokens are named by role (`--ink-2`, not a grey step), so a theme swaps values and touches no component.
+
+**How tokens flow into CSS.** `design/tokens.json` is the token source, carried over from the design system with the usage note of each token. `scripts/tokens.mjs` renders it into `design/tokens.css`, which is committed; `npm run tokens` regenerates it, and `tests/design-tokens.test.ts` fails when the committed file is not what tokens.json renders to, so neither can drift from the other. The same test pins the node-family pigments, the run inks and the better/worse, state and accent pairs to the design system's values in both themes. `base.css` imports `tokens.css` and `fonts.css`; `src/main.tsx` imports `base.css` once; each component imports its own stylesheet, and Vite bundles them all into the one CSS file the binary serves. Tokens that do not change with the theme — the three font families and their fallback stacks, the twelve type styles as `font` shorthands (with a `-tracking` companion), the 4 px spacing grid, radii, control and canvas sizes, durations and easings — sit in one bare `:root` block. Under `prefers-reduced-motion` every duration but `--duration-0` becomes 1 ms in `tokens.css`, and `base.css` catches any literal animation.
+
+**The theme mechanism.** Every colour and every shadow is themed; the generator writes them three times:
+
+- the complete light palette on `:root, [data-theme="light"]`, with `color-scheme: light` — so every token has a value on bare `:root` before any block redefines it;
+- the dark palette under `@media (prefers-color-scheme: dark)`, on `:root:not([data-theme="light"])`, with `color-scheme: dark` — the system's choice, unless the page has chosen light;
+- the dark palette again on `:root[data-theme="dark"], [data-theme="dark"]`, with `color-scheme: dark` — the page's choice, or a subtree's.
+
+The test asserts that both dark blocks redefine exactly the set the light block defines. A theme applies to any element carrying `data-theme`, not only the root, which is how the preview shows both themes side by side and how a theme switch will set one. An alias (`--focus-ring: var(--accent)`) is written in every themed block rather than once, because a custom property's `var()` resolves on the element that declares it: declared once on the root, a dark subtree would inherit the light accent.
+
+**Styling: plain CSS, no CSS-in-JS and no component kit** (ADR-C36 § 5). Class names are global and carry the `rg-` prefix, which is their scope. A state is drawn from the element's ARIA attribute or a `data-*` attribute — `aria-pressed`, `aria-checked`, `aria-selected`, `aria-current`, `aria-invalid`, `aria-busy`, `data-state`, `data-tone` — so the rule that draws a state and the attribute assistive technology reads are the same fact. The only presentational state classes are `.is-hover`, `.is-focus` and `.is-pressed`, listed beside the pseudo-class they mirror, so the preview can show a hover or a press at rest. CSS Modules were not used: the tests assert the rule that draws each state by its selector, and the selectors keep the design system's own vocabulary, so a reviewer compares a component with its reference one to one. `.rg-visually-hidden` lives in `base.css`: a component that carries its second channel as hidden text needs the base stylesheet loaded.
+
+**Colour is never the only carrier.** A status, a family, a run or a better/worse reading always comes with a glyph, a letter, a mark or a word: `StatusChip` has its icon or meter and its word, `RunSwatch` its letter (or "baseline" and a dashed outline), `Delta` its sign, arrow and a hidden "better" or "worse", `FilterChip` a check when pressed, `RankStrip` filled versus hollow cells and a sentence, `TopBar` a hollow ring and "unreachable", `InlineMessage` a glyph named "Error", "Warning" or "Note", the best table value its weight and a hidden "(best)". Each such component's test asserts the second carrier, not only the colour.
+
+**Components.** One directory each under `design/components/`: the component, its stylesheet, and a test per state that asserts the rendered state and, where the state is drawn by CSS (hover, pressed, focus), the rule that draws it — the test reads the stylesheet with Vite's `?raw` import, which is why `vite.config.ts` sets `css: true`. The API is small: props for state, children for content. `Progress` throws without a finite value: there is no indeterminate variant. `FamilyTile` (a family's pigment with its glyph) is a primitive beside `Glyph`, because the inspector's head and the canvas both need it. Two choices differ from the design system's reference markup, and why: `SegmentedControl` is a `radiogroup` of `radio`s rather than pressed buttons, since one tab stop moved by the arrow keys is the radio-group pattern assistive technology expects; `StatusChip` has a `warning` state beside the four the issue named, because the design system draws one.
+
+**Fonts** are the upstream projects' own woff2 files, unmodified, in the upright weights the type scale uses (`design/fonts/LICENSES.md` lists them, where they came from and why each weight is there). `fonts.css` points every face at `./fonts/`, never at a host, with `font-display: swap` so the fallback stack stands in while a face loads. The wordmark's 650 resolves to the 700 file by the browser's weight matching.
+
+**Glyphs** are one SVG file each under `design/glyphs/`, drawn on a 16 px grid in `currentColor`; the files are the source. `Glyph` inlines a drawing by name, read from the files at build time with `import.meta.glob`, so it takes the ink of its context and nothing is fetched. `GLYPH_NAMES` and the directory are held equal by a test.
+
+**One origin** (§ The one-address rule): `tests/design-assets.test.ts` reads every stylesheet, component, SVG and HTML entry under `design/` and `src/` and fails on any URL with a scheme or a host, an SVG's `xmlns` namespace aside, which nothing fetches. The design system's reference stylesheet loaded its faces from a font host; that line has no counterpart here.
+
+**The preview page**, `design/preview/`, renders every primitive in every state, in both themes side by side. It is the reviewer's tool: `npm run dev`, then `/design/preview/`. It is not an input of the production build, whose only entry is `index.html`: `tests/design-preview.test.ts` runs the same build `npm run build` runs into a scratch directory, lists what it wrote and fails on any preview file or any file carrying the preview's markup; it also starts the dev server and fetches the page.

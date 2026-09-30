@@ -1,0 +1,36 @@
+.rg-input {
+  width: 100%;
+  min-width: 0;
+  height: var(--size-control);
+  padding: 0 10px;
+  border: 1px solid var(--line-control);
+  border-radius: var(--radius-s);
+  background: var(--surface);
+  color: var(--ink);
+  font: 400 13px/18px var(--font-sans);
+  font-variant-numeric: tabular-nums;
+  transition: border-color var(--duration-0);
+}
+.rg-input::placeholder { color: var(--ink-3); }
+.rg-input:hover, .rg-input.is-hover { border-color: var(--ink-3); }
+.rg-input:focus-visible, .rg-input.is-focus {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+  border-color: var(--accent);
+}
+.rg-input--mono { font-family: var(--font-mono); }
+.rg-input--num { text-align: right; }
+.rg-input[aria-invalid="true"] { border-color: var(--critical); background: var(--critical-wash); }
+.rg-input[aria-invalid="true"]:focus-visible { outline-color: var(--critical); }
+.rg-input:disabled { background: var(--surface-2); color: var(--ink-disabled); border-color: var(--line); cursor: not-allowed; }
+.rg-input:read-only:not(:disabled) { background: var(--surface-2); border-color: var(--line); }
+
+.rg-affix { position: relative; display: flex; align-items: center; }
+.rg-affix .rg-input { padding-right: 40px; }
+.rg-affix__unit {
+  position: absolute;
+  right: 10px;
+  font: var(--type-label);
+  color: var(--ink-3);
+  pointer-events: none;
+}

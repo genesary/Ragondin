@@ -1,0 +1,59 @@
+.rg-topbar {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  height: var(--size-topbar);
+  padding: 0 var(--space-4);
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+.rg-wordmark { font: 650 16px/1 var(--font-display); letter-spacing: -0.025em; color: var(--ink); white-space: nowrap; }
+.rg-crumb {
+  display: inline-flex;
+  align-items: center;
+  height: var(--size-control-s);
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-s);
+  color: var(--ink-3);
+  font: var(--type-hash);
+  white-space: nowrap;
+}
+.rg-nav { display: flex; align-self: stretch; align-items: center; gap: 2px; }
+.rg-nav a {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  height: var(--size-control);
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-s);
+  color: var(--ink-2);
+  font: 500 13px/1 var(--font-sans);
+  text-decoration: none;
+}
+.rg-nav a:hover { background: var(--surface-2); color: var(--ink); }
+.rg-nav a[aria-current="page"] { color: var(--ink); font-weight: 600; }
+.rg-nav a[aria-current="page"]::after {
+  content: "";
+  position: absolute;
+  left: var(--space-3);
+  right: var(--space-3);
+  bottom: -8px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--accent);
+}
+.rg-topbar__end { display: flex; align-items: center; gap: var(--space-2); margin-left: auto; }
+.rg-service {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: var(--size-control-s);
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-full);
+  color: var(--ink-2);
+  font: var(--type-label);
+}
+.rg-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--good); }
+/* Unreachable: a hollow ring and the word, so shape and text carry it. */
+.rg-dot.is-off { background: transparent; box-shadow: inset 0 0 0 1.5px var(--ink-3); }

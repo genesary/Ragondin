@@ -8,9 +8,9 @@ The table below is also the manifest `npm run audit` reads (`ui/scripts/font-lic
 
 | Family | Role | Licence | Copyright | Obtained from |
 |---|---|---|---|---|
-| Wix Madefor Display | `--font-display`, 17 px and up | SIL Open Font License 1.1 (`OFL-1.1`), text in `OFL-WixMadefor.txt` | Copyright 2021 The Wix Madefor Project Authors | The upstream project's release `3.100`, archive `wixmadefor-fonts.zip` (SHA-256 `7fdbd012ca9e245d7c177a341bdbdf789521590e175322a9013c035981138f1c`), directory `fonts/webfonts/`; licence text from the same project at commit `85646f130c8d3edffe66c4d8755c3f9f7abfa877` |
+| Wix Madefor Display | `--font-display`, 17 px and up | SIL Open Font License 1.1 (`OFL-1.1`), text in `OFL-WixMadefor.txt` | Copyright 2021 The Wix Madefor Project Authors | The upstream project, `https://github.com/wix-incubator/wixmadefor`: release `3.100`, archive `wixmadefor-fonts.zip` (SHA-256 `7fdbd012ca9e245d7c177a341bdbdf789521590e175322a9013c035981138f1c`), directory `fonts/webfonts/`; licence text from the same project at commit `85646f130c8d3edffe66c4d8755c3f9f7abfa877` |
 | Wix Madefor Text | `--font-sans`, the UI face | as above | as above | as above |
-| Atkinson Hyperlegible Mono | `--font-mono`, hashes, ids, parameters | SIL Open Font License 1.1 (`OFL-1.1`), text in `OFL-AtkinsonHyperlegibleMono.txt` | Copyright 2020-2024 The Atkinson Hyperlegible Mono Project Authors | The upstream project's repository at commit `154d50362016cc3e873eb21d242cd0772384c8f9`, directory `fonts/webfonts/`, and its `OFL.txt` |
+| Atkinson Hyperlegible Mono | `--font-mono`, hashes, ids, parameters | SIL Open Font License 1.1 (`OFL-1.1`), text in `OFL-AtkinsonHyperlegibleMono.txt` | Copyright 2020-2024 The Atkinson Hyperlegible Mono Project Authors | The upstream project, `https://github.com/googlefonts/atkinson-hyperlegible-next-mono`, at commit `154d50362016cc3e873eb21d242cd0772384c8f9`, directory `fonts/webfonts/`, and its `OFL.txt` |
 
 The OFL permits bundling a font with software under any licence. Its conditions — the font may not be sold by itself, and a modified font may not keep its Reserved Font Name — bind the font files, not the Apache-2.0 code beside them. Keeping the files unmodified is what the digests below check.
 

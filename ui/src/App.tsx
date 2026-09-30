@@ -1,4 +1,4 @@
-/** A placeholder page: no screen, no design token and no API call exist yet. */
+/** A placeholder page: no screen and no API call exist yet. */
 export function App() {
   return (
     <main>

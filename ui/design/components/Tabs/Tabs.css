@@ -1,0 +1,33 @@
+.rg-tabs { display: flex; gap: var(--space-4); border-bottom: 1px solid var(--line); }
+.rg-tabs button {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: var(--size-control);
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ink-3);
+  font: 500 13px/1 var(--font-sans);
+  cursor: pointer;
+}
+.rg-tabs button:hover { color: var(--ink); }
+.rg-tabs button[aria-selected="true"] { color: var(--ink); }
+.rg-tabs button[aria-selected="true"]::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--accent);
+}
+.rg-tabs .rg-count {
+  padding: 1px 6px;
+  border-radius: var(--radius-full);
+  background: var(--surface-3);
+  color: var(--ink-3);
+  font: var(--type-micro);
+}

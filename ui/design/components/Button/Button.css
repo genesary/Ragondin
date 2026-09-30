@@ -1,0 +1,77 @@
+/* Button: four roles, every state drawn. The .is-* classes force a state for
+   the preview page; in the product the pseudo-classes draw it. */
+.rg-btn {
+  --btn-bg: var(--surface);
+  --btn-fg: var(--ink);
+  --btn-bd: var(--line-control);
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: var(--size-control);
+  padding: 0 var(--space-3);
+  overflow: hidden;
+  border: 1px solid var(--btn-bd);
+  border-radius: var(--radius-s);
+  background: var(--btn-bg);
+  color: var(--btn-fg);
+  font: 500 13px/1 var(--font-sans);
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+  transition: background-color var(--duration-0), box-shadow var(--duration-press) var(--ease-standard);
+}
+.rg-btn--secondary { --btn-bg: var(--surface); --btn-fg: var(--ink); }
+.rg-btn--secondary:hover, .rg-btn--secondary.is-hover { --btn-bg: var(--surface-2); }
+.rg-btn--secondary:active, .rg-btn--secondary.is-pressed { --btn-bg: var(--surface-3); }
+
+.rg-btn--primary { --btn-bg: var(--accent); --btn-fg: var(--on-accent); --btn-bd: var(--accent); font-weight: 600; }
+.rg-btn--primary:hover, .rg-btn--primary.is-hover { --btn-bg: var(--accent-hover); --btn-bd: var(--accent-hover); }
+.rg-btn--primary:active, .rg-btn--primary.is-pressed { --btn-bg: var(--accent-hover); box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.25); }
+
+.rg-btn--quiet { --btn-bg: transparent; --btn-bd: transparent; --btn-fg: var(--ink-2); }
+.rg-btn--quiet:hover, .rg-btn--quiet.is-hover { --btn-bg: var(--surface-2); --btn-fg: var(--ink); }
+.rg-btn--quiet:active, .rg-btn--quiet.is-pressed { --btn-bg: var(--surface-3); --btn-fg: var(--ink); }
+
+.rg-btn--destructive { --btn-bg: var(--surface); --btn-fg: var(--critical); }
+.rg-btn--destructive:hover, .rg-btn--destructive.is-hover { --btn-bg: var(--critical-wash); }
+.rg-btn--destructive:active, .rg-btn--destructive.is-pressed { --btn-bg: var(--critical-wash); box-shadow: inset 0 0 0 1px var(--critical); }
+
+.rg-btn.is-focus {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.rg-btn:disabled {
+  --btn-bg: var(--surface-2);
+  --btn-fg: var(--ink-disabled);
+  --btn-bd: var(--line);
+  cursor: not-allowed;
+  box-shadow: none;
+}
+.rg-btn--quiet:disabled { --btn-bg: transparent; --btn-bd: transparent; }
+
+.rg-btn--l { height: var(--size-control-l); padding: 0 var(--space-4); font-size: 14px; }
+.rg-btn--s { height: var(--size-control-s); padding: 0 var(--space-2); font-size: 12px; }
+
+/* Busy: a thin bar along the bottom edge, only until real progress exists. */
+.rg-btn[aria-busy="true"] { cursor: progress; }
+.rg-btn[aria-busy="true"]::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 40%;
+  height: 2px;
+  background: currentColor;
+  opacity: 0.55;
+  animation: rg-busy 1.1s var(--ease-standard) infinite;
+}
+@keyframes rg-busy {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(260%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .rg-btn[aria-busy="true"]::after { animation: none; width: 100%; opacity: 0.25; }
+}

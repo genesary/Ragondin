@@ -21,6 +21,16 @@ npm run dev     # http://localhost:5173
 
 There is no API to talk to yet; the page is a placeholder.
 
+The design system's preview — every primitive in every state, in both themes — is served by the same dev server at <http://localhost:5173/design/preview/>. It never ships: the production build leaves it out.
+
+## Change a token
+
+Tokens are written in [`design/tokens.json`](design/tokens.json) only. After changing it:
+
+```bash
+npm run tokens  # regenerates design/tokens.css; a test fails until you do
+```
+
 ## Run the gates
 
 ```bash

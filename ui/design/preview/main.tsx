@@ -1,13 +1,13 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
-import '../design/base.css';
-import { App } from './App.tsx';
+import '../base.css';
+import { Preview } from './Preview.tsx';
 
 const root = document.getElementById('root');
-if (root === null) throw new Error('index.html has no #root element');
+if (root === null) throw new Error('the preview page has no #root element');
 
 createRoot(root).render(
   <StrictMode>
-    <App />
+    <Preview />
   </StrictMode>,
 );

@@ -1,0 +1,23 @@
+/* Concentric: a 6px thumb on an 8px track with a 2px inset. */
+.rg-seg {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--radius-track);
+  background: var(--surface-3);
+}
+.rg-seg button {
+  min-width: 32px;
+  height: 28px;
+  padding: 0 var(--space-3);
+  border: 0;
+  border-radius: var(--radius-s);
+  background: transparent;
+  color: var(--ink-2);
+  font: 500 13px/1 var(--font-sans);
+  cursor: pointer;
+  transition: background-color var(--duration-micro) var(--ease-standard), color var(--duration-0);
+}
+.rg-seg button:hover { color: var(--ink); }
+.rg-seg button[aria-checked="true"] { background: var(--surface); color: var(--ink); box-shadow: var(--shadow-contact); }
+.rg-seg button:disabled { color: var(--ink-disabled); cursor: not-allowed; }

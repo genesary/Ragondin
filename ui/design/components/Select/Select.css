@@ -1,0 +1,24 @@
+.rg-select { position: relative; display: block; }
+.rg-select select {
+  width: 100%;
+  min-width: 0;
+  height: var(--size-control);
+  padding: 0 30px 0 10px;
+  appearance: none;
+  border: 1px solid var(--line-control);
+  border-radius: var(--radius-s);
+  background: var(--surface);
+  color: var(--ink);
+  font: 400 13px/18px var(--font-sans);
+  cursor: pointer;
+  transition: border-color var(--duration-0);
+}
+.rg-select select:hover, .rg-select.is-hover select { border-color: var(--ink-3); }
+.rg-select select:focus-visible, .rg-select.is-focus select {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+  border-color: var(--accent);
+}
+.rg-select select[aria-invalid="true"] { border-color: var(--critical); background: var(--critical-wash); }
+.rg-select select:disabled { background: var(--surface-2); color: var(--ink-disabled); border-color: var(--line); cursor: not-allowed; }
+.rg-select .rg-glyph { position: absolute; right: 8px; top: 8px; color: var(--ink-3); pointer-events: none; }
