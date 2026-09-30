@@ -1,0 +1,37 @@
+[package]
+name = "ragondin-api"
+description = "The front end's JSON API: the router, its typed errors, its response types and the traits it consumes. Internal."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+# The crate that answers the browser (ADR-C36 § 2). INV-12: it reaches no
+# crate under `engine/` or `components/`, nor `ragondin-remote`, directly or
+# through any other crate — `scripts/check-invariants.py` walks the closure.
+# Its workspace dependencies are therefore the experiment plane and the core:
+# `ragondin-experiments` for the `RunStore` trait, the run record and the
+# lowering of a stored configuration, and `ragondin-pipeline` for the
+# `LogicalPipeline` that lowering yields, which the handlers convert into this
+# crate's own graph type. `ragondin-config`, `ragondin-benchmarks` and
+# `ragondin-metrics` are allowed by INV-12 and arrive with the endpoints that
+# read them.
+[dependencies]
+ragondin-experiments = { workspace = true }
+ragondin-pipeline = { workspace = true }
+async-trait = { workspace = true } # dyn-compatible async traits (frozen: async_trait, not RPITIT)
+axum = { workspace = true }        # the router and the Tower layers of the server's envelope (ADR-C36 § 6)
+schemars = { workspace = true }    # the response types' schemas, assembled into the API description
+serde = { workspace = true }
+serde_json = { workspace = true }  # the JSON bodies, and the description document
+thiserror = { workspace = true }   # typed errors (ADR-C13): no anyhow in this crate
+# `spawn_blocking`: `RunStore` is synchronous and its file backend blocks, so a
+# handler moves the call off the async workers rather than stalling one.
+tokio = { workspace = true }
+
+[dev-dependencies]
+# `ServiceExt::oneshot` drives the router in the tests. Its `util` feature is
+# not asked for here: `axum` requires it of the same `tower` 0.5, and Cargo
+# unifies the two.
+tower = { workspace = true }

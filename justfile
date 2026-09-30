@@ -74,7 +74,7 @@ test-features:
     cargo test --workspace --all-features
 
 # Enforce the CI-guarded architecture invariants (INV-3, INV-4, INV-5, INV-6,
-# INV-11). Resolves the `--all-features` graph, as clippy, the tests and
+# INV-11, INV-12). Resolves the `--all-features` graph, as clippy, the tests and
 # deny.toml do: every heavy backend sits behind a feature by rule, so the lean
 # graph contains no component crate's real dependencies at all.
 check-invariants:
@@ -121,6 +121,13 @@ gen-adr-index:
 # is a hand-maintained index with extra steps.
 check-adr-index:
     python3 scripts/gen-adr-index.py --check
+
+# Regenerate the front end's API description, runtime/ragondin-api/api/v1.json,
+# from that crate's declared operations and response types. The file is a
+# golden: `cargo test -p ragondin-api` fails while it is stale, so a change to
+# the API is a diff someone reviews rather than a side effect nobody sees.
+gen-api-description:
+    cargo run -q -p ragondin-api --example gen-api-description
 
 # Audit the dependency graph: RustSec advisories, licences, duplicate versions
 # and source registries. The policy is deny.toml at the workspace root, not

@@ -15,6 +15,7 @@ members = [
     "runtime/ragondin-config",
     "runtime/ragondin-server",
     "runtime/ragondin-experiments",
+    "runtime/ragondin-api",
     "components/ragondin-retriever-bm25",
     "components/ragondin-retriever-dense",
     "components/ragondin-embedder-onnx",
@@ -62,6 +63,7 @@ ragondin-harness = { path = "eval/ragondin-harness" }
 ragondin-config = { path = "runtime/ragondin-config" }
 ragondin-server = { path = "runtime/ragondin-server" }
 ragondin-experiments = { path = "runtime/ragondin-experiments" }
+ragondin-api = { path = "runtime/ragondin-api" }
 ragondin-conformance = { path = "testkit/ragondin-conformance" }
 
 # --- third-party dependencies ---
@@ -79,7 +81,12 @@ sha2 = "0.10"                                      # canonical logical-form hash
 async-trait = "0.1"                                # dyn-compatible async traits (frozen: not RPITIT)
 thiserror = "2"                                    # typed library errors
 anyhow = "1"                                       # error aggregation, binaries only
-tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+# `net`, `sync` and `time` are admitted by ADR-C36 § 6 for `ragondin-api`: the
+# UI server's listener, its job-state channels and its timers are named in that
+# crate's own code rather than borrowed from another crate's features. They
+# change nothing that resolves today — `tonic`'s transport already turns all
+# three on in `Cargo.lock` — so the line only states what the API crate relies on.
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync", "time"] }
 tower = "0.5"                                      # serving envelope only (INV-11)
 clap = { version = "4", features = ["derive"] }    # the CLI parser, in `bin/ragondin` and nowhere else
 assert_cmd = "2"                                   # dev-only: spawns the built binary in `bin/ragondin`'s CLI tests
@@ -87,6 +94,23 @@ tonic = "0.12"                                     # gRPC transport for the wire
 prost = "0.13"                                     # protobuf messages for the wire layer
 tonic-build = "0.12"                               # build-dependency of ragondin-proto only: generates the stubs (ADR-C24)
 protox = "0.8"                                     # build-dependency of ragondin-proto only: compiles the .proto, no protoc (ADR-C34)
+
+# The UI server's router, admitted by ADR-C36 § 6 and used by `ragondin-api`
+# only. The 0.7 line, because `tonic` 0.12 already resolves `axum` 0.7.9 and
+# `hyper` 1 — `cargo tree -i hyper` shows one `hyper` in `Cargo.lock` with this
+# entry in place, so no second server stack enters the lockfile. Moving to
+# another line moves with `tonic`, and escalates. `default-features = false`,
+# and `json` is the one feature the crate uses: its extractor and response.
+# The defaults it drops are the listener (`tokio`, `http1`), which is the
+# binary's to own, the form and query extractors no endpoint reads, and
+# `tracing`/`tower-log`, since the crate emits no telemetry. `hyper` is on the
+# INV-4 deny-list, so the core cannot reach this.
+axum = { version = "0.7", default-features = false, features = ["json"] }
+# The API description's schemas (ADR-C36 § 6), used by `ragondin-api` only.
+# Default features: `derive` is what the response types use, `std` what it
+# needs. No OpenAPI generator crate: the description is assembled by hand from
+# these schemas.
+schemars = "1"
 
 # The workspace's HTTP client, decided in ADR-C33 § 2, and today reached by one
 # crate only: `testkit/ragondin-generator-service`, optional, behind its

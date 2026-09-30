@@ -1,0 +1,706 @@
+{
+  "components": {
+    "schemas": {
+      "Capabilities": {
+        "description": "What this build can run: the local implementations of each family, and\nwhether it can call a `Remote` one.",
+        "properties": {
+          "families": {
+            "description": "One entry per family, as the launcher lists them.",
+            "items": {
+              "$ref": "#/components/schemas/FamilyCapabilities"
+            },
+            "type": "array"
+          },
+          "remote": {
+            "description": "Whether this build carries the `remote` feature.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "families",
+          "remote"
+        ],
+        "type": "object"
+      },
+      "EdgeKind": {
+        "description": "The kind of value travelling along an edge.",
+        "oneOf": [
+          {
+            "description": "The question.",
+            "enum": [
+              "query"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "A list of retrieved chunks.",
+            "enum": [
+              "chunks"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "An assembled context.",
+            "enum": [
+              "context"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "A generator's answer.",
+            "enum": [
+              "answer"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "A value an extension node produces, unknown to the core.",
+            "enum": [
+              "opaque"
+            ],
+            "type": "string"
+          }
+        ]
+      },
+      "EdgeLocation": {
+        "description": "An edge, as a location names it.",
+        "properties": {
+          "from": {
+            "description": "The producing node or declared input.",
+            "type": "string"
+          },
+          "port": {
+            "description": "The position of the edge among `to`'s inputs, from 0.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "to": {
+            "description": "The consuming node.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "from",
+          "to",
+          "port"
+        ],
+        "type": "object"
+      },
+      "FamilyCapabilities": {
+        "description": "One family's local implementations in this build.",
+        "properties": {
+          "family": {
+            "description": "The family, spelled as a configuration's `component:` value.",
+            "type": "string"
+          },
+          "local": {
+            "description": "The `impl:` names this build registers in it.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "family",
+          "local"
+        ],
+        "type": "object"
+      },
+      "Graph": {
+        "description": "A pipeline as a graph: its declared inputs, its nodes and the edges\nbetween them.",
+        "properties": {
+          "edges": {
+            "description": "One edge per entry of a node's `inputs`, grouped by consuming node in\nnode order, then in port order.",
+            "items": {
+              "$ref": "#/components/schemas/GraphEdge"
+            },
+            "type": "array"
+          },
+          "inputs": {
+            "description": "The values the pipeline receives from its caller, in declared order.",
+            "items": {
+              "$ref": "#/components/schemas/GraphInput"
+            },
+            "type": "array"
+          },
+          "nodes": {
+            "description": "The nodes, sorted by id — the canonical order.",
+            "items": {
+              "$ref": "#/components/schemas/GraphNode"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "inputs",
+          "nodes",
+          "edges"
+        ],
+        "type": "object"
+      },
+      "GraphEdge": {
+        "description": "A data edge: `from`'s output feeds `to`'s input at `port`.",
+        "properties": {
+          "from": {
+            "description": "The producing node, or a declared input.",
+            "type": "string"
+          },
+          "kind": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/EdgeKind"
+              }
+            ],
+            "description": "The kind of value the producer puts on it."
+          },
+          "port": {
+            "description": "The position of this edge among `to`'s inputs, from 0.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "to": {
+            "description": "The consuming node.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "from",
+          "to",
+          "port",
+          "kind"
+        ],
+        "type": "object"
+      },
+      "GraphInput": {
+        "description": "A declared pipeline input.",
+        "properties": {
+          "id": {
+            "description": "The id nodes name it by.",
+            "type": "string"
+          },
+          "kind": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/EdgeKind"
+              }
+            ],
+            "description": "What it carries: the query, for every pipeline this build reads."
+          }
+        },
+        "required": [
+          "id",
+          "kind"
+        ],
+        "type": "object"
+      },
+      "GraphNode": {
+        "description": "A node of the graph.",
+        "properties": {
+          "family": {
+            "description": "Its component family, spelled as a configuration's `component:`\nvalue: `retriever`, `fusion`, `reranker`, `context_builder`,\n`generator` or `extension`.",
+            "type": "string"
+          },
+          "id": {
+            "description": "The node's id.",
+            "type": "string"
+          },
+          "implementation": {
+            "description": "Its `impl:` name; an extension node's kind.",
+            "type": "string"
+          },
+          "parameters": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ParameterValue"
+            },
+            "description": "Its parameters, in key order.",
+            "type": "object"
+          }
+        },
+        "required": [
+          "id",
+          "family",
+          "implementation",
+          "parameters"
+        ],
+        "type": "object"
+      },
+      "Location": {
+        "description": "Where in a pipeline a validation failure is.",
+        "properties": {
+          "edge": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EdgeLocation"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "The edge concerned, when there is one."
+          },
+          "node": {
+            "description": "The node concerned, when there is one.",
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "ParameterValue": {
+        "anyOf": [
+          {
+            "description": "A boolean.",
+            "type": "boolean"
+          },
+          {
+            "description": "An integer.",
+            "format": "int64",
+            "type": "integer"
+          },
+          {
+            "description": "A floating-point number.",
+            "format": "double",
+            "type": "number"
+          },
+          {
+            "description": "A string.",
+            "type": "string"
+          },
+          {
+            "description": "An ordered list.",
+            "items": {
+              "$ref": "#/components/schemas/ParameterValue"
+            },
+            "type": "array"
+          }
+        ],
+        "description": "A node parameter's value."
+      },
+      "Problem": {
+        "description": "An error, as `application/problem+json` (RFC 9457) with this API's own\nmembers: a stable `code`, a `hint` naming the action, and a `location` for\na validation failure.",
+        "properties": {
+          "code": {
+            "description": "The stable code a client matches on.",
+            "type": "string"
+          },
+          "detail": {
+            "description": "What happened, in this occurrence's words.",
+            "type": "string"
+          },
+          "hint": {
+            "description": "The action that would resolve it.",
+            "type": "string"
+          },
+          "location": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Location"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "Where in a pipeline a validation failure is. Present only for\n`pipeline_invalid`."
+          },
+          "status": {
+            "description": "The HTTP status.",
+            "format": "uint16",
+            "maximum": 65535,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "title": {
+            "description": "A short, fixed summary of the code.",
+            "type": "string"
+          },
+          "type": {
+            "description": "`urn:ragondin:problem:<code>`.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "title",
+          "status",
+          "detail",
+          "code",
+          "hint"
+        ],
+        "type": "object"
+      },
+      "RunDetail": {
+        "description": "`GET /runs/{id}`: one run, whole.",
+        "properties": {
+          "bindings": {
+            "description": "The `Remote` bindings it used, outside its identity.",
+            "items": {
+              "$ref": "#/components/schemas/ServiceBinding"
+            },
+            "type": "array"
+          },
+          "configuration": {
+            "description": "The configuration document that produced it, verbatim.",
+            "type": "string"
+          },
+          "graph": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Graph"
+              }
+            ],
+            "description": "The graph lowered from [`configuration`](Self::configuration) by the\npipeline grammar's one implementation — never by the browser."
+          },
+          "id": {
+            "description": "The run's content address.",
+            "type": "string"
+          },
+          "inputs": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/RunInputs"
+              }
+            ],
+            "description": "The components its identity digests."
+          },
+          "metrics": {
+            "additionalProperties": {
+              "format": "double",
+              "type": "number"
+            },
+            "description": "What it scored, by metric name.",
+            "type": "object"
+          },
+          "prefix_of": {
+            "description": "The run this one is a prefix of. Always absent today: no run is\nrecorded as a prefix yet.",
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "inputs",
+          "metrics",
+          "configuration",
+          "bindings",
+          "graph"
+        ],
+        "type": "object"
+      },
+      "RunInputs": {
+        "description": "The components of a run's identity tuple.",
+        "properties": {
+          "dataset_version": {
+            "description": "The benchmark dataset's version.",
+            "type": "string"
+          },
+          "engine_version": {
+            "description": "The engine's version.",
+            "type": "string"
+          },
+          "index_version": {
+            "description": "The index's version.",
+            "type": "string"
+          },
+          "model_hashes": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "The model hashes, by role.",
+            "type": "object"
+          },
+          "pipeline": {
+            "description": "The content hash of the canonical logical pipeline.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "pipeline",
+          "dataset_version",
+          "index_version",
+          "model_hashes",
+          "engine_version"
+        ],
+        "type": "object"
+      },
+      "RunListing": {
+        "description": "`GET /runs`: every run the store holds, and every one it holds but cannot\nread.",
+        "properties": {
+          "runs": {
+            "description": "The readable runs, in the store's listing order.",
+            "items": {
+              "$ref": "#/components/schemas/RunSummary"
+            },
+            "type": "array"
+          },
+          "unreadable": {
+            "description": "The runs the store lists and cannot load — reported, never dropped\nand never repaired.",
+            "items": {
+              "$ref": "#/components/schemas/UnreadableRun"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "runs",
+          "unreadable"
+        ],
+        "type": "object"
+      },
+      "RunSummary": {
+        "description": "One run, as the listing shows it.",
+        "properties": {
+          "dataset_version": {
+            "description": "The benchmark dataset's version.",
+            "type": "string"
+          },
+          "engine_version": {
+            "description": "The engine's version.",
+            "type": "string"
+          },
+          "id": {
+            "description": "The run's content address: 64 lowercase hex digits.",
+            "type": "string"
+          },
+          "index_version": {
+            "description": "The index's version.",
+            "type": "string"
+          },
+          "metrics": {
+            "additionalProperties": {
+              "format": "double",
+              "type": "number"
+            },
+            "description": "What the run scored, by metric name.",
+            "type": "object"
+          },
+          "pipeline": {
+            "description": "The content hash of the canonical logical pipeline it ran.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "pipeline",
+          "dataset_version",
+          "index_version",
+          "engine_version",
+          "metrics"
+        ],
+        "type": "object"
+      },
+      "ServiceBinding": {
+        "description": "A `Remote` component bound by family and name to the address it answers\nat — in the workspace's settings, and as a run recorded it.",
+        "properties": {
+          "family": {
+            "description": "The family the name is bound in: `generator`, `embedder`, ….",
+            "type": "string"
+          },
+          "name": {
+            "description": "The implementation name a node uses.",
+            "type": "string"
+          },
+          "uri": {
+            "description": "The service's address, as written.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "family",
+          "name",
+          "uri"
+        ],
+        "type": "object"
+      },
+      "SettingsSummary": {
+        "description": "The workspace's settings: deployment data, never hashed into a run.",
+        "properties": {
+          "datasets": {
+            "description": "The directory benchmarks are read from.",
+            "type": "string"
+          },
+          "services": {
+            "description": "The `Remote` bindings the workspace names.",
+            "items": {
+              "$ref": "#/components/schemas/ServiceBinding"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "datasets",
+          "services"
+        ],
+        "type": "object"
+      },
+      "UnreadableRun": {
+        "description": "A run the store lists but cannot load, and why.",
+        "properties": {
+          "id": {
+            "description": "The id the store lists it under.",
+            "type": "string"
+          },
+          "reason": {
+            "description": "What loading it reported.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "Workspace": {
+        "description": "`GET /workspace`: where the server works, how it is set up, which build is\nanswering and what that build can run.",
+        "properties": {
+          "build": {
+            "description": "The build's identity. The UI compares it with its own and reloads when\nthey differ (ADR-C36 § 1); the same value is on every response in the\n`x-ragondin-build` header.",
+            "type": "string"
+          },
+          "capabilities": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Capabilities"
+              }
+            ],
+            "description": "What this build can run, as the launcher reports it."
+          },
+          "path": {
+            "description": "The workspace directory, as the binary was given it.",
+            "type": "string"
+          },
+          "settings": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/SettingsSummary"
+              }
+            ],
+            "description": "The deployment settings the workspace holds."
+          }
+        },
+        "required": [
+          "path",
+          "settings",
+          "build",
+          "capabilities"
+        ],
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "description": "The JSON API `ragondin ui` serves to the UI embedded in the same build.",
+    "title": "ragondin",
+    "version": "v1"
+  },
+  "openapi": "3.0.3",
+  "paths": {
+    "/runs": {
+      "get": {
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunListing"
+                }
+              }
+            },
+            "description": "Every run the store holds, and every one it cannot read."
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "An error, as application/problem+json."
+          }
+        },
+        "summary": "Every run the store holds, and every one it cannot read."
+      }
+    },
+    "/runs/{id}": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunDetail"
+                }
+              }
+            },
+            "description": "One run: its inputs, metrics, configuration, bindings and lowered graph."
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "An error, as application/problem+json."
+          }
+        },
+        "summary": "One run: its inputs, metrics, configuration, bindings and lowered graph."
+      }
+    },
+    "/workspace": {
+      "get": {
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Workspace"
+                }
+              }
+            },
+            "description": "The workspace: its path, its settings, this build and its capabilities."
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "An error, as application/problem+json."
+          }
+        },
+        "summary": "The workspace: its path, its settings, this build and its capabilities."
+      }
+    }
+  },
+  "servers": [
+    {
+      "url": "/api/v1"
+    }
+  ]
+}
