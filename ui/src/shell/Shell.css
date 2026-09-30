@@ -1,5 +1,5 @@
-/* The shell's own pieces. Every value is a token (ARCHITECTURE.md § The
-   design system); the dot and the service pill are the top bar's own. */
+/* The shell's own layout. Every value is a token (ARCHITECTURE.md § The
+   design system); the dot is design/'s StatusDot. */
 .rg-workspace {
   display: inline-flex;
   align-items: center;
@@ -9,13 +9,13 @@
   border-radius: var(--radius-s);
 }
 .rg-workspace:hover { color: var(--ink); }
-/* Unreachable: a hollow ring and the word, as the top bar draws a service. */
-.rg-workspace[data-connected="false"] .rg-dot { background: transparent; box-shadow: inset 0 0 0 1.5px var(--ink-3); }
 .rg-shell__main {
   display: grid;
   gap: var(--space-4);
   padding: var(--space-6);
 }
+/* A focused screen heading is focused by the shell, not by the user: no ring. */
+.rg-shell__main h1:focus { outline: none; }
 @media (max-width: 640px) {
   .rg-shell__main { padding: var(--space-4); }
 }

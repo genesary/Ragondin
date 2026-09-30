@@ -24,8 +24,9 @@ const WORKSPACE: Workspace = {
 function show(hash: string, props: { reload?: () => void; eventsPath?: string } = {}) {
   window.history.replaceState(null, '', `/${hash}`);
   const reload = props.reload ?? vi.fn();
-  const view = render(<App client={createApiClient()} build={BUILD} reload={reload} {...(props.eventsPath === undefined ? {} : { eventsPath: props.eventsPath })} />);
-  return { ...view, reload };
+  const client = createApiClient();
+  const view = render(<App client={client} build={BUILD} reload={reload} {...(props.eventsPath === undefined ? {} : { eventsPath: props.eventsPath })} />);
+  return { ...view, reload, client };
 }
 
 const indicator = () => within(screen.getByRole('banner')).getAllByRole('link').find((l) => l.getAttribute('href') === '#setup' && l.closest('nav') === null);
@@ -47,6 +48,7 @@ describe('the shell’s screens', () => {
     ['#pipeline/hybrid-rrf', 'Pipeline', 'Nothing to show for hybrid-rrf yet'],
     ['#compare', 'Compare', 'No runs chosen to compare'],
     ['#compare/aaa+bbb?baseline=aaa', 'Compare', 'Nothing to show for 2 runs yet'],
+    ['#compare/aaa', 'Compare', 'Nothing to show for 1 run yet'],
     ['#replay', 'Replay', 'No query chosen'],
     ['#replay/aaa/q/1395?with=bbb', 'Replay', 'Nothing to show for query 1395 yet'],
     ['#editor', 'Editor', 'No pipeline open'],
@@ -77,16 +79,32 @@ describe('the shell’s screens', () => {
     await screen.findByText(WORKSPACE.path);
   });
 
-  it('gives an empty state the action that leads on, which moves to its screen', async () => {
+  it('gives an empty state the action that leads on, as a real link to its screen', async () => {
     mockApi({ 'GET /workspace': { body: WORKSPACE } }, { build: BUILD });
     show('#pipeline');
-    fireEvent.click(within(main()).getByRole('button', { name: 'Open Runs' }));
+    const action = within(main()).getByRole('link', { name: 'Open Runs' });
+    expect(action.getAttribute('href')).toBe('#runs');
+    fireEvent.click(action);
     await waitFor(() => expect(within(main()).getByRole('heading', { level: 1 }).textContent).toBe('Runs'));
+  });
+
+  it('moves focus to the new screen’s heading when the route changes, so the change is announced', async () => {
+    mockApi({ 'GET /workspace': { body: WORKSPACE } }, { build: BUILD });
+    show('#pipeline');
+    await screen.findByText(WORKSPACE.path);
+    // A deep link keeps the browser's own focus: nothing is moved on load.
+    expect(document.activeElement).toBe(document.body);
+    fireEvent.click(within(main()).getByRole('link', { name: 'Open Runs' }));
+    await waitFor(() => expect(within(main()).getByRole('heading', { level: 1 }).textContent).toBe('Runs'));
+    const heading = within(main()).getByRole('heading', { level: 1 });
+    expect(document.activeElement).toBe(heading);
+    expect(heading.getAttribute('tabindex')).toBe('-1');
   });
 
   it('says so, and offers Runs, for an address that names no screen', async () => {
     mockApi({ 'GET /workspace': { body: WORKSPACE } }, { build: BUILD });
     show('#nowhere');
+    expect(within(main()).getByRole('heading', { level: 1 }).textContent).toBe('No such screen');
     expect(within(main()).getByRole('alert').textContent).toContain('#nowhere');
     expect(within(main()).getByRole('link', { name: 'Open Runs' }).getAttribute('href')).toBe('#runs');
     await screen.findByText(WORKSPACE.path);
@@ -184,6 +202,26 @@ describe('the build identity handshake', () => {
     expect(reload).not.toHaveBeenCalled();
   });
 
+  it('judges the identity a problem answer carries too', async () => {
+    mockApi(
+      {
+        'GET /workspace': {
+          problem: {
+            type: 'urn:ragondin:problem:backend_failed',
+            title: 'Backend failed',
+            status: 500,
+            detail: 'The run store could not be read.',
+            code: 'backend_failed',
+            hint: 'Check the workspace directory, then retry.',
+          },
+        },
+      },
+      { build: '0.0.0+bbbbbbbbbbbb' },
+    );
+    const { reload } = show('#runs');
+    await waitFor(() => expect(reload).toHaveBeenCalledTimes(1));
+  });
+
   it('reloads once when another build answers, then refuses, naming both builds', async () => {
     mockApi({ 'GET /workspace': { body: WORKSPACE } }, { build: '0.0.0+bbbbbbbbbbbb' });
     const first = show('#runs');
@@ -228,6 +266,24 @@ describe('the connection state', () => {
     act(() => FakeEventSource.latest().open());
     await waitFor(() => expect(reload).toHaveBeenCalledTimes(1));
     expect(requests).toEqual(['GET /api/v1/workspace', 'GET /api/v1/workspace']);
+  });
+
+  it('closes its stream when the shell unmounts', async () => {
+    mockApi({ 'GET /workspace': { body: WORKSPACE } }, { build: BUILD });
+    const { unmount } = show('#runs', { eventsPath: '/jobs/events' });
+    await screen.findByText(WORKSPACE.path);
+    unmount();
+    expect(FakeEventSource.latest().closed).toBe(true);
+  });
+
+  it('neither reads the workspace again nor reopens the stream when it re-renders with a new reload function', async () => {
+    const { requests } = mockApi({ 'GET /workspace': { body: WORKSPACE } }, { build: BUILD });
+    const { rerender, client } = show('#runs', { eventsPath: '/jobs/events' });
+    await screen.findByText(WORKSPACE.path);
+    rerender(<App client={client} build={BUILD} reload={vi.fn()} eventsPath="/jobs/events" />);
+    await act(async () => {});
+    expect(requests).toEqual(['GET /api/v1/workspace']);
+    expect(FakeEventSource.instances).toHaveLength(1);
   });
 
   it('shows no connection state when no stream is open', async () => {

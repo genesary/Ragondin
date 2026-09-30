@@ -2,8 +2,9 @@
 // its empty state here: one sentence on the default path and the action that
 // leads on. A screen's own issue replaces its empty state with its content and
 // keeps the route shape src/routes.ts gives it.
-import { Button, EmptyState, Sheet } from '../../design/index.ts';
-import { navigate, type Route, type ScreenName } from '../routes.ts';
+import { useEffect, useRef, type RefObject } from 'react';
+import { ButtonLink, EmptyState, Sheet } from '../../design/index.ts';
+import { formatHash, type Route, type ScreenName } from '../routes.ts';
 
 export const SCREENS: readonly { screen: ScreenName; label: string; bare: Route }[] = [
   { screen: 'runs', label: 'Runs', bare: { screen: 'runs' } },
@@ -14,9 +15,12 @@ export const SCREENS: readonly { screen: ScreenName; label: string; bare: Route 
   { screen: 'setup', label: 'Setup', bare: { screen: 'setup' } },
 ];
 
-type Empty = { heading: string; sentence: string; action?: { label: string; to: Route } };
+type Action = { label: string; to: Route };
+type Empty = { heading: string; sentence: string; action?: Action };
 
-const openRuns = { label: 'Open Runs', to: { screen: 'runs' } } as const;
+const openRuns: Action = { label: 'Open Runs', to: { screen: 'runs' } };
+const openCompare: Action = { label: 'Open Compare', to: { screen: 'compare', ids: [] } };
+const count = (n: number, one: string) => `${n.toLocaleString('en-US')} ${one}${n === 1 ? '' : 's'}`;
 
 /** What a screen shows before it has data, given the state its route carries. */
 function emptyOf(route: Route): Empty {
@@ -35,18 +39,14 @@ function emptyOf(route: Route): Empty {
       return route.ids.length === 0
         ? { heading: 'No runs chosen to compare', sentence: 'Choose a baseline and up to four runs in Runs to compare them stage by stage.', action: openRuns }
         : {
-            heading: `Nothing to show for ${route.ids.length} runs yet`,
+            heading: `Nothing to show for ${count(route.ids.length, 'run')} yet`,
             sentence: 'The runs chosen, stage by stage against their baseline, appear here.',
             action: openRuns,
           };
     case 'replay':
       return 'run' in route
-        ? { heading: `Nothing to show for query ${route.query} yet`, sentence: 'This query, node by node through the pipeline, appears here.', action: { label: 'Open Compare', to: { screen: 'compare', ids: [] } } }
-        : {
-            heading: 'No query chosen',
-            sentence: 'Open a query from Compare to follow it through the pipeline, node by node.',
-            action: { label: 'Open Compare', to: { screen: 'compare', ids: [] } },
-          };
+        ? { heading: `Nothing to show for query ${route.query} yet`, sentence: 'This query, node by node through the pipeline, appears here.', action: openCompare }
+        : { heading: 'No query chosen', sentence: 'Open a query from Compare to follow it through the pipeline, node by node.', action: openCompare };
     case 'editor':
       return route.name === undefined
         ? { heading: 'No pipeline open', sentence: 'Open a pipeline from Runs to edit it on the canvas.', action: openRuns }
@@ -56,21 +56,40 @@ function emptyOf(route: Route): Empty {
   }
 }
 
+/**
+ * Moves focus to `heading` whenever `address` changes after the first render,
+ * so a screen reader announces the new view and the keyboard starts from it.
+ * The first render keeps the browser's own focus: a deep link opens where
+ * the browser puts it.
+ */
+export function useFocusOnChange(heading: RefObject<HTMLElement | null>, address: string) {
+  const first = useRef(true);
+  useEffect(() => {
+    if (first.current) {
+      first.current = false;
+      return;
+    }
+    heading.current?.focus();
+  }, [heading, address]);
+}
+
 /** The screen a route shows: its name as the page's heading, then its state. */
-export function Screen({ route }: { route: Route }) {
+export function Screen({ route, heading }: { route: Route; heading: RefObject<HTMLHeadingElement | null> }) {
   const label = SCREENS.find((s) => s.screen === route.screen)?.label ?? route.screen;
   const empty = emptyOf(route);
   return (
     <>
-      <h1 className="rg-visually-hidden">{label}</h1>
+      <h1 ref={heading} tabIndex={-1} className="rg-visually-hidden">
+        {label}
+      </h1>
       <Sheet>
         <EmptyState
           heading={empty.heading}
           action={
             empty.action === undefined ? undefined : (
-              <Button kind="primary" size="l" onClick={() => empty.action !== undefined && navigate(empty.action.to)}>
+              <ButtonLink kind="primary" size="l" href={formatHash(empty.action.to)}>
                 {empty.action.label}
-              </Button>
+              </ButtonLink>
             )
           }
         >

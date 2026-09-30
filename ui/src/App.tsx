@@ -1,12 +1,11 @@
-import { useCallback, useEffect, useState } from 'react';
-import { InlineMessage, TopBar } from '../design/index.ts';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { ButtonLink, InlineMessage, TopBar } from '../design/index.ts';
 import type { ApiClient, ApiProblem } from './api/client.ts';
 import { openEvents, type ConnectionState } from './api/events.ts';
 import type { Workspace } from './api/types.ts';
 import { formatHash, useRoute } from './routes.ts';
 import { judgeBuild } from './shell/build.ts';
-import { ConnectionStatus } from './shell/ConnectionStatus.tsx';
-import { Screen, SCREENS } from './shell/screens.tsx';
+import { Screen, SCREENS, useFocusOnChange } from './shell/screens.tsx';
 import './shell/Shell.css';
 import { ErrorState, type RequestState } from './shell/states.tsx';
 import { ThemeControl } from './shell/ThemeControl.tsx';
@@ -20,6 +19,13 @@ export type AppProps = {
   reload: () => void;
   /** The event stream to follow, under the API's base address; none is opened without it. */
   eventsPath?: string;
+};
+
+/** What the top bar shows of the stream, in words beside the dot (the front-end design, § 8). */
+const CONNECTION: Record<ConnectionState, { label: string; connected: boolean }> = {
+  connecting: { label: 'connecting', connected: false },
+  connected: { label: 'connected', connected: true },
+  disconnected: { label: 'disconnected — retrying', connected: false },
 };
 
 const mismatch = (served: string | null, expected: string): ApiProblem => ({
@@ -41,14 +47,23 @@ export function App({ client, build, reload, eventsPath }: AppProps) {
   const [workspace, setWorkspace] = useState<RequestState<Workspace>>({ status: 'loading' });
   const [refused, setRefused] = useState<ApiProblem | null>(null);
   const [connection, setConnection] = useState<ConnectionState | null>(null);
+  const heading = useRef<HTMLHeadingElement>(null);
+  useFocusOnChange(heading, route === null ? window.location.hash : formatHash(route));
+
+  // Kept in a ref: a new function from a re-rendering parent is not a reason
+  // to read the workspace again or to reopen the stream.
+  const reloadRef = useRef(reload);
+  useEffect(() => {
+    reloadRef.current = reload;
+  }, [reload]);
 
   const readWorkspace = useCallback(async () => {
     const result = await client.get('/workspace');
     // A request that got no answer carries no identity to compare.
-    if (result.ok || result.problem.code !== 'network_failed') {
-      const judgement = judgeBuild(client.build(), build);
+    if (result.ok || result.problem.code !== 'network_failed' || result.problem.status !== null) {
+      const judgement = judgeBuild(result.build, build);
       if (judgement.verdict === 'reload') {
-        reload();
+        reloadRef.current();
         return;
       }
       if (judgement.verdict === 'different') {
@@ -57,7 +72,7 @@ export function App({ client, build, reload, eventsPath }: AppProps) {
       }
     }
     setWorkspace(result.ok ? { status: 'loaded', value: result.value } : { status: 'error', problem: result.problem });
-  }, [client, build, reload]);
+  }, [client, build]);
 
   useEffect(() => {
     void readWorkspace();
@@ -80,12 +95,8 @@ export function App({ client, build, reload, eventsPath }: AppProps) {
         workspace={<WorkspaceIndicator state={workspace} />}
         links={SCREENS.map((s) => ({ label: s.label, href: formatHash(s.bare), current: route?.screen === s.screen }))}
         services={[]}
-        end={
-          <>
-            {connection === null ? null : <ConnectionStatus state={connection} />}
-            <ThemeControl />
-          </>
-        }
+        {...(connection === null ? {} : { status: CONNECTION[connection] })}
+        end={<ThemeControl />}
       />
       <main className="rg-shell__main">
         {refused !== null ? (
@@ -94,11 +105,24 @@ export function App({ client, build, reload, eventsPath }: AppProps) {
           <>
             {workspace.status === 'error' ? <ErrorState problem={workspace.problem} onRetry={retry} /> : null}
             {route === null ? (
-              <InlineMessage tone="critical" title={`No screen at ${window.location.hash}.`} action={<a href={formatHash({ screen: 'runs' })}>Open Runs</a>}>
-                The address names no screen of this build. Check the link, or start from Runs.
-              </InlineMessage>
+              <>
+                <h1 ref={heading} tabIndex={-1} className="rg-visually-hidden">
+                  No such screen
+                </h1>
+                <InlineMessage
+                  tone="critical"
+                  title={`No screen at ${window.location.hash}.`}
+                  action={
+                    <ButtonLink size="s" href={formatHash({ screen: 'runs' })}>
+                      Open Runs
+                    </ButtonLink>
+                  }
+                >
+                  The address names no screen of this build. Check the link, or start from Runs.
+                </InlineMessage>
+              </>
             ) : (
-              <Screen route={route} />
+              <Screen route={route} heading={heading} />
             )}
           </>
         )}

@@ -43,4 +43,23 @@ export default defineConfig([
       ],
     },
   },
+  {
+    // The network's test doubles stay out of the bundle: only a test may
+    // import them. ARCHITECTURE.md § The client; tests/test-doubles.test.ts.
+    files: [SOURCES],
+    ignores: ['**/*.test.*', 'tests/**'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              regex: '(^|/)api/testing(\\.[cm]?[jt]sx?)?$',
+              message: 'src/api/testing.ts holds test doubles; only tests import it, so none of it reaches the bundle (ui/ARCHITECTURE.md § The client).',
+            },
+          ],
+        },
+      ],
+    },
+  },
 ]);
