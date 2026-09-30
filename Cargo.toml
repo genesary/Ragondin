@@ -128,9 +128,11 @@ axum = { version = "0.7", default-features = false, features = [
 # these schemas.
 schemars = "1"
 
-# The workspace's HTTP client, decided in ADR-C33 § 2, and today reached by one
-# crate only: `testkit/ragondin-generator-service`, optional, behind its
-# `service` feature. `default-features = false` drops the native TLS stack, so
+# The workspace's HTTP client, decided in ADR-C33 § 2, and today reached by two
+# crates: `testkit/ragondin-generator-service`, optional, behind its `service`
+# feature; and `eval/ragondin-benchmarks`, for the one digest-verified
+# download of a pinned dataset snapshot, which no evaluation calls (that
+# crate's `ARCHITECTURE.md`). `default-features = false` drops the native TLS stack, so
 # TLS runs on `rustls` with `ring` and `webpki-roots`, the precedent ADR-C27
 # set for `ort`; `json` is the request and response bodies. A second HTTP
 # client, or a move to the 0.13 line, whose feature names differ, escalates.

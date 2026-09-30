@@ -1,6 +1,6 @@
 [package]
 name = "ragondin-benchmarks"
-description = "BenchmarkAdapter and its implementations (BEIR, SQuAD v1.1)."
+description = "BenchmarkAdapter and its implementations (BEIR, SQuAD v1.1), the dataset identity, and the pinned dataset manifest."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -10,7 +10,8 @@ rust-version.workspace = true
 # This crate reads dataset files from disk, which is correct here: INV-3 (no
 # I/O) names `ragondin-types` and `ragondin-pipeline` only. It stays light in
 # the spirit of INV-4 — a JSON reader, a TSV reader and SHA-256 for the
-# dataset and index digests (`src/identity.rs`), nothing heavier.
+# dataset and index digests (`src/identity.rs`), and the HTTP client that
+# puts a pinned snapshot on disk (`src/datasets.rs`) — nothing heavier.
 #
 # It depends on `ragondin-metrics` in NEITHER direction, deliberately: this
 # crate owns the qrels type and hands out a `&BTreeMap<DocId, u8>` that the
@@ -22,3 +23,10 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }       # the dataset and index digests (`src/identity.rs`)
 thiserror = { workspace = true }
+# The pinned download of a manifest snapshot (`src/datasets.rs`), and nothing
+# else: no evaluation reads the network. `reqwest` with the workspace entry's
+# own features (rustls, no native TLS), none appended; `tokio` for the
+# current-thread runtime the download drives the client on, so that this
+# crate's functions stay synchronous.
+reqwest = { workspace = true }
+tokio = { workspace = true }
