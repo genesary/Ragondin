@@ -185,7 +185,7 @@ check-ui: check-node
 # `check-deny`, it names what to install rather than failing on an unknown
 # command.
 check-node:
-    @command -v npm >/dev/null 2>&1 || { echo "error: check-ui needs Node {{ trim(read('ui/.node-version')) }} (the major pinned in ui/.node-version), with npm."; exit 1; }
+    @command -v npm >/dev/null 2>&1 || { echo "error: check-ui needs Node $(cat ui/.node-version) (the major pinned in ui/.node-version), with npm."; exit 1; }
 
 # Everything CI runs, in one command. Run this before declaring work done. It
 # needs Node, for `check-ui`, and checks for it first; every other recipe it
