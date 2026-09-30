@@ -144,8 +144,9 @@ workspace/
 ├── runtime/
 │   ├── ragondin-config             # ConfigSource (LocalFile | Stream); schema; parse → validate → compile
 │   ├── ragondin-server             # Serving: ingress → Tower stack → engine
-│   └── ragondin-experiments        # Native run store and run comparison. The API the UI consumes is a
-│                              #   crate of its own, runtime/ragondin-api (ADR-C36), not created yet
+│   ├── ragondin-experiments        # Native run store and run comparison
+│   └── ragondin-api                # The JSON API the UI consumes: router, typed errors, response types,
+│                              #   the traits it consumes. INTERNAL; reaches no engine, no component (INV-12)
 │
 ├── testkit/                   # Reference implementations and fixtures (ADR-C33 § 1). Nothing in the product depends on them.
 │   ├── ragondin-conformance        # The suite every component implementation must pass (Local or Remote)
@@ -194,6 +195,7 @@ flowchart TB
     SRV[ragondin-server]
     EXP[ragondin-experiments]
     CFG[ragondin-config]
+    API[ragondin-api]
   end
   subgraph EVAL["eval/"]
     HAR[ragondin-harness]
@@ -224,6 +226,7 @@ flowchart TB
   SRV --> ENG
   HAR --> ENG & MET & BEN & EXP & PIP & TYP
   EXP --> PIP & TYP
+  API --> EXP & PIP
   ENG --> CON & PIP & TYP
   ENG -->|"optional, feature = remote"| REM
   RAG -->|"optional, feature = remote"| REM
@@ -245,6 +248,7 @@ flowchart TB
 - `ragondin-engine` depends on `ragondin-contracts` (the traits) but on **no crate under `components/`**. This is load-bearing rule number one.
 - Crates under `components/` depend on `ragondin-contracts` and `ragondin-types` and **never the reverse**. A component is a **leaf**.
 - Only the **binary** knows both the engine and the concrete components. It is the **composition root**.
+- `ragondin-api` reaches **no crate under `engine/` or `components/`, nor `ragondin-remote`** (INV-12, ADR-C36 § 3): its workspace edges are `ragondin-experiments` and `ragondin-pipeline`, and the binary, which will mount its router, is where the UI meets the data plane — through the `Launcher` trait it implements. No binary depends on it yet.
 - `ragondin-types` is the ultimate leaf: everything depends on it; it depends on almost nothing.
 - A **dashed** arrow is an edge the architecture sanctions but that no `Cargo.toml` declares today. `ragondin-contracts → ragondin-pipeline` is the only one: a component receives values, not graphs, so no contract references a `ragondin-pipeline` type yet. The arrow stays because the day one does, adding the dependency needs no architectural argument. Solid arrows are edges that exist.
 - Every box names a member listed in the root `Cargo.toml`, except `components/`, which stands for eight; nothing here is reserved any more. That box covers — `ragondin-retriever-bm25`, `ragondin-retriever-dense`, `ragondin-store-memory`, `ragondin-fusion-rrf`, `ragondin-embedder-onnx`, `ragondin-reranker-onnx`, `ragondin-context-concat` and `ragondin-stub`, the deterministic fixture the end-to-end tests are wired with — and they are drawn as one box because their edges are identical. §4.1's rule is now a fact and not a forecast: `cargo metadata` gives each of the eight exactly `ragondin-contracts` and `ragondin-types` as normal dependencies, and nothing else in the workspace. Each also carries `ragondin-conformance` as a **dev**-dependency, which is how a component proves it satisfies its contract; the graph draws normal dependencies only, so that edge is deliberately absent.
@@ -272,6 +276,7 @@ Following rust-analyzer's practice, each load-bearing crate documents its invari
 | **INV-9** | **The wire format is separate from the in-memory representation** and versioned independently. | `ragondin-config`, `ragondin-proto` | DataFusion plan serialization |
 | **INV-10** | **Traces are an OUTPUT of execution**, not logs. | `ragondin-engine` | — |
 | **INV-11** | **Tower governs the network envelope, not the domain contract.** | `ragondin-server` vs `ragondin-contracts` | linkerd2-proxy |
+| **INV-12** | **The API crate reaches no engine and no component** — nor `ragondin-remote`, directly or transitively. *(CI-enforced)* | `ragondin-api` | — |
 
 ---
 

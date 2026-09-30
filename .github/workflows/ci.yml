@@ -116,12 +116,12 @@ jobs:
           RUSTDOCFLAGS: -D warnings
 
       # The most important gate: the architecture invariants (INV-3, INV-4,
-      # INV-5, INV-6, INV-11). Python 3 is preinstalled on ubuntu runners; the
+      # INV-5, INV-6, INV-11, INV-12). Python 3 is preinstalled on ubuntu runners; the
       # check has no third-party dependency. It resolves the `--all-features`
       # graph, like the clippy and test steps above: every heavy backend sits
       # behind a feature by rule, so the lean graph holds no component crate's
       # real dependencies at all.
-      - name: Architecture invariants (INV-3, INV-4, INV-5, INV-6, INV-11)
+      - name: Architecture invariants (INV-3, INV-4, INV-5, INV-6, INV-11, INV-12)
         run: python3 scripts/check-invariants.py
 
       # The gate below is only worth its green tick if it still scans what it

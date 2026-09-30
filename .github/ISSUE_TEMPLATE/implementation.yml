@@ -70,7 +70,7 @@ body:
     id: invariants
     attributes:
       label: Invariants you must not violate
-      description: The specific invariants (INV-1…INV-11) this work is near, and how to respect them. See the `architecture-invariants` skill.
+      description: The specific invariants (INV-1…INV-12) this work is near, and how to respect them. See the `architecture-invariants` skill.
     validations:
       required: true
 

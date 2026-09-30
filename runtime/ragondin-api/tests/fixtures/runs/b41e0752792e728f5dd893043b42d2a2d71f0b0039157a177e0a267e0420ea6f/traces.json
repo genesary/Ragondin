@@ -1,0 +1,554 @@
+{
+  "q-1": {
+    "nodes": [
+      {
+        "duration_nanos": 18417,
+        "error": null,
+        "inputs": [
+          {
+            "query": {
+              "id": "q-1"
+            }
+          }
+        ],
+        "node": "leg_a",
+        "output": {
+          "chunks": {
+            "count": 1,
+            "ranked": [
+              {
+                "chunk": "doc-a-0",
+                "document": "doc-a",
+                "score": 1.0
+              }
+            ]
+          }
+        }
+      },
+      {
+        "duration_nanos": 1709,
+        "error": null,
+        "inputs": [
+          {
+            "query": {
+              "id": "q-1"
+            }
+          }
+        ],
+        "node": "leg_b",
+        "output": {
+          "chunks": {
+            "count": 1,
+            "ranked": [
+              {
+                "chunk": "doc-b-0",
+                "document": "doc-b",
+                "score": 1.0
+              }
+            ]
+          }
+        }
+      },
+      {
+        "duration_nanos": 7834,
+        "error": null,
+        "inputs": [
+          {
+            "chunks": {
+              "count": 1
+            }
+          },
+          {
+            "chunks": {
+              "count": 1
+            }
+          }
+        ],
+        "node": "fused",
+        "output": {
+          "chunks": {
+            "count": 2,
+            "ranked": [
+              {
+                "chunk": "doc-a-0",
+                "document": "doc-a",
+                "score": 1.0
+              },
+              {
+                "chunk": "doc-b-0",
+                "document": "doc-b",
+                "score": 0.5
+              }
+            ]
+          }
+        }
+      },
+      {
+        "duration_nanos": 5042,
+        "error": null,
+        "inputs": [
+          {
+            "query": {
+              "id": "q-1"
+            }
+          },
+          {
+            "chunks": {
+              "count": 2
+            }
+          }
+        ],
+        "node": "context",
+        "output": {
+          "context": {
+            "chunks": [
+              {
+                "chunk": "doc-a-0",
+                "document": "doc-a",
+                "score": 1.0
+              }
+            ],
+            "text": "stub chunk 0 of `doc-a` for `alpha`"
+          }
+        }
+      },
+      {
+        "duration_nanos": 4834,
+        "error": null,
+        "inputs": [
+          {
+            "query": {
+              "id": "q-1"
+            }
+          },
+          {
+            "context": {
+              "count": 1,
+              "text_bytes": 35
+            }
+          }
+        ],
+        "node": "answer",
+        "output": {
+          "answer": {
+            "text": "stub chunk 0 of `doc-a` for `alpha`"
+          }
+        }
+      }
+    ]
+  },
+  "q-2": {
+    "nodes": [
+      {
+        "duration_nanos": 2333,
+        "error": null,
+        "inputs": [
+          {
+            "query": {
+              "id": "q-2"
+            }
+          }
+        ],
+        "node": "leg_a",
+        "output": {
+          "chunks": {
+            "count": 1,
+            "ranked": [
+              {
+                "chunk": "doc-a-0",
+                "document": "doc-a",
+                "score": 1.0
+              }
+            ]
+          }
+        }
+      },
+      {
+        "duration_nanos": 1625,
+        "error": null,
+        "inputs": [
+          {
+            "query": {
+              "id": "q-2"
+            }
+          }
+        ],
+        "node": "leg_b",
+        "output": {
+          "chunks": {
+            "count": 1,
+            "ranked": [
+              {
+                "chunk": "doc-b-0",
+                "document": "doc-b",
+                "score": 1.0
+              }
+            ]
+          }
+        }
+      },
+      {
+        "duration_nanos": 5625,
+        "error": null,
+        "inputs": [
+          {
+            "chunks": {
+              "count": 1
+            }
+          },
+          {
+            "chunks": {
+              "count": 1
+            }
+          }
+        ],
+        "node": "fused",
+        "output": {
+          "chunks": {
+            "count": 2,
+            "ranked": [
+              {
+                "chunk": "doc-a-0",
+                "document": "doc-a",
+                "score": 1.0
+              },
+              {
+                "chunk": "doc-b-0",
+                "document": "doc-b",
+                "score": 0.5
+              }
+            ]
+          }
+        }
+      },
+      {
+        "duration_nanos": 3958,
+        "error": null,
+        "inputs": [
+          {
+            "query": {
+              "id": "q-2"
+            }
+          },
+          {
+            "chunks": {
+              "count": 2
+            }
+          }
+        ],
+        "node": "context",
+        "output": {
+          "context": {
+            "chunks": [
+              {
+                "chunk": "doc-a-0",
+                "document": "doc-a",
+                "score": 1.0
+              }
+            ],
+            "text": "stub chunk 0 of `doc-a` for `beta`"
+          }
+        }
+      },
+      {
+        "duration_nanos": 3708,
+        "error": null,
+        "inputs": [
+          {
+            "query": {
+              "id": "q-2"
+            }
+          },
+          {
+            "context": {
+              "count": 1,
+              "text_bytes": 34
+            }
+          }
+        ],
+        "node": "answer",
+        "output": {
+          "answer": {
+            "text": "stub chunk 0 of `doc-a` for `beta`"
+          }
+        }
+      }
+    ]
+  },
+  "q-3": {
+    "nodes": [
+      {
+        "duration_nanos": 1875,
+        "error": null,
+        "inputs": [
+          {
+            "query": {
+              "id": "q-3"
+            }
+          }
+        ],
+        "node": "leg_a",
+        "output": {
+          "chunks": {
+            "count": 1,
+            "ranked": [
+              {
+                "chunk": "doc-a-0",
+                "document": "doc-a",
+                "score": 1.0
+              }
+            ]
+          }
+        }
+      },
+      {
+        "duration_nanos": 1500,
+        "error": null,
+        "inputs": [
+          {
+            "query": {
+              "id": "q-3"
+            }
+          }
+        ],
+        "node": "leg_b",
+        "output": {
+          "chunks": {
+            "count": 1,
+            "ranked": [
+              {
+                "chunk": "doc-b-0",
+                "document": "doc-b",
+                "score": 1.0
+              }
+            ]
+          }
+        }
+      },
+      {
+        "duration_nanos": 7750,
+        "error": null,
+        "inputs": [
+          {
+            "chunks": {
+              "count": 1
+            }
+          },
+          {
+            "chunks": {
+              "count": 1
+            }
+          }
+        ],
+        "node": "fused",
+        "output": {
+          "chunks": {
+            "count": 2,
+            "ranked": [
+              {
+                "chunk": "doc-a-0",
+                "document": "doc-a",
+                "score": 1.0
+              },
+              {
+                "chunk": "doc-b-0",
+                "document": "doc-b",
+                "score": 0.5
+              }
+            ]
+          }
+        }
+      },
+      {
+        "duration_nanos": 3833,
+        "error": null,
+        "inputs": [
+          {
+            "query": {
+              "id": "q-3"
+            }
+          },
+          {
+            "chunks": {
+              "count": 2
+            }
+          }
+        ],
+        "node": "context",
+        "output": {
+          "context": {
+            "chunks": [
+              {
+                "chunk": "doc-a-0",
+                "document": "doc-a",
+                "score": 1.0
+              }
+            ],
+            "text": "stub chunk 0 of `doc-a` for `gamma`"
+          }
+        }
+      },
+      {
+        "duration_nanos": 3500,
+        "error": null,
+        "inputs": [
+          {
+            "query": {
+              "id": "q-3"
+            }
+          },
+          {
+            "context": {
+              "count": 1,
+              "text_bytes": 35
+            }
+          }
+        ],
+        "node": "answer",
+        "output": {
+          "answer": {
+            "text": "stub chunk 0 of `doc-a` for `gamma`"
+          }
+        }
+      }
+    ]
+  },
+  "q-4": {
+    "nodes": [
+      {
+        "duration_nanos": 1917,
+        "error": null,
+        "inputs": [
+          {
+            "query": {
+              "id": "q-4"
+            }
+          }
+        ],
+        "node": "leg_a",
+        "output": {
+          "chunks": {
+            "count": 1,
+            "ranked": [
+              {
+                "chunk": "doc-a-0",
+                "document": "doc-a",
+                "score": 1.0
+              }
+            ]
+          }
+        }
+      },
+      {
+        "duration_nanos": 1458,
+        "error": null,
+        "inputs": [
+          {
+            "query": {
+              "id": "q-4"
+            }
+          }
+        ],
+        "node": "leg_b",
+        "output": {
+          "chunks": {
+            "count": 1,
+            "ranked": [
+              {
+                "chunk": "doc-b-0",
+                "document": "doc-b",
+                "score": 1.0
+              }
+            ]
+          }
+        }
+      },
+      {
+        "duration_nanos": 4959,
+        "error": null,
+        "inputs": [
+          {
+            "chunks": {
+              "count": 1
+            }
+          },
+          {
+            "chunks": {
+              "count": 1
+            }
+          }
+        ],
+        "node": "fused",
+        "output": {
+          "chunks": {
+            "count": 2,
+            "ranked": [
+              {
+                "chunk": "doc-a-0",
+                "document": "doc-a",
+                "score": 1.0
+              },
+              {
+                "chunk": "doc-b-0",
+                "document": "doc-b",
+                "score": 0.5
+              }
+            ]
+          }
+        }
+      },
+      {
+        "duration_nanos": 3500,
+        "error": null,
+        "inputs": [
+          {
+            "query": {
+              "id": "q-4"
+            }
+          },
+          {
+            "chunks": {
+              "count": 2
+            }
+          }
+        ],
+        "node": "context",
+        "output": {
+          "context": {
+            "chunks": [
+              {
+                "chunk": "doc-a-0",
+                "document": "doc-a",
+                "score": 1.0
+              }
+            ],
+            "text": "stub chunk 0 of `doc-a` for `delta`"
+          }
+        }
+      },
+      {
+        "duration_nanos": 3292,
+        "error": null,
+        "inputs": [
+          {
+            "query": {
+              "id": "q-4"
+            }
+          },
+          {
+            "context": {
+              "count": 1,
+              "text_bytes": 35
+            }
+          }
+        ],
+        "node": "answer",
+        "output": {
+          "answer": {
+            "text": "stub chunk 0 of `doc-a` for `delta`"
+          }
+        }
+      }
+    ]
+  }
+}

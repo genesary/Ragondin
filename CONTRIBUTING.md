@@ -40,7 +40,7 @@ treat that as a finding about the dependency, not about the branch.
 
 ### The architecture invariant checks
 
-Five invariants are enforced as blocking CI checks, not just documented:
+Six invariants are enforced as blocking CI checks, not just documented:
 
 - **INV-4 — the core stays light.** `ragondin-types` and `ragondin-contracts` carry no
   heavy dependency (tantivy, tonic, prost, ort, candle, vector-store clients,
@@ -58,6 +58,12 @@ Five invariants are enforced as blocking CI checks, not just documented:
   judgment a reviewer makes; these two are the part a build can decide.
 - **INV-11 — Tower governs the network envelope only.** No `impl tower::Service`
   under `components/`.
+- **INV-12 — the API crate reaches no engine and no component.**
+  `ragondin-api`, which answers the browser, depends on no crate under
+  `engine/` or `components/`, nor on `ragondin-remote`, directly or through
+  another crate. Code that needs the engine goes behind the `Launcher` trait,
+  which the binary implements. One blind spot is left to review:
+  `ragondin-proto` is reachable through `ragondin-config`.
 
 Run them directly with `just check-invariants` (implemented in
 `scripts/check-invariants.py`). If a check blocks you, it is the architecture

@@ -275,3 +275,22 @@ pipeline:
         }]
     );
 }
+
+/// The lowering `compare` runs is the one a reader of a stored run uses too
+/// (`ragondin-api` draws a run's graph from it), so it is exposed as one
+/// function rather than written a second time.
+#[test]
+fn a_stored_document_lowers_through_the_one_public_path() {
+    let pipeline = ragondin_experiments::lower_configuration(&ConfigDocument::new(
+        "pipeline:\n  inputs: [q]\n  nodes:\n    - { id: r, component: retriever, impl: bm25, inputs: [q] }\n",
+    ))
+    .expect("the document lowers");
+    assert_eq!(pipeline.inputs(), &[NodeId::new("q")]);
+    assert_eq!(pipeline.nodes().len(), 1);
+
+    let refused = ragondin_experiments::lower_configuration(&ConfigDocument::new(
+        "version: 99\npipeline:\n  inputs: [q]\n  nodes: []\n",
+    ))
+    .expect_err("a version this build cannot read is refused");
+    assert!(refused.contains("schema version"), "{refused}");
+}

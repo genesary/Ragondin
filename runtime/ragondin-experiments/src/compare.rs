@@ -62,7 +62,7 @@ fn compare_configurations(
     left: &ConfigDocument,
     right: &ConfigDocument,
 ) -> ConfigurationComparison {
-    let left = match lower(left) {
+    let left = match lower_configuration(left) {
         Ok(pipeline) => pipeline,
         Err(reason) => {
             return ConfigurationComparison::Unavailable {
@@ -71,7 +71,7 @@ fn compare_configurations(
             }
         }
     };
-    let right = match lower(right) {
+    let right = match lower_configuration(right) {
         Ok(pipeline) => pipeline,
         Err(reason) => {
             return ConfigurationComparison::Unavailable {
@@ -104,14 +104,19 @@ fn compare_configurations(
     }
 }
 
-/// The load path `ragondin-config` runs over a file, run over the kept text:
-/// into the hand-maintained wire schema, then through the validation pass —
+/// Lowers a stored configuration document to its [`LogicalPipeline`]: the
+/// load path `ragondin-config` runs over a file, run over the kept text —
+/// into the hand-maintained wire schema, then through the validation pass,
 /// never a deserializer pointed at an internal type (INV-9).
 ///
 /// The schema version is peeked first, as `ragondin-config` does, so a run
 /// stored under a version this build cannot read says that rather than
-/// reporting a syntax error.
-fn lower(document: &ConfigDocument) -> Result<LogicalPipeline, String> {
+/// reporting a syntax error. The `Err` is that reason, in words.
+///
+/// Public because a reader of a stored run needs the same lowering
+/// [`compare`] does — `ragondin-api` draws a run's graph from it — and one
+/// path is kept rather than a second written beside it.
+pub fn lower_configuration(document: &ConfigDocument) -> Result<LogicalPipeline, String> {
     if let Err(SchemaVersionPeekError::Unsupported(source)) =
         peek_schema_version(serde_yaml::Deserializer::from_str(document.as_str()))
     {
