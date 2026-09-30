@@ -303,6 +303,7 @@
               "benchmark_not_found",
               "benchmark_exists",
               "download_failed",
+              "download_cancelled",
               "import_refused",
               "backend_failed",
               "host_refused",

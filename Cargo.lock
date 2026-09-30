@@ -1946,6 +1946,7 @@ dependencies = [
  "ragondin-benchmarks",
  "ragondin-experiments",
  "ragondin-pipeline",
+ "reqwest",
  "schemars",
  "serde",
  "serde_json",
@@ -1961,12 +1962,10 @@ version = "0.0.0"
 dependencies = [
  "csv",
  "ragondin-types",
- "reqwest",
  "serde",
  "serde_json",
  "sha2",
  "thiserror",
- "tokio",
 ]
 
 [[package]]

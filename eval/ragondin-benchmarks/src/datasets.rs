@@ -8,27 +8,32 @@
 //! any other way.
 //!
 //! **A failure leaves nothing behind.** A download or an import is assembled
-//! in a staging directory beside its destination, named with a leading `.`,
-//! and renamed into place only once every check passed; on any error the
-//! staging directory is removed before the error returns. So a dataset's
-//! directory exists only when what it holds verified.
+//! in a staging directory of its own beside its destination — named with a
+//! leading `.` and unique to the attempt — and renamed into place only once
+//! every check passed; on any error the staging directory is removed before
+//! the error returns. So a dataset's directory exists only when what it holds
+//! verified, however many attempts overlap.
 //!
-//! This is the one place the crate fetches over the network, and it fetches
-//! only to put a frozen snapshot on disk: nothing is ever read from the network
-//! during evaluation (`ARCHITECTURE.md` § Local constraints).
+//! **This crate does not speak HTTP.** [`download`] is handed a [`Fetcher`] —
+//! the transport — and applies every rule itself: the size cap, the digest,
+//! cancellation, the deadline, the `dataset_version`, the publish step. The
+//! experiment plane's API supplies the HTTP fetcher, so the harness and the
+//! binary, which depend on this crate and never download, carry no HTTP or
+//! TLS stack (`ARCHITECTURE.md` § Putting a dataset on disk).
 
 use std::fmt::Write as _;
 use std::fs::{self, File};
 use std::io::{self, Write as _};
 use std::path::{Component, Path, PathBuf};
-use std::time::Duration;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 use crate::identity::dataset_version;
-use crate::manifest::{manifest, Format, ManifestEntry};
+use crate::manifest::{Format, ManifestEntry, ManifestFile};
 use crate::{Benchmark, BenchmarkAdapter};
 use crate::{BenchmarkError, CarriedPieces, SquadAdapter};
 
@@ -36,10 +41,8 @@ use crate::{BenchmarkError, CarriedPieces, SquadAdapter};
 /// was imported as.
 pub const LOCAL_MARKER: &str = "ragondin-local.json";
 
-/// How long a download waits for a connection, and then for each read. A
-/// server that stops answering fails the download instead of holding it.
-const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
-const READ_TIMEOUT: Duration = Duration::from_secs(60);
+/// The longest name an import accepts.
+pub const MAX_NAME_LENGTH: usize = 64;
 
 /// How far a download is: bytes received of the snapshot's total.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -110,12 +113,146 @@ pub fn verify(dir: &Path, format: Format, expected: &str) -> DiskState {
     }
 }
 
+// ---------------------------------------------------------------------------
+// The transport seam
+// ---------------------------------------------------------------------------
+
+/// The transport a download is handed: it fetches one URL and feeds what
+/// arrives into the [`Body`].
+///
+/// It calls [`Body::announce`] when the length is known before the bytes (an
+/// HTTP `Content-Length`), then [`Body::write`] for each chunk, and stops as
+/// soon as either returns [`Stopped`]. It returns `Err` with its own reason
+/// when the transfer fails. Whatever it returns after a `Stopped`, the
+/// download reports the reason the body recorded — a transport that ignores
+/// a refusal cannot turn it into a success.
+pub trait Fetcher {
+    /// Fetches `url` into `body`.
+    ///
+    /// # Errors
+    ///
+    /// Why the transfer failed, with every cause, in the transport's words.
+    fn fetch(&mut self, url: &str, body: &mut Body<'_>) -> Result<(), String>;
+}
+
+/// The download refused to take more: the transfer must stop. The reason is
+/// recorded in the [`Body`] and reported by [`download`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
+#[error("the download stopped the transfer")]
+pub struct Stopped;
+
+/// Why a body stopped a transfer.
+#[derive(Debug)]
+enum Stop {
+    TooLarge { seen: u64 },
+    Cancelled,
+    Deadline,
+    Io(io::Error),
+}
+
+/// Where a transport writes one file: hashed, counted against the manifest's
+/// size, written to the staging directory, and checked for cancellation and
+/// the deadline after every chunk.
+pub struct Body<'a> {
+    limit: u64,
+    out: File,
+    hasher: Sha256,
+    received: u64,
+    before: u64,
+    total: u64,
+    progress: &'a mut dyn FnMut(Progress),
+    cancelled: &'a AtomicBool,
+    started: Instant,
+    deadline: Duration,
+    stop: Option<Stop>,
+}
+
+impl Body<'_> {
+    /// The length the transport announces before the bytes. More than the
+    /// manifest's size is refused before a byte is written.
+    ///
+    /// # Errors
+    ///
+    /// [`Stopped`] when the transfer must stop.
+    pub fn announce(&mut self, length: u64) -> Result<(), Stopped> {
+        if self.stop.is_some() {
+            return Err(Stopped);
+        }
+        if length > self.limit {
+            return self.halt(Stop::TooLarge { seen: length });
+        }
+        Ok(())
+    }
+
+    /// One chunk of the file.
+    ///
+    /// # Errors
+    ///
+    /// [`Stopped`] when the download was cancelled, outlived its deadline,
+    /// received more than the manifest's size, or could not write.
+    pub fn write(&mut self, chunk: &[u8]) -> Result<(), Stopped> {
+        if self.stop.is_some() {
+            return Err(Stopped);
+        }
+        if self.cancelled.load(Ordering::Relaxed) {
+            return self.halt(Stop::Cancelled);
+        }
+        if self.started.elapsed() > self.deadline {
+            return self.halt(Stop::Deadline);
+        }
+        let seen = self.received + chunk.len() as u64;
+        if seen > self.limit {
+            return self.halt(Stop::TooLarge { seen });
+        }
+        if let Err(error) = self.out.write_all(chunk) {
+            return self.halt(Stop::Io(error));
+        }
+        self.hasher.update(chunk);
+        self.received = seen;
+        (self.progress)(Progress {
+            received: self.before + self.received,
+            total: self.total,
+        });
+        Ok(())
+    }
+
+    fn halt(&mut self, stop: Stop) -> Result<(), Stopped> {
+        self.stop = Some(stop);
+        Err(Stopped)
+    }
+}
+
+/// What a download reports to, and what can stop it.
+pub struct Controls<'a> {
+    /// Receives bytes received of the snapshot's total after every chunk.
+    pub progress: &'a mut dyn FnMut(Progress),
+    /// Set from anywhere to cancel: checked after every chunk, and before each
+    /// file.
+    pub cancelled: &'a AtomicBool,
+    /// How long the whole download may take, from its start. A server that
+    /// trickles bytes fails at the deadline instead of holding the download.
+    pub deadline: Duration,
+}
+
+impl Controls<'_> {
+    /// The deadline a download of `entry` gets by default: a minute's grace,
+    /// plus the time its size takes at 32 KiB/s — a minimum mean throughput.
+    pub fn deadline_for(entry: &ManifestEntry) -> Duration {
+        Duration::from_secs(60) + Duration::from_secs(entry.size_bytes() / (32 * 1024))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Download
+// ---------------------------------------------------------------------------
+
 /// Why a download was refused. Each names the manifest entry.
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum DownloadError {
-    /// The dataset's directory already exists. A download never overwrites
-    /// one: what is there may be a user's, and a failure must not remove it.
+    /// The dataset's directory exists — before the download started, or put
+    /// there by another download that finished first. A download never
+    /// overwrites one.
     #[error("{entry}: {} already exists; remove it to download again", path.display())]
     Occupied {
         /// The entry.
@@ -123,7 +260,8 @@ pub enum DownloadError {
         /// The directory.
         path: PathBuf,
     },
-    /// A file's path would land outside the dataset's directory.
+    /// A file's path would land outside the dataset's directory: a defect in
+    /// the manifest this build carries.
     #[error("{entry}: {path} is not a path inside the dataset's directory")]
     InvalidPath {
         /// The entry.
@@ -131,16 +269,40 @@ pub enum DownloadError {
         /// The path the entry gives.
         path: String,
     },
-    /// A file could not be fetched: no connection, a status other than
-    /// success, a transfer cut short.
+    /// The transport failed: no connection, a status other than success, a
+    /// transfer cut short.
     #[error("{entry}: fetching {url} failed: {reason}")]
     Fetch {
         /// The entry.
         entry: String,
         /// The URL.
         url: String,
-        /// What failed, with every cause.
+        /// What failed, in the transport's words.
         reason: String,
+    },
+    /// A file announced, or ran to, more bytes than the manifest's size.
+    #[error("{entry}: {file} is {seen} bytes or more, the manifest pins {limit}")]
+    TooLarge {
+        /// The entry.
+        entry: String,
+        /// The file's path in the snapshot.
+        file: String,
+        /// The manifest's size.
+        limit: u64,
+        /// The length announced, or the bytes counted when the cap was passed.
+        seen: u64,
+    },
+    /// A file ended short of the manifest's size.
+    #[error("{entry}: {file} ended after {received} bytes, the manifest pins {expected}")]
+    Truncated {
+        /// The entry.
+        entry: String,
+        /// The file's path in the snapshot.
+        file: String,
+        /// The manifest's size.
+        expected: u64,
+        /// The bytes received.
+        received: u64,
     },
     /// A file's bytes digest to another value than the manifest's.
     #[error("{entry}: {file} digests to {found}, the manifest pins {expected}")]
@@ -154,7 +316,22 @@ pub enum DownloadError {
         /// The SHA-256 of what was received.
         found: String,
     },
-    /// Every file verified, and the snapshot does not load.
+    /// The download was cancelled.
+    #[error("{entry}: the download was cancelled")]
+    Cancelled {
+        /// The entry.
+        entry: String,
+    },
+    /// The download outlived its deadline.
+    #[error("{entry}: the download took longer than {}s", deadline.as_secs())]
+    DeadlineExceeded {
+        /// The entry.
+        entry: String,
+        /// The deadline it had.
+        deadline: Duration,
+    },
+    /// Every file verified, and the snapshot does not load: a defect in the
+    /// manifest this build carries, since its digests pinned these bytes.
     #[error("{entry}: the snapshot does not load")]
     Load {
         /// The entry.
@@ -186,13 +363,12 @@ pub enum DownloadError {
     },
 }
 
-/// Fetches `entry`'s snapshot into `<datasets>/<dir>`, verifying each file's
-/// SHA-256 as it lands and then the loaded snapshot's `dataset_version`, and
-/// returns what it verified as.
+/// Fetches `entry`'s snapshot through `fetcher` into `<datasets>/<dir>`,
+/// verifying each file's size and SHA-256 as it lands and then the loaded
+/// snapshot's `dataset_version`, and returns what it verified as.
 ///
-/// Synchronous: it drives its own single-threaded runtime for the HTTP client,
-/// so it must not be called from an async task — a caller in one moves it to a
-/// blocking thread. `progress` receives the bytes received after every chunk.
+/// Synchronous: the fetcher blocks, and a caller in an async task moves the
+/// call to a blocking thread.
 ///
 /// # Errors
 ///
@@ -201,15 +377,17 @@ pub enum DownloadError {
 pub fn download(
     entry: &ManifestEntry,
     datasets: &Path,
-    progress: &mut dyn FnMut(Progress),
+    fetcher: &mut dyn Fetcher,
+    mut controls: Controls<'_>,
 ) -> Result<Verified, DownloadError> {
     let name = entry.name.as_str();
     let destination = datasets.join(entry.dir());
+    let occupied = || DownloadError::Occupied {
+        entry: name.to_owned(),
+        path: destination.clone(),
+    };
     if destination.exists() {
-        return Err(DownloadError::Occupied {
-            entry: name.to_owned(),
-            path: destination,
-        });
+        return Err(occupied());
     }
     let io_error = |path: &Path| {
         let path = path.to_path_buf();
@@ -220,10 +398,24 @@ pub fn download(
         }
     };
     fs::create_dir_all(datasets).map_err(io_error(datasets))?;
-    let staging = Staging::create(datasets.join(format!(".{}.download", entry.dir())))
-        .map_err(io_error(datasets))?;
+    let staging = Staging::create(datasets, entry.dir(), "download").map_err(io_error(datasets))?;
 
-    fetch_all(entry, staging.path(), progress)?;
+    let started = Instant::now();
+    let total = entry.size_bytes();
+    let mut before = 0u64;
+    for file in &entry.files {
+        fetch_file(
+            entry,
+            file,
+            staging.path(),
+            fetcher,
+            &mut controls,
+            started,
+            total,
+            before,
+        )?;
+        before += file.size_bytes;
+    }
 
     let benchmark = entry
         .format
@@ -240,125 +432,121 @@ pub fn download(
             found,
         });
     }
-    staging
-        .publish(&destination)
-        .map_err(io_error(&destination))?;
+    match staging.publish(&destination) {
+        Ok(()) => {}
+        Err(_) if destination.exists() => return Err(occupied()),
+        Err(error) => return Err(io_error(&destination)(error)),
+    }
     Ok(Verified {
         dataset_version: found,
         carries: benchmark.carries(),
     })
 }
 
-/// Fetches every file of `entry` into `staging`, refusing the first whose
-/// digest is not the manifest's.
-fn fetch_all(
+/// Fetches one file into `staging`, and refuses it unless it is exactly the
+/// manifest's size and digest.
+#[allow(clippy::too_many_arguments)] // one call site, every argument distinct
+fn fetch_file(
     entry: &ManifestEntry,
+    file: &ManifestFile,
     staging: &Path,
-    progress: &mut dyn FnMut(Progress),
+    fetcher: &mut dyn Fetcher,
+    controls: &mut Controls<'_>,
+    started: Instant,
+    total: u64,
+    before: u64,
 ) -> Result<(), DownloadError> {
     let name = entry.name.as_str();
-    let fetch_error = |url: &str, reason: String| DownloadError::Fetch {
+    let cancelled = || DownloadError::Cancelled {
         entry: name.to_owned(),
-        url: url.to_owned(),
-        reason,
     };
-    // One runtime per download, current-thread: the client needs one, and
-    // this crate's API stays synchronous (`ARCHITECTURE.md` says why).
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|source| DownloadError::Io {
-            entry: name.to_owned(),
-            path: staging.to_path_buf(),
-            source,
-        })?;
-    let client = reqwest::Client::builder()
-        .connect_timeout(CONNECT_TIMEOUT)
-        .read_timeout(READ_TIMEOUT)
-        .build()
-        .map_err(|error| fetch_error("", causes(&error)))?;
+    let late = |deadline| DownloadError::DeadlineExceeded {
+        entry: name.to_owned(),
+        deadline,
+    };
+    if controls.cancelled.load(Ordering::Relaxed) {
+        return Err(cancelled());
+    }
+    if started.elapsed() > controls.deadline {
+        return Err(late(controls.deadline));
+    }
+    let relative = inside(&file.path).ok_or_else(|| DownloadError::InvalidPath {
+        entry: name.to_owned(),
+        path: file.path.clone(),
+    })?;
+    let target = staging.join(relative);
+    let io_error = |path: &Path, source| DownloadError::Io {
+        entry: name.to_owned(),
+        path: path.to_path_buf(),
+        source,
+    };
+    if let Some(parent) = target.parent() {
+        fs::create_dir_all(parent).map_err(|source| io_error(parent, source))?;
+    }
+    let out = File::create(&target).map_err(|source| io_error(&target, source))?;
+    let deadline = controls.deadline;
+    let mut body = Body {
+        limit: file.size_bytes,
+        out,
+        hasher: Sha256::new(),
+        received: 0,
+        before,
+        total,
+        progress: &mut *controls.progress,
+        cancelled: controls.cancelled,
+        started,
+        deadline,
+        stop: None,
+    };
+    let outcome = fetcher.fetch(&file.url, &mut body);
+    let Body {
+        stop,
+        received,
+        hasher,
+        out,
+        ..
+    } = body;
+    let digest = hex(&hasher.finalize());
 
-    let total = entry.size_bytes();
-    let mut received = 0u64;
-    for file in &entry.files {
-        let relative = inside(&file.path).ok_or_else(|| DownloadError::InvalidPath {
-            entry: name.to_owned(),
-            path: file.path.clone(),
-        })?;
-        let target = staging.join(relative);
-        if let Some(parent) = target.parent() {
-            fs::create_dir_all(parent).map_err(|source| DownloadError::Io {
-                entry: name.to_owned(),
-                path: parent.to_path_buf(),
-                source,
-            })?;
-        }
-        let found = runtime
-            .block_on(fetch(&client, &file.url, &target, &mut |bytes| {
-                received += bytes;
-                progress(Progress { received, total });
-            }))
-            .map_err(|failure| match failure {
-                Failure::Http(reason) => fetch_error(&file.url, reason),
-                Failure::Io(source) => DownloadError::Io {
-                    entry: name.to_owned(),
-                    path: target.clone(),
-                    source,
-                },
-            })?;
-        if found != file.sha256 {
-            return Err(DownloadError::FileDigest {
+    match stop {
+        Some(Stop::TooLarge { seen }) => {
+            return Err(DownloadError::TooLarge {
                 entry: name.to_owned(),
                 file: file.path.clone(),
-                expected: file.sha256.clone(),
-                found,
-            });
+                limit: file.size_bytes,
+                seen,
+            })
         }
+        Some(Stop::Cancelled) => return Err(cancelled()),
+        Some(Stop::Deadline) => return Err(late(deadline)),
+        Some(Stop::Io(source)) => return Err(io_error(&target, source)),
+        None => {}
+    }
+    if let Err(reason) = outcome {
+        return Err(DownloadError::Fetch {
+            entry: name.to_owned(),
+            url: file.url.clone(),
+            reason,
+        });
+    }
+    if received < file.size_bytes {
+        return Err(DownloadError::Truncated {
+            entry: name.to_owned(),
+            file: file.path.clone(),
+            expected: file.size_bytes,
+            received,
+        });
+    }
+    out.sync_all().map_err(|source| io_error(&target, source))?;
+    if digest != file.sha256 {
+        return Err(DownloadError::FileDigest {
+            entry: name.to_owned(),
+            file: file.path.clone(),
+            expected: file.sha256.clone(),
+            found: digest,
+        });
     }
     Ok(())
-}
-
-enum Failure {
-    Http(String),
-    Io(io::Error),
-}
-
-/// Streams `url` into `target`, hashing as it writes, and returns the SHA-256
-/// of what was received.
-async fn fetch(
-    client: &reqwest::Client,
-    url: &str,
-    target: &Path,
-    on_chunk: &mut dyn FnMut(u64),
-) -> Result<String, Failure> {
-    let http = |error: reqwest::Error| Failure::Http(causes(&error));
-    let mut response = client
-        .get(url)
-        .send()
-        .await
-        .and_then(reqwest::Response::error_for_status)
-        .map_err(http)?;
-    let mut out = File::create(target).map_err(Failure::Io)?;
-    let mut hasher = Sha256::new();
-    while let Some(chunk) = response.chunk().await.map_err(http)? {
-        out.write_all(&chunk).map_err(Failure::Io)?;
-        hasher.update(&chunk);
-        on_chunk(chunk.len() as u64);
-    }
-    out.sync_all().map_err(Failure::Io)?;
-    Ok(hex(&hasher.finalize()))
-}
-
-/// An error and every cause beneath it, on one line: a `reqwest` error's own
-/// text rarely says what failed underneath.
-fn causes(error: &dyn std::error::Error) -> String {
-    let mut text = error.to_string();
-    let mut source = error.source();
-    while let Some(cause) = source {
-        let _ = write!(text, ": {cause}");
-        source = cause.source();
-    }
-    text
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -376,6 +564,10 @@ fn inside(path: &str) -> Option<PathBuf> {
         .all(|component| matches!(component, Component::Normal(_)));
     (normal && path.components().next().is_some()).then(|| path.to_path_buf())
 }
+
+// ---------------------------------------------------------------------------
+// Import
+// ---------------------------------------------------------------------------
 
 /// A local import, as the datasets directory records it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -395,6 +587,15 @@ impl LocalEntry {
     }
 }
 
+/// A directory whose [`LOCAL_MARKER`] this build cannot read.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MarkerError {
+    /// The directory's name.
+    pub name: String,
+    /// Why, naming the marker.
+    pub reason: String,
+}
+
 /// What an import registered.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Imported {
@@ -408,7 +609,7 @@ pub struct Imported {
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum ImportError {
-    /// The name is not one directory name.
+    /// The name is not one this directory accepts.
     #[error("{name:?} cannot name a dataset: {reason}")]
     InvalidName {
         /// The name given.
@@ -437,11 +638,22 @@ pub enum ImportError {
     /// The corpus does not load: the adapter's own error.
     #[error("{} does not load", path.display())]
     Load {
-        /// What was imported.
+        /// What was loaded.
         path: PathBuf,
         /// The adapter's error.
         #[source]
         source: BenchmarkError,
+    },
+    /// The copy digests to another value than the source did: the source
+    /// changed while it was imported.
+    #[error("{} changed while it was imported: it digested to {expected}, its copy to {found}", path.display())]
+    Changed {
+        /// What was imported.
+        path: PathBuf,
+        /// The source's `dataset_version`.
+        expected: String,
+        /// The copy's.
+        found: String,
     },
     /// A file could not be read or written.
     #[error("cannot import through {}", path.display())]
@@ -462,25 +674,33 @@ struct Marker {
 }
 
 /// Imports the corpus at `source`, which carries its own ground truth, as the
-/// local entry `name` in `datasets`.
+/// local entry `name` in `datasets`. `manifest` is the manifest the caller
+/// obtains from: its entries' directories are reserved.
 ///
 /// A directory is read as BEIR — as `beir-qa` when it holds `answers.jsonl` —
-/// and a file as SQuAD v1.1. The corpus is loaded, and refused with the
-/// adapter's error when it does not load; then the files the adapter read are
-/// copied into `<datasets>/<name>` beside [`LOCAL_MARKER`], which records its
-/// format and `dataset_version`.
+/// and a file as SQuAD v1.1. The source is loaded, and refused with the
+/// adapter's error when it does not load; the files the adapter read are
+/// copied into a staging directory, the copy is loaded and must digest as the
+/// source did, and it is published as `<datasets>/<name>` beside
+/// [`LOCAL_MARKER`], which records its format and `dataset_version`.
 ///
 /// # Errors
 ///
 /// [`ImportError`]; on any of them nothing is registered.
-pub fn import(datasets: &Path, name: &str, source: &Path) -> Result<Imported, ImportError> {
+pub fn import(
+    datasets: &Path,
+    name: &str,
+    source: &Path,
+    manifest: &[ManifestEntry],
+) -> Result<Imported, ImportError> {
     check_name(name)?;
     let destination = datasets.join(name);
-    if destination.exists() || manifest().iter().any(|entry| entry.dir() == name) {
-        return Err(ImportError::Occupied {
-            name: name.to_owned(),
-            path: destination,
-        });
+    let occupied = || ImportError::Occupied {
+        name: name.to_owned(),
+        path: destination.clone(),
+    };
+    if destination.exists() || manifest.iter().any(|entry| entry.dir() == name) {
+        return Err(occupied());
     }
     let io_error = |path: &Path| {
         let path = path.to_path_buf();
@@ -505,32 +725,49 @@ pub fn import(datasets: &Path, name: &str, source: &Path) -> Result<Imported, Im
         path: source.to_path_buf(),
         source: error,
     })?;
+    let expected = dataset_version(&benchmark);
 
     fs::create_dir_all(datasets).map_err(io_error(datasets))?;
-    let staging =
-        Staging::create(datasets.join(format!(".{name}.import"))).map_err(io_error(datasets))?;
+    let staging = Staging::create(datasets, name, "import").map_err(io_error(datasets))?;
     copy_read_files(format, source, staging.path())?;
-    let entry = LocalEntry {
-        name: name.to_owned(),
-        format,
-        dataset_version: dataset_version(&benchmark),
-    };
+    let copy = format
+        .load(staging.path())
+        .map_err(|error| ImportError::Load {
+            path: staging.path().to_path_buf(),
+            source: error,
+        })?;
+    let found = dataset_version(&copy);
+    if found != expected {
+        return Err(ImportError::Changed {
+            path: source.to_path_buf(),
+            expected,
+            found,
+        });
+    }
     let marker = Marker {
         format: format.selector().to_owned(),
-        dataset_version: entry.dataset_version.clone(),
+        dataset_version: found.clone(),
     };
     let marker_path = staging.path().join(LOCAL_MARKER);
     let text = serde_json::to_string_pretty(&marker).expect("a marker always serializes");
     fs::write(&marker_path, text + "\n").map_err(io_error(&marker_path))?;
-    staging
-        .publish(&destination)
-        .map_err(io_error(&destination))?;
+    match staging.publish(&destination) {
+        Ok(()) => {}
+        Err(_) if destination.exists() => return Err(occupied()),
+        Err(error) => return Err(io_error(&destination)(error)),
+    }
     Ok(Imported {
-        entry,
-        carries: benchmark.carries(),
+        entry: LocalEntry {
+            name: name.to_owned(),
+            format,
+            dataset_version: found,
+        },
+        carries: copy.carries(),
     })
 }
 
+/// A name is `[A-Za-z0-9_-][A-Za-z0-9._-]*`, at most [`MAX_NAME_LENGTH`]
+/// bytes: one directory name on every platform, never a staging directory's.
 fn check_name(name: &str) -> Result<(), ImportError> {
     let refuse = |reason| {
         Err(ImportError::InvalidName {
@@ -538,14 +775,18 @@ fn check_name(name: &str) -> Result<(), ImportError> {
             reason,
         })
     };
-    if name.is_empty() {
+    let allowed = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-';
+    let Some(&first) = name.as_bytes().first() else {
         return refuse("it is empty");
+    };
+    if name.len() > MAX_NAME_LENGTH {
+        return refuse("it is longer than 64 bytes");
     }
-    if name.starts_with('.') {
-        return refuse("a leading `.` is kept for staging directories");
+    if !allowed(first) {
+        return refuse("it must begin with a letter, a digit, `_` or `-`");
     }
-    if name.contains(['/', '\\']) {
-        return refuse("it must be one directory name, without a separator");
+    if !name.bytes().all(|byte| allowed(byte) || byte == b'.') {
+        return refuse("it may hold only letters, digits, `.`, `_` and `-`");
     }
     Ok(())
 }
@@ -563,14 +804,11 @@ fn load_squad_file(file: &Path) -> Result<Benchmark, BenchmarkError> {
 /// files and every qrels split, or the one SQuAD file under the name
 /// `SquadAdapter::new` reads.
 fn copy_read_files(format: Format, source: &Path, staging: &Path) -> Result<(), ImportError> {
-    let copy = |from: &Path, to: &Path| {
-        fs::copy(from, to)
-            .map(drop)
-            .map_err(|source| ImportError::Io {
-                path: from.to_path_buf(),
-                source,
-            })
+    let io_error = |path: &Path| {
+        let path = path.to_path_buf();
+        move |source| ImportError::Io { path, source }
     };
+    let copy = |from: &Path, to: &Path| fs::copy(from, to).map(drop).map_err(io_error(from));
     match format {
         Format::Squad => copy(source, &staging.join("dev-v1.1.json")),
         Format::Beir | Format::BeirQa => {
@@ -583,10 +821,6 @@ fn copy_read_files(format: Format, source: &Path, staging: &Path) -> Result<(), 
             }
             let qrels = source.join("qrels");
             let target = staging.join("qrels");
-            let io_error = |path: &Path| {
-                let path = path.to_path_buf();
-                move |source| ImportError::Io { path, source }
-            };
             fs::create_dir_all(&target).map_err(io_error(&target))?;
             for split in fs::read_dir(&qrels).map_err(io_error(&qrels))? {
                 let split = split.map_err(io_error(&qrels))?;
@@ -603,13 +837,15 @@ fn copy_read_files(format: Format, source: &Path, staging: &Path) -> Result<(), 
     }
 }
 
-/// Every local import under `datasets`, by name. A directory without
-/// [`LOCAL_MARKER`] is not one, and a `.`-named one is staging.
+/// Every local import under `datasets`, by name: a [`LocalEntry`] for each
+/// marker this build reads, a [`MarkerError`] for each it does not — one bad
+/// marker is that directory's problem, not the listing's. A directory without
+/// [`LOCAL_MARKER`] is not an import, and a `.`-named one is staging.
 ///
 /// # Errors
 ///
-/// The directory cannot be read, or a marker is not one this build wrote.
-pub fn local_entries(datasets: &Path) -> io::Result<Vec<LocalEntry>> {
+/// The directory itself cannot be read.
+pub fn local_entries(datasets: &Path) -> io::Result<Vec<Result<LocalEntry, MarkerError>>> {
     let mut entries = Vec::new();
     let listing = match fs::read_dir(datasets) {
         Ok(listing) => listing,
@@ -623,24 +859,68 @@ pub fn local_entries(datasets: &Path) -> io::Result<Vec<LocalEntry>> {
         if name.starts_with('.') || !marker_path.is_file() {
             continue;
         }
-        let invalid = |reason: String| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("{}: {reason}", marker_path.display()),
-            )
-        };
-        let marker: Marker = serde_json::from_str(&fs::read_to_string(&marker_path)?)
-            .map_err(|error| invalid(error.to_string()))?;
-        let format = Format::from_selector(&marker.format)
-            .ok_or_else(|| invalid(format!("no format is named {:?}", marker.format)))?;
-        entries.push(LocalEntry {
-            name,
-            format,
-            dataset_version: marker.dataset_version,
-        });
+        entries.push(read_marker(&name, &marker_path));
     }
-    entries.sort_by(|a, b| a.name.cmp(&b.name));
+    entries.sort_by(|a, b| entry_name(a).cmp(entry_name(b)));
     Ok(entries)
+}
+
+fn entry_name(entry: &Result<LocalEntry, MarkerError>) -> &str {
+    match entry {
+        Ok(entry) => &entry.name,
+        Err(error) => &error.name,
+    }
+}
+
+fn read_marker(name: &str, path: &Path) -> Result<LocalEntry, MarkerError> {
+    let invalid = |reason: String| MarkerError {
+        name: name.to_owned(),
+        reason: format!("{}: {reason}", path.display()),
+    };
+    let text = fs::read_to_string(path).map_err(|error| invalid(error.to_string()))?;
+    let marker: Marker = serde_json::from_str(&text).map_err(|error| invalid(error.to_string()))?;
+    let format = Format::from_selector(&marker.format)
+        .ok_or_else(|| invalid(format!("no format is named {:?}", marker.format)))?;
+    Ok(LocalEntry {
+        name: name.to_owned(),
+        format,
+        dataset_version: marker.dataset_version,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Staging
+// ---------------------------------------------------------------------------
+
+/// Distinguishes the staging directories one process creates.
+static ATTEMPT: AtomicU64 = AtomicU64::new(0);
+
+/// Removes the staging directories interrupted downloads and imports left in
+/// `datasets` — `.<name>.download-…` and `.<name>.import-…` — and returns how
+/// many.
+///
+/// Call it when no download or import is running, at startup: a running one's
+/// staging directory has the same shape.
+///
+/// # Errors
+///
+/// The directory cannot be read, or one cannot be removed.
+pub fn sweep_staging(datasets: &Path) -> io::Result<usize> {
+    let listing = match fs::read_dir(datasets) {
+        Ok(listing) => listing,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(0),
+        Err(error) => return Err(error),
+    };
+    let mut removed = 0;
+    for entry in listing {
+        let entry = entry?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name.starts_with('.') && (name.contains(".download-") || name.contains(".import-")) {
+            fs::remove_dir_all(entry.path())?;
+            removed += 1;
+        }
+    }
+    Ok(removed)
 }
 
 /// A directory assembled beside its destination and renamed into place, or
@@ -651,26 +931,36 @@ struct Staging {
 }
 
 impl Staging {
-    /// Creates `path` empty, removing what an interrupted earlier attempt
-    /// left there.
-    fn create(path: PathBuf) -> io::Result<Self> {
-        match fs::remove_dir_all(&path) {
-            Ok(()) => {}
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error),
+    /// Creates `<datasets>/.<name>.<kind>-<process>-<attempt>`, a name no
+    /// other attempt, in this process or another, uses at the same time.
+    fn create(datasets: &Path, name: &str, kind: &str) -> io::Result<Self> {
+        loop {
+            let attempt = ATTEMPT.fetch_add(1, Ordering::Relaxed);
+            let path = datasets.join(format!(".{name}.{kind}-{}-{attempt}", std::process::id()));
+            match fs::create_dir(&path) {
+                Ok(()) => {
+                    return Ok(Self {
+                        path,
+                        published: false,
+                    })
+                }
+                // Left by an earlier process that had the same id.
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+                Err(error) => return Err(error),
+            }
         }
-        fs::create_dir(&path)?;
-        Ok(Self {
-            path,
-            published: false,
-        })
     }
 
     fn path(&self) -> &Path {
         &self.path
     }
 
+    /// Renames it to `destination`. Fails when `destination` exists and is
+    /// not empty — another attempt published first.
     fn publish(mut self, destination: &Path) -> io::Result<()> {
+        if destination.exists() {
+            return Err(io::Error::from(io::ErrorKind::AlreadyExists));
+        }
         fs::rename(&self.path, destination)?;
         self.published = true;
         Ok(())

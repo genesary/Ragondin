@@ -180,6 +180,17 @@ async fn download_failed() {
 }
 
 #[tokio::test]
+async fn download_cancelled() {
+    let (status, body) = render(ApiError::DownloadCancelled {
+        name: "beir/scifact".to_owned(),
+    })
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_problem(&body, status, "download_cancelled");
+    assert!(body["detail"].as_str().unwrap().contains("beir/scifact"));
+}
+
+#[tokio::test]
 async fn import_refused() {
     let (status, body) = render(ApiError::ImportRefused {
         name: "mine".to_owned(),
@@ -252,7 +263,7 @@ fn every_variant_has_a_distinct_code() {
     assert_eq!(sorted.len(), codes.len(), "codes are unique: {codes:?}");
     assert_eq!(
         codes.len(),
-        17,
+        18,
         "a variant added without a test here: {codes:?}"
     );
 }

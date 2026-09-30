@@ -105,6 +105,12 @@ pub enum ApiError {
         /// What failed, digests included when one differed.
         reason: String,
     },
+    /// A download cancelled before it finished. Nothing was left on disk.
+    #[error("downloading {name} was cancelled")]
+    DownloadCancelled {
+        /// The benchmark.
+        name: String,
+    },
     /// An import refused: a name that is not one directory name, a path that
     /// cannot be read, or a corpus its adapter does not load. Nothing was
     /// registered.
@@ -164,6 +170,7 @@ impl ApiError {
         "benchmark_not_found",
         "benchmark_exists",
         "download_failed",
+        "download_cancelled",
         "import_refused",
         "backend_failed",
         "host_refused",
@@ -186,9 +193,10 @@ impl ApiError {
             Self::ServiceUnreachable { .. } | Self::DownloadFailed { .. } => {
                 StatusCode::BAD_GATEWAY
             }
-            Self::RunExists { .. } | Self::DatasetDiffers { .. } | Self::BenchmarkExists { .. } => {
-                StatusCode::CONFLICT
-            }
+            Self::RunExists { .. }
+            | Self::DatasetDiffers { .. }
+            | Self::BenchmarkExists { .. }
+            | Self::DownloadCancelled { .. } => StatusCode::CONFLICT,
             Self::RunUnreadable { .. } | Self::BackendFailed { .. } => {
                 StatusCode::INTERNAL_SERVER_ERROR
             }
@@ -232,12 +240,13 @@ impl ApiError {
             Self::BenchmarkNotFound { .. } => 8,
             Self::BenchmarkExists { .. } => 9,
             Self::DownloadFailed { .. } => 10,
-            Self::ImportRefused { .. } => 11,
-            Self::BackendFailed { .. } => 12,
-            Self::HostRefused { .. } => 13,
-            Self::OriginRefused { .. } => 14,
-            Self::RouteNotFound { .. } => 15,
-            Self::MethodNotAllowed { .. } => 16,
+            Self::DownloadCancelled { .. } => 11,
+            Self::ImportRefused { .. } => 12,
+            Self::BackendFailed { .. } => 13,
+            Self::HostRefused { .. } => 14,
+            Self::OriginRefused { .. } => 15,
+            Self::RouteNotFound { .. } => 16,
+            Self::MethodNotAllowed { .. } => 17,
         }
     }
 
@@ -254,6 +263,7 @@ impl ApiError {
             Self::BenchmarkNotFound { .. } => "No such benchmark",
             Self::BenchmarkExists { .. } => "The benchmark is already on disk",
             Self::DownloadFailed { .. } => "The download did not verify",
+            Self::DownloadCancelled { .. } => "The download was cancelled",
             Self::ImportRefused { .. } => "The import was refused",
             Self::BackendFailed { .. } => "A backend failed",
             Self::HostRefused { .. } => "Host refused",
@@ -299,6 +309,9 @@ impl ApiError {
             Self::DownloadFailed { .. } => {
                 "Retry the download; if the digest differs again, the source changed and this build's manifest no longer matches it."
                     .to_owned()
+            }
+            Self::DownloadCancelled { name } => {
+                format!("Download {name} again to obtain it; nothing was kept.")
             }
             Self::ImportRefused { .. } => {
                 "Correct what the detail names — the name, the path, or the dataset's files — and import again."
@@ -383,6 +396,9 @@ mod tests {
             ApiError::DownloadFailed {
                 name: String::new(),
                 reason: String::new(),
+            },
+            ApiError::DownloadCancelled {
+                name: String::new(),
             },
             ApiError::ImportRefused {
                 name: String::new(),

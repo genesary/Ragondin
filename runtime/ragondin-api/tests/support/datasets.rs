@@ -102,20 +102,22 @@ pub struct Server {
 }
 
 impl Server {
-    /// Serves the `beir-mini` fixture's files under `/beir-mini/<path>`.
+    /// Serves the `beir-mini` fixture's files under `/beir-mini/<path>`, and
+    /// the same files with one byte of `queries.jsonl` changed under
+    /// `/beir-mini-corrupt/<path>`.
     pub fn beir_mini() -> Self {
         let root = benchmark_fixture("beir-mini");
-        Self::serve(
-            BEIR_FILES
-                .iter()
-                .map(|path| {
-                    (
-                        format!("/beir-mini/{path}"),
-                        fs::read(root.join(path)).unwrap(),
-                    )
-                })
-                .collect(),
-        )
+        let mut files = BTreeMap::new();
+        for path in BEIR_FILES {
+            let bytes = fs::read(root.join(path)).unwrap();
+            let mut corrupt = bytes.clone();
+            if path == "queries.jsonl" {
+                corrupt[0] ^= 1;
+            }
+            files.insert(format!("/beir-mini/{path}"), bytes);
+            files.insert(format!("/beir-mini-corrupt/{path}"), corrupt);
+        }
+        Self::serve(files)
     }
 
     /// Starts serving `files`, keyed by path, on a free loopback port. The

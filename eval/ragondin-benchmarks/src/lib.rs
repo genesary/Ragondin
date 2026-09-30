@@ -31,9 +31,9 @@
 //! this build can obtain, each pinned by digest, and [`datasets`] puts one on
 //! disk through a digest-verified download, verifies what a directory holds
 //! against the `dataset_version` expected of it, and imports a local corpus.
-//! That download is the one network fetch in this crate, and it only puts a
-//! frozen snapshot on disk: nothing that loads a benchmark for a run reads the
-//! network.
+//! The download is handed its transport — this crate speaks no HTTP — and it
+//! only puts a frozen snapshot on disk: nothing that loads a benchmark for a
+//! run reads the network.
 //!
 //! Reading dataset files from disk here is correct: INV-3 (no I/O) names
 //! `ragondin-types` and `ragondin-pipeline`, not this crate. See

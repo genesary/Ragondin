@@ -234,15 +234,23 @@ pub enum EdgeKind {
 #[schemars(transform = every_property_required)]
 pub struct BenchmarkEntry {
     /// Its selector, `<format>/<dir>` — `beir/scifact` — as `ragondin bench
-    /// --benchmark` takes it.
+    /// --benchmark` takes it; for an import whose record cannot be read, its
+    /// directory's name alone.
     pub name: String,
-    /// The format that reads it: `beir`, `beir-qa` or `squad`.
+    /// The format that reads it: `beir`, `beir-qa` or `squad`; `unknown` for
+    /// an import whose record cannot be read.
     pub format: String,
     /// Where it stands against the digest expected of it.
     pub state: BenchmarkState,
     /// The ground truth it carries, read off the loaded dataset; `null` when
     /// nothing on disk loaded.
     pub ground_truth: Option<GroundTruth>,
+    /// The dataset's licence, for a benchmark the manifest names, whatever
+    /// its state: a downloaded dataset keeps the notice it was obtained
+    /// under. `null` for an import, whose licence is its owner's.
+    pub licence: Option<String>,
+    /// Where that licence is stated; `null` with it.
+    pub licence_url: Option<String>,
 }
 
 /// Where a benchmark stands. Every verdict is a statement about digests: the
@@ -260,10 +268,6 @@ pub enum BenchmarkState {
     Available {
         /// The snapshot's size.
         size_bytes: u64,
-        /// The dataset's licence, shown before it is downloaded.
-        licence: String,
-        /// Where the licence is stated.
-        licence_url: String,
     },
     /// On disk, and its digest is another.
     Differs {

@@ -10,8 +10,9 @@
 //!
 //! ```ignore
 //! assert_registry_conformance(|| RegistryFixture {
-//!     registry: MyRegistry::empty_with(manifest_serving_one_dataset()),
+//!     registry: MyRegistry::empty_with(manifest_serving_two_datasets()),
 //!     obtainable: "beir/mini".to_owned(),
+//!     corrupt: "beir/corrupt".to_owned(),
 //!     importable: path_to_a_beir_directory_with_qrels_only(),
 //! })
 //! .await;
@@ -23,32 +24,39 @@
 //! decide another's outcome:
 //!
 //! 1. **Listing.** A fresh registry lists `obtainable` as `available`, with a
-//!    licence and a size, and no name twice.
+//!    size and a licence, and no name twice.
 //! 2. **Download.** Downloading `obtainable` reports progress that never goes
 //!    back and ends at its total, and returns it `ready` with its
-//!    `dataset_version` and its ground truth; the listing and
+//!    `dataset_version`, its ground truth and its licence; the listing and
 //!    [`Registry::verify`] then report exactly that entry. A second download
 //!    is `benchmark_exists`.
-//! 3. **Unknown names.** Downloading or verifying a name the registry does
+//! 3. **A failed download leaves nothing.** Downloading `corrupt` is
+//!    `download_failed`, and it is still listed `available`, as before.
+//! 4. **Cancellation.** A download whose flag is set is `download_cancelled`,
+//!    and leaves the benchmark `available`.
+//! 5. **Unknown names.** Downloading or verifying a name the registry does
 //!    not know is `benchmark_not_found`, naming it, and lists nothing new.
-//! 4. **Import.** Importing `importable` returns a `local` entry carrying
+//! 6. **Import.** Importing `importable` returns a `local` entry carrying
 //!    qrels, listed and verified the same; importing under the same name
-//!    again is `benchmark_exists`, and importing a path that does not exist
-//!    is `import_refused` and registers nothing.
+//!    again is `benchmark_exists`, and importing a path that does not exist,
+//!    or under a name that is not one, is `import_refused` and registers
+//!    nothing.
 //!
 //! # Why a fixture
 //!
 //! A registry obtains what its manifest names from wherever the manifest
 //! points, and imports from a path on the machine it runs on. Neither is
 //! something the suite can make up for every backend, so the backend's test
-//! supplies them: a manifest entry it can really obtain — for the file
-//! backend, served by a local HTTP server — and a BEIR directory carrying
-//! qrels and no reference answers.
+//! supplies them: a manifest entry it can really obtain, and one whose source
+//! serves bytes that do not match its digests — for the file backend, both
+//! served by a local HTTP server — and a BEIR directory carrying qrels and no
+//! reference answers.
 //!
 //! A failed check panics with the case it belongs to, as a test assertion
 //! does. The function is `async` and starts no runtime of its own.
 
 use std::path::PathBuf;
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
 use crate::backends::{DownloadProgress, Registry};
@@ -61,6 +69,9 @@ pub struct RegistryFixture<R> {
     pub registry: R,
     /// A name its manifest holds, which it can download.
     pub obtainable: String,
+    /// A name its manifest holds, whose source serves bytes its digests
+    /// refuse.
+    pub corrupt: String,
     /// A BEIR directory with qrels and no `answers.jsonl`, to import.
     pub importable: PathBuf,
 }
@@ -74,8 +85,31 @@ where
 {
     listing(fresh()).await;
     download(fresh()).await;
+    failed_download(fresh()).await;
+    cancelled_download(fresh()).await;
     unknown_names(fresh()).await;
     import(fresh()).await;
+}
+
+fn not_cancelled() -> Arc<AtomicBool> {
+    Arc::new(AtomicBool::new(false))
+}
+
+fn assert_available(listed: &[BenchmarkEntry], name: &str, case: &str) {
+    let entry = find(listed, name).unwrap_or_else(|| panic!("{case}: {name} is not listed"));
+    match &entry.state {
+        BenchmarkState::Available { size_bytes } => {
+            assert!(*size_bytes > 0, "{case}: {name} has no size");
+        }
+        other => panic!("{case}: {name} is {other:?}, not available"),
+    }
+    assert!(
+        entry
+            .licence
+            .as_deref()
+            .is_some_and(|licence| !licence.is_empty()),
+        "{case}: {name} shows no licence"
+    );
 }
 
 async fn listing<R: Registry>(fixture: RegistryFixture<R>) {
@@ -89,23 +123,7 @@ async fn listing<R: Registry>(fixture: RegistryFixture<R>) {
     let count = names.len();
     names.dedup();
     assert_eq!(names.len(), count, "listing: a name is listed twice");
-    let entry = find(&listed, &fixture.obtainable)
-        .unwrap_or_else(|| panic!("listing: {} is not listed", fixture.obtainable));
-    match &entry.state {
-        BenchmarkState::Available {
-            size_bytes,
-            licence,
-            ..
-        } => {
-            assert!(*size_bytes > 0, "listing: {} has no size", entry.name);
-            assert!(
-                !licence.is_empty(),
-                "listing: {} has no licence",
-                entry.name
-            );
-        }
-        other => panic!("listing: {} is {other:?}, not available", entry.name),
-    }
+    assert_available(&listed, &fixture.obtainable, "listing");
 }
 
 async fn download<R: Registry>(fixture: RegistryFixture<R>) {
@@ -117,6 +135,7 @@ async fn download<R: Registry>(fixture: RegistryFixture<R>) {
         .download(
             name,
             Arc::new(move |progress| sink.lock().unwrap().push(progress)),
+            not_cancelled(),
         )
         .await
         .unwrap_or_else(|error| panic!("download: {name} does not download: {error}"));
@@ -130,6 +149,10 @@ async fn download<R: Registry>(fixture: RegistryFixture<R>) {
     assert!(
         downloaded.ground_truth.is_some(),
         "download: a ready dataset carries a ground truth"
+    );
+    assert!(
+        downloaded.licence.is_some(),
+        "download: a ready dataset keeps its licence"
     );
     let seen = seen.lock().unwrap().clone();
     let last = seen.last().expect("download: no progress was reported");
@@ -157,17 +180,57 @@ async fn download<R: Registry>(fixture: RegistryFixture<R>) {
         .expect("download: verifies");
     assert_eq!(verified, downloaded, "download: verify disagrees");
 
-    let again = fixture.registry.download(name, Arc::new(|_| {})).await;
+    let again = fixture
+        .registry
+        .download(name, Arc::new(|_| {}), not_cancelled())
+        .await;
     assert!(
         matches!(again, Err(ApiError::BenchmarkExists { .. })),
         "download: a second download is {again:?}, not benchmark_exists"
     );
 }
 
+async fn failed_download<R: Registry>(fixture: RegistryFixture<R>) {
+    let name = fixture.corrupt.as_str();
+    let before = fixture.registry.benchmarks().await.expect("failed: lists");
+    let refused = fixture
+        .registry
+        .download(name, Arc::new(|_| {}), not_cancelled())
+        .await;
+    assert!(
+        matches!(&refused, Err(ApiError::DownloadFailed { name: n, .. }) if n == name),
+        "failed: downloading {name} is {refused:?}, not download_failed"
+    );
+    let after = fixture.registry.benchmarks().await.expect("failed: lists");
+    assert_eq!(before, after, "failed: a failed download left something");
+    assert_available(&after, name, "failed");
+}
+
+async fn cancelled_download<R: Registry>(fixture: RegistryFixture<R>) {
+    let name = fixture.obtainable.as_str();
+    let refused = fixture
+        .registry
+        .download(name, Arc::new(|_| {}), Arc::new(AtomicBool::new(true)))
+        .await;
+    assert!(
+        matches!(&refused, Err(ApiError::DownloadCancelled { name: n }) if n == name),
+        "cancelled: {refused:?}, not download_cancelled"
+    );
+    let listed = fixture
+        .registry
+        .benchmarks()
+        .await
+        .expect("cancelled: lists");
+    assert_available(&listed, name, "cancelled");
+}
+
 async fn unknown_names<R: Registry>(fixture: RegistryFixture<R>) {
     let unknown = "beir/no-such-benchmark";
     let before = fixture.registry.benchmarks().await.expect("unknown: lists");
-    let downloaded = fixture.registry.download(unknown, Arc::new(|_| {})).await;
+    let downloaded = fixture
+        .registry
+        .download(unknown, Arc::new(|_| {}), not_cancelled())
+        .await;
     assert!(
         matches!(&downloaded, Err(ApiError::BenchmarkNotFound { name }) if name == unknown),
         "unknown: download is {downloaded:?}"
@@ -225,6 +288,14 @@ async fn import<R: Registry>(fixture: RegistryFixture<R>) {
     assert!(
         matches!(refused, Err(ApiError::ImportRefused { .. })),
         "import: a path that does not exist is {refused:?}"
+    );
+    let refused = fixture
+        .registry
+        .import("nul\0name", &fixture.importable)
+        .await;
+    assert!(
+        matches!(refused, Err(ApiError::ImportRefused { .. })),
+        "import: a name holding NUL is {refused:?}"
     );
     let after = fixture.registry.benchmarks().await.expect("import: lists");
     assert_eq!(

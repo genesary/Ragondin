@@ -2,7 +2,9 @@
 //! crate's response types — the one module where both sides are named, so
 //! that `response.rs` names neither (ADR-C36 § 2).
 
-use ragondin_benchmarks::datasets::{DiskState, DownloadError, ImportError, Imported, LocalEntry};
+use ragondin_benchmarks::datasets::{
+    DiskState, DownloadError, ImportError, Imported, LocalEntry, MarkerError,
+};
 use ragondin_benchmarks::manifest::ManifestEntry;
 use ragondin_benchmarks::CarriedPieces;
 use ragondin_experiments::{lower_configuration, Run, RunBinding, RunInputs as StoredInputs};
@@ -157,14 +159,12 @@ fn kind(kind: ValueKind) -> EdgeKind {
 
 /// A benchmark the manifest names, as the registry lists it: `ready` when the
 /// dataset on disk digests to the manifest's `dataset_version`, `available`
-/// when nothing is there.
+/// when nothing is there. Its licence is shown in every state.
 pub(crate) fn manifest_benchmark(entry: &ManifestEntry, state: DiskState) -> BenchmarkEntry {
     let (state, ground_truth) = match state {
         DiskState::Absent => (
             BenchmarkState::Available {
                 size_bytes: entry.size_bytes(),
-                licence: entry.licence.clone(),
-                licence_url: entry.licence_url.clone(),
             },
             None,
         ),
@@ -181,6 +181,8 @@ pub(crate) fn manifest_benchmark(entry: &ManifestEntry, state: DiskState) -> Ben
         format: entry.format.selector().to_owned(),
         state,
         ground_truth,
+        licence: Some(entry.licence.clone()),
+        licence_url: Some(entry.licence_url.clone()),
     }
 }
 
@@ -203,7 +205,25 @@ pub(crate) fn local_benchmark(entry: &LocalEntry, state: DiskState) -> Option<Be
         format: entry.format.selector().to_owned(),
         state,
         ground_truth,
+        licence: None,
+        licence_url: None,
     })
+}
+
+/// An import whose record this build cannot read: listed `unreadable` under
+/// its directory's name, so one bad record fails neither the listing nor the
+/// other entries.
+pub(crate) fn unreadable_import(error: &MarkerError) -> BenchmarkEntry {
+    BenchmarkEntry {
+        name: error.name.clone(),
+        format: "unknown".to_owned(),
+        state: BenchmarkState::Unreadable {
+            error: error.reason.clone(),
+        },
+        ground_truth: None,
+        licence: None,
+        licence_url: None,
+    }
 }
 
 /// A dataset on disk that is not the one expected: another digest, or one
@@ -239,6 +259,8 @@ pub(crate) fn imported(imported: &Imported) -> BenchmarkEntry {
             dataset_version: imported.entry.dataset_version.clone(),
         },
         ground_truth: Some(ground_truth(imported.carries)),
+        licence: None,
+        licence_url: None,
     }
 }
 
@@ -252,14 +274,23 @@ fn ground_truth(carries: CarriedPieces) -> GroundTruth {
 }
 
 /// A refused download, as the API reports it. Every refusal left nothing on
-/// disk; a directory already there, or a disk that cannot be written, is not
-/// the download's own failure and has its own code.
+/// disk. What the source or the network did is `download_failed`; a
+/// directory already there, a cancellation, and a defect of this build or its
+/// disk each have their own code.
 pub(crate) fn download_error(name: &str, error: DownloadError) -> ApiError {
     match error {
         DownloadError::Occupied { .. } => ApiError::BenchmarkExists {
             name: name.to_owned(),
         },
-        DownloadError::Io { .. } => ApiError::BackendFailed {
+        DownloadError::Cancelled { .. } => ApiError::DownloadCancelled {
+            name: name.to_owned(),
+        },
+        // The manifest pinned these bytes: a path outside the directory, or
+        // a snapshot that does not load, is this build's defect, not the
+        // source's.
+        DownloadError::Io { .. }
+        | DownloadError::Load { .. }
+        | DownloadError::InvalidPath { .. } => ApiError::BackendFailed {
             detail: causes(&error),
         },
         _ => ApiError::DownloadFailed {
@@ -288,7 +319,7 @@ pub(crate) fn import_error(name: &str, error: ImportError) -> ApiError {
 
 /// An error and every cause beneath it, on one line: the adapter's error
 /// names the file in its own text and the filesystem's reason in its source.
-fn causes(error: &dyn std::error::Error) -> String {
+pub(crate) fn causes(error: &dyn std::error::Error) -> String {
     let mut text = error.to_string();
     let mut source = error.source();
     while let Some(cause) = source {

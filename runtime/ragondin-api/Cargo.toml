@@ -24,6 +24,12 @@ ragondin-benchmarks = { workspace = true }
 ragondin-experiments = { workspace = true }
 ragondin-pipeline = { workspace = true }
 async-trait = { workspace = true } # dyn-compatible async traits (frozen: async_trait, not RPITIT)
+# The HTTP transport the `Registry` file backend hands to
+# `ragondin-benchmarks`' digest-verified download (`src/fs/registry.rs`): the
+# workspace's one client, with its entry's features and none appended. Here
+# and not in `ragondin-benchmarks`, so that the harness and the binary, which
+# depend on that crate and never download, carry no HTTP or TLS stack.
+reqwest = { workspace = true }
 axum = { workspace = true }        # the router and the Tower layers of the server's envelope (ADR-C36 § 6)
 schemars = { workspace = true }    # the response types' schemas, assembled into the API description
 serde = { workspace = true }

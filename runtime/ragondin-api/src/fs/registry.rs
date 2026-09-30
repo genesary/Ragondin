@@ -1,22 +1,34 @@
 //! The [`Registry`] over a benchmark manifest and a datasets directory.
 //!
-//! Every verdict, download and import is `ragondin-benchmarks`'
+//! Every verdict, download rule and import is `ragondin-benchmarks`'
 //! (`ragondin_benchmarks::datasets`): this backend finds the entry a name
 //! means, moves the work onto a blocking thread — each call loads a dataset
-//! whole or writes one — and converts what comes back into the API's types
+//! whole or writes one — supplies the one thing that crate leaves out, the
+//! HTTP transport, and converts what comes back into the API's types
 //! (`convert.rs`). It computes no digest of its own.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::time::Duration;
 
 use async_trait::async_trait;
-use ragondin_benchmarks::datasets::{self, local_entries, DiskState};
+use ragondin_benchmarks::datasets::{
+    self, local_entries, Body, Controls, DiskState, Fetcher, Progress,
+};
 use ragondin_benchmarks::manifest::ManifestEntry;
+use tokio::runtime::Handle;
 
 use crate::backends::{DownloadProgress, ProgressSink, Registry};
 use crate::convert;
 use crate::error::ApiError;
 use crate::response::BenchmarkEntry;
+
+/// How long a fetch waits for a connection, and then for each read. A server
+/// that stops sending fails the read; one that trickles fails the download's
+/// overall deadline (`Controls::deadline_for`).
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
+const READ_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// The benchmarks a manifest names and a datasets directory holds.
 ///
@@ -24,7 +36,8 @@ use crate::response::BenchmarkEntry;
 /// import at `<datasets>/<name>`, marked by
 /// [`LOCAL_MARKER`](ragondin_benchmarks::datasets::LOCAL_MARKER). The binary
 /// passes `ragondin_benchmarks::manifest::manifest()`; a test passes entries a
-/// local server can serve.
+/// local server can serve. The manifest given is the one whose entries'
+/// directories an import may not take.
 #[derive(Clone, Debug)]
 pub struct FsRegistry {
     datasets: PathBuf,
@@ -45,11 +58,42 @@ impl FsRegistry {
         &self.datasets
     }
 
+    /// Removes the staging directories an interrupted download or import
+    /// left, and returns how many. Call it at startup, before any download
+    /// or import runs: a running one's staging directory has the same shape.
+    ///
+    /// # Errors
+    ///
+    /// `backend_failed` when the directory cannot be read or cleaned.
+    pub fn sweep_staging(&self) -> Result<usize, ApiError> {
+        datasets::sweep_staging(&self.datasets).map_err(|error| ApiError::BackendFailed {
+            detail: format!("sweeping the datasets directory: {error}"),
+        })
+    }
+
     fn entry(&self, name: &str) -> Option<ManifestEntry> {
         self.manifest
             .iter()
             .find(|entry| entry.name == name)
             .cloned()
+    }
+
+    /// Every import, verified, and every one whose record cannot be read.
+    fn locals(&self) -> Result<Vec<(Option<String>, BenchmarkEntry)>, ApiError> {
+        let mut listed = Vec::new();
+        for local in local_entries(&self.datasets).map_err(backend_failed)? {
+            match local {
+                Ok(local) => {
+                    let dir = self.datasets.join(&local.name);
+                    let state = datasets::verify(&dir, local.format, &local.dataset_version);
+                    if let Some(entry) = convert::local_benchmark(&local, state) {
+                        listed.push((Some(local.selector()), entry));
+                    }
+                }
+                Err(error) => listed.push((None, convert::unreadable_import(&error))),
+            }
+        }
+        Ok(listed)
     }
 }
 
@@ -63,11 +107,7 @@ impl Registry for FsRegistry {
                 .iter()
                 .map(|entry| manifest_state(&registry.datasets, entry))
                 .collect();
-            for local in local_entries(&registry.datasets).map_err(backend_failed)? {
-                let dir = registry.datasets.join(&local.name);
-                let state = datasets::verify(&dir, local.format, &local.dataset_version);
-                listed.extend(convert::local_benchmark(&local, state));
-            }
+            listed.extend(registry.locals()?.into_iter().map(|(_, entry)| entry));
             Ok(listed)
         })
         .await
@@ -80,15 +120,12 @@ impl Registry for FsRegistry {
             if let Some(entry) = registry.entry(&name) {
                 return Ok(manifest_state(&registry.datasets, &entry));
             }
-            let not_found = || ApiError::BenchmarkNotFound { name: name.clone() };
-            let local = local_entries(&registry.datasets)
-                .map_err(backend_failed)?
+            registry
+                .locals()?
                 .into_iter()
-                .find(|local| local.selector() == name)
-                .ok_or_else(not_found)?;
-            let dir = registry.datasets.join(&local.name);
-            let state = datasets::verify(&dir, local.format, &local.dataset_version);
-            convert::local_benchmark(&local, state).ok_or_else(not_found)
+                .find(|(selector, _)| selector.as_deref() == Some(name.as_str()))
+                .map(|(_, entry)| entry)
+                .ok_or(ApiError::BenchmarkNotFound { name })
         })
         .await
     }
@@ -97,6 +134,7 @@ impl Registry for FsRegistry {
         &self,
         name: &str,
         progress: ProgressSink,
+        cancel: Arc<AtomicBool>,
     ) -> Result<BenchmarkEntry, ApiError> {
         let entry = self
             .entry(name)
@@ -104,14 +142,20 @@ impl Registry for FsRegistry {
                 name: name.to_owned(),
             })?;
         let datasets = self.datasets.clone();
+        let mut fetcher = Http::new(Handle::current())?;
         blocking(move || {
-            let mut report = |step: datasets::Progress| {
+            let mut report = |step: Progress| {
                 progress(DownloadProgress {
                     received: step.received,
                     total: step.total,
                 });
             };
-            match datasets::download(&entry, &datasets, &mut report) {
+            let controls = Controls {
+                progress: &mut report,
+                cancelled: &cancel,
+                deadline: Controls::deadline_for(&entry),
+            };
+            match datasets::download(&entry, &datasets, &mut fetcher, controls) {
                 Ok(verified) => Ok(convert::manifest_benchmark(
                     &entry,
                     DiskState::Verified(verified),
@@ -123,14 +167,65 @@ impl Registry for FsRegistry {
     }
 
     async fn import(&self, name: &str, path: &Path) -> Result<BenchmarkEntry, ApiError> {
-        let datasets = self.datasets.clone();
+        let registry = self.clone();
         let name = name.to_owned();
         let path = path.to_path_buf();
-        blocking(move || match datasets::import(&datasets, &name, &path) {
-            Ok(imported) => Ok(convert::imported(&imported)),
-            Err(error) => Err(convert::import_error(&name, error)),
+        blocking(move || {
+            match datasets::import(&registry.datasets, &name, &path, &registry.manifest) {
+                Ok(imported) => Ok(convert::imported(&imported)),
+                Err(error) => Err(convert::import_error(&name, error)),
+            }
         })
         .await
+    }
+}
+
+/// The HTTP transport `datasets::download` is handed: `reqwest`, driven on the
+/// server's own runtime from the blocking thread the download runs on.
+///
+/// Redirects are followed, as `reqwest` does by default (up to ten): a pinned
+/// URL on a dataset hub answers with a redirect to its storage, and integrity
+/// rests on the manifest's SHA-256, not on the host that served the bytes.
+/// TLS verifies against the `webpki-roots` bundle the workspace entry selects,
+/// so a network that intercepts TLS with its own authority fails the fetch,
+/// and nothing here overrides that.
+struct Http {
+    client: reqwest::Client,
+    runtime: Handle,
+}
+
+impl Http {
+    fn new(runtime: Handle) -> Result<Self, ApiError> {
+        let client = reqwest::Client::builder()
+            .connect_timeout(CONNECT_TIMEOUT)
+            .read_timeout(READ_TIMEOUT)
+            .build()
+            .map_err(|error| ApiError::BackendFailed {
+                detail: format!("building the HTTP client: {}", convert::causes(&error)),
+            })?;
+        Ok(Self { client, runtime })
+    }
+}
+
+impl Fetcher for Http {
+    fn fetch(&mut self, url: &str, body: &mut Body<'_>) -> Result<(), String> {
+        let client = self.client.clone();
+        self.runtime.block_on(async move {
+            let http = |error: reqwest::Error| convert::causes(&error);
+            let mut response = client
+                .get(url)
+                .send()
+                .await
+                .and_then(reqwest::Response::error_for_status)
+                .map_err(http)?;
+            if let Some(length) = response.content_length() {
+                body.announce(length).map_err(|stop| stop.to_string())?;
+            }
+            while let Some(chunk) = response.chunk().await.map_err(http)? {
+                body.write(&chunk).map_err(|stop| stop.to_string())?;
+            }
+            Ok(())
+        })
     }
 }
 

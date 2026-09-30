@@ -1,79 +1,65 @@
-//! What the dataset tests share: a local HTTP server, a scratch directory per
-//! test, and the fixtures.
+//! What the dataset tests share: an in-memory fetcher, a scratch directory
+//! per test, and the fixtures.
 //!
-//! The server speaks just enough HTTP/1.1, by hand over `std::net` on a
-//! loopback port, to answer a `GET` with the bytes registered under its path
-//! or a `404` — the pattern the `Remote` tests use (ADR-C33 § 6), without an
-//! async runtime. No test touches the network beyond the loopback interface.
+//! The fetcher stands for the transport `datasets::download` is handed — the
+//! experiment plane's API supplies an HTTP one — and serves bytes registered
+//! by URL, in small chunks, so that every rule the download applies per chunk
+//! is exercised. Nothing here touches the network.
 
 #![allow(dead_code)] // each test binary uses a different part of this module
 
 use std::collections::BTreeMap;
 use std::fs;
-use std::io::{BufRead, BufReader, Write};
-use std::net::TcpListener;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::thread;
 
+use ragondin_benchmarks::datasets::{Body, Fetcher};
 use sha2::{Digest, Sha256};
 
-/// A server answering `GET <path>` with the bytes registered under `path`.
-pub struct Server {
-    base: String,
+/// Serves the bytes registered under a URL, `CHUNK` bytes at a time,
+/// announcing their length first unless told not to.
+pub struct Memory {
+    pub files: BTreeMap<String, Vec<u8>>,
+    /// Whether the length is announced before the bytes, as an HTTP
+    /// `Content-Length` would.
+    pub announce: bool,
+    /// A length to announce instead of the true one.
+    pub announce_as: Option<u64>,
+    /// Keep writing after the download stopped the transfer, and report
+    /// success: a transport that ignores the refusal.
+    pub ignore_stops: bool,
 }
 
-impl Server {
-    /// Starts serving `files`, keyed by path (`/dev-v1.1.json`), on a free
-    /// loopback port. The thread lives as long as the test process.
-    pub fn serve(files: BTreeMap<String, Vec<u8>>) -> Self {
-        let listener = TcpListener::bind("127.0.0.1:0").expect("a loopback port is free");
-        let base = format!("http://{}", listener.local_addr().unwrap());
-        let files = Arc::new(files);
-        thread::spawn(move || {
-            for stream in listener.incoming() {
-                let Ok(mut stream) = stream else { return };
-                let files = Arc::clone(&files);
-                thread::spawn(move || {
-                    let mut reader = BufReader::new(stream.try_clone().unwrap());
-                    let mut request_line = String::new();
-                    if reader.read_line(&mut request_line).is_err() {
-                        return;
-                    }
-                    // Drain the headers; the request has no body.
-                    loop {
-                        let mut line = String::new();
-                        match reader.read_line(&mut line) {
-                            Ok(0) | Err(_) => break,
-                            Ok(_) if line == "\r\n" || line == "\n" => break,
-                            Ok(_) => {}
-                        }
-                    }
-                    let path = request_line.split_whitespace().nth(1).unwrap_or("");
-                    let response = match files.get(path) {
-                        Some(body) => {
-                            let mut head = format!(
-                                "HTTP/1.1 200 OK\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
-                                body.len()
-                            )
-                            .into_bytes();
-                            head.extend_from_slice(body);
-                            head
-                        }
-                        None => b"HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"
-                            .to_vec(),
-                    };
-                    let _ = stream.write_all(&response);
-                    let _ = stream.flush();
-                });
-            }
-        });
-        Self { base }
-    }
+pub const CHUNK: usize = 7;
 
-    /// The URL of `path` on this server.
-    pub fn url(&self, path: &str) -> String {
-        format!("{}{path}", self.base)
+impl Memory {
+    pub fn serving(files: impl IntoIterator<Item = (String, Vec<u8>)>) -> Self {
+        Self {
+            files: files.into_iter().collect(),
+            announce: true,
+            announce_as: None,
+            ignore_stops: false,
+        }
+    }
+}
+
+impl Fetcher for Memory {
+    fn fetch(&mut self, url: &str, body: &mut Body<'_>) -> Result<(), String> {
+        let bytes = self
+            .files
+            .get(url)
+            .ok_or_else(|| format!("404 Not Found for {url}"))?;
+        if self.announce {
+            let length = self.announce_as.unwrap_or(bytes.len() as u64);
+            if body.announce(length).is_err() && !self.ignore_stops {
+                return Err("stopped".to_owned());
+            }
+        }
+        for chunk in bytes.chunks(CHUNK) {
+            if body.write(chunk).is_err() && !self.ignore_stops {
+                return Err("stopped".to_owned());
+            }
+        }
+        Ok(())
     }
 }
 

@@ -225,6 +225,7 @@ impl Registry for FakeRegistry {
         &self,
         name: &str,
         _progress: ProgressSink,
+        _cancel: Arc<std::sync::atomic::AtomicBool>,
     ) -> Result<BenchmarkEntry, ApiError> {
         Err(ApiError::BenchmarkNotFound {
             name: name.to_owned(),

@@ -17,6 +17,7 @@
 //! envelope, in `layers.rs`, and nothing else.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::SystemTime;
 
@@ -132,25 +133,30 @@ pub trait Registry: Send + Sync {
     /// `benchmark_not_found` for a name the registry does not know.
     async fn verify(&self, name: &str) -> Result<BenchmarkEntry, ApiError>;
 
-    /// Fetches a benchmark the manifest names, reporting progress to
-    /// `progress`, and returns it once its digests verified — each file's,
-    /// then the loaded dataset's. A download that fails leaves nothing on
-    /// disk, and one that succeeds is `ready`.
+    /// Fetches a benchmark the manifest names and returns it once its digests
+    /// verified — each file's size and SHA-256, then the loaded dataset's
+    /// `dataset_version`. A download that fails, is cancelled or runs out of
+    /// time leaves nothing on disk; one that succeeds is `ready`.
     ///
-    /// It runs to its end once started: the download it drives offers no
-    /// cancellation, and the queue that schedules it (the design document
-    /// § 7) reads its progress from `progress`.
+    /// The queue that schedules it (the design document § 7) reads its
+    /// progress from `progress`, called after every chunk, and cancels it by
+    /// setting `cancel`, checked after every chunk — the harness's
+    /// cancellation shape.
     ///
     /// # Errors
     ///
     /// `benchmark_not_found` for a name the manifest does not hold,
-    /// `benchmark_exists` when its directory is already there,
-    /// `download_failed` for a fetch that failed or bytes whose digest is not
-    /// the manifest's.
+    /// `benchmark_exists` when its directory is already there — before the
+    /// download, or put there by another that finished first;
+    /// `download_failed` for a fetch that failed, a file of the wrong size or
+    /// digest, a snapshot of the wrong `dataset_version`, or a deadline
+    /// passed; `download_cancelled` once `cancel` is set; `backend_failed`
+    /// for a manifest defect or a disk that cannot be written.
     async fn download(
         &self,
         name: &str,
         progress: ProgressSink,
+        cancel: Arc<AtomicBool>,
     ) -> Result<BenchmarkEntry, ApiError>;
 
     /// Imports the corpus at `path`, which carries its own ground truth, as
