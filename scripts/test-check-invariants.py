@@ -503,6 +503,28 @@ def an_api_crate_reaching_the_engine_through_a_first_party_crate_fails() -> None
 
 
 @case
+def an_api_crate_reaching_the_engine_through_the_benchmarks_crate_fails() -> None:
+    """The edge the `Registry` file backend added: `ragondin-api` depends on
+    `ragondin-benchmarks`. Were the benchmarks crate ever to reach the engine,
+    INV-12 must fail through it, naming the engine and not the intermediary.
+    """
+    run_checker(
+        members={
+            "eval/ragondin-benchmarks": manifest(
+                "ragondin-benchmarks",
+                ['ragondin-engine = { path = "../../engine/ragondin-engine" }'],
+            ),
+            "runtime/ragondin-api": manifest(
+                "ragondin-api",
+                ['ragondin-benchmarks = { path = "../../eval/ragondin-benchmarks" }'],
+            ),
+        }
+    ).exits(1).says("INV-12 VIOLATION").says(
+        "ragondin-api reaches ragondin-engine (engine/ragondin-engine)"
+    ).is_silent_about("reaches ragondin-benchmarks")
+
+
+@case
 def an_api_crate_depending_on_the_remote_crate_fails() -> None:
     """`ragondin-remote` calls a component over the wire: ADR-C36 § 3 denies it
     beside `engine/` and `components/`, and says why under its rejected

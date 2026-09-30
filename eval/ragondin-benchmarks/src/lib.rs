@@ -27,6 +27,14 @@
 //! experiment plane that verifies a stored run against them share one
 //! definition without the second reaching the engine (ADR-C36 § 4).
 //!
+//! And it owns the **datasets directory**: [`manifest`] lists the datasets
+//! this build can obtain, each pinned by digest, and [`datasets`] puts one on
+//! disk through a digest-verified download, verifies what a directory holds
+//! against the `dataset_version` expected of it, and imports a local corpus.
+//! The download is handed its transport — this crate speaks no HTTP — and it
+//! only puts a frozen snapshot on disk: nothing that loads a benchmark for a
+//! run reads the network.
+//!
 //! Reading dataset files from disk here is correct: INV-3 (no I/O) names
 //! `ragondin-types` and `ragondin-pipeline`, not this crate. See
 //! `ARCHITECTURE.md`.
@@ -35,8 +43,10 @@
 
 pub mod beir;
 mod benchmark;
+pub mod datasets;
 mod error;
 pub mod identity;
+pub mod manifest;
 pub mod squad;
 
 pub use beir::BeirAdapter;

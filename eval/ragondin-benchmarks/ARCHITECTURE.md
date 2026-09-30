@@ -13,6 +13,13 @@ set, with the length-prefixed `Encoder` all three digests are written through.
 § *The identity of a dataset and of a derived chunk set* below says why they
 are here.
 
+And the **datasets directory**: in `src/manifest.rs`, the manifest of the
+datasets this build can obtain, each pinned by digest; in `src/datasets.rs`,
+the digest-verified download that puts one on disk, the verification of what
+a directory holds against the identity a run carries, and the import of a
+local corpus. § *The benchmark manifest* and § *Putting a dataset on disk*
+below say how.
+
 ## The internal structure is the stable thing
 
 This crate is the **data-side mirror of the component contract**: one stable
@@ -371,6 +378,169 @@ Choices made here, inside this crate (`AGENTS.md` § Rules of engagement):
 - **`sha2` is a dependency**, already in `[workspace.dependencies]` and already
   used by the harness for the same digests; it moved with them.
 
+## The benchmark manifest
+
+`manifest::manifest()` lists every dataset this build can obtain — the list
+the Setup screen shows as *available* (the design document § 6). It is Rust,
+versioned with the crate, so a manifest and the binary that carries it cannot
+disagree. Each `ManifestEntry` holds:
+
+- `name`, the benchmark selector `<format>/<dir>` — `beir/scifact` — that
+  `ragondin bench --benchmark` takes, and `format`, a `manifest::Format`
+  naming the same three selectors (`beir`, `beir-qa`, `squad`);
+- `files`: each file of the snapshot, with the path it takes under
+  `<datasets>/<dir>`, its URL **at a fixed revision** (a commit, never a
+  branch — a URL naming a branch reads whatever the branch holds today, a
+  moving source), its SHA-256 and its size;
+- `licence`, SPDX identifiers where the upstream states licences that have
+  them, and `licence_url`, where the upstream states it, at a fixed revision;
+- `dataset_version`: what the loaded snapshot digests to through
+  `identity::dataset_version`, recorded when this repository loaded it. A
+  download is checked against it, so "verified" means the identity a run over
+  the dataset will carry, not only the bytes received.
+
+`tests/manifest.rs` holds every entry complete, every name and directory
+unique, every format one `bench` accepts, and every URL pinned to a commit.
+
+**The entries, and why only these.** The manifest holds two, each checked for
+a licence that permits the copy a user makes by downloading:
+
+| Entry | Snapshot | Licence | `dataset_version` |
+|---|---|---|---|
+| `beir/scifact` | `mteb/scifact` on the Hugging Face hub at commit `cf10ab68…`: `corpus.jsonl`, `queries.jsonl`, `qrels/test.tsv`, `qrels/train.tsv` | `CC-BY-4.0 AND ODC-By-1.0` — the claims under CC BY 4.0, the S2ORC abstracts under ODC-By 1.0 (`allenai/scifact`'s `LICENSE.md`) | `9a07f80c…` |
+| `squad/dev` | `dev-v1.1.json` from `rajpurkar/SQuAD-explorer` at commit `240e165a…` | `CC-BY-SA-4.0`, as the SQuAD site states it | `e4e3b760…` |
+
+The SciFact snapshot digests to `9a07f80c…`, the `dataset_version` of the
+original BEIR `scifact.zip` that `bin/ragondin/tests/calibration.rs` pins: its
+JSON is re-serialized — the file digests differ from the zip's — but the
+loaded benchmark is the same one, so a run over a downloaded SciFact is
+comparable with the calibration.
+
+**`mteb/scifact` is a third-party mirror**, maintained by the MTEB project,
+not by SciFact's authors. Its card states no licence (`unknown`); the licence
+recorded is the one `allenai/scifact` states for the data, which a mirror
+inherits and cannot change. What makes the mirror trustworthy is not who
+hosts it but the manifest: every file is pinned by SHA-256 and the loaded
+snapshot by `dataset_version`, so a mirror that changed a byte would be
+refused, not believed.
+
+Left out, and why — each a choice made here, recorded so a later reader can
+disagree with it:
+
+- **`beir/nfcorpus`**: its terms of use say it is "free to use for academic
+  purposes" and send any other use to the NutritionFacts.org author; they say
+  nothing about redistribution. Unclear, so it is not offered.
+- **`beir/fiqa`**: no licence is stated upstream, and the hub mirrors mark it
+  `unknown`. Unclear.
+- **`beir/trec-covid`**: its corpus is CORD-19, whose papers each carry their
+  own licence, `no-cc` and `unk` among them. Unclear for the corpus as a whole.
+- **Every `beir-qa/` entry**: no `answers.jsonl` snapshot is published for any
+  BEIR dataset. The only reference answers in this repository are the
+  hand-written ones of the M2 exit-criterion fixture
+  (`bin/ragondin/tests/exit_criterion_generation.rs`), which are a fixture, not
+  a published snapshot. None is invented here.
+
+**A snapshot is a list of files, not one archive.** The design document § 6
+gives an entry one URL and one SHA-256, and BEIR publishes each dataset as a
+zip. That zip is served from an unversioned bucket — its URL carries no
+revision, which is why the calibration records its hash — and extracting a zip
+needs an archive reader, a new `[workspace.dependencies]` entry that ADR-C36
+§ 6 says is a new decision. A dataset repository at a fixed commit gives what
+the zip does not: a versioned URL, and files already in the layout the
+adapters read, so nothing is extracted and nothing new enters the workspace.
+The manifest pins each file's digest instead of an archive's; the design's
+"URL, sha256" holds per file.
+
+## Putting a dataset on disk
+
+`src/datasets.rs`, over a datasets directory in which `<format>/<dir>` lives
+at `<datasets>/<dir>`. Every verdict is a statement about digests, through
+`identity::dataset_version` and no other computation.
+
+- **`download(entry, datasets, fetcher, controls)`** fetches each file of the
+  entry through `fetcher` into a staging directory of its own, and refuses the
+  file unless it is exactly the manifest's size and SHA-256 — before anything
+  is loaded or placed. It then loads the staged snapshot with the entry's
+  format and refuses it unless it digests to the manifest's
+  `dataset_version`. Only then is the staging directory renamed to
+  `<datasets>/<dir>`. Each refusal is a `DownloadError` naming the entry and,
+  for a size or a digest, the expected and the found value. `controls` carries
+  the progress callback (bytes received of the snapshot's total, after every
+  chunk), the cancellation flag and the deadline.
+- **`verify(dir, format, expected)`** loads what a directory holds and
+  compares its `dataset_version` with `expected`: `Verified` (with the
+  `CarriedPieces` it carries), `Differs { expected, found, carries }`,
+  `Unreadable { error }` with the adapter's own error, or `Absent`. It loads
+  the dataset whole — adequate for the datasets in the manifest, which are
+  held in memory anyway (§ *Local constraints*) — and caches nothing.
+- **`import(datasets, name, source, manifest)`** registers a corpus that
+  already carries its ground truth: a directory is read as BEIR (`beir-qa`
+  when it holds `answers.jsonl`), a file as SQuAD v1.1. It loads the source and
+  refuses it with the adapter's error when it does not load; copies the files
+  the adapter read into a staging directory — the SQuAD file under the name
+  `SquadAdapter::new` reads; loads the copy and refuses it unless it digests
+  as the source did (`ImportError::Changed`, a source that changed while it
+  was read); and publishes it as `<datasets>/<name>` beside
+  `ragondin-local.json` (`LOCAL_MARKER`), which records the format and the
+  `dataset_version`. `local_entries` lists them, one `Result` per directory:
+  a marker this build cannot read is that directory's `MarkerError`, not the
+  listing's failure. Generating questions or judgments for a bare corpus is
+  not import.
+
+**The transport is handed in.** This crate does not speak HTTP: `download`
+takes a `Fetcher`, which fetches one URL and feeds a `Body` — `announce` for a
+length known up front, `write` per chunk — and the body applies every rule.
+The experiment plane's API supplies the HTTP fetcher (`reqwest`, in
+`ragondin-api`), and the tests an in-memory one. The reason is the lean build
+(ADR-C14): `ragondin-harness` and the binary depend on this crate and never
+download, and an HTTP client here would put an HTTP and TLS stack —
+`rustls`, `ring` and its C build — into both. With the transport outside,
+their dependency closures are what they were before the download existed.
+
+Choices made here, inside this crate:
+
+- **A failure leaves nothing behind, however many attempts overlap.** A
+  download or an import is assembled in a staging directory named
+  `.<dir>.download-<process>-<attempt>` (`.import-` for an import), unique to
+  the attempt, and renamed into place only once every check passed; a drop
+  guard removes it on any error. Two downloads of one entry therefore never
+  share a directory: both verify their own copy, the first rename wins, and
+  the second — a rename onto a directory that exists — is
+  `DownloadError::Occupied`, leaving the winner's verified copy in place. So a
+  dataset's directory exists only when what it holds verified (P4), and
+  `local_entries` skips `.`-named entries. `sweep_staging` removes what an
+  interrupted attempt left; it is called at startup, not per attempt, since a
+  running attempt's staging directory has the same shape.
+- **A download never overwrites.** A destination that exists is
+  `DownloadError::Occupied`: what is there may be a user's, and removing it on
+  a failed download would lose it.
+- **The manifest's size is a cap.** A length announced beyond it is refused
+  before a byte is written (`TooLarge`); a body that runs past it is cut off
+  at the chunk that passes it (`TooLarge`); a body that ends short is
+  `Truncated`. A server cannot fill the disk past what the manifest pins, and
+  a transport that ignores the refusal and reports success is still refused:
+  the body records why it stopped, and that reason wins.
+- **Cancellation and a deadline.** `Controls::cancelled` is an `AtomicBool`,
+  checked after every chunk and before each file — the shape the harness's
+  cancellation took — and a cancelled download is `Cancelled` with nothing
+  left. `Controls::deadline` bounds the whole download from its start;
+  `Controls::deadline_for` gives a minute's grace plus the entry's size at
+  32 KiB/s, a minimum mean throughput, so a server that trickles bytes fails
+  at the deadline (`DeadlineExceeded`) rather than holding the download. Both
+  are checked when a chunk arrives: a server that sends nothing at all is the
+  transport's to time out, and the HTTP fetcher does, per read.
+- **Synchronous.** `download` blocks on the fetcher, as `BenchmarkAdapter::load`
+  blocks on the disk, and the caller decides where the blocking happens — the
+  experiment plane's API runs it on a blocking thread.
+- **Import names are an allow-list**: `[A-Za-z0-9_-][A-Za-z0-9._-]*`, at most
+  64 bytes, not ending in `.` and not a Windows device name (`CON`, `PRN`,
+  `AUX`, `NUL`, `COM1`–`COM9`, `LPT1`–`LPT9`, in any case, with or without an
+  extension) — one directory name on every platform, never a staging
+  directory's, and never a byte such as NUL that a filesystem call would
+  reject after the name was accepted. A name is also refused when a dataset
+  already has it, or when the manifest the caller passes names an entry with
+  that directory.
+
 ## Local constraints
 
 - **I/O here is correct.** INV-3 (value types only, no I/O) names
@@ -378,12 +548,19 @@ Choices made here, inside this crate (`AGENTS.md` § Rules of engagement):
   Reading dataset files from disk is this crate's job. The `Benchmark` it
   produces is still plain data.
 - **Keep it light (INV-4 in spirit).** A JSON reader (`serde_json`), a TSV
-  reader (`csv`) and the SHA-256 the identity digests need (`sha2`) are the
-  whole toolkit. No heavy backend, no vector store, no
-  HTTP client — and in particular **no network fetch**: a dataset path comes
-  from configuration and the snapshot is frozen on disk, because a published
-  score is attached to a specific snapshot and benchmarking against a live
-  source is not reproducible (§9.1).
+  reader (`csv`) and the SHA-256 the identity digests and the download check
+  need (`sha2`) are the whole toolkit. No heavy backend, no vector store, and
+  no HTTP client: the download's transport is handed in (§ *Putting a dataset
+  on disk*).
+- **No fetch during evaluation; a pinned, verified download to put a snapshot
+  on disk.** A published score is attached to a specific snapshot, and
+  benchmarking against a live source is not reproducible
+  (`docs/system-architecture.md` § 9.1). So an adapter reads only a path on
+  disk, and nothing that loads a benchmark for a run touches the network. The
+  one download this crate governs is `datasets::download`, which takes a
+  snapshot the manifest pins by digest, refuses bytes whose size or digest
+  differs, and leaves on disk only a snapshot that verified — the way a frozen
+  snapshot gets onto the disk, not a way around it.
 - **Ids are opaque strings, never parsed as numbers.** BEIR ids look like
   `MED-10` and `4983`; leading zeros are significant. They map straight onto
   `DocId` / `QueryId`.

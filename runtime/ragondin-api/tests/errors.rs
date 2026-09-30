@@ -145,6 +145,64 @@ async fn dataset_differs() {
 }
 
 #[tokio::test]
+async fn benchmark_not_found() {
+    let (status, body) = render(ApiError::BenchmarkNotFound {
+        name: "beir/nowhere".to_owned(),
+    })
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_problem(&body, status, "benchmark_not_found");
+    assert!(body["detail"].as_str().unwrap().contains("beir/nowhere"));
+}
+
+#[tokio::test]
+async fn benchmark_exists() {
+    let (status, body) = render(ApiError::BenchmarkExists {
+        name: "beir/scifact".to_owned(),
+    })
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_problem(&body, status, "benchmark_exists");
+    assert!(body["hint"].as_str().unwrap().contains("beir/scifact"));
+}
+
+#[tokio::test]
+async fn download_failed() {
+    let (status, body) = render(ApiError::DownloadFailed {
+        name: "beir/scifact".to_owned(),
+        reason: "corpus.jsonl digests to 9f00, the manifest pins 331a".to_owned(),
+    })
+    .await;
+    assert_eq!(status, StatusCode::BAD_GATEWAY);
+    assert_problem(&body, status, "download_failed");
+    let detail = body["detail"].as_str().unwrap();
+    assert!(detail.contains("331a") && detail.contains("9f00"));
+}
+
+#[tokio::test]
+async fn download_cancelled() {
+    let (status, body) = render(ApiError::DownloadCancelled {
+        name: "beir/scifact".to_owned(),
+    })
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_problem(&body, status, "download_cancelled");
+    assert!(body["detail"].as_str().unwrap().contains("beir/scifact"));
+}
+
+#[tokio::test]
+async fn import_refused() {
+    let (status, body) = render(ApiError::ImportRefused {
+        name: "mine".to_owned(),
+        reason: "corpus.jsonl:1: malformed JSON record".to_owned(),
+    })
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_problem(&body, status, "import_refused");
+    assert!(body["detail"].as_str().unwrap().contains("corpus.jsonl:1"));
+}
+
+#[tokio::test]
 async fn backend_failed() {
     let (status, body) = render(ApiError::BackendFailed {
         detail: "runs/: permission denied".to_owned(),
@@ -205,7 +263,7 @@ fn every_variant_has_a_distinct_code() {
     assert_eq!(sorted.len(), codes.len(), "codes are unique: {codes:?}");
     assert_eq!(
         codes.len(),
-        13,
+        18,
         "a variant added without a test here: {codes:?}"
     );
 }
