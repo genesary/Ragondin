@@ -22,8 +22,13 @@ export type ButtonProps = {
 } & Disabled &
   Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'disabled' | 'children'>;
 
-/** The props that are event handlers (`onClick`, `onKeyDown`, …), which a disabled button must not run. */
-const isHandler = (key: string) => /^on[A-Z]/.test(key);
+/**
+ * The handlers that act — a click, a key, a press, a touch, a submission, in
+ * the bubble or the capture phase — which a disabled button must not run.
+ * Focus and hover handlers are not among them: a tooltip saying why the button
+ * refuses is wired through those, and is needed most while it refuses.
+ */
+const isActivation = (key: string) => /^on(Click|DoubleClick|KeyDown|KeyUp|PointerDown|PointerUp|MouseDown|MouseUp|TouchStart|TouchEnd|Submit)(Capture)?$/.test(key);
 
 export function Button({ kind = 'secondary', size = 'm', icon, busy = false, busyLabel, disabled, disabledReason, className, onClick, children, ...rest }: ButtonProps) {
   const reasonId = useId();
@@ -32,9 +37,10 @@ export function Button({ kind = 'secondary', size = 'm', icon, busy = false, bus
   // the tab order, so a keyboard or screen-reader user reaches it and hears
   // why it refuses. aria-disabled stops nothing by itself, so while disabled
   // the button is forced to type="button" (no form submission, by click,
-  // Enter or Space) and none of the caller's handlers is passed through.
-  // Busy, it is forced to type="button" too, so it does not submit twice.
-  const passed = disabled ? Object.fromEntries(Object.entries(rest).filter(([key]) => !isHandler(key))) : rest;
+  // Enter or Space) and none of the caller's activation handlers is passed
+  // through. Busy, it is forced to type="button" too, so it does not submit
+  // twice.
+  const passed = disabled ? Object.fromEntries(Object.entries(rest).filter(([key]) => !isActivation(key))) : rest;
   const describedBy = [rest['aria-describedby'], disabled ? reasonId : undefined].filter(Boolean).join(' ');
   return (
     <>

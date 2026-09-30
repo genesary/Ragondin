@@ -173,7 +173,7 @@ describe('Button disabled inside a form', () => {
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
-  it('runs none of the caller’s handlers while disabled', () => {
+  it('runs none of the caller’s key, pointer or mouse press handlers while disabled', () => {
     const onKeyDown = vi.fn();
     const onPointerDown = vi.fn();
     const onMouseUp = vi.fn();
@@ -189,6 +189,58 @@ describe('Button disabled inside a form', () => {
     expect(onKeyDown).not.toHaveBeenCalled();
     expect(onPointerDown).not.toHaveBeenCalled();
     expect(onMouseUp).not.toHaveBeenCalled();
+  });
+
+  it('runs no activation handler of the caller’s while disabled', () => {
+    const handlers = {
+      onDoubleClick: vi.fn(),
+      onKeyUp: vi.fn(),
+      onPointerUp: vi.fn(),
+      onMouseDown: vi.fn(),
+      onTouchStart: vi.fn(),
+      onTouchEnd: vi.fn(),
+      onSubmit: vi.fn(),
+    };
+    render(
+      <Button disabled disabledReason="Not yet" {...handlers}>
+        Launch run
+      </Button>,
+    );
+    const button = screen.getByRole('button', { name: 'Launch run' });
+    fireEvent.doubleClick(button);
+    fireEvent.keyUp(button, { key: 'Enter' });
+    fireEvent.pointerUp(button);
+    fireEvent.mouseDown(button);
+    fireEvent.touchStart(button);
+    fireEvent.touchEnd(button);
+    fireEvent.submit(button);
+    for (const handler of Object.values(handlers)) expect(handler).not.toHaveBeenCalled();
+  });
+
+  // A tooltip saying why a button refuses is wired through focus and hover,
+  // and is most useful exactly while the button is disabled.
+  it('passes the caller’s focus and hover handlers through while disabled', () => {
+    const handlers = {
+      onFocus: vi.fn(),
+      onBlur: vi.fn(),
+      onMouseEnter: vi.fn(),
+      onMouseLeave: vi.fn(),
+      onPointerEnter: vi.fn(),
+      onPointerLeave: vi.fn(),
+    };
+    render(
+      <Button disabled disabledReason="Not yet" {...handlers}>
+        Launch run
+      </Button>,
+    );
+    const button = screen.getByRole('button', { name: 'Launch run' });
+    fireEvent.focus(button);
+    fireEvent.blur(button);
+    fireEvent.mouseEnter(button);
+    fireEvent.mouseLeave(button);
+    fireEvent.pointerEnter(button);
+    fireEvent.pointerLeave(button);
+    for (const handler of Object.values(handlers)) expect(handler).toHaveBeenCalledTimes(1);
   });
 
   it('keeps the caller’s own description beside the reason', () => {
