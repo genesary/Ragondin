@@ -68,14 +68,16 @@ SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
 CHECKER = os.path.join(SCRIPTS_DIR, "check-invariants.py")
 
 # The crates the checker names by hand: INV-3's and INV-4's protected sets,
-# INV-5's subject and INV-12's. A fixture without them fails on `member_id`
-# before reaching anything a case is about, so every fixture carries all five.
+# INV-5's subject, and INV-12's subject and the one crate it denies by name. A
+# fixture without them fails on `member_id` before reaching anything a case is
+# about, so every fixture carries all six.
 REQUIRED_MEMBERS = {
     "core/ragondin-types": "ragondin-types",
     "core/ragondin-pipeline": "ragondin-pipeline",
     "core/ragondin-contracts": "ragondin-contracts",
     "engine/ragondin-engine": "ragondin-engine",
     "runtime/ragondin-api": "ragondin-api",
+    "wire/ragondin-remote": "ragondin-remote",
 }
 
 
@@ -166,6 +168,7 @@ def run_checker(
     members: dict[str, str] | None = None,
     excluded: dict[str, str] | None = None,
     outside: dict[str, str] | None = None,
+    omit: Iterable[str] = (),
 ) -> Result:
     """Build a throwaway workspace and run the checker in it.
 
@@ -173,7 +176,7 @@ def run_checker(
     and the three answers have to be expressible separately:
 
       - `members` — workspace-relative directories listed in `members = [...]`.
-        The four crates the checker names by hand are added with empty manifests
+        The crates the checker names by hand are added with empty manifests
         unless a case overrides one.
       - `excluded` — directories **inside** the workspace root that are named in
         `exclude = [...]`, so they are first-party code that is not a workspace
@@ -182,12 +185,16 @@ def run_checker(
       - `outside` — directories *beside* the workspace, which is where a stand-in
         for a third-party crate goes: reached by path, so nothing is fetched, but
         outside the repository the checker calls its own.
+
+    `omit` names required members to leave out, for a case about a crate the
+    checker names by hand going missing.
     """
     members = dict(members or {})
     excluded = dict(excluded or {})
     outside = dict(outside or {})
     for directory, name in REQUIRED_MEMBERS.items():
-        members.setdefault(directory, manifest(name))
+        if directory not in omit:
+            members.setdefault(directory, manifest(name))
 
     base = tempfile.mkdtemp(prefix="check-invariants-fixture-")
     try:
@@ -234,7 +241,7 @@ def a_clean_workspace_passes() -> None:
     the whole workspace reads as a changed number rather than as a green tick.
     """
     run_checker().exits(0).says(
-        "INV-6 OK — none of the 5 first-party crate(s) declares inventory or "
+        "INV-6 OK — none of the 6 first-party crate(s) declares inventory or "
         "linkme as a direct dependency."
     ).says("All architecture invariants hold.")
 
@@ -282,7 +289,7 @@ def inventory_inside_a_third_party_crate_is_not_a_violation() -> None:
     declares the backend, and the backend declares the registry crate.
 
     The count in the message is asserted too, and it is the other half of the
-    case: six first-party crates, not eight. `first_party_ids` follows path
+    case: seven first-party crates, not nine. `first_party_ids` follows path
     dependencies, and a rule that decided "ours" by that alone — rather than by
     the manifest being inside the repository — would swallow both stand-ins here
     and report a violation.
@@ -302,7 +309,7 @@ def inventory_inside_a_third_party_crate_is_not_a_violation() -> None:
             "inventory": manifest("inventory"),
         },
     ).exits(0).says(
-        "INV-6 OK — none of the 6 first-party crate(s) declares inventory or "
+        "INV-6 OK — none of the 7 first-party crate(s) declares inventory or "
         "linkme as a direct dependency."
     ).is_silent_about("INV-6 VIOLATION")
 
@@ -511,6 +518,28 @@ def an_api_crate_depending_on_the_remote_crate_fails() -> None:
         }
     ).exits(1).says("INV-12 VIOLATION").says(
         "ragondin-api reaches ragondin-remote (wire/ragondin-remote)"
+    )
+
+
+@case
+def a_renamed_remote_crate_fails_loudly() -> None:
+    """INV-12 denies `ragondin-remote` by name, so a rename would empty the rule.
+
+    A check that looked the name up and found nothing would print `INV-12 OK`
+    over a workspace whose renamed remote crate the api crate depends on. It
+    fails instead, the way a renamed engine or core crate does.
+    """
+    run_checker(
+        members={
+            "wire/ragondin-wire-client": manifest("ragondin-wire-client"),
+            "runtime/ragondin-api": manifest(
+                "ragondin-api",
+                ['ragondin-wire-client = { path = "../../wire/ragondin-wire-client" }'],
+            ),
+        },
+        omit=["wire/ragondin-remote"],
+    ).exits(1).says("workspace member 'ragondin-remote' not found").is_silent_about(
+        "INV-12 OK"
     )
 
 

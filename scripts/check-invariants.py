@@ -481,11 +481,15 @@ def check_inv12(md: dict, pkgs_by_id: dict, edges: dict):
     denied_prefixes = tuple(
         os.path.join(root, directory) + os.sep for directory in API_DENIED_DIRECTORIES
     )
+    # Looked up as members, so that a renamed crate stops the check loudly
+    # instead of leaving a name that matches nothing and a rule that denies
+    # nothing.
+    denied_ids = {member_id(md, pkgs_by_id, name) for name in API_DENIED_CRATES}
     offenders = []
     for dep_id in closure(member_id(md, pkgs_by_id, API_CRATE), edges):
         package = pkgs_by_id[dep_id]
         manifest_path = package["manifest_path"]
-        if manifest_path.startswith(denied_prefixes) or package["name"] in API_DENIED_CRATES:
+        if manifest_path.startswith(denied_prefixes) or dep_id in denied_ids:
             directory = os.path.relpath(os.path.dirname(manifest_path), root)
             offenders.append((package["name"], directory))
     return sorted(offenders)
