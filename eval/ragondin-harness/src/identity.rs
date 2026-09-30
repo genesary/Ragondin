@@ -13,12 +13,10 @@
 //! `index_version` — and the one-chunk-per-document derivation the second is
 //! taken over — live in `ragondin_benchmarks::identity`, because a stored run
 //! is verified against them by a reader that may not reach the engine, and
-//! ADR-C36 § 4 allows one definition of each. This module re-exports
-//! `dataset_version` for the evaluation loop and digests the tuple through the
-//! same `Encoder`, under its own domain, so the three digests cannot drift
-//! apart in how a string or a count is written.
+//! ADR-C36 § 4 allows one definition of each. This module digests the tuple
+//! through the same `Encoder`, under its own domain, so the three digests
+//! cannot drift apart in how a string or a count is written.
 
-pub(crate) use ragondin_benchmarks::identity::dataset_version;
 use ragondin_benchmarks::identity::Encoder;
 use ragondin_experiments::{RunId, RunInputs};
 

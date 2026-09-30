@@ -38,6 +38,7 @@ use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
+use ragondin_benchmarks::identity::dataset_version;
 use ragondin_benchmarks::{Benchmark, CarriedPieces};
 use ragondin_engine::{plan_physical, Engine, EngineContext, ExecutionTrace, Output, ValueSummary};
 use ragondin_experiments::{ConfigDocument, Metrics, Run, RunInputs, TraceDocument};
@@ -46,7 +47,7 @@ use ragondin_pipeline::{LogicalNode, LogicalPipeline, NodeId};
 use ragondin_types::{DocId, QueryId};
 
 use crate::error::{HarnessError, RankingWalkError};
-use crate::identity::{dataset_version, run_id};
+use crate::identity::run_id;
 use crate::trace::render;
 use crate::CorpusIndex;
 

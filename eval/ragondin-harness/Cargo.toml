@@ -17,7 +17,7 @@ rust-version.workspace = true
 [dependencies]
 ragondin-engine = { workspace = true }
 ragondin-metrics = { workspace = true }
-ragondin-benchmarks = { workspace = true }         # `Benchmark`, and the dataset/index identity and its encoder
+ragondin-benchmarks = { workspace = true }  # `Benchmark`, the dataset/index identity and its encoder
 ragondin-experiments = { workspace = true } # the `Run` record this driver assembles
 ragondin-pipeline = { workspace = true }    # `LogicalPipeline`, and the hash that opens run identity
 ragondin-types = { workspace = true }       # `Chunk`, `DocId`, `Query`

@@ -346,7 +346,13 @@ decision is unchanged — the composition root builds the `CorpusIndex`,
 constructs its components from `CorpusIndex::chunks`, and hands the same value
 to the harness — but the type and its derivation are now defined here, and
 `ragondin-harness` re-exports `CorpusIndex` so the composition root's path to
-it did not move. The ADR is immutable, so this note is the correction.
+it did not move. The ADR is immutable, so this note is the correction. The
+same holds for ADR-C29, ADR-C30 and ADR-C31, which cite
+`eval/ragondin-harness/src/corpus.rs` — its § One chunk per document, and
+`CorpusIndex::version`'s caveat that it addresses *a* chunk set, not provably
+the one retrieved from: that file no longer exists, both texts are now the
+`CorpusIndex` documentation in `src/identity.rs`, and what they say is
+unchanged.
 
 Choices made here, inside this crate (`AGENTS.md` § Rules of engagement):
 

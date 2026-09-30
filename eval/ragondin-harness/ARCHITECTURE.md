@@ -199,32 +199,26 @@ defines the record and states that the digest is assembled by the harness;
 elsewhere: `dataset_version`, `index_version` and the chunk derivation live in
 `ragondin_benchmarks::identity` (ADR-C36 § 4), and so does the `Encoder` all
 three digests are written through — `run_id` imports it back and writes its
-tuple under its own domain, `ragondin/run-id/v1`. That is a leaf choice about
-where a private helper lives, argued in `eval/ragondin-benchmarks/ARCHITECTURE.md`:
+tuple under its own domain, `ragondin/run-id/v1`. The encoder is a small
+public helper of `ragondin-benchmarks`, exported for this one use; where it
+lives is a leaf choice argued in `eval/ragondin-benchmarks/ARCHITECTURE.md`:
 one encoder keeps the three digests from drifting apart in how a string or a
 count is written. A literal-digest test in `src/identity.rs` pins the `run_id`
 of fixed inputs, and `ragondin-benchmarks`' `tests/identity_golden.rs` pins the
 other two, so a change in either crate that moves any stored run's id fails by
-name. Four decisions are load-bearing:
+name.
 
-- **The encoding is tagged and length-prefixed**, in the shape
-  `core/ragondin-pipeline/src/hash.rs` uses, and fed to SHA-256 in one pass.
-  Length prefixes make it injective; the domain separator keeps a dataset
-  digest from colliding with an index digest over the same bytes. Nothing goes
-  through `serde`: a serializer's output is documented as readable, not as
-  stable, and run identity is not a thing to hang on that.
-- **`dataset_version` is taken over the loaded benchmark**, not over the files
-  it was parsed from: two snapshots that parse to the same corpus, queries and
-  judgments are the same dataset, and a digest over bytes would make a
-  re-download a different one. Reference answers enter it only when the
-  benchmark carries them, as a section opened by its own tag after the qrels
-  (ADR-C30 § 5), so a qrels-only benchmark digests byte for byte as it did
-  before reference answers existed — the digests
-  `bin/ragondin/tests/calibration.rs` pins included. The answer text a run
-  produces is in its trace, and the trace is not part of identity.
-- **`index_version` is taken over the chunk set**, not over a backend artifact:
-  the chunks are what any index is built from, and an index file's bytes move
-  with a library version that changed nothing about what is indexed.
+What the encoding is (tagged, length-prefixed, never through `serde`), what
+`dataset_version` is taken over (the loaded benchmark, reference answers as a
+tagged section only when carried, ADR-C30 § 5) and what `index_version` is
+taken over (the chunk set, not a backend artifact) are decided in
+`ragondin_benchmarks::identity` and argued there — in its module
+documentation and in `eval/ragondin-benchmarks/ARCHITECTURE.md` § The identity
+of a dataset and of a derived chunk set — and are not restated here, so the two
+files cannot drift; `run_id` inherits all three. The answer text a run
+produces is in its trace, and the trace is not part of identity. One decision
+is this crate's own:
+
 - **`engine_version` is this crate's own `CARGO_PKG_VERSION`.** Every member
   takes its version from `[workspace.package]`, so the harness's version *is*
   the version of the engine it was compiled against. If the workspace ever
