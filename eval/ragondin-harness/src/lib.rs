@@ -23,6 +23,9 @@
 //!   crate does not resolve it. Built by the caller, not by this crate
 //!   (ADR-C26): the composition root is the one place that holds both the
 //!   engine and the concrete components it constructs from these chunks.
+//!   Defined in `ragondin_benchmarks::identity` with the dataset digest, and
+//!   re-exported here: a reader verifying a stored run derives the same chunk
+//!   set without reaching the engine (ADR-C36 § 4).
 //! - The `Run` — the record, named by `hash(pipeline_config, dataset_version,
 //!   index_version, model_hashes, engine_version)` (§7.1). Identical inputs
 //!   yield an identical `run_id` and identical metrics (P4).
@@ -65,12 +68,14 @@
 // Private modules with a flat re-export: one path to each item. The two names a
 // caller needs are `evaluate` and `Evaluation`; a caller that watches or stops
 // a run adds `evaluate_observed` and `QueryProgress`.
-mod corpus;
 mod error;
 mod evaluate;
 mod identity;
 mod trace;
 
-pub use corpus::CorpusIndex;
+// Re-exported, not defined: the chunk derivation and the `index_version` it
+// names live in `ragondin_benchmarks::identity` (ADR-C36 § 4), and this path
+// keeps every caller that names `ragondin_harness::CorpusIndex` compiling.
 pub use error::{HarnessError, RankingWalkError};
 pub use evaluate::{evaluate, evaluate_observed, Evaluation, QueryProgress};
+pub use ragondin_benchmarks::identity::CorpusIndex;

@@ -20,6 +20,13 @@
 //! neither direction: the metrics functions borrow a `&BTreeMap<DocId, u8>`,
 //! which is exactly what [`Qrels::for_query`] hands out.
 //!
+//! This crate also owns the **identity of a dataset and of the chunk set
+//! derived from it** — [`identity::dataset_version`],
+//! [`identity::CorpusIndex`] (one chunk per document) and
+//! [`identity::index_version`] — so that the harness that records them and the
+//! experiment plane that verifies a stored run against them share one
+//! definition without the second reaching the engine (ADR-C36 § 4).
+//!
 //! Reading dataset files from disk here is correct: INV-3 (no I/O) names
 //! `ragondin-types` and `ragondin-pipeline`, not this crate. See
 //! `ARCHITECTURE.md`.
@@ -29,6 +36,7 @@
 pub mod beir;
 mod benchmark;
 mod error;
+pub mod identity;
 pub mod squad;
 
 pub use beir::BeirAdapter;

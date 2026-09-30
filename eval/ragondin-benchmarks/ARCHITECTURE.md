@@ -6,6 +6,13 @@ The `BenchmarkAdapter` trait, the internal benchmark structure it produces
 (`Benchmark` = corpus + queries + `Qrels` + `ReferenceAnswers`), and one
 adapter per external dataset format: `BeirAdapter` and `SquadAdapter`.
 
+And, in `src/identity.rs`, the **identity of a dataset and of the chunk set
+derived from it**: `dataset_version` over a loaded `Benchmark`, `CorpusIndex`
+— the one-chunk-per-document derivation — and `index_version` over a chunk
+set, with the length-prefixed `Encoder` all three digests are written through.
+§ *The identity of a dataset and of a derived chunk set* below says why they
+are here.
+
 ## The internal structure is the stable thing
 
 This crate is the **data-side mirror of the component contract**: one stable
@@ -295,14 +302,78 @@ The same asymmetry principle governs the physical line numbers in
 blank lines are skipped or the file is CRLF. Three separate attempts at that
 arithmetic each fixed one file shape and broke another.
 
+## The identity of a dataset and of a derived chunk set
+
+Two of the five pieces of `run_id` (`docs/system-architecture.md` §7.1) are
+defined here, together with the derivation the second is taken over:
+
+- **`identity::dataset_version(&Benchmark)`** — a digest over the loaded
+  corpus, queries, qrels, and the reference answers when the benchmark carries
+  them, under the domain `ragondin/dataset-version/v1`. The reference answers
+  are a tagged section present only when carried (ADR-C30 § 5), so a
+  qrels-only benchmark digests as it did before they existed.
+- **`identity::CorpusIndex::build(&[Document])`** — the chunk set a run
+  retrieves over: one chunk per document, carrying its whole text under the
+  document's id, in corpus order. Ad hoc and deliberately not a pipeline:
+  question 5 of `docs/OPEN_QUESTIONS.md` is unresolved, and this derivation
+  takes no position on it.
+- **`identity::index_version(&[Chunk])`** — a digest over that chunk set,
+  under the domain `ragondin/index-version/v1`; `CorpusIndex::version` is it.
+
+**Why here.** ADR-C36 § 4 lets replay show a passage's text only when the
+dataset on disk digests to the run's `dataset_version` and the chunk set
+derived from it to the run's `index_version`, and it allows **one definition**
+of each digest and of the chunk derivation, shared by the writer and the
+reader. The writer is `ragondin-harness`, which reaches the engine; the reader
+is the experiment plane's API, which ADR-C36 § 3 forbids the engine. This
+crate is the one both reach: it already holds the `Benchmark` the dataset
+digest is taken over, and its closure holds no engine and no component. A
+second implementation of either digest, or of the derivation, anywhere else is
+not allowed.
+
+**The encoding is frozen by the stored runs.** Every byte of it enters
+`run_id`, so a change here changes the id of every run already recorded
+(INV-8). `tests/identity_golden.rs` pins the digests of this crate's three
+fixtures as literals — the values the harness computed before the definitions
+moved — and the recorded SciFact and NFCorpus snapshots still digest to the
+`dataset_version`s `bin/ragondin/tests/calibration.rs` pins. What is digested,
+in what order and under which domain tag is not this crate's to change in
+passing.
+
+**ADR-C26, read against this crate.** ADR-C26 describes `ragondin-harness` as
+the place the chunk set is prepared and `CorpusIndex` as a harness type. Its
+decision is unchanged — the composition root builds the `CorpusIndex`,
+constructs its components from `CorpusIndex::chunks`, and hands the same value
+to the harness — but the type and its derivation are now defined here, and
+`ragondin-harness` re-exports `CorpusIndex` so the composition root's path to
+it did not move. The ADR is immutable, so this note is the correction.
+
+Choices made here, inside this crate (`AGENTS.md` § Rules of engagement):
+
+- **`Encoder` is public.** `run_id` stays in the harness — it digests
+  `RunInputs`, the experiment plane's type, and only the harness holds all
+  five pieces — but it is written through the same length-prefixed encoder
+  under its own domain. Moving the encoder with the digests and exporting it
+  keeps one definition of how a string and a count are written; a copy left in
+  the harness would be a second encoder the three digests could drift apart
+  through. It exposes `new`, `field`, `count` and `finish`, nothing more.
+- **`CorpusIndex` moved whole**, not only its body. The derivation is its
+  constructor, and a harness type wrapping a benchmarks function would leave
+  the harness defining the derivation's entry point. A reader verifying a run
+  calls `CorpusIndex::build(benchmark.corpus()).version()`, exactly what the
+  composition root calls before the run.
+- **`sha2` is a dependency**, already in `[workspace.dependencies]` and already
+  used by the harness for the same digests; it moved with them.
+
 ## Local constraints
 
 - **I/O here is correct.** INV-3 (value types only, no I/O) names
   `ragondin-types` and `ragondin-pipeline`; this crate is not covered by it.
   Reading dataset files from disk is this crate's job. The `Benchmark` it
   produces is still plain data.
-- **Keep it light (INV-4 in spirit).** A JSON reader (`serde_json`) and a TSV
-  reader (`csv`) are the whole toolkit. No heavy backend, no vector store, no
+- **Keep it light (INV-4 in spirit).** A JSON reader (`serde_json`), a TSV
+  reader (`csv`) and the SHA-256 the identity digests need (`sha2`) are the
+  whole toolkit. No heavy backend, no vector store, no
   HTTP client — and in particular **no network fetch**: a dataset path comes
   from configuration and the snapshot is frozen on disk, because a published
   score is attached to a specific snapshot and benchmarking against a live

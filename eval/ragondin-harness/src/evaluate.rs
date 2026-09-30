@@ -45,10 +45,10 @@ use ragondin_metrics::{exact_match, ndcg_at_k, recall_at_k, reciprocal_rank, tok
 use ragondin_pipeline::{LogicalNode, LogicalPipeline, NodeId};
 use ragondin_types::{DocId, QueryId};
 
-use crate::corpus::CorpusIndex;
 use crate::error::{HarnessError, RankingWalkError};
 use crate::identity::{dataset_version, run_id};
 use crate::trace::render;
+use crate::CorpusIndex;
 
 /// What an evaluation run is asked to do.
 ///
