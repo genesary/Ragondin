@@ -1,0 +1,17 @@
+.rg-progress { display: grid; gap: 6px; min-width: 0; }
+.rg-progress__top { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); font: var(--type-dense); }
+.rg-progress__count { font-weight: 500; }
+.rg-progress__eta { font: var(--type-caption); color: var(--ink-3); }
+.rg-progress__track { position: relative; height: 4px; overflow: hidden; border-radius: 2px; background: var(--surface-3); }
+.rg-progress__fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: 2px;
+  background: var(--accent);
+  transition: width var(--duration-standard) var(--ease-standard);
+}
+/* Queued: a hatch and no fill, because nothing has happened yet. */
+.rg-progress[data-state="queued"] .rg-progress__track { background: repeating-linear-gradient(-45deg, var(--surface-3) 0 4px, var(--line) 4px 8px); }
+.rg-progress[data-state="done"] .rg-progress__fill { background: var(--good); }
+.rg-progress[data-state="failed"] .rg-progress__fill { background: var(--critical); }
+.rg-progress[data-state="failed"] .rg-progress__count { color: var(--critical); }

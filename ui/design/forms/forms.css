@@ -1,0 +1,13 @@
+/* What every field shares: the label stack and the helper line. */
+.rg-field { display: grid; gap: var(--space-1); min-width: 0; }
+.rg-field__label { font: var(--type-label); color: var(--ink-2); }
+.rg-help {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 0;
+  font: var(--type-caption);
+  color: var(--ink-3);
+}
+.rg-help[data-error] { color: var(--critical); }
+.rg-help .rg-glyph { vertical-align: 0; flex: none; }

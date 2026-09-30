@@ -1,0 +1,43 @@
+/* The whole row is the target, at least 32px tall: Fitts, not the 16px box. */
+.rg-check {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--size-control);
+  font: var(--type-dense);
+  color: var(--ink);
+  cursor: pointer;
+}
+.rg-check input {
+  display: grid;
+  place-content: center;
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  appearance: none;
+  border: 1px solid var(--line-control);
+  border-radius: 4px;
+  background: var(--surface);
+  cursor: pointer;
+  transition: background-color var(--duration-micro) var(--ease-standard), border-color var(--duration-micro);
+}
+.rg-check input::before {
+  content: "";
+  width: 10px;
+  height: 10px;
+  background: var(--on-accent);
+  transform: scale(0);
+  clip-path: polygon(14% 44%, 0 65%, 43% 100%, 100% 20%, 82% 4%, 40% 66%);
+  transition: transform var(--duration-micro) var(--ease-snap);
+}
+.rg-check input:hover { border-color: var(--ink-3); }
+.rg-check input:checked { background: var(--accent); border-color: var(--accent); }
+.rg-check input:indeterminate { background: var(--accent); border-color: var(--accent); }
+.rg-check input:checked::before { transform: scale(1); }
+.rg-check input:indeterminate::before { transform: scale(1); clip-path: inset(40% 10% 40% 10%); }
+.rg-check input:disabled { background: var(--surface-2); border-color: var(--line); cursor: not-allowed; }
+.rg-check input:disabled:checked { background: var(--ink-disabled); border-color: var(--ink-disabled); }
+.rg-check:has(input:disabled) { color: var(--ink-disabled); cursor: not-allowed; }
+.rg-check-wrap { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 0 var(--space-2); }
+.rg-check__reason { font: var(--type-caption); color: var(--ink-3); }

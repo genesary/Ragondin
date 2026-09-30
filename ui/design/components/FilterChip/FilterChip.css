@@ -1,0 +1,19 @@
+.rg-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 12px;
+  border: 1px solid var(--line-control);
+  border-radius: var(--radius-full);
+  background: var(--surface);
+  color: var(--ink-2);
+  font: var(--type-label);
+  cursor: pointer;
+}
+.rg-filter:hover { background: var(--surface-2); color: var(--ink); }
+.rg-filter[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--on-accent); padding-left: 8px; }
+.rg-filter .rg-count { opacity: 0.75; }
+.rg-filter:disabled { background: var(--surface-2); border-color: var(--line); color: var(--ink-disabled); cursor: not-allowed; }
+.rg-filter-wrap { display: inline-flex; align-items: center; gap: var(--space-2); }
+.rg-filter__reason { font: var(--type-caption); color: var(--ink-3); }

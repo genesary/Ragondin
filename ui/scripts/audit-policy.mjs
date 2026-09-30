@@ -23,6 +23,7 @@ export const LICENSE_ALLOW = [
   'BlueOak-1.0.0',
   'CDLA-Permissive-2.0',
   'ISC',
+  'OFL-1.1',
   'Unicode-3.0',
   'Unicode-DFS-2016',
   'Zlib',

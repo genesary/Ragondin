@@ -1,0 +1,18 @@
+.rg-inline {
+  --msg: var(--critical);
+  --msg-bg: var(--critical-wash);
+  display: grid;
+  grid-template-columns: 16px 1fr auto;
+  align-items: start;
+  gap: var(--space-2) var(--space-3);
+  padding: var(--space-3);
+  border-radius: var(--radius-s);
+  background: var(--msg-bg);
+  color: var(--ink);
+  font: var(--type-dense);
+}
+.rg-inline > .rg-glyph { margin-top: 1px; color: var(--msg); }
+.rg-inline b { font-weight: 600; }
+.rg-inline p { margin: 2px 0 0; color: var(--ink-2); }
+.rg-inline[data-tone="warning"] { --msg: var(--warning-ink); --msg-bg: var(--warning-wash); }
+.rg-inline[data-tone="info"] { --msg: var(--ink-2); --msg-bg: var(--surface-2); }

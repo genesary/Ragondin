@@ -1,0 +1,23 @@
+/* States are reserved: they never mark a run, a family or a delta. */
+.rg-status {
+  --st: var(--ink-3);
+  --st-bg: var(--surface-3);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 8px 0 6px;
+  border-radius: var(--radius-full);
+  background: var(--st-bg);
+  color: var(--st);
+  font: var(--type-label);
+  white-space: nowrap;
+}
+.rg-status .rg-glyph { width: 14px; height: 14px; vertical-align: 0; }
+.rg-status code { font: var(--type-hash); }
+.rg-status[data-state="running"] { --st: var(--ink); --st-bg: var(--surface-3); }
+.rg-status[data-state="done"] { --st: var(--good); --st-bg: var(--good-wash); }
+.rg-status[data-state="warning"] { --st: var(--warning-ink); --st-bg: var(--warning-wash); }
+.rg-status[data-state="failed"] { --st: var(--critical); --st-bg: var(--critical-wash); }
+.rg-status__meter { width: 28px; height: 4px; overflow: hidden; border-radius: 2px; background: var(--line-strong); }
+.rg-status__meter i { display: block; height: 100%; border-radius: 2px; background: var(--accent); }

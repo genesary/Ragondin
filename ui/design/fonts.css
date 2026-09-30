@@ -1,0 +1,76 @@
+/* The design system's three typefaces, served from this origin only (ADR-C36 § 5).
+   Every face points at a file under ./fonts/, never at another host: the
+   content security policy the binary sends would refuse one anyway, and
+   tests/design-assets.test.ts refuses it first. Licences: fonts/LICENSES.md. */
+
+@font-face {
+  font-family: "Wix Madefor Display";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("./fonts/WixMadeforDisplay-Medium.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Wix Madefor Display";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("./fonts/WixMadeforDisplay-SemiBold.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Wix Madefor Display";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("./fonts/WixMadeforDisplay-Bold.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Wix Madefor Text";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("./fonts/WixMadeforText-Regular.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Wix Madefor Text";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("./fonts/WixMadeforText-Medium.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Wix Madefor Text";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("./fonts/WixMadeforText-SemiBold.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Wix Madefor Text";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("./fonts/WixMadeforText-Bold.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Atkinson Hyperlegible Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("./fonts/AtkinsonHyperlegibleMono-Regular.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Atkinson Hyperlegible Mono";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("./fonts/AtkinsonHyperlegibleMono-Medium.woff2") format("woff2");
+}

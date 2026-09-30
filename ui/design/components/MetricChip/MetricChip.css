@@ -1,0 +1,28 @@
+.rg-metric {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: var(--radius-s);
+  background: var(--surface-2);
+  font: var(--type-dense);
+  line-height: 24px;
+  white-space: nowrap;
+}
+.rg-metric__k { font: var(--type-label); color: var(--ink-3); }
+.rg-metric__v { font-weight: 500; color: var(--ink); }
+.rg-metric[data-best] { background: var(--accent-wash); box-shadow: inset 0 0 0 1px var(--accent); }
+.rg-metric[data-best] .rg-metric__v { font-weight: 700; }
+
+.rg-delta {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font: 600 12px/16px var(--font-sans);
+  white-space: nowrap;
+}
+.rg-delta[data-meaning="better"] { color: var(--better); }
+.rg-delta[data-meaning="worse"] { color: var(--worse); }
+.rg-delta[data-meaning="same"] { color: var(--ink-3); font-weight: 500; }
+.rg-delta .rg-glyph { width: 12px; height: 12px; vertical-align: 0; }

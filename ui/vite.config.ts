@@ -10,7 +10,10 @@ export default defineConfig({
     // environment is Node; a component test opts into a DOM with a
     // `@vitest-environment happy-dom` docblock.
     environment: 'node',
-    include: ['src/**/*.test.{ts,tsx}', 'tests/**/*.test.ts'],
+    include: ['src/**/*.test.{ts,tsx}', 'design/**/*.test.{ts,tsx}', 'tests/**/*.test.ts'],
     setupFiles: ['tests/setup.ts'],
+    // Stylesheets are processed, not blanked: a component test reads its own
+    // stylesheet with `?raw` to assert the rule that draws a state.
+    css: true,
   },
 });

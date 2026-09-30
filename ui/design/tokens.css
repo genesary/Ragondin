@@ -1,0 +1,305 @@
+/* Generated from tokens.json by ui/scripts/gen-tokens.mjs (npm run tokens).
+   Do not edit: change tokens.json and regenerate. Tokens are named by role,
+   never by value, so a theme swaps values without touching a component. */
+
+/* Theme-independent tokens. */
+:root {
+  /* Type: three families, twelve styles. */
+  --font-display: "Wix Madefor Display", "Wix Madefor Text", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-sans: "Wix Madefor Text", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "Atkinson Hyperlegible Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --type-cover: 600 88px/80px var(--font-display);
+  --type-cover-tracking: -0.03em;
+  --type-title: 600 22px/28px var(--font-display);
+  --type-title-tracking: -0.012em;
+  --type-verdict: 500 17px/24px var(--font-display);
+  --type-verdict-tracking: -0.006em;
+  --type-figure: 600 28px/32px var(--font-display);
+  --type-figure-tracking: -0.02em;
+  --type-heading: 600 15px/20px var(--font-sans);
+  --type-heading-tracking: normal;
+  --type-body: 400 14px/20px var(--font-sans);
+  --type-body-tracking: normal;
+  --type-dense: 400 13px/18px var(--font-sans);
+  --type-dense-tracking: normal;
+  --type-label: 500 12px/16px var(--font-sans);
+  --type-label-tracking: normal;
+  --type-caption: 400 12px/16px var(--font-sans);
+  --type-caption-tracking: normal;
+  --type-micro: 500 11px/14px var(--font-sans);
+  --type-micro-tracking: normal;
+  --type-mono: 400 13px/18px var(--font-mono);
+  --type-mono-tracking: normal;
+  --type-hash: 500 12px/16px var(--font-mono);
+  --type-hash-tracking: 0.01em;
+  /* Space: the 4 px grid. */
+  --space-0-5: 2px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-12: 48px;
+  --space-16: 64px;
+  /* Radius: concentric. */
+  --radius-xs: 2px;
+  --radius-s: 6px;
+  --radius-track: 8px;
+  --radius-m: 10px;
+  --radius-l: 14px;
+  --radius-full: 999px;
+  /* Size: controls and canvas geometry. */
+  --size-control-s: 24px;
+  --size-control: 32px;
+  --size-control-l: 40px;
+  --size-topbar: 48px;
+  --size-inspector: 360px;
+  --size-grid: 16px;
+  --size-grid-major: 128px;
+  --size-node: 224px;
+  --size-port: 10px;
+  --size-rank-cell: 8px;
+  /* Motion: durations. */
+  --duration-0: 0ms;
+  --duration-press: 80ms;
+  --duration-micro: 140ms;
+  --duration-standard: 220ms;
+  --duration-emphasis: 320ms;
+  --duration-data: 420ms;
+  /* Motion: easings. */
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-exit: cubic-bezier(0.4, 0, 1, 1);
+  --ease-snap: cubic-bezier(0.3, 1.4, 0.6, 1);
+}
+
+/* Light: the complete palette on bare :root, so no token exists only behind a theme block. */
+:root,
+[data-theme="light"] {
+  color-scheme: light;
+  /* The desk: app background behind flush panels, page gutters. Never text on it smaller than ink-3. */
+  --ground: #f2f3f6;
+  /* Node canvas ground (Editor, Replay), under canvas-dot. In dark it is the deepest plane: things closer to you get lighter. */
+  --canvas: #eff1f5;
+  /* Flush panels, tables, node cards, inputs. The chart surface the palettes were validated on (#ffffff / #1e2125). */
+  --surface: #ffffff;
+  /* Hover wash on rows, list items and quiet buttons; the track of a segmented control. */
+  --surface-2: #f7f8fa;
+  /* Pressed state, selected table row, the thumb well of a progress track. */
+  --surface-3: #ebedf0;
+  /* Floating layers only: popover, menu, tooltip, toast, the floating inspector over the canvas. Always paired with shadow-float. */
+  --layer: #ffffff;
+  /* The pressed thumb of a segmented control: surface in light, line-strong in dark, so it reads as raised above its surface-3 track in both themes. */
+  --seg-thumb: var(--surface);
+  /* Hairlines between flush panels, table rows, list items. Decorative separation only (not a control boundary). */
+  --line: #e1e3e7;
+  /* Node card border at rest, chart axis/baseline, edge stroke at rest, dividers that group (a metric group in a table). */
+  --line-strong: #ced1d6;
+  /* Boundary of an input, select, checkbox and secondary button: 3:1 on surface in both themes. */
+  --line-control: #858991;
+  /* Dots of the canvas grid (1px every 16px). Major dots every 128px use line-strong. */
+  --canvas-dot: #c8cbd0;
+  /* Primary text and numbers on ground, canvas, surface, surface-2/3 and layer (15:1+ light, 11:1+ dark). */
+  --ink: #15181f;
+  /* Secondary text: labels, impl names, table body in dense views, on every ground and surface (7:1+). */
+  --ink-2: #44484f;
+  /* Muted text: captions, axis ticks, timestamps, placeholders; 4.5:1+ on ground, canvas, surface and surface-3 in both themes. Never for a value someone must read to decide. */
+  --ink-3: #656970;
+  /* Disabled labels and icons only (exempt from contrast by WCAG; always paired with a reason nearby). */
+  --ink-disabled: #a2a5aa;
+  /* THE accent, graphite slate. Primary button fill, selected node ring, active tab mark, focus ring, rank-strip hits. One per view carries the emphasis. 11:1+ on every ground in both themes. */
+  --accent: #242e40;
+  /* Hover of an accent fill (primary button). */
+  --accent-hover: #161f30;
+  /* Text and icons on an accent fill. */
+  --on-accent: #ffffff;
+  /* Selection halo around a selected node, selected-row tint, drop-target wash. Never behind body text that is not ink. */
+  --accent-wash: #242e4014;
+  /* Keyboard focus: 2px solid ring at 2px offset, outside the element. Alias of accent, so it clears 3:1 on every surface in both themes. */
+  --focus-ring: var(--accent);
+  /* Node family slot 1: bm25, dense, remote retrievers. Pigment register: glyph tile on node cards, palette section marks, latency-stack segments. Relief rule: always beside the family glyph and a text label. */
+  --family-retriever: #47a9df;
+  /* Node family slot 2: rrf and other merges. Pigment register: glyph tile on node cards, palette section marks, latency-stack segments. Relief rule: always beside the family glyph and a text label. */
+  --family-fusion: #dfa635;
+  /* Node family slot 3: cross-encoders, onnx rerankers. Pigment register: glyph tile on node cards, palette section marks, latency-stack segments. Relief rule: always beside the family glyph and a text label. */
+  --family-reranker: #cd5ea2;
+  /* Node family slot 4: context builders (concat, windowing). Pigment register: glyph tile on node cards, palette section marks, latency-stack segments. Relief rule: always beside the family glyph and a text label. */
+  --family-context: #5aca94;
+  /* Node family slot 5: LLM generators, local or Remote. Pigment register: glyph tile on node cards, palette section marks, latency-stack segments. Relief rule: always beside the family glyph and a text label. */
+  --family-generator: #9777d5;
+  /* Node family slot 6: the LLM-as-judge grader (reserved; arrives with the judge). Pigment register: glyph tile on node cards, palette section marks, latency-stack segments. Relief rule: always beside the family glyph and a text label. */
+  --family-judge: #bcba4e;
+  /* Neutral family for the query input node and, later, control-flow nodes (branch, loop), which are told apart by shape, not hue. */
+  --family-query: #7c8088;
+  /* Glyph ink on a family tile: 5:1+ on every light pigment, 3:1+ on every dark pigment. */
+  --on-family: #0f1216;
+  /* The baseline run of a comparison, always neutral and always first. In charts it is the reference the others are read against. */
+  --run-base: #7c8088;
+  /* Candidate run A (comparison slot 2). Ink register: bars, 2px lines, swatches. Assigned by slot when runs are selected, kept for the session; always shown with its letter. */
+  --run-a: #1161bb;
+  /* Candidate run B (comparison slot 3). Ink register: bars, 2px lines, swatches. Assigned by slot when runs are selected, kept for the session; always shown with its letter. */
+  --run-b: #9a7c00;
+  /* Candidate run C (comparison slot 4). Ink register: bars, 2px lines, swatches. Assigned by slot when runs are selected, kept for the session; always shown with its letter. */
+  --run-c: #bf2f77;
+  /* Candidate run D (comparison slot 5). Ink register: bars, 2px lines, swatches. Assigned by slot when runs are selected, kept for the session; always shown with its letter. */
+  --run-d: #62359c;
+  /* Letter on a run swatch for runs A, C and D (4.5:1+ in both themes). */
+  --on-run: #ffffff;
+  /* Letter on the run B swatch: the gold needs dark ink in both themes. */
+  --on-run-b: #0f1216;
+  /* A delta that improves on the baseline (higher nDCG, lower latency): delta text, the right arm of the per-query histogram. Always with a sign and an arrow glyph. */
+  --better: #007277;
+  /* A delta that regresses against the baseline: delta text, the left arm of the histogram. Always with a sign and an arrow glyph. */
+  --worse: #b83b07;
+  /* The neutral midpoint of the diverging histogram (unchanged queries). */
+  --delta-zero: #d5d7db;
+  /* Status good: done, connected, verified digest. Icon plus word, never color alone. */
+  --good: #1d7635;
+  /* Status warning fill and icon (running slower than usual, a digest not yet verified). As text use warning-ink. */
+  --warning: #d79700;
+  /* Warning text on surface and ground (5:1+). */
+  --warning-ink: #925b00;
+  /* Status critical: failed run, node error, unreachable service, refused edge. Icon plus word; as text 4.7:1+ in both themes. */
+  --critical: #b7162d;
+  /* Background of a good status chip. */
+  --good-wash: #1d81391a;
+  /* Background of a warning status chip or inline warning. */
+  --warning-wash: #d797001f;
+  /* Background of an inline error, an erroring node body, a critical chip. */
+  --critical-wash: #b7162d14;
+  /* Behind a modal sheet (rare: undo beats confirm). */
+  --scrim: #15181f52;
+  /* Node cards at rest on the canvas. The only resting object with a shadow. */
+  --shadow-contact: 0 0 0 1px rgba(21,24,31,0.04), 0 1px 2px rgba(21,24,31,0.08);
+  /* A node while dragged; a palette item while dragged onto the canvas. */
+  --shadow-lift: 0 2px 4px rgba(21,24,31,0.06), 0 12px 24px -6px rgba(21,24,31,0.20);
+  /* Popover, menu, tooltip, toast, floating inspector. Paired with layer. */
+  --shadow-float: 0 0 0 1px rgba(21,24,31,0.07), 0 4px 8px -2px rgba(21,24,31,0.08), 0 16px 32px -8px rgba(21,24,31,0.16);
+  /* Modal sheet over scrim. Rare. */
+  --shadow-modal: 0 0 0 1px rgba(21,24,31,0.08), 0 24px 64px -12px rgba(21,24,31,0.30);
+}
+
+/* Dark, when the system asks for it and the page has not chosen light. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --ground: #131519;
+    --canvas: #0f1114;
+    --surface: #1e2125;
+    --surface-2: #24272b;
+    --surface-3: #2b2e33;
+    --layer: #292b30;
+    --seg-thumb: var(--line-strong);
+    --line: #2e3036;
+    --line-strong: #3d4046;
+    --line-control: #686c73;
+    --canvas-dot: #33353b;
+    --ink: #edeef2;
+    --ink-2: #bbbec3;
+    --ink-3: #95989f;
+    --ink-disabled: #585b5f;
+    --accent: #d5dfef;
+    --accent-hover: #ecf2fc;
+    --on-accent: #14161b;
+    --accent-wash: #d5dfef1a;
+    --focus-ring: var(--accent);
+    --family-retriever: #247dad;
+    --family-fusion: #ad7c1d;
+    --family-reranker: #9d3772;
+    --family-context: #29996d;
+    --family-generator: #6e4da7;
+    --family-judge: #8b8c27;
+    --family-query: #82868e;
+    --on-family: #f7f8fa;
+    --run-base: #82868e;
+    --run-a: #5a94e0;
+    --run-b: #af8f15;
+    --run-c: #d45c91;
+    --run-d: #8470d6;
+    --on-run: #0f1216;
+    --on-run-b: #0f1216;
+    --better: #50bebf;
+    --worse: #f67d51;
+    --delta-zero: #3a3d43;
+    --good: #5fcc74;
+    --warning: #f2bf4e;
+    --warning-ink: #f2bf4e;
+    --critical: #f57377;
+    --good-wash: #5fcc741f;
+    --warning-wash: #f2bf4e1f;
+    --critical-wash: #f055601f;
+    --scrim: #00000099;
+    --shadow-contact: 0 0 0 1px rgba(0,0,0,0.35), 0 1px 2px rgba(0,0,0,0.45);
+    --shadow-lift: 0 2px 4px rgba(0,0,0,0.4), 0 16px 32px -8px rgba(0,0,0,0.65);
+    --shadow-float: 0 0 0 1px rgba(255,255,255,0.07), inset 0 1px 0 rgba(255,255,255,0.05), 0 12px 32px -6px rgba(0,0,0,0.7);
+    --shadow-modal: 0 0 0 1px rgba(255,255,255,0.08), 0 32px 80px -12px rgba(0,0,0,0.8);
+  }
+}
+
+/* Dark, when the page or a subtree chooses it. */
+:root[data-theme="dark"],
+[data-theme="dark"] {
+  color-scheme: dark;
+  --ground: #131519;
+  --canvas: #0f1114;
+  --surface: #1e2125;
+  --surface-2: #24272b;
+  --surface-3: #2b2e33;
+  --layer: #292b30;
+  --seg-thumb: var(--line-strong);
+  --line: #2e3036;
+  --line-strong: #3d4046;
+  --line-control: #686c73;
+  --canvas-dot: #33353b;
+  --ink: #edeef2;
+  --ink-2: #bbbec3;
+  --ink-3: #95989f;
+  --ink-disabled: #585b5f;
+  --accent: #d5dfef;
+  --accent-hover: #ecf2fc;
+  --on-accent: #14161b;
+  --accent-wash: #d5dfef1a;
+  --focus-ring: var(--accent);
+  --family-retriever: #247dad;
+  --family-fusion: #ad7c1d;
+  --family-reranker: #9d3772;
+  --family-context: #29996d;
+  --family-generator: #6e4da7;
+  --family-judge: #8b8c27;
+  --family-query: #82868e;
+  --on-family: #f7f8fa;
+  --run-base: #82868e;
+  --run-a: #5a94e0;
+  --run-b: #af8f15;
+  --run-c: #d45c91;
+  --run-d: #8470d6;
+  --on-run: #0f1216;
+  --on-run-b: #0f1216;
+  --better: #50bebf;
+  --worse: #f67d51;
+  --delta-zero: #3a3d43;
+  --good: #5fcc74;
+  --warning: #f2bf4e;
+  --warning-ink: #f2bf4e;
+  --critical: #f57377;
+  --good-wash: #5fcc741f;
+  --warning-wash: #f2bf4e1f;
+  --critical-wash: #f055601f;
+  --scrim: #00000099;
+  --shadow-contact: 0 0 0 1px rgba(0,0,0,0.35), 0 1px 2px rgba(0,0,0,0.45);
+  --shadow-lift: 0 2px 4px rgba(0,0,0,0.4), 0 16px 32px -8px rgba(0,0,0,0.65);
+  --shadow-float: 0 0 0 1px rgba(255,255,255,0.07), inset 0 1px 0 rgba(255,255,255,0.05), 0 12px 32px -6px rgba(0,0,0,0.7);
+  --shadow-modal: 0 0 0 1px rgba(255,255,255,0.08), 0 32px 80px -12px rgba(0,0,0,0.8);
+}
+
+/* Motion answers an action; under reduced motion it becomes instant. */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --duration-press: 1ms;
+    --duration-micro: 1ms;
+    --duration-standard: 1ms;
+    --duration-emphasis: 1ms;
+    --duration-data: 1ms;
+  }
+}

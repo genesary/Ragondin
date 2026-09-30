@@ -1,0 +1,19 @@
+.rg-sheet {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-m);
+  background: var(--surface);
+  box-shadow: none;
+}
+.rg-section { min-width: 0; padding: var(--space-5) var(--space-6); }
+.rg-section + .rg-section { border-top: 1px solid var(--line); }
+.rg-section__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+.rg-section__heading { margin: 0; font: var(--type-heading); color: var(--ink); }
+.rg-section__caption { margin: 0; font: var(--type-caption); color: var(--ink-3); }
