@@ -72,14 +72,17 @@ function fill(template: string, params: Record<string, string> | undefined): str
 }
 
 const isObject = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
-const isNullableString = (value: unknown) => value === undefined || value === null || typeof value === 'string';
+const isEdgeLocation = (value: unknown) => isObject(value) && typeof value.from === 'string' && typeof value.to === 'string' && typeof value.port === 'number';
 
-/** Whether a location is one: absent or null, or a node (a string or null) and an edge (null, or its two ends and port). */
+/**
+ * Whether a location is one: absent or null, or an object carrying both of
+ * its required members — a node (a string or null) and an edge (null, or its
+ * two ends and port). An absent member is no location either.
+ */
 const isLocation = (value: unknown) => {
   if (value === undefined || value === null) return true;
-  if (!isObject(value) || !isNullableString(value.node)) return false;
-  const edge = value.edge;
-  return edge === undefined || edge === null || (isObject(edge) && typeof edge.from === 'string' && typeof edge.to === 'string' && typeof edge.port === 'number');
+  if (!isObject(value)) return false;
+  return (value.node === null || typeof value.node === 'string') && (value.edge === null || isEdgeLocation(value.edge));
 };
 
 /**

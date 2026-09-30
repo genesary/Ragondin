@@ -126,6 +126,10 @@ describe('the API client, on a problem', () => {
     ['a string', '"x"'],
     ['a node that is not a string', '{"node":1,"edge":null}'],
     ['an edge that is not an object', '{"node":null,"edge":"e"}'],
+    // Both members are required: an absent one is no location either.
+    ['an empty object', '{}'],
+    ['a node without an edge', '{"node":"x"}'],
+    ['an edge without a node', '{"edge":null}'],
   ])('reports a problem whose location is %s as unreadable, never as a location it is not', async (_, location) => {
     const body = `{"code":"pipeline_invalid","detail":"d","hint":"h","location":${location}}`;
     stubFetch(async () => new Response(body, { status: 422, headers: { 'content-type': 'application/problem+json' } }));
