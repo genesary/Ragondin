@@ -71,14 +71,23 @@ function fill(template: string, params: Record<string, string> | undefined): str
   return refused ? null : path;
 }
 
-/** Whether a parsed problem body has the members every problem carries. */
+const isObject = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
+const isNullableString = (value: unknown) => value === undefined || value === null || typeof value === 'string';
+
+/** Whether a location is one: absent or null, or a node (a string or null) and an edge (null, or its two ends and port). */
+const isLocation = (value: unknown) => {
+  if (value === undefined || value === null) return true;
+  if (!isObject(value) || !isNullableString(value.node)) return false;
+  const edge = value.edge;
+  return edge === undefined || edge === null || (isObject(edge) && typeof edge.from === 'string' && typeof edge.to === 'string' && typeof edge.port === 'number');
+};
+
+/**
+ * Whether a parsed problem body has the members every problem carries, and a
+ * location a screen can render — never "at node undefined".
+ */
 const isProblem = (value: unknown): value is Problem =>
-  typeof value === 'object' &&
-  value !== null &&
-  !Array.isArray(value) &&
-  typeof (value as Problem).code === 'string' &&
-  typeof (value as Problem).detail === 'string' &&
-  typeof (value as Problem).hint === 'string';
+  isObject(value) && typeof value.code === 'string' && typeof value.detail === 'string' && typeof value.hint === 'string' && isLocation(value.location);
 
 const unreadable = (request: string, status: number, why: string): ApiProblem => ({
   code: 'response_unreadable',
@@ -154,7 +163,7 @@ export function createApiClient(): ApiClient {
       } catch {
         return failed('its problem body is not JSON');
       }
-      if (!isProblem(parsed)) return failed('its problem body lacks a string code, detail or hint');
+      if (!isProblem(parsed)) return failed('its problem body lacks a string code, detail or hint, or has a malformed location');
       return {
         ok: false,
         build,
@@ -162,11 +171,10 @@ export function createApiClient(): ApiClient {
       };
     }
     if (!response.ok) return failed(`its body is ${type === '' ? 'untyped' : type}, not a problem`);
-    if (text === '') {
-      // Only an answer the description declares empty may be: a 204, or an
-      // operation whose success response has no body.
-      const empty = response.status === 204 || EMPTY_ANSWERS.includes(`${verb} ${template}`);
-      return empty ? { ok: true, build, value: null as never } : failed('its body is empty where the description declares one');
+    // Only an operation the description declares empty may answer empty — a
+    // 204 included — or its `null` would stand in for a type it is not.
+    if (text === '' || response.status === 204) {
+      return EMPTY_ANSWERS.includes(`${verb} ${template}`) ? { ok: true, build, value: null as never } : failed('its body is empty where the description declares one');
     }
     try {
       return { ok: true, build, value: JSON.parse(text) as never };

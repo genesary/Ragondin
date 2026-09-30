@@ -2,6 +2,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createApiClient } from './client.ts';
 import type { Problem, Workspace } from './types.ts';
 
+// No operation of the golden description answers empty yet; this file's
+// client reads one that does, so the empty-answer rule is exercised both ways.
+vi.mock('./types.ts', () => ({ EMPTY_ANSWERS: ['DELETE /runs/{id}'] }));
+
 const WORKSPACE: Workspace = {
   path: '/home/ada/ws',
   build: '0.0.0+0123456789ab',
@@ -118,6 +122,17 @@ describe('the API client, on a problem', () => {
     expect(result.ok ? null : result.problem.location).toEqual(location);
   });
 
+  it.each([
+    ['a string', '"x"'],
+    ['a node that is not a string', '{"node":1,"edge":null}'],
+    ['an edge that is not an object', '{"node":null,"edge":"e"}'],
+  ])('reports a problem whose location is %s as unreadable, never as a location it is not', async (_, location) => {
+    const body = `{"code":"pipeline_invalid","detail":"d","hint":"h","location":${location}}`;
+    stubFetch(async () => new Response(body, { status: 422, headers: { 'content-type': 'application/problem+json' } }));
+    const result = await createApiClient().get('/workspace');
+    expect(result.ok ? null : result.problem.code).toBe('response_unreadable');
+  });
+
   it('keeps the build identity a problem response carries too', async () => {
     stubFetch(async () => json(problem, { status: 404, type: 'application/problem+json', build: '1.0.0+aaaaaaaaaaaa' }));
     expect((await createApiClient().get('/workspace')).build).toBe('1.0.0+aaaaaaaaaaaa');
@@ -204,6 +219,12 @@ describe('the API client, writing', () => {
     expect(init?.body).toBe('{"pipeline":"p"}');
     expect(new Headers(init?.headers).get('content-type')).toBe('application/json');
     expect(result).toEqual({ ok: true, value: { job_id: 'j1' }, build: '0.0.0+0123456789ab' });
+  });
+
+  it('reports a 204 from an operation that declares a body as unreadable, never as a null of its type', async () => {
+    stubFetch(async () => new Response(null, { status: 204, headers: { 'x-ragondin-build': 'b' } }));
+    const result = await createApiClient().get('/workspace');
+    expect(result.ok ? null : result.problem.code).toBe('response_unreadable');
   });
 
   it('del sends DELETE and reads an empty answer as null', async () => {
