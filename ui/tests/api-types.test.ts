@@ -15,6 +15,9 @@ const UI_ROOT = fileURLToPath(new URL('..', import.meta.url));
 const GOLDEN = fileURLToPath(new URL('../../runtime/ragondin-api/api/v1.json', import.meta.url));
 const TYPES = fileURLToPath(new URL('../src/api/types.ts', import.meta.url));
 
+/** A success response, for the paths a refusal test needs otherwise valid. */
+const OK = { 200: { content: { 'application/json': { schema: { type: 'string' } } } } } as const;
+
 /** A description with the given schemas and paths, and nothing else. */
 const description = (schemas: Record<string, unknown>, paths: Record<string, unknown> = {}) => ({
   openapi: '3.0.3',
@@ -85,8 +88,8 @@ describe('renderApiTypes', () => {
         },
       }),
     );
-    expect(typeOf(out, 'Code')).toBe("'run_exists' | 'run_unreadable'");
-    expect(typeOf(out, 'Kind')).toBe("'query' | 'chunks'");
+    expect(typeOf(out, 'Code')).toBe('"run_exists" | "run_unreadable"');
+    expect(typeOf(out, 'Kind')).toBe('"query" | "chunks"');
     expect(typeOf(out, 'Maybe')).toBe('Code | null');
     expect(typeOf(out, 'Value')).toBe('boolean | Value[]');
   });
@@ -117,7 +120,26 @@ describe('renderApiTypes', () => {
     const out = renderApiTypes(
       description({ H: { type: 'object', required: ['x-build'], properties: { 'x-build': { type: 'string' } } } }),
     );
-    expect(typeOf(out, 'H')).toBe("{ 'x-build': string; }");
+    expect(typeOf(out, 'H')).toBe('{ "x-build": string; }');
+  });
+
+  it('escapes an enum value or a property name holding a newline or a backslash, as JSON does', () => {
+    const out = renderApiTypes(
+      description({
+        E: { type: 'string', enum: ['a\nb', 'a\\b'] },
+        O: { type: 'object', required: ['a\nb', 'a\\b'], properties: { 'a\nb': { type: 'string' }, 'a\\b': { type: 'string' } } },
+      }),
+    );
+    expect(typeOf(out, 'E')).toBe(String.raw`"a\nb" | "a\\b"`);
+    expect(typeOf(out, 'O')).toBe(String.raw`{ "a\nb": string; "a\\b": string; }`);
+  });
+
+  it('lists the operations the description declares empty, for the client to accept an empty body from', () => {
+    const out = renderApiTypes(
+      description({}, { '/jobs/{id}': { delete: { parameters: [{ in: 'path', name: 'id', required: true, schema: { type: 'string' } }], responses: { 204: { description: 'Gone.' } } } } }),
+    );
+    expect(out).toContain('export const EMPTY_ANSWERS: readonly string[] = ["DELETE /jobs/{id}"];');
+    expect(renderApiTypes(description({}))).toContain('export const EMPTY_ANSWERS: readonly string[] = [];');
   });
 
   it('renders every path: its methods, path parameters, request body and success response', () => {
@@ -149,7 +171,7 @@ describe('renderApiTypes', () => {
       ),
     );
     expect(typeOf(out, 'Paths')).toBe(
-      "{ '/runs/{id}': { get: { params: { id: string; }; response: R; }; }; '/runs': { post: { params: Record<string, never>; body: R; response: R; }; }; }",
+      '{ "/runs/{id}": { get: { params: { id: string; }; response: R; }; }; "/runs": { post: { params: Record<string, never>; body: R; response: R; }; }; }',
     );
   });
 
@@ -162,6 +184,23 @@ describe('renderApiTypes', () => {
       /query/,
     ],
     ['a path with no success response', description({}, { '/x': { get: { parameters: [], responses: {} } } }), /success/],
+    ['a second success response', description({}, { '/x': { get: { responses: { ...OK, 201: OK[200] } } } }), /second success/],
+    ['an object with neither properties nor additionalProperties', description({ X: { type: 'object' } }), /neither/],
+    ['properties on a type that is not an object', description({ X: { type: 'string', properties: {} } }), /properties/],
+    ['a required name that is not a property', description({ X: { type: 'object', required: ['gone'], properties: {} } }), /gone/],
+    ['an operation keyword it does not check (security)', description({}, { '/x': { get: { security: [], responses: OK } } }), /security/],
+    ['an operation keyword it does not check (deprecated)', description({}, { '/x': { get: { deprecated: true, responses: OK } } }), /deprecated/],
+    [
+      'an optional request body',
+      description({}, { '/x': { post: { requestBody: { required: false, content: { 'application/json': { schema: { type: 'string' } } } }, responses: OK } } }),
+      /optional request body/,
+    ],
+    ['a path-level parameters list', description({}, { '/x': { parameters: [], get: { responses: OK } } }), /parameters/],
+    ['a path-level summary', description({}, { '/x': { summary: 's', get: { responses: OK } } }), /summary/],
+    ['an OpenAPI version other than 3.0.x', { ...description({}), openapi: '3.1.0' }, /3\.1\.0/],
+    ['a schema name that is not an identifier', description({ 'Run-Detail': { type: 'string' } }), /Run-Detail/],
+    ['a schema named as the generator’s own output', description({ Paths: { type: 'string' } }), /Paths/],
+    ['a reference to a schema that does not exist', description({ X: { $ref: '#/components/schemas/Gone' } }), /Gone/],
   ])('refuses %s rather than guessing', (_, input, message) => {
     expect(() => renderApiTypes(input)).toThrow(message);
   });

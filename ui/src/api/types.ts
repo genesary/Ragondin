@@ -15,7 +15,7 @@ export type Capabilities = {
 };
 
 /** The kind of value travelling along an edge. */
-export type EdgeKind = 'query' | 'chunks' | 'context' | 'answer' | 'opaque';
+export type EdgeKind = "query" | "chunks" | "context" | "answer" | "opaque";
 
 /** An edge, as a location names it. */
 export type EdgeLocation = {
@@ -108,7 +108,7 @@ export type Problem = {
    * The stable code a client matches on: one of `ApiError::CODES`, which
    * the schema lists as an enum so a generated client can narrow on it.
    */
-  code: 'pipeline_invalid' | 'impl_not_in_build' | 'service_unreachable' | 'run_exists' | 'run_unreadable' | 'run_not_found' | 'dataset_absent' | 'dataset_differs' | 'benchmark_not_found' | 'benchmark_exists' | 'download_failed' | 'download_cancelled' | 'import_refused' | 'backend_failed' | 'host_refused' | 'origin_refused' | 'route_not_found' | 'method_not_allowed';
+  code: "pipeline_invalid" | "impl_not_in_build" | "service_unreachable" | "run_exists" | "run_unreadable" | "run_not_found" | "dataset_absent" | "dataset_differs" | "benchmark_not_found" | "benchmark_exists" | "download_failed" | "download_cancelled" | "import_refused" | "backend_failed" | "host_refused" | "origin_refused" | "route_not_found" | "method_not_allowed";
   /** What happened, in this occurrence's words. */
   detail: string;
   /** The action that would resolve it. */
@@ -244,14 +244,14 @@ export type Workspace = {
 
 /** Every path under the API's base address: per method, its path parameters, its request body and its success response. */
 export type Paths = {
-  '/runs': {
+  "/runs": {
     /** Every run the store holds, and every one it cannot read. */
     get: {
       params: Record<string, never>;
       response: RunListing;
     };
   };
-  '/runs/{id}': {
+  "/runs/{id}": {
     /** One run: its inputs, metrics, configuration, bindings and lowered graph. */
     get: {
       params: {
@@ -260,7 +260,7 @@ export type Paths = {
       response: RunDetail;
     };
   };
-  '/workspace': {
+  "/workspace": {
     /** The workspace: its path, its settings, this build and its capabilities. */
     get: {
       params: Record<string, never>;
@@ -268,3 +268,6 @@ export type Paths = {
     };
   };
 };
+
+/** The operations whose success response has no body: the client accepts an empty answer from these, and from a 204. */
+export const EMPTY_ANSWERS: readonly string[] = [];
