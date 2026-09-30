@@ -87,13 +87,20 @@ The loop's contract, which a caller that tracks jobs builds on:
   does, so the traces the observer holds are every trace the run produced,
   however the run stops. `HarnessError::Execute` still carries its trace: a
   caller with no observer keeps the evidence.
+- **The observer is synchronous.** It runs on the loop, between one query and
+  the next, so whatever it does is added to every query's turn: a caller that
+  writes files or pushes progress from inside it holds the executor for that
+  long. Do cheap work there, or send the `QueryProgress`'s contents over a
+  channel to a consumer that does the rest.
 - **The cancellation signal is read at the top of each iteration and nowhere
   else**: between two queries, never inside one. A query in flight runs to its
   end — a `Remote` call finishes or times out under its own rules — and is
   observed; a signal read set returns `HarnessError::Cancelled` naming how many
   queries ran, which is not a failure of the pipeline. A signal set before the
   first query runs nothing and reports 0; one set after the last query finds
-  no boundary left and the run completes.
+  no boundary left and the run completes. A benchmark with no query never
+  enters the loop, so it never reads the signal: it ends as it did before,
+  in `HarnessError::NothingToScore`.
 - **Queries stay sequential.** One worker is the caller's rule, and the loop
   does not grow a second.
 
@@ -262,11 +269,11 @@ reader can disagree with it.
 
 8. **The observer is a closure; the signal is a borrowed `AtomicBool`.**
    `evaluate_observed` takes `O: FnMut(QueryProgress<'_>) + Send` by value
-   (a caller that keeps its observer passes `&mut` it) and `&AtomicBool`. A
+   (a caller that keeps its observer passes `&mut observer`) and `&AtomicBool`. A
    one-method trait would add a name and an impl for what a closure already
    is; a crate-owned token type would wrap one `AtomicBool` and gain nothing
    the standard library does not give — a caller on another thread holds an
-   `Arc<AtomicBool>` and passes `&*` it. A cancellation-token crate would be a
+   `Arc<AtomicBool>` and passes `&*arc`. A cancellation-token crate would be a
    new `[workspace.dependencies]` entry, which escalates, for a job the
    standard library already does. `SeqCst` on both sides: one load per query
    costs nothing worth reasoning about a weaker ordering for. The observer is
@@ -298,9 +305,11 @@ fixture, with a retriever that wraps the stub's and counts its calls — the
 proof that no query ran past a cancellation — and, for the signal set while a
 query is in flight, sets it from inside that query's first retrieval leg.
 
-The expected metrics in the first two files are derived by hand in a comment, from the
-fixture's qrels and from what the stub components fabricate. That is the point
-of stubs: the arithmetic is checkable by a reader, and **no number the test
-asserts is a measurement of retrieval quality**. The pipeline fixture labels its
+The expected metrics in the first two files are derived by hand in a
+comment, from the fixture's qrels and from what the stub components fabricate;
+the third reuses the first file's to pin that the new entry point scores what
+`evaluate` scored before it was rerouted. That is the point of stubs: the
+arithmetic is checkable by a reader, and **no number the test asserts is a
+measurement of retrieval quality**. The pipeline fixture labels its
 two legs with corpus document ids so that the fabricated ranking lands on judged
 documents; that is a fixture trick, not a retrieval claim.

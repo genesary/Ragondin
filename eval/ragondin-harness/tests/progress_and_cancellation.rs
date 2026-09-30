@@ -17,7 +17,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use ragondin_benchmarks::{BeirAdapter, Benchmark, BenchmarkAdapter};
+use ragondin_benchmarks::{BeirAdapter, Benchmark, BenchmarkAdapter, ReferenceAnswers};
 use ragondin_config::{ConfigSource, LocalFile};
 use ragondin_contracts::{ComponentError, RetrieveParams, Retriever};
 use ragondin_engine::EngineContext;
@@ -334,10 +334,7 @@ async fn evaluate_without_an_observer_behaves_as_before() {
     let calls = Arc::new(AtomicUsize::new(0));
     let evaluation = evaluation(&pipeline, &config, &benchmark, &index);
 
-    let before: Run = evaluate(&evaluation, &counting_context(&calls, None))
-        .await
-        .expect("the stub pipeline cannot fail on this benchmark");
-    let through_the_new_entry_point = evaluate_observed(
+    let run = evaluate_observed(
         &evaluation,
         &counting_context(&calls, None),
         |_: QueryProgress<'_>| {},
@@ -346,24 +343,149 @@ async fn evaluate_without_an_observer_behaves_as_before() {
     .await
     .expect("the stub pipeline cannot fail on this benchmark");
 
-    // Every field of the record agrees; the traces agree once each node's
-    // wall-clock duration is set aside, since two executions never take the
-    // same nanoseconds.
-    assert_eq!(before.id, through_the_new_entry_point.id);
-    assert_eq!(before.inputs, through_the_new_entry_point.inputs);
-    assert_eq!(before.config, through_the_new_entry_point.config);
-    assert_eq!(before.bindings, through_the_new_entry_point.bindings);
+    // The numbers `tests/harness_over_beir_mini.rs` derives by hand and pins
+    // for `evaluate` as it was before this entry point existed: `q-1` hits at
+    // rank 1, `q-2` at rank 2, `0042` misses, averaged over three queries.
+    // `evaluate` now calls `evaluate_observed`, so comparing the two alone
+    // would compare one code path with itself; these values are what the loop
+    // produced before it was rerouted.
+    let queries = 3.0;
+    let expected = [
+        ("ndcg@10", (1.0 + 1.0 / f64::log2(3.0)) / queries),
+        ("recall@10", 2.0 / queries),
+        ("mrr", (1.0 + 0.5) / queries),
+    ];
     assert_eq!(
-        before.metrics.iter().collect::<Vec<_>>(),
-        through_the_new_entry_point
+        run.metrics.iter().count(),
+        expected.len(),
+        "the retrieval family and nothing else: {:?}",
+        run.metrics.iter().collect::<Vec<_>>()
+    );
+    for (name, value) in expected {
+        let got = run
             .metrics
-            .iter()
-            .collect::<Vec<_>>()
-    );
+            .get(name)
+            .unwrap_or_else(|| panic!("`{name}` is reported"));
+        assert!((got - value).abs() < 1e-12, "{name}: {got} != {value}");
+    }
     assert_eq!(
-        without_durations(&before),
-        without_durations(&through_the_new_entry_point)
+        run.traces.keys().cloned().collect::<Vec<_>>(),
+        [
+            QueryId::new("0042"),
+            QueryId::new("q-1"),
+            QueryId::new("q-2")
+        ],
+        "one trace per evaluated query, filed under its id"
     );
+    let nodes = run.traces[&QueryId::new("q-1")].as_value()["nodes"].clone();
+    assert_eq!(
+        nodes
+            .as_array()
+            .expect("the trace lists its nodes")
+            .iter()
+            .map(|node| node["node"].as_str().expect("a node is named"))
+            .collect::<Vec<_>>(),
+        ["leg_a", "leg_b", "fused"],
+        "execution order, as `harness_over_beir_mini.rs` pins it"
+    );
+
+    // And `evaluate` agrees with it on every field, the traces once each
+    // node's wall-clock duration is set aside.
+    let plain: Run = evaluate(&evaluation, &counting_context(&calls, None))
+        .await
+        .expect("the stub pipeline cannot fail on this benchmark");
+    assert_eq!(plain.id, run.id);
+    assert_eq!(plain.inputs, run.inputs);
+    assert_eq!(plain.config, run.config);
+    assert_eq!(plain.bindings, run.bindings);
+    assert_eq!(
+        plain.metrics.iter().collect::<Vec<_>>(),
+        run.metrics.iter().collect::<Vec<_>>()
+    );
+    assert_eq!(without_durations(&plain), without_durations(&run));
+}
+
+#[tokio::test]
+async fn a_signal_set_after_the_last_query_lets_the_run_complete() {
+    let (pipeline, config) = pipeline(&fixture("stub-over-beir-mini.yaml")).await;
+    let benchmark = beir_mini();
+    let index = CorpusIndex::build(benchmark.corpus());
+    let calls = Arc::new(AtomicUsize::new(0));
+    let cancel = AtomicBool::new(false);
+    let mut observed = 0;
+
+    let run = evaluate_observed(
+        &evaluation(&pipeline, &config, &benchmark, &index),
+        &counting_context(&calls, None),
+        |progress: QueryProgress<'_>| {
+            observed += 1;
+            if progress.position == progress.total {
+                cancel.store(true, Ordering::SeqCst);
+            }
+        },
+        &cancel,
+    )
+    .await
+    .expect("no boundary is left to read the signal at, so the run completes");
+
+    assert_eq!(observed, 3);
+    assert_eq!(run.traces.len(), 3);
+    assert!(cancel.load(Ordering::SeqCst), "the signal was set");
+}
+
+#[tokio::test]
+async fn a_refused_query_reaches_the_observer_before_the_error_returns() {
+    // A benchmark carrying reference answers, run through a pipeline that
+    // ends in a ranking: the first query is refused with `NoAnswer`.
+    let (pipeline, config) = pipeline(&fixture("stub-over-beir-mini.yaml")).await;
+    let mut references = ReferenceAnswers::new();
+    references.insert(QueryId::new("q-1"), vec!["an answer".to_string()]);
+    let benchmark = beir_mini().with_reference_answers(references);
+    let index = CorpusIndex::build(benchmark.corpus());
+    let calls = Arc::new(AtomicUsize::new(0));
+    let mut seen = Vec::new();
+
+    let refused = evaluate_observed(
+        &evaluation(&pipeline, &config, &benchmark, &index),
+        &counting_context(&calls, None),
+        |progress: QueryProgress<'_>| seen.push(Seen::from(&progress)),
+        &AtomicBool::new(false),
+    )
+    .await
+    .expect_err("a ranking cannot be scored against reference answers");
+
+    let HarnessError::NoAnswer { query, trace, .. } = refused else {
+        panic!("expected NoAnswer: {refused}")
+    };
+    assert_eq!(seen.len(), 1, "the refused query is observed once");
+    assert_eq!(seen[0].query, query);
+    assert_eq!(
+        seen[0].trace, trace,
+        "the observer and the error carry the same trace"
+    );
+}
+
+#[tokio::test]
+async fn the_future_evaluate_observed_returns_is_send() {
+    // The launcher runs the evaluation on a worker; a future that is not
+    // `Send` would compile here and fail there. Never polled: the check is
+    // that this compiles.
+    fn assert_send<T: Send>(_: T) {}
+
+    let (pipeline, config) = pipeline(&fixture("stub-over-beir-mini.yaml")).await;
+    let benchmark = beir_mini();
+    let index = CorpusIndex::build(benchmark.corpus());
+    let evaluation = evaluation(&pipeline, &config, &benchmark, &index);
+    let ctx = counting_context(&Arc::new(AtomicUsize::new(0)), None);
+    let cancel = AtomicBool::new(false);
+    let mut observed = 0;
+
+    assert_send(evaluate_observed(
+        &evaluation,
+        &ctx,
+        |_: QueryProgress<'_>| observed += 1,
+        &cancel,
+    ));
 }
 
 /// A run's traces by query, each node's `duration_nanos` removed.

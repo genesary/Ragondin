@@ -148,7 +148,11 @@ pub struct QueryProgress<'a> {
 ///   executes, and nowhere else: a query in flight runs to its end and is
 ///   observed, and one set before the first query runs nothing. A signal set
 ///   after the last query has no boundary left to be read at, and the run
-///   completes.
+///   completes; a benchmark with no query never reads it at all.
+///
+/// The observer runs synchronously on the loop, so its cost is added to every
+/// query: a caller with slow work to do — files, a network push — sends the
+/// progress over a channel rather than doing that work inside it.
 ///
 /// # Errors
 ///
