@@ -229,6 +229,16 @@ pub fn app(store: FakeRunStore) -> Router {
 }
 
 pub fn app_with(store: FakeRunStore, launcher: FakeLauncher) -> Router {
+    app_serving(store, launcher, Router::new())
+}
+
+/// The router with `assets` mounted beside the API, as the binary mounts the
+/// UI's pages.
+pub fn app_with_assets(assets: Router) -> Router {
+    app_serving(FakeRunStore::default(), FakeLauncher::default(), assets)
+}
+
+fn app_serving(store: FakeRunStore, launcher: FakeLauncher, assets: Router) -> Router {
     router(
         Backends {
             runs: Arc::new(store),
@@ -242,6 +252,7 @@ pub fn app_with(store: FakeRunStore, launcher: FakeLauncher) -> Router {
             build: BUILD.to_owned(),
             workspace: PathBuf::from("/workspace"),
         },
+        assets,
     )
 }
 

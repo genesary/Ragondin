@@ -121,6 +121,12 @@ pub trait Registry: Send + Sync {
 
     /// Fetches a benchmark the manifest names, and verifies its digest
     /// before it counts as present.
+    ///
+    /// **Provisional shape.** A download is a job with progress, run on its
+    /// own queue beside the run queue (the design document § 7); this
+    /// signature carries none of that, and the issue that brings the manifest
+    /// and the digest-verified download (#341) settles it. Nothing calls it
+    /// yet.
     async fn download(&self, name: &str) -> Result<(), ApiError>;
 
     /// Imports a benchmark from a local path under `name`.
@@ -200,6 +206,12 @@ pub trait Launcher: Send + Sync {
 
     /// Runs a job to its end, and returns its terminal state: `Done` with the
     /// id the harness computed from what ran, `Failed`, or `Cancelled`.
+    ///
+    /// **Provisional shape.** It carries no progress observer and no
+    /// cancellation token, which the queue needs to report `Running` and to
+    /// cancel between queries. The job model and its queue (#349) settle the
+    /// signature, and the binary's implementation over the composition root
+    /// (#353) fills it. Nothing calls it yet.
     async fn execute(&self, job: Job) -> JobState;
 }
 

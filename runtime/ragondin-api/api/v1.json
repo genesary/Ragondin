@@ -250,6 +250,10 @@
             "type": "string"
           }
         },
+        "required": [
+          "edge",
+          "node"
+        ],
         "type": "object"
       },
       "ParameterValue": {
@@ -286,7 +290,22 @@
         "description": "An error, as `application/problem+json` (RFC 9457) with this API's own\nmembers: a stable `code`, a `hint` naming the action, and a `location` for\na validation failure.",
         "properties": {
           "code": {
-            "description": "The stable code a client matches on.",
+            "description": "The stable code a client matches on: one of `ApiError::CODES`, which\nthe schema lists as an enum so a generated client can narrow on it.",
+            "enum": [
+              "pipeline_invalid",
+              "impl_not_in_build",
+              "service_unreachable",
+              "run_exists",
+              "run_unreadable",
+              "run_not_found",
+              "dataset_absent",
+              "dataset_differs",
+              "backend_failed",
+              "host_refused",
+              "origin_refused",
+              "route_not_found",
+              "method_not_allowed"
+            ],
             "type": "string"
           },
           "detail": {
@@ -386,12 +405,13 @@
           }
         },
         "required": [
+          "bindings",
+          "configuration",
+          "graph",
           "id",
           "inputs",
           "metrics",
-          "configuration",
-          "bindings",
-          "graph"
+          "prefix_of"
         ],
         "type": "object"
       },

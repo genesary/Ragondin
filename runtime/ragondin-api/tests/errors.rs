@@ -174,6 +174,28 @@ async fn origin_refused() {
     assert_problem(&body, status, "origin_refused");
 }
 
+#[tokio::test]
+async fn route_not_found() {
+    let (status, body) = render(ApiError::RouteNotFound {
+        path: "/api/v1/nowhere".to_owned(),
+    })
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_problem(&body, status, "route_not_found");
+    assert!(body["detail"].as_str().unwrap().contains("/api/v1/nowhere"));
+}
+
+#[tokio::test]
+async fn method_not_allowed() {
+    let (status, body) = render(ApiError::MethodNotAllowed {
+        method: "DELETE".to_owned(),
+        path: "/api/v1/runs".to_owned(),
+    })
+    .await;
+    assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
+    assert_problem(&body, status, "method_not_allowed");
+}
+
 #[test]
 fn every_variant_has_a_distinct_code() {
     let codes = ApiError::CODES;
@@ -183,7 +205,7 @@ fn every_variant_has_a_distinct_code() {
     assert_eq!(sorted.len(), codes.len(), "codes are unique: {codes:?}");
     assert_eq!(
         codes.len(),
-        11,
+        13,
         "a variant added without a test here: {codes:?}"
     );
 }

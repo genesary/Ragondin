@@ -102,6 +102,20 @@ pub enum ApiError {
         /// The `Origin` the request named, if any.
         origin: Option<String>,
     },
+    /// A path under `/api/` that names no endpoint.
+    #[error("no endpoint at {path}")]
+    RouteNotFound {
+        /// The path as requested.
+        path: String,
+    },
+    /// An endpoint asked for with a method it does not serve.
+    #[error("{path} does not answer {method}")]
+    MethodNotAllowed {
+        /// The method as requested.
+        method: String,
+        /// The path as requested.
+        path: String,
+    },
 }
 
 impl ApiError {
@@ -118,6 +132,8 @@ impl ApiError {
         "backend_failed",
         "host_refused",
         "origin_refused",
+        "route_not_found",
+        "method_not_allowed",
     ];
 
     /// The stable code a client matches on.
@@ -136,9 +152,12 @@ impl ApiError {
             Self::RunUnreadable { .. } | Self::BackendFailed { .. } => {
                 StatusCode::INTERNAL_SERVER_ERROR
             }
-            Self::RunNotFound { .. } | Self::DatasetAbsent { .. } => StatusCode::NOT_FOUND,
+            Self::RunNotFound { .. } | Self::DatasetAbsent { .. } | Self::RouteNotFound { .. } => {
+                StatusCode::NOT_FOUND
+            }
             Self::HostRefused { .. } => StatusCode::MISDIRECTED_REQUEST,
             Self::OriginRefused { .. } => StatusCode::FORBIDDEN,
+            Self::MethodNotAllowed { .. } => StatusCode::METHOD_NOT_ALLOWED,
         }
     }
 
@@ -172,6 +191,8 @@ impl ApiError {
             Self::BackendFailed { .. } => 8,
             Self::HostRefused { .. } => 9,
             Self::OriginRefused { .. } => 10,
+            Self::RouteNotFound { .. } => 11,
+            Self::MethodNotAllowed { .. } => 12,
         }
     }
 
@@ -188,6 +209,8 @@ impl ApiError {
             Self::BackendFailed { .. } => "A backend failed",
             Self::HostRefused { .. } => "Host refused",
             Self::OriginRefused { .. } => "Origin refused",
+            Self::RouteNotFound { .. } => "No such endpoint",
+            Self::MethodNotAllowed { .. } => "Method not allowed",
         }
     }
 
@@ -226,6 +249,12 @@ impl ApiError {
             }
             Self::OriginRefused { .. } => {
                 "Send state-changing requests from the UI this server serves.".to_owned()
+            }
+            Self::RouteNotFound { .. } => {
+                "Check the path against the API description, api/v1.json.".to_owned()
+            }
+            Self::MethodNotAllowed { .. } => {
+                "Use one of the methods the `Allow` header lists.".to_owned()
             }
         }
     }
@@ -287,6 +316,13 @@ mod tests {
             },
             ApiError::HostRefused { host: None },
             ApiError::OriginRefused { origin: None },
+            ApiError::RouteNotFound {
+                path: String::new(),
+            },
+            ApiError::MethodNotAllowed {
+                method: String::new(),
+                path: String::new(),
+            },
         ];
         assert_eq!(samples.len(), ApiError::CODES.len());
         for (position, error) in samples.iter().enumerate() {

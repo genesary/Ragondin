@@ -30,10 +30,12 @@ use crate::error::ApiError;
 /// it with its own build's and reloads when they differ (ADR-C36 § 1).
 pub const BUILD_HEADER: &str = "x-ragondin-build";
 
-/// The content security policy: every source is the server's own origin.
-/// Nothing is added for inline styles — `ARCHITECTURE.md` § The layers says
-/// why the UI needs no `'unsafe-inline'`.
-const CONTENT_SECURITY_POLICY: &str = "default-src 'self'";
+/// The content security policy: every source is the server's own origin, and
+/// no page may frame this one — `default-src` does not govern framing, and a
+/// page that launches runs is a clickjacking target. Nothing is added for
+/// inline styles — `ARCHITECTURE.md` § The layers says why the UI needs no
+/// `'unsafe-inline'`.
+const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; frame-ancestors 'none'";
 
 /// What the layers compare a request against, fixed when the router is built.
 struct Envelope {
@@ -99,18 +101,20 @@ async fn content_security_policy(
 /// loopback. The comparison ignores ASCII case, as host names do; it does not
 /// resolve names, so `localhost` is refused by a server given `127.0.0.1`.
 /// A request with no `Host` header is judged by its URI's authority, which is
-/// where HTTP/2 carries it, and refused when it has neither.
+/// where HTTP/2 carries it, and refused when it has neither; one whose `Host`
+/// is present and not text is refused.
 async fn check_host(
     State(envelope): State<Arc<Envelope>>,
     request: Request<Body>,
     next: Next,
 ) -> Response {
-    let host = request
-        .headers()
-        .get(header::HOST)
-        .and_then(|value| value.to_str().ok())
-        .map(str::to_owned)
-        .or_else(|| request.uri().authority().map(|a| a.as_str().to_owned()));
+    // The URI's authority is consulted only when the header is absent: a
+    // header that is present and not text is refused, never skipped in favour
+    // of whatever the URI says.
+    let host = match request.headers().get(header::HOST) {
+        Some(value) => value.to_str().ok().map(str::to_owned),
+        None => request.uri().authority().map(|a| a.as_str().to_owned()),
+    };
     match host {
         Some(host) if host.eq_ignore_ascii_case(&envelope.served) => next.run(request).await,
         host => ApiError::HostRefused { host }.into_response(),

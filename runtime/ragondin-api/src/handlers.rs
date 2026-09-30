@@ -5,6 +5,7 @@
 use std::sync::Arc;
 
 use axum::extract::{Path, State};
+use axum::http::{Method, Uri};
 use axum::Json;
 use ragondin_experiments::{RunId, RunStore, RunStoreError};
 
@@ -82,6 +83,26 @@ pub(crate) async fn run(
     })
     .await?;
     Ok(Json(convert::detail(&run)?))
+}
+
+/// Where the API is nested. Inside the nest, axum hands a handler the path
+/// with this prefix stripped, so the two fallbacks below put it back to name
+/// the path as it was requested.
+pub(crate) const API_PREFIX: &str = "/api";
+
+/// Any path under `/api` that names no endpoint.
+pub(crate) async fn route_not_found(uri: Uri) -> ApiError {
+    ApiError::RouteNotFound {
+        path: format!("{API_PREFIX}{}", uri.path()),
+    }
+}
+
+/// An endpoint asked for with a method it does not serve.
+pub(crate) async fn method_not_allowed(method: Method, uri: Uri) -> ApiError {
+    ApiError::MethodNotAllowed {
+        method: method.to_string(),
+        path: format!("{API_PREFIX}{}", uri.path()),
+    }
 }
 
 /// Runs a synchronous store call on a blocking thread: the file backend

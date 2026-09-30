@@ -11,9 +11,11 @@
 //! execute a pipeline, construct a component or call one; the only path from
 //! the UI to the data plane is [`Launcher`], implemented by the binary.
 //!
-//! [`router`] builds the whole thing from [`Backends`] and a
-//! [`ServerConfig`], both passed in by the binary: nothing here is a static or
-//! a global. Nothing here binds a port either — the listener is the binary's.
+//! [`router`] builds the whole server from [`Backends`], a [`ServerConfig`]
+//! and the assets `Router`, all passed in by the binary, and applies the
+//! server's layers last so that nothing it answers is outside them. Nothing
+//! here is a static or a global, and nothing binds a port — the listener is
+//! the binary's.
 //!
 //! The modules:
 //!
@@ -71,18 +73,43 @@ pub struct ServerConfig {
     pub workspace: PathBuf,
 }
 
-/// The router: the three read endpoints under `/api/v1`, wrapped in the
-/// server's layers.
-pub fn router(backends: Backends, config: ServerConfig) -> Router {
+/// The whole server: the API under `/api`, `assets` beside it, and the
+/// server's layers around both.
+///
+/// `assets` is whatever else the server answers — the UI's pages, and the
+/// fallback that serves them on every client-side route. It is taken here,
+/// rather than merged by the caller into what this returns, because
+/// `Router::layer` wraps only the routes that exist when it is called: a
+/// route or a fallback added afterwards would answer a foreign `Host`
+/// without the content security policy or the build identity. The envelope
+/// is applied last, here, so nothing the server answers is outside it. Pass
+/// `Router::new()` for none.
+///
+/// Every path under `/api` is the API's: an unknown one is a
+/// `route_not_found` problem, never the assets' fallback.
+pub fn router(backends: Backends, config: ServerConfig, assets: Router) -> Router {
     let (served, build) = (config.served.clone(), config.build.clone());
-    let routes = Router::new()
-        .route("/api/v1/workspace", get(handlers::workspace))
-        .route("/api/v1/runs", get(handlers::runs))
+    // Each route answers a method it does not serve with a problem body;
+    // axum still sets `Allow`.
+    let api = Router::new()
+        .route(
+            "/v1/workspace",
+            get(handlers::workspace).fallback(handlers::method_not_allowed),
+        )
+        .route(
+            "/v1/runs",
+            get(handlers::runs).fallback(handlers::method_not_allowed),
+        )
         // axum 0.7 spells a path parameter `:id`; the description's `{id}`.
-        .route("/api/v1/runs/:id", get(handlers::run))
+        .route(
+            "/v1/runs/:id",
+            get(handlers::run).fallback(handlers::method_not_allowed),
+        )
+        .fallback(handlers::route_not_found)
         .with_state(handlers::AppState {
             backends,
             config: Arc::new(config),
         });
-    layers::wrap(routes, &served, &build)
+    let server = Router::new().nest(handlers::API_PREFIX, api).merge(assets);
+    layers::wrap(server, &served, &build)
 }

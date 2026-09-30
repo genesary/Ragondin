@@ -47,6 +47,49 @@ fn the_description_lists_every_operation_with_its_schema() {
     }
 }
 
+fn schemas() -> serde_json::Value {
+    let description: serde_json::Value =
+        serde_json::from_str(&ragondin_api::description::render()).unwrap();
+    description["components"]["schemas"].clone()
+}
+
+fn required(schema: &serde_json::Value) -> Vec<&str> {
+    schema["required"]
+        .as_array()
+        .map(|names| names.iter().map(|name| name.as_str().unwrap()).collect())
+        .unwrap_or_default()
+}
+
+/// A field serialized on every response is required in the schema, nullable
+/// when it can be null — so a generated client types it `T | null`, never
+/// `T | undefined`, which the JSON never is.
+#[test]
+fn a_field_always_serialized_is_required_even_when_nullable() {
+    let schemas = schemas();
+    assert!(required(&schemas["RunDetail"]).contains(&"prefix_of"));
+    assert_eq!(
+        schemas["RunDetail"]["properties"]["prefix_of"]["nullable"],
+        true
+    );
+    for field in ["node", "edge"] {
+        assert!(required(&schemas["Location"]).contains(&field), "{field}");
+    }
+    // `location` is omitted when absent, so it stays optional.
+    assert!(!required(&schemas["Problem"]).contains(&"location"));
+}
+
+/// A client narrows on `code`, so the schema lists the codes.
+#[test]
+fn the_problem_code_is_an_enum_of_every_stable_code() {
+    let codes: Vec<String> = schemas()["Problem"]["properties"]["code"]["enum"]
+        .as_array()
+        .expect("`code` is an enum")
+        .iter()
+        .map(|code| code.as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(codes, ragondin_api::ApiError::CODES);
+}
+
 /// The description is written from a table, and the router from code: this
 /// is what keeps the two saying the same thing.
 #[tokio::test]

@@ -112,6 +112,7 @@ pub struct UnreadableRun {
 
 /// `GET /runs/{id}`: one run, whole.
 #[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
+#[schemars(transform = every_property_required)]
 pub struct RunDetail {
     /// The run's content address.
     pub id: String,
@@ -242,7 +243,9 @@ pub struct Problem {
     pub status: u16,
     /// What happened, in this occurrence's words.
     pub detail: String,
-    /// The stable code a client matches on.
+    /// The stable code a client matches on: one of `ApiError::CODES`, which
+    /// the schema lists as an enum so a generated client can narrow on it.
+    #[schemars(schema_with = "problem_code")]
     pub code: String,
     /// The action that would resolve it.
     pub hint: String,
@@ -254,6 +257,7 @@ pub struct Problem {
 
 /// Where in a pipeline a validation failure is.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+#[schemars(transform = every_property_required)]
 pub struct Location {
     /// The node concerned, when there is one.
     pub node: Option<String>,
@@ -270,4 +274,34 @@ pub struct EdgeLocation {
     pub to: String,
     /// The position of the edge among `to`'s inputs, from 0.
     pub port: u64,
+}
+
+/// Marks every property of a struct's schema required.
+///
+/// `schemars` leaves an `Option` field out of `required`, which a generated
+/// client reads as "may be absent". The structs this is applied to serialize
+/// every field on every response, `null` included, so each is required and
+/// nullable: the client types it `T | null`, which is what the JSON holds.
+fn every_property_required(schema: &mut schemars::Schema) {
+    let names: Vec<serde_json::Value> = schema
+        .get("properties")
+        .and_then(serde_json::Value::as_object)
+        .map(|properties| {
+            properties
+                .keys()
+                .cloned()
+                .map(serde_json::Value::String)
+                .collect()
+        })
+        .unwrap_or_default();
+    schema.insert("required".to_owned(), serde_json::Value::Array(names));
+}
+
+/// The schema of `Problem::code`: a string that is one of the stable codes.
+fn problem_code(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    schemars::json_schema!({
+        "type": "string",
+        "description": "The stable code a client matches on.",
+        "enum": crate::error::ApiError::CODES,
+    })
 }

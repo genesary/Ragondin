@@ -19,7 +19,7 @@ the response types, the typed errors, and the traits the service consumes.
 
 | Piece | Role |
 |---|---|
-| `router` | Builds the router from `Backends` and a `ServerConfig`, both passed in by the binary |
+| `router` | Builds the whole server from `Backends`, a `ServerConfig` and the assets `Router`, all passed in by the binary, and wraps it in the layers last |
 | `Backends` | The five backends, each an `Arc<dyn …>`: `RunStore`, `PipelineSource`, `Registry`, `WorkspaceSettings`, `Launcher` |
 | `backends` | The four traits this crate defines, and the values they exchange |
 | `response` | Every type the API serializes — the response bodies and `Problem` |
@@ -29,8 +29,12 @@ the response types, the typed errors, and the traits the service consumes.
 | `fs` | The home of the file backends — empty today |
 
 Served today: `GET /api/v1/workspace`, `GET /api/v1/runs`,
-`GET /api/v1/runs/{id}`. Nothing here binds a port: the listener, the
-loopback-only rule and the embedded assets are the binary's.
+`GET /api/v1/runs/{id}`. Every other path under `/api` is the API's too: an
+unknown one answers `route_not_found`, and a method an endpoint does not
+serve answers `method_not_allowed` with axum's `Allow` header — problem bodies
+both, never an empty 404 or the assets' fallback. Nothing here binds a port:
+the listener, the loopback-only rule and the embedded assets themselves are
+the binary's, which hands the assets in as a `Router`.
 
 ## INV-12: this crate reaches no engine and no component
 
@@ -78,9 +82,12 @@ cluster: the binary picks each backend.
   than stalling an async worker on the disk.
 - **`Launcher` carries the shapes the design document § 7 gives**: `probe`
   returns the identity a `Remote` service reports, `identity` the run id a
-  `Submission` announces, and `execute` a `Job`'s terminal `JobState`. The
-  crate is internal, so the job model may widen `execute` — progress,
-  cancellation — without owing anyone a deprecation.
+  `Submission` announces, and `execute` a `Job`'s terminal `JobState`.
+  **`execute` and `Registry::download` are provisional**, and their doc
+  comments say so: the job model and its queue (#349) settle `execute`'s
+  progress and cancellation, and the manifest's issue (#341) settles a
+  download as a job. Nothing calls either yet, and the crate is internal, so
+  widening them owes no one a deprecation.
 - **The backends return `ApiError`.** They live in this crate or are written
   for it, and an error that already carries its code needs no second mapping.
 
@@ -110,6 +117,14 @@ run is recorded as a prefix yet.
 `unreadable`, with the store's reason, rather than dropped or failing the whole
 listing — reported, never repaired.
 
+**A field serialized on every response is required in its schema**, nullable
+when it can be null: `RunDetail::prefix_of`, `Location::node` and
+`Location::edge` carry a `transform` that lists every property as required,
+since `schemars` would otherwise leave an `Option` out and a generated client
+would type it as possibly absent. `Problem::location`, omitted when there is
+none, stays optional. `Problem::code`'s schema is an enum of
+`ApiError::CODES`, so a generated client can narrow on it.
+
 ## The error codes
 
 `ApiError` is typed with `thiserror` (ADR-C13); `anyhow` is not a dependency.
@@ -132,6 +147,8 @@ code.
 | `backend_failed` | 500 | a backend failed otherwise — listing the store, say | `GET /runs`, `GET /workspace` |
 | `host_refused` | 421 | the `Host` layer refused the request | every path |
 | `origin_refused` | 403 | the `Origin` layer refused the request | every path |
+| `route_not_found` | 404 | a path under `/api` that names no endpoint | the API's fallback |
+| `method_not_allowed` | 405 | an endpoint asked for with a method it does not serve; `Allow` lists the ones it does | each endpoint |
 
 Choices made here (`AGENTS.md` § Rules of engagement), since the design
 document § 8 lists seven codes and leaves the rest to the implementation:
@@ -140,10 +157,13 @@ document § 8 lists seven codes and leaves the rest to the implementation:
   two are different facts — nothing is there, versus something is there this
   build cannot read — and a client acts differently on each. A string that
   cannot be a run id names no run either, and gets the same answer.
-- **Four codes beyond the design's seven**: `run_not_found` for the above;
+- **Six codes beyond the design's seven**: `run_not_found` for the above;
   `backend_failed`, because a backend's I/O failure is none of the seven and
   a problem body must carry some code; `host_refused` and `origin_refused`,
-  so that the layers' refusals are problem bodies like every other error.
+  so that the layers' refusals are problem bodies like every other error;
+  `route_not_found` and `method_not_allowed`, so that axum's own empty 404
+  and 405 never reach the UI. `run_not_found` would be wrong for an unknown
+  path: it tells the client a run is missing, and a client acts on that.
 - **`dataset_absent` and `dataset_differs` have statuses**, 404 and 409, for
   an endpoint that needs the text and cannot degrade. Where replay can show
   ids instead, the design document § 8 makes them a flag in a `200` response,
@@ -154,13 +174,30 @@ document § 8 lists seven codes and leaves the rest to the implementation:
 The server's defence of its origin (ADR-C36 § 1), as Tower layers on the
 router — the network envelope, which is where ADR-C10 puts Tower, and the only
 place this crate uses it: no handler and no trait is a `tower::Service`
-(INV-11). Each is `axum::middleware::from_fn_with_state`, outermost first:
+(INV-11). Each is `axum::middleware::from_fn_with_state`, outermost first.
+
+**This crate owns the whole envelope, and applies it last.** `router` takes
+the assets — the UI's pages and the fallback that serves them on every
+client-side route — as a `Router`, nests the API under `/api` beside them, and
+only then wraps the result in the four layers. The reason is how axum's
+`Router::layer` works: it wraps the routes that exist when it is called, and a
+route merged or a fallback set afterwards answers outside the layers — a
+foreign `Host` accepted, no content security policy, no build identity. The
+UI's own page is exactly what the policy must reach (ADR-C36 § 5 makes it the
+layer that holds), so leaving the order to the caller would leave the defence
+to be remembered. The alternative, a public `envelope(Router, &ServerConfig)`
+documented as "apply last", was rejected for that reason: it is correct only
+if the binary never adds a route after calling it, and nothing would say when
+it did. `tests/layers.rs` checks that a route and a fallback in the assets
+carry both headers and are refused on a foreign `Host`.
 
 1. **The build identity**, `x-ragondin-build: <ServerConfig::build>`, on every
    response — refusals and 404s included — so the UI can compare builds on
    any answer. `GET /workspace` reports the same value in its body.
-2. **The content security policy**, `default-src 'self'`, on every response.
-   Nothing is added for styles. `'unsafe-inline'` would be needed only for a
+2. **The content security policy**, `default-src 'self'; frame-ancestors
+   'none'`, on every response. `default-src` does not govern framing, and a
+   page that launches runs and writes files is a clickjacking target, so no
+   page may frame this one. Nothing is added for styles. `'unsafe-inline'` would be needed only for a
    `<style>` element or a `style=` attribute present in served HTML; the UI's
    stylesheets are bundled files served from this origin, and React writes a
    component's inline styles through the DOM's style properties, which a
@@ -168,9 +205,15 @@ place this crate uses it: no handler and no trait is a `tower::Service`
    policy grows in the pull request that brings it, argued here.
 3. **The `Host` check**: the request's `Host` — or, without one, its URI's
    authority, where HTTP/2 carries it — must equal `ServerConfig::served`,
-   ignoring ASCII case; otherwise `host_refused`. It compares the authority
-   the server was given and resolves nothing, so `localhost` is refused by a
-   server given `127.0.0.1:7878`. This is the defence against DNS rebinding.
+   ignoring ASCII case; otherwise `host_refused`. A `Host` header that is
+   present and not text is refused — the URI is read only when the header is
+   absent. It compares the authority the server was given and resolves
+   nothing, so `localhost` is refused by a server given `127.0.0.1:7878`.
+   This is the defence against DNS rebinding. **One authority, today**: a
+   browser reaching the server through an SSH tunnel as `localhost:<port>`, or
+   on a local port other than the one served, sends a `Host` the check
+   refuses. Whether `ServerConfig::served` becomes a set of authorities is the
+   binary's to decide when it binds the listener (#339).
 4. **The `Origin` check**, on `POST`, `PUT`, `PATCH` and `DELETE`: `Origin`
    must be `http://` followed by `ServerConfig::served`; otherwise
    `origin_refused`. **A missing `Origin` is refused**, a choice made here: a
@@ -198,7 +241,9 @@ beside it: the two cannot drift silently.
 
 All admitted by ADR-C36 § 6, each argued in its root `Cargo.toml` comment:
 `axum` on the 0.7 line `tonic` 0.12 already resolves (`default-features =
-false`, `json` only — one `hyper` in `Cargo.lock`), `schemars`, and `tokio`,
+false`; `json` for the endpoints, and `tokio` and `http1` for `axum::serve`,
+named now because appending a feature to the entry later would escalate — one
+`hyper` in `Cargo.lock`, which no core crate reaches), `schemars`, and `tokio`,
 whose workspace entry now names `net`, `sync` and `time`. `tower` is a
 dev-dependency, for `ServiceExt::oneshot` in the tests; its `util` feature
 comes from `axum`'s own requirement on the same `tower`, unified by Cargo,
