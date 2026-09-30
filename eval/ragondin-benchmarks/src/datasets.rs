@@ -767,7 +767,10 @@ pub fn import(
 }
 
 /// A name is `[A-Za-z0-9_-][A-Za-z0-9._-]*`, at most [`MAX_NAME_LENGTH`]
-/// bytes: one directory name on every platform, never a staging directory's.
+/// bytes, not ending in `.`, and not a Windows device name (`CON`, `PRN`,
+/// `AUX`, `NUL`, `COM1`–`COM9`, `LPT1`–`LPT9`, in any case, with or without an
+/// extension): one directory name on every platform, never a staging
+/// directory's.
 fn check_name(name: &str) -> Result<(), ImportError> {
     let refuse = |reason| {
         Err(ImportError::InvalidName {
@@ -787,6 +790,17 @@ fn check_name(name: &str) -> Result<(), ImportError> {
     }
     if !name.bytes().all(|byte| allowed(byte) || byte == b'.') {
         return refuse("it may hold only letters, digits, `.`, `_` and `-`");
+    }
+    if name.ends_with('.') {
+        return refuse("it must not end with `.`, which Windows strips");
+    }
+    let stem = name.split('.').next().unwrap_or(name).to_ascii_uppercase();
+    let device = matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || (stem.len() == 4
+            && (stem.starts_with("COM") || stem.starts_with("LPT"))
+            && matches!(stem.as_bytes()[3], b'1'..=b'9'));
+    if device {
+        return refuse("it is a device name Windows reserves");
     }
     Ok(())
 }

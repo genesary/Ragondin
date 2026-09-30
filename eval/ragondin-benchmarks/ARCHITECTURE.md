@@ -533,7 +533,9 @@ Choices made here, inside this crate:
   blocks on the disk, and the caller decides where the blocking happens — the
   experiment plane's API runs it on a blocking thread.
 - **Import names are an allow-list**: `[A-Za-z0-9_-][A-Za-z0-9._-]*`, at most
-  64 bytes — one directory name on every platform, never a staging
+  64 bytes, not ending in `.` and not a Windows device name (`CON`, `PRN`,
+  `AUX`, `NUL`, `COM1`–`COM9`, `LPT1`–`LPT9`, in any case, with or without an
+  extension) — one directory name on every platform, never a staging
   directory's, and never a byte such as NUL that a filesystem call would
   reject after the name was accepted. A name is also refused when a dataset
   already has it, or when the manifest the caller passes names an entry with

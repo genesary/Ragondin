@@ -142,8 +142,11 @@ supplies the HTTP transport, and converts what comes back in `convert.rs`.
   `ServiceBinding` — and `BenchmarkStatus` is gone, replaced by
   `BenchmarkState`'s five states.
 - **`sweep_staging`** removes the staging directories an interrupted download
-  or import left. The binary calls it once at startup, before the queue runs:
-  a running download's staging directory has the same shape.
+  or import left. **Nothing calls it yet**: the binary must call
+  `FsRegistry::sweep_staging()` once at startup, before the queue runs —
+  owned by the issue that wires the workspace (#342) — since a running
+  download's staging directory has the same shape. Until then an interrupted
+  attempt leaves a `.`-named directory, which the listing ignores.
 - **The conformance suite** (`src/conformance.rs`, behind the `conformance`
   feature, the model `ragondin-experiments` set for `RunStore`) checks the
   contract `Registry`'s documentation states: a fresh listing; a download
@@ -238,7 +241,7 @@ code.
 | `benchmark_exists` | 409 | a download or an import whose directory is already there | `FsRegistry` |
 | `download_failed` | 502 | a fetch that failed, a file of the wrong size or digest, a snapshot of the wrong `dataset_version`, or a deadline passed; the detail names both values | `FsRegistry` |
 | `download_cancelled` | 409 | a download whose cancellation flag was set; nothing was kept | `FsRegistry` |
-| `import_refused` | 422 | an import name outside `[A-Za-z0-9_-][A-Za-z0-9._-]*` (64 bytes at most), a path that cannot be read, or a corpus its adapter refuses — the adapter's error in the detail | `FsRegistry` |
+| `import_refused` | 422 | an import name outside `[A-Za-z0-9_-][A-Za-z0-9._-]*` (64 bytes at most, no trailing `.`, no Windows device name), a path that cannot be read, or a corpus its adapter refuses — the adapter's error in the detail | `FsRegistry` |
 | `backend_failed` | 500 | a backend failed otherwise — listing the store, say | `GET /runs`, `GET /workspace` |
 | `host_refused` | 421 | the `Host` layer refused the request | every path |
 | `origin_refused` | 403 | the `Origin` layer refused the request | every path |

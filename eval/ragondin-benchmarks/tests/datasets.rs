@@ -619,6 +619,14 @@ fn an_import_name_outside_the_allowed_characters_is_refused() {
         "with space",
         "é",
         long.as_str(),
+        // Reserved device names on Windows, whatever the case or extension.
+        "CON",
+        "nul",
+        "aux.txt",
+        "COM1",
+        "lpt9.json",
+        // Windows strips a trailing dot.
+        "trailing.",
     ] {
         assert!(
             matches!(

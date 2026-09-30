@@ -140,8 +140,10 @@ pub trait Registry: Send + Sync {
     ///
     /// The queue that schedules it (the design document § 7) reads its
     /// progress from `progress`, called after every chunk, and cancels it by
-    /// setting `cancel`, checked after every chunk — the harness's
-    /// cancellation shape.
+    /// setting `cancel` — the harness's cancellation shape. Cancellation is
+    /// observed when a chunk arrives or a file starts, so against a stalled
+    /// server it takes effect only when the transport gives up: the 60 s read
+    /// timeout, or up to 30 s while connecting.
     ///
     /// # Errors
     ///
