@@ -144,7 +144,8 @@ workspace/
 ├── runtime/
 │   ├── ragondin-config             # ConfigSource (LocalFile | Stream); schema; parse → validate → compile
 │   ├── ragondin-server             # Serving: ingress → Tower stack → engine
-│   └── ragondin-experiments        # Native run store, registry, the API the UI consumes
+│   └── ragondin-experiments        # Native run store and run comparison. The API the UI consumes is a
+│                              #   crate of its own, runtime/ragondin-api (ADR-C36), not created yet
 │
 ├── testkit/                   # Reference implementations and fixtures (ADR-C33 § 1). Nothing in the product depends on them.
 │   ├── ragondin-conformance        # The suite every component implementation must pass (Local or Remote)
