@@ -58,6 +58,15 @@ dependency, works on any runner with Python 3) and enforces:
           heterogeneous traits; a `Service` is uniform, and collapsing the two
           loses the domain signature at the layer that needs it most.
 
+  INV-12 — the API crate reaches no engine and no component.
+          `ragondin-api` must not depend, directly or through any other crate,
+          on any crate under `engine/` or `components/`, nor on
+          `ragondin-remote` (ADR-C36 § 3). Closure, like INV-5, so the harness
+          and the serving driver, which both reach the engine, are refused
+          through it. The known blind spot: `ragondin-proto` is reachable
+          through `ragondin-config`, so a client hand-built over its generated
+          stubs is left to review.
+
 INV-9 is absent because there is nothing to check yet, not because it is
 undecided. INV-9 forbids deriving *the wire format* from internal IR types
 (ADR-C11: "Never derive the wire format from internal IR types; it is
@@ -451,6 +460,37 @@ def check_inv5(md: dict, pkgs_by_id: dict, edges: dict):
     return component_names, offenders
 
 
+# --- INV-12 ----------------------------------------------------------------
+# The crate that answers the browser, and the parts of the repository it may
+# not reach: the directories are decided by where a manifest lives, as INV-5's
+# are, and `ragondin-remote` by name, because it is the one crate outside those
+# directories that calls a component (ADR-C36 § 3).
+API_CRATE = "ragondin-api"
+API_DENIED_DIRECTORIES = ("engine", "components")
+API_DENIED_CRATES = {"ragondin-remote"}
+
+
+def check_inv12(md: dict, pkgs_by_id: dict, edges: dict):
+    """Return [(offender name, its directory relative to the root), …].
+
+    Over the whole `--all-features` closure of `ragondin-api`, first-party or
+    not: a crate reached through `ragondin-harness` or `ragondin-server` is
+    reached all the same, and those are the paths the rule exists to close.
+    """
+    root = md["workspace_root"]
+    denied_prefixes = tuple(
+        os.path.join(root, directory) + os.sep for directory in API_DENIED_DIRECTORIES
+    )
+    offenders = []
+    for dep_id in closure(member_id(md, pkgs_by_id, API_CRATE), edges):
+        package = pkgs_by_id[dep_id]
+        manifest_path = package["manifest_path"]
+        if manifest_path.startswith(denied_prefixes) or package["name"] in API_DENIED_CRATES:
+            directory = os.path.relpath(os.path.dirname(manifest_path), root)
+            offenders.append((package["name"], directory))
+    return sorted(offenders)
+
+
 def main() -> int:
     md = load_metadata()
     pkgs_by_id, edges = build_indexes(md)
@@ -542,6 +582,23 @@ def main() -> int:
             print(f"    {path}:{line}: impl {trait} for … — a component is not a Service")
     else:
         print("INV-11 OK — no component implements tower::Service.")
+
+    inv12 = check_inv12(md, pkgs_by_id, edges)
+    if inv12:
+        ok = False
+        print("INV-12 VIOLATION — the API crate reaches no engine and no component.")
+        print("  ragondin-api answers the browser, and must not be able to execute a")
+        print("  pipeline, construct a component or call one, in process or over the")
+        print("  wire (ADR-12, made mechanical by ADR-C36 § 3). The one path from the")
+        print("  UI to the data plane is the Launcher trait, which the binary")
+        print("  implements: put the code that needs the engine behind it.")
+        for name, directory in inv12:
+            print(f"    ragondin-api reaches {name} ({directory})")
+    else:
+        print(
+            "INV-12 OK — ragondin-api reaches no crate under engine/ or components/, "
+            "nor ragondin-remote."
+        )
 
     if not ok:
         print("\nArchitecture invariants FAILED. See the messages above.", file=sys.stderr)
