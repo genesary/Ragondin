@@ -380,7 +380,7 @@ needs a real model. The tests compile under the `service` feature, and
 - **What is deliberately left open.** A reference service for any other family.
   Streaming, retries and batching, which a product service would want and a
   fixture does not. TLS and authentication between `ragondin` and this service
-  — ADR-C32 § 3 leaves them to M6 — which are distinct from the TLS this
+  — ADR-C32 § 3 leaves them to M7 — which are distinct from the TLS this
   service uses to reach its inference server. No entry in
   `docs/OPEN_QUESTIONS.md` is opened, closed, or changed.
 

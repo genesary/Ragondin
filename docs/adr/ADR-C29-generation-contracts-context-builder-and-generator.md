@@ -29,7 +29,7 @@ signature for neither. `docs/code-architecture.md` § 6.2 sketches a
 building a prompt is a node of the graph, a generator's own private business, or
 an `Extension`. ADR-C16 fixes that a node's port kinds are coarse, parameterless
 and derived from its variant, and says in its Consequences that `NodeValue` stays
-refactorable "as kinds arrive in M3 and M4" — so a new kind is expected, and
+refactorable "as kinds arrive in M3 and M5" — so a new kind is expected, and
 nothing says which. ADR-C28 decides what the trace names for a list of chunks and
 is silent about text. ADR-9 and ADR-15 require that a generator's model, prompt,
 temperature and seed be recorded on the same footing as the embedder's, and
@@ -39,7 +39,7 @@ Four choices follow from that gap, and **none of them can be made apart from the
 others**, which is why they are one decision:
 
 - **The traits and the values they move.** Whether a context is a typed value
-  carrying which chunks it holds, or a `String`. The answer decides what M4's
+  carrying which chunks it holds, or a `String`. The answer decides what M5's
   context precision and recall can be computed from, and whether per-node replay
   can show a prompt's provenance without re-deriving it from a neighbour.
 - **The pipeline side.** Which `LogicalNode` variants exist, what each consumes
@@ -402,7 +402,7 @@ here moves per-node detail into a `tracing` macro.
 
 - **Text only — the context is a `String`, and the generator takes
   `(query, &str)`.** The smallest possible contract, and the one that loses
-  provenance at the first node. M4's context precision and recall ask *which*
+  provenance at the first node. M5's context precision and recall ask *which*
   chunks were in the prompt, and per-node replay asks the same question; with a
   bare string, both have to reach back into the previous node's trace entry and
   re-derive from a neighbour what the value itself could have carried. A contract
@@ -445,7 +445,7 @@ here moves per-node detail into a `tracing` macro.
   forbids. A parameter records an intention; the method records what answered.
 
 - **Nothing in M3 — the generator does not enter `model_hashes`.** Self-preference
-  detection waits for the judge in M4 anyway, so the cost looks deferred. It is
+  detection waits for the judge in M5 anyway, so the cost looks deferred. It is
   not: the trait gains the method later as an INV-1 break on a boundary with
   implementations behind it, and in the meantime every M3 run's identity omits
   the one model that decides its answers.

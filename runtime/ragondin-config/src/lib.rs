@@ -23,7 +23,7 @@
 //! crate is the one that supplies it.
 //!
 //! Not here: the `Stream` configuration source, the controller, and the
-//! custom-resource watch. All three are M6, and `docs/OPEN_QUESTIONS.md` #2 —
+//! custom-resource watch. All three are M7, and `docs/OPEN_QUESTIONS.md` #2 —
 //! the controller's language — is deliberately unresolved.
 
 #![warn(missing_docs)]

@@ -75,7 +75,7 @@ way to keep an address out of run identity is to keep it out of the YAML.
 Three accepted texts require exactly that. ADR-3 promises that a `Remote`
 component that wins can be ported to `Local` "with no change to any user's
 configuration". ADR-7 promises that a developer "deploys to Kubernetes without
-changing anything". The M6 milestone's exit criterion is that "the same
+changing anything". The M7 milestone's exit criterion is that "the same
 configuration runs standalone from a local file (LocalFile ConfigSource) and
 in-cluster via the controller and purpose-built gRPC config service (Stream
 ConfigSource), unchanged". A laptop's `localhost:50051` and a cluster's service
@@ -190,7 +190,7 @@ the text before the `/`, `<name>` the text between the `/` and the `=`, and
 `fusion`, `reranker`, and, once ADR-C31's nodes land, `context_builder` and
 `generator` — or `embedder`, the one family that is not a node and that this
 ADR reaches. A binding is keyed by the pair: `reranker/bge` and `embedder/bge`
-are two distinct bindings. In M6 the same arguments are written in the pod
+are two distinct bindings. In M7 the same arguments are written in the pod
 spec; the `Stream` configuration source carries only the pipeline
 representation, as ADR-7 requires.
 
@@ -269,7 +269,7 @@ loaded, and the node's `served_model` for a bound embedder. The closure is
 the composition root's own code, which a third party composing its own binary
 writes the same way (INV-7).
 
-**TLS and authentication are out of scope** until M6 decides them.
+**TLS and authentication are out of scope** until M7 decides them.
 
 ### 4. Identity, and the order in `bench`
 
@@ -435,7 +435,7 @@ feature.
   component to `Local` changes the configuration further, which ADR-3 promised
   it would not, though for the embedder and the reranker this decision's own
   per-nature keys already dent that promise; and the YAML that runs
-  locally is no longer the one that runs in the cluster, which ADR-7 and M6's
+  locally is no longer the one that runs in the cluster, which ADR-7 and M7's
   exit criterion forbid.
 
 - **A top-level `remotes:` table in the configuration**, mapping names to
@@ -594,7 +594,7 @@ feature.
   the direction, and nothing here contradicts them.
 
 - **What is deliberately left open.** The `Remote` vector store (with #24).
-  TLS and authentication on a binding (M6). What the reference generator service
+  TLS and authentication on a binding (M7). What the reference generator service
   is (#253). No entry in
   `docs/OPEN_QUESTIONS.md` is opened, closed, or changed.
 

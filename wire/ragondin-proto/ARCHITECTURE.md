@@ -25,7 +25,7 @@ service, reserved.
 **Not here.** The conversions between a domain value and its message, and the
 `Remote` adapters that call the generated clients, are `ragondin-remote`'s. The
 configuration-delivery messages and rpcs, and anything that serves or calls
-them, arrive with the `Stream` configuration source in M6.
+them, arrive with the `Stream` configuration source in M7.
 
 ## File layout
 

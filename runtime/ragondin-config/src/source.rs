@@ -6,7 +6,7 @@
 //! file on disk or from the controller over gRPC is not its concern.
 //!
 //! Only `LocalFile` exists here. `Stream` — the configuration pushed over the
-//! purpose-built gRPC service — is M6, and building it now would mean designing
+//! purpose-built gRPC service — is M7, and building it now would mean designing
 //! a protocol whose ACK/NACK shape §8.1 has settled only in outline.
 //!
 //! # The load path
@@ -43,7 +43,7 @@ use ragondin_pipeline::{
 ///
 /// `docs/system-architecture.md` §8.2 names two implementations: [`LocalFile`],
 /// here, and `Stream` — pushed from the controller over the configuration
-/// service — which is M6 and does not exist yet.
+/// service — which is M7 and does not exist yet.
 ///
 /// The method is **async**, and it is the trait — not [`LocalFile`] — that
 /// the signature is for. `Stream` reads a pushed configuration off a gRPC

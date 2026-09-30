@@ -118,7 +118,7 @@ ignore = ["RUSTSEC-2024-0436"]
 # operator, once, at startup -- and, for `ragondin compare`, the verbatim copy
 # of such a file that `bench` kept in the operator's run store. It is not
 # exposed to untrusted input: a YAML parser bug here is reachable by someone
-# who already writes the configuration file, and M6's `Stream` source carries
+# who already writes the configuration file, and M7's `Stream` source carries
 # protobuf over gRPC, not YAML.
 #
 # Revisit on either trigger, and not before:

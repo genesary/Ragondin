@@ -202,6 +202,29 @@ no `## Amendments` section was added, because there is nothing to amend.
 Recorded here so that a future reader comparing an ADR against its git history
 sees a rename rather than unexplained drift.
 
+## The 2026-09-30 milestone renumbering
+
+The front end became milestone **M4** on 2026-09-30, and every later milestone
+moved by one: the calibrated judge from M4 to M5, control flow from M5 to M6,
+cloud-native from M6 to M7, custom benchmarks from M7 to M8
+(`docs/AGENT_WORKFLOW.md` § The milestone roadmap). Eight accepted ADRs cite a
+milestone by number — ADR-C16, ADR-C29, ADR-C30, ADR-C31, ADR-C32, ADR-C33,
+ADR-C34 and ADR-C35 — and each such number was **updated mechanically** to the
+milestone's new number, so that `M5` in ADR-C30 still names the milestone that
+brings `Branch`, now M6, and `M6` in ADR-C32 still names the cloud-native one,
+now M7.
+
+It is not an exception to process rule 1, for the reason the 2026-09-05 rename
+gives: **no decision changed**, only an identifier did. Every such ADR still
+names the same milestone — the same theme and exit criterion — under the number
+it now carries. Nothing was reworded, retracted or re-argued, and no
+`## Amendments` section was added. An ADR accepted from now on names a milestone
+by its theme as well as its number, so that the next renumbering, if there is
+one, has less to touch.
+
+Recorded here so that a future reader comparing one of those ADRs against its
+git history sees a renumbering rather than unexplained drift.
+
 ## Status values
 
 - **Accepted** — the decision is in force.

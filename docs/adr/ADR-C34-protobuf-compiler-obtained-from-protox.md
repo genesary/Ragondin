@@ -26,7 +26,7 @@ exposes both, as `Builder::compile_protos` and `Builder::compile_fds`.
 
 The question reaches the default build, not only the full one.
 `ragondin-proto` is a workspace member, and `runtime/ragondin-config` depends
-on it unconditionally. That edge is declared ahead of M6's configuration
+on it unconditionally. That edge is declared ahead of M7's configuration
 delivery and is not yet used. `bin/ragondin` depends on `ragondin-config`, and
 `cargo tree -i ragondin-proto` shows the path
 `ragondin-proto → ragondin-config → ragondin`. So whatever `build.rs` requires,

@@ -18,7 +18,7 @@ YAML run locally **is** the Kubernetes custom resource, modulo the wire format.
 | `ConfigError` | Four typed diagnoses, one per thing the reader must do |
 
 `Stream` — a configuration pushed from the controller over the
-configuration-delivery service — is **M6 and deliberately absent**.
+configuration-delivery service — is **M7 and deliberately absent**.
 `docs/OPEN_QUESTIONS.md` #2 (the controller's language) is unresolved, and
 nothing here presupposes an answer to it.
 
@@ -56,5 +56,5 @@ nothing here presupposes an answer to it.
   rather than this one, and a configuration is read once, at startup, off a
   local file — never per request on a serving path.
 - **`ragondin-proto` is declared and unused.** The edge
-  `docs/code-architecture.md` §4.3 draws, kept so that M6 adds a source rather
+  `docs/code-architecture.md` §4.3 draws, kept so that M7 adds a source rather
   than a dependency.
