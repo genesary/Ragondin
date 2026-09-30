@@ -96,13 +96,40 @@ function validateLicenseExceptions(exceptions) {
 }
 
 /**
- * Every package of the project at `root` whose licence the policy does not
- * admit.
+ * Every third-party package of the project at `root`, with its licence.
  *
  * The package list is the lockfile's, so a platform-specific package this
  * machine did not install is still audited, from the licence npm recorded for
  * it; every package that is installed is read from its own package.json, which
  * is what the tree actually carries.
+ *
+ * @param {string} root
+ * @returns {{ name: string, version: string, license: string | null, dev: boolean }[]}
+ */
+function packagesOf(root) {
+  const lock = JSON.parse(readFileSync(join(root, 'package-lock.json'), 'utf8'));
+  if (lock.lockfileVersion !== 3 || typeof lock.packages !== 'object') {
+    throw new Error('package-lock.json is not a lockfile v3 with a "packages" map');
+  }
+  const packages = [];
+  for (const [key, entry] of Object.entries(lock.packages)) {
+    // The root project, and workspace links, are this repository's own code.
+    if (!key.includes('node_modules/') || entry.link === true) continue;
+    const manifestPath = join(root, key, 'package.json');
+    const installed = existsSync(manifestPath) ? JSON.parse(readFileSync(manifestPath, 'utf8')) : null;
+    packages.push({
+      name: key.slice(key.lastIndexOf('node_modules/') + 'node_modules/'.length),
+      version: String(installed?.version ?? entry.version),
+      license: installed !== null ? licenseOf(installed) : licenseOf(entry),
+      dev: entry.dev === true,
+    });
+  }
+  return packages;
+}
+
+/**
+ * Every package of the project at `root` whose licence the policy does not
+ * admit. An exception counts only for a development-only package.
  *
  * @param {string} root
  * @param {{ allow: readonly string[], exceptions: readonly LicenseException[] }} policy
@@ -111,30 +138,16 @@ function validateLicenseExceptions(exceptions) {
 export function auditLicenses(root, policy) {
   validateLicenseExceptions(policy.exceptions);
   const allow = new Set(policy.allow);
-  const lock = JSON.parse(readFileSync(join(root, 'package-lock.json'), 'utf8'));
-  if (lock.lockfileVersion !== 3 || typeof lock.packages !== 'object') {
-    throw new Error('package-lock.json is not a lockfile v3 with a "packages" map');
-  }
 
   /** @type {LicenseProblem[]} */
   const problems = [];
-  for (const [key, entry] of Object.entries(lock.packages)) {
-    // The root project, and workspace links, are this repository's own code.
-    if (!key.includes('node_modules/') || entry.link === true) continue;
-    const name = key.slice(key.lastIndexOf('node_modules/') + 'node_modules/'.length);
-
-    const manifestPath = join(root, key, 'package.json');
-    const installed = existsSync(manifestPath) ? JSON.parse(readFileSync(manifestPath, 'utf8')) : null;
-    const license = installed !== null ? licenseOf(installed) : licenseOf(entry);
-    const version = String(installed?.version ?? entry.version);
-
+  for (const { name, version, license, dev } of packagesOf(root)) {
     if (license === null) {
       problems.push({ package: name, version, license: null, problem: 'no licence field' });
       continue;
     }
-
     const admitted = new Set(allow);
-    if (entry.dev === true) {
+    if (dev) {
       for (const e of policy.exceptions) if (e.package === name) admitted.add(e.license);
     }
     if (!satisfies(license, admitted)) {
@@ -142,4 +155,29 @@ export function auditLicenses(root, policy) {
     }
   }
   return problems;
+}
+
+/**
+ * The exceptions that admit nothing: no development-only package of that name
+ * needs that licence to pass. Each is an allowance to delete.
+ *
+ * @param {string} root
+ * @param {{ allow: readonly string[], exceptions: readonly LicenseException[] }} policy
+ * @returns {LicenseException[]}
+ */
+export function unmatchedLicenseExceptions(root, policy) {
+  validateLicenseExceptions(policy.exceptions);
+  const allow = new Set(policy.allow);
+  const packages = packagesOf(root);
+  return policy.exceptions.filter(
+    (e) =>
+      !packages.some(
+        (p) =>
+          p.dev &&
+          p.name === e.package &&
+          p.license !== null &&
+          !satisfies(p.license, allow) &&
+          satisfies(p.license, new Set([...allow, e.license])),
+      ),
+  );
 }

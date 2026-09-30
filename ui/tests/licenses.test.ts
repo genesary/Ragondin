@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { LICENSE_ALLOW, LICENSE_EXCEPTIONS } from '../scripts/audit-policy.mjs';
-import { auditLicenses, satisfies } from '../scripts/licenses.mjs';
+import { auditLicenses, satisfies, unmatchedLicenseExceptions } from '../scripts/licenses.mjs';
 
 const REPO_ROOT = fileURLToPath(new URL('../..', import.meta.url));
 
@@ -158,6 +158,24 @@ describe('auditLicenses over an installed tree', () => {
       'glob-helper',
       'other',
     ]);
+  });
+
+  it('names an exception that admits nothing, so it gets deleted', () => {
+    const root = fixture({
+      'glob-helper': { lock: { license: 'MIT', dev: true }, installed: { license: 'MIT' } },
+    });
+    const absent = { ...exception, package: 'gone' };
+    expect(unmatchedLicenseExceptions(root, { ...policy, exceptions: [exception, absent] })).toEqual([
+      exception,
+      absent,
+    ]);
+  });
+
+  it('does not name an exception that is still needed', () => {
+    const root = fixture({
+      'glob-helper': { lock: { license: 'BlueOak-1.0.0', dev: true }, installed: { license: 'BlueOak-1.0.0' } },
+    });
+    expect(unmatchedLicenseExceptions(root, { ...policy, exceptions: [exception] })).toEqual([]);
   });
 
   it('refuses an exception that does not carry a date and a reason', () => {

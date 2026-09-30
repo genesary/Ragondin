@@ -11,5 +11,6 @@ export default defineConfig({
     // `@vitest-environment happy-dom` docblock.
     environment: 'node',
     include: ['src/**/*.test.{ts,tsx}', 'tests/**/*.test.ts'],
+    setupFiles: ['tests/setup.ts'],
   },
 });

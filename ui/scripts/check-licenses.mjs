@@ -2,10 +2,16 @@
 // licence the policy in audit-policy.mjs does not admit, or that has none.
 import { fileURLToPath } from 'node:url';
 import { LICENSE_ALLOW, LICENSE_EXCEPTIONS } from './audit-policy.mjs';
-import { auditLicenses } from './licenses.mjs';
+import { auditLicenses, unmatchedLicenseExceptions } from './licenses.mjs';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
-const problems = auditLicenses(root, { allow: LICENSE_ALLOW, exceptions: LICENSE_EXCEPTIONS });
+const policy = { allow: LICENSE_ALLOW, exceptions: LICENSE_EXCEPTIONS };
+
+for (const e of unmatchedLicenseExceptions(root, policy)) {
+  console.warn(`warning: licence exception ${e.package} (${e.license}) admits nothing any more; remove it.`);
+}
+
+const problems = auditLicenses(root, policy);
 
 if (problems.length > 0) {
   console.error('Licence audit failed. The allow list is deny.toml\'s; see ui/ARCHITECTURE.md § The dependency audit.');

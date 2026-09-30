@@ -47,6 +47,22 @@ describe('network confinement', () => {
     });
   }
 
+  // Every extension tsc and Vite accept is linted; one the lint skipped would
+  // be a way around it that nothing reports.
+  for (const ext of ['js', 'mjs', 'cjs', 'jsx', 'ts', 'mts', 'cts', 'tsx']) {
+    it(`rejects fetch outside src/api/ in a .${ext} file`, async () => {
+      const messages = await lint("export const r = fetch('/api/v1/runs');", join(UI_ROOT, `src/views/Example.${ext}`));
+      expect(messages.map((m) => m.ruleId)).toEqual(['no-restricted-globals']);
+    });
+  }
+
+  for (const object of ['top', 'parent', 'frames', 'opener']) {
+    it(`rejects ${object}.fetch outside src/api/`, async () => {
+      const messages = await lint(`export const r = ${object}.fetch('/api/v1/runs');`, OUTSIDE);
+      expect(messages.map((m) => m.ruleId)).toEqual(['no-restricted-properties']);
+    });
+  }
+
   it('leaves an unrelated method that happens to be called fetch alone', async () => {
     const code = 'export const r = (cache: { fetch(): number }) => cache.fetch();';
     expect(await lint(code, OUTSIDE)).toEqual([]);
