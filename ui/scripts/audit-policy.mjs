@@ -22,6 +22,7 @@ export const LICENSE_ALLOW = [
   'BSD-3-Clause',
   'BlueOak-1.0.0',
   'CDLA-Permissive-2.0',
+  'OFL-1.1',
   'ISC',
   'Unicode-3.0',
   'Unicode-DFS-2016',

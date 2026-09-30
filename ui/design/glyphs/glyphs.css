@@ -1,0 +1,38 @@
+/* Glyphs sit on one optical line with 13px text. */
+.rg-glyph {
+  display: inline-block;
+  flex: none;
+  vertical-align: -3px;
+}
+
+/* A family tile: the pigment, the glyph in on-family ink. */
+.rg-tile {
+  --fam: var(--family-query);
+  width: 24px;
+  height: 24px;
+  flex: none;
+  display: inline-grid;
+  place-content: center;
+  border-radius: var(--radius-s);
+  background: var(--fam);
+  color: var(--on-family);
+}
+.rg-tile .rg-glyph {
+  display: block;
+}
+.rg-tile[data-family="query"] { --fam: var(--family-query); }
+.rg-tile[data-family="retriever"] { --fam: var(--family-retriever); }
+.rg-tile[data-family="fusion"] { --fam: var(--family-fusion); }
+.rg-tile[data-family="reranker"] { --fam: var(--family-reranker); }
+.rg-tile[data-family="context"] { --fam: var(--family-context); }
+.rg-tile[data-family="generator"] { --fam: var(--family-generator); }
+.rg-tile[data-family="judge"] { --fam: var(--family-judge); }
+/* Control flow is structure, not a family: neutral, and a diamond. */
+.rg-tile[data-family="control"] {
+  --fam: var(--family-query);
+  border-radius: 4px;
+  transform: rotate(45deg);
+}
+.rg-tile[data-family="control"] .rg-glyph {
+  transform: rotate(-45deg);
+}

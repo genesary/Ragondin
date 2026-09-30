@@ -1,0 +1,81 @@
+/* The base stylesheet: tokens, faces, and the few element rules every screen
+   stands on. Colour, type and spacing come from tokens.css only. */
+@import './tokens.css';
+@import './fonts.css';
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  background-color: var(--ground);
+  color: var(--ink);
+  font: var(--type-body);
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+h1,
+h2,
+h3,
+h4,
+p,
+figure,
+dl,
+dd {
+  margin: 0;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+code,
+kbd,
+samp {
+  font: var(--type-mono);
+}
+
+/* Visible focus everywhere: 2px ring at 2px offset, outside the element. */
+:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* Hidden from sight, kept for assistive technology. */
+.rg-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* Motion answers an action; under reduced motion nothing travels. The
+   duration tokens already collapse (tokens.css); this catches any animation
+   or transition written with a literal. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+    scroll-behavior: auto !important;
+  }
+}

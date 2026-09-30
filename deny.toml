@@ -173,6 +173,21 @@ ignore = ["RUSTSEC-2024-0436"]
 #                  combines into an Apache-2.0 distribution without imposing
 #                  anything on a downstream user, the criterion above.
 #
+# A seventh arrived with the design system, and is on this list for files
+# committed under ui/design/fonts/ rather than for any crate or npm package:
+#
+#   OFL-1.1        the design system's three typefaces (Wix Madefor Display,
+#                  Wix Madefor Text, Atkinson Hyperlegible Mono), which the
+#                  binary serves from its own origin (ADR-C36 § 5). They
+#                  are bundled unmodified, as separate files beside their
+#                  licence text. The OFL's conditions -- no sale of a font by
+#                  itself, and a modified font may not keep its Reserved Font
+#                  Name -- bind the font files and never reach the Apache-2.0
+#                  code they ship with. A font is not a package, so no lockfile
+#                  names it: ui/scripts/font-licenses.mjs holds every font file
+#                  to this list through ui/design/fonts/LICENSES.md. Decided by
+#                  the product owner on #336.
+#
 # The rest are on the list ahead of need, so that an ordinary permissive
 # dependency does not fail CI at the moment it is added. They are not there
 # because something uses them.
@@ -193,6 +208,7 @@ allow = [
     "BSD-3-Clause",
     "BlueOak-1.0.0",
     "CDLA-Permissive-2.0",
+    "OFL-1.1",
     "ISC",
     "Unicode-3.0",
     "Unicode-DFS-2016",
