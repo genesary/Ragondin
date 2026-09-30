@@ -12,8 +12,8 @@ rust-version.workspace = true
 # independently (INV-9).
 #
 # `ragondin-proto` is declared and not yet used: the `Stream` source speaks the
-# configuration-delivery service (`ragondin-proto::config`), and that is M6.
-# The edge is the one `docs/code-architecture.md` §4.3 draws, kept so the M6
+# configuration-delivery service (`ragondin-proto::config`), and that is M7.
+# The edge is the one `docs/code-architecture.md` §4.3 draws, kept so the M7
 # work adds a source rather than a dependency.
 #
 # `serde_yaml` is supplied at this edge because `ragondin-pipeline` carries no

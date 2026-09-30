@@ -16,7 +16,7 @@ body:
     id: meta
     attributes:
       label: Type / Milestone / Labels
-      description: The issue type, its milestone (M0…M7), and the labels to apply (area, crate, size, readiness).
+      description: The issue type, its milestone (M0…M8), and the labels to apply (area, crate, size, readiness).
       value: |
         - **Type:**
         - **Milestone:**

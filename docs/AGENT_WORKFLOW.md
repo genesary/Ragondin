@@ -49,7 +49,7 @@ A **Rust language-server integration is strongly recommended**, so that agents *
 
 ## The milestone roadmap
 
-Work is organized into milestones M0…M7 (create and inspect them on GitHub; each carries its exit criterion in its description). In brief:
+Work is organized into milestones M0…M8 (create and inspect them on GitHub; each carries its exit criterion in its description). In brief:
 
 | Milestone | Theme |
 |---|---|
@@ -57,12 +57,17 @@ Work is organized into milestones M0…M7 (create and inspect them on GitHub; ea
 | **M1** | Core contracts & engine skeleton |
 | **M2** | First defensible deliverable — hybrid retrieval on BEIR (the primary guard against scope inflation) |
 | **M3** | Generation & end-to-end RAG |
-| **M4** | The calibrated judge |
-| **M5** | Control flow — corrective & agentic RAG |
-| **M6** | Cloud-native — Kubernetes, controller, config delivery |
-| **M7** | Custom benchmarks |
+| **M4** | The front end — the viewer, the launcher and the editor, at parity with the command line |
+| **M5** | The calibrated judge |
+| **M6** | Control flow — corrective & agentic RAG |
+| **M7** | Cloud-native — Kubernetes, controller, config delivery |
+| **M8** | Custom benchmarks |
 
-**Post-M7 horizon** (deliberately beyond the initial roadmap, tracked in `docs/OPEN_QUESTIONS.md`):
+The front end became M4 on 2026-09-30, and every later milestone moved by one. A milestone number written before that date in a mutable document was corrected in the same change; the accepted ADRs that cite milestones by number were updated as identifiers only, as `docs/adr/README.md` records.
+
+**Every milestone that adds a capability a user can reach — through the command line, a pipeline document or a run record — includes that capability's front-end slice in its exit criterion.** A capability that reaches the command line and not the front end is not finished. This is how every milestone before M4 already worked — `compare` shipped in M2, its parameter diff in M3 — and it is what keeps the front end from becoming a milestone of its own again. Within M4, the viewer is built before the editor and no viewer issue depends on an editor issue ([ADR-16](adr/ADR-016-visual-editing-with-the-front-end-yaml-stays-the-truth.md)), so the load-bearing views ship whatever happens to the editor's schedule.
+
+**Post-M8 horizon** (deliberately beyond the initial roadmap, tracked in `docs/OPEN_QUESTIONS.md`):
 
 - **Multi-tenant RAG-as-a-Service** — tenant isolation, quotas, security, index sharing; deferred until the research bench is proven.
 

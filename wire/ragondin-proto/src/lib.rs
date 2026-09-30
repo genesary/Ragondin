@@ -38,7 +38,7 @@ pub mod v1 {
 /// The configuration-delivery gRPC service: a reservation, with no rpc yet.
 ///
 /// Its versioned, ACK/NACK protocol is designed with the `Stream`
-/// configuration source in M6; today the module holds the service's name and
+/// configuration source in M7; today the module holds the service's name and
 /// package and nothing else.
 ///
 /// A module rather than a separate crate: config delivery shares the wire

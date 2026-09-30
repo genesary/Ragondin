@@ -21,7 +21,7 @@ An **Architecture Decision Record (ADR)** captures one architectural decision: i
 
 - **`000-template.md`** — the template every ADR follows: Context / Decision / Alternatives rejected / Consequences / Status, plus an optional Amendments section (process rule 2).
 - **`ADR-001-*.md` … `ADR-016-*.md`** — the frozen decisions of the *system* architecture, one file per decision, cited as `ADR-1` … `ADR-16`.
-- **`ADR-C01-*.md` … `ADR-C35-*.md`** — the frozen decisions of the *code* architecture, one file per decision, cited as `ADR-C1` … `ADR-C35`.
+- **`ADR-C01-*.md` … `ADR-C36-*.md`** — the frozen decisions of the *code* architecture, one file per decision, cited as `ADR-C1` … `ADR-C36`.
 
 Each file is self-contained: it should be understandable and actionable on its own, without first reading `AGENTS.md` or the architecture documents. If an ADR only makes sense after reading something else, it is under-specified and should be fixed.
 
@@ -89,6 +89,7 @@ index of citable decisions is worse than none — `just check` fails when it dri
 | [`ADR-C33`](ADR-C33-reference-generator-service-stateless-relay.md) | The reference Remote generator service is a stateless relay under testkit/, behind a feature, over one HTTP client, speaking the OpenAI-compatible chat-completions dialect | INV-4, INV-11 | accepted |
 | [`ADR-C34`](ADR-C34-protobuf-compiler-obtained-from-protox.md) | The protobuf compiler is `protox`, a build-dependency of `ragondin-proto`; no `protoc` is needed | INV-4 | accepted |
 | [`ADR-C35`](ADR-C35-component-error-crosses-the-wire-as-three-status-codes.md) | A `ComponentError` crosses the wire as one of three gRPC status codes; every `Remote` adapter maps a status back with one total function in `ragondin-remote` | INV-1 | accepted |
+| [`ADR-C36`](ADR-C36-front-end-served-by-the-binary-over-an-internal-api.md) | The front end is served by `ragondin ui` from an internal crate that reaches no engine and no component, over a versioned JSON API that is not yet promised; replay resolves passages at read time against a verified dataset; the UI is a TypeScript application under `ui/`, governed like the workspace | INV-1, INV-2, INV-4, INV-5, INV-6, INV-8, INV-9, INV-10, INV-11, INV-12 | accepted |
 
 <!-- END GENERATED ADR INDEX -->
 
@@ -142,7 +143,7 @@ stated here canonically.
 number is **never padded**:
 
 - System-architecture decisions use the bare prefix: `ADR-1` … `ADR-16`.
-- Code-architecture decisions use the `C` prefix: `ADR-C1` … `ADR-C35`.
+- Code-architecture decisions use the `C` prefix: `ADR-C1` … `ADR-C36`.
 - New decisions (from `decision` issues) continue the appropriate sequence and are added, never inserted retroactively.
 
 **The filename** is `ADR-<number>-<slug>.md`, where the number **is** padded — to
@@ -200,6 +201,29 @@ no `## Amendments` section was added, because there is nothing to amend.
 
 Recorded here so that a future reader comparing an ADR against its git history
 sees a rename rather than unexplained drift.
+
+## The 2026-09-30 milestone renumbering
+
+The front end became milestone **M4** on 2026-09-30, and every later milestone
+moved by one: the calibrated judge from M4 to M5, control flow from M5 to M6,
+cloud-native from M6 to M7, custom benchmarks from M7 to M8
+(`docs/AGENT_WORKFLOW.md` § The milestone roadmap). Eight accepted ADRs cite a
+milestone by number — ADR-C16, ADR-C29, ADR-C30, ADR-C31, ADR-C32, ADR-C33,
+ADR-C34 and ADR-C35 — and each such number was **updated mechanically** to the
+milestone's new number, so that `M5` in ADR-C30 still names the milestone that
+brings `Branch`, now M6, and `M6` in ADR-C32 still names the cloud-native one,
+now M7.
+
+It is not an exception to process rule 1, for the reason the 2026-09-05 rename
+gives: **no decision changed**, only an identifier did. Every such ADR still
+names the same milestone — the same theme and exit criterion — under the number
+it now carries. Nothing was reworded, retracted or re-argued, and no
+`## Amendments` section was added. An ADR accepted from now on names a milestone
+by its theme as well as its number, so that the next renumbering, if there is
+one, has less to touch.
+
+Recorded here so that a future reader comparing one of those ADRs against its
+git history sees a renumbering rather than unexplained drift.
 
 ## Status values
 

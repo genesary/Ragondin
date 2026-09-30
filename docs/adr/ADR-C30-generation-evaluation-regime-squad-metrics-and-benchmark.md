@@ -71,7 +71,7 @@ workspace has no chunker — `eval/ragondin-harness/src/corpus.rs` § One chunk 
 document makes each document one chunk carrying its whole text, and the M2
 encoder truncates at 256 word pieces (`max_sequence_length: 256` in the
 calibration configurations); its scorer must be deterministic, since the judge
-is M4's instrument; and its licence must allow the data to be used and a frozen
+is M5's instrument; and its licence must allow the data to be used and a frozen
 fixture of it to be committed. A second, independent review checked the
 candidates against their data rather than their papers, and its findings are
 what § 2 of the Decision rests on. They are recorded here, as evidence, rather
@@ -381,7 +381,7 @@ beside what retrieval offered — for a future per-node comparison; it is not th
 metrics' input. A benchmark that does not carry qrels (§ 5 defines *carries*)
 needs no ranking, and the walk is not attempted.
 
-**A ranking node that did not run** — possible once a `Branch` exists, in M5 —
+**A ranking node that did not run** — possible once a `Branch` exists, in M6 —
 is an open item, decided with `Branch`, not here.
 
 ### 4. What is reproduced, and what is frozen
@@ -527,7 +527,7 @@ pieces, not on the value type.
   #5.
 
 - **CRAG.** Its official scoring — perfect, acceptable, missing, incorrect —
-  presumes a judge, which is M4's instrument and which ADR-10 keeps out of the
+  presumes a judge, which is M5's instrument and which ADR-10 keeps out of the
   foundation; and its mock-API design has no counterpart in the pipeline
   representation.
 
@@ -610,7 +610,7 @@ pieces, not on the value type.
 - **What stays open.** The chunker, and with it MultiHop-RAG, together with
   `docs/OPEN_QUESTIONS.md` #5. Per-question-type reporting, which needs no
   `Query` field and takes a benchmark-side attribute when a benchmark needs it.
-  `Branch`, and what § 3 does with a ranking node that did not run, in M5.
+  `Branch`, and what § 3 does with a ranking node that did not run, in M6.
   Each is named so that the next reader can see it was weighed rather than
   missed.
 

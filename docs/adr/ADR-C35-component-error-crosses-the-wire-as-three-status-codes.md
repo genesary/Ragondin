@@ -269,7 +269,7 @@ front of the service, such as a proxy that answered `401` or `403`, which
   - The decode-size limit. `tonic`'s default of 4 MiB applies until #13 sets
     one deliberately; a message over it is `OUT_OF_RANGE`, so `Backend`.
   - TLS and authentication between `ragondin` and a service, which ADR-C32
-    § 3 leaves to M6.
+    § 3 leaves to M7.
   - No entry in `docs/OPEN_QUESTIONS.md` is opened, closed, or changed.
 
 ## Status
