@@ -4,7 +4,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-/** @typedef {import('./audit-policy.mjs').LicenseException} LicenseException */
 /**
  * @typedef {{ package: string, version: string, license: string | null, problem: 'not allowed' | 'no licence field' }} LicenseProblem
  */
@@ -81,20 +80,6 @@ function licenseOf(manifest) {
   return null;
 }
 
-/** @param {readonly LicenseException[]} exceptions */
-function validateLicenseExceptions(exceptions) {
-  for (const e of exceptions) {
-    for (const field of /** @type {const} */ (['package', 'license', 'date', 'reason'])) {
-      if (typeof e[field] !== 'string' || e[field].trim() === '') {
-        throw new Error(`licence exception ${JSON.stringify(e)} has no ${field}`);
-      }
-    }
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(e.date)) {
-      throw new Error(`licence exception for ${e.package}: date must be YYYY-MM-DD`);
-    }
-  }
-}
-
 /**
  * Every third-party package of the project at `root`, with its licence.
  *
@@ -104,7 +89,7 @@ function validateLicenseExceptions(exceptions) {
  * is what the tree actually carries.
  *
  * @param {string} root
- * @returns {{ name: string, version: string, license: string | null, dev: boolean }[]}
+ * @returns {{ name: string, version: string, license: string | null }[]}
  */
 function packagesOf(root) {
   const lock = JSON.parse(readFileSync(join(root, 'package-lock.json'), 'utf8'));
@@ -121,63 +106,30 @@ function packagesOf(root) {
       name: key.slice(key.lastIndexOf('node_modules/') + 'node_modules/'.length),
       version: String(installed?.version ?? entry.version),
       license: installed !== null ? licenseOf(installed) : licenseOf(entry),
-      dev: entry.dev === true,
     });
   }
   return packages;
 }
 
 /**
- * Every package of the project at `root` whose licence the policy does not
- * admit. An exception counts only for a development-only package.
+ * Every package of the project at `root` whose licence the allow list does not
+ * admit, runtime and development packages alike.
  *
  * @param {string} root
- * @param {{ allow: readonly string[], exceptions: readonly LicenseException[] }} policy
+ * @param {{ allow: readonly string[] }} policy
  * @returns {LicenseProblem[]}
  */
 export function auditLicenses(root, policy) {
-  validateLicenseExceptions(policy.exceptions);
   const allow = new Set(policy.allow);
 
   /** @type {LicenseProblem[]} */
   const problems = [];
-  for (const { name, version, license, dev } of packagesOf(root)) {
+  for (const { name, version, license } of packagesOf(root)) {
     if (license === null) {
       problems.push({ package: name, version, license: null, problem: 'no licence field' });
-      continue;
-    }
-    const admitted = new Set(allow);
-    if (dev) {
-      for (const e of policy.exceptions) if (e.package === name) admitted.add(e.license);
-    }
-    if (!satisfies(license, admitted)) {
+    } else if (!satisfies(license, allow)) {
       problems.push({ package: name, version, license, problem: 'not allowed' });
     }
   }
   return problems;
-}
-
-/**
- * The exceptions that admit nothing: no development-only package of that name
- * needs that licence to pass. Each is an allowance to delete.
- *
- * @param {string} root
- * @param {{ allow: readonly string[], exceptions: readonly LicenseException[] }} policy
- * @returns {LicenseException[]}
- */
-export function unmatchedLicenseExceptions(root, policy) {
-  validateLicenseExceptions(policy.exceptions);
-  const allow = new Set(policy.allow);
-  const packages = packagesOf(root);
-  return policy.exceptions.filter(
-    (e) =>
-      !packages.some(
-        (p) =>
-          p.dev &&
-          p.name === e.package &&
-          p.license !== null &&
-          !satisfies(p.license, allow) &&
-          satisfies(p.license, new Set([...allow, e.license])),
-      ),
-  );
 }

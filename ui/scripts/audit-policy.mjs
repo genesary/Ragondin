@@ -4,7 +4,9 @@
 // each list, and why each exists, is in ui/ARCHITECTURE.md § The dependency audit.
 
 /**
- * The licences any package in the tree may carry.
+ * The licences any package in the tree may carry, runtime or development
+ * alike. There is no per-package exception: a licence outside this list is
+ * refused whatever the package's role.
  *
  * A COPY of `[licenses] allow` in the repository root's deny.toml, duplicated
  * on purpose, and it must stay identical: tests/licenses.test.ts reads both and
@@ -18,33 +20,12 @@ export const LICENSE_ALLOW = [
   'MIT',
   'BSD-2-Clause',
   'BSD-3-Clause',
+  'BlueOak-1.0.0',
   'CDLA-Permissive-2.0',
   'ISC',
   'Unicode-3.0',
   'Unicode-DFS-2016',
   'Zlib',
-];
-
-/**
- * A licence outside the allow list, admitted for one named package, and only
- * while that package is a development dependency: the check ignores an
- * exception for anything the bundle ships. The shape of cargo-deny's
- * `[[licenses.exceptions]]`, plus the date and the reason deny.toml asks of
- * every allowance.
- *
- * @typedef {{ package: string, license: string, date: string, reason: string }} LicenseException
- * @type {readonly LicenseException[]}
- */
-export const LICENSE_EXCEPTIONS = [
-  {
-    package: 'minimatch',
-    license: 'BlueOak-1.0.0',
-    date: '2026-09-30',
-    reason:
-      'ESLint depends on it unconditionally, so no configuration of ours drops it. ' +
-      'The Blue Oak Model License 1.0.0 is permissive (OSI-approved, no reciprocal ' +
-      'term), and the package is a development tool that never reaches the bundle.',
-  },
 ];
 
 /**

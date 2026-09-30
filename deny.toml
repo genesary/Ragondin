@@ -164,6 +164,15 @@ ignore = ["RUSTSEC-2024-0436"]
 #                  covers is redistributed by this workspace: that crate is
 #                  `publish = false` and ships nowhere.
 #
+# A sixth arrived with the front end, and is on this list for the npm tree
+# (see below) rather than for any crate:
+#
+#   BlueOak-1.0.0  minimatch, which ESLint depends on unconditionally, a
+#                  development-only tool of ui/ that never reaches the bundle.
+#                  Permissive (OSI-approved) with no reciprocal term: it
+#                  combines into an Apache-2.0 distribution without imposing
+#                  anything on a downstream user, the criterion above.
+#
 # The rest are on the list ahead of need, so that an ordinary permissive
 # dependency does not fail CI at the moment it is added. They are not there
 # because something uses them.
@@ -182,6 +191,7 @@ allow = [
     "MIT",
     "BSD-2-Clause",
     "BSD-3-Clause",
+    "BlueOak-1.0.0",
     "CDLA-Permissive-2.0",
     "ISC",
     "Unicode-3.0",

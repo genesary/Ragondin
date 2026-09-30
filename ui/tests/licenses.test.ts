@@ -3,8 +3,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
-import { LICENSE_ALLOW, LICENSE_EXCEPTIONS } from '../scripts/audit-policy.mjs';
-import { auditLicenses, satisfies, unmatchedLicenseExceptions } from '../scripts/licenses.mjs';
+import { LICENSE_ALLOW } from '../scripts/audit-policy.mjs';
+import { auditLicenses, satisfies } from '../scripts/licenses.mjs';
 
 const REPO_ROOT = fileURLToPath(new URL('../..', import.meta.url));
 
@@ -76,7 +76,7 @@ describe('auditLicenses over an installed tree', () => {
     return root;
   }
 
-  const policy = { allow: ['MIT', 'Apache-2.0'], exceptions: [] };
+  const policy = { allow: ['MIT', 'Apache-2.0'] };
 
   it('passes a tree whose every licence is allowed', () => {
     const root = fixture({
@@ -126,72 +126,11 @@ describe('auditLicenses over an installed tree', () => {
     expect(auditLicenses(root, policy)[0]?.package).toBe('@scope/inner');
   });
 
-  const exception = {
-    package: 'glob-helper',
-    license: 'BlueOak-1.0.0',
-    date: '2026-09-30',
-    reason: 'fixture',
-  };
-
-  it('lets a named exception admit its licence for a development-only package', () => {
+  it("refuses a licence outside the list whatever the package's role", () => {
     const root = fixture({
-      'glob-helper': { lock: { license: 'BlueOak-1.0.0', dev: true }, installed: { license: 'BlueOak-1.0.0' } },
+      'dev-tool': { lock: { license: 'BlueOak-1.0.0', dev: true }, installed: { license: 'BlueOak-1.0.0' } },
+      'runtime-lib': { lock: { license: 'BlueOak-1.0.0' }, installed: { license: 'BlueOak-1.0.0' } },
     });
-    expect(auditLicenses(root, { ...policy, exceptions: [exception] })).toEqual([]);
-  });
-
-  it('never lets an exception admit a licence into the runtime tree', () => {
-    const root = fixture({
-      'glob-helper': { lock: { license: 'BlueOak-1.0.0' }, installed: { license: 'BlueOak-1.0.0' } },
-    });
-    expect(auditLicenses(root, { ...policy, exceptions: [exception] })).toEqual([
-      { package: 'glob-helper', version: '1.0.0', license: 'BlueOak-1.0.0', problem: 'not allowed' },
-    ]);
-  });
-
-  it('admits only the licence the exception names, for only the package it names', () => {
-    const root = fixture({
-      'glob-helper': { lock: { license: 'GPL-3.0-only', dev: true }, installed: { license: 'GPL-3.0-only' } },
-      other: { lock: { license: 'BlueOak-1.0.0', dev: true }, installed: { license: 'BlueOak-1.0.0' } },
-    });
-    expect(auditLicenses(root, { ...policy, exceptions: [exception] }).map((p) => p.package)).toEqual([
-      'glob-helper',
-      'other',
-    ]);
-  });
-
-  it('names an exception that admits nothing, so it gets deleted', () => {
-    const root = fixture({
-      'glob-helper': { lock: { license: 'MIT', dev: true }, installed: { license: 'MIT' } },
-    });
-    const absent = { ...exception, package: 'gone' };
-    expect(unmatchedLicenseExceptions(root, { ...policy, exceptions: [exception, absent] })).toEqual([
-      exception,
-      absent,
-    ]);
-  });
-
-  it('does not name an exception that is still needed', () => {
-    const root = fixture({
-      'glob-helper': { lock: { license: 'BlueOak-1.0.0', dev: true }, installed: { license: 'BlueOak-1.0.0' } },
-    });
-    expect(unmatchedLicenseExceptions(root, { ...policy, exceptions: [exception] })).toEqual([]);
-  });
-
-  it('refuses an exception that does not carry a date and a reason', () => {
-    const root = fixture({});
-    const bad = { package: 'glob-helper', license: 'BlueOak-1.0.0' };
-    expect(() => auditLicenses(root, { ...policy, exceptions: [bad as typeof exception] })).toThrow(/date/);
-  });
-});
-
-describe('the committed licence exceptions', () => {
-  it('each carry a package, a licence, a date and a reason', () => {
-    for (const e of LICENSE_EXCEPTIONS) {
-      expect(e.package).toMatch(/\S/);
-      expect(e.license).toMatch(/\S/);
-      expect(e.date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
-      expect(e.reason).toMatch(/\S/);
-    }
+    expect(auditLicenses(root, policy).map((p) => p.package)).toEqual(['dev-tool', 'runtime-lib']);
   });
 });
