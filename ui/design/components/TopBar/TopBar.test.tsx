@@ -21,6 +21,15 @@ describe('TopBar shell', () => {
   });
 });
 
+describe('TopBar workspace', () => {
+  it('holds whatever the application puts there, such as an indicator that is a link', () => {
+    render(<TopBar workspace={<a href="#setup">~/ragondin-ws, 2 services</a>} links={links} services={[]} />);
+    const indicator = screen.getByRole('link', { name: '~/ragondin-ws, 2 services' });
+    expect(indicator.closest('.rg-crumb')).toBeTruthy();
+    expect(indicator.closest('nav')).toBeNull();
+  });
+});
+
 describe('TopBar current screen', () => {
   it('marks the current screen by aria-current, weight and an accent mark, not colour alone', () => {
     render(<TopBar workspace="w" links={links} services={[]} />);

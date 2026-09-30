@@ -73,10 +73,16 @@ just check-deny
 just map <entity>
 just map --conflicts
 
-# The front end's gates: `npm ci`, then lint, typecheck, test, build and the
-# licence and advisory audit, inside ui/ (ui/ARCHITECTURE.md). Needs the Node
-# major pinned in ui/.node-version. No cargo recipe needs Node.
+# The front end's gates: `npm ci`, then the API types' freshness, lint,
+# typecheck, test, build and the licence and advisory audit, inside ui/
+# (ui/ARCHITECTURE.md). Needs the Node major pinned in ui/.node-version. No
+# cargo recipe needs Node.
 just check-ui
+
+# Regenerate the UI's API types, ui/src/api/types.ts, from the API's golden
+# description, after `just gen-api-description`; `check-ui` fails while they
+# are stale. Needs Node.
+just gen-ui-types
 
 # All of the above — run this before declaring any work complete. It needs
 # Node, because it runs `check-ui`.

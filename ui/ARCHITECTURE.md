@@ -2,7 +2,7 @@
 
 The front end: a TypeScript application, built with Vite and React, that the `ragondin ui` subcommand serves (ADR-C36). It is **not a crate** and sits outside Cargo, but it is **load-bearing** in the sense `AGENTS.md` § Documentation ships with the code it describes means: this file is read before `ui/` is modified, and a diff that falsifies it corrects it in the same pull request (ADR-C36 § 5).
 
-Today it is the governed application with its design system: one placeholder page, every gate green, every rule written, and the tokens, faces, glyphs and primitive components every screen will be built from under `design/` (§ The design system). No screen and no API call exist yet.
+Today it is the governed application, its design system under `design/` (§ The design system), and the shell every screen mounts into: the API client over types generated from the API's description (§ The client, § The generated types), the router and the URL state of the six screens (§ The router and the URL state), the top bar with the workspace, the theme and the connection state (§ The shell), and the build identity handshake (§ The build identity handshake). Each screen renders its empty state; its content is its own issue's.
 
 ## What lives here
 
@@ -32,10 +32,17 @@ ui/
 │   └── testing/         # the CSS reader the design tests use; nothing in the bundle imports it
 ├── src/
 │   ├── main.tsx         # mounts the application, loading design/base.css once
-│   ├── App.tsx          # the placeholder page
+│   ├── App.tsx          # the shell: top bar, workspace read, build handshake, the screen the address shows
+│   ├── routes.ts        # the URL state contract: the six screens and what each carries in the hash
+│   ├── build-identity.d.ts  # declares the build identity vite.config.ts bakes in
+│   ├── shell/           # the shell's parts: screens' empty states, the four states, workspace, theme, connection, handshake
 │   └── api/             # the only module that may touch the network
-│       └── base.ts      # the API's base address, '/api/v1'
-├── scripts/             # the dependency audit (npm and fonts), and the token generator
+│       ├── base.ts      # the API's base address, '/api/v1'
+│       ├── types.ts     # generated from the API's description (`just gen-ui-types`); never edited
+│       ├── client.ts    # the one client: get, post, put, patch, del, problems, the build identity
+│       ├── events.ts    # the event stream wrapper: reconnection and the connection state
+│       └── testing.ts   # test doubles: request-level API mocks, a fake event stream; never in the bundle
+├── scripts/             # the dependency audit (npm and fonts), the token generator, the API type generator, the build identity
 └── tests/               # tests of the governance itself: lint rule, audit, DEPENDENCIES.md, tokens, one origin, preview
 ```
 
@@ -47,6 +54,7 @@ A component's test sits beside it, in `src/` or `design/`; a test of a rule abou
 
 | Script | What it does |
 |---|---|
+| `types:check` | Fails when `src/api/types.ts` is not what the API's description generates (§ The generated types). |
 | `lint` | ESLint over everything, warnings are errors. |
 | `typecheck` | `tsc -b` over the application and the tooling, both strict. |
 | `test` | Vitest: component tests in a DOM, governance tests in Node. |
@@ -57,13 +65,15 @@ A component's test sits beside it, in `src/` or `design/`; a test of a rule abou
 
 ## The one-address rule
 
-The UI talks to one address: the origin that served it. Every request goes to the binary's JSON API under a **relative** base address, `API_BASE` in `src/api/base.ts`, and every asset — fonts included — is bundled and served by the binary, never fetched from a CDN or any other host (ADR-C36 § 5, applying ADR-012 on the browser side). `src/api/base.test.ts` asserts that the base address resolves against whatever origin served the page.
+The UI talks to one address: the origin that served it. Every request goes to the binary's JSON API under a **relative** base address, `API_BASE` in `src/api/base.ts`, through the one client in `src/api/client.ts` and the one event stream wrapper in `src/api/events.ts`, and every asset — fonts included — is bundled and served by the binary, never fetched from a CDN or any other host (ADR-C36 § 5, applying ADR-012 on the browser side). `src/api/base.test.ts` asserts that the base address resolves against whatever origin served the page.
 
 `ui/` is the **only consumer of `/api/v1`** (ADR-C36 § 2). That is what keeps the API internal rather than a stable boundary: it changes with the UI, in the same pull request. A second consumer is a decision, not a change.
 
 ## The network lint
 
 The second, best-effort layer of that rule. `eslint.config.js` makes it an error, anywhere outside `src/api/`, to name the browser's network primitives — `fetch`, `XMLHttpRequest`, `WebSocket`, `EventSource` — whether as a bare global (`no-restricted-globals`) or as a property of `window`, `globalThis`, `self`, `top`, `parent`, `frames` or `opener`, dotted or with a literal key (`no-restricted-properties`). Each message names `src/api/` and this section. It covers every source extension `tsc` and Vite accept — `.js`, `.mjs`, `.cjs`, `.jsx`, `.ts`, `.mts`, `.cts`, `.tsx` — because a file the lint does not match is a file it silently does not read. `tests/network-lint.test.ts` lints the same code as if it lived outside and inside `src/api/`, against the real configuration, and once per extension.
+
+The shell's own network access passes it with no exception added: every `fetch` is in `src/api/client.ts`, every `EventSource` in `src/api/events.ts`, and the tests' doubles of both in `src/api/testing.ts`, which a test anywhere imports so that it names no primitive itself.
 
 It is a **scan of source text, and it does not see**:
 
@@ -96,6 +106,70 @@ A green lint is evidence, not proof. **The layer that holds is the content secur
 — the shape `deny.toml`'s `ignore` comment prescribes. An exception that no longer matches anything is reported, so it gets deleted. The list is empty today. The advisory audit reads the registry's advisory database, which changes daily: like `just check-deny`, it can go red on a branch whose diff caused nothing.
 
 Adding a dependency is governed by `DEPENDENCIES.md`, whose rule is `AGENTS.md` § Conventions'.
+
+## The generated types
+
+`src/api/types.ts` is **generated from the API's golden description**, `runtime/ragondin-api/api/v1.json`, and never written by hand (ADR-C36 § 2). `just gen-ui-types` regenerates it; it is committed so a change to the API reads as a diff of the types in the same review. It holds one `export type` per schema of the description, each with the description's own documentation, and `Paths`: for every path and method, its path parameters, its request body and its success response. The client's signatures are derived from `Paths`, so a screen cannot ask a path the description does not have or read a body as the wrong type.
+
+**The freshness check** is `scripts/check-api-types.mjs`, the `types:check` step of `npm run check`: it regenerates into a temporary file and compares it with the committed one, so a description changed without `just gen-ui-types`, or a hand edit of `types.ts`, fails the gate with the first differing line and the recipe to run. `tests/api-types.test.ts` runs it on a fixture — current, a changed description, a hand edit — and asserts that `npm run check` runs it.
+
+**The generator is a script here, `scripts/api-types.mjs`, not a package.** Every OpenAPI-to-TypeScript generator on npm that was evaluated reads YAML through `js-yaml`, which depends on `argparse`, licensed Python-2.0 — off the allow list both toolchains share (§ The dependency audit) — and `openapi-typescript`, the usual choice, also declares a peer dependency on TypeScript 5, which this tree is past. Admitting one would be a change to `deny.toml`'s policy for a development convenience. The description is small and uses a fixed set of schema forms — objects, `required`, maps through `additionalProperties`, arrays, `$ref`, `enum`, `oneOf`, `anyOf`, `allOf`, `nullable` — so the script renders exactly those and **throws on any other**, naming where: a change to the description's shape stops generation rather than degrading a type to `unknown`, and is then raised against `runtime/ragondin-api`, never patched in `types.ts`. A path parameter is the only parameter it accepts, and a success response must be JSON or empty, for the same reason.
+
+## The client
+
+`src/api/client.ts` is the one client over the API: `get`, `post`, `put`, `patch` and `del` on the relative base address, typed by `Paths`. **Every outcome is a value**, `{ ok: true, value }` or `{ ok: false, problem }`, never an exception a caller could forget to catch, so a result whose failure goes unhandled is visible at the call site (the front-end design, § 8).
+
+A failure is an `ApiProblem`: `code`, `message`, `hint`, `location` (a validation failure's node or edge, else null) and `status` (null when no answer arrived). An `application/problem+json` answer is read into one as the API sent it, its `code` one of the description's enum. Three failures never reach the API's error handling, and the client names them itself: `network_failed` (no answer: the server is down or unreachable), `response_unreadable` (an error status without a problem body, or a body that is not JSON — the two sides disagree on the API), and `build_mismatch` (§ The build identity handshake). Each message names the request, `GET /api/v1/workspace`, so the inline error says what failed.
+
+The client also keeps **the build identity** of the last answer, from the `x-ragondin-build` header every response carries, problems included. The description declares no header, so that one name, `BUILD_HEADER`, is written in `client.ts` rather than generated.
+
+Tests mock the network at the request level: `src/api/testing.ts`'s `mockApi` replaces `fetch` with answers keyed by the description's own method and path template — `'GET /workspace'` — and typed by the generated body, so a mock of a path the API does not have, or a body of the wrong shape, does not compile. No server is started in a unit test.
+
+## The router and the URL state
+
+`src/routes.ts` is the URL state contract: the `Route` union names each screen and the state it carries, `formatHash` writes it and `parseHash` reads it back, and `useRoute` follows the hash. The addresses are the design's (§ 3), so a link pasted into an issue reproduces the view:
+
+| Hash | Screen and state |
+|---|---|
+| `#runs` (or empty) | Runs |
+| `#pipeline`, `#pipeline/<name>` | Pipeline, before a pipeline is chosen and with one |
+| `#compare`, `#compare/<id>+<id>…?baseline=<id>` | Compare: the runs, joined by `+`, and the baseline |
+| `#replay`, `#replay/<run>/q/<query>?with=<run>` | Replay: one query of one run, optionally beside another run |
+| `#editor`, `#editor/<name>` | Editor |
+| `#setup` | Setup |
+
+Every value is percent-encoded, so an id holding `+` or `/` round-trips. An address that names no screen, or names one malformed — a missing segment, `?baseline=` without runs, a broken escape — is **no route**, and the shell says so and offers Runs, rather than guessing a screen. A screen reads its state from the `Route` it is given and never parses the hash itself; a screen that needs more state extends its variant here, in its own issue.
+
+**Hash routing**, as the design writes the addresses: a hash never reaches the server, so every deep link works whatever serves the page and from whatever context it is pasted. **The router is this module, with no dependency.** ADR-C36 § 5 asks for a typed client-side router; the two requirements are typed state and hash routing, and none of the candidates met both within the licence policy: TanStack Router depends on `isbot`, licensed Unlicense, and wouter is Unlicense itself, both off the allow list; React Router types a route's parameters only in its framework mode, through a build plugin that generates them, and in library mode hands a screen strings, so the typed contract above would still be written here and the package would add only the matching; `type-route`, typed and hash-capable, has not been released since 2023, and its hash mode writes its own `/#/…` address back as a path, giving `#/#/runs`. What the module has to do — six shapes, parse, format, follow `hashchange` — is short and tested per route. Taking a router package later is a runtime dependency named under its own heading; it would replace this module, never sit beside it.
+
+## The build identity handshake
+
+The UI and the API it talks to must be the same build (ADR-C36 § 1). **The UI's side of the identity comes from the build**, never from a response, or the comparison would prove nothing: `vite.config.ts` defines `__RAGONDIN_BUILD__` from `scripts/build-identity.mjs`, and `src/shell/build.ts` exports it as `BUILD`. That script computes the identity **from the source the binary reads its own from**: `<version>+<commit>`, the `ragondin` crate's version — `[workspace.package]`'s, which it inherits, or its own if it declares one — and `git rev-parse --short=12 HEAD`, or `unknown` outside a checkout. Both sides read the same files of the same commit, so a UI built with the binary it is embedded in carries the identity that binary reports; a commit moves with a change to either side, which a version alone would not. The binary's side of this agreement is its build script, and the two change together.
+
+The shell compares on load, when `GET /workspace` answers, and again whenever the event stream reconnects (§ The connection state), since the server may have been restarted as another build meanwhile. `judgeBuild` decides:
+
+- **the same build**: the page continues, and forgets any earlier reload;
+- **another build, for the first time**: the page reloads once, which fetches that build's own UI, and remembers in `sessionStorage` which identity it reloaded for;
+- **the same other build after that reload**: the page refuses, with the error state naming both identities (`build_mismatch`) and how to resolve it — never reloading forever;
+- **an answer without an identity** counts as another build; a request that got **no answer** carries nothing to compare and is shown as the network failure it is.
+
+When `sessionStorage` is unavailable the tab cannot remember having reloaded, so it refuses at once rather than risk a reload loop.
+
+## The connection state
+
+`src/api/events.ts`'s `openEvents` wraps `EventSource` on the relative base address. The browser retries a dropped stream by itself while it can; when it gives up — the source is closed, as after an error status — the wrapper opens a new one, one second later, doubling up to ten seconds, and never stops. It reports `connecting`, `connected` or `disconnected`, which the top bar shows as the words `connecting`, `connected` or `disconnected — retrying` beside a filled dot or a hollow ring: **the state never reads as current while the stream is down** (the front-end design, § 8). Every connection after the first calls back so the shell re-checks the build identity; the first is not re-checked, because the page load just did.
+
+The shell opens a stream only when it is given a path: no event stream exists in the API's description yet, so today's shell opens none and shows no connection state. The job queue's stream is the first to be passed in; the wrapper is tested against a fake stream, `FakeEventSource` in `src/api/testing.ts`.
+
+## The shell
+
+`src/App.tsx` is what every screen mounts into. The top bar is design/'s `TopBar`: the name; **the workspace indicator** (`src/shell/WorkspaceIndicator.tsx`) — the path, how many services the workspace binds, and a filled dot, or a hollow ring and the words "Workspace unreachable", read from `GET /workspace` and saying so while that request is in flight, as a link that opens Setup; **the six screens as links**, the current one marked, each to its screen's bare address; the connection state when a stream is open; and **the theme control** (`src/shell/ThemeControl.tsx`), a segmented control of System, Light and Dark. The theme sets `data-theme` on the page's root, or removes it for the system's choice (§ The design system), and is remembered per viewer in `localStorage`; every storage access goes through `src/shell/storage.ts`, guarded, and the page is right without storage — the choice then simply is not remembered.
+
+The indicator shows no benchmark count: `GET /workspace` does not report one, and no endpoint lists benchmarks yet.
+
+Below the bar is the screen the address shows (`src/shell/screens.tsx`), each today in its empty state: the screen's name as the page's heading, then one sentence on the default path and the one action that leads on, which moves to the screen it names. A failed workspace read is shown above it as a section error with Retry.
+
+**The four states** are `src/shell/states.tsx` beside design/'s `EmptyState`: `Loading`, only while a request is in flight and always a label, never a bare spinner (a request has no count to show); `ErrorState`, an `ApiProblem` rendered inline — its message, where a validation failure is, its hint and its code — through `InlineMessage`, never a modal, with Retry when the caller can retry; and `Resource`, which renders a request's `RequestState` as the loading, the error or the loaded state.
 
 ## Toolchain
 
@@ -132,7 +206,7 @@ The test asserts that both dark blocks redefine exactly the set the light block 
 
 **Colour is never the only carrier.** A status, a family, a run or a better/worse reading always comes with a glyph, a letter, a mark or a word: `StatusChip` has its icon or meter and its word, `RunSwatch` its letter (or "baseline" and a dashed outline), `Delta` its sign, arrow and a hidden "better" or "worse", `FilterChip` a check when pressed, `RankStrip` filled versus hollow cells and a sentence, `TopBar` a hollow ring and "unreachable", `InlineMessage` a glyph named "Error", "Warning" or "Note", the best table value its weight and a hidden "(best)". Each such component's test asserts the second carrier, not only the colour.
 
-**Components.** One directory each under `design/components/`: the component, its stylesheet, and a test per state that asserts the rendered state and, where the state is drawn by CSS (hover, pressed, focus), the rule that draws it — the test reads the stylesheet with Vite's `?raw` import, which is why `vite.config.ts` sets `css: true`. The API is small: props for state, children for content. `Progress` throws without a finite value: there is no indeterminate variant; its `progressbar` role sits on the track, named by the count, so an action beside the count stays a button. A disabled `Button` is `aria-disabled` rather than natively disabled: it stays in the tab order and its reason describes it — the one accessible path, beside any description the caller gave, with no `title` repeating it — so a keyboard or screen-reader user reaches the reason without a pointer. Because `aria-disabled` stops nothing by itself, a disabled button is forced to `type="button"`, so it submits no form by click, Enter or Space, and none of the caller's event handlers is passed to it; a busy button is forced to `type="button"` too, so it does not submit twice. A disabled `FilterChip` or `Checkbox` shows its reason as visible text that describes the control rather than joining its name. The selected `Table` row carries `aria-current`, which a table row honours, and a bar on its edge beside the tint. `SegmentedControl` and `Tabs` keep one tab stop — on the first option when the value matches none — and the arrow keys move the choice without scrolling the page. `FamilyTile` (a family's pigment with its glyph) is a primitive beside `Glyph`, because the inspector's head and the canvas both need it. Two choices differ from the design system's reference markup, and why: `SegmentedControl` is a `radiogroup` of `radio`s rather than pressed buttons, since one tab stop moved by the arrow keys is the radio-group pattern assistive technology expects; `StatusChip` has a `warning` state beside the four the issue named, because the design system draws one.
+**Components.** One directory each under `design/components/`: the component, its stylesheet, and a test per state that asserts the rendered state and, where the state is drawn by CSS (hover, pressed, focus), the rule that draws it — the test reads the stylesheet with Vite's `?raw` import, which is why `vite.config.ts` sets `css: true`. The API is small: props for state, children for content. `Progress` throws without a finite value: there is no indeterminate variant; its `progressbar` role sits on the track, named by the count, so an action beside the count stays a button. A disabled `Button` is `aria-disabled` rather than natively disabled: it stays in the tab order and its reason describes it — the one accessible path, beside any description the caller gave, with no `title` repeating it — so a keyboard or screen-reader user reaches the reason without a pointer. Because `aria-disabled` stops nothing by itself, a disabled button is forced to `type="button"`, so it submits no form by click, Enter or Space, and none of the caller's activation handlers — click, double click, key down and up, pointer, mouse and touch press and release, submit, in either phase — is passed to it; its focus and hover handlers are, because a tooltip saying why it refuses is wired through them and is needed most while it refuses. A busy button is forced to `type="button"` too, so it does not submit twice. A disabled `FilterChip` or `Checkbox` shows its reason as visible text that describes the control rather than joining its name. The selected `Table` row carries `aria-current`, which a table row honours, and a bar on its edge beside the tint. `SegmentedControl` and `Tabs` keep one tab stop — on the first option when the value matches none — and the arrow keys move the choice without scrolling the page. `TopBar`'s workspace slot takes any content — a path, or the shell's workspace indicator, which is a link to Setup (§ The shell). `FamilyTile` (a family's pigment with its glyph) is a primitive beside `Glyph`, because the inspector's head and the canvas both need it. Two choices differ from the design system's reference markup, and why: `SegmentedControl` is a `radiogroup` of `radio`s rather than pressed buttons, since one tab stop moved by the arrow keys is the radio-group pattern assistive technology expects; `StatusChip` has a `warning` state beside the four the issue named, because the design system draws one.
 
 **Fonts** are the upstream projects' own woff2 files, unmodified, in the upright weights the type scale uses (`design/fonts/LICENSES.md` lists them, where they came from and why each weight is there). `fonts.css` points every face at `./fonts/`, never at a host, with `font-display: swap` so the fallback stack stands in while a face loads. The wordmark's 650 resolves to the 700 file by the browser's weight matching.
 

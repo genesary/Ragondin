@@ -1,10 +1,16 @@
+import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitest/config';
+import { buildIdentity } from './scripts/build-identity.mjs';
 
 // No React plugin: esbuild compiles JSX with the automatic runtime on its own,
 // and the one thing the plugin adds, Fast Refresh in the dev server, does not
 // yet pay for the plugin's transitive tree. ARCHITECTURE.md § Toolchain says why.
 export default defineConfig({
   esbuild: { jsx: 'automatic' },
+  // The build identity, computed from the build rather than read from the
+  // first response, or the handshake would compare the server with itself.
+  // ARCHITECTURE.md § The build identity handshake.
+  define: { __RAGONDIN_BUILD__: JSON.stringify(buildIdentity(fileURLToPath(new URL('..', import.meta.url)))) },
   test: {
     // The governance tests read files and run ESLint, so the default
     // environment is Node; a component test opts into a DOM with a

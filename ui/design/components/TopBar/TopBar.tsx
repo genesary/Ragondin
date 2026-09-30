@@ -5,8 +5,8 @@ export type TopBarLink = { label: string; href: string; current?: boolean };
 export type TopBarService = { name: string; connected: boolean };
 
 export type TopBarProps = {
-  /** The workspace path, set in mono. */
-  workspace: string;
+  /** The workspace, set in mono: its path, or the application's indicator of it. */
+  workspace: ReactNode;
   /** The screens, in the order the application gives. */
   links: readonly TopBarLink[];
   services: readonly TopBarService[];

@@ -33,3 +33,7 @@ The `[workspace.dependencies]` rule, transposed to the npm tree (ADR-C36 § 5; `
 | `typescript-eslint` | Lets ESLint parse TypeScript, and its recommended rules. |
 | `vite` | The dev server and the production build. |
 | `vitest` | The test runner. |
+
+## Roles filled without a dependency
+
+Two roles the front end needs are filled by code in `ui/` rather than by a package, because no candidate passed the audit or met the role: **the API type generator** (`scripts/api-types.mjs`; every generator evaluated pulls `argparse`, licensed Python-2.0) and **the typed hash router** (`src/routes.ts`; the typed candidates were off the licence list, untyped outside a framework mode, or broken in hash mode). `ARCHITECTURE.md` § The generated types and § The router and the URL state give the candidates and the reasons. A package that later takes either role is added under the rule above, and replaces the code rather than sitting beside it.
