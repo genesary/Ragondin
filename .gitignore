@@ -31,3 +31,8 @@ __pycache__/
 .tokensave
 # Local, uncommitted external-review prompt
 /REVIEW_PROMPT.md
+
+# The front end's installed packages and build output. Nothing here commits built
+# assets; how the binary handles a missing ui/dist/ is the embedding's concern.
+ui/node_modules/
+ui/dist/

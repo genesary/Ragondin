@@ -164,6 +164,15 @@ ignore = ["RUSTSEC-2024-0436"]
 #                  covers is redistributed by this workspace: that crate is
 #                  `publish = false` and ships nowhere.
 #
+# A sixth arrived with the front end, and is on this list for the npm tree
+# (see below) rather than for any crate:
+#
+#   BlueOak-1.0.0  minimatch, which ESLint depends on unconditionally, a
+#                  development-only tool of ui/ that never reaches the bundle.
+#                  Permissive (OSI-approved) with no reciprocal term: it
+#                  combines into an Apache-2.0 distribution without imposing
+#                  anything on a downstream user, the criterion above.
+#
 # The rest are on the list ahead of need, so that an ordinary permissive
 # dependency does not fail CI at the moment it is added. They are not there
 # because something uses them.
@@ -171,11 +180,18 @@ ignore = ["RUSTSEC-2024-0436"]
 # MPL-2.0 is deliberately absent. It is file-level copyleft rather than
 # permissive, nothing in the lockfile carries it, and adding it is a decision to
 # take when a crate first needs it -- not in advance.
+#
+# COPIED, on purpose, as `LICENSE_ALLOW` in ui/scripts/audit-policy.mjs: the
+# front end's npm tree is audited against this same list, and the two
+# toolchains cannot share a file. The two must stay identical --
+# ui/tests/licenses.test.ts reads both and fails when they differ -- so a change
+# here changes that copy in the same commit.
 allow = [
     "Apache-2.0",
     "MIT",
     "BSD-2-Clause",
     "BSD-3-Clause",
+    "BlueOak-1.0.0",
     "CDLA-Permissive-2.0",
     "ISC",
     "Unicode-3.0",

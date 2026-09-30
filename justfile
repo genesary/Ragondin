@@ -171,5 +171,23 @@ calibrate-generation:
     RAGONDIN_GENERATOR_SERVICE_BIN="{{ env_var_or_default("CARGO_TARGET_DIR", justfile_directory() / "target") }}/debug/ragondin-generator-service" \
         cargo test --release -p ragondin --features bm25,onnx,stub,remote --test calibration_generation -- --ignored --nocapture --test-threads=1
 
-# Everything CI runs, in one command. Run this before declaring work done.
-check: fmt build test test-features clippy check-features doc test-check-invariants check-invariants test-check-doc-links check-doc-links check-adr-index check-deny
+# The front end's gates: install exactly the lockfile, then lint, typecheck,
+# test, build and audit it (ui/ARCHITECTURE.md § The gates). The one recipe here
+# that needs Node -- the version pinned in ui/.node-version. No cargo recipe
+# does, and none may: the Rust build stays Rust-only (ADR-C36 § 5), so
+# everything above runs on a machine without Node, and only `check`, which
+# covers both worlds, needs it.
+check-ui: check-node
+    cd ui && npm ci && npm run check
+
+# Fails at once, and says why, when Node is missing -- rather than as exit 127
+# at the end of `check`, after the whole cargo pipeline has run. Like
+# `check-deny`, it names what to install rather than failing on an unknown
+# command.
+check-node:
+    @command -v npm >/dev/null 2>&1 || { echo "error: check-ui needs Node $(cat ui/.node-version) (the major pinned in ui/.node-version), with npm."; exit 1; }
+
+# Everything CI runs, in one command. Run this before declaring work done. It
+# needs Node, for `check-ui`, and checks for it first; every other recipe it
+# runs is cargo or Python.
+check: check-node fmt build test test-features clippy check-features doc test-check-invariants check-invariants test-check-doc-links check-doc-links check-adr-index check-deny check-ui
