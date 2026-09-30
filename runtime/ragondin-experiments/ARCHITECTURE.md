@@ -15,7 +15,10 @@ view of the product.
 |---|---|
 | `RunId` | The content address of a run: a 32-byte digest, rendered and parsed as 64 lowercase hex digits |
 | `Run` | One execution: its identity tuple's components, its metrics, the configuration document, the per-query traces |
-| `FileSystemRunStore` | `save`, `load` by id, `compare` by two ids — one directory per run |
+| `RunStore` | The trait a run store backend implements: `save`, `load` by id, `ids` — every stored run's id |
+| `FileSystemRunStore` | `RunStore`'s first implementation, one directory per run; also `compare` by two ids |
+| `Trace` | The stored trace document's one typed definition, converted to and from `TraceDocument` |
+| `conformance` | Behind the `conformance` feature: the suite every `RunStore` backend passes |
 | `compare` | The diff behind `ragondin compare`: metric by metric, and the configuration parameters the two runs differ in |
 
 **Deliberately absent**, and each for its own reason: the **export adapters**
@@ -130,14 +133,17 @@ harness.
     assembles the run with no bindings, since it never sees the command line,
     and the binary sets the field before saving. `compare` does not show
     bindings.
-- **The configuration is kept verbatim, and the traces are opaque.** The store
-  writes the configuration document as it was handed in — the text whose
-  canonical logical form hashes to the `pipeline` digest beside it — and never
-  re-serializes one out of an in-memory pipeline type, which would put a second,
-  drifting spelling of the configuration in the store. A trace is likewise the
-  harness's rendering of `ragondin-engine`'s `ExecutionTrace` (INV-10), held as
-  a JSON document: this crate does not depend on the engine, and the trace's
-  shape belongs to the engine and moves with it.
+- **The configuration is kept verbatim, and the traces are opaque to the
+  store.** The store writes the configuration document as it was handed in —
+  the text whose canonical logical form hashes to the `pipeline` digest beside
+  it — and never re-serializes one out of an in-memory pipeline type, which
+  would put a second, drifting spelling of the configuration in the store. A
+  trace is the harness's rendering of `ragondin-engine`'s `ExecutionTrace`
+  (INV-10), held as a JSON document, `TraceDocument`, which `save` and `load`
+  move without parsing (ADR-C28) — the conformance suite round-trips a
+  document that is not a valid `Trace` to hold every backend to it. This crate
+  does not depend on the engine; the document's shape is defined here, in
+  `Trace` (§ The trace has one typed definition).
 - **Metrics are recorded here, never computed here.** `ragondin-metrics` scores
   one query and the harness averages over a query set; a `Metrics` value is the
   figure a comparison puts side by side. The names are not a fixed catalogue —
@@ -151,6 +157,87 @@ harness.
   `0.0` when nothing is relevant — but an aggregate has denominators of its own:
   a mean over an empty query set, or a cost-per-query where the count is zero,
   is `0.0 / 0.0`.
+
+## `RunStore` is the seam; `FileSystemRunStore` is one backend
+
+ADR-C36 § 2 extracts the trait here, the store's home, so that a reader —
+`ragondin-api` — holds a backend it did not choose, and a cluster deployment
+supplies another. What the trait promises is written on it, method by method,
+and the conformance suite checks it; everything above about directories,
+staging names and leading dots is the file backend's way of keeping that
+promise, not part of it.
+
+- **Synchronous, and `Send + Sync`.** The file backend is synchronous and its
+  callers are blocking paths; the trait follows it. A backend that needs
+  `async` is its own escalation (the async-trait decision is frozen), not a
+  change this trait anticipates.
+- **`save`, `load`, `ids`, and nothing else.** `compare` stays a function of two
+  `Run`s, since a comparison does not care where its runs were kept;
+  `FileSystemRunStore::compare`, loading two ids and comparing them, is kept as
+  the file backend's convenience because `ragondin compare` calls it. There is
+  no `exists`: nothing asks it yet, and `load` answers it.
+- **The file backend's `save` and `load` stay inherent**, and its trait
+  implementation calls them, so that a caller holding a `FileSystemRunStore`
+  needs no trait in scope — the binary did not change when the trait arrived.
+  `ids` is on the trait alone.
+- **`ids` lists in ascending order of the hex rendering**, a choice made here:
+  a listing wants a stable order, and this one means nothing, as a digest
+  order should — which is why `RunId` still has no `Ord`. The file backend
+  lists every directory whose name parses as a `RunId`, skipping staging
+  directories, files, symbolic links (the store writes none) and other names,
+  and reports an entry whose type cannot be read rather than skipping it; a
+  root never created lists nothing.
+  A torn directory is listed: its id names it, and `load` reports it
+  `Incomplete`.
+- **The conformance suite is a module behind a feature**, not a crate: its
+  subject is this crate's trait and its fixtures are this crate's types, and a
+  crate of its own would be a split the frozen crate granularity does not
+  allow. `assert_run_store_conformance` takes two closures, a choice made here:
+  `fresh` builds an empty store for each case, so a backend with external
+  state makes one per case; `tear` damages a stored run, because the trait
+  offers no way to and every backend can reach a torn run, so the suite checks
+  that it is *reported* and leaves how it happens to the backend. It panics
+  on the first failure, naming the case. `FileSystemRunStore` runs it in
+  `tests/run_store_conformance.rs`, built only under the feature
+  (`required-features`), which `just test-features` turns on.
+
+## The trace has one typed definition
+
+`Trace` (`src/trace.rs`) is the shape of a stored trace document: its nodes,
+each with its id, input summaries, output summary, `duration_nanos` and
+`error`, and a summary in each of the seven shapes the harness renders.
+`From<Trace> for TraceDocument` is the rendering, and `TryFrom<&TraceDocument>
+for Trace` reads it back. The harness writes through it and a reader parses
+through it, so within one build the two cannot drift. ADR-C36 § 2 gives it
+three rules, which this crate keeps:
+
+- **One definition in Rust**, here, beside `TraceDocument` — the one crate the
+  writer and every reader depend on. No engine type appears in it: the
+  harness maps the engine's `ExecutionTrace` into it field by field (INV-2).
+- **Reported, never repaired or guessed.** `Trace::try_from` refuses a missing
+  field, a field the shape does not have, a summary in neither of its kind's
+  two shapes, a value of the wrong type — an integer score included, since
+  the rendering writes every score as a float — and a named chunk list whose
+  `count` disagrees with its chunks, with a `TraceError` naming the node and
+  the field. Strictness is what makes the conversion exact: every document it
+  accepts renders back to the same JSON value, so a reader never shows a
+  trace other than the one stored. (The same *value*, not always the same
+  text: a number spelled unusually — `0.50` — reads as `0.5`, which is how
+  the store writes it anyway.)
+- **No version now; the first incompatible change adds one**, in the same
+  change — which is a change to what the trace carries and escalates
+  (`AGENTS.md` § Rules of engagement).
+
+Two choices made here. A chunk's score is an `f64` where the engine records
+an `f32`: the harness widens it losslessly, as the hand-built renderer did, and
+an `f64` reads any stored number back exactly. Counts and byte lengths are
+`u64`, so the shape does not depend on the reader's pointer width.
+`tests/trace.rs` loads a run the hand-built renderer stored
+(`tests/fixtures/stored-before-typed-trace/`), parses every trace, and checks
+that the typed shape renders the bytes on disk.
+
+The store itself still never parses a trace: `Trace` is for the code on
+either side of it.
 
 ## The comparison lowers the stored configurations
 

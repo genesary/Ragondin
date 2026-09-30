@@ -236,8 +236,12 @@ impl ConfigDocument {
 /// structured per-node return value (INV-10). This crate holds the *rendering*
 /// of one rather than the type: the experiment plane's store does not depend
 /// on the engine, and the harness, which depends on both, is where a trace and
-/// a run record meet. Keeping it a JSON document also keeps the store out of
-/// the way of the trace's shape, which belongs to the engine and moves with it.
+/// a run record meet.
+///
+/// The store holds it as an opaque JSON value and never parses it (ADR-C28).
+/// Its shape has one definition, [`Trace`](crate::Trace): the harness renders
+/// through it, and a reader asks for it back with `Trace::try_from`, which
+/// reports a document it does not describe rather than repairing it.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct TraceDocument {
@@ -252,11 +256,10 @@ impl TraceDocument {
 
     /// The rendered trace.
     ///
-    /// Nothing in this crate calls it — the store moves a trace through serde
-    /// rather than through this accessor — but a wrapper whose content cannot
-    /// be read back is not a record of anything, and the reader is downstream:
-    /// the comparison view renders a stored trace, and an export adapter would
-    /// translate one.
+    /// The store never calls it — it moves a trace through serde rather than
+    /// through this accessor. [`Trace::try_from`](crate::Trace) reads the
+    /// typed shape out of it, and a reader that wants the raw document has it
+    /// here.
     pub fn as_value(&self) -> &serde_json::Value {
         &self.value
     }

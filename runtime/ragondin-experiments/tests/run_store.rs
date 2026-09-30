@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 
 use ragondin_experiments::{
     compare, ConfigDocument, FileSystemRunStore, Metrics, Run, RunBinding, RunId, RunIdParseError,
-    RunInputs, RunStoreError, TraceDocument,
+    RunInputs, RunStore, RunStoreError, TraceDocument,
 };
 use ragondin_pipeline::PipelineHash;
 use ragondin_types::QueryId;
@@ -511,4 +511,82 @@ fn saving_over_a_torn_directory_reports_it_rather_than_claiming_success() {
         "the files that are there are left where they are"
     );
     assert_eq!(staged_entries(&store), Vec::<String>::new());
+}
+
+/// The trait is object-safe and `Send + Sync`: a reader holds one backend
+/// behind a pointer and shares it across threads.
+#[test]
+fn a_run_store_is_usable_behind_a_shared_pointer() {
+    let backend = store("shared_pointer");
+    let run = a_run(run_id(0x71), &[("ndcg@10", 0.42)]);
+    backend.save(&run).expect("the run must be writable");
+
+    let shared: std::sync::Arc<dyn RunStore> = std::sync::Arc::new(backend);
+    let ids = std::thread::spawn(move || shared.ids())
+        .join()
+        .expect("the reader thread finishes")
+        .expect("the store lists its runs");
+
+    assert_eq!(ids, vec![run.id]);
+}
+
+#[test]
+fn a_store_whose_root_was_never_created_lists_no_runs() {
+    // The root is created by the first `save`, so an unused store has none —
+    // and holds no runs, rather than failing to list them.
+    let store = store("ids_no_root");
+    assert!(!store.root().exists());
+
+    assert_eq!(
+        RunStore::ids(&store).expect("an absent root lists"),
+        Vec::new()
+    );
+}
+
+#[test]
+fn the_listing_skips_whatever_under_the_root_is_not_a_run_directory() {
+    // A staging directory a crashed `save` left, a file named like a run, a
+    // directory whose name is not a run id: none of them is a run. A torn run
+    // directory *is* listed — its id names it, and `load` is where it is
+    // reported incomplete.
+    let store = store("ids_skip");
+    let stored = a_run(run_id(0x72), &[("ndcg@10", 0.42)]);
+    store.save(&stored).expect("the run must be writable");
+    let root = store.root();
+    let torn = run_id(0x73);
+    fs::create_dir_all(root.join(torn.to_string())).expect("a torn directory");
+    fs::create_dir_all(root.join(format!(".{}.1-0.partial", run_id(0x74)))).expect("staging");
+    fs::write(root.join(run_id(0x75).to_string()), "not a directory").expect("a file");
+    fs::create_dir_all(root.join("notes")).expect("a stray directory");
+    fs::create_dir_all(root.join(run_id(0xab).to_string().to_uppercase())).expect("uppercase");
+
+    let ids = RunStore::ids(&store).expect("the root lists");
+
+    assert_eq!(ids, vec![stored.id, torn]);
+    assert!(matches!(
+        store.load(&torn),
+        Err(RunStoreError::Incomplete { .. })
+    ));
+}
+
+#[cfg(unix)]
+#[test]
+fn the_listing_does_not_follow_a_symbolic_link() {
+    // The store writes directories, never links; a link under the root is
+    // something a person put there, and the listing reads each entry's own
+    // type rather than what it points at.
+    let store = store("ids_symlink");
+    let stored = a_run(run_id(0x81), &[("ndcg@10", 0.42)]);
+    store.save(&stored).expect("the run must be writable");
+    let root = store.root();
+    std::os::unix::fs::symlink(
+        root.join(stored.id.to_string()),
+        root.join(run_id(0x82).to_string()),
+    )
+    .expect("a link is creatable");
+
+    assert_eq!(
+        RunStore::ids(&store).expect("the root lists"),
+        vec![stored.id]
+    );
 }

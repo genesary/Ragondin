@@ -32,3 +32,13 @@ serde_json = { workspace = true } # the on-disk format of a run record
 # role (`ARCHITECTURE.md` § The comparison lowers the stored configurations).
 serde_yaml = { workspace = true }
 thiserror = { workspace = true }
+
+[features]
+# The conformance suite for `RunStore` backends (`src/conformance.rs`): a
+# backend's tests turn it on, and a production build of this crate does not
+# carry it.
+conformance = []
+
+[[test]]
+name = "run_store_conformance"
+required-features = ["conformance"]

@@ -9,12 +9,18 @@
 //! assembled by the harness, which holds every piece of the tuple; this crate
 //! defines the record, stores it by that id, and diffs two of them.
 //!
-//! Three modules:
+//! The modules:
 //!
 //! - [`run`] — [`RunId`] and the [`Run`] record: the identity tuple's
 //!   components, the metrics, the configuration and the per-query traces.
-//! - [`store`] — [`FileSystemRunStore`], a directory per run. Native by
-//!   decision (ADR-13), and filesystem-backed by a choice that module argues.
+//! - [`store`] — the [`RunStore`] trait, and [`FileSystemRunStore`], its
+//!   first implementation, a directory per run. Native by decision (ADR-13),
+//!   and filesystem-backed by a choice that module argues.
+//! - [`mod@trace`] — [`Trace`], the one typed definition of a stored trace
+//!   document, read out of a [`TraceDocument`] and written back into one
+//!   (ADR-C36 § 2). The store itself never parses a trace.
+//! - `conformance`, behind the `conformance` feature — the suite every
+//!   [`RunStore`] backend passes.
 //! - [`mod@compare`] — [`compare()`], the diff behind `ragondin compare`:
 //!   metric by metric, and the configuration parameters the two runs differ
 //!   in and, later, the comparison view (§6.5).
@@ -30,6 +36,10 @@
 pub mod compare;
 pub mod run;
 pub mod store;
+pub mod trace;
+
+#[cfg(feature = "conformance")]
+pub mod conformance;
 
 pub use compare::{
     compare, ConfigurationComparison, MetricComparison, ParameterDifference, ParameterKey,
@@ -38,4 +48,5 @@ pub use compare::{
 pub use run::{
     ConfigDocument, Metrics, Run, RunBinding, RunId, RunIdParseError, RunInputs, TraceDocument,
 };
-pub use store::{FileSystemRunStore, RunStoreError};
+pub use store::{FileSystemRunStore, RunStore, RunStoreError};
+pub use trace::{Trace, TraceChunk, TraceError, TraceNode, TraceProblem, TraceSummary};

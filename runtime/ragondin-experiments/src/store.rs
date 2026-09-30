@@ -1,4 +1,5 @@
-//! The native run store: [`FileSystemRunStore`] and its [`RunStoreError`].
+//! The native run store: the [`RunStore`] trait, [`FileSystemRunStore`] — its
+//! first implementation — and the [`RunStoreError`] both report.
 //!
 //! **Native, by decision** (ADR-13): a run here is a content-addressed tuple
 //! whose configuration is a graph and whose central artifact is a structured
@@ -111,6 +112,56 @@ use serde::Serialize;
 
 use crate::compare::{compare, RunComparison};
 use crate::run::{ConfigDocument, Metrics, Run, RunBinding, RunId, RunInputs, TraceDocument};
+
+/// Where runs are kept: written whole, read by id, and listed.
+///
+/// The seam a backend plugs into — [`FileSystemRunStore`] locally, and an
+/// object store is the backend the design names for a cluster. What every
+/// backend promises is what the conformance suite checks
+/// (`conformance::assert_run_store_conformance`, behind this crate's
+/// `conformance` feature), and each method's contract below is that promise:
+///
+/// - **A run is kept whole, and kept once.** `save` stores all of a run or
+///   none of it, and a run already stored under the id is left as it is — its
+///   id is the digest of its inputs, so a second save is the same run.
+/// - **What cannot be read back is refused before anything is stored**: a
+///   metric that is not a finite number
+///   ([`NotFinite`](RunStoreError::NotFinite)).
+/// - **A torn run is reported, never repaired**, by `save` and `load` alike
+///   ([`Incomplete`](RunStoreError::Incomplete)).
+/// - **Traces are moved, never parsed.** A [`TraceDocument`] goes in and comes
+///   back as it was, whether or not it is a valid
+///   [`Trace`](crate::Trace) (ADR-C28): only a reader that asks for the typed
+///   shape parses one.
+///
+/// Synchronous, as the file backend is; a backend that needs `async` is an
+/// escalation of its own, not a variation on this trait. `Send + Sync`,
+/// because a reader shares one backend across threads.
+///
+/// Comparing two runs is not a method: [`compare`] is a function of two
+/// [`Run`]s, whichever store they were loaded from.
+pub trait RunStore: Send + Sync {
+    /// Writes a run, and does nothing if that run is already stored.
+    ///
+    /// `Ok(())` means *this run is in the store*. A run with a non-finite
+    /// metric is refused before anything is written; a run whose id names a
+    /// torn record is reported [`Incomplete`](RunStoreError::Incomplete).
+    fn save(&self, run: &Run) -> Result<(), RunStoreError>;
+
+    /// Reads the run named by `id`: [`NotFound`](RunStoreError::NotFound)
+    /// when the store holds none, [`Incomplete`](RunStoreError::Incomplete)
+    /// when it holds a torn one.
+    fn load(&self, id: &RunId) -> Result<Run, RunStoreError>;
+
+    /// The id of every run the store holds, each once, in ascending order of
+    /// its hex rendering.
+    ///
+    /// The order is for a listing to be stable, and means nothing else: a
+    /// digest has no meaningful order, which is why [`RunId`] has no `Ord`.
+    /// An id is listed when the store holds a record under it, complete or
+    /// not — `load` is where a torn one is reported.
+    fn ids(&self) -> Result<Vec<RunId>, RunStoreError>;
+}
 
 const INPUTS_FILE: &str = "inputs.json";
 const METRICS_FILE: &str = "metrics.json";
@@ -236,6 +287,58 @@ impl FileSystemRunStore {
         let ticket = NEXT.fetch_add(1, Ordering::Relaxed);
         self.root
             .join(format!(".{id}.{}-{ticket}.partial", std::process::id()))
+    }
+}
+
+/// The inherent `save` and `load` are this implementation: they stay inherent
+/// so that a caller holding a `FileSystemRunStore` needs no trait in scope.
+impl RunStore for FileSystemRunStore {
+    fn save(&self, run: &Run) -> Result<(), RunStoreError> {
+        FileSystemRunStore::save(self, run)
+    }
+
+    fn load(&self, id: &RunId) -> Result<Run, RunStoreError> {
+        FileSystemRunStore::load(self, id)
+    }
+
+    /// Every directory under the root whose name parses as a [`RunId`].
+    ///
+    /// Anything else is not a run and is skipped: a `.partial` staging
+    /// directory (its leading dot — the module's *A run directory appears
+    /// whole or not at all*), a file, a name that is not 64 lowercase hex
+    /// digits, a symbolic link (the store writes none). A root that does not
+    /// exist yet — no run was ever saved — holds no runs. An entry whose type
+    /// cannot be read is reported, never skipped.
+    fn ids(&self) -> Result<Vec<RunId>, RunStoreError> {
+        let io = |source| RunStoreError::Io {
+            path: self.root.clone(),
+            source,
+        };
+        let entries = match fs::read_dir(&self.root) {
+            Ok(entries) => entries,
+            Err(source) if source.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(source) => return Err(io(source)),
+        };
+
+        let mut ids = Vec::new();
+        for entry in entries {
+            let entry = entry.map_err(io)?;
+            let Some(id) = entry
+                .file_name()
+                .to_str()
+                .and_then(|name| name.parse::<RunId>().ok())
+            else {
+                continue;
+            };
+            // The entry's own type, and its failure reported: `Path::is_dir`
+            // would turn a stat error into `false` and drop the entry
+            // silently. A symbolic link is not followed, so it is not listed.
+            if entry.file_type().map_err(io)?.is_dir() {
+                ids.push(id);
+            }
+        }
+        ids.sort_by_cached_key(RunId::to_string);
+        Ok(ids)
     }
 }
 
