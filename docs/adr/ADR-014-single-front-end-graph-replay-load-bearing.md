@@ -1,10 +1,10 @@
 ---
 id: ADR-014
 title: Single front end; graph replay is load-bearing, visual authoring is a later trajectory
-status: accepted
+status: superseded
 invariants: []
 supersedes: []
-superseded_by: null
+superseded_by: ADR-016
 ---
 
 # ADR-14: Single front end; graph replay is load-bearing, visual authoring is a later trajectory
@@ -28,4 +28,4 @@ One coherent product. Per-node replay is a direct dividend of the graph represen
 
 ## Status
 
-Accepted.
+Superseded by [ADR-16](ADR-016-visual-editing-with-the-front-end-yaml-stays-the-truth.md). The single front end, graph replay as load-bearing and part of the core, and read mode before write mode are carried forward there unchanged; the Decision's sentences placing visual editing in a later trajectory, as an additional front end, with YAML-first authoring as the primary path, are the reason for the supersession: visual editing is built with the front end, over pipeline files that stay the source of truth.

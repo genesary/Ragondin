@@ -62,4 +62,4 @@ Local caches (embedding, retrieval, context prefix) must remain **reconstructibl
 
 Node-based editors conventionally manipulate **acyclic** graphs. This IR contains **branch and bounded-loop** nodes. Rendering control flow visually is a **hard interface-design problem**, not an implementation detail.
 
-- **Blocks:** visual graph authoring — the post-M7 visual-authoring phase of the roadmap (see `docs/AGENT_WORKFLOW.md`). The read-only graph replay view is unaffected and remains part of the core.
+- **Blocks:** visual rendering and editing of control flow — `Branch` and `Loop` in the canvas, in the control-flow milestone (see `docs/AGENT_WORKFLOW.md`). Narrowed by [ADR-16](adr/ADR-016-visual-editing-with-the-front-end-yaml-stays-the-truth.md), deliberately: the representation has no control-flow node today, so visual editing of the acyclic pipelines it can express is built with the front end, and only control flow waits on this question. The read-only graph replay view is unaffected and remains part of the core.

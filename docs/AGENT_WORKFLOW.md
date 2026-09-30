@@ -64,7 +64,6 @@ Work is organized into milestones M0…M7 (create and inspect them on GitHub; ea
 
 **Post-M7 horizon** (deliberately beyond the initial roadmap, tracked in `docs/OPEN_QUESTIONS.md`):
 
-- **Visual graph authoring** — the visual-authoring phase; gated on the visual control-flow rendering open question.
 - **Multi-tenant RAG-as-a-Service** — tenant isolation, quotas, security, index sharing; deferred until the research bench is proven.
 
 M2 is the project's first defensible deliverable and the primary guard against scope inflation. Resist any pull to bring later milestones' work forward into it.
