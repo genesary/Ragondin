@@ -15,6 +15,10 @@ const GLOBAL_OBJECTS = ['window', 'globalThis', 'self', 'top', 'parent', 'frames
 // Every extension tsc and Vite accept. A file the lint does not match is a file
 // it does not read, so a narrower list would be a silent way around the rule.
 const SOURCES = '**/*.{js,mjs,cjs,jsx,ts,mts,cts,tsx}';
+// src/api/testing.ts, named through any path that reaches it from outside src/api/.
+const TESTING_FROM_ANYWHERE = '(^|/)api/testing(\\.[cm]?[jt]sx?)?$';
+const testingMessage =
+  'src/api/testing.ts holds test doubles; only tests import it, so none of it reaches the bundle (ui/ARCHITECTURE.md § The client).';
 const message =
   'Network access is confined to src/api/ (ui/ARCHITECTURE.md § The network lint): the UI reaches its own origin only, through that module.';
 
@@ -48,15 +52,22 @@ export default defineConfig([
     // import them. ARCHITECTURE.md § The client; tests/test-doubles.test.ts.
     files: [SOURCES],
     ignores: ['**/*.test.*', 'tests/**'],
+    rules: { 'no-restricted-imports': ['error', { patterns: [{ regex: TESTING_FROM_ANYWHERE, message: testingMessage }] }] },
+  },
+  {
+    // Inside src/api/ the module is a sibling (`./testing`) or a parent's
+    // (`../testing`), which the path above does not name. A later block
+    // replaces the rule's options rather than adding to them, so both
+    // patterns are listed.
+    files: ['src/api/**/*.{js,mjs,cjs,jsx,ts,mts,cts,tsx}'],
+    ignores: ['**/*.test.*'],
     rules: {
       'no-restricted-imports': [
         'error',
         {
           patterns: [
-            {
-              regex: '(^|/)api/testing(\\.[cm]?[jt]sx?)?$',
-              message: 'src/api/testing.ts holds test doubles; only tests import it, so none of it reaches the bundle (ui/ARCHITECTURE.md § The client).',
-            },
+            { regex: TESTING_FROM_ANYWHERE, message: testingMessage },
+            { regex: '^(\\./|(\\.\\./)+)testing(\\.[cm]?[jt]sx?)?$', message: testingMessage },
           ],
         },
       ],

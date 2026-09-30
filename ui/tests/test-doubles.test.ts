@@ -34,6 +34,19 @@ describe('the test doubles’ import rule', () => {
     }
   });
 
+  it('refuses a sibling import from inside src/api/', async () => {
+    for (const code of ["import { mockApi } from './testing.ts';\nexport const m = mockApi;", "import { mockApi } from './testing';\nexport const m = mockApi;"]) {
+      const messages = await lint(code, 'src/api/client.ts');
+      expect(messages.map((m) => m.ruleId)).toEqual(['no-restricted-imports']);
+    }
+    const nested = await lint("import { mockApi } from '../testing.ts';\nexport const m = mockApi;", 'src/api/sub/example.ts');
+    expect(nested.map((m) => m.ruleId)).toEqual(['no-restricted-imports']);
+  });
+
+  it('accepts a sibling import from a test inside src/api/', async () => {
+    expect(await lint("import { mockApi } from './testing.ts';\nexport const m = mockApi;", 'src/api/client.test.ts')).toEqual([]);
+  });
+
   it.each(['src/App.test.tsx', 'src/shell/Example.test.ts', 'tests/example.test.ts'])('accepts it in %s', async (file) => {
     expect(await lint(IMPORTS.relative, file)).toEqual([]);
   });
