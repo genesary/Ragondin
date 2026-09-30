@@ -277,6 +277,10 @@ Why here and not elsewhere:
   the text in `ragondin-pipeline`'s `RawPipeline` and lower it through the same
   `validate`, so the schema and the pass stay single; what is duplicated is the
   few lines of `serde_yaml` in front of them.
+- **The lowering is one public function, `lower_configuration`.** A reader of
+  a stored run needs the same graph `compare` computes — `ragondin-api` draws
+  a run's graph from it — so it calls this function rather than writing a
+  third reader. Its `Err` is the reason in words, as `Unavailable` carries it.
 
 What is compared, and what is not: every node's component family, its `impl:`
 name (an extension node's `kind`, which is where its `impl:` lands on lowering)

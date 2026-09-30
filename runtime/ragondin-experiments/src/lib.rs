@@ -42,8 +42,8 @@ pub mod trace;
 pub mod conformance;
 
 pub use compare::{
-    compare, ConfigurationComparison, MetricComparison, ParameterDifference, ParameterKey,
-    RunComparison, Side,
+    compare, lower_configuration, ConfigurationComparison, MetricComparison, ParameterDifference,
+    ParameterKey, RunComparison, Side,
 };
 pub use run::{
     ConfigDocument, Metrics, Run, RunBinding, RunId, RunIdParseError, RunInputs, TraceDocument,
