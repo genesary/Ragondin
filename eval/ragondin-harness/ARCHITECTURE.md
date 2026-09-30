@@ -38,11 +38,17 @@ trace is the executor's return value, never a log (INV-10,
 harness keeps every one of them, renders it into the `TraceDocument` the run
 store holds, and files it under its query. Four consequences are deliberate:
 
-- **The rendering is hand-written** (`src/trace.rs`) and `ExecutionTrace` is
+- **The translation is hand-written** (`src/trace.rs`) and `ExecutionTrace` is
   not serialized by a derive. The engine is internal and not an API boundary
   (INV-2), so its trace type is meant to move; a derive would make every stored
   run a hostage of that shape. The harness is the crate that knows both the
-  engine and the run store, so the translation lives here.
+  engine and the run store, so the translation lives here — field by field,
+  into `ragondin-experiments`' `Trace`, the stored document's one typed
+  definition (ADR-C36 § 2), whose `From<Trace> for TraceDocument` writes the
+  JSON. The harness no longer spells the document itself: the JSON shapes
+  below are `Trace`'s, and a reader parses them back through the same type.
+  The unit tests in `src/trace.rs` keep asserting the JSON the hand-built
+  renderer wrote, so a run stored before the typed shape reads back unchanged.
 - **An output names its chunks, an input counts them** (ADR-C28). For each
   node, the rendered document carries the chunks the node produced in the order
   it produced them — chunk id, document id, score — and for each input port a

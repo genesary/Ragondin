@@ -20,7 +20,7 @@ use std::path::PathBuf;
 use ragondin_benchmarks::{BeirAdapter, Benchmark, BenchmarkAdapter};
 use ragondin_config::{ConfigSource, LocalFile};
 use ragondin_engine::EngineContext;
-use ragondin_experiments::{ConfigDocument, FileSystemRunStore, Run};
+use ragondin_experiments::{ConfigDocument, FileSystemRunStore, Run, Trace};
 use ragondin_harness::{evaluate, CorpusIndex, Evaluation, HarnessError};
 use ragondin_pipeline::{LogicalPipeline, ParamValue};
 use ragondin_stub::{StubFusion, StubRetriever};
@@ -275,6 +275,21 @@ async fn the_run_the_harness_assembles_is_one_the_store_accepts() {
         run.metrics.iter().collect::<Vec<_>>()
     );
     assert_eq!(reloaded.config, run.config);
+
+    // And a reader of the stored run gets its traces back in the typed shape
+    // (ADR-C36 § 2): the store moved the documents without parsing them, and
+    // each one parses into the `Trace` it was rendered through. Not compared
+    // with `run.traces`: the store root outlives one test run, a run already
+    // stored under the id is left alone, and durations differ between runs.
+    assert_eq!(
+        reloaded.traces.keys().collect::<Vec<_>>(),
+        run.traces.keys().collect::<Vec<_>>()
+    );
+    for (query, document) in &reloaded.traces {
+        let trace = Trace::try_from(document)
+            .unwrap_or_else(|error| panic!("the stored trace of {query:?} parses: {error}"));
+        assert!(!trace.nodes.is_empty(), "{query:?} ran at least one node");
+    }
 }
 
 #[tokio::test]

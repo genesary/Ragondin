@@ -1,10 +1,10 @@
-//! Rendering an [`ExecutionTrace`] into the [`TraceDocument`] a run stores.
+//! Converting an [`ExecutionTrace`] into the [`TraceDocument`] a run stores.
 //!
 //! The trace is the executor's **return value** (INV-10), and this is the one
 //! place a run record gets one: nothing here reads a log, and the harness emits
 //! no per-node telemetry of its own.
 //!
-//! # Why the rendering is written by hand
+//! # Why the conversion is written by hand
 //!
 //! `ExecutionTrace` belongs to `ragondin-engine`, which is internal and not an
 //! API boundary (INV-2) — its shape is meant to move. Deriving `Serialize` on
@@ -12,81 +12,79 @@
 //! engine's internals in a file format. So the harness, which is the crate that
 //! knows both the engine and the run store, translates between them, and this
 //! module is where that translation is legible and changeable.
+//!
+//! It translates into [`Trace`], the stored document's one definition, which
+//! lives in `ragondin-experiments` beside [`TraceDocument`] (ADR-C36 § 2); the
+//! document is that trace's rendering, and a reader parses it back through the
+//! same type. What the JSON looks like is decided there, not here. No engine
+//! type crosses into that crate: this module maps each one field by field.
 
 use ragondin_engine::{ExecutionTrace, RankedChunk, ValueSummary};
-use ragondin_experiments::TraceDocument;
-use serde_json::{json, Value};
+use ragondin_experiments::{Trace, TraceChunk, TraceDocument, TraceNode, TraceSummary};
 
 /// Renders what the executor returned for one query.
 pub(crate) fn render(trace: &ExecutionTrace) -> TraceDocument {
-    let nodes: Vec<Value> = trace
-        .nodes
-        .iter()
-        .map(|node| {
-            json!({
-                "node": node.node.as_str(),
-                "inputs": node.inputs.iter().map(summary).collect::<Vec<_>>(),
-                "output": node.output.as_ref().map(summary),
+    TraceDocument::from(Trace {
+        nodes: trace
+            .nodes
+            .iter()
+            .map(|node| TraceNode {
+                node: node.node.clone(),
+                inputs: node.inputs.iter().map(summary).collect(),
+                output: node.output.as_ref().map(summary),
                 // Nanoseconds, as an integer: a duration rendered as a float
                 // would round, and this field is read by a replay view that
                 // shows where a run spent its time.
-                "duration_nanos": node.duration.as_nanos() as u64,
-                "error": node.error,
+                duration_nanos: node.duration.as_nanos() as u64,
+                error: node.error.clone(),
             })
-        })
-        .collect();
-
-    TraceDocument::new(json!({ "nodes": nodes }))
-}
-
-/// One named chunk — of a ranking or of a context, rendered alike.
-fn ranked_chunk(hit: &RankedChunk) -> Value {
-    json!({
-        "chunk": hit.chunk.as_str(),
-        "document": hit.document.as_str(),
-        "score": hit.score,
+            .collect(),
     })
 }
 
-/// Renders one edge value's summary.
+/// One named chunk — of a ranking or of a context, converted alike.
+///
+/// The score is widened from the engine's `f32` to `f64` — lossless, and the
+/// reason a stored score shows more digits than the component returned. A
+/// non-finite score would render as `null`: the ranking contract makes one
+/// unreachable from a conforming component, and the document is opaque to the
+/// store, so nothing here refuses it; a reader parsing it back reports it.
+fn ranked_chunk(hit: &RankedChunk) -> TraceChunk {
+    TraceChunk {
+        chunk: hit.chunk.clone(),
+        document: hit.document.clone(),
+        score: f64::from(hit.score),
+    }
+}
+
+/// Converts one edge value's summary, variant for variant.
 ///
 /// An output's chunks are **named**, in the order the node returned them, and
-/// an input's are counted (ADR-C28). For chunks, `count` is rendered on both
-/// sides, so a reader of the field does not have to know which side it is
-/// looking at; on an output it is the length of `ranked`, which is where the
-/// ranking a per-query fixture, a graded-relevance calibration or a replay
-/// view reads lives. A context is rendered differently on each side: `chunks`
-/// and `text` when produced, `count` and `text_bytes` when consumed.
-///
-/// A produced context renders as `{"context": {"chunks": [...], "text": ...}}`
-/// and a produced answer as `{"answer": {"text": ...}}` — the shapes ADR-C31
-/// § 5 pins, each chunk rendered as a ranked one is. Consumed, a context
-/// renders as `{"context": {"count": ..., "text_bytes": ...}}` and an answer
-/// as `{"answer": {"text_bytes": ...}}`: sizes only, since the value is named
-/// under the node that produced it.
-///
-/// A score is rendered as the JSON number of its `f32`, widened to `f64` on
-/// the way — lossless, and the reason a stored score shows more digits than
-/// the component returned. A non-finite score would render as `null`: the
-/// ranking contract makes one unreachable from a conforming component, and
-/// this document is opaque to the store, so nothing here refuses it.
-fn summary(value: &ValueSummary) -> Value {
+/// an input's are counted (ADR-C28); a context and an answer are named where
+/// they were produced and sized where they were consumed (ADR-C31 § 5). The
+/// engine records each side as its own variant, and so does [`TraceSummary`],
+/// so the mapping is one to one and adds nothing.
+fn summary(value: &ValueSummary) -> TraceSummary {
     match value {
-        ValueSummary::Query { id } => json!({"query": {"id": id.as_str()}}),
-        ValueSummary::Chunks { count } => json!({"chunks": {"count": count}}),
-        ValueSummary::RankedChunks { chunks } => json!({"chunks": {
-            "count": chunks.len(),
-            "ranked": chunks.iter().map(ranked_chunk).collect::<Vec<_>>(),
-        }}),
-        ValueSummary::ContextSize { count, text_bytes } => {
-            json!({"context": {"count": count, "text_bytes": text_bytes}})
-        }
-        ValueSummary::Context { chunks, text } => json!({"context": {
-            "chunks": chunks.iter().map(ranked_chunk).collect::<Vec<_>>(),
-            "text": text,
-        }}),
-        ValueSummary::AnswerSize { text_bytes } => json!({"answer": {"text_bytes": text_bytes}}),
-        ValueSummary::Answer { text } => json!({"answer": {"text": text}}),
+        ValueSummary::Query { id } => TraceSummary::Query { id: id.clone() },
+        ValueSummary::Chunks { count } => TraceSummary::Chunks {
+            count: *count as u64,
+        },
+        ValueSummary::RankedChunks { chunks } => TraceSummary::RankedChunks {
+            chunks: chunks.iter().map(ranked_chunk).collect(),
+        },
+        ValueSummary::ContextSize { count, text_bytes } => TraceSummary::ContextSize {
+            count: *count as u64,
+            text_bytes: *text_bytes as u64,
+        },
+        ValueSummary::Context { chunks, text } => TraceSummary::Context {
+            chunks: chunks.iter().map(ranked_chunk).collect(),
+            text: text.clone(),
+        },
+        ValueSummary::AnswerSize { text_bytes } => TraceSummary::AnswerSize {
+            text_bytes: *text_bytes as u64,
+        },
+        ValueSummary::Answer { text } => TraceSummary::Answer { text: text.clone() },
     }
 }
 
@@ -97,6 +95,7 @@ mod tests {
     use ragondin_engine::NodeTrace;
     use ragondin_pipeline::NodeId;
     use ragondin_types::{ChunkId, DocId, QueryId};
+    use serde_json::{json, Value};
 
     use super::*;
 
@@ -229,5 +228,43 @@ mod tests {
         let document = render(&ExecutionTrace::default());
 
         assert_eq!(document.as_value(), &json!({"nodes": []}));
+    }
+
+    #[test]
+    fn a_score_renders_as_the_widened_f32_it_always_did() {
+        // 0.1 has no exact `f32`; its nearest one, widened to `f64`, prints as
+        // 0.10000000149011612. The hand-built renderer wrote `json!(score)` of
+        // the `f32` itself, so every run stored so far holds that spelling, and
+        // the typed shape must write it byte for byte.
+        let document = render(&ExecutionTrace {
+            nodes: vec![NodeTrace {
+                output: Some(ValueSummary::RankedChunks {
+                    chunks: vec![ranked("c-1", "doc-a", 0.1)],
+                }),
+                ..node(None)
+            }],
+        });
+
+        let score = &document.as_value()["nodes"][0]["output"]["chunks"]["ranked"][0]["score"];
+        assert_eq!(score, &json!(0.1f32));
+        assert_eq!(
+            serde_json::to_string(score).expect("renders"),
+            "0.10000000149011612"
+        );
+    }
+
+    #[test]
+    fn a_rendered_trace_parses_back_into_the_shape_it_was_rendered_through() {
+        // The writer and the reader compile against one definition (ADR-C36
+        // § 2): what this module stores, `Trace::try_from` reads.
+        let document = render(&ExecutionTrace {
+            nodes: vec![node(None), node(Some("refused"))],
+        });
+
+        let trace = Trace::try_from(&document).expect("a rendered trace parses");
+
+        assert_eq!(trace.nodes.len(), 2);
+        assert_eq!(trace.nodes[1].error.as_deref(), Some("refused"));
+        assert_eq!(TraceDocument::from(trace), document);
     }
 }
