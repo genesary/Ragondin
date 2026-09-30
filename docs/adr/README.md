@@ -20,7 +20,7 @@ An **Architecture Decision Record (ADR)** captures one architectural decision: i
 ## Layout
 
 - **`000-template.md`** — the template every ADR follows: Context / Decision / Alternatives rejected / Consequences / Status, plus an optional Amendments section (process rule 2).
-- **`ADR-001-*.md` … `ADR-015-*.md`** — the frozen decisions of the *system* architecture, one file per decision, cited as `ADR-1` … `ADR-15`.
+- **`ADR-001-*.md` … `ADR-016-*.md`** — the frozen decisions of the *system* architecture, one file per decision, cited as `ADR-1` … `ADR-16`.
 - **`ADR-C01-*.md` … `ADR-C35-*.md`** — the frozen decisions of the *code* architecture, one file per decision, cited as `ADR-C1` … `ADR-C35`.
 
 Each file is self-contained: it should be understandable and actionable on its own, without first reading `AGENTS.md` or the architecture documents. If an ADR only makes sense after reading something else, it is under-specified and should be fixed.
@@ -51,8 +51,9 @@ index of citable decisions is worse than none — `just check` fails when it dri
 | [`ADR-011`](ADR-011-research-bench-before-multi-tenant-service.md) | Research bench before multi-tenant service | — | accepted |
 | [`ADR-012`](ADR-012-ui-in-experiment-plane-not-data-plane.md) | UI in the experiment plane, never in the data plane | — | accepted |
 | [`ADR-013`](ADR-013-native-run-store-with-export-adapters.md) | Native run store with export adapters | — | accepted |
-| [`ADR-014`](ADR-014-single-front-end-graph-replay-load-bearing.md) | Single front end; graph replay is load-bearing, visual authoring is a later trajectory | — | accepted |
+| [`ADR-014`](ADR-014-single-front-end-graph-replay-load-bearing.md) | Single front end; graph replay is load-bearing, visual authoring is a later trajectory | — | superseded |
 | [`ADR-015`](ADR-015-traceability-and-statistical-reproducibility.md) | Traceability and statistical reproducibility, not strict determinism | — | accepted |
+| [`ADR-016`](ADR-016-visual-editing-with-the-front-end-yaml-stays-the-truth.md) | Single front end; graph replay is load-bearing and built first; visual editing is built with it, over pipeline files that stay the source of truth | INV-8, INV-9 | accepted |
 | [`ADR-C01`](ADR-C01-multi-crate-workspace-boundaries-are-crate-boundaries.md) | Multi-crate workspace; load-bearing boundaries are crate boundaries | — | accepted |
 | [`ADR-C02`](ADR-C02-three-level-pipeline-representation.md) | Three-level pipeline representation (Raw / Logical / Physical) | INV-8 | amended |
 | [`ADR-C03`](ADR-C03-closed-enum-plus-open-extension-variant.md) | Closed enum of primitive nodes plus an open Extension variant | — | accepted |
@@ -140,7 +141,7 @@ stated here canonically.
 **The ID** is what prose cites, and what the ADR's own `#` heading carries. Its
 number is **never padded**:
 
-- System-architecture decisions use the bare prefix: `ADR-1` … `ADR-15`.
+- System-architecture decisions use the bare prefix: `ADR-1` … `ADR-16`.
 - Code-architecture decisions use the `C` prefix: `ADR-C1` … `ADR-C35`.
 - New decisions (from `decision` issues) continue the appropriate sequence and are added, never inserted retroactively.
 

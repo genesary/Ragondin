@@ -412,12 +412,12 @@ Exporting rather than building upon preserves interoperability for teams already
 
 The second view is the differentiating capability, and it is **a direct dividend of the graph representation** (§5.1). Because the representation *is* a graph, and traces are captured **per node**, the interface can draw the graph and superimpose the execution on it. **Debugging a RAG pipeline becomes visual.** No existing tool does this well.
 
-**Authoring trajectory.** Node-based visual authoring (in the style of node-graph editors) is an explicit **two-step trajectory**, not indefinite polish:
+**Authoring trajectory.** Node-based visual authoring (in the style of node-graph editors) is built in **two steps, in one milestone** ([ADR-16](adr/ADR-016-visual-editing-with-the-front-end-yaml-stays-the-truth.md), superseding ADR-14's later trajectory):
 
 - **Step 1 — the graph in read mode** (the replay view above). Load-bearing, part of the core.
-- **Step 2 — visual graph editing.** Added later as an additional front end over the same representation. Once the graph can be rendered for reading, making it editable is an incremental extension.
+- **Step 2 — visual graph editing.** The same front end, and the same canvas, in write mode. Once the graph can be rendered for reading, making it editable is an incremental extension — which is why the viewer is built first and never waits on the editor.
 
-**YAML-first authoring remains the primary path for v0.** The v0 audience is researchers, who want to version configurations in git, submit them as pull requests, and script fifty variants in a loop. For that user, a text file is a better tool than a canvas. The canvas serves the *next* audience.
+**The pipeline file stays the source of truth.** Researchers version configurations in git, submit them as pull requests, and script fifty variants in a loop; for that user a text file is the better tool, and it stays the machine entry point. The canvas is the human entry point, and what it edits *is* that file: it writes the pipeline document only when the pipeline validates, what it writes hashes under `ragondin validate` to exactly what it showed, and node positions live beside the document, never in the hash. There is no second store of pipelines behind the canvas.
 
 **An identified risk.** Node-based editors conventionally manipulate acyclic graphs. This representation contains **branch and bounded-loop nodes**. Rendering control flow visually is a **hard interface-design problem**, not an implementation detail. It is tracked as such (§12).
 
@@ -663,7 +663,7 @@ BM25, dense, sparse and reranking, **all in-process**, asynchronous, with contin
 | The metrics catalogue and the native run store | — |
 | Export adapters to third-party trackers | — |
 | Configuration gRPC service, controller, custom resources | — |
-| The user interface (run comparison, per-node replay) | Visual graph *editing* (v0 is YAML-first) |
+| The user interface (run comparison, per-node replay, visual editing over the pipeline file — ADR-16) | Visual rendering and editing of control flow, until `docs/OPEN_QUESTIONS.md` § 7 is decided |
 
 ### 11.2 The chosen first audience
 
@@ -700,8 +700,9 @@ Everything else in this architecture is an **extension of that core**, and every
 | **ADR-11** | **Research bench before multi-tenant service** | Multi-tenant service first | A benchmarking core must be proven before productization (§11.2) |
 | **ADR-12** | **UI in the experiment plane, never in the data plane** | UI coupled to the data plane | Headless scalable data plane *and* a complete product, without tension (§6) |
 | **ADR-13** | **Native run store with export adapters** | Build on an existing experiment tracker | Data model too flat for a graph-shaped config; per-node replay inexpressible; inverts the plane dependency (§6.4) |
-| **ADR-14** | **Single front end**; graph replay is load-bearing, visual authoring is a later trajectory | Separate benchmarking tool; visual authoring in v0 | One coherent product; YAML serves the v0 research audience better (§6.5) |
+| **ADR-14** | *Superseded by ADR-16.* **Single front end**; graph replay is load-bearing, visual authoring is a later trajectory | Separate benchmarking tool; visual authoring in v0 | One coherent product; YAML serves the v0 research audience better (§6.5) |
 | **ADR-15** | **Traceability and statistical reproducibility, not strict determinism** | Promise deterministic judge-based runs | LLM non-determinism under dynamic batching is irreducible (§9.7) |
+| **ADR-16** | **Single front end**; graph replay is load-bearing and built first; **visual editing is built with it**, over pipeline files that stay the source of truth | Editing in a later milestone; the canvas as the source of truth; export only; an editor before the viewer | The front end is the main human entry point; the file and the canvas are one object, so parity is a test (§6.5) |
 
 ---
 
@@ -715,8 +716,8 @@ Everything else in this architecture is an **extension of that core**, and every
 | **Narrow contribution funnel** — a Rust wall | High | The `Local`/`Remote` contract makes Python contribution first-class (§5.2, §10) |
 | **Non-reproducible runs** | High | Full content addressing; index versioned and pinned (P4, §7.1) |
 | **Public benchmark contamination** | Medium | Custom-benchmark phase and synthetic generation (§9.5) |
-| **Visual control-flow rendering** — node editors assume acyclic graphs | Medium | Tracked as an open design problem; deferred to the visual-authoring milestone (§6.5, §13) |
-| **The UI consuming the schedule** | Medium | Load-bearing views (run comparison, per-node replay) distinguished from polish (visual editing); YAML-first (§6.5) |
+| **Visual control-flow rendering** — node editors assume acyclic graphs | Medium | Tracked as an open design problem; decided in the control-flow milestone, before `Branch` and `Loop` reach the canvas (§6.5, ADR-16) |
+| **The UI consuming the schedule** | Medium | The load-bearing views (run comparison, per-node replay) are built before the editor and never depend on it; the milestone's exit criterion is a parity test, not a judgment; the pipeline file stays the source of truth (§6.5, ADR-16) |
 | **Configuration complexity at scale** — many tenants, delta pushes | Medium (deferred) | Consciously deferred; crossed at real need rather than pre-paid (§8.1) |
 
 ---
