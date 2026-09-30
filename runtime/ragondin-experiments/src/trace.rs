@@ -17,10 +17,11 @@
 //! - **Reported, never repaired.** A document these types do not describe
 //!   fails [`Trace::try_from`] with a [`TraceError`] naming the node and the
 //!   field. Nothing is defaulted, dropped or guessed: a missing field, a field
-//!   the shape does not have, a summary in neither of its kind's shapes, and a
-//!   count that disagrees with the chunks it counts are each refused, because
-//!   accepting any of them would make the typed trace render a document other
-//!   than the one it was read from.
+//!   the shape does not have, a value of the wrong type — an integer score
+//!   among them, since a score is always rendered as a float — a summary in
+//!   neither of its kind's shapes, and a count that disagrees with the chunks
+//!   it counts are each refused, because accepting any of them would make the
+//!   typed trace render a document other than the one it was read from.
 //! - **The first incompatible change adds a version.** The document carries
 //!   no version field today. A change to this shape that a stored trace could
 //!   not satisfy adds one in the same change — and is a change to what the
@@ -365,12 +366,15 @@ impl Reader {
         })
     }
 
+    /// A float, and only a float: the rendering writes every score as one,
+    /// so an integer here (`1` for `1.0`) would read back as a value the
+    /// typed trace renders differently.
     fn number(&self, value: &Value, at: &str) -> Result<f64, TraceError> {
-        value.as_f64().ok_or_else(|| {
+        value.as_f64().filter(|_| value.is_f64()).ok_or_else(|| {
             self.fail(
                 at,
                 TraceProblem::WrongType {
-                    expected: "a number",
+                    expected: "a floating-point number",
                 },
             )
         })

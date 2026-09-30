@@ -568,3 +568,25 @@ fn the_listing_skips_whatever_under_the_root_is_not_a_run_directory() {
         Err(RunStoreError::Incomplete { .. })
     ));
 }
+
+#[cfg(unix)]
+#[test]
+fn the_listing_does_not_follow_a_symbolic_link() {
+    // The store writes directories, never links; a link under the root is
+    // something a person put there, and the listing reads each entry's own
+    // type rather than what it points at.
+    let store = store("ids_symlink");
+    let stored = a_run(run_id(0x81), &[("ndcg@10", 0.42)]);
+    store.save(&stored).expect("the run must be writable");
+    let root = store.root();
+    std::os::unix::fs::symlink(
+        root.join(stored.id.to_string()),
+        root.join(run_id(0x82).to_string()),
+    )
+    .expect("a link is creatable");
+
+    assert_eq!(
+        RunStore::ids(&store).expect("the root lists"),
+        vec![stored.id]
+    );
+}

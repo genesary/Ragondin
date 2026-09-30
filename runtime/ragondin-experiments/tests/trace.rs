@@ -261,6 +261,25 @@ fn a_value_of_the_wrong_type_is_refused() {
 }
 
 #[test]
+fn an_integer_score_is_refused_because_it_would_render_back_as_a_float() {
+    // The rendering always writes a score as a float (`1.0`), so accepting
+    // the integer `1` would read a document the typed trace cannot write
+    // back: a different `Value`, and different bytes.
+    let error = refusal(a_node_with_output(
+        json!({"chunks": {"count": 1, "ranked": [{"chunk": "c-1", "document": "d", "score": 1}]}}),
+    ));
+
+    assert_eq!(error.node(), Some(&NodeId::new("rerank")));
+    assert_eq!(error.field(), "nodes[1].output.chunks.ranked[0].score");
+    assert_eq!(
+        error.problem(),
+        &TraceProblem::WrongType {
+            expected: "a floating-point number"
+        }
+    );
+}
+
+#[test]
 fn a_count_that_disagrees_with_the_chunks_it_counts_is_refused() {
     // The typed shape holds the chunks and derives the count; accepting a
     // disagreeing count would silently rewrite it on the way back out.

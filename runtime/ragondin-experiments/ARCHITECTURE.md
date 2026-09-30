@@ -184,7 +184,9 @@ promise, not part of it.
   a listing wants a stable order, and this one means nothing, as a digest
   order should — which is why `RunId` still has no `Ord`. The file backend
   lists every directory whose name parses as a `RunId`, skipping staging
-  directories, files and other names, and a root never created lists nothing.
+  directories, files, symbolic links (the store writes none) and other names,
+  and reports an entry whose type cannot be read rather than skipping it; a
+  root never created lists nothing.
   A torn directory is listed: its id names it, and `load` reports it
   `Incomplete`.
 - **The conformance suite is a module behind a feature**, not a crate: its
@@ -214,11 +216,14 @@ three rules, which this crate keeps:
   harness maps the engine's `ExecutionTrace` into it field by field (INV-2).
 - **Reported, never repaired or guessed.** `Trace::try_from` refuses a missing
   field, a field the shape does not have, a summary in neither of its kind's
-  two shapes, a value of the wrong type, and a named chunk list whose `count`
-  disagrees with its chunks, with a `TraceError` naming the node and the
-  field. Strictness is what makes the conversion exact: every document it
-  accepts renders back to itself, so a reader never shows a trace other than
-  the one stored.
+  two shapes, a value of the wrong type — an integer score included, since
+  the rendering writes every score as a float — and a named chunk list whose
+  `count` disagrees with its chunks, with a `TraceError` naming the node and
+  the field. Strictness is what makes the conversion exact: every document it
+  accepts renders back to the same JSON value, so a reader never shows a
+  trace other than the one stored. (The same *value*, not always the same
+  text: a number spelled unusually — `0.50` — reads as `0.5`, which is how
+  the store writes it anyway.)
 - **No version now; the first incompatible change adds one**, in the same
   change — which is a change to what the trace carries and escalates
   (`AGENTS.md` § Rules of engagement).

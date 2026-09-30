@@ -26,7 +26,8 @@
 //!    [`Trace`](crate::Trace) — reads back equal to the run written. That
 //!    second trace is the check that `save` and `load` move a trace without
 //!    parsing it (ADR-C28). A second `save` of the same run succeeds and
-//!    changes nothing.
+//!    changes nothing, and a `save` of a *different* run under the same id
+//!    succeeds and leaves the first one stored.
 //! 2. **Unknown id.** `load` of an id never saved is
 //!    [`NotFound`](RunStoreError::NotFound), naming the id.
 //! 3. **Listing.** A fresh store lists nothing; after several saves, a repeat
@@ -37,7 +38,7 @@
 //!    is stored: the id neither lists nor loads.
 //! 5. **Incomplete run.** A run `tear` has damaged is reported
 //!    [`Incomplete`](RunStoreError::Incomplete) by `load` and by `save`,
-//!    never repaired.
+//!    never repaired, and is still listed by `ids`.
 //!
 //! # Why two closures
 //!
@@ -145,6 +146,23 @@ fn round_trip(store: &impl RunStore) {
         .load(&run.id)
         .unwrap_or_else(|error| panic!("round trip: `load` after a second save: {error}"));
     assert_eq!(again, run, "round trip: a second save changes nothing");
+
+    // A different record under the same id — a rerun whose judge scored
+    // differently, say — is not written over the first: the id names the
+    // run, and the store keeps what it had.
+    let mut rerun = a_run(run.id);
+    rerun.metrics.insert("ndcg@10", 0.99);
+    rerun.bindings.clear();
+    store.save(&rerun).unwrap_or_else(|error| {
+        panic!("round trip: saving a rerun under a stored id failed: {error}")
+    });
+    let kept = store
+        .load(&run.id)
+        .unwrap_or_else(|error| panic!("round trip: `load` after saving a rerun: {error}"));
+    assert_eq!(
+        kept, run,
+        "round trip: a run already stored under the id is left as it is"
+    );
 }
 
 fn unknown_id(store: &impl RunStore) {
@@ -211,6 +229,14 @@ fn incomplete_run<S: RunStore>(store: &S, tear: &mut impl FnMut(&S, &RunId)) {
         .save(&run)
         .unwrap_or_else(|error| panic!("incomplete run: `save` failed: {error}"));
     tear(store, &run.id);
+
+    let ids = store
+        .ids()
+        .unwrap_or_else(|error| panic!("incomplete run: `ids` failed: {error}"));
+    assert!(
+        ids.contains(&run.id),
+        "incomplete run: a torn run is still listed — `load` is where it is reported — got {ids:?}"
+    );
 
     assert!(
         matches!(store.load(&run.id), Err(RunStoreError::Incomplete { .. })),

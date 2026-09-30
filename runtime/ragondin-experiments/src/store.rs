@@ -306,8 +306,9 @@ impl RunStore for FileSystemRunStore {
     /// Anything else is not a run and is skipped: a `.partial` staging
     /// directory (its leading dot — the module's *A run directory appears
     /// whole or not at all*), a file, a name that is not 64 lowercase hex
-    /// digits. A root that does not exist yet — no run was ever saved — holds
-    /// no runs.
+    /// digits, a symbolic link (the store writes none). A root that does not
+    /// exist yet — no run was ever saved — holds no runs. An entry whose type
+    /// cannot be read is reported, never skipped.
     fn ids(&self) -> Result<Vec<RunId>, RunStoreError> {
         let io = |source| RunStoreError::Io {
             path: self.root.clone(),
@@ -329,7 +330,10 @@ impl RunStore for FileSystemRunStore {
             else {
                 continue;
             };
-            if entry.path().is_dir() {
+            // The entry's own type, and its failure reported: `Path::is_dir`
+            // would turn a stat error into `false` and drop the entry
+            // silently. A symbolic link is not followed, so it is not listed.
+            if entry.file_type().map_err(io)?.is_dir() {
                 ids.push(id);
             }
         }
