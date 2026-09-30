@@ -171,6 +171,12 @@ ignore = ["RUSTSEC-2024-0436"]
 # MPL-2.0 is deliberately absent. It is file-level copyleft rather than
 # permissive, nothing in the lockfile carries it, and adding it is a decision to
 # take when a crate first needs it -- not in advance.
+#
+# COPIED, on purpose, as `LICENSE_ALLOW` in ui/scripts/audit-policy.mjs: the
+# front end's npm tree is audited against this same list, and the two
+# toolchains cannot share a file. The two must stay identical --
+# ui/tests/licenses.test.ts reads both and fails when they differ -- so a change
+# here changes that copy in the same commit.
 allow = [
     "Apache-2.0",
     "MIT",
