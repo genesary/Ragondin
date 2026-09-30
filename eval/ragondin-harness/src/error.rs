@@ -39,6 +39,20 @@ pub enum HarnessError {
         source: Box<ExecError>,
     },
 
+    /// The caller's cancellation signal was read set between two queries, and
+    /// the run stopped there.
+    ///
+    /// Not a failure of the pipeline: every query that ran succeeded, and the
+    /// caller asked for the stop. A caller that tracks jobs files it as
+    /// cancelled, not failed. The traces of the queries that ran are not here —
+    /// `evaluate_observed` delivered each to its observer as the query
+    /// finished, and those are the partial record.
+    #[error("the run was cancelled after {completed} queries")]
+    Cancelled {
+        /// How many queries ran, each to its end, before the signal was read.
+        completed: usize,
+    },
+
     /// The benchmark carries neither qrels nor reference answers, so no
     /// metric family scored any query.
     ///

@@ -37,6 +37,15 @@
 //! builder, found by port position (ADR-C30 § 3), and the answer is read from
 //! the generator's entry in the trace.
 //!
+//! # Watching and stopping a run
+//!
+//! [`evaluate_observed`] is the loop behind [`evaluate`], with an observer
+//! called once per executed query — its position, the total, the engine's
+//! time, and the rendered trace, as a [`QueryProgress`] — and a cancellation
+//! signal read between two queries and never inside one
+//! ([`HarnessError::Cancelled`]). The traces the observer received are the
+//! partial record of a run that stopped.
+//!
 //! The harness **returns** the run rather than storing it: the store root is
 //! the caller's, and `FileSystemRunStore::save` is one call away. What belongs
 //! here is the record; where it is written down is the composition root's.
@@ -54,7 +63,8 @@
 #![warn(missing_docs)]
 
 // Private modules with a flat re-export: one path to each item. The two names a
-// caller needs are `evaluate` and `Evaluation`.
+// caller needs are `evaluate` and `Evaluation`; a caller that watches or stops
+// a run adds `evaluate_observed` and `QueryProgress`.
 mod corpus;
 mod error;
 mod evaluate;
@@ -63,4 +73,4 @@ mod trace;
 
 pub use corpus::CorpusIndex;
 pub use error::{HarnessError, RankingWalkError};
-pub use evaluate::{evaluate, Evaluation};
+pub use evaluate::{evaluate, evaluate_observed, Evaluation, QueryProgress};

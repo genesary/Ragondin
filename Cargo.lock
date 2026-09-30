@@ -2054,8 +2054,10 @@ dependencies = [
 name = "ragondin-harness"
 version = "0.0.0"
 dependencies = [
+ "async-trait",
  "ragondin-benchmarks",
  "ragondin-config",
+ "ragondin-contracts",
  "ragondin-engine",
  "ragondin-experiments",
  "ragondin-metrics",

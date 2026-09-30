@@ -29,8 +29,12 @@ thiserror = { workspace = true }            # typed library errors (frozen: neve
 # wires `ragondin-stub` onto an `EngineContext` through the public `register_*`
 # API, and reads its pipeline off disk through `ragondin-config` the way
 # `ragondin bench` will. Neither belongs in the library — a driver receives a
-# context, it does not build one.
+# context, it does not build one. `ragondin-contracts` and `async-trait` let the
+# progress test wrap the stub retriever in one that counts its calls, which is
+# how it proves the engine ran no query past a cancellation.
 [dev-dependencies]
 ragondin-stub = { workspace = true }
+ragondin-contracts = { workspace = true }
+async-trait = { workspace = true }
 ragondin-config = { workspace = true }
 tokio = { workspace = true }

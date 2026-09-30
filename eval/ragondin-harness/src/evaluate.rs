@@ -22,15 +22,28 @@
 //!    own judged set, in benchmark order (ADR-C30 § 5). Which families a run
 //!    reports is read once, from what the benchmark carries (ADR-8).
 //! 4. **Assemble the identity tuple** and name the run by its digest.
+//!
+//! # What a caller sees while it runs
+//!
+//! [`evaluate_observed`] is the same loop with two more parameters: an
+//! observer called once per executed query, right after the trace is rendered
+//! and before anything is scored — so a failing or refused query reaches it
+//! too, before the error returns — and a cancellation signal read at the top
+//! of every iteration, between two queries and never inside one. The traces
+//! the observer has received are the partial record of a run that stopped.
+//! [`evaluate`] is that loop with an observer that does nothing and a signal
+//! nobody sets.
 
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
 
 use ragondin_benchmarks::{Benchmark, CarriedPieces};
 use ragondin_engine::{plan_physical, Engine, EngineContext, ExecutionTrace, Output, ValueSummary};
-use ragondin_experiments::{ConfigDocument, Metrics, Run, RunInputs};
+use ragondin_experiments::{ConfigDocument, Metrics, Run, RunInputs, TraceDocument};
 use ragondin_metrics::{exact_match, ndcg_at_k, recall_at_k, reciprocal_rank, token_f1};
 use ragondin_pipeline::{LogicalNode, LogicalPipeline, NodeId};
-use ragondin_types::DocId;
+use ragondin_types::{DocId, QueryId};
 
 use crate::corpus::CorpusIndex;
 use crate::error::{HarnessError, RankingWalkError};
@@ -90,6 +103,66 @@ pub async fn evaluate(
     evaluation: &Evaluation<'_>,
     ctx: &EngineContext,
 ) -> Result<Run, HarnessError> {
+    evaluate_observed(
+        evaluation,
+        ctx,
+        |_: QueryProgress<'_>| {},
+        &AtomicBool::new(false),
+    )
+    .await
+}
+
+/// One executed query, as [`evaluate_observed`] reports it to its observer.
+///
+/// Borrowed rather than owned: the run keeps its own copy of the trace, and an
+/// observer that files it elsewhere clones it once, where it needs to.
+#[derive(Debug, Clone, Copy)]
+pub struct QueryProgress<'a> {
+    /// The query that just ran.
+    pub query: &'a QueryId,
+    /// Its position in the benchmark, from 1: the `3,982` of `3,982 / 10,570`.
+    pub position: usize,
+    /// How many queries the benchmark holds.
+    pub total: usize,
+    /// How long `Engine::execute` took for this query, measured around the
+    /// call — the whole query's time, where the node durations inside the
+    /// trace are each component's own (ADR-C28).
+    pub elapsed: Duration,
+    /// The query's trace, rendered: the very document the run files under the
+    /// query, or the one a stopping error carries.
+    pub trace: &'a TraceDocument,
+}
+
+/// Evaluates `evaluation` as [`evaluate`] does, reporting each query to
+/// `observer` as it finishes and stopping between two queries once `cancel` is
+/// set.
+///
+/// - **The observer** is called once per executed query, in benchmark order,
+///   immediately after the query's trace is rendered and before it is scored.
+///   A query whose execution fails, or whose output is refused, reaches the
+///   observer before the error returns, so every trace the run produced has
+///   been delivered by the time it stops, however it stops. It is `Send` so
+///   that the returned future is, when the caller holds it across the loop's
+///   await points on another thread.
+/// - **The signal** is read at the top of each iteration, before the query
+///   executes, and nowhere else: a query in flight runs to its end and is
+///   observed, and one set before the first query runs nothing. A signal set
+///   after the last query has no boundary left to be read at, and the run
+///   completes.
+///
+/// # Errors
+///
+/// Those of [`evaluate`], and [`HarnessError::Cancelled`] when the signal is
+/// read set.
+pub async fn evaluate_observed<O>(
+    evaluation: &Evaluation<'_>,
+    ctx: &EngineContext,
+    mut observer: O,
+    cancel: &AtomicBool,
+) -> Result<Run, HarnessError>
+where
+    O: FnMut(QueryProgress<'_>) + Send,
+{
     // Once, before the loop: planning resolves every `impl:` name and
     // constructs the components a plan holds.
     let plan = plan_physical(evaluation.pipeline, ctx)?;
@@ -108,9 +181,30 @@ pub async fn evaluate(
     let mut retrieval_scores = RetrievalScores::default();
     let mut generation_scores = GenerationScores::default();
 
-    for (query, judgments, references) in evaluation.benchmark.iter_with_references() {
+    let total = evaluation.benchmark.queries().len();
+    for (completed, (query, judgments, references)) in
+        evaluation.benchmark.iter_with_references().enumerate()
+    {
+        // The one place the signal is read: between two queries, so a query
+        // is either not started or run to its end and observed.
+        if cancel.load(Ordering::SeqCst) {
+            return Err(HarnessError::Cancelled { completed });
+        }
+
+        let started = Instant::now();
         let (output, trace) = engine.execute(&plan, query.clone()).await;
+        let elapsed = started.elapsed();
         let document = render(&trace);
+
+        // Before anything below can return: a query that fails or is refused
+        // is delivered too, so the observer holds every trace produced.
+        observer(QueryProgress {
+            query: &query.id,
+            position: completed + 1,
+            total,
+            elapsed,
+            trace: &document,
+        });
 
         let output = output.map_err(|source| HarnessError::Execute {
             query: query.id.clone(),
