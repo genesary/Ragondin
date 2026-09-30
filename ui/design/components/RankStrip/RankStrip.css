@@ -12,7 +12,7 @@
   border-radius: var(--radius-xs);
   box-shadow: inset 0 0 0 1px var(--line-control);
 }
-.rg-rankstrip > i.is-hit { background: var(--accent); box-shadow: none; }
-.rg-rankstrip > i.is-cut { box-shadow: inset 0 0 0 1px var(--line); opacity: 0.6; }
+.rg-rankstrip > i[data-cell="hit"] { background: var(--accent); box-shadow: none; }
+.rg-rankstrip > i[data-cell="cut"] { box-shadow: inset 0 0 0 1px var(--line); opacity: 0.6; }
 .rg-rankstrip--l { grid-auto-columns: 12px; gap: 3px; }
 .rg-rankstrip--l > i { width: 12px; height: 12px; border-radius: 3px; }

@@ -21,6 +21,9 @@ export type InputProps = {
 export function Input({ id, label, unit, numeric = false, mono = false, help, error, className, ...rest }: InputProps) {
   const line = error ?? help;
   const helpId = `${id}-help`;
+  const unitId = `${id}-unit`;
+  // The unit is part of what the value means ("30" is "30 s"), so it describes the field.
+  const describedBy = [unit === undefined ? '' : unitId, line === undefined ? '' : helpId].filter(Boolean).join(' ');
   const classes = ['rg-input', numeric ? 'rg-input--num' : '', mono ? 'rg-input--mono' : '', className ?? ''].filter(Boolean).join(' ');
   const input = (
     <input
@@ -28,7 +31,7 @@ export function Input({ id, label, unit, numeric = false, mono = false, help, er
       id={id}
       className={classes}
       aria-invalid={error === undefined ? undefined : true}
-      aria-describedby={line === undefined ? undefined : helpId}
+      aria-describedby={describedBy === '' ? undefined : describedBy}
     />
   );
   return (
@@ -41,7 +44,7 @@ export function Input({ id, label, unit, numeric = false, mono = false, help, er
       ) : (
         <span className="rg-affix">
           {input}
-          <span className="rg-affix__unit" aria-hidden="true">
+          <span id={unitId} className="rg-affix__unit">
             {unit}
           </span>
         </span>

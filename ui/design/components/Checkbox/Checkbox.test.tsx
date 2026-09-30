@@ -38,7 +38,7 @@ describe('Checkbox mixed', () => {
 describe('Checkbox disabled', () => {
   it('stays visible and says why, in words', () => {
     render(<Checkbox label="squad/dev" checked={false} onChange={() => {}} disabled disabledReason="another benchmark, can't join this comparison" />);
-    const box = screen.getByRole('checkbox', { name: /squad\/dev/ }) as HTMLInputElement;
+    const box = screen.getByRole('checkbox', { name: 'squad/dev' }) as HTMLInputElement;
     expect(box.disabled).toBe(true);
     const reason = screen.getByText("another benchmark, can't join this comparison");
     expect(box.getAttribute('aria-describedby')).toBe(reason.id);

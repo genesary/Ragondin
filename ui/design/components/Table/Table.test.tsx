@@ -49,20 +49,27 @@ describe('Table numeric alignment', () => {
 describe('Table best per row', () => {
   it('sets exactly the best value of each row in bold, and says so in words', () => {
     const { container } = render(<Table caption="m" columns={columns} rows={rows} />);
-    const best = [...container.querySelectorAll('td.is-best')];
+    const best = [...container.querySelectorAll('td[data-best]')];
     expect(best.map((td) => td.textContent)).toEqual(['0.7217 (best)', '0.9120 (best)']);
-    expect(declared(css, '.rg-table td.is-best', 'font-weight')).toBe('700');
-    expect(container.querySelectorAll('td.is-best .rg-visually-hidden')).toHaveLength(2);
+    expect(declared(css, '.rg-table td[data-best]', 'font-weight')).toBe('700');
+    expect(container.querySelectorAll('td[data-best] .rg-visually-hidden')).toHaveLength(2);
+    expect(css).not.toMatch(/\.is-[a-z]/);
   });
 });
 
 describe('Table groups and selection', () => {
-  it('heads a group of rows with its name, and marks the selected row', () => {
+  it('heads a group of rows with its name', () => {
     render(<Table caption="m" columns={columns} rows={rows} />);
-    const group = screen.getByRole('rowheader', { name: 'Ranking' }) ?? null;
-    expect(group.getAttribute('colspan')).toBe('3');
-    expect(screen.getByText('Recall@100').closest('tr')?.getAttribute('aria-selected')).toBe('true');
-    expect(screen.getByText('nDCG@10').closest('tr')?.getAttribute('aria-selected')).toBeNull();
-    expect(declared(css, '.rg-table tr[aria-selected="true"] td', 'background')).toBe('var(--accent-wash)');
+    expect(screen.getByRole('rowheader', { name: 'Ranking' }).getAttribute('colspan')).toBe('3');
+  });
+
+  it('marks the selected row with aria-current, which a table row honours, and a bar beside it, not a tint alone', () => {
+    render(<Table caption="m" columns={columns} rows={rows} />);
+    const selected = screen.getByText('Recall@100').closest('tr');
+    expect(selected?.getAttribute('aria-current')).toBe('true');
+    expect(selected?.getAttribute('aria-selected')).toBeNull();
+    expect(screen.getByText('nDCG@10').closest('tr')?.getAttribute('aria-current')).toBeNull();
+    expect(declared(css, '.rg-table tr[aria-current="true"] td', 'background')).toBe('var(--accent-wash)');
+    expect(declared(css, '.rg-table tr[aria-current="true"] > :first-child', 'box-shadow')).toBe('inset 2px 0 0 var(--accent)');
   });
 });

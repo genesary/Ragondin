@@ -21,9 +21,14 @@ describe('Input at rest', () => {
     expect(help?.textContent).toBe('1 to 5,183');
   });
 
-  it('carries its unit as a suffix, right-aligned numbers and a mono face on request', () => {
-    const { container } = render(<Input id="t" label="timeout" unit="s" numeric mono />);
-    expect(screen.getByText('s').classList.contains('rg-affix__unit')).toBe(true);
+  it('carries its unit as a suffix that assistive technology reads too, right-aligned numbers and a mono face on request', () => {
+    const { container } = render(<Input id="t" label="timeout" unit="s" numeric mono help="1 to 600" />);
+    const unit = screen.getByText('s');
+    expect(unit.classList.contains('rg-affix__unit')).toBe(true);
+    expect(unit.getAttribute('aria-hidden')).toBeNull();
+    const described = (screen.getByLabelText('timeout').getAttribute('aria-describedby') ?? '').split(' ');
+    expect(described).toContain(unit.id);
+    expect(described.map((i) => document.getElementById(i)?.textContent)).toEqual(['s', '1 to 600']);
     const input = container.querySelector('input');
     expect(input?.classList.contains('rg-input--num')).toBe(true);
     expect(input?.classList.contains('rg-input--mono')).toBe(true);
@@ -34,6 +39,8 @@ describe('Input at rest', () => {
 describe('Input hover', () => {
   it('darkens its boundary', () => {
     expect(declared(css, '.rg-input:hover', 'border-color')).toBe('var(--ink-3)');
+    expect(declared(css, '.rg-input[data-preview-state="hover"]', 'border-color')).toBe('var(--ink-3)');
+    expect(css).not.toMatch(/\.is-(hover|focus)\b/);
   });
 });
 
@@ -56,7 +63,7 @@ describe('Input invalid', () => {
     const message = document.getElementById(input.getAttribute('aria-describedby') ?? '');
     expect(message?.textContent).toBe('5000 is more than the corpus holds. Use 1 to 5,183.');
     expect(message?.querySelector('svg')).toBeTruthy();
-    expect(container.querySelector('.rg-help.is-error')).toBe(message);
+    expect(container.querySelector('.rg-help[data-error]')).toBe(message);
     expect(declared(css, '.rg-input[aria-invalid="true"]', 'border-color')).toBe('var(--critical)');
   });
 });

@@ -21,6 +21,7 @@
 /* The baseline is a reference, not a contender: its dashed line in charts. */
 .rg-swatch[data-run="base"] { background: transparent; border: 1.5px dashed var(--run-base); }
 .rg-swatch--s { width: 10px; height: 10px; border-radius: 3px; }
+.rg-swatch--s[data-run="base"] { border-width: 1.5px; }
 
 .rg-hash {
   padding: 2px 6px;

@@ -18,7 +18,7 @@ describe('FamilyTile', () => {
   it('gives query and control flow the neutral pigment; control flow is told apart by its diamond', () => {
     expect(declared(css, '.rg-tile[data-family="query"]', '--fam')).toBe('var(--family-query)');
     expect(declared(css, '.rg-tile[data-family="control"]', '--fam')).toBe('var(--family-query)');
-    expect(declared(css, '.rg-tile[data-family="control"]', 'transform')).toBe('rotate(45deg)');
+    expect(declared(css, '.rg-tile[data-family="control"]', 'transform')).toBe('rotate(45deg) scale(0.82)');
   });
 
   it('draws the glyph in on-family ink', () => {

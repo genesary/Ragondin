@@ -13,8 +13,8 @@
   cursor: pointer;
   transition: border-color var(--duration-0);
 }
-.rg-select select:hover, .rg-select.is-hover select { border-color: var(--ink-3); }
-.rg-select select:focus-visible, .rg-select.is-focus select {
+.rg-select select:hover, .rg-select select[data-preview-state="hover"] { border-color: var(--ink-3); }
+.rg-select select:focus, .rg-select select[data-preview-state="focus"] {
   outline: 2px solid var(--focus-ring);
   outline-offset: 1px;
   border-color: var(--accent);

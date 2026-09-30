@@ -2,13 +2,13 @@
 
 The three typefaces of the design system, committed so the binary serves them from its own origin (ADR-C36 § 5): nothing fetches a font at run time. Each file is the upstream project's own web font, **byte for byte**: no subsetting, no instancing, no conversion. Only the upright weights the type scale in `../tokens.json` uses are kept.
 
-The table below is also the manifest `npm run audit` reads (`ui/scripts/font-licenses.mjs`): every font file in this directory needs a row, its licence must be on the allow list `deny.toml` and `ui/scripts/audit-policy.mjs` share, its licence text must sit beside it, and the file must still match the SHA-256 recorded here. A row whose file is gone fails too.
+The two tables under § Files and § Licence texts are also the manifest `npm run audit` reads (`ui/scripts/font-licenses.mjs`). Every font file anywhere under `ui/` (installed packages and build output aside) must sit directly in this directory and have exactly one row; its licence must be on the allow list `deny.toml` and `ui/scripts/audit-policy.mjs` share; its licence text must sit in this directory, named without a path, and be pinned by its own SHA-256; and both files must still match the digests recorded here. A row whose file is gone fails too.
 
 ## Families
 
 | Family | Role | Licence | Copyright | Obtained from |
 |---|---|---|---|---|
-| Wix Madefor Display | `--font-display`, 17 px and up | SIL Open Font License 1.1 (`OFL-1.1`), text in `OFL-WixMadefor.txt` | Copyright 2021 The Wix Madefor Project Authors | The upstream project, `https://github.com/wix-incubator/wixmadefor`: release `3.100`, archive `wixmadefor-fonts.zip` (SHA-256 `7fdbd012ca9e245d7c177a341bdbdf789521590e175322a9013c035981138f1c`), directory `fonts/webfonts/`; licence text from the same project at commit `85646f130c8d3edffe66c4d8755c3f9f7abfa877` |
+| Wix Madefor Display | `--font-display`, 17 px and up | SIL Open Font License 1.1 (`OFL-1.1`), text in `OFL-WixMadefor.txt` | Copyright 2021 The Wix Madefor Project Authors | The upstream project, `https://github.com/wix-incubator/wixmadefor` (the copyright line in the licence text names it `github.com/wix/wixmadefor`, the address it had before it moved; the one project either way): release `3.100`, archive `wixmadefor-fonts.zip` (SHA-256 `7fdbd012ca9e245d7c177a341bdbdf789521590e175322a9013c035981138f1c`), directory `fonts/webfonts/`; licence text from the same project at commit `85646f130c8d3edffe66c4d8755c3f9f7abfa877` |
 | Wix Madefor Text | `--font-sans`, the UI face | as above | as above | as above |
 | Atkinson Hyperlegible Mono | `--font-mono`, hashes, ids, parameters | SIL Open Font License 1.1 (`OFL-1.1`), text in `OFL-AtkinsonHyperlegibleMono.txt` | Copyright 2020-2024 The Atkinson Hyperlegible Mono Project Authors | The upstream project, `https://github.com/googlefonts/atkinson-hyperlegible-next-mono`, at commit `154d50362016cc3e873eb21d242cd0772384c8f9`, directory `fonts/webfonts/`, and its `OFL.txt` |
 
@@ -27,6 +27,13 @@ The OFL permits bundling a font with software under any licence. Its conditions 
 | `WixMadeforText-Bold.woff2` | Wix Madefor Text | 700 | OFL-1.1 | `OFL-WixMadefor.txt` | `1160efa6a6588d74244cf251be999b46451b7eaa6d6323ca9cc80710f2890ad5` |
 | `AtkinsonHyperlegibleMono-Regular.woff2` | Atkinson Hyperlegible Mono | 400 | OFL-1.1 | `OFL-AtkinsonHyperlegibleMono.txt` | `3b916de5c5247c5fa9736aad6c2673f1b0b0381ab306dcddfcee4a184a842a51` |
 | `AtkinsonHyperlegibleMono-Medium.woff2` | Atkinson Hyperlegible Mono | 500 | OFL-1.1 | `OFL-AtkinsonHyperlegibleMono.txt` | `a9572b3a95d6e20bfdf08c4e351069416c0f07880435ef0822819e4f0410b459` |
+
+## Licence texts
+
+| File | SHA-256 |
+|---|---|
+| `OFL-WixMadefor.txt` | `42f1587d2b9350babd4fde58777c8468d081a7028536d62dc02229135c432447` |
+| `OFL-AtkinsonHyperlegibleMono.txt` | `1ebb31cf7393164f20d10c1d48406cddb5314feff8465531cf1e4ba37e9dd740` |
 
 ## Why these weights
 

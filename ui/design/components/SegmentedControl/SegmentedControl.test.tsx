@@ -27,7 +27,7 @@ describe('SegmentedControl at rest', () => {
 
 describe('SegmentedControl pressed', () => {
   it('raises the pressed thumb on the surface with the contact shadow', () => {
-    expect(declared(css, '.rg-seg button[aria-checked="true"]', 'background')).toBe('var(--surface)');
+    expect(declared(css, '.rg-seg button[aria-checked="true"]', 'background')).toBe('var(--seg-thumb)');
     expect(declared(css, '.rg-seg button[aria-checked="true"]', 'box-shadow')).toBe('var(--shadow-contact)');
   });
 
@@ -47,6 +47,19 @@ describe('SegmentedControl keyboard', () => {
     expect(onChange).toHaveBeenLastCalledWith('single');
     fireEvent.keyDown(screen.getByRole('radio', { name: 'Side by side' }), { key: 'ArrowLeft' });
     expect(onChange).toHaveBeenLastCalledWith('single');
+  });
+});
+
+describe('SegmentedControl keyboard, continued', () => {
+  it('keeps the arrow keys from scrolling the page', () => {
+    render(<SegmentedControl label="m" options={options} value="side" onChange={() => {}} />);
+    expect(fireEvent.keyDown(screen.getByRole('radio', { name: 'Side by side' }), { key: 'ArrowRight' })).toBe(false);
+    expect(fireEvent.keyDown(screen.getByRole('radio', { name: 'Side by side' }), { key: 'a' })).toBe(true);
+  });
+
+  it('keeps a tab stop on the first option when the value matches none', () => {
+    render(<SegmentedControl label="m" options={options} value="gone" onChange={() => {}} />);
+    expect(screen.getAllByRole('radio').map((r) => r.tabIndex)).toEqual([0, -1, -1]);
   });
 });
 

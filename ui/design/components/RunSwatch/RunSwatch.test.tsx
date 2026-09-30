@@ -55,4 +55,10 @@ describe('RunSwatch small', () => {
     expect(swatch.querySelector('.rg-visually-hidden')?.textContent).toBe('C');
     expect(screen.getByText('bm25')).toBeTruthy();
   });
+
+  it('keeps the baseline dashed at 10px', () => {
+    const { container } = render(<RunSwatch slot="base" name="dense-only" small />);
+    expect(container.querySelector('.rg-swatch--s[data-run="base"]')).toBeTruthy();
+    expect(declared(css, '.rg-swatch--s[data-run="base"]', 'border-width')).toBe('1.5px');
+  });
 });

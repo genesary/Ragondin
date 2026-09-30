@@ -93,6 +93,10 @@ describe('the palettes are the design system’s values, in both themes', () => 
     ['accent', '#242e40', '#d5dfef'],
   ])('reserved pair %s', expectPair);
 
+  it('raises the segmented thumb: the surface in light, line-strong in dark, so it reads above its track', () => {
+    expectPair('seg-thumb', 'var(--surface)', 'var(--line-strong)');
+  });
+
   it('draws the focus ring in the accent of the surface it sits on, in every theme block', () => {
     expectPair('focus-ring', 'var(--accent)', 'var(--accent)');
   });

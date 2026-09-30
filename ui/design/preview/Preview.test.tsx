@@ -24,4 +24,10 @@ describe('Preview', () => {
       expect(within(dark).getByRole('heading', { name })).toBeTruthy();
     }
   });
+
+  it('forces hover, focus and pressed at rest through data-preview-state, and through no class', () => {
+    const { container } = render(<Preview />);
+    for (const state of ['hover', 'focus', 'pressed']) expect(container.querySelectorAll(`[data-preview-state="${state}"]`).length).toBeGreaterThan(0);
+    expect(container.querySelector('[class*="is-"]')).toBeNull();
+  });
 });

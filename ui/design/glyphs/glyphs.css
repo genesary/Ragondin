@@ -31,7 +31,7 @@
 .rg-tile[data-family="control"] {
   --fam: var(--family-query);
   border-radius: 4px;
-  transform: rotate(45deg);
+  transform: rotate(45deg) scale(0.82);
 }
 .rg-tile[data-family="control"] .rg-glyph {
   transform: rotate(-45deg);

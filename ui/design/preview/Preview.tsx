@@ -60,13 +60,13 @@ function Buttons() {
       {KINDS.map((kind) => (
         <FragmentRow key={kind} label={kind}>
           <Button kind={kind}>Launch run</Button>
-          <Button kind={kind} className="is-hover">
+          <Button kind={kind} data-preview-state="hover">
             Launch run
           </Button>
-          <Button kind={kind} className="is-focus">
+          <Button kind={kind} data-preview-state="focus">
             Launch run
           </Button>
-          <Button kind={kind} className="is-pressed">
+          <Button kind={kind} data-preview-state="pressed">
             Launch run
           </Button>
           <Button kind={kind} disabled disabledReason="Select runs on one benchmark to compare">
@@ -128,8 +128,8 @@ function Column({ theme }: { theme: 'light' | 'dark' }) {
 
       <Block name="Input">
         <Input id={id('rest')} label="top_k" defaultValue="100" help="1 to 5,183" numeric />
-        <Input id={id('hover')} label="top_k (hover)" defaultValue="100" className="is-hover" numeric />
-        <Input id={id('focus')} label="path (focus)" defaultValue="~/ragondin-ws" className="is-focus" mono />
+        <Input id={id('hover')} label="top_k (hover)" defaultValue="100" data-preview-state="hover" numeric />
+        <Input id={id('focus')} label="path (focus)" defaultValue="~/ragondin-ws" data-preview-state="focus" mono />
         <Input id={id('invalid')} label="top_k (invalid)" defaultValue="5000" numeric error="5000 is more than the corpus holds. Use 1 to 5,183." />
         <Input id={id('unit')} label="timeout" defaultValue="30" unit="s" numeric />
         <Input id={id('readonly')} label="embedder (read-only)" defaultValue="bge-small-en-v1.5" readOnly mono />

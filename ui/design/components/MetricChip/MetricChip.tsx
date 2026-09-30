@@ -36,7 +36,7 @@ export type MetricChipProps = {
 
 export function MetricChip({ name, value, best = false, delta }: MetricChipProps) {
   return (
-    <span className={best ? 'rg-metric is-best' : 'rg-metric'}>
+    <span className="rg-metric" data-best={best ? true : undefined}>
       <span className="rg-metric__k">{name}</span>
       <span className="rg-metric__v">{value}</span>
       {best ? <span className="rg-visually-hidden">best</span> : null}

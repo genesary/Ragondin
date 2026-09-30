@@ -13,7 +13,7 @@ describe('Inspector docked', () => {
       </Inspector>,
     );
     const panel = screen.getByRole('complementary', { name: 'rerank' });
-    expect(panel.classList.contains('is-floating')).toBe(false);
+    expect(panel.hasAttribute('data-floating')).toBe(false);
     expect(container.querySelector('.rg-tile[data-family="reranker"]')).toBeTruthy();
     expect(screen.getByText('reranker/onnx').classList.contains('rg-inspector__impl')).toBe(true);
     expect(screen.getByText('body').classList.contains('rg-inspector__body')).toBe(true);
@@ -49,9 +49,10 @@ describe('Inspector floating', () => {
         x
       </Inspector>,
     );
-    expect(screen.getByRole('complementary').classList.contains('is-floating')).toBe(true);
-    expect(declared(css, '.rg-inspector.is-floating', 'background')).toBe('var(--layer)');
-    expect(declared(css, '.rg-inspector.is-floating', 'box-shadow')).toBe('var(--shadow-float)');
-    expect(declared(css, '.rg-inspector.is-floating', 'border-radius')).toBe('var(--radius-l)');
+    expect(screen.getByRole('complementary').hasAttribute('data-floating')).toBe(true);
+    expect(declared(css, '.rg-inspector[data-floating]', 'background')).toBe('var(--layer)');
+    expect(declared(css, '.rg-inspector[data-floating]', 'box-shadow')).toBe('var(--shadow-float)');
+    expect(declared(css, '.rg-inspector[data-floating]', 'border-radius')).toBe('var(--radius-l)');
+    expect(css).not.toMatch(/\.is-[a-z]/);
   });
 });

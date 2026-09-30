@@ -23,8 +23,8 @@ export function RankStrip({ hits, cut = K, large = false }: RankStripProps) {
     <span className={large ? 'rg-rankstrip rg-rankstrip--l' : 'rg-rankstrip'} role="img" aria-label={label} title={label}>
       {Array.from({ length: K }, (_, i) => {
         const rank = i + 1;
-        const cls = ranks.includes(rank) ? 'is-hit' : rank > cut ? 'is-cut' : undefined;
-        return <i key={rank} className={cls} />;
+        const cell = ranks.includes(rank) ? 'hit' : rank > cut ? 'cut' : 'miss';
+        return <i key={rank} data-cell={cell} />;
       })}
     </span>
   );

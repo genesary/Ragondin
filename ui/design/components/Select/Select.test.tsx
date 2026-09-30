@@ -34,7 +34,9 @@ describe('Select focus', () => {
     const select = screen.getByLabelText('Benchmark');
     select.focus();
     expect(document.activeElement).toBe(select);
-    expect(declared(css, '.rg-select select:focus-visible', 'outline')).toBe('2px solid var(--focus-ring)');
+    // :focus, not :focus-visible: a select opened with the mouse shows its ring too.
+    expect(declared(css, '.rg-select select:focus', 'outline')).toBe('2px solid var(--focus-ring)');
+    expect(css).not.toMatch(/\.is-(hover|focus)\b/);
   });
 });
 
@@ -47,7 +49,8 @@ describe('Select disabled', () => {
 });
 
 describe('Select invalid', () => {
-  it('says what is wrong in words beside a glyph', () => {
+  it('says what is wrong in words beside a glyph, the error drawn from its attribute', () => {
+    expect(css).toMatch(/\.rg-select select\[aria-invalid="true"\]/);
     render(<Select id="b" label="Benchmark" options={options} error="beir/fiqa is not downloaded." />);
     const select = screen.getByLabelText('Benchmark');
     expect(select.getAttribute('aria-invalid')).toBe('true');

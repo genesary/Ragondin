@@ -16,7 +16,7 @@ export type TableRow =
       cells: readonly ReactNode[];
       /** The column holding this row's best value, set in bold. */
       bestColumn?: number;
-      /** The row that drives a chart highlight. */
+      /** The row that drives a chart highlight; marked with aria-current, which a table row honours. */
       selected?: boolean;
     }
   | { kind: 'group'; id: string; label: string };
@@ -55,12 +55,11 @@ export function Table({ caption, columns, rows }: TableProps) {
                 </th>
               </tr>
             ) : (
-              <tr key={row.id} aria-selected={row.selected ? true : undefined}>
+              <tr key={row.id} aria-current={row.selected ? true : undefined}>
                 {row.cells.map((cell, i) => {
                   const best = i === row.bestColumn;
-                  const classes = [columns[i]?.numeric ? 'num' : '', best ? 'is-best' : ''].filter(Boolean).join(' ');
                   return (
-                    <td key={columns[i]?.id ?? i} className={classes || undefined}>
+                    <td key={columns[i]?.id ?? i} className={columns[i]?.numeric ? 'num' : undefined} data-best={best ? true : undefined}>
                       {cell}
                       {best ? <span className="rg-visually-hidden"> (best)</span> : null}
                     </td>

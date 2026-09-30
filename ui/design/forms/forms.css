@@ -9,5 +9,5 @@
   font: var(--type-caption);
   color: var(--ink-3);
 }
-.rg-help.is-error { color: var(--critical); }
+.rg-help[data-error] { color: var(--critical); }
 .rg-help .rg-glyph { vertical-align: 0; flex: none; }

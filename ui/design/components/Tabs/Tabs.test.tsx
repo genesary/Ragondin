@@ -49,6 +49,30 @@ describe('Tabs hover', () => {
   });
 });
 
+describe('Tabs keyboard and identity', () => {
+  it('keeps the arrow keys from scrolling the page', () => {
+    render(<Tabs label="s" tabs={tabs} selected="workspace" onSelect={() => {}} />);
+    expect(fireEvent.keyDown(screen.getByRole('tab', { name: 'Workspace' }), { key: 'ArrowRight' })).toBe(false);
+  });
+
+  it('keeps a tab stop on the first tab when the selection matches none', () => {
+    render(<Tabs label="s" tabs={tabs} selected="gone" onSelect={() => {}} />);
+    expect(screen.getAllByRole('tab').map((t) => t.tabIndex)).toEqual([0, -1, -1]);
+  });
+
+  it('gives each tab an id unique on the page, even when two tab lists share tab ids', () => {
+    render(
+      <>
+        <Tabs label="one" tabs={tabs} selected="workspace" onSelect={() => {}} />
+        <Tabs label="two" tabs={tabs} selected="workspace" onSelect={() => {}} />
+      </>,
+    );
+    const ids = screen.getAllByRole('tab').map((t) => t.id);
+    expect(ids.every((id) => id !== '')).toBe(true);
+    expect(new Set(ids).size).toBe(6);
+  });
+});
+
 describe('Tabs keyboard', () => {
   it('moves along the list with the arrow keys, wrapping', () => {
     const onSelect = vi.fn();

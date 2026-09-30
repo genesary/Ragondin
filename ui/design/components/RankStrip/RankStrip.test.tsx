@@ -15,23 +15,24 @@ describe('RankStrip', () => {
 
   it('fills exactly the ranks it is given, in rank order', () => {
     const { container } = render(<RankStrip hits={[7, 1, 2]} />);
-    const filled = cells(container).map((c, i) => (c.classList.contains('is-hit') ? i + 1 : null)).filter((r) => r !== null);
+    const filled = cells(container).map((c, i) => (c.getAttribute('data-cell') === 'hit' ? i + 1 : null)).filter((r) => r !== null);
     expect(filled).toEqual([1, 2, 7]);
   });
 
   it('ignores ranks outside the top ten', () => {
     const { container } = render(<RankStrip hits={[0, 11, 3, 3]} />);
-    expect(cells(container).filter((c) => c.classList.contains('is-hit'))).toHaveLength(1);
+    expect(cells(container).filter((c) => c.getAttribute('data-cell') === 'hit')).toHaveLength(1);
   });
 
   it('is filled versus hollow, not a colour: the hit is solid accent, the miss an outline', () => {
-    expect(declared(css, '.rg-rankstrip > i.is-hit', 'background')).toBe('var(--accent)');
+    expect(declared(css, '.rg-rankstrip > i[data-cell="hit"]', 'background')).toBe('var(--accent)');
+    expect(css).not.toMatch(/\.is-[a-z]/);
     expect(declared(css, '.rg-rankstrip > i', 'box-shadow')).toBe('inset 0 0 0 1px var(--line-control)');
   });
 
   it('fades the ranks past the cut-off', () => {
     const { container } = render(<RankStrip hits={[2]} cut={5} />);
-    const cut = cells(container).map((c, i) => (c.classList.contains('is-cut') ? i + 1 : null)).filter((r) => r !== null);
+    const cut = cells(container).map((c, i) => (c.getAttribute('data-cell') === 'cut' ? i + 1 : null)).filter((r) => r !== null);
     expect(cut).toEqual([6, 7, 8, 9, 10]);
   });
 

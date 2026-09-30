@@ -19,5 +19,5 @@
   transition: background-color var(--duration-micro) var(--ease-standard), color var(--duration-0);
 }
 .rg-seg button:hover { color: var(--ink); }
-.rg-seg button[aria-checked="true"] { background: var(--surface); color: var(--ink); box-shadow: var(--shadow-contact); }
+.rg-seg button[aria-checked="true"] { background: var(--seg-thumb); color: var(--ink); box-shadow: var(--shadow-contact); }
 .rg-seg button:disabled { color: var(--ink-disabled); cursor: not-allowed; }

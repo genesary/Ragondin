@@ -36,7 +36,7 @@ describe('TopBar services', () => {
     const { container } = render(<TopBar workspace="w" links={links} services={[{ name: 'qwen2.5-7b', connected: true }]} />);
     const service = container.querySelector('.rg-service') as HTMLElement;
     expect(service.textContent).toBe('qwen2.5-7b');
-    expect(service.querySelector('.rg-dot:not(.is-off)')).toBeTruthy();
+    expect(service.getAttribute('data-connected')).toBe('true');
     expect(declared(css, '.rg-dot', 'background')).toBe('var(--good)');
   });
 
@@ -44,8 +44,9 @@ describe('TopBar services', () => {
     const { container } = render(<TopBar workspace="w" links={links} services={[{ name: 'bge-embedder', connected: false }]} />);
     const service = container.querySelector('.rg-service') as HTMLElement;
     expect(service.textContent).toBe('bge-embedder unreachable');
-    expect(service.querySelector('.rg-dot.is-off')).toBeTruthy();
-    expect(declared(css, '.rg-dot.is-off', 'background')).toBe('transparent');
+    expect(service.getAttribute('data-connected')).toBe('false');
+    expect(declared(css, '.rg-service[data-connected="false"] .rg-dot', 'background')).toBe('transparent');
+    expect(css).not.toMatch(/\.is-[a-z]/);
   });
 
   it('keeps a slot at the end for the theme switch', () => {

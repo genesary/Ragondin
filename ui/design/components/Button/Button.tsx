@@ -1,4 +1,4 @@
-import type { ButtonHTMLAttributes, ReactNode } from 'react';
+import { useId, type ButtonHTMLAttributes, type ReactNode } from 'react';
 import { Glyph, type GlyphName } from '../../glyphs/Glyph.tsx';
 import './Button.css';
 
@@ -23,19 +23,32 @@ export type ButtonProps = {
   Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'disabled' | 'children'>;
 
 export function Button({ kind = 'secondary', size = 'm', icon, busy = false, busyLabel, disabled, disabledReason, className, onClick, children, ...rest }: ButtonProps) {
+  const reasonId = useId();
   const classes = ['rg-btn', `rg-btn--${kind}`, size === 'm' ? '' : `rg-btn--${size}`, className ?? ''].filter(Boolean).join(' ');
+  // Disabled is aria-disabled, not the native attribute: the button stays in
+  // the tab order, so a keyboard or screen-reader user reaches it and hears
+  // why it refuses. The click is refused here instead.
   return (
-    <button
-      type="button"
-      {...rest}
-      className={classes}
-      disabled={disabled}
-      title={disabled ? disabledReason : rest.title}
-      aria-busy={busy || undefined}
-      onClick={busy ? undefined : onClick}
-    >
-      {icon === undefined ? null : <Glyph name={icon} />}
-      {busy && busyLabel !== undefined ? busyLabel : children}
-    </button>
+    <>
+      <button
+        type="button"
+        {...rest}
+        className={classes}
+        aria-disabled={disabled || undefined}
+        aria-describedby={disabled ? reasonId : rest['aria-describedby']}
+        title={disabled ? disabledReason : rest.title}
+        aria-busy={busy || undefined}
+        onClick={busy || disabled ? undefined : onClick}
+      >
+        {icon === undefined ? null : <Glyph name={icon} />}
+        {busy && busyLabel !== undefined ? busyLabel : children}
+      </button>
+      {/* Outside the button, so the reason describes it rather than joining its name. */}
+      {disabled ? (
+        <span id={reasonId} className="rg-visually-hidden">
+          {disabledReason}
+        </span>
+      ) : null}
+    </>
   );
 }

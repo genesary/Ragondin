@@ -59,3 +59,14 @@ describe('Progress failed', () => {
     expect(declared(css, '.rg-progress[data-state="failed"] .rg-progress__fill', 'background')).toBe('var(--critical)');
   });
 });
+
+describe('Progress accessibility', () => {
+  it('names the bar by its count and keeps the action reachable outside it', () => {
+    render(<Progress state="done" value={300} total={300} label="Done in 9 min 12 s" action={<button type="button">Compare</button>} />);
+    const bar = screen.getByRole('progressbar', { name: 'Done in 9 min 12 s' });
+    expect(bar.classList.contains('rg-progress__track')).toBe(true);
+    const action = screen.getByRole('button', { name: 'Compare' });
+    expect(bar.contains(action)).toBe(false);
+    expect(action.closest('[role="progressbar"]')).toBeNull();
+  });
+});

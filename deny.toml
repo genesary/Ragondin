@@ -185,8 +185,10 @@ ignore = ["RUSTSEC-2024-0436"]
 #                  Name -- bind the font files and never reach the Apache-2.0
 #                  code they ship with. A font is not a package, so no lockfile
 #                  names it: ui/scripts/font-licenses.mjs holds every font file
-#                  to this list through ui/design/fonts/LICENSES.md. Decided by
-#                  the product owner on #336.
+#                  to this list through ui/design/fonts/LICENSES.md. The list
+#                  is shared, so this entry also admits any crate or npm
+#                  package licensed OFL-1.1, runtime or development alike.
+#                  Decided by the product owner on #336.
 #
 # The rest are on the list ahead of need, so that an ordinary permissive
 # dependency does not fail CI at the moment it is added. They are not there
@@ -208,8 +210,8 @@ allow = [
     "BSD-3-Clause",
     "BlueOak-1.0.0",
     "CDLA-Permissive-2.0",
-    "OFL-1.1",
     "ISC",
+    "OFL-1.1",
     "Unicode-3.0",
     "Unicode-DFS-2016",
     "Zlib",

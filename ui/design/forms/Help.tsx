@@ -9,7 +9,7 @@ import './forms.css';
  */
 export function Help({ id, error, children }: { id: string; error?: boolean; children: ReactNode }) {
   return (
-    <p id={id} className={error ? 'rg-help is-error' : 'rg-help'}>
+    <p id={id} className="rg-help" data-error={error ? true : undefined}>
       {error ? <Glyph name="alert" /> : null}
       {children}
     </p>

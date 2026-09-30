@@ -10,15 +10,16 @@ describe('MetricChip at rest', () => {
     const { container } = render(<MetricChip name="nDCG@10" value="0.7217" />);
     expect(screen.getByText('nDCG@10').classList.contains('rg-metric__k')).toBe(true);
     expect(screen.getByText('0.7217').classList.contains('rg-metric__v')).toBe(true);
-    expect(container.querySelector('.rg-metric.is-best')).toBeNull();
+    expect(container.querySelector('.rg-metric[data-best]')).toBeNull();
   });
 });
 
 describe('MetricChip best', () => {
   it('marks the one best value by weight and outline, and says so in words', () => {
     const { container } = render(<MetricChip name="nDCG@10" value="0.7217" best />);
-    expect(container.querySelector('.rg-metric.is-best')).toBeTruthy();
-    expect(declared(css, '.rg-metric.is-best .rg-metric__v', 'font-weight')).toBe('700');
+    expect(container.querySelector('.rg-metric[data-best]')).toBeTruthy();
+    expect(declared(css, '.rg-metric[data-best] .rg-metric__v', 'font-weight')).toBe('700');
+    expect(css).not.toMatch(/\.is-[a-z]/);
     expect(screen.getByText('best').classList.contains('rg-visually-hidden')).toBe(true);
   });
 });

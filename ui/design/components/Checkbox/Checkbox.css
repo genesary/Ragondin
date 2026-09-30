@@ -39,4 +39,5 @@
 .rg-check input:disabled { background: var(--surface-2); border-color: var(--line); cursor: not-allowed; }
 .rg-check input:disabled:checked { background: var(--ink-disabled); border-color: var(--ink-disabled); }
 .rg-check:has(input:disabled) { color: var(--ink-disabled); cursor: not-allowed; }
+.rg-check-wrap { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 0 var(--space-2); }
 .rg-check__reason { font: var(--type-caption); color: var(--ink-3); }

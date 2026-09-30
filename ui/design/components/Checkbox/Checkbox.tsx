@@ -20,7 +20,7 @@ export function Checkbox({ label, checked, indeterminate = false, onChange, disa
   useEffect(() => {
     if (ref.current !== null) ref.current.indeterminate = indeterminate;
   }, [indeterminate]);
-  return (
+  const box = (
     <label className="rg-check">
       <input
         ref={ref}
@@ -31,11 +31,16 @@ export function Checkbox({ label, checked, indeterminate = false, onChange, disa
         onChange={(e) => onChange(e.target.checked)}
       />
       <span className="rg-check__label">{label}</span>
-      {disabled ? (
-        <span id={reasonId} className="rg-check__reason">
-          {disabledReason}
-        </span>
-      ) : null}
     </label>
+  );
+  if (!disabled) return box;
+  // The reason sits beside the label, not in it: it describes the box rather than naming it.
+  return (
+    <span className="rg-check-wrap">
+      {box}
+      <span id={reasonId} className="rg-check__reason">
+        {disabledReason}
+      </span>
+    </span>
   );
 }

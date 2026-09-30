@@ -8,7 +8,7 @@
   background: var(--surface);
   transition: transform var(--duration-standard) var(--ease-standard);
 }
-.rg-inspector.is-floating {
+.rg-inspector[data-floating] {
   overflow: hidden;
   border: 0;
   border-radius: var(--radius-l);

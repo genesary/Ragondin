@@ -34,7 +34,12 @@ function externalReferences(text: string, isCss: boolean): string[] {
     for (const m of body.matchAll(/url\(([^)]*)\)/gi)) if (SCHEME_OR_HOST.test(m[1] ?? '')) found.push(m[0]);
     for (const m of body.matchAll(/@import\s+(?!url\()([^;]+);/gi)) if (SCHEME_OR_HOST.test(m[1] ?? '')) found.push(m[0]);
   }
-  for (const m of body.replace(NAMESPACE, '').matchAll(/(?:[a-z][a-z0-9+.-]*:)?\/\/[a-z0-9.-]+\.[a-z]{2,}[^\s'")]*/gi)) found.push(m[0]);
+  const rest = body.replace(NAMESPACE, '');
+  // Any scheme followed by `//`, whatever the host: a name, an IP, localhost.
+  for (const m of rest.matchAll(/\b[a-z][a-z0-9+.-]*:\/\/[^\s'"()<>]*/gi)) found.push(m[0]);
+  // A protocol-relative address: `//host` opening a quoted string or a url(). A
+  // line comment's `// ` is not preceded by a quote or a parenthesis.
+  for (const m of rest.matchAll(/["'(`]\s*\/\/[^\s/'"()<>][^\s'"()<>]*/g)) found.push(m[0]);
   return found;
 }
 
@@ -45,6 +50,11 @@ describe('externalReferences', () => {
     ['src: url(//cdn.example.com/a.woff2);', true],
     ['src: url(https://example.com/a.woff2) format("woff2");', true],
     ['const href = "https://example.com/logo.svg";', false],
+    ['<svg><image href="http://127.0.0.1/x.png"/></svg>', false],
+    ["const api = 'http://localhost:8080/api';", false],
+    ['<link href="//cdn/x.css">', false],
+    ["const ws = 'ws://10.0.0.2:9000';", false],
+    ['{ "logo": "https://example.com/l.svg" }', false],
   ])('flags %j', (text, isCss) => {
     expect(externalReferences(text, isCss)).not.toEqual([]);
   });
@@ -54,18 +64,20 @@ describe('externalReferences', () => {
     ["@import './tokens.css';", true],
     ['<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"></svg>', false],
     ['/* see https://example.com in a comment */ .a { color: red; }', true],
+    ['// a line comment, and a path: import x from "./a.ts";', false],
   ])('passes %j', (text, isCss) => {
     expect(externalReferences(text, isCss)).toEqual([]);
   });
 });
 
 describe('one origin: no stylesheet or component names another host (ADR-C36 § 5)', () => {
-  const files = [...sources(DESIGN, ['.css', '.ts', '.tsx', '.html', '.svg']), ...sources(join(UI, 'src'), ['.css', '.ts', '.tsx']), join(UI, 'index.html')];
+  const files = [...sources(DESIGN, ['.css', '.ts', '.tsx', '.html', '.svg', '.json']), ...sources(join(UI, 'src'), ['.css', '.ts', '.tsx']), join(UI, 'index.html')];
 
   it('scans the design system, the application and the entry page', () => {
     expect(files.some((f) => f.endsWith('fonts.css'))).toBe(true);
     expect(files.some((f) => f.endsWith('.tsx'))).toBe(true);
     expect(files.some((f) => f.endsWith('.svg'))).toBe(true);
+    expect(files.some((f) => f.endsWith('tokens.json'))).toBe(true);
   });
 
   it.each(files.map((f) => [relative(UI, f), f]))('%s references no URL with a scheme or a host', (_name, path) => {
@@ -106,6 +118,11 @@ describe('base.css', () => {
     expect(declared(css, 'body', 'color')).toBe('var(--ink)');
     expect(declared(css, 'body', 'font')).toBe('var(--type-body)');
     expect(declared(css, 'body', 'font-variant-numeric')).toBe('tabular-nums');
+  });
+
+  it('repaints a themed subtree: its ground and its bare text take the theme it chose', () => {
+    expect(declared(css, '[data-theme]', 'background-color')).toBe('var(--ground)');
+    expect(declared(css, '[data-theme]', 'color')).toBe('var(--ink)');
   });
 
   it('draws a visible focus ring on everything that takes keyboard focus', () => {

@@ -12,8 +12,8 @@
   transition: border-color var(--duration-0);
 }
 .rg-input::placeholder { color: var(--ink-3); }
-.rg-input:hover, .rg-input.is-hover { border-color: var(--ink-3); }
-.rg-input:focus-visible, .rg-input.is-focus {
+.rg-input:hover, .rg-input[data-preview-state="hover"] { border-color: var(--ink-3); }
+.rg-input:focus-visible, .rg-input[data-preview-state="focus"] {
   outline: 2px solid var(--focus-ring);
   outline-offset: 1px;
   border-color: var(--accent);

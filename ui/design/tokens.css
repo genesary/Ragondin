@@ -90,6 +90,8 @@
   --surface-3: #ebedf0;
   /* Floating layers only: popover, menu, tooltip, toast, the floating inspector over the canvas. Always paired with shadow-float. */
   --layer: #ffffff;
+  /* The pressed thumb of a segmented control: surface in light, line-strong in dark, so it reads as raised above its surface-3 track in both themes. */
+  --seg-thumb: var(--surface);
   /* Hairlines between flush panels, table rows, list items. Decorative separation only (not a control boundary). */
   --line: #e1e3e7;
   /* Node card border at rest, chart axis/baseline, edge stroke at rest, dividers that group (a metric group in a table). */
@@ -188,6 +190,7 @@
     --surface-2: #24272b;
     --surface-3: #2b2e33;
     --layer: #292b30;
+    --seg-thumb: var(--line-strong);
     --line: #2e3036;
     --line-strong: #3d4046;
     --line-control: #686c73;
@@ -244,6 +247,7 @@
   --surface-2: #24272b;
   --surface-3: #2b2e33;
   --layer: #292b30;
+  --seg-thumb: var(--line-strong);
   --line: #2e3036;
   --line-strong: #3d4046;
   --line-control: #686c73;

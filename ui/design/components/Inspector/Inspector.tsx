@@ -22,7 +22,7 @@ export type InspectorProps = {
  */
 export function Inspector({ family, title, impl, floating = false, onClose, footer, children }: InspectorProps) {
   return (
-    <aside className={floating ? 'rg-inspector is-floating' : 'rg-inspector'} aria-label={title}>
+    <aside className="rg-inspector" data-floating={floating ? true : undefined} aria-label={title}>
       <header className="rg-inspector__head">
         <FamilyTile family={family} labelled />
         <span className="rg-inspector__title">

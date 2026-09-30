@@ -1,5 +1,5 @@
-import { useRef } from 'react';
-import { arrowStep, nextEnabled } from '../../roving.ts';
+import { useRef, type KeyboardEvent } from 'react';
+import { arrowStep, nextEnabled, tabStop } from '../../roving.ts';
 import './SegmentedControl.css';
 
 export type Segment = { value: string; label: string; disabled?: boolean; /** Why it is disabled. */ reason?: string };
@@ -19,11 +19,15 @@ export type SegmentedControlProps = {
  */
 export function SegmentedControl({ label, options, value, onChange }: SegmentedControlProps) {
   const refs = useRef<(HTMLButtonElement | null)[]>([]);
+  const disabled = options.map((o) => o.disabled === true);
   const current = options.findIndex((o) => o.value === value);
-  const onKeyDown = (key: string) => {
-    const step = arrowStep(key);
+  const stop = tabStop(disabled, current);
+  const onKeyDown = (e: KeyboardEvent) => {
+    const step = arrowStep(e.key);
     if (step === null) return;
-    const next = nextEnabled(options.map((o) => o.disabled === true), current, step);
+    // The arrows move the choice, not the page.
+    e.preventDefault();
+    const next = nextEnabled(disabled, stop, step);
     const option = options[next];
     if (option === undefined) return;
     onChange(option.value);
@@ -40,11 +44,11 @@ export function SegmentedControl({ label, options, value, onChange }: SegmentedC
           type="button"
           role="radio"
           aria-checked={o.value === value}
-          tabIndex={o.value === value ? 0 : -1}
+          tabIndex={i === stop ? 0 : -1}
           disabled={o.disabled}
           title={o.disabled ? o.reason : undefined}
           onClick={() => onChange(o.value)}
-          onKeyDown={(e) => onKeyDown(e.key)}
+          onKeyDown={onKeyDown}
         >
           {o.label}
         </button>

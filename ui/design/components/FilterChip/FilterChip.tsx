@@ -1,3 +1,4 @@
+import { useId } from 'react';
 import { Glyph } from '../../glyphs/Glyph.tsx';
 import './FilterChip.css';
 
@@ -13,12 +14,29 @@ export type FilterChipProps = {
 
 /** A toggle filter above a list. Pressed changes shape (a check) as well as fill. */
 export function FilterChip({ label, count, pressed, onToggle, disabled, disabledReason }: FilterChipProps) {
-  return (
-    <button type="button" className="rg-filter" aria-pressed={pressed} disabled={disabled} onClick={() => onToggle(!pressed)}>
+  const reasonId = useId();
+  const chip = (
+    <button
+      type="button"
+      className="rg-filter"
+      aria-pressed={pressed}
+      disabled={disabled}
+      aria-describedby={disabled ? reasonId : undefined}
+      onClick={() => onToggle(!pressed)}
+    >
       {pressed ? <Glyph name="check" /> : null}
       {label}
       {count === undefined ? null : <span className="rg-count">{count.toLocaleString('en-US')}</span>}
-      {disabled ? <span className="rg-filter__reason">{disabledReason}</span> : null}
     </button>
+  );
+  if (!disabled) return chip;
+  // The reason describes the chip; inside it, it would become part of its name.
+  return (
+    <span className="rg-filter-wrap">
+      {chip}
+      <span id={reasonId} className="rg-filter__reason">
+        {disabledReason}
+      </span>
+    </span>
   );
 }

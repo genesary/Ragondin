@@ -21,6 +21,7 @@ describe('FilterChip at rest', () => {
 describe('FilterChip hover', () => {
   it('washes its fill', () => {
     expect(declared(css, '.rg-filter:hover', 'background')).toBe('var(--surface-2)');
+    expect(css).not.toMatch(/\.is-[a-z]/);
   });
 });
 
@@ -38,10 +39,11 @@ describe('FilterChip pressed', () => {
 });
 
 describe('FilterChip disabled', () => {
-  it('stays visible and says why', () => {
+  it('stays visible and says why, the reason describing the chip rather than naming it', () => {
     render(<FilterChip label="beir/fiqa" pressed={false} onToggle={() => {}} disabled disabledReason="not downloaded" />);
-    const chip = screen.getByRole('button', { name: /beir\/fiqa/ }) as HTMLButtonElement;
+    const chip = screen.getByRole('button', { name: 'beir/fiqa' }) as HTMLButtonElement;
     expect(chip.disabled).toBe(true);
-    expect(chip.textContent).toContain('not downloaded');
+    expect(chip.textContent).not.toContain('not downloaded');
+    expect(document.getElementById(chip.getAttribute('aria-describedby') ?? '')?.textContent).toBe('not downloaded');
   });
 });

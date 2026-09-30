@@ -33,8 +33,8 @@ export function TopBar({ workspace, links, services, end }: TopBarProps) {
       </nav>
       <div className="rg-topbar__end">
         {services.map((s) => (
-          <span key={s.name} className="rg-service">
-            <span className={s.connected ? 'rg-dot' : 'rg-dot is-off'} aria-hidden="true" />
+          <span key={s.name} className="rg-service" data-connected={s.connected}>
+            <span className="rg-dot" aria-hidden="true" />
             {s.connected ? s.name : `${s.name} unreachable`}
           </span>
         ))}

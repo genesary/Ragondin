@@ -25,6 +25,13 @@ body {
   text-rendering: optimizeLegibility;
 }
 
+/* A subtree that chooses a theme (data-theme on any element) repaints its own
+   ground and ink: the tokens change there, and inherited colour would not. */
+[data-theme] {
+  background-color: var(--ground);
+  color: var(--ink);
+}
+
 h1,
 h2,
 h3,
