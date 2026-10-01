@@ -55,7 +55,7 @@ use std::task::{Context, Poll};
 use axum::body::Body;
 use axum::extract::Request;
 use axum::response::Response;
-use axum::routing::{any, get, post, put, IntoMakeService};
+use axum::routing::{any, IntoMakeService};
 use axum::{Router, ServiceExt};
 use tower::Service;
 
@@ -78,10 +78,9 @@ mod extract;
 mod handlers;
 mod layers;
 mod lineage;
+mod routes;
 mod stages;
 mod validation;
-
-use endpoints::{benchmarks, compare, pipelines, services};
 
 pub use assets::{content_type_for, Asset, Assets, NoAssets};
 pub use backends::{
@@ -134,78 +133,13 @@ pub struct ServerConfig {
 /// assets' to answer.
 pub fn router(backends: Backends, config: ServerConfig, assets: Arc<dyn Assets>) -> Server {
     let (served, build) = (config.served.clone(), config.build.clone());
-    // Each route answers a method it does not serve with a problem body;
-    // axum still sets `Allow`.
-    let api = Router::new()
-        .route(
-            "/v1/workspace",
-            get(handlers::workspace).fallback(handlers::method_not_allowed),
-        )
-        .route(
-            "/v1/runs",
-            get(handlers::runs).fallback(handlers::method_not_allowed),
-        )
-        // axum 0.7 spells a path parameter `:id`; the description's `{id}`.
-        .route(
-            "/v1/runs/:id",
-            get(handlers::run).fallback(handlers::method_not_allowed),
-        )
-        .route(
-            "/v1/runs/:id/queries",
-            get(handlers::queries).fallback(handlers::method_not_allowed),
-        )
-        .route(
-            "/v1/runs/:id/trace/:query",
-            get(handlers::trace).fallback(handlers::method_not_allowed),
-        )
-        .route(
-            "/v1/compare",
-            post(compare::compare).fallback(handlers::method_not_allowed),
-        )
-        .route(
-            "/v1/pipelines",
-            get(pipelines::list).fallback(handlers::method_not_allowed),
-        )
-        // A static segment outranks a parameter, so `validate` is never a
-        // pipeline's name: the file backend refuses it as one.
-        .route(
-            "/v1/pipelines/validate",
-            post(pipelines::validate).fallback(handlers::method_not_allowed),
-        )
-        .route(
-            "/v1/pipelines/:name",
-            get(pipelines::read)
-                .put(pipelines::write)
-                .fallback(handlers::method_not_allowed),
-        )
-        .route(
-            "/v1/pipelines/:name/layout",
-            get(pipelines::read_layout)
-                .put(pipelines::write_layout)
-                .fallback(handlers::method_not_allowed),
-        )
-        .route(
-            "/v1/benchmarks",
-            get(benchmarks::list).fallback(handlers::method_not_allowed),
-        )
-        .route(
-            "/v1/benchmarks/import",
-            post(benchmarks::import).fallback(handlers::method_not_allowed),
-        )
-        .route(
-            "/v1/services",
-            get(services::list).fallback(handlers::method_not_allowed),
-        )
-        .route(
-            "/v1/services/:family/:name",
-            put(services::bind)
-                .delete(services::unbind)
-                .fallback(handlers::method_not_allowed),
-        )
-        .route(
-            "/v1/services/:family/:name/probe",
-            post(services::probe).fallback(handlers::method_not_allowed),
-        )
+    // Every route is listed once, in `routes::api`, and registered only
+    // through `routes::Routes::route`, whose bound refuses a handler that
+    // takes anything but `State` and the crate's own extractors (ADR-C37 § 2).
+    let mut routes = routes::Builder::default();
+    routes::api(&mut routes);
+    let api = routes
+        .into_router()
         .fallback(handlers::route_not_found)
         .with_state(handlers::AppState::new(backends, config));
     let server = Router::new()

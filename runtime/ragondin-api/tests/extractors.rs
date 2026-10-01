@@ -125,6 +125,22 @@ async fn an_undecodable_run_id_is_parameter_invalid_naming_id() {
     assert_eq!(body["name"], "id");
 }
 
+/// `HEAD` is axum's implicit `HEAD`-on-`GET`, through the same extractors:
+/// the refusal is the `GET`'s, a problem, whose body `HEAD` leaves out.
+#[tokio::test]
+async fn head_on_an_undecodable_run_id_is_the_get_s_problem() {
+    let request = Request::head("/api/v1/runs/%FF")
+        .header("host", SERVED)
+        .body(Body::empty())
+        .unwrap();
+    let response = send(app(FakeRunStore::holding([fixture_run()])), request).await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        response.headers()[header::CONTENT_TYPE],
+        "application/problem+json"
+    );
+}
+
 /// A query string is strict percent-encoded UTF-8, checked before it is
 /// deserialized: a malformed escape, or bytes that are not UTF-8, in a name
 /// or a value, is refused as such — never passed through literally, never
@@ -193,48 +209,6 @@ async fn a_body_over_the_limit_is_a_413_problem() {
         "application/problem+json"
     );
     assert_eq!(body_json(response).await["code"], "body_too_large");
-}
-
-/// No handler takes axum's `Json` extractor. `clippy.toml` cannot refuse
-/// it: `axum::extract::Json` is `axum::Json`, the response every handler
-/// returns, and `disallowed-types` sees one type. So this scans the source
-/// for the shape a `Json` argument has — a binding typed `Json<…>`, which a
-/// response never is — outside the extractor module. A source scan, and so
-/// best-effort: an alias (`use axum::Json as J;`) is what it does not see.
-#[test]
-fn no_handler_takes_axum_s_json_extractor() {
-    let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-    let mut pending = vec![src];
-    let mut scanned = 0;
-    while let Some(path) = pending.pop() {
-        if path.is_dir() {
-            pending.extend(
-                std::fs::read_dir(&path)
-                    .unwrap()
-                    .map(|entry| entry.unwrap().path()),
-            );
-            continue;
-        }
-        if path.extension().is_none_or(|extension| extension != "rs")
-            || path.ends_with("extract.rs")
-        {
-            continue;
-        }
-        scanned += 1;
-        let source: String = std::fs::read_to_string(&path)
-            .unwrap()
-            .chars()
-            .filter(|c| !c.is_whitespace())
-            .collect();
-        for typed in [":Json<", ":axum::Json<", ":axum::extract::Json<"] {
-            assert!(
-                !source.contains(typed),
-                "{}: a binding typed `Json<…>` reads a body around `ApiJson` (ADR-C37 § 2)",
-                path.display()
-            );
-        }
-    }
-    assert!(scanned > 10, "the scan reads the crate's sources");
 }
 
 /// A body that breaks off while it is read — here a chunk whose size is not

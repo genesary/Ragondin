@@ -5,9 +5,11 @@
 //! [`ApiError`], so every refusal is a problem body with a stable code —
 //! never axum's plain text.
 //!
-//! This is the one module that names axum's raw `Path`, `Query`, the body's
-//! `Bytes` and the request's header map: `clippy.toml` refuses the first two
-//! and `HeaderMap` everywhere else in the crate.
+//! [`ApiInput`] marks them, with `State`: a route is registered only for a
+//! handler whose every argument is one (`routes.rs`), so no handler takes
+//! anything else. This is the one module that names axum's raw `Path`,
+//! `Query`, the body's `Bytes` and the request's header map: `clippy.toml`
+//! refuses the first two and `HeaderMap` everywhere else in the crate.
 
 // The raw extractors are this module's to wrap: everywhere else in the crate
 // `clippy.toml` refuses them (ADR-C37 § 2), and this is where the refusal
@@ -20,13 +22,14 @@ use axum::async_trait;
 use axum::body::Bytes;
 use axum::extract::path::ErrorKind;
 use axum::extract::rejection::{BytesRejection, FailedToBufferBody, PathRejection};
-use axum::extract::{FromRequest, FromRequestParts, Path, Query, RawPathParams, Request};
+use axum::extract::{FromRequest, FromRequestParts, Path, Query, RawPathParams, Request, State};
 use axum::http::request::Parts;
-use schemars::{JsonSchema, SchemaGenerator};
+use schemars::{JsonSchema, Schema, SchemaGenerator};
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
+use crate::description::{schema_of, Parameters};
 use crate::error::ApiError;
 
 /// The path parameters, deserialized into `T`. A segment that does not
@@ -81,7 +84,17 @@ async fn path_refused<S: Send + Sync>(
                 .ok()
                 .and_then(|raw| raw.iter().nth(index).map(|(key, _)| key.to_owned()))
         }
-        ErrorKind::ParseError { .. } | ErrorKind::Message(_) => None,
+        // No key or position: the route's one parameter, if it has only
+        // one, is the one refused; among several, none is guessed.
+        ErrorKind::ParseError { .. } | ErrorKind::Message(_) => {
+            RawPathParams::from_request_parts(parts, state)
+                .await
+                .ok()
+                .and_then(|raw| match raw.iter().collect::<Vec<_>>()[..] {
+                    [(key, _)] => Some(key.to_owned()),
+                    _ => None,
+                })
+        }
         _ => {
             return ApiError::BackendFailed {
                 detail: format!("the route's path parameters were not read: {reason}"),
@@ -175,48 +188,51 @@ fn decode(text: &str) -> Option<String> {
 /// The request headers `T` names, deserialized into it (ADR-C37 § 4).
 ///
 /// `T` is a struct whose fields are the headers it reads, each renamed to
-/// the header's wire spelling (`If-Match`), deriving `JsonSchema`: its
-/// schema's properties are the names read, which is also what the
-/// description declares as `in: header`. It is not closed — a request
-/// carries headers no handler reads, and every header `T` does not name is
-/// ignored. A header it names that is sent more than once is
-/// `parameter_invalid`, naming it; one whose value is not text is
-/// `request_invalid`, as it was before the headers were declared. No
-/// admitted crate deserializes a header map, so each value is read here, as
-/// trimmed text, into a JSON object `T` is deserialized from.
+/// the header's wire spelling (`If-Match`), deriving `JsonSchema`, and
+/// naming the same headers in [`HeaderFields::NAMES`] — the names read,
+/// computed once per type rather than from the schema on every request. The
+/// description checks the two lists agree when it declares the headers as
+/// `in: header` ([`header_schema`]). It is not closed — a request carries
+/// headers no handler reads, and every header `T` does not name is ignored.
+/// A header it names that is sent more than once is `parameter_invalid`,
+/// naming it; one whose value is not text is `request_invalid`, as it was
+/// before the headers were declared. No admitted crate deserializes a
+/// header map, so each value is read here, **as trimmed text**, into a JSON
+/// object of strings `T` is deserialized from: a field of `T` reads a
+/// string.
 pub(crate) struct ApiHeaders<T>(pub(crate) T);
+
+/// A type [`ApiHeaders`] reads: the headers it names, as on the wire.
+pub(crate) trait HeaderFields: DeserializeOwned + JsonSchema {
+    /// The wire names of the headers it reads — its schema's properties.
+    const NAMES: &'static [&'static str];
+}
 
 #[async_trait]
 impl<S, T> FromRequestParts<S> for ApiHeaders<T>
 where
     S: Send + Sync,
-    T: DeserializeOwned + JsonSchema,
+    T: HeaderFields,
 {
     type Rejection = ApiError;
 
     async fn from_request_parts(parts: &mut Parts, _: &S) -> Result<Self, ApiError> {
-        let schema = SchemaGenerator::default().into_root_schema_for::<T>();
-        let names = schema
-            .get("properties")
-            .and_then(Value::as_object)
-            .map(|properties| properties.keys().cloned().collect::<Vec<_>>())
-            .unwrap_or_default();
         let mut read = Map::new();
-        for name in names {
-            let mut values = parts.headers.get_all(name.as_str()).iter();
+        for &name in T::NAMES {
+            let mut values = parts.headers.get_all(name).iter();
             let Some(value) = values.next() else {
                 continue;
             };
             if values.next().is_some() {
                 return Err(ApiError::ParameterInvalid {
-                    name: Some(name),
+                    name: Some(name.to_owned()),
                     reason: "it is sent more than once".to_owned(),
                 });
             }
             let text = value.to_str().map_err(|_| ApiError::RequestInvalid {
                 detail: format!("the `{name}` header is not text"),
             })?;
-            read.insert(name, Value::String(text.trim().to_owned()));
+            read.insert(name.to_owned(), Value::String(text.trim().to_owned()));
         }
         serde_json::from_value(Value::Object(read))
             .map(Self)
@@ -226,6 +242,96 @@ where
             })
     }
 }
+
+/// `T`'s schema, for the description, once its properties are checked to
+/// be exactly [`HeaderFields::NAMES`]: a header the extractor reads and the
+/// description does not declare, or the reverse, stops the description
+/// rather than drifting.
+pub(crate) fn header_schema<T: HeaderFields>(generator: &mut SchemaGenerator) -> Schema {
+    let schema = schema_of::<T>(generator);
+    let mut properties: Vec<&str> = schema
+        .get("properties")
+        .and_then(Value::as_object)
+        .map(|properties| properties.keys().map(String::as_str).collect())
+        .unwrap_or_default();
+    let mut names = T::NAMES.to_vec();
+    properties.sort_unstable();
+    names.sort_unstable();
+    assert_eq!(
+        properties,
+        names,
+        "{}: the headers its schema declares are not the ones `NAMES` reads",
+        std::any::type_name::<T>()
+    );
+    schema
+}
+
+/// What a handler of the `/api` router may take as an argument (ADR-C37
+/// § 2): `State`, or one of this module's extractors. The router's routes
+/// are registered through `routes::Routes::route`, which takes a handler
+/// only when every argument is one, so a raw extractor does not compile
+/// there — whatever it is imported as, and wrapped in an `Option` or a
+/// `Result` as much as bare. Each also says which query and header types it
+/// reads, which is what the description declares.
+pub(crate) trait ApiInput {
+    /// The `ApiQuery` type's schema, for `ApiQuery` alone.
+    fn query() -> Option<Parameters> {
+        None
+    }
+    /// The `ApiHeaders` type's schema, for `ApiHeaders` alone.
+    fn headers() -> Option<Parameters> {
+        None
+    }
+}
+
+impl<S> ApiInput for State<S> {}
+impl<T> ApiInput for ApiPath<T> {}
+impl<T> ApiInput for ApiJson<T> {}
+
+impl<T: JsonSchema> ApiInput for ApiQuery<T> {
+    fn query() -> Option<Parameters> {
+        Some(schema_of::<T>)
+    }
+}
+
+impl<T: HeaderFields> ApiInput for ApiHeaders<T> {
+    fn headers() -> Option<Parameters> {
+        Some(header_schema::<T>)
+    }
+}
+
+/// A handler's arguments, as axum's `Handler<T, S>` types them —
+/// `T = (M, T1, …, Tn)` — when every `Ti` is an [`ApiInput`]; and the
+/// query and header types they read.
+pub(crate) trait ApiInputs {
+    /// The schema of the one `ApiQuery` among the arguments.
+    fn query() -> Option<Parameters>;
+    /// The schema of the `ApiHeaders` among the arguments, if any.
+    fn headers() -> Option<Parameters>;
+}
+
+macro_rules! api_inputs {
+    ($($input:ident),*) => {
+        impl<M, $($input: ApiInput,)*> ApiInputs for (M, $($input,)*) {
+            fn query() -> Option<Parameters> {
+                None$(.or($input::query()))*
+            }
+            fn headers() -> Option<Parameters> {
+                None$(.or($input::headers()))*
+            }
+        }
+    };
+}
+
+api_inputs!();
+api_inputs!(T1);
+api_inputs!(T1, T2);
+api_inputs!(T1, T2, T3);
+api_inputs!(T1, T2, T3, T4);
+api_inputs!(T1, T2, T3, T4, T5);
+api_inputs!(T1, T2, T3, T4, T5, T6);
+api_inputs!(T1, T2, T3, T4, T5, T6, T7);
+api_inputs!(T1, T2, T3, T4, T5, T6, T7, T8);
 
 /// The request body, read as `T`'s JSON (ADR-C37 § 4).
 ///
@@ -293,4 +399,62 @@ fn innermost(error: &(dyn Error + 'static)) -> String {
         cause = source;
     }
     cause.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::body::Body;
+    use axum::http::Request;
+    use axum::routing::get;
+    use axum::Router;
+    use serde::de::Deserializer;
+    use tower::ServiceExt;
+
+    use super::*;
+
+    /// A path value whose own `Deserialize` refuses it, as a validated
+    /// newtype would.
+    struct Even(u32);
+
+    impl<'de> Deserialize<'de> for Even {
+        fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+            let n = u32::deserialize(deserializer)?;
+            if n % 2 == 0 {
+                Ok(Self(n))
+            } else {
+                Err(serde::de::Error::custom("`n` is even"))
+            }
+        }
+    }
+
+    async fn refusal(router: Router, path: &str) -> Value {
+        let response = router
+            .oneshot(Request::get(path).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        serde_json::from_slice(&bytes).unwrap()
+    }
+
+    /// A value the route's one parameter does not read — by its primitive
+    /// type or by its own `Deserialize` — is named by that parameter, which
+    /// is the only one it can be.
+    #[tokio::test]
+    async fn a_value_refused_by_its_type_names_the_route_s_one_parameter() {
+        let primitive = Router::new().route(
+            "/:n",
+            get(|ApiPath(n): ApiPath<u32>| async move { n.to_string() }),
+        );
+        let newtype = Router::new().route(
+            "/:n",
+            get(|ApiPath(Even(n)): ApiPath<Even>| async move { n.to_string() }),
+        );
+        for (router, path) in [(primitive, "/abc"), (newtype, "/3")] {
+            let body = refusal(router, path).await;
+            assert_eq!(body["code"], "parameter_invalid", "{path}: {body}");
+            assert_eq!(body["name"], "n", "{path}: {body}");
+        }
+    }
 }

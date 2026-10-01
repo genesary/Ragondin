@@ -97,6 +97,10 @@ pub struct PreconditionHeaders {
     pub if_none_match: Option<String>,
 }
 
+impl crate::extract::HeaderFields for PreconditionHeaders {
+    const NAMES: &'static [&'static str] = &["If-Match", "If-None-Match"];
+}
+
 /// `PUT /pipelines/{name}` and `POST /pipelines/validate`: a pipeline
 /// document, as text.
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, JsonSchema)]

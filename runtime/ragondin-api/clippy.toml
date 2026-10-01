@@ -2,14 +2,18 @@
 # through this crate's own extractors, in `src/extract.rs` — the one module
 # that allows these types, and says why.
 #
+# The route guard is what holds the rule for handlers: `routes::Routes::route`
+# registers a handler only when every argument is `State` or one of the
+# crate's extractors, so a raw extractor of any spelling does not compile
+# there. This file adds the crate's other code: no helper takes these types
+# either.
+#
 # This file is the package's, not the workspace root's: Clippy reads the
 # package directory first, and a root file would ban these types in every
-# crate.
-#
-# `axum::extract::Json` is not listed: it is the same type as `axum::Json`,
-# the response every handler returns, and `disallowed-types` cannot tell an
-# argument from a return type. `tests/extractors.rs` scans the source for a
-# binding typed `Json<…>` instead.
+# crate. `axum::extract::Json` is not listed: it is the same type as
+# `axum::Json`, the response every handler returns, and `disallowed-types`
+# cannot tell an argument from a return type; the route guard refuses it as
+# an argument.
 disallowed-types = [
     { path = "axum::extract::Path", reason = "read a path parameter through `ApiPath<T>` (ADR-C37 § 2): axum's rejection is plain text" },
     { path = "axum::extract::Query", reason = "read the query string through `ApiQuery<T>` (ADR-C37 § 2, § 3): it validates strict percent-encoded UTF-8 first" },

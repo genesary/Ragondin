@@ -19,8 +19,7 @@ use schemars::{JsonSchema, Schema, SchemaGenerator};
 use serde_json::{json, Map, Value};
 
 use crate::request::{
-    CompareRequest, ImportRequest, PipelineDocument, PreconditionHeaders, ProbeRequest,
-    RunQueriesParameters, ServiceAddress,
+    CompareRequest, ImportRequest, PipelineDocument, ProbeRequest, ServiceAddress,
 };
 use crate::response::{
     BenchmarkListing, Comparison, PipelineDetail, PipelineLayout, PipelineListing,
@@ -44,23 +43,16 @@ pub struct Operation {
     /// What more a reader needs to know, rendered as the operation's
     /// `description` when present. Its parameters are not stated here: the
     /// path's are read off [`path`](Self::path), and the query's and the
-    /// headers' off [`query`](Self::query) and [`headers`](Self::headers).
+    /// headers' off the route's handler — the `ApiQuery` and `ApiHeaders`
+    /// types it takes, which the route list records (ADR-C37 § 5).
     pub description: Option<&'static str>,
-    /// The schema of the type its handler reads the query string into
-    /// (ADR-C37 § 5), declared as `in: query` parameters; `None` for an
-    /// endpoint that takes none, whose handler reads `NoParameters`.
-    pub query: Option<Parameters>,
-    /// The schema of the type its handler reads its request headers into,
-    /// declared as `in: header` parameters; `None` when it reads none.
-    pub headers: Option<Parameters>,
 }
 
-/// How an operation's query or header type gives its schema:
-/// [`schema_of`] at that type.
-pub type Parameters = fn(&mut SchemaGenerator) -> Schema;
+/// How a query or header type gives its schema: [`schema_of`] at that type.
+pub(crate) type Parameters = fn(&mut SchemaGenerator) -> Schema;
 
-/// `T`'s own schema, for [`Operation::query`] and [`Operation::headers`].
-pub fn schema_of<T: JsonSchema>(generator: &mut SchemaGenerator) -> Schema {
+/// `T`'s own schema, as a route's query or header type declares it.
+pub(crate) fn schema_of<T: JsonSchema>(generator: &mut SchemaGenerator) -> Schema {
     T::json_schema(generator)
 }
 
@@ -99,21 +91,25 @@ fn declare_parameters(
         transform.transform(&mut schema);
     }
     let schema = schema.to_value();
-    let properties = match (schema.get("type"), schema.get("properties")) {
-        (Some(kind), Some(Value::Object(properties))) if kind == "object" => properties,
-        _ => {
-            return Err(format!(
-                "a {} parameter type is a struct, and this schema is not one: {schema}",
-                place.name()
-            ))
-        }
-    };
+    if schema.get("type") != Some(&json!("object")) {
+        return Err(format!(
+            "a {} parameter type is a struct, and this schema is not one: {schema}",
+            place.name()
+        ));
+    }
     if place == Place::Query && schema.get("additionalProperties") != Some(&Value::Bool(false)) {
         return Err(format!(
             "a query parameter type is closed, `#[serde(deny_unknown_fields)]`, and this \
              schema's `additionalProperties` is not `false`: {schema}"
         ));
     }
+    // A closed struct with no field — `NoParameters` — declares none.
+    let none = Map::new();
+    let properties = match schema.get("properties") {
+        Some(Value::Object(properties)) => properties,
+        None => &none,
+        Some(_) => return Err(format!("`properties` that is not an object: {schema}")),
+    };
     let required: Vec<&str> = schema
         .get("required")
         .and_then(Value::as_array)
@@ -153,8 +149,6 @@ pub const OPERATIONS: &[Operation] = &[
         response: "Workspace",
         request: None,
         description: None,
-        query: None,
-        headers: None,
     },
     Operation {
         method: "get",
@@ -163,8 +157,6 @@ pub const OPERATIONS: &[Operation] = &[
         response: "RunListing",
         request: None,
         description: None,
-        query: None,
-        headers: None,
     },
     Operation {
         method: "get",
@@ -173,8 +165,6 @@ pub const OPERATIONS: &[Operation] = &[
         response: "RunDetail",
         request: None,
         description: None,
-        query: None,
-        headers: None,
     },
     Operation {
         method: "get",
@@ -183,8 +173,6 @@ pub const OPERATIONS: &[Operation] = &[
         response: "RunQueries",
         request: None,
         description: None,
-        query: Some(schema_of::<RunQueriesParameters>),
-        headers: None,
     },
     Operation {
         method: "get",
@@ -193,8 +181,6 @@ pub const OPERATIONS: &[Operation] = &[
         response: "QueryTrace",
         request: None,
         description: None,
-        query: None,
-        headers: None,
     },
     Operation {
         method: "post",
@@ -205,8 +191,6 @@ pub const OPERATIONS: &[Operation] = &[
         description: Some(
             "Two to five runs, each once, the baseline among them. More than five, or runs whose dataset_version differs, is runs_not_comparable (409), naming the ceiling or both versions; there is no comparison across benchmarks. A body's `pairing` — between the baseline's pipeline and another compared run's — is checked first and applied to this comparison, and kept under `pipelines/<pipeline>.pairing/<other>.json` only once the response is built, so a refused request keeps nothing; it is read in both directions after. With no pairs it is removed (\"Reset to automatic\"). A pairing of other pipelines, or a pair naming a node that is not a retriever, fusion or reranker of its pipeline, is request_invalid.",
         ),
-        query: None,
-        headers: None,
     },
     Operation {
         method: "get",
@@ -215,8 +199,6 @@ pub const OPERATIONS: &[Operation] = &[
         response: "PipelineListing",
         request: None,
         description: None,
-        query: None,
-        headers: None,
     },
     Operation {
         method: "post",
@@ -225,8 +207,6 @@ pub const OPERATIONS: &[Operation] = &[
         response: "PipelineValidated",
         request: Some("PipelineDocument"),
         description: None,
-        query: None,
-        headers: None,
     },
     Operation {
         method: "get",
@@ -237,8 +217,6 @@ pub const OPERATIONS: &[Operation] = &[
         description: Some(
             "The etag is also the response's `ETag` header, quoted.",
         ),
-        query: None,
-        headers: None,
     },
     Operation {
         method: "put",
@@ -249,8 +227,6 @@ pub const OPERATIONS: &[Operation] = &[
         description: Some(
             "A write states one precondition: `If-Match` to replace the stored document, or `If-None-Match: *` to create one. A stale etag, `If-Match: *` with nothing stored, a creation over an existing document, or neither header is precondition_failed (412), with the current etag in the `ETag` header, the detail and the problem's `etag` member, and nothing written; both headers at once is request_invalid. A document the composition root refuses — a key no component reads — is pipeline_invalid, in `ragondin bench`'s words. The answer's etag is also its `ETag` header.",
         ),
-        query: None,
-        headers: Some(schema_of::<PreconditionHeaders>),
     },
     Operation {
         method: "get",
@@ -259,8 +235,6 @@ pub const OPERATIONS: &[Operation] = &[
         response: "PipelineLayout",
         request: None,
         description: None,
-        query: None,
-        headers: None,
     },
     Operation {
         method: "put",
@@ -269,8 +243,6 @@ pub const OPERATIONS: &[Operation] = &[
         response: "PipelineLayout",
         request: Some("Layout"),
         description: None,
-        query: None,
-        headers: None,
     },
     Operation {
         method: "get",
@@ -279,8 +251,6 @@ pub const OPERATIONS: &[Operation] = &[
         response: "BenchmarkListing",
         request: None,
         description: None,
-        query: None,
-        headers: None,
     },
     Operation {
         method: "post",
@@ -289,8 +259,6 @@ pub const OPERATIONS: &[Operation] = &[
         response: "BenchmarkEntry",
         request: Some("ImportRequest"),
         description: None,
-        query: None,
-        headers: None,
     },
     Operation {
         method: "get",
@@ -299,8 +267,6 @@ pub const OPERATIONS: &[Operation] = &[
         response: "ServiceListing",
         request: None,
         description: None,
-        query: None,
-        headers: None,
     },
     Operation {
         method: "put",
@@ -309,8 +275,6 @@ pub const OPERATIONS: &[Operation] = &[
         response: "ServiceListing",
         request: Some("ServiceAddress"),
         description: None,
-        query: None,
-        headers: None,
     },
     Operation {
         method: "delete",
@@ -319,8 +283,6 @@ pub const OPERATIONS: &[Operation] = &[
         response: "ServiceListing",
         request: None,
         description: None,
-        query: None,
-        headers: None,
     },
     Operation {
         method: "post",
@@ -329,8 +291,6 @@ pub const OPERATIONS: &[Operation] = &[
         response: "ProbeResult",
         request: Some("ProbeRequest"),
         description: None,
-        query: None,
-        headers: None,
     },
 ];
 
@@ -369,14 +329,33 @@ fn description() -> Value {
     generator.subschema_for::<CompareRequest>();
     // The query and header parameters, before the definitions are taken: a
     // type one of them refers to is defined under its own name too.
+    let mut routes = crate::routes::Declared::default();
+    crate::routes::api(&mut routes);
+    for route in &routes.0 {
+        assert!(
+            OPERATIONS
+                .iter()
+                .any(|operation| (operation.method, operation.path) == (route.method, route.path)),
+            "{} {} is routed and not described",
+            route.method,
+            route.path
+        );
+    }
     let declared: Vec<Vec<Value>> = OPERATIONS
         .iter()
         .map(|operation| {
+            let route = routes
+                .0
+                .iter()
+                .find(|route| (route.method, route.path) == (operation.method, operation.path))
+                .unwrap_or_else(|| {
+                    panic!(
+                        "{} {} is described and not routed",
+                        operation.method, operation.path
+                    )
+                });
             let mut declared = Vec::new();
-            for (place, of) in [
-                (Place::Query, operation.query),
-                (Place::Header, operation.headers),
-            ] {
+            for (place, of) in [(Place::Query, route.query), (Place::Header, route.headers)] {
                 if let Some(of) = of {
                     declared.extend(
                         declare_parameters(&mut generator, place, of).unwrap_or_else(|refused| {

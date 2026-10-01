@@ -27,7 +27,8 @@ the response types, the typed errors, and the traits the service consumes.
 | `backends` | The four traits this crate defines, and the values they exchange |
 | `response` | Every type the API serializes — the response bodies and `Problem` |
 | `request` | Every request body the API reads, and the types its query parameters and request headers are read into |
-| `extract` | The extractors every handler reads its input through — `ApiPath`, `ApiQuery`, `ApiHeaders`, `ApiJson` — and `NoParameters` (ADR-C37) |
+| `extract` | The extractors every handler reads its input through — `ApiPath`, `ApiQuery`, `ApiHeaders`, `ApiJson` — `NoParameters`, and `ApiInput`, the bound a handler's every argument meets (ADR-C37) |
+| `routes` | Every route of the `/api` router, listed once: built into the router, and recorded for the description, each registered through the `ApiInput` guard |
 | `error` | `ApiError`, its stable codes, its `application/problem+json` rendering |
 | `layers` | The server's defence of its origin, as Tower layers on the router |
 | `description` | The API description, assembled from the declared operations and the `schemars` schemas |
@@ -566,37 +567,54 @@ reviewer looks for.
 takes no parameter — an empty braced struct that refuses any — and
 `ApiQuery<RunQueriesParameters>` for `GET /runs/{id}/queries`, whose one
 value, `missing_gold_at`, is the newtype `MissingGoldAt`. The parameter and
-header types are in `src/request.rs`; `description.rs` declares each from its
-schema, in `Operation::query` and `Operation::headers`. Two tests hold the
+header types are in `src/request.rs`. **The description reads them off the
+routes**: every route is listed once, in `routes::api`, and read twice — by
+`routes::Builder`, which makes the axum router, and by `routes::Declared`,
+which records each handler's `ApiQuery` and `ApiHeaders` types — so
+`description.rs` declares the types the handlers take, never a second list
+kept beside them; a route without an operation, or the reverse, stops the
+description. A header type names its headers in `HeaderFields::NAMES`, read
+once per type rather than from the schema on every request, and the
+description checks that list against the type's schema. Two tests hold the
 rule over every operation in `OPERATIONS` (`tests/extractors.rs`): an
 undeclared query parameter answers `parameter_invalid`, and a path segment
 that does not decode to UTF-8 answers `parameter_invalid` naming the path
 parameter.
 
-**How it is enforced.** `clippy.toml`, in this package and not at the
-workspace root (a root file would reach every crate), refuses
-`axum::extract::Path`, `axum::extract::Query` and `axum::http::HeaderMap`
-under `disallowed-types`; `src/extract.rs` alone allows them, saying why.
-`axum::extract::Json` is not on that list, because it *is* `axum::Json`, the
-response every handler returns, and `disallowed-types` cannot tell an
-argument from a return type. A source scan in `tests/extractors.rs` refuses a
-binding typed `Json<…>` outside the extractor module instead — best-effort,
-blind to an alias. `Uri::query()` is read in `src/extract.rs` only, which
-review checks.
+**How it is enforced.** By the compiler, for every handler: `routes::Routes::route`,
+the one way a route of the `/api` router is registered, takes a handler only
+when axum's `Handler<T, S>` types its arguments as `T = (M, T1, …, Tn)` with
+every `Ti` an `ApiInput` — `State`, `ApiPath`, `ApiQuery`, `ApiHeaders` or
+`ApiJson` (`ApiInputs`, implemented by macro for up to eight arguments). A
+handler that takes axum's `Path`, `Query` or `Json` — bare, in an `Option`
+or in a `Result` — `Bytes`, `RawQuery`, the `Uri`, the `Request` or a
+`HeaderMap` does not compile, whatever it is imported as. The naming
+fallbacks are registered as fallbacks, outside `route`, which is ADR-C37
+§ 2's exception. `clippy.toml`, in this package and not at the workspace root
+(a root file would reach every crate), adds the crate's other code: it
+refuses `axum::extract::Path`, `axum::extract::Query` and
+`axum::http::HeaderMap` under `disallowed-types`, and `src/extract.rs` alone
+allows them, saying why. `axum::extract::Json` is not on that list, because
+it *is* `axum::Json`, the response every handler returns, and
+`disallowed-types` cannot tell an argument from a return type; the guard
+refuses it as an argument.
 
 Choices made here (`AGENTS.md` § Rules of engagement), each within what
 ADR-C37 decides:
 
 - **`name` is present exactly when the extractor knows it.** A path value is
-  named by axum's rejection, or for a tuple by the route's own parameter
-  list. A query value that is not percent-encoded UTF-8 is named when its
+  named by axum's rejection, for a tuple by the route's own parameter list,
+  and — when a value's own type refuses it without a key or a position — by
+  the route's parameter if it has only one; among several, none is guessed.
+  A query value that is not percent-encoded UTF-8 is named when its
   name decodes, and not when the name itself does not. A header sent twice
   is named by its wire spelling, `If-Match`. A refusal from the
   deserializer — an unknown, repeated or unreadable parameter — names none:
   serde's reason is text, and a name parsed out of it would be a guess. A
   value type describes itself instead (`` `missing_gold_at` is a positive
   integer ``).
-- **A header value is read as trimmed text**, and a header type's fields are
+- **A header value is read as trimmed text**, into a JSON object of strings
+  the header type is deserialized from, so its fields read strings: they are
   `Option<String>` where the header's meaning is the handler's to read —
   the precondition's `*` and weak tags stay in `precondition`, as they were.
   A value that is not text is `request_invalid`, as before the headers were
