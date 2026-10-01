@@ -73,9 +73,14 @@ just check-deny
 just map <entity>
 just map --conflicts
 
-# The front end's gates: `npm ci`, then the API types' freshness, lint,
-# typecheck, test, build, the third-party notices' re-check, and the licence
-# and advisory audit, inside ui/
+# `npm ci` and the UI's build into ui/dist/, the folder the binary's `ui`
+# feature embeds. `just check` runs it before the feature-gated Rust tests, so
+# they never embed a ui/dist/ left by an older checkout. Needs Node.
+just build-ui
+
+# The front end's gates: `build-ui` (`npm ci`, build), then the API types'
+# freshness, lint, typecheck, test, the third-party notices' re-check, and the
+# licence and advisory audit, inside ui/
 # (ui/ARCHITECTURE.md). Needs the Node major pinned in ui/.node-version. No
 # cargo recipe needs Node.
 just check-ui
@@ -86,7 +91,8 @@ just check-ui
 just gen-ui-types
 
 # All of the above — run this before declaring any work complete. It needs
-# Node, because it runs `check-ui`.
+# Node, because it runs `build-ui` and `check-ui`. It builds ui/dist/ once,
+# before the feature-gated Rust tests that embed it.
 just check
 ```
 

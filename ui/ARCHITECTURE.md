@@ -52,7 +52,7 @@ A component's test sits beside it, in `src/` or `design/`; a test of a rule abou
 
 ## The gates
 
-`npm run check` is the one command, and CI's `ui` job, `just check-ui` and a contributor all run it. It runs, cheapest first:
+`npm run check` is the one command, and CI's `ui` job and a contributor run it; `just check-ui` runs its steps, the build first (below). It runs, cheapest first:
 
 | Script | What it does |
 |---|---|
@@ -64,7 +64,7 @@ A component's test sits beside it, in `src/` or `design/`; a test of a rule abou
 | `notices` | Re-reads `dist/third-party-notices.txt` and fails when a runtime package's or a font licence's notice is absent or stale. |
 | `audit` | The font licence audit, the npm licence audit, then the advisory audit (§ The dependency audit). |
 
-`just check-ui` runs `npm ci` first, so the gate always installs exactly the lockfile. **The Rust build does not need Node** (ADR-C36 § 5): no cargo command and no cargo-based `just` recipe runs anything under `ui/`. The one thing cargo reads there is `dist/`, the build's output: `bin/ragondin`'s build script embeds it under the `ui` feature when it exists, and a page saying the UI was not built when it does not (`bin/ragondin/ARCHITECTURE.md` § The ui subcommand). Only `just check`, which covers both worlds, runs Node.
+`just check-ui` runs `npm ci` first, so the gate always installs exactly the lockfile. The install and the build are `just build-ui`'s, which `check-ui` depends on; `check-ui` then runs every other step of `npm run check`, read from `package.json` rather than named, and fails if that script stops naming `npm run build` as a step. `just check` runs `build-ui` before the feature-gated Rust tests, which embed `dist/`, so they never embed one left by an older checkout, and the build runs once per `just check`. **The Rust build does not need Node** (ADR-C36 § 5): no cargo command and no cargo-based `just` recipe runs anything under `ui/`. The one thing cargo reads there is `dist/`, the build's output: `bin/ragondin`'s build script embeds it under the `ui` feature when it exists, and a page saying the UI was not built when it does not (`bin/ragondin/ARCHITECTURE.md` § The ui subcommand). Only `just check`, which covers both worlds, runs Node.
 
 ## The one-address rule
 

@@ -518,8 +518,8 @@ than the assets.
   real page passes it; a missing or foreign notices file fails it, the real
   one passes it. A `ui/dist/` built before the notices existed fails
   `a_built_ui_serves_its_third_party_notices` with a message saying to
-  rebuild it: `just check` runs the Rust tests before `check-ui` rebuilds
-  `ui/dist/`.
+  rebuild it. `just check` never reaches it: it runs `build-ui` before the
+  feature-gated tests; a bare `cargo test --features ui` can.
 
 ### The wiring
 

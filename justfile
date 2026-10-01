@@ -186,23 +186,39 @@ calibrate-generation:
     RAGONDIN_GENERATOR_SERVICE_BIN="{{ env_var_or_default("CARGO_TARGET_DIR", justfile_directory() / "target") }}/debug/ragondin-generator-service" \
         cargo test --release -p ragondin --features bm25,onnx,stub,remote --test calibration_generation -- --ignored --nocapture --test-threads=1
 
+# Install exactly the lockfile and build ui/dist/, the folder bin/ragondin's
+# `ui` feature embeds. `check` runs it before `test-features`, the first recipe
+# that compiles that feature, so the Rust tests embed this tree's UI and never
+# a ui/dist/ left by an older checkout: one built before a pull fails them, and
+# `check-ui`, which alone rebuilt it, ran after them.
+build-ui: check-node
+    cd ui && npm ci && npm run build
+
 # The front end's gates: install exactly the lockfile, then lint, typecheck,
 # test, build, re-check the notices and audit it (ui/ARCHITECTURE.md § The
-# gates). The one recipe here that needs Node -- the version pinned in
-# ui/.node-version. No cargo recipe does, and none may: the Rust build stays
-# Rust-only (ADR-C36 § 5), so everything above runs on a machine without
-# Node, and only `check`, which covers both worlds, needs it.
-check-ui: check-node
-    cd ui && npm ci && npm run check
+# gates). It, `build-ui` and `gen-ui-types` are the recipes here that need
+# Node -- the version pinned in ui/.node-version. No cargo recipe does, and none may: the Rust
+# build stays Rust-only (ADR-C36 § 5), so everything above runs on a machine
+# without Node, and only `check`, which covers both worlds, needs it.
+#
+# The install and the build are `build-ui`'s, a dependency, so `check`, which
+# names both, builds once: just runs a recipe once per invocation. The other
+# steps are read from `npm run check` rather than named, as `clippy` reads the
+# binary's features, so a gate added there runs here without an edit; and if
+# that script stops naming `npm run build` as a step, this fails rather than
+# silently building twice.
+check-ui: build-ui
+    cd ui && steps="$(node -p "const s = require('./package.json').scripts.check.split(' && '); if (!s.includes('npm run build')) throw new Error('the check script of ui/package.json no longer runs npm run build as a step; update check-ui in the justfile'); s.filter((x) => x !== 'npm run build').join(' && ')")" && echo "$steps" && sh -c "$steps"
 
 # Fails at once, and says why, when Node is missing -- rather than as exit 127
 # at the end of `check`, after the whole cargo pipeline has run. Like
 # `check-deny`, it names what to install rather than failing on an unknown
 # command.
 check-node:
-    @command -v npm >/dev/null 2>&1 || { echo "error: check-ui needs Node $(cat ui/.node-version) (the major pinned in ui/.node-version), with npm."; exit 1; }
+    @command -v npm >/dev/null 2>&1 || { echo "error: build-ui and check-ui need Node $(cat ui/.node-version) (the major pinned in ui/.node-version), with npm."; exit 1; }
 
 # Everything CI runs, in one command. Run this before declaring work done. It
-# needs Node, for `check-ui`, and checks for it first; every other recipe it
-# runs is cargo or Python.
-check: check-node fmt build test test-features clippy check-features doc test-check-invariants check-invariants test-check-doc-links check-doc-links check-adr-index check-deny check-ui
+# needs Node, for `build-ui` and `check-ui`, and checks for it first; every
+# other recipe it runs is cargo or Python. `build-ui` runs before
+# `test-features`, the first recipe that embeds ui/dist/.
+check: check-node fmt build test build-ui test-features clippy check-features doc test-check-invariants check-invariants test-check-doc-links check-doc-links check-adr-index check-deny check-ui
