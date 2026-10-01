@@ -3,8 +3,8 @@ import './Port.css';
 
 export type PortSide = 'in' | 'out';
 
-/** A port as the card places it: which side, which kind, its index on that side and its top offset. */
-export type PortProps = { side: PortSide; kind: PortKind; index: number; top: number };
+/** A port as the card places it: which side, which kind, its index on that side, its top offset, and whether an edge meets it. */
+export type PortProps = { side: PortSide; kind: PortKind; index: number; top: number; connected: boolean };
 
 /** What a person calls each kind, the words the legend and a port's tooltip use. */
 export const PORT_LABEL: Record<PortKind, string> = {
@@ -27,14 +27,28 @@ export const portTitle = (side: PortSide, kind: PortKind) => `${side === 'in' ? 
 
 /**
  * A port's mark: its shape says its kind — a circle for the query, a square
- * for candidates, a diamond for context, a leaf for the answer, a dashed ring
- * for anything else — so a connection reads without colour.
+ * for candidates, a diamond for context, a leaf for the answer, and for
+ * anything else a ring around a dot that stays hollow when connected and in
+ * replay — so a connection reads without colour. A connected port is filled.
  */
-export function PortMark({ side, kind, top }: PortProps) {
-  return <span className="rg-port" data-side={side} data-kind={kind} style={{ top }} title={portTitle(side, kind)} />;
+export function PortMark({ side, kind, top, connected }: PortProps) {
+  return (
+    <span className="rg-port" data-side={side} data-kind={kind} data-connected={connected || undefined} style={{ top }} title={portTitle(side, kind)}>
+      <PortDot kind={kind} />
+    </span>
+  );
+}
+
+/** The dot inside the `opaque` ring; no other kind has one. */
+export function PortDot({ kind }: { kind: PortKind }) {
+  return kind === 'opaque' ? <i className="rg-port__dot" /> : null;
 }
 
 /** The mark alone, in flow, for the legend. */
 export function PortSwatch({ kind }: { kind: PortKind }) {
-  return <span className="rg-port" data-kind={kind} data-swatch="true" aria-hidden="true" />;
+  return (
+    <span className="rg-port" data-kind={kind} data-swatch="true" aria-hidden="true">
+      <PortDot kind={kind} />
+    </span>
+  );
 }

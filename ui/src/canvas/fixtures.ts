@@ -37,3 +37,23 @@ export const HYBRID_RERANK_GEN: Graph = {
     { from: 'question', to: 'vectors', port: 0, kind: 'query' },
   ],
 };
+
+/**
+ * A graph with an extension node, whose output is `opaque`: a lexical leg
+ * passed through a `gate` before the generator. The neutral diamond tile and
+ * the `opaque` port are drawn from it.
+ */
+export const GATED_GEN: Graph = {
+  inputs: [{ id: 'question', kind: 'query' }],
+  nodes: [
+    { id: 'answer', family: 'generator', implementation: 'answerer', parameters: {} },
+    { id: 'gate', family: 'extension', implementation: 'threshold', parameters: { min_score: 0.4 } },
+    { id: 'lexical', family: 'retriever', implementation: 'bm25', parameters: { top_k: 10 } },
+  ],
+  edges: [
+    { from: 'question', to: 'answer', port: 0, kind: 'query' },
+    { from: 'gate', to: 'answer', port: 1, kind: 'opaque' },
+    { from: 'lexical', to: 'gate', port: 0, kind: 'chunks' },
+    { from: 'question', to: 'lexical', port: 0, kind: 'query' },
+  ],
+};

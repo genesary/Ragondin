@@ -19,12 +19,19 @@ const SOURCES = '**/*.{js,mjs,cjs,jsx,ts,mts,cts,tsx}';
 const TESTING_FROM_ANYWHERE = '(^|/)api/testing(\\.[cm]?[jt]sx?)?$';
 const testingMessage =
   'src/api/testing.ts holds test doubles; only tests import it, so none of it reaches the bundle (ui/ARCHITECTURE.md § The client).';
-// The canvas library, reached by any of its package names or paths.
-const CANVAS_LIBRARY = '^@xyflow/';
+// The canvas library and what it brings — its layout engine, d3's modules —
+// reached by any of their package names or paths.
+const CANVAS_LIBRARY = '^(@xyflow/|@dagrejs/|d3-)';
 const canvasMessage =
-  'The canvas library stays behind src/canvas/ (ui/ARCHITECTURE.md § The canvas): a screen imports the Canvas, never the library.';
+  'The canvas library, its layout engine and d3 stay behind src/canvas/ (ui/ARCHITECTURE.md § The canvas): a screen imports the Canvas, never the library.';
+// The canvas library's internal state store: importing it would be the UI
+// taking on a state store, which escalates, inside src/canvas/ as anywhere.
+const STORE = '^zustand(/|$)';
+const storeMessage =
+  'zustand is the canvas library\'s internal store; taking on a state store is a decision issue, not an import (AGENTS.md § Conventions, ui/DEPENDENCIES.md).';
 const TESTING_PATTERN = { regex: TESTING_FROM_ANYWHERE, message: testingMessage };
 const CANVAS_PATTERN = { regex: CANVAS_LIBRARY, message: canvasMessage };
+const STORE_PATTERN = { regex: STORE, message: storeMessage };
 const message =
   'Network access is confined to src/api/ (ui/ARCHITECTURE.md § The network lint): the UI reaches its own origin only, through that module.';
 
@@ -60,15 +67,15 @@ export default defineConfig([
     // canvas; tests/canvas-confinement.test.ts.
     files: [SOURCES],
     ignores: ['**/*.test.*', 'tests/**'],
-    rules: { 'no-restricted-imports': ['error', { patterns: [TESTING_PATTERN, CANVAS_PATTERN] }] },
+    rules: { 'no-restricted-imports': ['error', { patterns: [TESTING_PATTERN, CANVAS_PATTERN, STORE_PATTERN] }] },
   },
   {
-    // Inside src/canvas/ the library is allowed. A later block replaces the
-    // rule's options rather than adding to them, so the test doubles' pattern
-    // is listed again.
+    // Inside src/canvas/ the library is allowed, its store still not. A later
+    // block replaces the rule's options rather than adding to them, so the
+    // other patterns are listed again.
     files: ['src/canvas/**/*.{js,mjs,cjs,jsx,ts,mts,cts,tsx}'],
     ignores: ['**/*.test.*'],
-    rules: { 'no-restricted-imports': ['error', { patterns: [TESTING_PATTERN] }] },
+    rules: { 'no-restricted-imports': ['error', { patterns: [TESTING_PATTERN, STORE_PATTERN] }] },
   },
   {
     // Inside src/api/ the module is a sibling (`./testing`) or a parent's
@@ -84,6 +91,7 @@ export default defineConfig([
           patterns: [
             TESTING_PATTERN,
             CANVAS_PATTERN,
+            STORE_PATTERN,
             { regex: '^(\\./|(\\.\\./)+)testing(\\.[cm]?[jt]sx?)?$', message: testingMessage },
           ],
         },

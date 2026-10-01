@@ -42,6 +42,10 @@
 .rg-canvas__legend .rg-tile { width: 16px; height: 16px; border-radius: 4px; }
 .rg-canvas__legend .rg-tile .rg-glyph { width: 12px; height: 12px; }
 
+/* The library's attribution, kept visible, quiet in the canvas's own inks. */
+.rg-canvas .react-flow__attribution { --xy-attribution-background-color: var(--canvas); padding: 2px 6px; margin: var(--space-1); border-radius: var(--radius-s); font: 500 11px/14px var(--font-sans); }
+.rg-canvas .react-flow__attribution a { color: var(--ink-3); }
+
 /* The library's node wrapper is a box around the card, nothing more. */
 .rg-canvas .react-flow__node { background: none; border: 0; padding: 0; }
 .rg-canvas .react-flow__node:focus-visible { outline: none; }

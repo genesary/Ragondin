@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { parseRules } from '../../design/testing/css.ts';
 import css from './Canvas.css?raw';
 import { Canvas } from './Canvas.tsx';
-import { HYBRID_RERANK_GEN } from './fixtures.ts';
+import { GATED_GEN, HYBRID_RERANK_GEN } from './fixtures.ts';
 import nodeCss from './NodeCard.css?raw';
 import { NODE_WIDTH, resolveLayout } from './layout.ts';
 import { toModel } from './model.ts';
@@ -246,5 +246,152 @@ describe('Canvas motion', () => {
   it('switches off the canvas library’s own edge animation and viewport transitions', () => {
     const { container } = renderCanvas();
     expect(container.querySelector('.react-flow__edge.animated')).toBeNull();
+  });
+});
+
+describe('Canvas, round 1 of review', () => {
+  it('fills a port only where an edge meets it', () => {
+    const { container } = renderCanvas();
+    expect(nodeEl(container, 'fused').querySelector('.rg-port[data-side="out"]')?.getAttribute('data-connected')).toBe('true');
+    expect(nodeEl(container, 'fused').querySelector('.rg-port[data-side="in"]')?.getAttribute('data-connected')).toBe('true');
+    expect(nodeEl(container, 'answer').querySelector('.rg-port[data-side="out"]')?.getAttribute('data-connected')).toBeNull();
+  });
+
+  it('draws an opaque edge into a ring-and-dot port, and names it in the legend', () => {
+    const { container } = renderCanvas({ graph: GATED_GEN });
+    expect(container.querySelector('path.rg-edge[data-from="gate"][data-to="answer"]')?.getAttribute('data-kind')).toBe('opaque');
+    const port = nodeEl(container, 'answer').querySelector('.rg-port[data-side="in"][data-kind="opaque"]');
+    expect(port?.querySelector('.rg-port__dot')).toBeTruthy();
+    expect(nodeEl(container, 'gate').querySelector('.rg-tile[data-family="control"]')).toBeTruthy();
+    const legend = container.querySelector('.rg-canvas__legend') as HTMLElement;
+    expect(within(legend).getByText('other', { selector: '[data-legend="port"]' }).querySelector('.rg-port__dot')).toBeTruthy();
+  });
+
+  it('describes each node by the keys that work in read mode', () => {
+    const { container } = renderCanvas();
+    const described = nodeEl(container, 'fused').getAttribute('aria-describedby')!;
+    expect(document.getElementById(described)?.textContent).toBe('Enter selects, Shift+F10 opens the menu, Escape clears.');
+  });
+
+  it('names the graph region it hands its keys to', () => {
+    renderCanvas();
+    expect(screen.getByRole('application', { name: 'Pipeline hybrid-rerank-gen' })).toBeTruthy();
+  });
+
+  it('lays out from the graph alone: an overlay moves no node and changes nothing it reports', () => {
+    const plain = vi.fn();
+    const replay = vi.fn();
+    const a = renderCanvas({ onAutoPlaced: plain });
+    const before = Object.fromEntries(TOPOLOGICAL.map((id) => [id, translate(nodeEl(a.container, id))]));
+    a.unmount();
+    const b = renderCanvas({ onAutoPlaced: replay, overlay: { reranked: { metric: { name: 'nDCG@10', value: '0.861' }, ranks: [1], discarded: 90, durationMs: 349, share: 0.85, error: 'x' } } });
+    for (const id of TOPOLOGICAL) expect(translate(nodeEl(b.container, id))).toEqual(before[id]);
+    expect(replay.mock.calls).toEqual(plain.mock.calls);
+  });
+
+  it('keeps the canvas library’s attribution visible', () => {
+    const { container } = renderCanvas();
+    const link = container.querySelector('.react-flow__attribution a');
+    expect(link?.textContent).toBe('React Flow');
+    // Restyled with tokens, never hidden.
+    const rules = parseRules(css).filter((r) => r.selector.includes('.react-flow__attribution'));
+    expect(rules.length).toBeGreaterThan(0);
+    for (const rule of rules) {
+      expect(rule.declarations.get('display')).not.toBe('none');
+      expect(rule.declarations.get('visibility')).toBeUndefined();
+    }
+    expect(rules.some((r) => r.declarations.get('color') === 'var(--ink-3)')).toBe(true);
+  });
+
+  it('announces nothing on its own as the zoom changes', () => {
+    const { container } = renderCanvas();
+    expect(container.querySelector('.rg-canvas__zoom')?.hasAttribute('aria-live')).toBe(false);
+  });
+
+  it('puts the toolbar first in the tab order, before the nodes', () => {
+    const { container } = renderCanvas();
+    const stops = [...container.querySelectorAll<HTMLElement>('button, a[href], [tabindex]')].filter((el) => el.tabIndex >= 0);
+    const names = stops.map((el) => el.getAttribute('data-id') ?? el.textContent);
+    expect(names.slice(0, 3)).toEqual(['Zoom out', 'Zoom in', 'Fit graph']);
+    expect(names.slice(3, 3 + TOPOLOGICAL.length)).toEqual(TOPOLOGICAL);
+  });
+
+  it('draws nothing that can be dragged or connected in read mode', () => {
+    const { container } = renderCanvas();
+    expect(container.querySelector('.react-flow__node.draggable')).toBeNull();
+    expect(container.querySelector('.react-flow__handle.connectable')).toBeNull();
+    expect(container.querySelector('.react-flow__handle.connectableend')).toBeNull();
+  });
+
+  it('renders the same graph in both themes, with no colour of its own', () => {
+    const { container } = render(
+      <>
+        {(['light', 'dark'] as const).map((theme) => (
+          <div key={theme} data-theme={theme}>
+            <Canvas graph={HYBRID_RERANK_GEN} label={theme} overlay={{ reranked: { ranks: [1] } }} />
+          </div>
+        ))}
+      </>,
+    );
+    for (const theme of ['light', 'dark']) {
+      const root = container.querySelector(`[data-theme="${theme}"]`) as HTMLElement;
+      expect(root.querySelectorAll('.rg-node')).toHaveLength(TOPOLOGICAL.length);
+      expect(root.querySelectorAll('path.rg-edge')).toHaveLength(HYBRID_RERANK_GEN.edges.length);
+      expect(root.querySelector('.rg-canvas__legend')).toBeTruthy();
+    }
+    expect(css).not.toMatch(/#[0-9a-f]{3,8}\b/i);
+    expect(css).not.toMatch(/\b(rgb|hsl|oklch)a?\(/);
+  });
+});
+
+describe('the node menu', () => {
+  function openOn(id: string, entries = 3) {
+    const view = renderCanvas({
+      menu: (node) => (
+        <>
+          {Array.from({ length: entries }, (_, i) => (
+            <button key={i} role="menuitem">
+              item {i} of {node}
+            </button>
+          ))}
+        </>
+      ),
+    });
+    const el = nodeEl(view.container, id);
+    act(() => el.focus());
+    fireEvent.keyDown(el, { key: 'F10', shiftKey: true });
+    return { ...view, el };
+  }
+
+  it('moves between entries with the arrow keys, wrapping, and Home and End', () => {
+    openOn('fused');
+    const items = screen.getAllByRole('menuitem');
+    expect(document.activeElement).toBe(items[0]);
+    fireEvent.keyDown(items[0]!, { key: 'ArrowDown' });
+    expect(document.activeElement).toBe(items[1]);
+    fireEvent.keyDown(items[1]!, { key: 'ArrowUp' });
+    fireEvent.keyDown(items[0]!, { key: 'ArrowUp' });
+    expect(document.activeElement).toBe(items[2]);
+    fireEvent.keyDown(items[2]!, { key: 'ArrowDown' });
+    expect(document.activeElement).toBe(items[0]);
+    fireEvent.keyDown(items[0]!, { key: 'End' });
+    expect(document.activeElement).toBe(items[2]);
+    fireEvent.keyDown(items[2]!, { key: 'Home' });
+    expect(document.activeElement).toBe(items[0]);
+  });
+
+  it('closes on Tab and gives focus back to the node', () => {
+    const { el } = openOn('fused');
+    fireEvent.keyDown(screen.getAllByRole('menuitem')[0]!, { key: 'Tab' });
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(document.activeElement).toBe(el);
+  });
+
+  it('closes when focus leaves it', () => {
+    openOn('fused');
+    const zoom = screen.getByRole('button', { name: 'Zoom in' });
+    act(() => zoom.focus());
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(document.activeElement).toBe(zoom);
   });
 });

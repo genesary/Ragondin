@@ -53,6 +53,8 @@
 
 /* Replay: read-only. Ports go solid and smaller, keeping their shape. */
 .rg-node[data-replay="true"] .rg-port { width: 8px; height: 8px; background: var(--ink-3); border: 0; }
+.rg-node[data-replay="true"] .rg-port[data-kind="opaque"] { background: var(--surface); border: 1.5px solid var(--ink-3); }
+.rg-node[data-replay="true"] .rg-port__dot { width: 2px; height: 2px; }
 .rg-node[data-replay="true"] .rg-port[data-side="in"] { left: -5px; }
 .rg-node[data-replay="true"] .rg-port[data-side="out"] { right: -5px; }
 .rg-node__replay { margin: 0 12px; padding: 8px 0 10px; border-top: 1px solid var(--line); display: grid; gap: 8px; }

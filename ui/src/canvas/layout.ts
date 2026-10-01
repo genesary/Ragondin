@@ -1,14 +1,15 @@
 import dagre from '@dagrejs/dagre';
-import type { CanvasModel, CanvasNode, NodeOverlay } from './model.ts';
+import type { Layout, Position } from '../api/types.ts';
+import type { CanvasModel, CanvasNode } from './model.ts';
 
-/** A card's top-left corner on the canvas, in canvas pixels at zoom 1. */
-export type Position = { x: number; y: number };
+export type { Position };
 
 /**
- * A stored layout: node id to position, as the caller read it. Presentation
- * only — nothing here hashes it, and the canvas is whole without one.
+ * A stored layout: the `nodes` of the API's `Layout`, node id to a card's
+ * top-left corner. Presentation only — nothing here hashes it, and the canvas
+ * is whole without one.
  */
-export type StoredLayout = Readonly<Record<string, Position>>;
+export type StoredLayout = Readonly<Layout['nodes']>;
 
 export type ResolvedLayout = {
   positions: Record<string, Position>;
@@ -25,34 +26,28 @@ export const RANK_GAP = 64;
 // still leaves a step between them.
 const NODE_GAP = 2 * GRID;
 
-// A card's height, from the rows it draws (NodeCard.css): the head, then the
-// parameter row in edit-and-read, or the replay body's rows. An estimate on
-// the high side, so the automatic layout never lets two cards touch; the
-// canvas measures the real card once it is on screen.
+// One envelope for every card, whatever it shows: the tallest a card gets
+// (NodeCard.css) — the head, the replay body's four rows, and the failure
+// message. The layout reads the graph alone, so the replay data of the query
+// on screen never moves a node, and what `onAutoPlaced` reports does not
+// depend on it. The canvas measures the real card once it is on screen.
 const HEAD = 56;
 const ROW = 32;
 const ERROR = 56;
+export const NODE_HEIGHT = HEAD + 4 * ROW + GRID + ERROR;
 
-export function nodeSize(node: CanvasNode, overlay?: NodeOverlay): { width: number; height: number } {
-  let height = HEAD;
-  if (overlay === undefined) {
-    if (node.param !== undefined) height += ROW;
-  } else {
-    const rows = [overlay.metric, overlay.ranks, overlay.discarded, overlay.durationMs ?? overlay.share].filter((r) => r !== undefined).length;
-    if (rows > 0) height += ROW * rows + GRID;
-  }
-  if (overlay?.error !== undefined) height += ERROR;
-  return { width: NODE_WIDTH, height };
+export function nodeSize(): { width: number; height: number } {
+  return { width: NODE_WIDTH, height: NODE_HEIGHT };
 }
 
 const snap = (v: number) => Math.round(v / GRID) * GRID;
 
 /** dagre, left to right, every card snapped to the grid. */
-function automatic(model: CanvasModel, overlays: Readonly<Record<string, NodeOverlay>>): Record<string, Position> {
+function automatic(model: CanvasModel): Record<string, Position> {
   const g = new dagre.graphlib.Graph();
   g.setGraph({ rankdir: 'LR', ranksep: RANK_GAP, nodesep: NODE_GAP, marginx: 0, marginy: 0 });
   g.setDefaultEdgeLabel(() => ({}));
-  for (const node of model.nodes) g.setNode(node.id, nodeSize(node, overlays[node.id]));
+  for (const node of model.nodes) g.setNode(node.id, nodeSize());
   for (const edge of model.edges) if (g.hasNode(edge.from) && g.hasNode(edge.to)) g.setEdge(edge.from, edge.to);
   dagre.layout(g);
   const out: Record<string, Position> = {};
@@ -69,8 +64,7 @@ function automatic(model: CanvasModel, overlays: Readonly<Record<string, NodeOve
  * clear of every card already placed. With no stored layout every node is
  * placed automatically, and every one is flagged so the caller can persist it.
  */
-export function resolveLayout(model: CanvasModel, stored?: StoredLayout, overlays: Readonly<Record<string, NodeOverlay>> = {}): ResolvedLayout {
-  const auto = automatic(model, overlays);
+export function resolveLayout(model: CanvasModel, stored?: StoredLayout): ResolvedLayout {
   const positions: Record<string, Position> = {};
   const placed: { x: number; y: number; width: number; height: number }[] = [];
   const missing: CanvasNode[] = [];
@@ -81,12 +75,14 @@ export function resolveLayout(model: CanvasModel, stored?: StoredLayout, overlay
       continue;
     }
     positions[node.id] = { x: at.x, y: at.y };
-    placed.push({ ...at, ...nodeSize(node, overlays[node.id]) });
+    placed.push({ ...at, ...nodeSize() });
   }
   const clashes = (box: (typeof placed)[number]) =>
     placed.some((p) => box.x < p.x + p.width + GRID && p.x < box.x + box.width + GRID && box.y < p.y + p.height + GRID && p.y < box.y + box.height + GRID);
+  // dagre runs only when a node needs it.
+  const auto = missing.length === 0 ? {} : automatic(model);
   for (const node of missing) {
-    const box = { ...auto[node.id]!, ...nodeSize(node, overlays[node.id]) };
+    const box = { ...auto[node.id]!, ...nodeSize() };
     if (stored !== undefined) while (clashes(box)) box.y += GRID;
     positions[node.id] = { x: box.x, y: box.y };
     placed.push(box);

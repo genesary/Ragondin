@@ -19,6 +19,17 @@ const IMPORTS = {
   the_library: "import { ReactFlow } from '@xyflow/react';\nexport const f = ReactFlow;",
   its_stylesheet: "import '@xyflow/react/dist/base.css';\nexport const f = 1;",
   its_core: "import { Position } from '@xyflow/system';\nexport const p = Position;",
+  its_layout: "import dagre from '@dagrejs/dagre';\nexport const d = dagre;",
+  its_graph: "import { Graph } from '@dagrejs/graphlib';\nexport const g = Graph;",
+  its_d3: "import { zoom } from 'd3-zoom';\nexport const z = zoom;",
+};
+
+// The canvas library's internal store: a state store no code here may take
+// on, inside the canvas or out — a second store escalates (AGENTS.md
+// § Conventions).
+const STORE = {
+  root: "import { create } from 'zustand';\nexport const c = create;",
+  subpath: "import { createStore } from 'zustand/vanilla';\nexport const c = createStore;",
 };
 
 describe('the canvas library’s import rule', () => {
@@ -32,6 +43,14 @@ describe('the canvas library’s import rule', () => {
 
   it.each(Object.entries(IMPORTS))('accepts %s inside src/canvas/', async (_, code) => {
     expect(await lint(code, 'src/canvas/Example.tsx')).toEqual([]);
+  });
+
+  it.each(Object.entries(STORE))('refuses the store (%s import) everywhere, src/canvas/ included', async (_, code) => {
+    for (const file of ['src/App.tsx', 'src/canvas/Example.tsx', 'src/api/example.ts', 'design/components/Example/Example.tsx']) {
+      const messages = await lint(code, file);
+      expect(messages.map((m) => m.ruleId), file).toEqual(['no-restricted-imports']);
+      expect(messages[0]?.message).toContain('decision');
+    }
   });
 
   it('still refuses the test doubles inside src/canvas/', async () => {
