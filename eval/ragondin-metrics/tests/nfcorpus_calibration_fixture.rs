@@ -172,7 +172,7 @@ fn rankings(run: &str) -> Vec<(String, Vec<DocId>)> {
         let ranked = &mut queries.last_mut().expect("a block was just opened").1;
         assert_eq!(rank, ranked.len() + 1, "ranks are 1..n in {}", row[0]);
         assert!(rank <= CUTOFF, "the calibration ran at top_k {CUTOFF}");
-        // `ragondin-harness`'s `ranked_documents` collapses a document's
+        // The fold, `documents_by_first_occurrence`, collapses a document's
         // chunks to its best-ranked one, so a document cannot appear twice.
         // The extraction applies that rule; this is where it is checked.
         assert!(

@@ -18,6 +18,7 @@ view of the product.
 | `RunStore` | The trait a run store backend implements: `save`, `load` by id, `ids` — every stored run's id |
 | `FileSystemRunStore` | `RunStore`'s first implementation, one directory per run; also `compare` by two ids |
 | `Trace` | The stored trace document's one typed definition, converted to and from `TraceDocument` |
+| `terminal`, `ranking_node` | The walk (ADR-C30 § 3): which node's ranking a pipeline's retrieval metrics are read from, with `WalkError` naming where it stops |
 | `conformance` | Behind the `conformance` feature: the suite every `RunStore` backend passes |
 | `compare` | The diff behind `ragondin compare`: metric by metric, and the configuration parameters the two runs differ in |
 
@@ -238,6 +239,48 @@ that the typed shape renders the bytes on disk.
 
 The store itself still never parses a trace: `Trace` is for the code on
 either side of it.
+
+## The walk has one definition
+
+`src/walk.rs` holds ADR-C30 § 3's walk over a `LogicalPipeline`: `terminal`,
+the one node no other node consumes, and `ranking_node`, the node whose output
+is the ranking the retrieval metrics read — a terminal generator's context port
+names a context builder, whose chunks port names it; a terminal builder is
+entered at its own chunks port; any other terminal node is its own ranking.
+Both go by port position, never by name.
+
+It is here for the reason `Trace` is (ADR-C36 § 2, applied to a rule rather
+than a shape): the harness walks to the ranking it scores when it writes a
+run's metrics, and `ragondin-api` walks to the same node when it reads the
+stored traces back, and INV-12 keeps `ragondin-api` off the harness. This
+crate is the one both already depend on for the trace and the lowering. It is
+not in `ragondin-pipeline`, whose public API is an INV-1 boundary: the walk is
+written against that crate's existing public surface (`nodes`, `inputs`, `id`,
+the `LogicalNode` variants) and adds nothing to it. Its companion rule, the
+chunk-to-document fold, is `ragondin-metrics`' `documents_by_first_occurrence`,
+which is where a metric's input is shaped.
+
+Choices made here (`AGENTS.md` § Rules of engagement):
+
+- **`WalkError` is this crate's own error, with the three stops of the
+  pipeline's shape**: no single terminal node, a missing port, and a
+  generator whose context port names no context builder. Whether the node
+  found holds a ranking for a query is a question about a trace, and each
+  caller asks it of its own trace type — the harness of the engine's
+  `ExecutionTrace`, `ragondin-api` of the stored `Trace` — so it is not a
+  variant here. The harness's `RankingWalkError` maps each stop to its
+  variant of the same name and message, and keeps `NoRankedChunks` for the
+  trace question; `ragondin-api` reads any stop as "no output ranking".
+- **`ranking_node` borrows from the pipeline** (`Result<&NodeId, _>`): both
+  callers hold the pipeline for the whole run, and the one that keeps the id
+  clones it.
+- **`terminal` is public too**, because the answer is read at the terminal
+  node, and both callers read it there.
+
+`src/walk.rs`'s tests are the walk's tests, moved from the harness when the
+walk moved: a chunk-producing terminal, a generator, a terminal builder, a
+generator fed by something other than a builder, a missing port, and several
+terminals.
 
 ## The comparison lowers the stored configurations
 

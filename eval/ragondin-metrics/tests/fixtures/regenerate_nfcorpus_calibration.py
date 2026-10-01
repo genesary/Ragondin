@@ -36,9 +36,9 @@ One run of `bin/ragondin/tests/calibration.rs`, left in the store
 From that run's `traces.json` it takes, per query, that terminal node's
 `output.chunks.ranked` — the list ADR-C28 has the execution trace carry, in the
 order the node produced it — and collapses the chunks to documents by first
-occurrence, the rule `ragondin-harness`'s `ranked_documents` applies. (For this
-pipeline NFCorpus has one chunk per document, so nothing is ever collapsed; the
-script asserts that rather than assuming it.)
+occurrence, the rule `ragondin-metrics`' `documents_by_first_occurrence` states
+and the harness applies. (For this pipeline NFCorpus has one chunk per document,
+so nothing is ever collapsed; the script asserts that rather than assuming it.)
 
 The qrels and the query order come from the dataset the calibration ran over:
 BEIR NFCorpus, the original `nfcorpus.zip` from the BEIR datasets bucket,
@@ -165,8 +165,8 @@ def read_rankings(traces, node):
     """Per query, the documents `node` produced, best first, with their scores.
 
     Chunks are collapsed to documents by first occurrence — the rule
-    `ragondin-harness`'s `ranked_documents` applies, because a metric scores
-    documents and a pipeline returns chunks.
+    `ragondin-metrics`' `documents_by_first_occurrence` states, because a
+    metric scores documents and a pipeline returns chunks.
     """
     rankings = {}
     for query, trace in traces.items():

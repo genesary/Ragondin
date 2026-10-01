@@ -1,7 +1,7 @@
 //! [`HarnessError`]: what stops an evaluation run.
 
 use ragondin_engine::{ExecError, PlanError};
-use ragondin_experiments::TraceDocument;
+use ragondin_experiments::{TraceDocument, WalkError};
 use ragondin_pipeline::NodeId;
 use ragondin_types::QueryId;
 
@@ -159,4 +159,66 @@ pub enum RankingWalkError {
         /// The node, or the pipeline input, the walk arrived at.
         node: NodeId,
     },
+}
+
+/// The shared walk's stops, each under the variant that names it here.
+///
+/// The walk itself is `ragondin_experiments::ranking_node`, the one definition
+/// the harness and `ragondin-api` both call; this type adds only
+/// [`RankingWalkError::NoRankedChunks`], which is a question about the
+/// engine's trace rather than about the pipeline's shape. The messages are the
+/// shared error's, word for word.
+impl From<WalkError> for RankingWalkError {
+    fn from(walk: WalkError) -> Self {
+        match walk {
+            WalkError::NoTerminalNode => Self::NoTerminalNode,
+            WalkError::MissingPort { node, port } => Self::MissingPort { node, port },
+            WalkError::ContextNotFromBuilder { generator, context } => {
+                Self::ContextNotFromBuilder { generator, context }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_way_the_shared_walk_stops_maps_to_the_variant_naming_it() {
+        let cases = [
+            (WalkError::NoTerminalNode, RankingWalkError::NoTerminalNode),
+            (
+                WalkError::MissingPort {
+                    node: NodeId::new("context"),
+                    port: 1,
+                },
+                RankingWalkError::MissingPort {
+                    node: NodeId::new("context"),
+                    port: 1,
+                },
+            ),
+            (
+                WalkError::ContextNotFromBuilder {
+                    generator: NodeId::new("answer"),
+                    context: NodeId::new("leg"),
+                },
+                RankingWalkError::ContextNotFromBuilder {
+                    generator: NodeId::new("answer"),
+                    context: NodeId::new("leg"),
+                },
+            ),
+        ];
+
+        for (walk, expected) in cases {
+            let message = walk.to_string();
+            let mapped = RankingWalkError::from(walk);
+            assert_eq!(
+                mapped.to_string(),
+                message,
+                "the message a run's error carries is unchanged"
+            );
+            assert_eq!(mapped, expected);
+        }
+    }
 }

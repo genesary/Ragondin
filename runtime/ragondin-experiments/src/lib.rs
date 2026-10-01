@@ -19,6 +19,9 @@
 //! - [`mod@trace`] — [`Trace`], the one typed definition of a stored trace
 //!   document, read out of a [`TraceDocument`] and written back into one
 //!   (ADR-C36 § 2). The store itself never parses a trace.
+//! - [`walk`] — [`terminal`] and [`ranking_node`], the one definition of
+//!   ADR-C30 § 3's walk to the ranking a pipeline is scored on, called by the
+//!   harness that writes a run's metrics and by the API that reads them back.
 //! - `conformance`, behind the `conformance` feature — the suite every
 //!   [`RunStore`] backend passes.
 //! - [`mod@compare`] — [`compare()`], the diff behind `ragondin compare`:
@@ -37,6 +40,7 @@ pub mod compare;
 pub mod run;
 pub mod store;
 pub mod trace;
+pub mod walk;
 
 #[cfg(feature = "conformance")]
 pub mod conformance;
@@ -50,3 +54,4 @@ pub use run::{
 };
 pub use store::{FileSystemRunStore, RunStore, RunStoreError};
 pub use trace::{Trace, TraceChunk, TraceError, TraceNode, TraceProblem, TraceSummary};
+pub use walk::{ranking_node, terminal, WalkError};

@@ -41,9 +41,13 @@ use std::time::{Duration, Instant};
 use ragondin_benchmarks::identity::dataset_version;
 use ragondin_benchmarks::{Benchmark, CarriedPieces};
 use ragondin_engine::{plan_physical, Engine, EngineContext, ExecutionTrace, Output, ValueSummary};
-use ragondin_experiments::{ConfigDocument, Metrics, Run, RunInputs, TraceDocument};
-use ragondin_metrics::{exact_match, ndcg_at_k, recall_at_k, reciprocal_rank, token_f1};
-use ragondin_pipeline::{LogicalNode, LogicalPipeline, NodeId};
+use ragondin_experiments::{
+    ranking_node, terminal, ConfigDocument, Metrics, Run, RunInputs, TraceDocument,
+};
+use ragondin_metrics::{
+    documents_by_first_occurrence, exact_match, ndcg_at_k, recall_at_k, reciprocal_rank, token_f1,
+};
+use ragondin_pipeline::{LogicalPipeline, NodeId};
 use ragondin_types::{DocId, QueryId};
 
 use crate::error::{HarnessError, RankingWalkError};
@@ -236,7 +240,8 @@ where
         }
         if retrieval {
             let ranked = ranking_node(evaluation.pipeline)
-                .and_then(|node| ranked_documents(&trace, node))
+                .map_err(RankingWalkError::from)
+                .and_then(|node| documents_at(&trace, node))
                 .map_err(|walk| HarnessError::NoRanking {
                     query: query.id.clone(),
                     trace: document.clone(),
@@ -291,6 +296,9 @@ where
 /// The answer a query's pipeline produced, read from the terminal node's
 /// output entry in the trace, or `None` when that entry is not an answer.
 ///
+/// The terminal node is `ragondin_experiments::terminal`'s, the definition
+/// `ragondin-api` reads a stored run's answer at.
+///
 /// Read from the trace rather than from the executor's `Output`: the trace is
 /// what a stored run's `traces.json` holds, and the per-query fixture reads its
 /// answers there (ADR-C31 § 5), so the text scored here and the text a
@@ -312,24 +320,6 @@ fn kind(output: &Output) -> &'static str {
     }
 }
 
-/// The one node of `pipeline` that no other node consumes, if there is
-/// exactly one.
-///
-/// The executor refuses a plan with zero or several (ADR-C30 § 3 rests on
-/// that), so after a query has run this is always `Some`.
-fn terminal(pipeline: &LogicalPipeline) -> Option<&LogicalNode> {
-    let mut terminals = pipeline.nodes().iter().filter(|node| {
-        !pipeline
-            .nodes()
-            .iter()
-            .any(|other| other.inputs().contains(node.id()))
-    });
-    match (terminals.next(), terminals.next()) {
-        (Some(terminal), None) => Some(terminal),
-        _ => None,
-    }
-}
-
 /// What `node` produced for this query, as the trace records it.
 fn output_entry<'t>(trace: &'t ExecutionTrace, node: &NodeId) -> Option<&'t ValueSummary> {
     trace
@@ -339,76 +329,22 @@ fn output_entry<'t>(trace: &'t ExecutionTrace, node: &NodeId) -> Option<&'t Valu
         .and_then(|entry| entry.output.as_ref())
 }
 
-/// The node whose output entry in the trace holds the ranking the retrieval
-/// metrics read (ADR-C30 § 3), found by port position and never by name.
-///
-/// - A terminal **generator**: its context port names a context builder, and
-///   that builder's chunks port names the ranking.
-/// - A terminal **context builder**: the walk enters at its chunks port.
-/// - Any other terminal node produces chunks and is its own ranking.
-///
-/// Only the pipeline's shape is read here; whether the node found holds a
-/// ranking in the trace is [`ranked_documents`]'s question.
-fn ranking_node(pipeline: &LogicalPipeline) -> Result<&NodeId, RankingWalkError> {
-    let terminal = terminal(pipeline).ok_or(RankingWalkError::NoTerminalNode)?;
-    let builder = match terminal {
-        LogicalNode::Generator(generator) => {
-            let context = port(terminal, CONTEXT_PORT)?;
-            match pipeline.nodes().iter().find(|node| node.id() == context) {
-                Some(builder @ LogicalNode::ContextBuilder(_)) => builder,
-                _ => {
-                    return Err(RankingWalkError::ContextNotFromBuilder {
-                        generator: generator.id.clone(),
-                        context: context.clone(),
-                    })
-                }
-            }
-        }
-        LogicalNode::ContextBuilder(_) => terminal,
-        _ => return Ok(terminal.id()),
-    };
-    port(builder, CHUNKS_PORT)
-}
-
-/// A generator's context port: `Fixed([Query, Context])`.
-const CONTEXT_PORT: usize = 1;
-/// A context builder's chunks port: `Fixed([Query, Chunks])`.
-const CHUNKS_PORT: usize = 1;
-
-/// What `node`'s input port `position` names.
-fn port(node: &LogicalNode, position: usize) -> Result<&NodeId, RankingWalkError> {
-    node.inputs()
-        .get(position)
-        .ok_or_else(|| RankingWalkError::MissingPort {
-            node: node.id().clone(),
-            port: position,
-        })
-}
-
 /// The ranked **documents** `node` produced, read from its output entry in
-/// `trace`.
-///
-/// The one place a ranking is extracted. A metric scores documents and a
-/// pipeline ranks chunks, so the list is collapsed by first occurrence: the
-/// best-ranked chunk of a document is where that document enters the ranking,
-/// which is the max-score-per-document rule BEIR evaluations use, expressed
-/// over a list the node already returned in descending score order.
+/// `trace` and folded by `ragondin_metrics::documents_by_first_occurrence` —
+/// the one definition of the fold, which `ragondin-api` applies to the stored
+/// trace of the same query.
 ///
 /// Read from the trace (ADR-C28 names every node's chunks there) rather than
 /// from the executor's output, because once a pipeline ends in an answer the
 /// ranking is no longer its output. A node that is absent from the trace, that
 /// failed, or whose output is not a ranking is named, never read as empty.
-fn ranked_documents(trace: &ExecutionTrace, node: &NodeId) -> Result<Vec<DocId>, RankingWalkError> {
+fn documents_at(trace: &ExecutionTrace, node: &NodeId) -> Result<Vec<DocId>, RankingWalkError> {
     let Some(ValueSummary::RankedChunks { chunks }) = output_entry(trace, node) else {
         return Err(RankingWalkError::NoRankedChunks { node: node.clone() });
     };
-    let mut documents: Vec<DocId> = Vec::with_capacity(chunks.len());
-    for hit in chunks {
-        if !documents.contains(&hit.document) {
-            documents.push(hit.document.clone());
-        }
-    }
-    Ok(documents)
+    Ok(documents_by_first_occurrence(
+        chunks.iter().map(|hit| &hit.document),
+    ))
 }
 
 /// The running sums of the retrieval metrics, over the queries that carry at
@@ -528,40 +464,14 @@ mod tests {
     ]}"#;
 
     #[test]
-    fn a_chunk_ranking_collapses_to_its_documents_by_first_occurrence() {
-        let trace = ExecutionTrace {
-            nodes: vec![ranking(
-                "leg",
-                vec![
-                    ranked("d-1#2", "d-1", 0.9),
-                    ranked("d-2#0", "d-2", 0.8),
-                    ranked("d-1#0", "d-1", 0.7),
-                    ranked("d-3#1", "d-3", 0.6),
-                ],
-            )],
-        };
-
-        assert_eq!(
-            ranked_documents(&trace, &NodeId::new("leg")),
-            Ok(vec![
-                DocId::new("d-1"),
-                DocId::new("d-2"),
-                DocId::new("d-3")
-            ]),
-            "a document enters the ranking at its best chunk and never twice"
-        );
-    }
-
-    #[test]
     fn an_empty_output_ranks_no_document() {
+        // An empty ranking is a ranking: scored as one that found nothing,
+        // never refused as `NoRankedChunks`.
         let trace = ExecutionTrace {
             nodes: vec![ranking("leg", Vec::new())],
         };
 
-        assert_eq!(
-            ranked_documents(&trace, &NodeId::new("leg")),
-            Ok(Vec::new())
-        );
+        assert_eq!(documents_at(&trace, &NodeId::new("leg")), Ok(Vec::new()));
     }
 
     #[test]
@@ -583,43 +493,13 @@ mod tests {
 
         for node in ["absent", "context", "failed"] {
             assert_eq!(
-                ranked_documents(&trace, &NodeId::new(node)),
+                documents_at(&trace, &NodeId::new(node)),
                 Err(RankingWalkError::NoRankedChunks {
                     node: NodeId::new(node)
                 }),
                 "{node}"
             );
         }
-    }
-
-    #[test]
-    fn a_chunk_producing_terminal_node_is_its_own_ranking() {
-        let pipeline = forged(
-            r#"{"inputs":["question"],"nodes":[
-                {"Fusion":{"id":"fused","implementation":"f","inputs":["a","b"],"params":{}}},
-                {"Retriever":{"id":"a","implementation":"r","inputs":["question"],"params":{}}},
-                {"Retriever":{"id":"b","implementation":"r","inputs":["question"],"params":{}}}
-            ]}"#,
-        );
-
-        assert_eq!(ranking_node(&pipeline), Ok(&NodeId::new("fused")));
-    }
-
-    #[test]
-    fn a_generator_is_scored_on_the_ranking_that_fed_its_context_builder() {
-        assert_eq!(ranking_node(&forged(GENERATION)), Ok(&NodeId::new("leg")));
-    }
-
-    #[test]
-    fn a_terminal_context_builder_is_scored_on_its_own_chunks_port() {
-        let pipeline = forged(
-            r#"{"inputs":["question"],"nodes":[
-                {"ContextBuilder":{"id":"context","implementation":"c","inputs":["question","leg"],"params":{}}},
-                {"Retriever":{"id":"leg","implementation":"r","inputs":["question"],"params":{}}}
-            ]}"#,
-        );
-
-        assert_eq!(ranking_node(&pipeline), Ok(&NodeId::new("leg")));
     }
 
     #[test]
@@ -651,50 +531,8 @@ mod tests {
 
         let node = ranking_node(&pipeline).expect("the walk reaches the retriever");
         assert_eq!(
-            ranked_documents(&trace, node),
+            documents_at(&trace, node),
             Ok(vec![DocId::new("a"), DocId::new("b")])
         );
-    }
-
-    #[test]
-    fn a_generator_fed_by_something_other_than_a_context_builder_is_named() {
-        let pipeline = forged(
-            r#"{"inputs":["question"],"nodes":[
-                {"Generator":{"id":"answer","implementation":"g","inputs":["question","leg"],"params":{}}},
-                {"Retriever":{"id":"leg","implementation":"r","inputs":["question"],"params":{}}}
-            ]}"#,
-        );
-
-        assert_eq!(
-            ranking_node(&pipeline),
-            Err(RankingWalkError::ContextNotFromBuilder {
-                generator: NodeId::new("answer"),
-                context: NodeId::new("leg"),
-            })
-        );
-    }
-
-    #[test]
-    fn a_missing_port_and_a_missing_terminal_are_named() {
-        let short = forged(
-            r#"{"inputs":["question"],"nodes":[
-                {"ContextBuilder":{"id":"context","implementation":"c","inputs":["question"],"params":{}}}
-            ]}"#,
-        );
-        assert_eq!(
-            ranking_node(&short),
-            Err(RankingWalkError::MissingPort {
-                node: NodeId::new("context"),
-                port: 1,
-            })
-        );
-
-        let two = forged(
-            r#"{"inputs":["question"],"nodes":[
-                {"Retriever":{"id":"a","implementation":"r","inputs":["question"],"params":{}}},
-                {"Retriever":{"id":"b","implementation":"r","inputs":["question"],"params":{}}}
-            ]}"#,
-        );
-        assert_eq!(ranking_node(&two), Err(RankingWalkError::NoTerminalNode));
     }
 }

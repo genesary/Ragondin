@@ -10,7 +10,8 @@ rust-version.workspace = true
 # The experiment plane's own state. It depends on `ragondin-pipeline` for the
 # `PipelineHash` that is the first component of run identity
 # (`docs/system-architecture.md` §7.1) and for the `RawPipeline` and
-# `validate` a comparison lowers two stored configurations through, and on
+# `validate` a comparison lowers two stored configurations through, and for
+# the `LogicalPipeline` shape the walk to a run's ranking node reads; and on
 # `ragondin-types` for the `QueryId` a per-query trace is filed under. It does
 # **not** depend on `ragondin-engine`: the harness is the driver that holds
 # both, and it renders the engine's `ExecutionTrace` into the document this
