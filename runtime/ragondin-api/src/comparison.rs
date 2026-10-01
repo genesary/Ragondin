@@ -122,9 +122,11 @@ pub(crate) fn align(columns: &[Column<'_>]) -> Vec<Row> {
 }
 
 /// The seven bins, from the worst to the best, with their bounds. The edges
-/// are a choice made in this crate (`ARCHITECTURE.md` § Compare): the
-/// delta's sign, and its absolute magnitude against 0.1 and 0.3, alike for
-/// every ranking metric, a bound belonging to the bin nearer zero.
+/// are the product's, fixed by `docs/design/2026-09-29-front-end-design.md`
+/// § 3. UX and design (`ARCHITECTURE.md` § Compare): the delta's sign, and
+/// its absolute magnitude against 0.1 and 0.3, alike for every ranking
+/// metric, a bound belonging to the bin nearer zero. Moving them is a change
+/// to that document, then to this table and to [`bin_of`].
 pub(crate) const BINS: [(DeltaBinName, Option<f64>, Option<f64>); 7] = [
     (DeltaBinName::MuchWorse, None, Some(-0.3)),
     (DeltaBinName::Worse, Some(-0.3), Some(-0.1)),

@@ -895,14 +895,15 @@ with a delta — `much_worse`, `worse`, `slightly_worse`, `unchanged`,
 `slightly_better`, `better`, `much_better` — each with its bounds and its
 queries.
 
-**The bin edges are a choice made in this crate**, not the design's — no
-document of the repository fixes them: the delta's sign, and its absolute
-magnitude against 0.1 and 0.3, applied to every ranking metric alike; **a
-bound belongs to the bin nearer zero** (−0.3 is `worse`, 0.1
-`slightly_better`), so the bins are symmetric; and **`unchanged` is a
-delta of exactly zero.** A per-query score is a deterministic reading of a
-stored trace, so a ranking left as it was gives exactly the same score, and a
-tolerance would be a threshold nobody chose. Moving the edges is a change to
+**The bin edges are the product's**, fixed by
+`docs/design/2026-09-29-front-end-design.md` § 3. UX and design: the delta's
+sign, and its absolute magnitude against 0.1 and 0.3, applied to every
+ranking metric alike; **a bound belongs to the bin nearer zero** (−0.3 is
+`worse`, 0.1 `slightly_better`), so the bins are symmetric; and
+**`unchanged` is a delta of exactly zero.** A per-query score is a
+deterministic reading of a stored trace, so a ranking left as it was gives
+exactly the same score, and a tolerance would be a threshold nobody chose.
+Moving the edges is a change to that design document first, then to
 `comparison::BINS` and `bin_of`.
 
 ### The latency
