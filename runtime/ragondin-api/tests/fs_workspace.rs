@@ -142,6 +142,22 @@ fn every_form_outside_the_settings_grammar_is_refused_naming_its_line() {
 }
 
 #[test]
+fn a_no_break_space_is_named_by_its_code_point() {
+    for text in [
+        "\u{a0}datasets = \"a\"\n",
+        "datasets\u{a0}= \"a\"\n",
+        "datasets =\u{a0}\"a\"\n",
+    ] {
+        let root = scratch("no_break_space");
+        fs::write(root.join("workspace.toml"), text).expect("written");
+
+        let error = Workspace::open(&root).expect_err("refused");
+
+        assert!(error.to_string().contains("U+00A0"), "{text:?}: {error}");
+    }
+}
+
+#[test]
 fn a_byte_order_mark_is_refused_by_name() {
     let root = scratch("bom");
     fs::write(root.join("workspace.toml"), "\u{feff}datasets = \"a\"\n").expect("written");

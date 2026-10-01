@@ -202,6 +202,17 @@ pub fn check(family: &str, name: &str, uri: &str) -> Result<Binding> {
     parse_one(&format!("{family}/{name}={uri}"))
 }
 
+/// Whether some node of `pipeline` names `name` in the family spelled
+/// `family` — the use [`Bindings::refuse_unused`] looks for. A family that is
+/// none of [`Family::ALL`] is used by nothing.
+#[cfg(feature = "ui")]
+pub fn used_by(pipeline: &LogicalPipeline, family: &str, name: &str) -> bool {
+    Family::ALL
+        .into_iter()
+        .find(|known| known.name() == family)
+        .is_some_and(|family| pipeline.nodes().iter().any(|node| uses(node, family, name)))
+}
+
 /// Whether `node` names `name` in `family`.
 fn uses(node: &LogicalNode, family: Family, name: &str) -> bool {
     match (family, node) {

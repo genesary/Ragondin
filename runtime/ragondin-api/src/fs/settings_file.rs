@@ -108,11 +108,16 @@ pub(crate) fn parse(text: &str) -> Result<SettingsFile, GrammarError> {
             in_services = true;
             continue;
         }
+        refuse_foreign_space(content).map_err(refuse)?;
         let (key, rest) = parse_key(content).map_err(refuse)?;
-        let rest = trim_start(rest)
-            .strip_prefix('=')
-            .ok_or_else(|| refuse(format!("the key `{key}` is not followed by `=`")))?;
-        let (value, rest) = parse_string(trim_start(rest)).map_err(refuse)?;
+        let rest = trim_start(rest);
+        refuse_foreign_space(rest).map_err(refuse)?;
+        let rest = trim_start(
+            rest.strip_prefix('=')
+                .ok_or_else(|| refuse(format!("the key `{key}` is not followed by `=`")))?,
+        );
+        refuse_foreign_space(rest).map_err(refuse)?;
+        let (value, rest) = parse_string(rest).map_err(refuse)?;
         check_end(rest, "the value").map_err(refuse)?;
         if in_services {
             let Some((family, name)) = key.split_once('/') else {
@@ -176,6 +181,27 @@ fn trim_start(text: &str) -> &str {
     text.trim_start_matches(WHITESPACE)
 }
 
+/// Refuses `text` when it begins with a character Unicode calls whitespace
+/// and TOML does not — a no-break space, typically pasted in — naming it by
+/// its code point, since it looks like a space in any editor.
+fn refuse_foreign_space(text: &str) -> Result<(), String> {
+    match text.chars().next() {
+        Some(c) if c.is_whitespace() && !WHITESPACE.contains(&c) => {
+            let what = if c == '\u{a0}' {
+                "a no-break space"
+            } else {
+                "a whitespace character"
+            };
+            Err(format!(
+                "{what} (U+{:04X}), which TOML does not count as whitespace: only a space or a \
+                 tab is",
+                c as u32
+            ))
+        }
+        _ => Ok(()),
+    }
+}
+
 /// A control character TOML forbids in a string or a comment: U+0000 to
 /// U+001F but the tab, and U+007F.
 fn is_forbidden_control(c: char) -> bool {
@@ -196,6 +222,7 @@ fn check_comment(comment: &str) -> Result<(), String> {
 /// What follows `what` on its line: nothing, or a comment.
 fn check_end(rest: &str, what: &str) -> Result<(), String> {
     let rest = trim(rest);
+    refuse_foreign_space(rest)?;
     if rest.is_empty() {
         Ok(())
     } else if rest.starts_with('#') {

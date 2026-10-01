@@ -585,8 +585,13 @@ API crate holds it as an `Arc<dyn Launcher>` and names no component.
   of `bench`'s `check_nodes` that holds in every build — a `dense` node's
   keys by the nature of its embedder, a `cross_encoder`'s, a bound
   reranker's, one embedder per pipeline — with the workspace's bindings
-  (each through `binding::check`, gathered by `Bindings::from_checked`)
-  deciding which names are bound. A refusal is `pipeline_invalid` in
+  deciding which names are bound. **Only the bindings a node of the document
+  uses count** (`binding::used_by`, the use `refuse_unused` looks for), as
+  `bench` would be given only those: startup does not check the bindings in
+  `workspace.toml`, and one hand-edited out of shape must not block the save
+  of every document. A binding the document does use goes through
+  `binding::check` (gathered by `Bindings::from_checked`), and one `--remote`
+  would refuse is `binding_refused`, naming it. A refusal is `pipeline_invalid` in
   `bench`'s words (`node `<id>`: …`) with the node as its location. A key no
   component reads is refused whatever its value, and a URL-valued key a
   component reads is accepted. `check_nodes`' one build-dependent refusal —

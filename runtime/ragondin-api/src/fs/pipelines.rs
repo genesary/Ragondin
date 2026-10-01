@@ -108,10 +108,31 @@ impl FsPipelines {
         Ok(None)
     }
 
+    /// Refuses `name` when a stored pipeline has it in another case. On a
+    /// filesystem that ignores case `Hybrid.yaml` is `hybrid.yaml`: a write
+    /// under the one would replace the other behind its etag, a read would
+    /// answer the other under this name, and a layout would land beside the
+    /// other under a name the listing does not show. Refused for all of them,
+    /// on every filesystem, so the answer does not depend on which one.
+    fn refuse_alias(&self, name: &str) -> Result<(), ApiError> {
+        match self.alias_of(name)? {
+            Some(stored) => Err(ApiError::RequestInvalid {
+                detail: format!(
+                    "`{name}` differs from the stored pipeline `{stored}` only in case, and on a \
+                     filesystem that ignores case the two are one file; use `{stored}`"
+                ),
+            }),
+            None => Ok(()),
+        }
+    }
+
+    /// The stored pipeline `name`, for a read or a layout: `pipeline_not_found`
+    /// when there is none, `request_invalid` for a case alias of one.
     fn require(&self, name: &str) -> Result<PipelineFile, ApiError> {
         if !is_name(name) {
             return Err(not_found(name));
         }
+        self.refuse_alias(name)?;
         self.load(name)?.ok_or_else(|| not_found(name))
     }
 }
@@ -181,16 +202,7 @@ impl PipelineSource for FsPipelines {
             precondition.clone(),
         );
         blocking(move || {
-            // On a case-insensitive filesystem `Hybrid.yaml` is `hybrid.yaml`:
-            // a write under the one would replace the other behind its etag.
-            if let Some(stored) = this.alias_of(&name)? {
-                return Err(ApiError::RequestInvalid {
-                    detail: format!(
-                        "`{name}` differs from the stored pipeline `{stored}` only in case, and \
-                         on a filesystem that ignores case the two are one file; write `{stored}`"
-                    ),
-                });
-            }
+            this.refuse_alias(&name)?;
             let stored = this.load(&name)?;
             let current = stored
                 .as_ref()

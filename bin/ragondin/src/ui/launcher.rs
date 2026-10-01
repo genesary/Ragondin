@@ -71,6 +71,12 @@ impl Launcher for BinaryLauncher {
     /// read is refused here, in its words, before the document is stored.
     /// The build-specific refusal `bench` adds — an `onnx` embedder in a build
     /// without the feature — is not made: a stored document is not a run.
+    ///
+    /// Only the bindings a node of the document uses are considered, as
+    /// `bench` would only be given those: startup does not check
+    /// `workspace.toml`'s bindings, and a malformed one nothing here names
+    /// must not block the save of every document. One the document does use
+    /// is checked, and refused as `binding_refused` naming it.
     fn check_document(
         &self,
         pipeline: &LogicalPipeline,
@@ -78,6 +84,7 @@ impl Launcher for BinaryLauncher {
     ) -> Result<(), ApiError> {
         let bindings = bindings
             .iter()
+            .filter(|binding| binding::used_by(pipeline, &binding.family, &binding.name))
             .map(|binding| binding::check(&binding.family, &binding.name, &binding.uri))
             .collect::<anyhow::Result<Vec<_>>>()
             .map_err(refused)?;
@@ -392,6 +399,60 @@ mod tests {
         BinaryLauncher
             .check_document(&document, &[])
             .expect("every key is one the ONNX embedder's node reads");
+    }
+
+    fn binding(family: &str, name: &str, uri: &str) -> ragondin_api::ServiceBinding {
+        ragondin_api::ServiceBinding {
+            family: family.to_owned(),
+            name: name.to_owned(),
+            uri: uri.to_owned(),
+        }
+    }
+
+    const BM25_ONLY: &str =
+        "    - id: lexical\n      component: retriever\n      impl: bm25\n      \
+         inputs: [question]\n      params: { top_k: 10 }\n";
+
+    #[test]
+    fn a_bad_binding_no_node_uses_does_not_affect_the_document() {
+        // Hand-edited into `workspace.toml`, which startup reads without
+        // checking its bindings: a family that is none, a URI that is not
+        // `http://`, and a malformed binding of a name no node names.
+        let bindings = [
+            binding("store", "q", "ftp://h"),
+            binding("generator", "qwen", "ftp://h"),
+            binding("reranker", "unused", "https://h"),
+        ];
+
+        BinaryLauncher
+            .check_document(&pipeline(BM25_ONLY), &bindings)
+            .expect("no node uses any of them");
+    }
+
+    #[test]
+    fn a_bad_binding_the_document_uses_is_refused_naming_it() {
+        let document = pipeline(
+            "    - id: lexical\n      component: retriever\n      impl: bm25\n      \
+             inputs: [question]\n      params: { top_k: 10 }\n\
+             \x20   - id: ranked\n      component: reranker\n      impl: bge-reranker\n      \
+             inputs: [question, lexical]\n      params: { top_k: 5, served_model: r }\n",
+        );
+
+        let error = BinaryLauncher
+            .check_document(
+                &document,
+                &[
+                    binding("store", "q", "ftp://h"),
+                    binding("reranker", "bge-reranker", "ftp://h"),
+                ],
+            )
+            .expect_err("`ranked` names a binding `--remote` refuses");
+
+        assert!(
+            matches!(&error, ApiError::BindingRefused { detail }
+                if detail.contains("`--remote reranker/bge-reranker=ftp://h`")),
+            "{error:?}"
+        );
     }
 
     #[test]

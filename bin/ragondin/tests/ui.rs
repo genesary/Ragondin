@@ -491,6 +491,34 @@ mod with_the_feature {
         }
     }
 
+    /// A binding hand-edited into `workspace.toml` that `--remote` would
+    /// refuse — startup does not check bindings — blocks no save of a
+    /// document that does not use it.
+    #[test]
+    fn a_bad_binding_no_document_node_uses_blocks_no_save() {
+        let root = workspace("bad_binding");
+        std::fs::write(
+            root.join("workspace.toml"),
+            "[services]\n\"store/q\" = \"ftp://h\"\n",
+        )
+        .unwrap();
+        let server = Server::start(&root, &[]);
+        let document = "pipeline:\n  inputs: [question]\n  nodes:\n    - id: lexical\n      \
+                        component: retriever\n      impl: bm25\n      inputs: [question]\n      \
+                        params: { top_k: 10 }\n";
+
+        let answer = http::send_json_with(
+            server.authority(),
+            "PUT",
+            "/api/v1/pipelines/lexical",
+            &serde_json::json!({ "document": document }).to_string(),
+            &[("If-None-Match", "*")],
+        );
+
+        assert_eq!(answer.status, 200, "{answer:?}");
+        assert!(root.join("pipelines/lexical.yaml").is_file());
+    }
+
     /// The composition root's key refusals, on `PUT` only: a key the
     /// component does not read is refused in `bench`'s words, a URL-valued
     /// key it reads is stored.

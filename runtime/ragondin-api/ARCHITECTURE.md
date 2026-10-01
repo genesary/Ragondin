@@ -290,7 +290,8 @@ against this reader. It reads blank lines and
 strings, and a comment after a value; it refuses everything else — another
 key or table, a duplicate, a value that is not a one-line string, a service
 key without its `/`, anything after a value, a control character other than
-a tab in a string or a comment, whitespace other than a space or a tab, an
+a tab in a string or a comment, whitespace other than a space or a tab
+(named by its code point — a no-break space is `U+00A0`), an
 escape TOML does not define (a `\u` takes four hex digits, a `+` not one of
 them), and a byte-order mark, named as one — naming the line. Everything it
 accepts is valid TOML, so another reader agrees with it; a person who writes
@@ -351,11 +352,15 @@ handler writes it.
   private there), and not `validate`, which the router gives
   `POST /pipelines/validate` (a static segment outranks a parameter, so a
   pipeline under that name could not be read). A read of any other name is
-  `pipeline_not_found`, a write `request_invalid`. **A write under a name
-  that differs from a stored one only in case is `request_invalid`**: on a
-  filesystem that ignores case the two are one file, and the write would
-  replace the other behind its etag. Names keep their case otherwise, so a
-  file a person named `Hybrid.yaml` is still listed and read. The listing skips a file whose stem is not a name —
+  `pipeline_not_found`, a write `request_invalid`. **A name that differs
+  from a stored one only in case is `request_invalid`, naming the stored
+  one** — for a write, a read and a layout read or write alike: on a
+  filesystem that ignores case the two are one file, so a write would
+  replace the other behind its etag, a read would answer the other under
+  this name, and a layout would land beside the other; refused on every
+  filesystem, so the answer does not depend on which. Names keep their case
+  otherwise, so a file a person named `Hybrid.yaml` is still listed and
+  read as `Hybrid`. The listing skips a file whose stem is not a name —
   staging files and hidden ones included — and is sorted by name; each entry
   carries its etag, its modified time, and its hash or its validation error,
   computed on the request.

@@ -496,6 +496,42 @@ async fn concurrent_writes_with_the_same_etag_have_exactly_one_winner() {
     assert_eq!(on_disk(&workspace, "hybrid"), winners[0].as_bytes());
 }
 
+/// With only `Fresh.yaml` stored, `fresh` names it on a filesystem that
+/// ignores case and nothing on one that does not: a read or a layout under
+/// `fresh` is refused as a write is, naming `Fresh`, and no
+/// `fresh.layout.json` appears beside `Fresh.yaml`.
+#[tokio::test]
+async fn reads_and_layouts_under_a_case_alias_are_refused_naming_the_stored_name() {
+    let workspace = scratch("case_alias_reads");
+    fs::write(workspace.pipelines().join("Fresh.yaml"), HYBRID).unwrap();
+    let layout = json!({ "version": 1, "nodes": { "lexical": { "x": 1.0, "y": 2.0 } } });
+
+    for request in [
+        get("/api/v1/pipelines/fresh"),
+        get("/api/v1/pipelines/fresh/layout"),
+        write_request("PUT", "/api/v1/pipelines/fresh/layout", &layout, &[]),
+    ] {
+        let path = request.uri().to_string();
+        let response = send(server(&workspace), request).await;
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{path}");
+        let problem = body_json(response).await;
+        assert_eq!(problem["code"], "request_invalid", "{path}");
+        assert!(
+            problem["detail"].as_str().unwrap().contains("`Fresh`"),
+            "{path}: {problem}"
+        );
+    }
+    let names: Vec<String> = fs::read_dir(workspace.pipelines())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(names, ["Fresh.yaml"]);
+    // The stored name itself reads.
+    let read = send(server(&workspace), get("/api/v1/pipelines/Fresh")).await;
+    assert_eq!(read.status(), StatusCode::OK);
+}
+
 #[tokio::test]
 async fn a_name_differing_from_a_stored_one_only_in_case_is_refused() {
     let workspace = scratch("case_alias");
