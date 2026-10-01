@@ -725,3 +725,103 @@ async fn the_layout_round_trips_beside_the_document_and_never_changes_the_hash()
     .await;
     assert_eq!(absent.status(), StatusCode::NOT_FOUND);
 }
+
+/// Every refusal `POST /pipelines/validate` makes, its whole problem body
+/// pinned byte for byte: the load and its words are `ragondin-config`'s, and
+/// this is what keeps a change there from reaching a client unannounced.
+#[tokio::test]
+async fn validate_refuses_every_branch_with_the_problem_body_it_always_has() {
+    let workspace = scratch("refusal_golden");
+    let node = "    - id: legs\n      component: retriever\n      impl: bm25\n";
+    let unlocated = json!({ "node": null, "edge": null });
+    let at_legs = json!({ "node": "legs", "edge": null });
+    let cases = [
+        (
+            "version: 99\npipeline:\n  inputs: [q]\n  nodes: []\n".to_owned(),
+            "the configuration is written in a schema version this build cannot read: unsupported pipeline schema version 99: this build reads version 3",
+            unlocated.clone(),
+        ),
+        (
+            "pipeline:\n  inputs: [q\n  nodes: []\n".to_owned(),
+            "could not parse configuration: did not find expected ',' or ']' at line 3 column 8, while parsing a flow sequence at line 2 column 11",
+            unlocated.clone(),
+        ),
+        (
+            "pipeline:\n  inputs: [q]\n".to_owned(),
+            "could not parse configuration: pipeline: missing field `nodes` at line 2 column 3",
+            unlocated.clone(),
+        ),
+        (
+            format!("pipeline:\n  inputs: [a, b]\n  nodes:\n{node}      inputs: [a]\n"),
+            "configuration is not a valid pipeline: a pipeline must declare exactly one input, found 2",
+            unlocated.clone(),
+        ),
+        (
+            format!("pipeline:\n  inputs: [q]\n  nodes:\n{node}      inputs: [q]\n{node}      inputs: [q]\n"),
+            "configuration is not a valid pipeline: duplicate node id `legs`",
+            at_legs.clone(),
+        ),
+        (
+            format!("pipeline:\n  inputs: [q]\n  nodes:\n{node}      inputs: [nowhere]\n"),
+            "configuration is not a valid pipeline: node `legs`: input `nowhere` names neither a node nor a declared input",
+            at_legs.clone(),
+        ),
+        (
+            format!("pipeline:\n  inputs: [legs]\n  nodes:\n{node}      inputs: [legs]\n"),
+            "configuration is not a valid pipeline: declared input `legs` is also a node id",
+            at_legs.clone(),
+        ),
+        (
+            format!("pipeline:\n  inputs: [q]\n  nodes:\n{node}      inputs: [legs]\n"),
+            "configuration is not a valid pipeline: cycle in the pipeline's data edges: legs",
+            at_legs.clone(),
+        ),
+        (
+            format!("pipeline:\n  inputs: [q]\n  nodes:\n{node}      inputs: [q]\n      params: {{ top_k: .inf }}\n"),
+            "configuration is not a valid pipeline: node `legs`: parameter `top_k` is not a finite number",
+            at_legs.clone(),
+        ),
+        (
+            "pipeline:\n  inputs: [q]\n  nodes:\n    - { id: legs, component: summarizer, impl: x, inputs: [q] }\n".to_owned(),
+            "configuration is not a valid pipeline: node `legs`: unknown component `summarizer`",
+            at_legs.clone(),
+        ),
+        (
+            MIS_KINDED.to_owned(),
+            "the configuration wires two nodes incompatibly\n  edge: `legs` feeds `ranked` at port 0\n  expected: query\n  found: chunks",
+            json!({ "node": "ranked", "edge": { "from": "legs", "to": "ranked", "port": 0 } }),
+        ),
+        (
+            MIS_KINDED.replace("inputs: [legs, question]", "inputs: [question, legs, legs]"),
+            "the configuration wires two nodes incompatibly\n  edge: `legs` feeds `ranked` at port 2\n  expected: nothing — `ranked` declares no port at position 2\n  found: chunks",
+            json!({ "node": "ranked", "edge": { "from": "legs", "to": "ranked", "port": 2 } }),
+        ),
+    ];
+
+    for (text, detail, location) in cases {
+        let response = send(
+            server(&workspace),
+            write_request("POST", "/api/v1/pipelines/validate", &document(&text), &[]),
+        )
+        .await;
+
+        assert_eq!(
+            response.status(),
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{text}"
+        );
+        assert_eq!(
+            body_json(response).await,
+            json!({
+                "type": "urn:ragondin:problem:pipeline_invalid",
+                "title": "The pipeline is invalid",
+                "status": 422,
+                "code": "pipeline_invalid",
+                "detail": format!("the pipeline does not validate: {detail}"),
+                "hint": "Correct the node or edge named in `location`, then validate again.",
+                "location": location,
+            }),
+            "{text}"
+        );
+    }
+}

@@ -429,11 +429,82 @@ mod with_the_feature {
         found
     }
 
-    #[test]
-    fn validate_returns_the_hash_the_cli_prints_for_the_same_bytes() {
-        let server = Server::start(&workspace("validate_parity"), &[]);
+    /// One document per refusal the load can make that no fixture under
+    /// `tests/fixtures` makes: the version, the syntax, and every verdict of
+    /// the validation pass. Written under `root`, beside the fixtures they
+    /// complete.
+    fn branch_documents(root: &std::path::Path) -> Vec<PathBuf> {
+        let directory = root.join("branches");
+        std::fs::create_dir_all(&directory).unwrap();
+        let node = "    - id: legs\n      component: retriever\n      impl: bm25\n";
+        [
+            ("unsupported-version", "version: 99\npipeline:\n  inputs: [q]\n  nodes: []\n".to_owned()),
+            ("syntax", "pipeline:\n  inputs: [q\n  nodes: []\n".to_owned()),
+            ("wrong-type", "pipeline: [\n".to_owned()),
+            ("missing-key", "pipeline:\n  inputs: [q]\n".to_owned()),
+            ("no-input", format!("pipeline:\n  inputs: []\n  nodes:\n{node}")),
+            ("two-inputs", format!("pipeline:\n  inputs: [a, b]\n  nodes:\n{node}      inputs: [a]\n")),
+            ("duplicate-id", format!("pipeline:\n  inputs: [q]\n  nodes:\n{node}      inputs: [q]\n{node}      inputs: [q]\n")),
+            ("dangling", format!("pipeline:\n  inputs: [q]\n  nodes:\n{node}      inputs: [nowhere]\n")),
+            ("collides", format!("pipeline:\n  inputs: [legs]\n  nodes:\n{node}      inputs: [legs]\n")),
+            ("cycle", format!("pipeline:\n  inputs: [q]\n  nodes:\n{node}      inputs: [legs]\n")),
+            ("non-finite", format!("pipeline:\n  inputs: [q]\n  nodes:\n{node}      inputs: [q]\n      params: {{ top_k: .inf }}\n")),
+        ]
+        .into_iter()
+        .map(|(name, text)| {
+            let path = directory.join(format!("{name}.yaml"));
+            std::fs::write(&path, text).unwrap();
+            path
+        })
+        .collect()
+    }
 
-        for path in fixture_configurations() {
+    /// The `detail` `POST /pipelines/validate` answers for a document, as
+    /// derived from what `ragondin validate` prints on stderr for the same
+    /// bytes in a file at `path`: the CLI's words, with the file the request
+    /// does not have replaced, byte for byte.
+    ///
+    /// Every detail opens with the problem's own heading, `the pipeline does
+    /// not validate: `. After it, the incompatible-wiring report is the CLI's
+    /// own, with "the configuration" where the CLI names the file; every other
+    /// refusal is the heading `ConfigError` renders, without the path and
+    /// joined to its one cause by a colon.
+    fn detail_from_the_cli_report(report: &str, path: &std::path::Path) -> String {
+        let quoted = format!("`{}`", path.display());
+        let report = report
+            .strip_suffix('\n')
+            .and_then(|report| report.strip_prefix("error: "))
+            .unwrap_or_else(|| panic!("not one error report: {report:?}"));
+        if let Some(rest) = report.strip_prefix(&format!("{quoted} wires two nodes incompatibly")) {
+            return format!(
+                "the pipeline does not validate: the configuration wires two nodes incompatibly{rest}"
+            );
+        }
+        let (heading, cause) = report
+            .split_once("\n  caused by: ")
+            .unwrap_or_else(|| panic!("no cause: {report:?}"));
+        assert!(!cause.contains("\n  caused by: "), "one cause: {report:?}");
+        let heading = heading.replace(&format!(" {quoted}"), "");
+        let prefix = match heading.as_str() {
+            "could not parse configuration" => "could not parse configuration",
+            "configuration is not a valid pipeline" => "configuration is not a valid pipeline",
+            "configuration is written in a schema version this build cannot read" => {
+                "the configuration is written in a schema version this build cannot read"
+            }
+            other => panic!("a heading the load does not render: {other:?}"),
+        };
+        format!("the pipeline does not validate: {prefix}: {cause}")
+    }
+
+    #[test]
+    fn validate_answers_what_the_cli_prints_byte_for_byte_on_every_fixture_and_branch() {
+        let root = workspace("validate_parity");
+        let server = Server::start(&root, &[]);
+        let mut refused = 0;
+
+        let mut documents = fixture_configurations();
+        documents.extend(branch_documents(&root));
+        for path in documents {
             let text = std::fs::read_to_string(&path).unwrap();
             let cli = ragondin(&["validate", path.to_str().unwrap()]);
             let body = serde_json::json!({ "document": text }).to_string();
@@ -454,41 +525,20 @@ mod with_the_feature {
                 assert_eq!(api.status, 200, "{}: {}", path.display(), api.body);
                 assert_eq!(answer["hash"], hash, "{}", path.display());
             } else {
+                refused += 1;
                 assert_eq!(api.status, 422, "{}: {}", path.display(), api.body);
                 assert_eq!(answer["code"], "pipeline_invalid", "{}", path.display());
-                // The refusal in the CLI's words: its incompatible-wiring
-                // report's lines, or else the cause it prints last, which
-                // carries the deserializer's or the validation pass's text.
-                let detail = answer["detail"].as_str().unwrap();
                 let report = String::from_utf8(cli.stderr).unwrap();
-                let lines: Vec<&str> = report
-                    .lines()
-                    .map(str::trim)
-                    .filter(|line| {
-                        ["edge:", "expected:", "found:"]
-                            .iter()
-                            .any(|key| line.starts_with(key))
-                    })
-                    .collect();
-                let compared: Vec<&str> = if lines.is_empty() {
-                    let cause = report
-                        .lines()
-                        .rev()
-                        .find_map(|line| line.trim().strip_prefix("caused by: "))
-                        .unwrap_or_else(|| panic!("{}: {report}", path.display()));
-                    vec![cause]
-                } else {
-                    lines
-                };
-                for line in compared {
-                    assert!(
-                        detail.contains(line),
-                        "{}: {line:?} in {detail}",
-                        path.display()
-                    );
-                }
+                assert_eq!(
+                    answer["detail"].as_str().unwrap(),
+                    detail_from_the_cli_report(&report, &path),
+                    "{}",
+                    path.display()
+                );
             }
         }
+        // The fixtures' four refusals and the eleven branch documents.
+        assert_eq!(refused, 15);
     }
 
     /// A binding hand-edited into `workspace.toml` that `--remote` would
