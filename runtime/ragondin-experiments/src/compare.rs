@@ -35,71 +35,150 @@ use crate::run::{ConfigDocument, Run, RunId};
 /// Infallible even when a stored configuration does not lower — a run stored
 /// under an older schema, say: the metrics are still compared, and
 /// [`RunComparison::configuration`] says which side could not be read and why.
+///
+/// The two-run case of [`compare_runs`], computed by the same table and the
+/// same matrix, the left-hand run in the baseline's place. Unlike it, two
+/// runs of different benchmarks are still compared: `ragondin compare` has
+/// always answered for any two stored runs, and its output does not change.
 pub fn compare(left: &Run, right: &Run) -> RunComparison {
-    let names: BTreeSet<&str> = left
-        .metrics
-        .iter()
-        .chain(right.metrics.iter())
-        .map(|(name, _)| name)
-        .collect();
-
+    let runs = [left, right];
     RunComparison {
         left: left.id,
         right: right.id,
-        metrics: names
+        metrics: table(&runs)
             .into_iter()
-            .map(|name| MetricComparison {
-                name: name.to_owned(),
-                left: left.metrics.get(name),
-                right: right.metrics.get(name),
+            .map(|row| MetricComparison {
+                name: row.name,
+                left: row.values[0],
+                right: row.values[1],
             })
             .collect(),
-        configuration: compare_configurations(&left.config, &right.config),
+        configuration: match matrix(&runs) {
+            ConfigurationMatrix::Compared {
+                parameters,
+                same_logical_form,
+            } => ConfigurationComparison::Compared {
+                differences: parameters
+                    .into_iter()
+                    .map(|row| {
+                        let mut values = row.values.into_iter();
+                        ParameterDifference {
+                            node: row.node,
+                            key: row.key,
+                            left: values.next().flatten(),
+                            right: values.next().flatten(),
+                        }
+                    })
+                    .collect(),
+                same_logical_form,
+            },
+            ConfigurationMatrix::Unavailable { column, reason, .. } => {
+                ConfigurationComparison::Unavailable {
+                    side: if column == 0 { Side::Left } else { Side::Right },
+                    reason,
+                }
+            }
+        },
     }
 }
 
-fn compare_configurations(
-    left: &ConfigDocument,
-    right: &ConfigDocument,
-) -> ConfigurationComparison {
-    let left = match lower_configuration(left) {
-        Ok(pipeline) => pipeline,
-        Err(reason) => {
-            return ConfigurationComparison::Unavailable {
-                side: Side::Left,
-                reason,
+/// Compares runs against a baseline: every metric any of them recorded, one
+/// value per run, with the best of each row and each run's delta to the
+/// baseline ([`MetricRow`]); and every configuration parameter not identical
+/// across them, with each run's value ([`ConfigurationMatrix`]).
+///
+/// The columns are the baseline first, then `others` in the order given.
+/// Like [`compare`], it is not refused when a stored configuration does not
+/// lower: the metrics are still compared, and the matrix names the run.
+///
+/// # Errors
+///
+/// [`NotComparable::DatasetsDiffer`] when a run was evaluated on another
+/// benchmark than the baseline — another `dataset_version` — naming the
+/// first such run and both versions. A metric is what a benchmark's ground
+/// truth allows, so two benchmarks' figures side by side would compare the
+/// benchmarks rather than the runs.
+pub fn compare_runs(baseline: &Run, others: &[&Run]) -> Result<Comparison, NotComparable> {
+    if let Some(run) = others
+        .iter()
+        .find(|run| run.inputs.dataset_version != baseline.inputs.dataset_version)
+    {
+        return Err(NotComparable::DatasetsDiffer {
+            baseline: baseline.id,
+            baseline_version: baseline.inputs.dataset_version.clone(),
+            run: run.id,
+            run_version: run.inputs.dataset_version.clone(),
+        });
+    }
+    let runs: Vec<&Run> = std::iter::once(baseline)
+        .chain(others.iter().copied())
+        .collect();
+    Ok(Comparison {
+        runs: runs.iter().map(|run| run.id).collect(),
+        metrics: table(&runs),
+        configuration: matrix(&runs),
+    })
+}
+
+/// Every metric any of `runs` recorded, in name order, one value per run.
+fn table(runs: &[&Run]) -> Vec<MetricRow> {
+    let names: BTreeSet<&str> = runs
+        .iter()
+        .flat_map(|run| run.metrics.iter().map(|(name, _)| name))
+        .collect();
+    names
+        .into_iter()
+        .map(|name| MetricRow {
+            name: name.to_owned(),
+            direction: Direction::of(name),
+            values: runs.iter().map(|run| run.metrics.get(name)).collect(),
+        })
+        .collect()
+}
+
+/// Every parameter not identical across `runs`' lowered configurations,
+/// sorted by node id and then by key — or the first run whose configuration
+/// does not lower.
+fn matrix(runs: &[&Run]) -> ConfigurationMatrix {
+    let mut pipelines = Vec::with_capacity(runs.len());
+    for (column, run) in runs.iter().enumerate() {
+        match lower_configuration(&run.config) {
+            Ok(pipeline) => pipelines.push(pipeline),
+            Err(reason) => {
+                return ConfigurationMatrix::Unavailable {
+                    run: run.id,
+                    column,
+                    reason,
+                }
             }
         }
-    };
-    let right = match lower_configuration(right) {
-        Ok(pipeline) => pipeline,
-        Err(reason) => {
-            return ConfigurationComparison::Unavailable {
-                side: Side::Right,
-                reason,
-            }
-        }
-    };
-
-    let same_logical_form = left.content_hash() == right.content_hash();
-    let left = parameters(&left);
-    let right = parameters(&right);
-    let keys: BTreeSet<&(NodeId, ParameterKey)> = left.keys().chain(right.keys()).collect();
-
-    let differences = keys
+    }
+    let same_logical_form = pipelines
+        .windows(2)
+        .all(|pair| pair[0].content_hash() == pair[1].content_hash());
+    let parameters: Vec<_> = pipelines.iter().map(parameters).collect();
+    let keys: BTreeSet<&(NodeId, ParameterKey)> =
+        parameters.iter().flat_map(|each| each.keys()).collect();
+    let rows = keys
         .into_iter()
         .filter_map(|entry| {
-            let (left, right) = (left.get(entry), right.get(entry));
-            (left != right).then(|| ParameterDifference {
-                node: entry.0.clone(),
-                key: entry.1.clone(),
-                left: left.cloned(),
-                right: right.cloned(),
-            })
+            let values: Vec<Option<&ParamValue>> =
+                parameters.iter().map(|each| each.get(entry)).collect();
+            values
+                .windows(2)
+                .any(|pair| pair[0] != pair[1])
+                .then(|| ParameterRow {
+                    node: entry.0.clone(),
+                    key: entry.1.clone(),
+                    values: values
+                        .into_iter()
+                        .map(Option::<&ParamValue>::cloned)
+                        .collect(),
+                })
         })
         .collect();
-    ConfigurationComparison::Compared {
-        differences,
+    ConfigurationMatrix::Compared {
+        parameters: rows,
         same_logical_form,
     }
 }
@@ -315,4 +394,153 @@ pub enum ParameterKey {
     Impl,
     /// A key under the node's `params:`.
     Param(String),
+}
+
+/// Runs compared against a baseline: [`compare_runs`]'s answer.
+///
+/// Every list of values is in the order of [`runs`](Self::runs): the
+/// baseline first, then the other runs in the order they were given.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Comparison {
+    /// The runs compared, the baseline first.
+    pub runs: Vec<RunId>,
+    /// One row per metric any of the runs recorded, in name order.
+    pub metrics: Vec<MetricRow>,
+    /// The configuration parameters not identical across the runs.
+    pub configuration: ConfigurationMatrix,
+}
+
+/// One metric across the runs compared.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MetricRow {
+    /// The metric's name.
+    pub name: String,
+    /// Which way the metric improves, read off its name.
+    pub direction: Direction,
+    /// Each run's value, `None` where that run did not record the metric —
+    /// which is not zero, and is never shown as zero.
+    pub values: Vec<Option<f64>>,
+}
+
+impl MetricRow {
+    /// The columns holding the best value of the row, by its
+    /// [`direction`](Self::direction): every one of them on a tie, none when
+    /// no run recorded the metric. A run that did not record it is never the
+    /// best.
+    pub fn best(&self) -> Vec<usize> {
+        let best =
+            self.values
+                .iter()
+                .flatten()
+                .copied()
+                .reduce(|best, value| match self.direction {
+                    Direction::HigherIsBetter => best.max(value),
+                    Direction::LowerIsBetter => best.min(value),
+                });
+        self.values
+            .iter()
+            .enumerate()
+            .filter(|(_, value)| value.is_some() && **value == best)
+            .map(|(column, _)| column)
+            .collect()
+    }
+
+    /// Each run's value minus the baseline's, when both recorded the metric:
+    /// the baseline's own is `0.0`, and the sign reads as what moved going
+    /// from the baseline to that run, whichever way the metric improves.
+    pub fn deltas(&self) -> Vec<Option<f64>> {
+        let baseline = self.values.first().copied().flatten();
+        self.values
+            .iter()
+            .map(|value| match (baseline, value) {
+                (Some(baseline), Some(value)) => Some(value - baseline),
+                _ => None,
+            })
+            .collect()
+    }
+}
+
+/// Which way a metric improves.
+///
+/// A choice made in this crate, since a run's metrics are no fixed catalogue
+/// (`ARCHITECTURE.md` § Local invariants): a metric whose name holds
+/// `latency` is better lower, and every other is better higher — as the
+/// ranking and answer metrics the harness records, `ndcg@<k>`, `recall@<k>`,
+/// `mrr`, `exact_match` and `token_f1`, all are.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Direction {
+    /// A higher value is better: a quality metric.
+    HigherIsBetter,
+    /// A lower value is better: a latency.
+    LowerIsBetter,
+}
+
+impl Direction {
+    /// The direction the metric `name` improves in.
+    pub fn of(name: &str) -> Self {
+        if name.contains("latency") {
+            Self::LowerIsBetter
+        } else {
+            Self::HigherIsBetter
+        }
+    }
+}
+
+/// The configuration parameters not identical across the runs compared, or
+/// why that could not be said.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ConfigurationMatrix {
+    /// Every stored document lowered.
+    Compared {
+        /// One row per parameter — component family and `impl:` name
+        /// included — whose value is not the same in every run, absence
+        /// included, sorted by node id and then by key. Empty when the runs
+        /// agree on every one.
+        parameters: Vec<ParameterRow>,
+        /// Whether every canonical logical form hashes equal
+        /// ([`LogicalPipeline::content_hash`]): runs that differ only in
+        /// their wiring have no row and are still not one configuration.
+        same_logical_form: bool,
+    },
+    /// A run's stored document does not lower under this build — the first
+    /// such run, in column order.
+    Unavailable {
+        /// The run whose configuration could not be read.
+        run: RunId,
+        /// Its column: `0` for the baseline.
+        column: usize,
+        /// What the parser or the validation pass said.
+        reason: String,
+    },
+}
+
+/// One configuration parameter that is not the same in every run compared.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ParameterRow {
+    /// The node the parameter belongs to, by its id.
+    pub node: NodeId,
+    /// Which of the node's parameters.
+    pub key: ParameterKey,
+    /// Each run's value, `None` where its configuration does not set it.
+    pub values: Vec<Option<ParamValue>>,
+}
+
+/// Why runs cannot be compared.
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum NotComparable {
+    /// A run was evaluated on another benchmark than the baseline.
+    #[error(
+        "run {run} was evaluated on {run_version} and the baseline {baseline} on \
+         {baseline_version}: runs are compared on one benchmark only"
+    )]
+    DatasetsDiffer {
+        /// The baseline.
+        baseline: RunId,
+        /// The baseline's `dataset_version`.
+        baseline_version: String,
+        /// The first run evaluated on another benchmark.
+        run: RunId,
+        /// That run's `dataset_version`.
+        run_version: String,
+    },
 }
