@@ -1,0 +1,317 @@
+/** @vitest-environment happy-dom */
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createApiClient, type ApiClient } from '../api/client.ts';
+import { mockApi, type MockRoutes } from '../api/testing.ts';
+import type { CompareRequest, Comparison, Problem, RunListing, RunSummary } from '../api/types.ts';
+import { useRoute } from '../routes.ts';
+import { CompareScreen } from './CompareScreen.tsx';
+import { COMPARISON, DENSE, HYBRID, RERANK, SCIFACT } from './fixtures.ts';
+
+const hex = (c: string) => c.repeat(64);
+const short = (id: string) => id.slice(0, 12);
+const OTHER_BENCH = hex('f');
+const R4 = hex('4');
+const R5 = hex('6');
+const R6 = hex('7');
+const FIQA_RUN = hex('8');
+
+const summary = (id: string, dataset: string): RunSummary => ({ id, pipeline: hex('9'), dataset_version: dataset, index_version: hex('0'), engine_version: '0.0.0', metrics: {} });
+const LISTING: RunListing = {
+  runs: [summary(DENSE, SCIFACT), summary(HYBRID, SCIFACT), summary(RERANK, SCIFACT), summary(R4, SCIFACT), summary(R5, SCIFACT), summary(R6, SCIFACT), summary(FIQA_RUN, OTHER_BENCH)],
+  unreadable: [],
+};
+
+const problem = (code: Problem['code'], detail: string, hint: string, status = 409): Problem => ({ type: `urn:ragondin:problem:${code}`, title: code, status, detail, code, hint });
+const CEILING = problem('runs_not_comparable', '6 runs: a comparison holds a baseline and at most four runs, 5 in all', 'Compare runs of one benchmark, a baseline and at most four others.');
+
+/** What `POST /compare` answers: the fixture for up to five runs, keeping the pairing it was sent — as the API does. */
+function answer(body: CompareRequest) {
+  if (body.run_ids.length > 5) return { problem: CEILING };
+  const pairings = body.pairing === undefined || body.pairing === null || body.pairing.pairs.length === 0 ? [] : [body.pairing];
+  const stages = COMPARISON.stages.map((row) =>
+    pairings.length > 0 && row.stage === 'after_rerank' ? { ...row, source: 'manual' as const } : row,
+  );
+  return { body: { ...COMPARISON, pairings, stages } satisfies Comparison };
+}
+
+const routes = (compare: MockRoutes['POST /compare'] = answer): MockRoutes => ({ 'POST /compare': compare, 'GET /runs': { body: LISTING } });
+
+/** What the shell does: hands the screen the runs and the baseline the address carries. */
+function Shell({ client }: { client: ApiClient }) {
+  const route = useRoute();
+  if (route?.screen !== 'compare') return <p>elsewhere {window.location.hash}</p>;
+  return <CompareScreen client={client} ids={route.ids} baseline={route.baseline} />;
+}
+
+function show(hash: string, mocks: MockRoutes = routes()) {
+  window.history.replaceState(null, '', `/${hash}`);
+  const api = mockApi(mocks);
+  render(<Shell client={createApiClient()} />);
+  return api;
+}
+
+const THREE = `#compare/${DENSE}+${HYBRID}+${RERANK}?baseline=${DENSE}`;
+const loaded = () => screen.findByRole('heading', { name: 'Metrics' });
+
+beforeEach(() => window.history.replaceState(null, '', '/'));
+afterEach(() => {
+  window.history.replaceState(null, '', '/');
+  vi.unstubAllGlobals();
+});
+
+describe('the states', () => {
+  it('with fewer than two runs, says so and leads back to Runs with what was chosen', () => {
+    show(`#compare/${DENSE}`);
+    expect(screen.getByRole('heading', { name: 'Choose at least two runs' })).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Open Runs' }).getAttribute('href')).toBe(`#runs?sel=${DENSE}`);
+  });
+
+  it('with none, leads back to Runs', () => {
+    show('#compare');
+    expect(screen.getByRole('link', { name: 'Open Runs' }).getAttribute('href')).toBe('#runs');
+  });
+
+  it('says so while comparing', () => {
+    show(THREE);
+    expect(screen.getByRole('status').textContent).toBe('Comparing 3 runs');
+  });
+
+  it('fills in the baseline the address left out, in place, with the first run', async () => {
+    show(`#compare/${HYBRID}+${DENSE}`);
+    await waitFor(() => expect(window.location.hash).toBe(`#compare/${HYBRID}+${DENSE}?baseline=${HYBRID}`));
+  });
+
+  it('says why runs are not comparable, in the API\'s words, and leads back to Runs', async () => {
+    const other = problem('runs_not_comparable', `runs ${short(DENSE)} and ${short(FIQA_RUN)} were evaluated on different datasets`, 'Compare runs of one benchmark, a baseline and at most four others.');
+    show(`#compare/${DENSE}+${FIQA_RUN}?baseline=${DENSE}`, routes({ problem: other }));
+    expect(await screen.findByRole('heading', { name: 'These runs cannot be compared' })).toBeTruthy();
+    expect(screen.getByText(other.detail)).toBeTruthy();
+    expect(screen.getByText(other.hint)).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Open Runs' }).getAttribute('href')).toBe(`#runs?sel=${DENSE},${FIQA_RUN}`);
+  });
+
+  it('shows another failure inline with Retry, and Retry compares again', async () => {
+    show(THREE, routes([{ network: 'down' }, answer({ run_ids: [DENSE, HYBRID, RERANK], baseline: DENSE })]));
+    fireEvent.click(await screen.findByRole('button', { name: 'Retry' }));
+    await loaded();
+  });
+});
+
+describe('the address', () => {
+  it('reloads into the same view: the runs and the baseline it names are what is compared', async () => {
+    const api = show(THREE);
+    await loaded();
+    expect(api.bodies[0]).toEqual({ run_ids: [DENSE, HYBRID, RERANK], baseline: DENSE });
+  });
+
+  it('writes a change of baseline in place, and compares again against it', async () => {
+    const api = show(THREE);
+    await loaded();
+    fireEvent.change(screen.getByLabelText('Baseline'), { target: { value: HYBRID } });
+    await waitFor(() => expect(window.location.hash).toBe(`#compare/${DENSE}+${HYBRID}+${RERANK}?baseline=${HYBRID}`));
+    await waitFor(() => expect(api.bodies.at(-1)).toEqual({ run_ids: [DENSE, HYBRID, RERANK], baseline: HYBRID }));
+  });
+});
+
+describe('the run bar', () => {
+  it('names each run by its slot, its pipeline and its short id', async () => {
+    show(THREE);
+    await loaded();
+    const items = within(screen.getByRole('list', { name: 'Runs compared' })).getAllByRole('listitem');
+    expect(items.map((li) => li.querySelector('.rg-swatch')?.getAttribute('data-run'))).toEqual(['base', 'a', 'b']);
+    expect(items[1]?.textContent).toContain('hybrid');
+    expect(within(items[1] as HTMLElement).getByRole('button', { name: `Copy run hash ${HYBRID}` })).toBeTruthy();
+    expect(screen.getByText('beir/scifact')).toBeTruthy();
+  });
+
+  it('offers to add only runs of the same benchmark not yet compared', async () => {
+    show(THREE);
+    await loaded();
+    const select = (await screen.findByLabelText('Add a run')) as HTMLSelectElement;
+    await waitFor(() => expect(select.options.length).toBeGreaterThan(1));
+    const offered = [...select.options].map((o) => o.value).filter((v) => v !== '');
+    expect(offered).toEqual([R4, R5, R6]);
+  });
+
+  it('adds a run: compares with it, then writes it to the address', async () => {
+    const api = show(THREE);
+    await loaded();
+    const select = (await screen.findByLabelText('Add a run')) as HTMLSelectElement;
+    await waitFor(() => expect(select.options.length).toBe(4));
+    fireEvent.change(select, { target: { value: R4 } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }));
+    await waitFor(() => expect(window.location.hash).toBe(`#compare/${DENSE}+${HYBRID}+${RERANK}+${R4}?baseline=${DENSE}`));
+    expect(api.bodies.some((b) => JSON.stringify(b) === JSON.stringify({ run_ids: [DENSE, HYBRID, RERANK, R4], baseline: DENSE }))).toBe(true);
+  });
+
+  it('refuses a sixth run with the API\'s message, and keeps the comparison on screen', async () => {
+    show(`#compare/${DENSE}+${HYBRID}+${RERANK}+${R4}+${R5}?baseline=${DENSE}`);
+    await loaded();
+    const select = (await screen.findByLabelText('Add a run')) as HTMLSelectElement;
+    await waitFor(() => expect(select.options.length).toBe(2));
+    fireEvent.change(select, { target: { value: R6 } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }));
+    expect((await screen.findByRole('alert')).textContent).toContain(CEILING.detail);
+    expect(window.location.hash).toBe(`#compare/${DENSE}+${HYBRID}+${RERANK}+${R4}+${R5}?baseline=${DENSE}`);
+    expect(screen.getByRole('heading', { name: 'Metrics' })).toBeTruthy();
+  });
+
+  it('removes a run from the address, but never below two', async () => {
+    show(THREE);
+    await loaded();
+    fireEvent.click(screen.getByRole('button', { name: 'Remove run A' }));
+    await waitFor(() => expect(window.location.hash).toBe(`#compare/${DENSE}+${RERANK}?baseline=${DENSE}`));
+  });
+
+  it('shows "Replay side by side" with the reason it waits for a query', async () => {
+    show(THREE);
+    await loaded();
+    const replay = screen.getByRole('button', { name: 'Replay side by side' });
+    expect(replay.getAttribute('aria-disabled')).toBe('true');
+    expect(document.getElementById(replay.getAttribute('aria-describedby') ?? '')?.textContent).toBe('Choose a query in the histogram: Replay opens one query beside the baseline.');
+  });
+});
+
+describe('the charts', () => {
+  it('draws the grouped bars: three metrics, three runs, one 0–1 scale, the best labelled', async () => {
+    show(THREE);
+    await loaded();
+    const figure = screen.getByRole('figure', { name: 'Each metric per run, on one 0–1 scale' });
+    expect(figure.querySelectorAll('rect.rg-chart__bar')).toHaveLength(9);
+    expect([...figure.querySelectorAll('.rg-chart__group')].map((g) => g.textContent)).toEqual(['mrr@10', 'ndcg@10', 'recall@100']);
+    expect([...figure.querySelectorAll('.rg-chart__best')].map((g) => g.textContent)).toEqual(['★ 0.6790', '★ 0.7032', '★ 0.9310', '★ 0.9310']);
+    expect([...figure.querySelectorAll('.rg-chart__tick')].map((t) => t.textContent)).toEqual(['0', '0.2', '0.4', '0.6', '0.8', '1']);
+  });
+
+  it('draws the stage line: the legs, after fusion, after rerank; the dense-only line breaks where it has no stage', async () => {
+    show(THREE);
+    await loaded();
+    const figure = screen.getByRole('figure', { name: 'mrr@10 at each stage' });
+    expect([...figure.querySelectorAll('.rg-chart__group')].map((g) => g.textContent)).toEqual(['retrieval legs', 'after fusion', 'after rerank', 'final ranking']);
+    // The baseline has a leg and a final ranking only: two points, no segment.
+    expect(figure.querySelectorAll('path.rg-chart__line[data-ink="base"]')).toHaveLength(0);
+    expect(figure.querySelectorAll('circle.rg-chart__point[data-ink="base"]')).toHaveLength(2);
+    // The two legs of each hybrid run are marks of their own.
+    expect(figure.querySelectorAll('circle.rg-chart__dot')).toHaveLength(4);
+  });
+
+  it('stacks the latency of each run\'s nodes by family, the reranked run\'s four nodes', async () => {
+    show(THREE);
+    await loaded();
+    const figure = screen.getByRole('figure', { name: 'Median latency per node, in milliseconds' });
+    const stacks = figure.querySelectorAll('g.rg-chart__stack');
+    expect([...(stacks[2] as Element).querySelectorAll('rect')].map((r) => r.getAttribute('data-family'))).toEqual(['retriever', 'retriever', 'reranker', 'fusion']);
+    expect([...within(figure).getByRole('list', { name: 'Legend' }).querySelectorAll('li')].map((li) => li.textContent)).toEqual(['retriever', 'fusion', 'reranker']);
+  });
+
+  it('draws the histogram\'s seven bins with their counts and its worse and better halves', async () => {
+    show(THREE);
+    await loaded();
+    const group = screen.getByRole('group', { name: 'Per-query change in mrr@10, A · hybrid against the baseline' });
+    expect(within(group).getAllByRole('button')).toHaveLength(7);
+    expect(screen.getAllByText('worse', { selector: '.rg-hist__half' })).toHaveLength(1);
+    fireEvent.click(screen.getByRole('radio', { name: 'B · hybrid-rerank' }));
+    const b = screen.getByRole('group', { name: 'Per-query change in mrr@10, B · hybrid-rerank against the baseline' });
+    expect([...b.querySelectorAll('.rg-hist__count')].map((c) => c.textContent)).toEqual(['6', '20', '35', '108', '54', '0', '77']);
+  });
+
+  it('lists a bar\'s queries on Enter or click, each opening Replay beside the baseline', async () => {
+    show(THREE);
+    await loaded();
+    fireEvent.click(screen.getByRole('radio', { name: 'B · hybrid-rerank' }));
+    fireEvent.click(screen.getByRole('button', { name: 'much worse, below −0.3: 6 queries' }));
+    const list = screen.getByRole('region', { name: '6 queries much worse, below −0.3' });
+    const links = within(list).getAllByRole('link');
+    expect(links).toHaveLength(6);
+    expect(links[0]?.textContent).toBe('q1−0.5200');
+    expect(links[0]?.getAttribute('href')).toBe(`#replay/${RERANK}/q/q1?with=${DENSE}`);
+  });
+
+  it('gives every chart a table, one keyboard stop away', async () => {
+    show(THREE);
+    await loaded();
+    const toggles = screen.getAllByRole('button', { name: 'Show as a table' });
+    expect(toggles).toHaveLength(4);
+    fireEvent.click(toggles[1] as HTMLElement);
+    const table = screen.getByRole('table', { name: 'mrr@10 at each stage, as a table' });
+    expect(within(table).getAllByText('no stage here')).toHaveLength(3);
+  });
+});
+
+describe('the tables', () => {
+  it('emphasises the best of each row by its direction, and signs each delta against the baseline', async () => {
+    show(THREE);
+    await loaded();
+    const table = screen.getByRole('table', { name: 'Metrics of 3 runs against the baseline' });
+    const latency = within(table).getByText('latency_p50_ms').closest('tr') as HTMLElement;
+    // Lower is better for a latency: the baseline holds the best.
+    expect([...latency.querySelectorAll('td[data-best]')].map((td) => td.textContent)).toEqual(['12.0 (best)']);
+    expect([...latency.querySelectorAll('.rg-delta[data-meaning="worse"]')].map((d) => d.textContent)).toEqual(['+7.0 worse', '+129.0 worse']);
+    const recall = within(table).getByText('recall@100').closest('tr') as HTMLElement;
+    expect(recall.querySelectorAll('td[data-best]')).toHaveLength(2);
+    expect((recall.querySelector('.rg-delta[data-meaning="better"]') as HTMLElement).textContent).toBe('+0.0290 better');
+  });
+
+  it('shows only the parameters that differ, departures from the baseline marked', async () => {
+    show(THREE);
+    await loaded();
+    const table = screen.getByRole('table', { name: 'Parameters that differ across the runs' });
+    const rows = within(table).getAllByRole('row').slice(1);
+    expect(rows).toHaveLength(4);
+    const dense = rows[1] as HTMLElement;
+    expect(dense.textContent).toContain('top_k');
+    expect([...dense.querySelectorAll('mark')].map((m) => m.textContent)).toEqual(['50 (differs from the baseline)']);
+  });
+
+  it('says "no stage here" in the stage table where a run lacks a stage', async () => {
+    show(THREE);
+    await loaded();
+    const table = screen.getByRole('table', { name: 'Stages of each run' });
+    const fusion = within(table).getByText('after fusion').closest('tr') as HTMLElement;
+    expect(fusion.textContent).toContain('no stage here');
+    expect(fusion.textContent).toContain('rrf');
+  });
+});
+
+describe('the verdict', () => {
+  it('ends the page: the sentence, then the one primary action, to the worst regression beside the baseline', async () => {
+    show(THREE);
+    await loaded();
+    fireEvent.click(screen.getByRole('radio', { name: 'B · hybrid-rerank' }));
+    const section = screen.getByRole('region', { name: 'Verdict' });
+    expect(section.textContent).toContain('On mrr@10, B · hybrid-rerank against the baseline: 131 queries improve, 108 are unchanged, 61 get worse — 6 by more than 0.3.');
+    const primary = document.querySelectorAll('.rg-btn--primary');
+    expect(primary).toHaveLength(1);
+    expect(primary[0]?.textContent).toBe('Replay the 61 regressions');
+    expect(primary[0]?.getAttribute('href')).toBe(`#replay/${RERANK}/q/q1?with=${DENSE}`);
+    // Nothing follows the action on the page.
+    const sheet = section.closest('.rg-sheet') as HTMLElement;
+    expect(sheet.lastElementChild).toBe(section);
+    const sentence = section.querySelector('.rg-compare__verdict') as HTMLElement;
+    expect(sentence.nextElementSibling?.contains(primary[0] as Node)).toBe(true);
+    expect(section.lastElementChild).toBe(sentence.nextElementSibling);
+  });
+});
+
+describe('the pairing', () => {
+  it('posts a pair drawn by hand, then the subtitle counts it; Reset to automatic clears it', async () => {
+    const api = show(THREE);
+    await loaded();
+    expect(screen.getByText('Paired automatically')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Pair nodes…' }));
+    const panel = screen.getByRole('region', { name: 'Pair nodes' });
+    fireEvent.change(within(panel).getByLabelText('Pair the baseline with'), { target: { value: RERANK } });
+    fireEvent.click(within(panel).getByRole('button', { name: 'dense, baseline' }));
+    fireEvent.click(within(panel).getByRole('button', { name: 'rerank, B' }));
+    expect(await screen.findByText('1 pair by hand')).toBeTruthy();
+    expect(api.bodies.at(-1)).toEqual({
+      run_ids: [DENSE, HYBRID, RERANK],
+      baseline: DENSE,
+      pairing: { pipeline: 'dense-only', other: 'hybrid-rerank', pairs: [{ node: 'dense', other: 'rerank' }] },
+    });
+    fireEvent.click(within(screen.getByRole('region', { name: 'Pair nodes' })).getByRole('button', { name: 'Reset to automatic' }));
+    expect(await screen.findByText('Paired automatically')).toBeTruthy();
+    expect(api.bodies.at(-1)).toEqual({ run_ids: [DENSE, HYBRID, RERANK], baseline: DENSE, pairing: { pipeline: 'dense-only', other: 'hybrid-rerank', pairs: [] } });
+  });
+});

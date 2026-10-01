@@ -55,6 +55,12 @@ describe('Table best per row', () => {
     expect(container.querySelectorAll('td[data-best] .rg-visually-hidden')).toHaveLength(2);
     expect(css).not.toMatch(/\.is-[a-z]/);
   });
+
+  it('marks every column of a tie, since the best can be held by several', () => {
+    const tie: TableRow[] = [{ id: 'recall', cells: ['Recall@100', '0.9310', '0.9310'], bestColumn: [1, 2] }];
+    const { container } = render(<Table caption="m" columns={columns} rows={tie} />);
+    expect([...container.querySelectorAll('td[data-best]')].map((td) => td.textContent)).toEqual(['0.9310 (best)', '0.9310 (best)']);
+  });
 });
 
 describe('Table row groups', () => {

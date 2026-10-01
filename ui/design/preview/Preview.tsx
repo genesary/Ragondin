@@ -1,6 +1,8 @@
 import { useState, type ReactNode } from 'react';
 import {
+  BarChart,
   Button,
+  ChartFrame,
   Checkbox,
   Delta,
   EmptyState,
@@ -10,9 +12,11 @@ import {
   FilterChip,
   GLYPH_NAMES,
   Glyph,
+  Histogram,
   InlineMessage,
   Input,
   Inspector,
+  LineChart,
   MetricChip,
   Progress,
   RankStrip,
@@ -21,6 +25,7 @@ import {
   SegmentedControl,
   Select,
   Sheet,
+  StackedBarChart,
   StatusChip,
   StatusDot,
   Table,
@@ -28,6 +33,7 @@ import {
   Toast,
   TopBar,
   type ButtonKind,
+  type RunSeries,
 } from '../index.ts';
 import { GATED_GEN, HYBRID_RERANK_GEN } from '../../src/canvas/fixtures.ts';
 import { Canvas, NodeCard, type NodeCardProps } from '../../src/canvas/index.ts';
@@ -37,8 +43,18 @@ import './preview.css';
 export const COMPONENTS = [
   'Glyph', 'Button', 'Input', 'Select', 'Checkbox', 'StatusChip', 'MetricChip', 'FilterChip', 'RunSwatch', 'Table',
   'Sheet', 'Inspector', 'Toast', 'InlineMessage', 'Progress', 'EmptyState', 'RankStrip', 'SegmentedControl', 'Tabs', 'TopBar',
-  'StatusDot', 'NodeCard', 'Canvas',
+  'StatusDot', 'NodeCard', 'Canvas', 'Charts',
 ] as const;
+
+/** Three runs, the baseline first, for the chart primitives. */
+const RUNS: RunSeries[] = [
+  { id: 'base', label: 'baseline · dense-only', short: 'base', ink: 'base' },
+  { id: 'a', label: 'A · hybrid', short: 'A', ink: 'a' },
+  { id: 'b', label: 'B · hybrid-rerank', short: 'B', ink: 'b' },
+];
+const four = (v: number) => v.toFixed(4);
+const runLegend = RUNS.map((r) => ({ id: r.id, label: r.label, mark: <RunSwatch slot={r.ink} small /> }));
+const sample = <span className="rg-preview__caption">The screen supplies the table alternative.</span>;
 
 const KINDS: ButtonKind[] = ['primary', 'secondary', 'quiet', 'destructive'];
 const HASH = '9e2b7d41c0a3f5e6';
@@ -430,6 +446,66 @@ function Column({ theme }: { theme: 'light' | 'dark' }) {
         <div className="rg-preview__flow">
           <Canvas graph={GATED_GEN} label={`gated-gen, an opaque edge, ${theme}`} />
         </div>
+      </Block>
+
+      <Block name="Charts">
+        <ChartFrame caption="Grouped bars, one 0–1 scale" legend={runLegend} table={sample}>
+          <BarChart
+            label="Each metric per run"
+            groups={[{ id: 'ndcg', label: 'ndcg@10' }, { id: 'recall', label: 'recall@100' }]}
+            series={RUNS}
+            values={[[0.6483, 0.6611, 0.7032], [0.902, 0.931, null]]}
+            domain={[0, 1]}
+            format={four}
+            best={(g, s) => (g === 0 && s === 2) || (g === 1 && s === 1)}
+          />
+        </ChartFrame>
+        <ChartFrame caption="A line per run, broken where a stage is missing" legend={runLegend} table={sample}>
+          <LineChart
+            label="ndcg@10 at each stage"
+            x={[{ id: 'legs', label: 'retrieval legs' }, { id: 'fusion', label: 'after fusion' }, { id: 'rerank', label: 'after rerank' }, { id: 'final', label: 'final ranking' }]}
+            series={RUNS}
+            values={[[0.6483, null, null, 0.6483], [0.6483, 0.6611, null, 0.6611], [0.6483, 0.6611, 0.7032, 0.7032]]}
+            dots={[{ series: 2, x: 0, value: 0.6203, label: 'bm25' }]}
+            domain={[0, 1]}
+            format={four}
+            gapLabel="no stage here"
+          />
+        </ChartFrame>
+        <ChartFrame caption="Stacked latency, by family" legend={(['retriever', 'fusion', 'reranker'] as const).map((f) => ({ id: f, label: FAMILY_LABEL[f], mark: <FamilyTile family={f} /> }))} table={sample}>
+          <StackedBarChart
+            label="Median latency per node"
+            bars={RUNS.map((r) => ({ id: r.id, label: r.label }))}
+            segments={[
+              [{ id: 'dense', label: 'dense', value: 11, family: 'retriever' }],
+              [{ id: 'bm25', label: 'bm25', value: 4, family: 'retriever' }, { id: 'dense', label: 'dense', value: 11, family: 'retriever' }, { id: 'rrf', label: 'rrf', value: 0.5, family: 'fusion' }],
+              [{ id: 'bm25', label: 'bm25', value: 4, family: 'retriever' }, { id: 'dense', label: 'dense', value: 11, family: 'retriever' }, { id: 'rerank', label: 'rerank', value: 120, family: 'reranker' }],
+            ]}
+            format={(v) => `${v} ms`}
+          />
+        </ChartFrame>
+        <ChartFrame
+          caption="Diverging histogram"
+          legend={[{ id: 'worse', label: 'worse', mark: <span className="rg-chart__key" data-tone="worse" /> }, { id: 'zero', label: 'unchanged', mark: <span className="rg-chart__key" data-tone="zero" /> }, { id: 'better', label: 'better', mark: <span className="rg-chart__key" data-tone="better" /> }]}
+          table={sample}
+        >
+          <Histogram
+            label={`Per-query change, ${theme}`}
+            bins={[
+              { id: 'mw', label: 'much worse', range: 'below −0.3', count: 6, tone: 'worse' },
+              { id: 'w', label: 'worse', range: '−0.3 to −0.1', count: 20, tone: 'worse' },
+              { id: 'sw', label: 'slightly worse', range: '−0.1 to 0', count: 35, tone: 'worse' },
+              { id: 'u', label: 'unchanged', range: '0', count: 108, tone: 'zero' },
+              { id: 'sb', label: 'slightly better', range: '0 to 0.1', count: 54, tone: 'better' },
+              { id: 'b', label: 'better', range: '0.1 to 0.3', count: 0, tone: 'better' },
+              { id: 'mb', label: 'much better', range: 'above 0.3', count: 77, tone: 'better' },
+            ]}
+            halves={{ worse: 'worse', better: 'better' }}
+            active="w"
+            onActivate={() => {}}
+            controls={id('hist-list')}
+          />
+        </ChartFrame>
       </Block>
     </div>
   );

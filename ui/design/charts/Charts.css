@@ -1,0 +1,129 @@
+/* The chart primitives. Every hue is a token: run inks for the bars, lines and
+   histogram's runs, family pigments for the latency stack, better/worse for
+   the histogram's arms. Text is always in an ink token, never in a series
+   colour. A series is told by its data-ink or data-family attribute, and by a
+   letter, a dash or a word beside it. */
+
+.rg-chart { display: grid; gap: var(--space-3); min-width: 0; margin: 0; }
+.rg-chart__head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: var(--space-2); }
+.rg-chart__caption { font: var(--type-label); color: var(--ink); }
+.rg-chart__note { font: var(--type-caption); color: var(--ink-3); }
+.rg-chart__plot { position: relative; min-width: 0; }
+.rg-chart__plot { max-width: 800px; }
+/* At most PLOT's width, so a label in SVG units is drawn at its type size, never magnified. */
+.rg-chart__plot > svg { display: block; width: 100%; height: auto; overflow: visible; }
+.rg-chart__foot { display: flex; justify-content: flex-end; }
+.rg-chart__table[hidden] { display: none; }
+
+.rg-legend { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-4); margin: 0; padding: 0; list-style: none; }
+.rg-legend__item { display: inline-flex; align-items: center; gap: var(--space-1); font: var(--type-caption); color: var(--ink-2); }
+/* A legend key for a tone — the histogram's arms and middle — or a neutral series. */
+.rg-chart__key { display: inline-block; flex: none; width: 10px; height: 10px; border-radius: 3px; background: var(--family-query); }
+.rg-chart__key[data-tone="worse"] { background: var(--worse); }
+.rg-chart__key[data-tone="better"] { background: var(--better); }
+.rg-chart__key[data-tone="zero"] { background: var(--delta-zero); }
+
+.rg-chart__tip {
+  position: absolute;
+  z-index: 1;
+  min-width: 120px;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-s);
+  background: var(--layer);
+  box-shadow: var(--shadow-float);
+  color: var(--ink);
+  font: var(--type-caption);
+  pointer-events: none;
+  transform: translate(-50%, calc(-100% - var(--space-2)));
+  white-space: nowrap;
+}
+.rg-chart__tip { display: grid; gap: var(--space-1); }
+.rg-chart__tip-row { display: flex; justify-content: space-between; gap: var(--space-3); }
+.rg-chart__tip-row > :last-child { font-variant-numeric: tabular-nums; }
+
+/* Axes: one value axis per chart, its grid quiet, its labels muted ink. */
+.rg-chart__grid { stroke: var(--line); stroke-width: 1; }
+.rg-chart__baseline { stroke: var(--line-strong); stroke-width: 1; }
+.rg-chart__tick,
+.rg-chart__letter { fill: var(--ink-3); font: var(--type-micro); font-variant-numeric: tabular-nums; }
+.rg-chart__group { fill: var(--ink-2); font: var(--type-caption); }
+.rg-chart__best { fill: var(--ink); font: var(--type-micro); font-weight: 700; font-variant-numeric: tabular-nums; }
+/* A hover target covers the whole band its marks sit in: larger than any mark. */
+.rg-chart__hit { fill: transparent; }
+.rg-chart__hit:hover { fill: var(--accent-wash); }
+
+/* Run inks: bars. The baseline is a reference, not a contender — a dashed neutral outline. */
+.rg-chart__bar[data-ink="a"] { fill: var(--run-a); }
+.rg-chart__bar[data-ink="b"] { fill: var(--run-b); }
+.rg-chart__bar[data-ink="c"] { fill: var(--run-c); }
+.rg-chart__bar[data-ink="d"] { fill: var(--run-d); }
+.rg-chart__bar[data-ink="base"] { fill: none; stroke: var(--run-base); stroke-width: 1.5; stroke-dasharray: 4 3; }
+
+/* Run inks: lines, 2px, and their points. The baseline's line is dashed. */
+.rg-chart__line { fill: none; stroke-width: 2; stroke-linejoin: round; }
+.rg-chart__line[data-ink="a"] { stroke: var(--run-a); }
+.rg-chart__line[data-ink="b"] { stroke: var(--run-b); }
+.rg-chart__line[data-ink="c"] { stroke: var(--run-c); }
+.rg-chart__line[data-ink="d"] { stroke: var(--run-d); }
+.rg-chart__line[data-ink="base"] { stroke: var(--run-base); stroke-dasharray: 5 4; }
+.rg-chart__point[data-ink="a"] { fill: var(--run-a); }
+.rg-chart__point[data-ink="b"] { fill: var(--run-b); }
+.rg-chart__point[data-ink="c"] { fill: var(--run-c); }
+.rg-chart__point[data-ink="d"] { fill: var(--run-d); }
+.rg-chart__point[data-ink="base"] { fill: var(--surface); stroke: var(--run-base); stroke-width: 1.5; }
+/* A further mark at one position (a second leg) is a hollow ring, so it never reads as the line's own point. */
+.rg-chart__dot { fill: var(--surface); stroke-width: 1.5; }
+.rg-chart__dot[data-ink="base"] { stroke: var(--run-base); }
+.rg-chart__dot[data-ink="a"] { stroke: var(--run-a); }
+.rg-chart__dot[data-ink="b"] { stroke: var(--run-b); }
+.rg-chart__dot[data-ink="c"] { stroke: var(--run-c); }
+.rg-chart__dot[data-ink="d"] { stroke: var(--run-d); }
+.rg-chart__end { fill: var(--ink-2); font: var(--type-micro); }
+
+/* Family pigments: the latency stack's segments, never a run ink. A hairline
+   in the surface colour parts two neighbours, so a segment is told by its
+   edge as well as its hue; the legend carries each family's glyph and name. */
+.rg-chart__seg { stroke: var(--surface); stroke-width: 1; }
+.rg-chart__seg[data-family="retriever"] { fill: var(--family-retriever); }
+.rg-chart__seg[data-family="fusion"] { fill: var(--family-fusion); }
+.rg-chart__seg[data-family="reranker"] { fill: var(--family-reranker); }
+.rg-chart__seg[data-family="context"] { fill: var(--family-context); }
+.rg-chart__seg[data-family="generator"] { fill: var(--family-generator); }
+.rg-chart__seg[data-family="judge"] { fill: var(--family-judge); }
+.rg-chart__seg[data-family="query"],
+.rg-chart__seg[data-family="control"],
+.rg-chart__seg[data-family="none"] { fill: var(--family-query); }
+.rg-chart__total { fill: var(--ink-2); font: var(--type-micro); font-variant-numeric: tabular-nums; }
+
+/* The diverging histogram: HTML, so each bar is a real button. A column is
+   the bar's whole hover and click target; the arms take the reserved worse
+   and better colours, the middle the neutral delta-zero. */
+.rg-hist { display: grid; gap: var(--space-2); }
+.rg-hist__bins { display: grid; grid-auto-columns: minmax(0, 1fr); grid-auto-flow: column; gap: var(--space-1); height: calc(var(--space-16) * 3); }
+.rg-hist__col {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: var(--space-1);
+  height: 100%;
+  min-width: 0;
+  padding: var(--space-1);
+  border: 0;
+  border-radius: var(--radius-s);
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+}
+.rg-hist__col:hover,
+.rg-hist__col[data-preview-state="hover"] { background: var(--accent-wash); }
+.rg-hist__col:focus-visible,
+.rg-hist__col[data-preview-state="focus"] { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
+.rg-hist__col[aria-expanded="true"] { box-shadow: inset 0 -2px 0 var(--accent); background: var(--accent-wash); }
+.rg-hist__count { font: var(--type-label); font-variant-numeric: tabular-nums; color: var(--ink); }
+.rg-hist__track { display: flex; align-items: flex-end; min-height: 0; border-bottom: 1px solid var(--line-strong); }
+.rg-hist__bar { display: block; width: 100%; min-height: 0; border-radius: var(--radius-xs) var(--radius-xs) 0 0; }
+.rg-hist__bar[data-tone="worse"] { background: var(--worse); }
+.rg-hist__bar[data-tone="better"] { background: var(--better); }
+.rg-hist__bar[data-tone="zero"] { background: var(--delta-zero); }
+.rg-hist__range { overflow: hidden; font: var(--type-micro); color: var(--ink-3); text-overflow: ellipsis; white-space: nowrap; }
+.rg-hist__halves { display: flex; justify-content: space-between; font: var(--type-caption); color: var(--ink-2); }
+.rg-hist__half { display: inline-flex; align-items: center; gap: var(--space-1); }

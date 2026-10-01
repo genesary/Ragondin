@@ -1,11 +1,13 @@
-// The six screens, widest to narrowest (the front-end design, § 3). Runs is
-// built (src/runs/); each other screen is its empty state here: one sentence
+// The six screens, widest to narrowest (the front-end design, § 3). Runs and
+// Compare are built (src/runs/, src/compare/); each other screen is its empty
+// state here: one sentence
 // on the default path and the action that leads on. A screen's own issue
 // replaces its empty state with its content and keeps the route shape
 // src/routes.ts gives it.
 import { useEffect, useRef, type RefObject } from 'react';
 import { ButtonLink, EmptyState, Sheet } from '../../design/index.ts';
 import type { ApiClient } from '../api/client.ts';
+import { CompareScreen } from '../compare/CompareScreen.tsx';
 import { formatHash, type Route, type ScreenName } from '../routes.ts';
 import { RunsScreen } from '../runs/RunsScreen.tsx';
 
@@ -23,23 +25,14 @@ type Empty = { heading: string; sentence: string; action?: Action };
 
 const openRuns: Action = { label: 'Open Runs', to: { screen: 'runs' } };
 const openCompare: Action = { label: 'Open Compare', to: { screen: 'compare', ids: [] } };
-const count = (n: number, one: string) => `${n.toLocaleString('en-US')} ${one}${n === 1 ? '' : 's'}`;
 
 /** What a screen shows before it has data, given the state its route carries. */
-function emptyOf(route: Exclude<Route, { screen: 'runs' }>): Empty {
+function emptyOf(route: Exclude<Route, { screen: 'runs' | 'compare' }>): Empty {
   switch (route.screen) {
     case 'pipeline':
       return route.name === undefined
         ? { heading: 'No pipeline chosen', sentence: 'Choose a pipeline in Runs to see each of its nodes against every benchmark it ran on.', action: openRuns }
         : { heading: `Nothing to show for ${route.name} yet`, sentence: `Each node of ${route.name} against every benchmark it ran on appears here.`, action: openRuns };
-    case 'compare':
-      return route.ids.length === 0
-        ? { heading: 'No runs chosen to compare', sentence: 'Choose a baseline and up to four runs in Runs to compare them stage by stage.', action: openRuns }
-        : {
-            heading: `Nothing to show for ${count(route.ids.length, 'run')} yet`,
-            sentence: 'The runs chosen, stage by stage against their baseline, appear here.',
-            action: openRuns,
-          };
     case 'replay':
       if ('run' in route && route.query === undefined) {
         return { heading: `No query chosen for run ${route.run.slice(0, 12)}`, sentence: 'A query of this run, node by node through the pipeline, appears here.', action: openCompare };
@@ -86,6 +79,14 @@ export function Screen({ route, heading, client }: { route: Route; heading: RefO
       <>
         {title}
         <RunsScreen client={client} sel={route.sel ?? []} />
+      </>
+    );
+  }
+  if (route.screen === 'compare') {
+    return (
+      <>
+        {title}
+        <CompareScreen client={client} ids={route.ids} baseline={route.baseline} />
       </>
     );
   }

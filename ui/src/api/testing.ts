@@ -5,7 +5,7 @@
 // imports this file, so nothing of it reaches the bundle.
 import { vi } from 'vitest';
 import { API_BASE } from './base.ts';
-import { BUILD_HEADER, type Answer, type PathWith } from './client.ts';
+import { BUILD_HEADER, type Answer, type Body, type PathWith } from './client.ts';
 import type { Problem } from './types.ts';
 
 /** An `EventSource` a test drives by hand. */
@@ -74,10 +74,13 @@ export type MockReply<T> = { body: T; build?: string } | { problem: Problem; bui
  * The mocked answers, keyed by method and the description's own path
  * template: a key the description does not have, or a body that is not its
  * path's generated type, does not compile. A list is answered in order, its
- * last reply repeating.
+ * last reply repeating. A POST may answer from the body it was sent, typed as
+ * its path's request body.
  */
 export type MockRoutes = {
   [P in PathWith<'get'> as `GET ${P}`]?: MockReply<Answer<P, 'get'>> | MockReply<Answer<P, 'get'>>[];
+} & {
+  [P in PathWith<'post'> as `POST ${P}`]?: MockReply<Answer<P, 'post'>> | MockReply<Answer<P, 'post'>>[] | ((body: Body<P, 'post'>) => MockReply<Answer<P, 'post'>>);
 };
 
 const pattern = (template: string) => new RegExp(`^${API_BASE}${template.replace(/[.*+?^$()|[\]\\]/g, '\\$&').replace(/\{[^}]+\}/g, '[^/]+')}$`);
@@ -86,23 +89,30 @@ const pattern = (template: string) => new RegExp(`^${API_BASE}${template.replace
  * Replaces the global `fetch` with answers from `routes`, each carrying the
  * build identity `build` unless the reply names its own. A request no route
  * matches is answered as the server answers one: `route_not_found`. Returns
- * the requests made, as `GET /api/v1/…`. `vi.unstubAllGlobals()` restores
+ * the requests made, as `GET /api/v1/…`, and beside each the JSON body it
+ * sent, parsed — undefined for none. `vi.unstubAllGlobals()` restores
  * `fetch`.
  */
 export function mockApi(routes: MockRoutes, { build = 'test-build' }: { build?: string } = {}) {
   const requests: string[] = [];
+  const bodies: unknown[] = [];
+  type Replies = MockReply<unknown>[] | ((body: unknown) => MockReply<unknown>);
   const table = Object.entries(routes).map(([key, replies]) => {
     const [method = '', template = ''] = key.split(' ');
-    return { method, match: pattern(template), replies: (Array.isArray(replies) ? [...replies] : [replies]) as MockReply<unknown>[] };
+    const list: Replies = typeof replies === 'function' ? (replies as (body: unknown) => MockReply<unknown>) : ((Array.isArray(replies) ? [...replies] : [replies]) as MockReply<unknown>[]);
+    return { method, match: pattern(template), replies: list };
   });
   const answer = (status: number, type: string, body: unknown, identity: string) =>
     new Response(JSON.stringify(body), { status, headers: { 'content-type': type, [BUILD_HEADER]: identity } });
 
   vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
     const method = init?.method ?? 'GET';
+    const sent: unknown = typeof init?.body === 'string' ? JSON.parse(init.body) : undefined;
     requests.push(`${method} ${url}`);
+    bodies.push(sent);
     const route = table.find((r) => r.method === method && r.match.test(url));
-    const reply = route === undefined ? undefined : route.replies.length > 1 ? route.replies.shift() : route.replies[0];
+    const replies = route?.replies;
+    const reply = replies === undefined ? undefined : typeof replies === 'function' ? replies(sent) : replies.length > 1 ? replies.shift() : replies[0];
     if (reply === undefined) {
       const problem: Problem = {
         type: 'urn:ragondin:problem:route_not_found',
@@ -118,5 +128,5 @@ export function mockApi(routes: MockRoutes, { build = 'test-build' }: { build?: 
     if ('problem' in reply) return answer(reply.problem.status, 'application/problem+json', reply.problem, reply.build ?? build);
     return answer(200, 'application/json', reply.body, reply.build ?? build);
   });
-  return { requests };
+  return { requests, bodies };
 }

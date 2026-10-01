@@ -40,7 +40,7 @@ export type Method = 'get' | 'post' | 'put' | 'patch' | 'delete';
 export type PathWith<M extends Method> = { [P in keyof Paths]: M extends keyof Paths[P] ? P : never }[keyof Paths];
 type Operation<P extends keyof Paths, M extends Method> = Paths[P] extends Record<M, infer O> ? O : never;
 export type Answer<P extends keyof Paths, M extends Method> = Operation<P, M> extends { response: infer R } ? R : never;
-type Body<P extends keyof Paths, M extends Method> = Operation<P, M> extends { body: infer B } ? B : never;
+export type Body<P extends keyof Paths, M extends Method> = Operation<P, M> extends { body: infer B } ? B : never;
 /** No argument for a path without parameters; the parameters otherwise. */
 type ParamsArg<P extends keyof Paths, M extends Method> = Operation<P, M> extends { params: infer Q }
   ? Q extends Record<string, never>
