@@ -328,8 +328,8 @@ line names a package the closure already held. Since the retraction removes
 no ground the decision rested on, this is an amendment rather than a
 supersession.
 
-**On whose authority.** The repository's review of PR #395, which accepted
-the deviation as justified.
+**On whose authority.** The repository owner, accepting on 2026-10-01 the
+deviation PR #395 reported.
 The Decision section is untouched, as process rule 2 requires.
 
 ## Status
