@@ -18,10 +18,11 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::SystemTime;
 
 use async_trait::async_trait;
+use ragondin_benchmarks::identity::CorpusIndex;
 use ragondin_benchmarks::Benchmark;
 use ragondin_experiments::{RunId, RunStore};
 
@@ -283,8 +284,10 @@ pub enum RunDataset {
     Verified {
         /// The benchmark's selector, `<format>/<dir>`.
         name: String,
-        /// The dataset, loaded whole.
-        benchmark: Arc<Benchmark>,
+        /// The dataset, loaded whole, and the chunk set derived from it.
+        /// Shared: a backend may hand the same one to every request while
+        /// the disk still holds it (`fs::FsRegistry` does).
+        dataset: Arc<LoadedDataset>,
     },
     /// The benchmark pinned to the digest is not on disk.
     Absent {
@@ -308,6 +311,53 @@ pub enum RunDataset {
     },
     /// No benchmark the registry knows is pinned to the digest.
     Unknown,
+}
+
+/// A dataset that verified, loaded whole, and the chunk set derived from it
+/// — built on first use, then kept, so a dataset held between requests is
+/// chunked once however many replays read it.
+///
+/// The chunk set is `CorpusIndex::build` over the corpus, the one derivation
+/// the writer and the reader share (ADR-C36 § 4); nothing here decides
+/// whether it is the run's — a reader compares its `version` with the run's
+/// `index_version` before it shows any text.
+pub struct LoadedDataset {
+    benchmark: Benchmark,
+    index: OnceLock<CorpusIndex>,
+}
+
+impl LoadedDataset {
+    /// A loaded dataset, its chunk set not yet derived.
+    pub fn new(benchmark: Benchmark) -> Self {
+        Self {
+            benchmark,
+            index: OnceLock::new(),
+        }
+    }
+
+    /// The dataset.
+    pub fn benchmark(&self) -> &Benchmark {
+        &self.benchmark
+    }
+
+    /// The chunk set derived from the corpus, derived on the first call. A
+    /// corpus is large, so call it on a blocking thread; a second caller
+    /// meanwhile waits for the first derivation rather than repeating it.
+    pub fn index(&self) -> &CorpusIndex {
+        self.index
+            .get_or_init(|| CorpusIndex::build(self.benchmark.corpus()))
+    }
+}
+
+impl std::fmt::Debug for LoadedDataset {
+    // A corpus can be gigabytes: the debug form names its size, not its text.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LoadedDataset")
+            .field("documents", &self.benchmark.corpus().len())
+            .field("queries", &self.benchmark.queries().len())
+            .field("index_built", &self.index.get().is_some())
+            .finish()
+    }
 }
 
 /// Where a download stands: bytes received of the snapshot's total.
@@ -490,4 +540,43 @@ pub enum JobState {
     },
     /// Cancelled before it finished.
     Cancelled,
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use ragondin_benchmarks::identity::CorpusIndex;
+    use ragondin_benchmarks::{Benchmark, Qrels};
+    use ragondin_types::{DocId, Document};
+
+    use super::LoadedDataset;
+
+    fn benchmark() -> Benchmark {
+        let document = |id: &str, text: &str| Document {
+            id: DocId::new(id),
+            text: text.to_owned(),
+            metadata: BTreeMap::new(),
+        };
+        Benchmark::new(
+            vec![
+                document("d-1", "the cat sat"),
+                document("d-2", "on the mat"),
+            ],
+            Vec::new(),
+            Qrels::new(),
+        )
+    }
+
+    #[test]
+    fn the_chunk_set_is_the_one_derivation_and_is_derived_once() {
+        let loaded = LoadedDataset::new(benchmark());
+
+        let first = loaded.index();
+        let second = loaded.index();
+
+        assert_eq!(first, &CorpusIndex::build(benchmark().corpus()));
+        assert!(std::ptr::eq(first, second), "built once, then kept");
+        assert_eq!(loaded.benchmark(), &benchmark());
+    }
 }

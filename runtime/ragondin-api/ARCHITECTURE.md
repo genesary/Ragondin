@@ -170,12 +170,12 @@ supplies the HTTP transport, and converts what comes back in `convert.rs`.
   ground truth — `qrels`, `reference_answers`, `both` — is read off the loaded
   dataset's `CarriedPieces`, and is `null` when nothing loaded.
 - **The listing digests every dataset on every call.** Each entry on disk is
-  loaded whole and digested, and nothing is cached: correct, and slow for a
+  loaded whole and digested, and nothing is kept: correct, and slow for a
   large corpus. `GET /benchmarks` and `GET /workspace`'s count call it on
-  each request; a cache is `cache/`'s business, not this backend's.
-  `dataset` has the same cost, one dataset per call, and the derived-data
-  endpoints pay it on every request — § *Derived data* says why, and what
-  `cache/` saves them.
+  each request; a figure cache is `cache/`'s business, not this backend's.
+  `dataset` is the exception: it keeps the datasets it verified loaded in
+  memory between calls, and digests one again only when its files change —
+  § *The loaded datasets* below.
 - **What the trait gained**, since the backend showed the trait lacked it:
   `verify`, one entry by name; `download(name, progress, cancel)`, returning
   the verified entry — progress after every chunk through a `ProgressSink`,
@@ -225,6 +225,53 @@ supplies the HTTP transport, and converts what comes back in `convert.rs`.
   derived data's routes call `dataset`; `GET /benchmarks` lists the registry
   and `POST /benchmarks/import` imports through it; a download is a job on
   the queue's IO lane, and its route arrives with the queue (#349).
+
+### The loaded datasets: a choice made here
+
+`FsRegistry::dataset` keeps each dataset it verified loaded in memory
+between calls (`fs/memo.rs`), so per-node and replay requests on one run —
+the matrix and the Replay screen call them per interaction — load and digest
+the dataset once rather than on every request. `RunDataset::Verified` hands
+out a shared `LoadedDataset`: the `Benchmark`, and the `CorpusIndex` derived
+from it on first use and then kept, so replay chunks a corpus once too. **It
+is an optimisation, never a truth** (the design document § 6): no verdict
+changes, and nothing is written to disk.
+
+- **The key** is the directory and the `dataset_version` it is pinned to.
+  A slot holds a dataset only once `ragondin_benchmarks::identity` digested it
+  to that version — the one definition, called as before; nothing is digested
+  a second way. Only `Verified` is kept: a dataset absent, differing or
+  unreadable is loaded again on the next call, and whatever was held for its
+  directory is dropped.
+- **The invalidation is a fingerprint**, taken before every serve and before
+  every load: every entry under the directory, recursively, with its relative
+  path, kind, size and modification time, and on Unix its inode and status
+  change time. Any difference — one byte rewritten in place, a file added,
+  renamed or removed — loads and digests again, and the verdict is whatever
+  that digest says. **A fingerprint is not a digest**: it decides when to
+  digest, never whether a dataset verifies. It is taken *before* the load, so
+  a file changed during a load is a change to the next call, not hidden
+  behind what this one loaded. The status change time is there because a
+  user can restore a file's size and modification time (`touch -r`, an
+  archive extracted over it) but not that; on a platform without it, a
+  rewrite that keeps a file's size and modification time to the clock's
+  resolution goes unseen until the slot is dropped.
+- **The bound is two datasets**, least recently used dropped first: the one
+  on screen and the one just left, so moving between two benchmarks' runs
+  loads neither again. It is a count, not a size, because nothing measures a
+  loaded dataset's memory; and it is that small because a large corpus is
+  gigabytes, while a comparison or a matrix reads one benchmark. A request
+  still holding a dropped dataset keeps it until it answers.
+- **Concurrency**: a call locks the list only to find its slot, then locks
+  that slot alone while it fingerprints and, if it must, loads. Several
+  requests for one dataset — the matrix fetching N runs at once — wait for
+  one load and share it; a request for another dataset is not held up.
+- **Tested** in `fs/memo.rs`, with a counting loader — one load while the
+  files are unchanged, another after each kind of change, the bound and its
+  order, one load under concurrent calls — and over the API in
+  `tests/dataset_memo.rs`: consecutive `/queries` and `/trace` requests are
+  answered from one load, and one byte changed between requests is
+  `dataset_differs`.
 
 ### `reqwest`, the transport
 
@@ -797,16 +844,15 @@ binary's build identity (#365) provides; its doc comment says so.
   computed anyway and served, and the reason is reported in the listing's
   `cache_error`, so a read-only workspace stays usable and a broken cache is
   never silent.
-- **What it saves, and what it does not.** **The dataset is loaded and
-  digested on every request** to either endpoint — the verdict cannot be
-  trusted without it, and the qrels and the passage text come from the load
-  anyway. The cache saves every per-query and per-node figure of the listing.
-  The trace endpoint reads nothing from it: it derives the chunk set to
-  resolve text, and one query's figures cost nothing. On a large corpus the
-  load is the cost of every request, so **a memo on keeping a verified
-  dataset in memory between requests is owed before the screens that call
-  these endpoints per interaction — the matrix (#346) and replay (#350) —
-  land**. `POST /compare` pays the same load, once per comparison.
+- **What it saves, and what it does not.** The cache saves every per-query
+  and per-node figure of the listing; it saves no load. The trace endpoint
+  reads nothing from it: it reads the chunk set to resolve text, and one
+  query's figures cost nothing. **The load is the registry's to save**: every
+  request to either endpoint, and `POST /compare`, asks `Registry::dataset`
+  for a verdict — it cannot be trusted otherwise, and the qrels and the
+  passage text come from the dataset — and the file backend answers from the
+  dataset it keeps loaded while the files are unchanged, chunk set included
+  (§ *The loaded datasets*).
 
 **Per-node metrics are served by `GET /runs/{id}/queries`**, beside the
 per-query scores they are computed with, and not by `GET /runs/{id}` as the

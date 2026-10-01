@@ -355,7 +355,7 @@ async fn figures(
         .dataset(&inputs.dataset_version)
         .await?
     {
-        RunDataset::Verified { name, benchmark } => {
+        RunDataset::Verified { name, dataset } => {
             let check = convert::ground_verified(&name, &inputs);
             let workspace = state.config.workspace.clone();
             let work: Vec<_> = runs
@@ -375,7 +375,13 @@ async fn figures(
                 let mut failures = Vec::new();
                 for (key, pipeline, traces, metrics, outputs) in &work {
                     let (computed, failure) = handlers::figures(
-                        &workspace, key, pipeline, traces, metrics, outputs, &benchmark,
+                        &workspace,
+                        key,
+                        pipeline,
+                        traces,
+                        metrics,
+                        outputs,
+                        dataset.benchmark(),
                     );
                     figures.push(computed);
                     failures.extend(failure);

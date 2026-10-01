@@ -21,9 +21,9 @@ use axum::body::Body;
 use axum::http::{Request, Response};
 use ragondin_api::{
     content_type_for, router, ApiError, Asset, Assets, Backends, BenchmarkEntry, Capabilities,
-    FamilyCapabilities, Job, JobState, Launcher, Layout, Pairing, PinnedBenchmark, PipelineFile,
-    PipelineSource, Precondition, ProgressSink, Registry, Revision, RunDataset, Server,
-    ServerConfig, ServiceBinding, ServiceIdentity, Settings, Submission, WorkspaceSettings,
+    FamilyCapabilities, Job, JobState, Launcher, Layout, LoadedDataset, Pairing, PinnedBenchmark,
+    PipelineFile, PipelineSource, Precondition, ProgressSink, Registry, Revision, RunDataset,
+    Server, ServerConfig, ServiceBinding, ServiceIdentity, Settings, Submission, WorkspaceSettings,
 };
 use ragondin_benchmarks::identity::dataset_version;
 use ragondin_benchmarks::Benchmark;
@@ -469,7 +469,7 @@ impl Registry for PinningRegistry {
 /// Lists, downloads and imports nothing.
 #[derive(Default)]
 pub struct FixtureRegistry {
-    held: Vec<(String, Arc<Benchmark>)>,
+    held: Vec<(String, Arc<LoadedDataset>)>,
 }
 
 impl FixtureRegistry {
@@ -477,7 +477,7 @@ impl FixtureRegistry {
         Self {
             held: benchmarks
                 .into_iter()
-                .map(|(name, benchmark)| (name, Arc::new(benchmark)))
+                .map(|(name, benchmark)| (name, Arc::new(LoadedDataset::new(benchmark))))
                 .collect(),
         }
     }
@@ -510,11 +510,11 @@ impl Registry for FixtureRegistry {
         Ok(self
             .held
             .iter()
-            .find(|(_, benchmark)| dataset_version(benchmark) == version)
-            .map_or(RunDataset::Unknown, |(name, benchmark)| {
+            .find(|(_, dataset)| dataset_version(dataset.benchmark()) == version)
+            .map_or(RunDataset::Unknown, |(name, dataset)| {
                 RunDataset::Verified {
                     name: name.clone(),
-                    benchmark: Arc::clone(benchmark),
+                    dataset: Arc::clone(dataset),
                 }
             }))
     }
@@ -523,9 +523,9 @@ impl Registry for FixtureRegistry {
         Ok(self
             .held
             .iter()
-            .map(|(name, benchmark)| PinnedBenchmark {
+            .map(|(name, dataset)| PinnedBenchmark {
                 name: name.clone(),
-                dataset_version: dataset_version(benchmark),
+                dataset_version: dataset_version(dataset.benchmark()),
             })
             .collect())
     }

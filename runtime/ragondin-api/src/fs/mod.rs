@@ -25,6 +25,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::error::ApiError;
 
+mod memo;
 mod pipelines;
 mod registry;
 mod settings;

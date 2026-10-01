@@ -20,7 +20,10 @@ use ragondin_benchmarks::identity::dataset_version;
 use ragondin_benchmarks::manifest::{Format, ManifestEntry};
 use tokio::runtime::Handle;
 
-use crate::backends::{DownloadProgress, PinnedBenchmark, ProgressSink, Registry, RunDataset};
+use super::memo::{self, DatasetMemo};
+use crate::backends::{
+    DownloadProgress, LoadedDataset, PinnedBenchmark, ProgressSink, Registry, RunDataset,
+};
 use crate::convert;
 use crate::error::ApiError;
 use crate::response::BenchmarkEntry;
@@ -39,10 +42,17 @@ const READ_TIMEOUT: Duration = Duration::from_secs(60);
 /// passes `ragondin_benchmarks::manifest::manifest()`; a test passes entries a
 /// local server can serve. The manifest given is the one whose entries'
 /// directories an import may not take.
+///
+/// It keeps the datasets [`Registry::dataset`] verified loaded between
+/// calls — a bounded number, the least recently used dropped first — and
+/// loads and digests one again whenever a file under its directory changes;
+/// `memo.rs` says how many, and how a change is seen. Clones share what is
+/// kept.
 #[derive(Clone, Debug)]
 pub struct FsRegistry {
     datasets: PathBuf,
     manifest: Arc<Vec<ManifestEntry>>,
+    loaded: Arc<DatasetMemo>,
 }
 
 impl FsRegistry {
@@ -51,6 +61,7 @@ impl FsRegistry {
         Self {
             datasets,
             manifest: Arc::new(manifest),
+            loaded: Arc::new(DatasetMemo::new(memo::CAPACITY)),
         }
     }
 
@@ -229,7 +240,10 @@ impl Registry for FsRegistry {
                 name, dir, format, ..
             } in pinned
             {
-                match load_pinned(name, &dir, format, &version) {
+                let found = registry.loaded.dataset(&version, &dir, name, |name| {
+                    load_pinned(name, &dir, format, &version)
+                });
+                match found {
                     verified @ RunDataset::Verified { .. } => return Ok(verified),
                     other => {
                         first.get_or_insert(other);
@@ -284,7 +298,7 @@ fn load_pinned(name: String, dir: &Path, format: Format, expected: &str) -> RunD
             if found == expected {
                 RunDataset::Verified {
                     name,
-                    benchmark: Arc::new(benchmark),
+                    dataset: Arc::new(LoadedDataset::new(benchmark)),
                 }
             } else {
                 RunDataset::Differs { name, found }

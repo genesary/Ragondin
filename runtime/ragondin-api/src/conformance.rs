@@ -486,8 +486,8 @@ async fn altered_dataset<R: Registry>(fixture: RegistryFixture<R>, alteration: A
 
 async fn assert_verified<R: Registry>(registry: &R, version: &str, case: &str) {
     match registry.dataset(version).await {
-        Ok(RunDataset::Verified { benchmark, .. }) => assert_eq!(
-            dataset_version(&benchmark),
+        Ok(RunDataset::Verified { dataset, .. }) => assert_eq!(
+            dataset_version(dataset.benchmark()),
             version,
             "{case}: the dataset handed back digests to another value"
         ),
