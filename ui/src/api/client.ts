@@ -27,6 +27,8 @@ export type ApiProblem = {
   location: NonNullable<Problem['location']> | null;
   /** The HTTP status, or null when no answer arrived. */
   status: number | null;
+  /** The parameter, path parameter or header a `parameter_invalid` names, when the API knows which; absent otherwise. */
+  name?: string;
 };
 
 /**
@@ -208,11 +210,9 @@ export function createApiClient(): ApiClient {
         return failed('its problem body is not JSON');
       }
       if (!isProblem(parsed)) return failed('its problem body lacks a string code, detail or hint, or has a malformed location');
-      return {
-        ok: false,
-        build,
-        problem: { code: parsed.code, message: parsed.detail, hint: parsed.hint, location: parsed.location ?? null, status: response.status },
-      };
+      const problem: ApiProblem = { code: parsed.code, message: parsed.detail, hint: parsed.hint, location: parsed.location ?? null, status: response.status };
+      if (typeof parsed.name === 'string') problem.name = parsed.name;
+      return { ok: false, build, problem };
     }
     if (!response.ok) return failed(`its body is ${type === '' ? 'untyped' : type}, not a problem`);
     // Only an operation the description declares empty may answer empty — a

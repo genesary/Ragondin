@@ -177,6 +177,16 @@ describe('the API client, on a problem', () => {
     });
   });
 
+  it('carries the parameter a parameter_invalid names, and none when it names none', async () => {
+    const refused = { ...problem, code: 'parameter_invalid', status: 400 } as const;
+    stubFetch(async () => json({ ...refused, name: 'missing_gold_at' }, { status: 400, type: 'application/problem+json' }));
+    const named = await createApiClient().get('/workspace');
+    expect(named.ok ? null : named.problem.name).toBe('missing_gold_at');
+    stubFetch(async () => json(refused, { status: 400, type: 'application/problem+json' }));
+    const unnamed = await createApiClient().get('/workspace');
+    expect(unnamed.ok ? null : 'name' in unnamed.problem).toBe(false);
+  });
+
   it('carries a validation failure’s location', async () => {
     const location = { node: 'rerank', edge: null };
     stubFetch(async () => json({ ...problem, code: 'pipeline_invalid', status: 422, location }, { status: 422, type: 'application/problem+json' }));

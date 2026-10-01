@@ -244,6 +244,46 @@ describe('renderApiTypes', () => {
       /GET \/x.*cookie/,
     ],
     [
+      'a parameter located in an inherited key (`constructor`)',
+      description({}, { '/x': { get: { parameters: [{ in: 'constructor', name: 'c', required: true, schema: { type: 'string' } }], responses: OK } } }),
+      /GET \/x.*constructor/,
+    ],
+    [
+      'a parameter located in an inherited key (`__proto__`)',
+      description({}, { '/x': { get: { parameters: [{ in: '__proto__', name: 'c', required: true, schema: { type: 'string' } }], responses: OK } } }),
+      /GET \/x.*__proto__/,
+    ],
+    [
+      'two query parameters of one name',
+      description({}, {
+        '/x': {
+          get: {
+            parameters: [
+              { in: 'query', name: 'q', required: false, schema: { type: 'string' } },
+              { in: 'query', name: 'q', required: false, schema: { type: 'integer' } },
+            ],
+            responses: OK,
+          },
+        },
+      }),
+      /GET \/x.*`q`.*twice/,
+    ],
+    [
+      'two headers of one name',
+      description({}, {
+        '/x': {
+          get: {
+            parameters: [
+              { in: 'header', name: 'If-Match', required: false, schema: { type: 'string' } },
+              { in: 'header', name: 'If-Match', required: false, schema: { type: 'string' } },
+            ],
+            responses: OK,
+          },
+        },
+      }),
+      /GET \/x.*`If-Match`.*twice/,
+    ],
+    [
       'a parameter in no location it knows',
       description({}, { '/x': { get: { parameters: [{ in: 'body', name: 'b', required: true, schema: { type: 'string' } }], responses: OK } } }),
       /GET \/x.*body/,

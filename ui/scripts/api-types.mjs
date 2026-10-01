@@ -250,12 +250,24 @@ function pathsType(paths, typeOf) {
     const operations = Object.entries(methods).map(([method, op]) => {
       const where = `${method.toUpperCase()} ${path}`;
       onlyKnown(op, OPERATION_KEYS, where, 'operation');
-      /** @type {Record<string, string[]>} */
-      const byPlace = { path: [], query: [], header: [] };
+      // A Map, so a location named after an inherited key (`constructor`,
+      // `__proto__`) is unknown rather than an object's own member.
+      /** @type {Map<unknown, string[]>} */
+      const byPlace = new Map([
+        ['path', []],
+        ['query', []],
+        ['header', []],
+      ]);
+      /** @type {Set<string>} */
+      const seen = new Set();
       for (const p of /** @type {Schema[]} */ (op.parameters ?? [])) {
         onlyKnown(p, PARAMETER_KEYS, where, 'parameter');
-        const place = byPlace[p.in];
-        if (place === undefined) refuse(where, `a parameter in \`${p.in}\`, which is not the path, the query string or a header`);
+        const place = byPlace.get(p.in);
+        if (place === undefined) return refuse(where, `a parameter in \`${String(p.in)}\`, which is not the path, the query string or a header`);
+        // One name per location: a second would be a second member of one type.
+        const key = `${p.in}\n${p.name}`;
+        if (seen.has(key)) refuse(where, `the ${p.in} parameter \`${p.name}\` declared twice`);
+        seen.add(key);
         // A path parameter is always required; a query or header one is
         // optional unless the description says otherwise.
         const optional = p.in !== 'path' && p.required !== true ? '?' : '';
@@ -263,10 +275,12 @@ function pathsType(paths, typeOf) {
         place.push(`${comment}        ${propertyName(p.name)}${optional}: ${typeOf(p.schema ?? {}, `${where} ${p.name}`, '        ')};`);
       }
       const block = (/** @type {string} */ key, /** @type {string[]} */ members) => `      ${key}: {\n${members.join('\n')}\n      };`;
-      const inPath = byPlace.path ?? [];
+      const inPath = byPlace.get('path') ?? [];
+      const inQuery = byPlace.get('query') ?? [];
+      const inHeader = byPlace.get('header') ?? [];
       const lines = [inPath.length === 0 ? '      params: Record<string, never>;' : block('params', inPath)];
-      if (byPlace.query?.length) lines.push(block('query', byPlace.query));
-      if (byPlace.header?.length) lines.push(block('headers', byPlace.header));
+      if (inQuery.length > 0) lines.push(block('query', inQuery));
+      if (inHeader.length > 0) lines.push(block('headers', inHeader));
       if (op.requestBody !== undefined) {
         onlyKnown(op.requestBody, REQUEST_BODY_KEYS, where, 'request body');
         if (op.requestBody.required === false) refuse(where, 'an optional request body, which the client always sends');
