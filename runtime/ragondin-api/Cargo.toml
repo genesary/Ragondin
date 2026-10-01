@@ -16,13 +16,18 @@ rust-version.workspace = true
 # the `LogicalPipeline` that lowering yields, which the handlers convert into
 # this crate's own graph type; and `ragondin-benchmarks` for the manifest, the
 # digest-verified download and the import the `Registry` file backend
-# (`src/fs/registry.rs`) is written over. Its closure holds no engine and no
-# component. `ragondin-config` and `ragondin-metrics` are allowed by INV-12
-# and arrive with the endpoints that read them.
+# (`src/fs/registry.rs`) is written over, and for the digests and the chunk
+# derivation passage text is verified against; `ragondin-metrics` for the
+# per-query and per-node scores read from a stored trace; and `ragondin-types`
+# for the ids those scores are computed over. Its closure holds no engine and
+# no component. `ragondin-config` is allowed by INV-12 and arrives with the
+# endpoints that read it.
 [dependencies]
 ragondin-benchmarks = { workspace = true }
 ragondin-experiments = { workspace = true }
+ragondin-metrics = { workspace = true }
 ragondin-pipeline = { workspace = true }
+ragondin-types = { workspace = true }
 async-trait = { workspace = true } # dyn-compatible async traits (frozen: async_trait, not RPITIT)
 # The HTTP transport the `Registry` file backend hands to
 # `ragondin-benchmarks`' digest-verified download (`src/fs/registry.rs`): the

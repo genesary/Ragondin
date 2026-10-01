@@ -121,6 +121,30 @@ async fn run_not_found() {
 }
 
 #[tokio::test]
+async fn query_not_found() {
+    let (status, body) = render(ApiError::QueryNotFound {
+        run_id: "ab".repeat(32),
+        query: "q-9".to_owned(),
+    })
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_problem(&body, status, "query_not_found");
+    assert!(body["detail"].as_str().unwrap().contains("q-9"));
+}
+
+#[tokio::test]
+async fn parameter_invalid() {
+    let (status, body) = render(ApiError::ParameterInvalid {
+        name: "missing_gold_at".to_owned(),
+        reason: "`ten` is not a positive integer".to_owned(),
+    })
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_problem(&body, status, "parameter_invalid");
+    assert!(body["detail"].as_str().unwrap().contains("missing_gold_at"));
+}
+
+#[tokio::test]
 async fn dataset_absent() {
     let (status, body) = render(ApiError::DatasetAbsent {
         dataset: "beir/scifact".to_owned(),
@@ -263,7 +287,7 @@ fn every_variant_has_a_distinct_code() {
     assert_eq!(sorted.len(), codes.len(), "codes are unique: {codes:?}");
     assert_eq!(
         codes.len(),
-        18,
+        20,
         "a variant added without a test here: {codes:?}"
     );
 }

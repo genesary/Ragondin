@@ -31,8 +31,12 @@
 //! - `conformance` — behind the `conformance` feature, the suite every
 //!   [`Registry`] backend passes.
 //!
-//! Every path is under `/api/v1`: `GET /workspace`, `GET /runs` and
-//! `GET /runs/{id}`.
+//! Every path is under `/api/v1`: `GET /workspace`, `GET /runs`,
+//! `GET /runs/{id}`, `GET /runs/{id}/queries` and
+//! `GET /runs/{id}/trace/{query}`. The last two serve derived data — per-query
+//! scores, per-node metrics, passage text — computed on read against the run's
+//! own dataset, cached under the workspace's `cache/`, and never written into
+//! the run (`ARCHITECTURE.md` § Derived data).
 
 #![warn(missing_docs)]
 
@@ -57,15 +61,17 @@ pub mod error;
 pub mod fs;
 pub mod response;
 
+mod cache;
 mod convert;
+mod derived;
 mod handlers;
 mod layers;
 
 pub use assets::{content_type_for, Asset, Assets, NoAssets};
 pub use backends::{
     Backends, DownloadProgress, Job, JobState, Launcher, PipelineEntry, PipelineFile,
-    PipelineSource, ProgressSink, Registry, Revision, ServiceIdentity, Settings, Submission,
-    WorkspaceSettings,
+    PipelineSource, ProgressSink, Registry, Revision, RunDataset, ServiceIdentity, Settings,
+    Submission, WorkspaceSettings,
 };
 pub use error::ApiError;
 pub use layers::BUILD_HEADER;
@@ -84,6 +90,12 @@ pub struct ServerConfig {
     /// The build's identity — the crate version with a build hash, say — as
     /// `GET /workspace` and every response's `x-ragondin-build` header
     /// report it.
+    ///
+    /// **It must change with every change to the code** — the commit and a
+    /// dirty flag, say. The derived-data cache under the workspace's `cache/`
+    /// is keyed on it, since another build may score or derive differently:
+    /// a build string that stayed the same across a code change would serve
+    /// figures the new code would not compute.
     pub build: String,
     /// The workspace directory, as `GET /workspace` reports it.
     pub workspace: PathBuf,
@@ -121,6 +133,14 @@ pub fn router(backends: Backends, config: ServerConfig, assets: Arc<dyn Assets>)
         .route(
             "/v1/runs/:id",
             get(handlers::run).fallback(handlers::method_not_allowed),
+        )
+        .route(
+            "/v1/runs/:id/queries",
+            get(handlers::queries).fallback(handlers::method_not_allowed),
+        )
+        .route(
+            "/v1/runs/:id/trace/:query",
+            get(handlers::trace).fallback(handlers::method_not_allowed),
         )
         .fallback(handlers::route_not_found)
         .with_state(handlers::AppState {

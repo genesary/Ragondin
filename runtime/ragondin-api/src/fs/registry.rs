@@ -16,10 +16,11 @@ use async_trait::async_trait;
 use ragondin_benchmarks::datasets::{
     self, local_entries, Body, Controls, DiskState, Fetcher, Progress,
 };
-use ragondin_benchmarks::manifest::ManifestEntry;
+use ragondin_benchmarks::identity::dataset_version;
+use ragondin_benchmarks::manifest::{Format, ManifestEntry};
 use tokio::runtime::Handle;
 
-use crate::backends::{DownloadProgress, ProgressSink, Registry};
+use crate::backends::{DownloadProgress, ProgressSink, Registry, RunDataset};
 use crate::convert;
 use crate::error::ApiError;
 use crate::response::BenchmarkEntry;
@@ -177,6 +178,84 @@ impl Registry for FsRegistry {
             }
         })
         .await
+    }
+
+    async fn dataset(&self, version: &str) -> Result<RunDataset, ApiError> {
+        let registry = self.clone();
+        let version = version.to_owned();
+        blocking(move || {
+            // Every benchmark pinned to the digest — the manifest's entries in
+            // manifest order, then the imports — each the run's dataset
+            // exactly. The first one on disk that verifies is the answer;
+            // with none, the first one's state is.
+            let mut pinned: Vec<(String, PathBuf, Format)> = registry
+                .manifest
+                .iter()
+                .filter(|entry| entry.dataset_version == version)
+                .map(|entry| {
+                    (
+                        entry.name.clone(),
+                        registry.datasets.join(entry.dir()),
+                        entry.format,
+                    )
+                })
+                .collect();
+            pinned.extend(
+                local_entries(&registry.datasets)
+                    .map_err(backend_failed)?
+                    .into_iter()
+                    // An import whose record cannot be read names no digest,
+                    // so it cannot be pinned to this one; the listing reports
+                    // it as unreadable.
+                    .flatten()
+                    .filter(|local| local.dataset_version == version)
+                    .map(|local| {
+                        (
+                            local.selector(),
+                            registry.datasets.join(&local.name),
+                            local.format,
+                        )
+                    }),
+            );
+            let mut first = None;
+            for (name, dir, format) in pinned {
+                match load_pinned(name, &dir, format, &version) {
+                    verified @ RunDataset::Verified { .. } => return Ok(verified),
+                    other => {
+                        first.get_or_insert(other);
+                    }
+                }
+            }
+            Ok(first.unwrap_or(RunDataset::Unknown))
+        })
+        .await
+    }
+}
+
+/// The dataset at `dir`, read as `format` and compared with the digest it is
+/// pinned to. Loaded here rather than through `datasets::verify`, which
+/// discards what it loaded: the caller needs the dataset itself. The digest
+/// is `ragondin_benchmarks::identity`'s, the one definition.
+fn load_pinned(name: String, dir: &Path, format: Format, expected: &str) -> RunDataset {
+    if !dir.exists() {
+        return RunDataset::Absent { name };
+    }
+    match format.load(dir) {
+        Err(error) => RunDataset::Unreadable {
+            name,
+            error: convert::causes(&error),
+        },
+        Ok(benchmark) => {
+            let found = dataset_version(&benchmark);
+            if found == expected {
+                RunDataset::Verified {
+                    name,
+                    benchmark: Arc::new(benchmark),
+                }
+            } else {
+                RunDataset::Differs { name, found }
+            }
+        }
     }
 }
 

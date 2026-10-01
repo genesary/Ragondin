@@ -229,6 +229,240 @@ pub enum EdgeKind {
     Opaque,
 }
 
+/// `GET /runs/{id}/queries`: every query the run executed, its scores read
+/// from the trace against the run's own ground truth, and the per-node
+/// ranking metrics.
+///
+/// Derived data: computed on read and cached under the workspace's `cache/`,
+/// never stored in the run, and identical whether the cache was there or not.
+#[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
+#[schemars(transform = every_property_required)]
+pub struct RunQueries {
+    /// The run's id.
+    pub run: String,
+    /// Whether the ground truth the scores are read against is the run's
+    /// own: the dataset on disk digests to the run's `dataset_version`. The
+    /// chunk set is not compared — a score depends on the qrels and the
+    /// reference answers, not on passage text. Scores and per-node metrics
+    /// are present only when it is `verified`.
+    pub ground_truth: DatasetCheck,
+    /// The metrics a query can be scored on: those the run recorded that are
+    /// read per query, by name.
+    pub metrics: Vec<String>,
+    /// The node whose ranking the ranking metrics read (ADR-C30 § 3), when the
+    /// pipeline has one.
+    pub ranking_node: Option<String>,
+    /// The node whose answer the answer metrics read, when the pipeline ends
+    /// in one.
+    pub answer_node: Option<String>,
+    /// The queries, in the run's order (by id) — all of them, or those the
+    /// `missing_gold_at` filter kept.
+    pub queries: Vec<QueryScores>,
+    /// Every node of the pipeline, in the canonical order, with its ranking
+    /// metrics averaged over the run's judged queries.
+    pub nodes: Vec<NodeMetrics>,
+    /// Why the figures could not be cached under the workspace's `cache/`,
+    /// when they could not; `null` otherwise. The response is complete
+    /// either way: the cache is never a truth, so its failure fails nothing.
+    pub cache_error: Option<String>,
+}
+
+/// One query, as the run executed it.
+#[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
+pub struct QueryScores {
+    /// The query's id.
+    pub id: String,
+    /// Its scores at the run's output, by metric name: the ranking metrics
+    /// when its qrels are non-empty, the answer metrics when it has a
+    /// reference. Empty when it is judged on neither, or when the ground
+    /// truth is not verified.
+    pub scores: BTreeMap<String, f64>,
+    /// The sum of its nodes' durations, in nanoseconds: each component's own
+    /// time, as the trace records it.
+    pub duration_nanos: u64,
+}
+
+/// One node's ranking metrics over the run.
+#[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
+#[schemars(transform = every_property_required)]
+pub struct NodeMetrics {
+    /// The node's id.
+    pub node: String,
+    /// Whether the node produced a ranking for at least one query. A context
+    /// builder, a generator and a node that failed on every query did not.
+    pub produces_ranking: bool,
+    /// How many queries the means are over: the judged queries for which the
+    /// node produced a ranking. A query without qrels is never in it, as it
+    /// is never in the harness's means; `0` when the ground truth is not
+    /// verified.
+    pub judged_queries: u64,
+    /// The ranking metrics of its ranking, averaged over `judged_queries`;
+    /// `null` when that is none, or when the ground truth is not verified.
+    pub metrics: Option<BTreeMap<String, f64>>,
+}
+
+/// `GET /runs/{id}/trace/{query}`: one query's trace, node by node, in the
+/// order the nodes ran, with each named chunk's passage text when the run's
+/// own dataset is on disk.
+#[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
+pub struct QueryTrace {
+    /// The run's id.
+    pub run: String,
+    /// The query's id.
+    pub query: String,
+    /// Whether passage text could be resolved: only against the dataset the
+    /// run was evaluated on, digests compared (ADR-C36 § 4).
+    pub passages: DatasetCheck,
+    /// The query's scores at the run's output, as `GET /runs/{id}/queries`
+    /// reports them: present when the dataset on disk is the run's, whatever
+    /// the chunk set.
+    pub scores: BTreeMap<String, f64>,
+    /// The nodes, in execution order.
+    pub nodes: Vec<TraceNodeView>,
+}
+
+/// One node of a query's trace.
+#[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
+#[schemars(transform = every_property_required)]
+pub struct TraceNodeView {
+    /// The node's id.
+    pub node: String,
+    /// What it received, one summary per input port, in port order.
+    pub inputs: Vec<TraceValue>,
+    /// What it produced; `null` when it failed.
+    pub output: Option<TraceValue>,
+    /// How long its component took, in nanoseconds.
+    pub duration_nanos: u64,
+    /// The failure it reported; `null` when it succeeded.
+    pub error: Option<String>,
+    /// The ranking metrics of what it produced for this query: present when
+    /// it produced a ranking, the query is judged and the dataset on disk is
+    /// the run's; `null` otherwise.
+    pub metrics: Option<BTreeMap<String, f64>>,
+}
+
+/// A value along an edge, as the trace records it: sized on an input port,
+/// named where a node produced it.
+#[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum TraceValue {
+    /// A query, by id.
+    Query {
+        /// The query's id.
+        id: String,
+    },
+    /// A list of chunks, counted.
+    ChunkCount {
+        /// How many chunks it held.
+        count: u64,
+    },
+    /// The chunks a node produced, in its own order.
+    Ranking {
+        /// The chunks, in the order the node returned them.
+        chunks: Vec<TracePassage>,
+    },
+    /// A context, sized.
+    ContextSize {
+        /// How many chunks it held.
+        count: u64,
+        /// The length of its text, in bytes of UTF-8.
+        text_bytes: u64,
+    },
+    /// The context a node produced.
+    Context {
+        /// Its chunks, in the order the builder placed them.
+        chunks: Vec<TracePassage>,
+        /// Its rendered text, whole, as the trace records it.
+        text: String,
+    },
+    /// An answer, sized.
+    AnswerSize {
+        /// The length of its text, in bytes of UTF-8.
+        text_bytes: u64,
+    },
+    /// The answer a node produced.
+    Answer {
+        /// Its text, as the generator returned it.
+        text: String,
+    },
+}
+
+/// One named chunk, with its passage text when it could be resolved.
+#[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
+#[schemars(transform = every_property_required)]
+pub struct TracePassage {
+    /// The chunk's id.
+    pub chunk: String,
+    /// The document it was derived from.
+    pub document: String,
+    /// The score the node gave it, on the node's own scale.
+    pub score: f64,
+    /// Its text: present only when the passages are `verified` and the chunk
+    /// set derived from the dataset holds this id; `null` otherwise.
+    pub text: Option<String>,
+}
+
+/// Whether the dataset on disk is the one a run was evaluated on: the
+/// benchmark pinned to the run's `dataset_version`, digesting to it — and,
+/// for passage text, its derived chunk set digesting to the run's
+/// `index_version`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+#[schemars(transform = every_property_required)]
+pub struct DatasetCheck {
+    /// The verdict.
+    pub status: DatasetStatus,
+    /// The benchmark the run's `dataset_version` is pinned to, by its
+    /// selector; `null` when the registry pins no benchmark to it.
+    pub benchmark: Option<String>,
+    /// The digests the run recorded.
+    pub expected: DatasetVersions,
+    /// The digests of what is on disk, as far as they were computed; `null`
+    /// when nothing on disk loaded.
+    pub found: Option<FoundVersions>,
+    /// The verdict in words: what was compared, and what differed.
+    pub detail: String,
+}
+
+/// Where the run's dataset stands.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DatasetStatus {
+    /// On disk, and every digest compared is the run's: the dataset's for
+    /// the ground truth, the dataset's and the chunk set's for passage text.
+    Verified,
+    /// Not on disk, or pinned by no benchmark the registry knows.
+    DatasetAbsent,
+    /// On disk, and its digest is not the run's `dataset_version`.
+    DatasetDiffers,
+    /// On disk, and it does not load: `detail` carries the adapter's error.
+    DatasetUnreadable,
+    /// Passage text only: the dataset is the run's, but the chunk set this
+    /// build derives from it does not digest to the run's `index_version` —
+    /// the derivation moved. The scores are unaffected.
+    IndexDiffers,
+}
+
+/// The two dataset digests of a run's identity.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct DatasetVersions {
+    /// The dataset's digest.
+    pub dataset_version: String,
+    /// The derived chunk set's digest.
+    pub index_version: String,
+}
+
+/// The digests of the dataset on disk.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+#[schemars(transform = every_property_required)]
+pub struct FoundVersions {
+    /// What the dataset on disk digests to.
+    pub dataset_version: String,
+    /// What its derived chunk set digests to; `null` when it was not
+    /// compared — the dataset already differs, or the check is the ground
+    /// truth's, which depends on the dataset alone.
+    pub index_version: Option<String>,
+}
+
 /// One benchmark the registry knows: named by the manifest, or imported.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
 #[schemars(transform = every_property_required)]

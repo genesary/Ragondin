@@ -8,7 +8,9 @@
 
 #![allow(dead_code)] // each test binary uses a different part of this module
 
+pub mod calibration;
 pub mod datasets;
+pub mod runs;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -20,9 +22,11 @@ use axum::http::{Request, Response};
 use ragondin_api::{
     content_type_for, router, ApiError, Asset, Assets, Backends, BenchmarkEntry, Capabilities,
     FamilyCapabilities, Job, JobState, Launcher, PipelineEntry, PipelineFile, PipelineSource,
-    ProgressSink, Registry, Revision, Server, ServerConfig, ServiceBinding, ServiceIdentity,
-    Settings, Submission, WorkspaceSettings,
+    ProgressSink, Registry, Revision, RunDataset, Server, ServerConfig, ServiceBinding,
+    ServiceIdentity, Settings, Submission, WorkspaceSettings,
 };
+use ragondin_benchmarks::identity::dataset_version;
+use ragondin_benchmarks::Benchmark;
 use ragondin_experiments::{FileSystemRunStore, Run, RunId, RunStore, RunStoreError};
 
 /// The address every test router serves, and so the `Host` a request names.
@@ -238,6 +242,66 @@ impl Registry for FakeRegistry {
             reason: "the fake registry imports nothing".to_owned(),
         })
     }
+
+    async fn dataset(&self, _dataset_version: &str) -> Result<RunDataset, ApiError> {
+        Ok(RunDataset::Unknown)
+    }
+}
+
+/// A registry holding benchmarks in memory, each on "disk" and verified: a
+/// run's dataset is found when one of them digests to its `dataset_version`.
+/// Lists, downloads and imports nothing.
+#[derive(Default)]
+pub struct FixtureRegistry {
+    held: Vec<(String, Arc<Benchmark>)>,
+}
+
+impl FixtureRegistry {
+    pub fn holding(benchmarks: impl IntoIterator<Item = (String, Benchmark)>) -> Self {
+        Self {
+            held: benchmarks
+                .into_iter()
+                .map(|(name, benchmark)| (name, Arc::new(benchmark)))
+                .collect(),
+        }
+    }
+}
+
+#[async_trait]
+impl Registry for FixtureRegistry {
+    async fn benchmarks(&self) -> Result<Vec<BenchmarkEntry>, ApiError> {
+        Ok(Vec::new())
+    }
+
+    async fn verify(&self, name: &str) -> Result<BenchmarkEntry, ApiError> {
+        FakeRegistry.verify(name).await
+    }
+
+    async fn download(
+        &self,
+        name: &str,
+        progress: ProgressSink,
+        cancel: Arc<std::sync::atomic::AtomicBool>,
+    ) -> Result<BenchmarkEntry, ApiError> {
+        FakeRegistry.download(name, progress, cancel).await
+    }
+
+    async fn import(&self, name: &str, path: &Path) -> Result<BenchmarkEntry, ApiError> {
+        FakeRegistry.import(name, path).await
+    }
+
+    async fn dataset(&self, version: &str) -> Result<RunDataset, ApiError> {
+        Ok(self
+            .held
+            .iter()
+            .find(|(_, benchmark)| dataset_version(benchmark) == version)
+            .map_or(RunDataset::Unknown, |(name, benchmark)| {
+                RunDataset::Verified {
+                    name: name.clone(),
+                    benchmark: Arc::clone(benchmark),
+                }
+            }))
+    }
 }
 
 /// The router over the given store, and default fakes for the rest.
@@ -260,18 +324,46 @@ pub fn app_with_assets(assets: impl Assets + 'static) -> Server {
 }
 
 fn app_serving(store: FakeRunStore, launcher: FakeLauncher, assets: Arc<dyn Assets>) -> Server {
+    serve(
+        store,
+        Arc::new(FakeRegistry),
+        launcher,
+        PathBuf::from("/workspace"),
+        assets,
+    )
+}
+
+/// The router over `store` and `registry`, working in `workspace` — where
+/// the derived data it computes is cached, under `cache/`.
+pub fn app_over(store: FakeRunStore, registry: Arc<dyn Registry>, workspace: &Path) -> Server {
+    serve(
+        store,
+        registry,
+        FakeLauncher::default(),
+        workspace.to_path_buf(),
+        Arc::new(ragondin_api::NoAssets),
+    )
+}
+
+fn serve(
+    store: FakeRunStore,
+    registry: Arc<dyn Registry>,
+    launcher: FakeLauncher,
+    workspace: PathBuf,
+    assets: Arc<dyn Assets>,
+) -> Server {
     router(
         Backends {
             runs: Arc::new(store),
             pipelines: Arc::new(FakePipelines),
-            registry: Arc::new(FakeRegistry),
+            registry,
             settings: Arc::new(FakeSettings::default()),
             launcher: Arc::new(launcher),
         },
         ServerConfig {
             served: SERVED.to_owned(),
             build: BUILD.to_owned(),
-            workspace: PathBuf::from("/workspace"),
+            workspace,
         },
         assets,
     )

@@ -10,7 +10,7 @@ mod support;
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use ragondin_api::conformance::{assert_registry_conformance, RegistryFixture};
+use ragondin_api::conformance::{assert_registry_conformance, Alteration, RegistryFixture};
 use ragondin_api::fs::FsRegistry;
 use ragondin_benchmarks::manifest::Format;
 
@@ -36,6 +36,20 @@ async fn the_file_registry_is_a_conformant_registry() {
         obtainable: "beir/mini".to_owned(),
         corrupt: "beir/corrupt".to_owned(),
         importable: beir.clone(),
+        // A benchmark `<format>/<dir>` lives at `<datasets>/<dir>`.
+        alter: Box::new(|registry: &FsRegistry, name: &str, alteration| {
+            let dir = registry.datasets().join(name.rsplit('/').next().unwrap());
+            let corpus = dir.join("corpus.jsonl");
+            match alteration {
+                Alteration::ChangeContent => {
+                    let text = std::fs::read_to_string(&corpus).unwrap();
+                    let changed = text.replacen("The cat sat", "The bat sat", 1);
+                    assert_ne!(changed, text);
+                    std::fs::write(&corpus, changed).unwrap();
+                }
+                Alteration::Break => std::fs::remove_file(&corpus).unwrap(),
+            }
+        }),
     })
     .await;
 }

@@ -29,11 +29,15 @@ the response types, the typed errors, and the traits the service consumes.
 | `error` | `ApiError`, its stable codes, its `application/problem+json` rendering |
 | `layers` | The server's defence of its origin, as Tower layers on the router |
 | `description` | The API description, assembled from the declared operations and the `schemars` schemas |
+| `derived` | The data derived from a stored run and its benchmark: per-query scores, per-node ranking metrics, the gold filter |
+| `cache` | The workspace's `cache/`: those derived figures, reconstructible, never a truth |
 | `fs` | The file backends: `FsRegistry` today |
 | `conformance` | The suite every `Registry` backend passes, behind the `conformance` feature |
 
 Served today: `GET /api/v1/workspace`, `GET /api/v1/runs`,
-`GET /api/v1/runs/{id}`. `/api`, `/api/` and every other path below them are
+`GET /api/v1/runs/{id}`, `GET /api/v1/runs/{id}/queries` and
+`GET /api/v1/runs/{id}/trace/{query}` — the last two described in
+§ *Derived data*. `/api`, `/api/` and every other path below them are
 the API's too: an unknown one answers `route_not_found`, and a method an
 endpoint does not serve answers `method_not_allowed` with axum's `Allow`
 header — problem bodies both, never an empty 404 or the assets' fallback.
@@ -63,15 +67,26 @@ would not see it. The sign in a diff is a `tonic` channel or a generated
 client type in this crate.
 
 Its workspace dependencies today are `ragondin-experiments` — the `RunStore`
-trait, the `Run` record, and `lower_configuration` — `ragondin-pipeline`, for
-the `LogicalPipeline` that lowering yields, and `ragondin-benchmarks`, for the
-manifest, the download, the verification and the import the `Registry` file
-backend is written over. `ragondin-benchmarks` reaches no engine and no
-component: its closure is the core's `ragondin-types` and its readers, and
-`just check-invariants` walks it — `scripts/test-check-invariants.py` holds a
-case in which it reaches the engine and INV-12 fails through it. `ragondin-config`
-and `ragondin-metrics` are within INV-12 and arrive with the endpoints that read
-them.
+trait, the `Run` record, the typed `Trace`, and `lower_configuration` —
+`ragondin-pipeline`, for the `LogicalPipeline` that lowering yields,
+`ragondin-benchmarks`, for the manifest, the download, the verification and
+the import the `Registry` file backend is written over, and for the digests
+and the chunk derivation passage text is verified against,
+`ragondin-metrics`, for the per-query and per-node scores, and
+`ragondin-types`, for the ids they are computed over. `ragondin-benchmarks`
+and `ragondin-metrics` reach no engine and no component: their closure is the
+core's `ragondin-types` and its readers, and `just check-invariants` walks it
+— `scripts/test-check-invariants.py` holds a case in which `ragondin-benchmarks`
+reaches the engine and INV-12 fails through it. `ragondin-config` is within
+INV-12 and arrives with the endpoints that read it. **`ragondin-harness` is
+not a dependency, and may not become one** (INV-12 refuses it through the
+engine). The two rules the derived data shares with it — the
+chunk-to-document fold and ADR-C30 § 3's walk — are therefore **a temporary
+second definition** in `derived.rs`, each function naming its counterpart in
+`eval/ragondin-harness/src/evaluate.rs`. Nothing keeps the two in step: the
+invariant test in § *Derived data* pins this crate to the fixtures, not to the
+harness. #369 moves both rules into one definition both crates reach, and
+deletes these.
 
 ## The traits and their backends
 
@@ -130,9 +145,11 @@ supplies the HTTP transport, and converts what comes back in `convert.rs`.
   dataset's `CarriedPieces`, and is `null` when nothing loaded.
 - **The listing digests every dataset on every call.** Each entry on disk is
   loaded whole and digested, and nothing is cached: correct, and slow for a
-  large corpus. The endpoint that serves it (#342) and the one that resolves
-  passages (#343) should know this before calling it per request; a cache is
-  `cache/`'s business, not this backend's.
+  large corpus. The endpoint that serves it (#342) should know this before
+  calling it per request; a cache is `cache/`'s business, not this backend's.
+  `dataset` has the same cost, one dataset per call, and the derived-data
+  endpoints pay it on every request — § *Derived data* says why, and what
+  `cache/` saves them.
 - **What the trait gained**, since the backend showed the trait lacked it:
   `verify`, one entry by name; `download(name, progress, cancel)`, returning
   the verified entry — progress after every chunk through a `ProgressSink`,
@@ -140,7 +157,18 @@ supplies the HTTP transport, and converts what comes back in `convert.rs`.
   shape the harness's cancellation took), and a deadline the download applies
   itself. That settles the provisional shape. `import` returns the entry it
   registered, and an import may not take the directory of an entry of *this
-  registry's* manifest. `BenchmarkEntry`, which the trait exchanges, moved to
+  registry's* manifest. And `dataset(dataset_version)`, for the derived-data
+  endpoints: a run names no benchmark, only the digest of the one it was
+  evaluated on, so the backend finds every benchmark *pinned* to that digest
+  — manifest entries in manifest order, then imports — and answers the first
+  one on disk that loads and digests to it (`Verified`, with the dataset
+  loaded), or else the first one's state: `Absent`, `Differs` with the digest
+  found, `Unreadable` with the adapter's error. A digest no benchmark is
+  pinned to is `Unknown`, whatever the disk holds: nothing is resolved by
+  closeness (ADR-C36 § 4). It loads through `Format::load` and digests with
+  `ragondin_benchmarks::identity::dataset_version` rather than calling
+  `datasets::verify`, which discards what it loaded.
+  `BenchmarkEntry`, which the trait exchanges, moved to
   `response.rs` as a response type — the way `Settings` already carries
   `ServiceBinding` — and `BenchmarkStatus` is gone, replaced by
   `BenchmarkState`'s five states.
@@ -155,11 +183,17 @@ supplies the HTTP transport, and converts what comes back in `convert.rs`.
   contract `Registry`'s documentation states: a fresh listing; a download
   reported `ready` by the listing and by `verify`; a failed download that
   leaves the benchmark `available`, as before; a cancelled one; unknown
-  names; and an import, including a name holding NUL refused as
-  `import_refused`. `tests/registry_conformance.rs` runs it against
-  `FsRegistry`, with a faithful and a corrupted source served by a
-  dependency-free local HTTP server — no test touches the network. No route
-  calls the registry yet: the endpoints that do are the workspace's (#342).
+  names; an import, including a name holding NUL refused as
+  `import_refused`; and `dataset`, which finds a downloaded and an imported
+  benchmark by their digests, answers `Absent` before the download,
+  `Unknown` for a digest nothing is pinned to, `Differs` once a downloaded
+  benchmark's content is changed and `Unreadable` once it is broken — the
+  fixture's `alter` hook does both behind the registry's back, as a person
+  editing the datasets directory would. `tests/registry_conformance.rs` runs
+  it against `FsRegistry`, with a faithful and a corrupted source served by a
+  dependency-free local HTTP server — no test touches the network. The only
+  route that calls the registry is the derived data's, through `dataset`; the
+  listing, the download and the import are the workspace's endpoints (#342).
 
 ### `reqwest`, the transport
 
@@ -237,9 +271,11 @@ code.
 | `service_unreachable` | 502 | a probe or a submission reached no service | no |
 | `run_exists` | 409 | a submission's run id is already stored or queued | no |
 | `run_unreadable` | 500 | a stored run this build cannot read: torn, malformed, or a configuration that no longer lowers | `GET /runs/{id}` |
-| `run_not_found` | 404 | no run under this id, or a string that is not a run id | `GET /runs/{id}` |
-| `dataset_absent` | 404 | passage text asked for, no dataset on disk | no |
-| `dataset_differs` | 409 | passage text asked for, the dataset on disk is not the run's | no |
+| `run_not_found` | 404 | no run under this id, or a string that is not a run id | `GET /runs/{id}` and below |
+| `query_not_found` | 404 | a query id the run's traces do not hold | `GET /runs/{id}/trace/{query}` |
+| `parameter_invalid` | 400 | a query parameter the endpoint does not take, given twice, or a value it cannot read | `GET /runs/{id}/queries`, `GET /runs/{id}/trace/{query}` |
+| `dataset_absent` | 404 | ground truth needed, and the run's dataset is not on disk or pinned by nothing | `GET /runs/{id}/queries?missing_gold_at=` |
+| `dataset_differs` | 409 | ground truth needed, and the dataset on disk is not the run's: its digest differs, or it does not load (the detail says which) | `GET /runs/{id}/queries?missing_gold_at=` |
 | `benchmark_not_found` | 404 | a benchmark name the registry does not know, or a download of one the manifest does not hold | `FsRegistry` |
 | `benchmark_exists` | 409 | a download or an import whose directory is already there | `FsRegistry` |
 | `download_failed` | 502 | a fetch that failed, a file of the wrong size or digest, a snapshot of the wrong `dataset_version`, or a deadline passed; the detail names both values | `FsRegistry` |
@@ -258,7 +294,12 @@ document § 8 lists seven codes and leaves the rest to the implementation:
   two are different facts — nothing is there, versus something is there this
   build cannot read — and a client acts differently on each. A string that
   cannot be a run id names no run either, and gets the same answer.
-- **Eleven codes beyond the design's seven**: `run_not_found` for the above;
+- **Thirteen codes beyond the design's seven**: `run_not_found` for the above;
+  `query_not_found`, for the same reason one level down — a run that exists
+  and a query it did not execute; `parameter_invalid`, because an unknown,
+  repeated or malformed query parameter is refused rather than ignored, on
+  every endpoint that reads the query string, and a silently ignored filter
+  would answer a question nobody asked;
   `backend_failed`, because a backend's I/O failure is none of the seven and
   a problem body must carry some code; `host_refused` and `origin_refused`,
   so that the layers' refusals are problem bodies like every other error;
@@ -278,9 +319,162 @@ document § 8 lists seven codes and leaves the rest to the implementation:
   directory: the manifest pinned those bytes, so the defect is this build's,
   not the source's.
 - **`dataset_absent` and `dataset_differs` have statuses**, 404 and 409, for
-  an endpoint that needs the text and cannot degrade. Where replay can show
-  ids instead, the design document § 8 makes them a flag in a `200` response,
-  not an error; that endpoint decides which it is.
+  an endpoint that needs the ground truth and cannot degrade: the
+  `missing_gold_at` filter, which is a question about qrels. Where an endpoint
+  can show ids and unscored queries instead — the trace, the unfiltered
+  listing — the design document § 8 makes them a flag in a `200` response,
+  not an error, and they are: `passages` and `ground_truth`, whose statuses
+  add `dataset_unreadable` (on disk, does not load — the hint differs from a
+  differing digest's) and, for passages only, `index_differs`. A dataset that
+  does not load still answers the filter with `dataset_differs`, its detail
+  saying that nothing loaded: one more code would buy the client nothing it
+  can act on differently.
+
+## Derived data
+
+`GET /runs/{id}/queries` and `GET /runs/{id}/trace/{query}` serve what the
+run record does not hold: per-query scores, per-node ranking metrics, and
+passage text. **All of it is derived data: computed here on read, cached
+under the workspace's `cache/`, and never written into the run** — the store
+writes nothing derived (its rule), and `cache/` is reconstructible data that
+is never a truth (the design document § 6). Deleting `cache/` changes no
+response; `tests/replay.rs` deletes it and compares.
+
+### What a figure is
+
+A reading of the trace against the run's own ground truth, with
+`ragondin-metrics` and the harness's rules (`derived.rs`):
+
+- **The metrics are the ones the run recorded**, by name: `ndcg@<k>`,
+  `recall@<k>`, `mrr` (uncut, as the harness records it), `exact_match`,
+  `token_f1`, each at the cutoff its own name states. Other names — a latency
+  percentile — are not per-query figures and are not listed.
+- **Documents, folded from chunks by first occurrence**: several chunks of one
+  document count once, at the rank of the best — `ragondin-harness`' rule, of
+  which `derived.rs` holds a temporary second definition until #369 (§ *INV-12*
+  says why, and what does not guard it meanwhile).
+- **The output ranking is found by ADR-C30 § 3's walk**, by port position: a
+  terminal generator's context port names a context builder, whose chunks port
+  names the ranking; a terminal builder is entered at its chunks port; any
+  other terminal node is its own ranking — the harness's walk, a second
+  definition until #369 as well. The answer is the terminal node's, when the
+  core says it produces one.
+- **Per node**: every node whose output is a ranking is scored on the same
+  metrics, per query, and averaged over the judged queries for which it
+  produced one — a query without qrels is in no mean, as in the harness, and
+  `judged_queries` says how many each mean is over, so the front end can label
+  it. A context builder, a generator and a failed node have no ranking and no
+  metric, and `produces_ranking` says which nodes have one.
+- **Means are summed in the benchmark's query order** and divided once, the
+  harness's order, so the figure at the last ranking node is `metrics.json`'s.
+  **That equality is an invariant test** (`tests/per_node_metrics.rs`): on the
+  harness-recorded fixture run, and on `ragondin-metrics`' `pytrec_eval`-checked
+  fixtures — the M2 regression fixture, the SciFact and NFCorpus calibration
+  fixtures, and the SQuAD generation fixture, whose per-query EM and F1 also
+  average to its `metrics.json`. A divergence means the trace or the metric
+  lies. The test pins this crate's reading to those fixtures; it does not
+  compare this crate's rules with the harness's, which a change to the
+  harness alone would not trip.
+- **Node rows carry ranking metrics only.** The generator's EM and token-F1
+  are a run-level figure: `metrics.json`'s, or the mean of the per-query
+  scores, never a node row.
+- **The gold filter**: `?missing_gold_at=<k>` keeps the judged queries none of
+  whose documents graded above 0 is in the top `k` of the output ranking.
+  It is the only parameter the listing takes, and the trace takes none; a
+  name and a value are percent-decoded, and any other parameter, the same one
+  twice, or a value that is not a positive integer is `parameter_invalid`.
+  It is stated in the operation's `description` in `api/v1.json`, not
+  declared under `parameters`: the UI's type generator refuses a query
+  parameter (`ui/ARCHITECTURE.md` § The generated types) until the screen
+  that first sends one extends it.
+- **No pagination.** The listing answers every query of the run at once —
+  SQuAD's thousand in one body. Paging it is a change to this endpoint when a
+  screen needs it.
+- **Durations**: a query's is the sum of its nodes' `duration_nanos`, each
+  component's own time. The run's latency percentiles are `metrics.json`'s and
+  are not recomputed.
+
+### Passage text, and the ground truth, only against the run's own dataset
+
+ADR-C36 § 4: a passage's text is shown only when the dataset on disk digests
+to the run's `dataset_version` **and** the chunk set derived from it digests to
+its `index_version`. The dataset is found through `Registry::dataset`; the
+chunk set is `ragondin_benchmarks::identity::CorpusIndex`, the one derivation
+the writer and the reader share. Otherwise the ids are shown alone, and a
+`DatasetCheck` says why — `dataset_absent` (not on disk, or pinned by no
+benchmark the registry knows) or `dataset_differs` (a digest differs, or the
+dataset does not load) — with the benchmark's name, the digests the run
+recorded and, as far as they were computed, the digests found. A chunk id the
+verified chunk set does not hold has no text.
+
+**Two verdicts, by what each needs.** ADR-C36 § 4 conditions the *text* on
+both digests. A score needs only the qrels and the reference answers, which
+are the dataset's, so the scores and per-node metrics — the listing's
+`ground_truth`, the trace's `scores` and node `metrics` — are gated on
+`dataset_version` alone, and `ground_truth` compares no chunk set
+(`found.index_version` is `null`). The passages are gated on both: a dataset
+that verifies with a chunk set that does not is `index_differs`, no text,
+both chunk-set digests side by side, and the scores still read. A dataset
+that does not load is `dataset_unreadable`, with the adapter's error in
+`detail`. With anything but `verified`, the queries are listed with their
+durations and no scores, and the nodes with no metrics.
+
+**The trigger ADR-C36 § 4 records.** This resolution holds while chunks are
+derived outside the pipeline, by `CorpusIndex`. **The day a chunker component
+produces chunks inside a pipeline, a chunk's text can no longer be derived
+without executing that component**, which INV-12 forbids this crate; what
+replay shows for such chunks is then a new decision, to be met deliberately
+rather than discovered.
+
+### The cache: a choice made here
+
+`cache/<run_id>/derived.json`, one JSON file per run, written only once the
+dataset has verified: the per-query scores and the per-node metrics. It is
+keyed on everything they were computed from — the file format, the build, the
+run id, the `dataset_version`, and a digest of the run's own content (every
+trace document and every metric, through `ragondin_benchmarks::identity`'s
+encoder under a domain of this crate's) — and is used only when the whole key
+still holds; anything else is a miss, recomputed and overwritten. **No clock
+is read**: a dataset changed on disk no longer verifies, so its cache is never
+consulted, and one restored verifies again and finds its file valid. The
+content digest is there because a run deleted and launched again keeps its
+id, which digests the inputs, while a nondeterministic component may give it
+other traces. The build is there because another build may score
+differently: **the cache is correct only if `ServerConfig::build` changes
+with every change to the code** — the commit and a dirty flag, which the
+binary's build identity (#365) provides; its doc comment says so.
+
+- **Figures are stored as the bits of their doubles**, not as decimals:
+  `serde_json`'s default reader rounds a decimal to within an ulp of the
+  double written, so a decimal cache would answer one ulp away from a computed
+  response. (The same rounding is why the invariant test compares the
+  harness-recorded run to `metrics.json` within two ulps rather than bit for
+  bit: `metrics.json` is read with that reader.)
+- **Written whole or not at all**: to a `.partial` file of this process and
+  thread, then renamed over the file; a write or a rename that fails removes
+  the `.partial` file. A file that does not parse is a miss and is
+  overwritten — it is derived data, so rebuilding it loses nothing, unlike a
+  stored run, which is reported and never repaired.
+- **A cache that cannot be read or written fails nothing.** The figures are
+  computed anyway and served, and the reason is reported in the listing's
+  `cache_error`, so a read-only workspace stays usable and a broken cache is
+  never silent.
+- **What it saves, and what it does not.** **The dataset is loaded and
+  digested on every request** to either endpoint — the verdict cannot be
+  trusted without it, and the qrels and the passage text come from the load
+  anyway. The cache saves every per-query and per-node figure of the listing.
+  The trace endpoint reads nothing from it: it derives the chunk set to
+  resolve text, and one query's figures cost nothing. On a large corpus the
+  load is the cost of every request, so **a memo on keeping a verified
+  dataset in memory between requests is owed before the screens that call
+  these endpoints per interaction — the matrix (#346) and replay (#350) —
+  land**.
+
+**Per-node metrics are served by `GET /runs/{id}/queries`**, beside the
+per-query scores they are computed with, and not by `GET /runs/{id}` as the
+design document § 5's table once listed them (its row now points here): the
+detail endpoint reads the store alone, and putting the metrics there would
+make every run's detail load and digest its dataset.
 
 ## The assets
 
@@ -416,6 +610,11 @@ workspace's serving-envelope entry, is a dependency for the `Service` trait
 requirement on the same `tower`, unified by Cargo, rather than from a feature
 appended to the workspace entry. `hyper` is on the
 INV-4 deny-list, so the core cannot reach any of this.
+
+`ragondin-metrics` and `ragondin-types` are workspace crates of the core and
+the evaluation plane, within INV-12, for § *Derived data*. `ragondin-harness`
+is not, and the two rules restated from it are a temporary second definition
+until #369 (§ *INV-12*).
 
 `reqwest` is a dependency for the `Registry` file backend's transport, with
 its workspace entry's features and none appended, on the one `hyper` already

@@ -22,6 +22,116 @@
         ],
         "type": "object"
       },
+      "DatasetCheck": {
+        "description": "Whether the dataset on disk is the one a run was evaluated on: the\nbenchmark pinned to the run's `dataset_version`, digesting to it — and,\nfor passage text, its derived chunk set digesting to the run's\n`index_version`.",
+        "properties": {
+          "benchmark": {
+            "description": "The benchmark the run's `dataset_version` is pinned to, by its\nselector; `null` when the registry pins no benchmark to it.",
+            "nullable": true,
+            "type": "string"
+          },
+          "detail": {
+            "description": "The verdict in words: what was compared, and what differed.",
+            "type": "string"
+          },
+          "expected": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DatasetVersions"
+              }
+            ],
+            "description": "The digests the run recorded."
+          },
+          "found": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FoundVersions"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "The digests of what is on disk, as far as they were computed; `null`\nwhen nothing on disk loaded."
+          },
+          "status": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DatasetStatus"
+              }
+            ],
+            "description": "The verdict."
+          }
+        },
+        "required": [
+          "benchmark",
+          "detail",
+          "expected",
+          "found",
+          "status"
+        ],
+        "type": "object"
+      },
+      "DatasetStatus": {
+        "description": "Where the run's dataset stands.",
+        "oneOf": [
+          {
+            "description": "On disk, and every digest compared is the run's: the dataset's for\nthe ground truth, the dataset's and the chunk set's for passage text.",
+            "enum": [
+              "verified"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "Not on disk, or pinned by no benchmark the registry knows.",
+            "enum": [
+              "dataset_absent"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "On disk, and its digest is not the run's `dataset_version`.",
+            "enum": [
+              "dataset_differs"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "On disk, and it does not load: `detail` carries the adapter's error.",
+            "enum": [
+              "dataset_unreadable"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "Passage text only: the dataset is the run's, but the chunk set this\nbuild derives from it does not digest to the run's `index_version` —\nthe derivation moved. The scores are unaffected.",
+            "enum": [
+              "index_differs"
+            ],
+            "type": "string"
+          }
+        ]
+      },
+      "DatasetVersions": {
+        "description": "The two dataset digests of a run's identity.",
+        "properties": {
+          "dataset_version": {
+            "description": "The dataset's digest.",
+            "type": "string"
+          },
+          "index_version": {
+            "description": "The derived chunk set's digest.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "dataset_version",
+          "index_version"
+        ],
+        "type": "object"
+      },
       "EdgeKind": {
         "description": "The kind of value travelling along an edge.",
         "oneOf": [
@@ -105,6 +215,25 @@
         "required": [
           "family",
           "local"
+        ],
+        "type": "object"
+      },
+      "FoundVersions": {
+        "description": "The digests of the dataset on disk.",
+        "properties": {
+          "dataset_version": {
+            "description": "What the dataset on disk digests to.",
+            "type": "string"
+          },
+          "index_version": {
+            "description": "What its derived chunk set digests to; `null` when it was not\ncompared — the dataset already differs, or the check is the ground\ntruth's, which depends on the dataset alone.",
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "dataset_version",
+          "index_version"
         ],
         "type": "object"
       },
@@ -256,6 +385,41 @@
         ],
         "type": "object"
       },
+      "NodeMetrics": {
+        "description": "One node's ranking metrics over the run.",
+        "properties": {
+          "judged_queries": {
+            "description": "How many queries the means are over: the judged queries for which the\nnode produced a ranking. A query without qrels is never in it, as it\nis never in the harness's means; `0` when the ground truth is not\nverified.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "metrics": {
+            "additionalProperties": {
+              "format": "double",
+              "type": "number"
+            },
+            "description": "The ranking metrics of its ranking, averaged over `judged_queries`;\n`null` when that is none, or when the ground truth is not verified.",
+            "nullable": true,
+            "type": "object"
+          },
+          "node": {
+            "description": "The node's id.",
+            "type": "string"
+          },
+          "produces_ranking": {
+            "description": "Whether the node produced a ranking for at least one query. A context\nbuilder, a generator and a node that failed on every query did not.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "judged_queries",
+          "metrics",
+          "node",
+          "produces_ranking"
+        ],
+        "type": "object"
+      },
       "ParameterValue": {
         "anyOf": [
           {
@@ -298,6 +462,8 @@
               "run_exists",
               "run_unreadable",
               "run_not_found",
+              "query_not_found",
+              "parameter_invalid",
               "dataset_absent",
               "dataset_differs",
               "benchmark_not_found",
@@ -358,6 +524,79 @@
           "detail",
           "code",
           "hint"
+        ],
+        "type": "object"
+      },
+      "QueryScores": {
+        "description": "One query, as the run executed it.",
+        "properties": {
+          "duration_nanos": {
+            "description": "The sum of its nodes' durations, in nanoseconds: each component's own\ntime, as the trace records it.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "id": {
+            "description": "The query's id.",
+            "type": "string"
+          },
+          "scores": {
+            "additionalProperties": {
+              "format": "double",
+              "type": "number"
+            },
+            "description": "Its scores at the run's output, by metric name: the ranking metrics\nwhen its qrels are non-empty, the answer metrics when it has a\nreference. Empty when it is judged on neither, or when the ground\ntruth is not verified.",
+            "type": "object"
+          }
+        },
+        "required": [
+          "id",
+          "scores",
+          "duration_nanos"
+        ],
+        "type": "object"
+      },
+      "QueryTrace": {
+        "description": "`GET /runs/{id}/trace/{query}`: one query's trace, node by node, in the\norder the nodes ran, with each named chunk's passage text when the run's\nown dataset is on disk.",
+        "properties": {
+          "nodes": {
+            "description": "The nodes, in execution order.",
+            "items": {
+              "$ref": "#/components/schemas/TraceNodeView"
+            },
+            "type": "array"
+          },
+          "passages": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DatasetCheck"
+              }
+            ],
+            "description": "Whether passage text could be resolved: only against the dataset the\nrun was evaluated on, digests compared (ADR-C36 § 4)."
+          },
+          "query": {
+            "description": "The query's id.",
+            "type": "string"
+          },
+          "run": {
+            "description": "The run's id.",
+            "type": "string"
+          },
+          "scores": {
+            "additionalProperties": {
+              "format": "double",
+              "type": "number"
+            },
+            "description": "The query's scores at the run's output, as `GET /runs/{id}/queries`\nreports them: present when the dataset on disk is the run's, whatever\nthe chunk set.",
+            "type": "object"
+          }
+        },
+        "required": [
+          "run",
+          "query",
+          "passages",
+          "scores",
+          "nodes"
         ],
         "type": "object"
       },
@@ -480,6 +719,70 @@
         ],
         "type": "object"
       },
+      "RunQueries": {
+        "description": "`GET /runs/{id}/queries`: every query the run executed, its scores read\nfrom the trace against the run's own ground truth, and the per-node\nranking metrics.\n\nDerived data: computed on read and cached under the workspace's `cache/`,\nnever stored in the run, and identical whether the cache was there or not.",
+        "properties": {
+          "answer_node": {
+            "description": "The node whose answer the answer metrics read, when the pipeline ends\nin one.",
+            "nullable": true,
+            "type": "string"
+          },
+          "cache_error": {
+            "description": "Why the figures could not be cached under the workspace's `cache/`,\nwhen they could not; `null` otherwise. The response is complete\neither way: the cache is never a truth, so its failure fails nothing.",
+            "nullable": true,
+            "type": "string"
+          },
+          "ground_truth": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DatasetCheck"
+              }
+            ],
+            "description": "Whether the ground truth the scores are read against is the run's\nown: the dataset on disk digests to the run's `dataset_version`. The\nchunk set is not compared — a score depends on the qrels and the\nreference answers, not on passage text. Scores and per-node metrics\nare present only when it is `verified`."
+          },
+          "metrics": {
+            "description": "The metrics a query can be scored on: those the run recorded that are\nread per query, by name.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "nodes": {
+            "description": "Every node of the pipeline, in the canonical order, with its ranking\nmetrics averaged over the run's judged queries.",
+            "items": {
+              "$ref": "#/components/schemas/NodeMetrics"
+            },
+            "type": "array"
+          },
+          "queries": {
+            "description": "The queries, in the run's order (by id) — all of them, or those the\n`missing_gold_at` filter kept.",
+            "items": {
+              "$ref": "#/components/schemas/QueryScores"
+            },
+            "type": "array"
+          },
+          "ranking_node": {
+            "description": "The node whose ranking the ranking metrics read (ADR-C30 § 3), when the\npipeline has one.",
+            "nullable": true,
+            "type": "string"
+          },
+          "run": {
+            "description": "The run's id.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "answer_node",
+          "cache_error",
+          "ground_truth",
+          "metrics",
+          "nodes",
+          "queries",
+          "ranking_node",
+          "run"
+        ],
+        "type": "object"
+      },
       "RunSummary": {
         "description": "One run, as the listing shows it.",
         "properties": {
@@ -565,6 +868,264 @@
           "services"
         ],
         "type": "object"
+      },
+      "TraceNodeView": {
+        "description": "One node of a query's trace.",
+        "properties": {
+          "duration_nanos": {
+            "description": "How long its component took, in nanoseconds.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "error": {
+            "description": "The failure it reported; `null` when it succeeded.",
+            "nullable": true,
+            "type": "string"
+          },
+          "inputs": {
+            "description": "What it received, one summary per input port, in port order.",
+            "items": {
+              "$ref": "#/components/schemas/TraceValue"
+            },
+            "type": "array"
+          },
+          "metrics": {
+            "additionalProperties": {
+              "format": "double",
+              "type": "number"
+            },
+            "description": "The ranking metrics of what it produced for this query: present when\nit produced a ranking, the query is judged and the dataset on disk is\nthe run's; `null` otherwise.",
+            "nullable": true,
+            "type": "object"
+          },
+          "node": {
+            "description": "The node's id.",
+            "type": "string"
+          },
+          "output": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TraceValue"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "What it produced; `null` when it failed."
+          }
+        },
+        "required": [
+          "duration_nanos",
+          "error",
+          "inputs",
+          "metrics",
+          "node",
+          "output"
+        ],
+        "type": "object"
+      },
+      "TracePassage": {
+        "description": "One named chunk, with its passage text when it could be resolved.",
+        "properties": {
+          "chunk": {
+            "description": "The chunk's id.",
+            "type": "string"
+          },
+          "document": {
+            "description": "The document it was derived from.",
+            "type": "string"
+          },
+          "score": {
+            "description": "The score the node gave it, on the node's own scale.",
+            "format": "double",
+            "type": "number"
+          },
+          "text": {
+            "description": "Its text: present only when the passages are `verified` and the chunk\nset derived from the dataset holds this id; `null` otherwise.",
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "chunk",
+          "document",
+          "score",
+          "text"
+        ],
+        "type": "object"
+      },
+      "TraceValue": {
+        "description": "A value along an edge, as the trace records it: sized on an input port,\nnamed where a node produced it.",
+        "oneOf": [
+          {
+            "description": "A query, by id.",
+            "properties": {
+              "id": {
+                "description": "The query's id.",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "query"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "A list of chunks, counted.",
+            "properties": {
+              "count": {
+                "description": "How many chunks it held.",
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "kind": {
+                "enum": [
+                  "chunk_count"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "count"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "The chunks a node produced, in its own order.",
+            "properties": {
+              "chunks": {
+                "description": "The chunks, in the order the node returned them.",
+                "items": {
+                  "$ref": "#/components/schemas/TracePassage"
+                },
+                "type": "array"
+              },
+              "kind": {
+                "enum": [
+                  "ranking"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "chunks"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "A context, sized.",
+            "properties": {
+              "count": {
+                "description": "How many chunks it held.",
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "kind": {
+                "enum": [
+                  "context_size"
+                ],
+                "type": "string"
+              },
+              "text_bytes": {
+                "description": "The length of its text, in bytes of UTF-8.",
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "kind",
+              "count",
+              "text_bytes"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "The context a node produced.",
+            "properties": {
+              "chunks": {
+                "description": "Its chunks, in the order the builder placed them.",
+                "items": {
+                  "$ref": "#/components/schemas/TracePassage"
+                },
+                "type": "array"
+              },
+              "kind": {
+                "enum": [
+                  "context"
+                ],
+                "type": "string"
+              },
+              "text": {
+                "description": "Its rendered text, whole, as the trace records it.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "chunks",
+              "text"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "An answer, sized.",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "answer_size"
+                ],
+                "type": "string"
+              },
+              "text_bytes": {
+                "description": "The length of its text, in bytes of UTF-8.",
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "kind",
+              "text_bytes"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "The answer a node produced.",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "answer"
+                ],
+                "type": "string"
+              },
+              "text": {
+                "description": "Its text, as the generator returned it.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "text"
+            ],
+            "type": "object"
+          }
+        ]
       },
       "UnreadableRun": {
         "description": "A run the store lists but cannot load, and why.",
@@ -692,6 +1253,89 @@
           }
         },
         "summary": "One run: its inputs, metrics, configuration, bindings and lowered graph."
+      }
+    },
+    "/runs/{id}/queries": {
+      "get": {
+        "description": "Takes one optional query parameter, `missing_gold_at=<k>`, a positive integer: keep only the judged queries with no gold document (grade above 0) in the top k of the output ranking. It needs the run's own dataset, and answers dataset_absent or dataset_differs without it. Any other parameter, or this one twice, is parameter_invalid. Not declared under `parameters`: the UI's type generator refuses query parameters until the screen that first sends one extends it.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunQueries"
+                }
+              }
+            },
+            "description": "A run's queries with their scores read from the trace, and its per-node ranking metrics."
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "An error, as application/problem+json."
+          }
+        },
+        "summary": "A run's queries with their scores read from the trace, and its per-node ranking metrics."
+      }
+    },
+    "/runs/{id}/trace/{query}": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueryTrace"
+                }
+              }
+            },
+            "description": "One query's trace, node by node, with passage text when the run's own dataset is on disk."
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "An error, as application/problem+json."
+          }
+        },
+        "summary": "One query's trace, node by node, with passage text when the run's own dataset is on disk."
       }
     },
     "/workspace": {
