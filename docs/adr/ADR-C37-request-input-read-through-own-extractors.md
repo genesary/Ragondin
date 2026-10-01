@@ -132,13 +132,14 @@ the UI's type generator reads both.**
   `axum::extract::Json` or a `HeaderMap` to read a request header, and none
   reads `Uri::query()`. `HEAD` on an API route is axum's implicit
   `HEAD`-on-`GET`, through the same extractors.
-- **Two kinds of handler are explicit exceptions.**
-  - The fallbacks that take the `Uri`, and the `Method`, only to name the
-    request in an error (`route_not_found`, `prefix_not_found`,
-    `method_not_allowed`) read no input from them.
-  - The assets fallback, `assets::serve`, is outside the `/api` router. It
-    reads the `Method` and the `Uri` to choose the file it serves, answers
-    `HEAD` itself, and refuses any other method with its own `405`.
+- **One exception inside the router, and one handler outside the rule.**
+  - The exception is the naming fallbacks: they take the `Uri`, and the
+    `Method`, only to name the request in an error (`route_not_found`,
+    `prefix_not_found`, `method_not_allowed`), and read no input from them.
+  - The assets fallback, `assets::serve`, is outside the rule, because it is
+    outside the `/api` router. It reads the `Method` and the `Uri` to choose
+    the file it serves, answers `HEAD` itself, and refuses any other method
+    with its own `405`.
 - **The layers are outside this rule.** The `Host` and `Origin` layers read
   headers as the network envelope, where ADR-C10 puts them, not as a handler's
   input.
@@ -186,8 +187,8 @@ request carries headers no handler reads, and `ApiHeaders<T>` ignores every
 header its type does not name. It reads the headers with the module's own
 code, since no admitted crate deserializes a `HeaderMap`. A header it names
 that appears more than once is refused as `parameter_invalid`, naming the
-header, as a repeated query parameter is. Its other refusals are problem
-bodies with the codes the endpoint gives today.
+header, as a repeated query parameter is. Its other refusals keep the
+codes the endpoint gives today.
 
 **`ApiPath<T>` refuses an invalid path value as `parameter_invalid`**, naming
 the path parameter the segment fills, whether the segment does not decode to
