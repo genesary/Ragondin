@@ -21,7 +21,7 @@ An **Architecture Decision Record (ADR)** captures one architectural decision: i
 
 - **`000-template.md`** — the template every ADR follows: Context / Decision / Alternatives rejected / Consequences / Status, plus an optional Amendments section (process rule 2).
 - **`ADR-001-*.md` … `ADR-016-*.md`** — the frozen decisions of the *system* architecture, one file per decision, cited as `ADR-1` … `ADR-16`.
-- **`ADR-C01-*.md` … `ADR-C36-*.md`** — the frozen decisions of the *code* architecture, one file per decision, cited as `ADR-C1` … `ADR-C36`.
+- **`ADR-C01-*.md` … `ADR-C37-*.md`** — the frozen decisions of the *code* architecture, one file per decision, cited as `ADR-C1` … `ADR-C37`.
 
 Each file is self-contained: it should be understandable and actionable on its own, without first reading `AGENTS.md` or the architecture documents. If an ADR only makes sense after reading something else, it is under-specified and should be fixed.
 
@@ -90,6 +90,7 @@ index of citable decisions is worse than none — `just check` fails when it dri
 | [`ADR-C34`](ADR-C34-protobuf-compiler-obtained-from-protox.md) | The protobuf compiler is `protox`, a build-dependency of `ragondin-proto`; no `protoc` is needed | INV-4 | accepted |
 | [`ADR-C35`](ADR-C35-component-error-crosses-the-wire-as-three-status-codes.md) | A `ComponentError` crosses the wire as one of three gRPC status codes; every `Remote` adapter maps a status back with one total function in `ragondin-remote` | INV-1 | accepted |
 | [`ADR-C36`](ADR-C36-front-end-served-by-the-binary-over-an-internal-api.md) | The front end is served by `ragondin ui` from an internal crate that reaches no engine and no component, over a versioned JSON API that is not yet promised; replay resolves passages at read time against a verified dataset; the UI is a TypeScript application under `ui/`, governed like the workspace | INV-1, INV-2, INV-4, INV-5, INV-6, INV-8, INV-9, INV-10, INV-11, INV-12 | accepted |
+| [`ADR-C37`](ADR-C37-request-input-read-through-own-extractors.md) | Every request input reaches `ragondin-api` through the crate's own extractors, over axum's `query` feature; a parameter is a closed, typed struct, and every query parameter and required header is declared in the API description | INV-1, INV-11, INV-12 | accepted |
 
 <!-- END GENERATED ADR INDEX -->
 
@@ -143,7 +144,7 @@ stated here canonically.
 number is **never padded**:
 
 - System-architecture decisions use the bare prefix: `ADR-1` … `ADR-16`.
-- Code-architecture decisions use the `C` prefix: `ADR-C1` … `ADR-C36`.
+- Code-architecture decisions use the `C` prefix: `ADR-C1` … `ADR-C37`.
 - New decisions (from `decision` issues) continue the appropriate sequence and are added, never inserted retroactively.
 
 **The filename** is `ADR-<number>-<slug>.md`, where the number **is** padded — to

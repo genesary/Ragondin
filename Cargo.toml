@@ -113,7 +113,11 @@ protox = "0.8"                                     # build-dependency of ragondi
 #
 # The defaults it drops are the form and query extractors no endpoint reads,
 # `matched-path` and `original-uri`, which no handler uses, and
-# `tracing`/`tower-log`, since the crate emits no telemetry. `cargo tree -i
+# `tracing`/`tower-log`, since the crate emits no telemetry. ADR-C37 § 1
+# admits `query`, for `ragondin-api`'s own `ApiQuery` extractor; it is not
+# on the list yet, and is appended in the pull request that first uses it,
+# where this comment names it among the features above. `form` stays off.
+# `cargo tree -i
 # hyper -e normal --all-features` still shows one `hyper`, reached through
 # `axum`, `tonic` and their stack and from no core crate. `hyper` is on the
 # INV-4 deny-list, so the core cannot reach this.
