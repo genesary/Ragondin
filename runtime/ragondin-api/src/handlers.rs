@@ -189,28 +189,9 @@ pub(crate) async fn queries(
                 outputs.clone(),
             );
             let (benchmark, figures, failure) = work(move || {
-                // A cache that cannot be read is a miss whose reason is kept.
-                let (cached, read_failure) = match cache::read(&workspace, &key) {
-                    Ok(cached) => (cached, None),
-                    Err(failure) => (None, Some(failure)),
-                };
-                if let Some(figures) = cached {
-                    return Ok((benchmark, figures, None));
-                }
-                let figures = cache::Figures {
-                    queries: traces
-                        .iter()
-                        .map(|(query, trace)| {
-                            let scores =
-                                derived::query_scores(&metrics, &outputs, &benchmark, query, trace);
-                            (query.as_str().to_owned(), scores)
-                        })
-                        .collect(),
-                    nodes: derived::node_figures(&metrics, &pipeline, &traces, Some(&benchmark)),
-                };
-                // Served whatever the cache did: its failure is reported, and
-                // fails nothing (`cache.rs`).
-                let failure = read_failure.or(cache::write(&workspace, &key, &figures).err());
+                let (figures, failure) = figures(
+                    &workspace, &key, &pipeline, &traces, &metrics, &outputs, &benchmark,
+                );
                 Ok((benchmark, figures, failure))
             })
             .await?;
@@ -334,6 +315,43 @@ pub(crate) async fn trace(
     }))
 }
 
+/// A run's per-query scores and per-node figures against its verified
+/// `benchmark`: read from the workspace's `cache/` when the whole key holds,
+/// computed and written there otherwise. Synchronous — the cache is files —
+/// so a handler calls it inside [`work`]. A cache that cannot be read or
+/// written fails nothing: the figures are computed anyway, and the reason
+/// comes back beside them (`cache.rs`).
+pub(crate) fn figures(
+    workspace: &std::path::Path,
+    key: &cache::Key,
+    pipeline: &LogicalPipeline,
+    traces: &BTreeMap<QueryId, Trace>,
+    metrics: &Metrics,
+    outputs: &Outputs,
+    benchmark: &ragondin_benchmarks::Benchmark,
+) -> (cache::Figures, Option<String>) {
+    // A cache that cannot be read is a miss whose reason is kept.
+    let (cached, read_failure) = match cache::read(workspace, key) {
+        Ok(cached) => (cached, None),
+        Err(failure) => (None, Some(failure)),
+    };
+    if let Some(figures) = cached {
+        return (figures, None);
+    }
+    let figures = cache::Figures {
+        queries: traces
+            .iter()
+            .map(|(query, trace)| {
+                let scores = derived::query_scores(metrics, outputs, benchmark, query, trace);
+                (query.as_str().to_owned(), scores)
+            })
+            .collect(),
+        nodes: derived::node_figures(metrics, pipeline, traces, Some(benchmark)),
+    };
+    let failure = read_failure.or(cache::write(workspace, key, &figures).err());
+    (figures, failure)
+}
+
 /// The one parameter `GET /runs/{id}/queries` takes.
 const MISSING_GOLD_AT: &str = "missing_gold_at";
 
@@ -408,7 +426,7 @@ fn decode(text: &str) -> Result<String, ApiError> {
 
 /// Loads a run by the id a path named: `run_not_found` for an id that is not
 /// one or names nothing, `run_unreadable` for a run that does not read.
-async fn load_run(state: &AppState, id: String) -> Result<Run, ApiError> {
+pub(crate) async fn load_run(state: &AppState, id: String) -> Result<Run, ApiError> {
     let run_id: RunId = id
         .parse()
         .map_err(|_| ApiError::RunNotFound { id: id.clone() })?;
@@ -426,7 +444,7 @@ async fn load_run(state: &AppState, id: String) -> Result<Run, ApiError> {
 
 /// The run's pipeline, lowered from its stored document by
 /// `ragondin-experiments`' one lowering path.
-fn lower(run: &Run) -> Result<LogicalPipeline, ApiError> {
+pub(crate) fn lower(run: &Run) -> Result<LogicalPipeline, ApiError> {
     lower_configuration(&run.config).map_err(|reason| ApiError::RunUnreadable {
         run_id: run.id.to_string(),
         reason,
@@ -435,7 +453,7 @@ fn lower(run: &Run) -> Result<LogicalPipeline, ApiError> {
 
 /// Every trace of the run, typed; one that does not read makes the run
 /// `run_unreadable`, naming the query — reported, never repaired.
-fn read_traces(run: &Run) -> Result<BTreeMap<QueryId, Trace>, ApiError> {
+pub(crate) fn read_traces(run: &Run) -> Result<BTreeMap<QueryId, Trace>, ApiError> {
     run.traces
         .iter()
         .map(|(query, document)| Ok((query.clone(), read_trace(run, query, document)?)))
@@ -478,7 +496,7 @@ fn duration(trace: &Trace) -> u64 {
 
 /// Runs derivation work — a dataset's chunk set, the cache files — on a
 /// blocking thread, off the async workers.
-async fn work<T, F>(call: F) -> Result<T, ApiError>
+pub(crate) async fn work<T, F>(call: F) -> Result<T, ApiError>
 where
     T: Send + 'static,
     F: FnOnce() -> Result<T, ApiError> + Send + 'static,

@@ -9,6 +9,7 @@ use serde::de::DeserializeOwned;
 use crate::error::ApiError;
 
 pub(crate) mod benchmarks;
+pub(crate) mod compare;
 pub(crate) mod pipelines;
 pub(crate) mod services;
 

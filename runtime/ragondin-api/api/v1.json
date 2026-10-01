@@ -204,6 +204,230 @@
         ],
         "type": "object"
       },
+      "CompareRequest": {
+        "additionalProperties": false,
+        "description": "`POST /compare`: the runs to compare, the baseline among them, and\noptionally a manual pairing to keep before comparing.",
+        "properties": {
+          "baseline": {
+            "description": "The run the others are compared against.",
+            "type": "string"
+          },
+          "pairing": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Pairing"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "A manual pairing between two workspace pipelines, kept — replacing\nany — before the runs are compared; with no pairs, it is removed and\nthe two pipelines pair automatically again. Absent changes nothing."
+          },
+          "run_ids": {
+            "description": "The runs, by id: two to five, each once, the baseline among them. The\nanswer puts the baseline first and the others in this order.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "run_ids",
+          "baseline"
+        ],
+        "type": "object"
+      },
+      "ComparedRun": {
+        "description": "One run of a comparison.",
+        "properties": {
+          "id": {
+            "description": "The run's id.",
+            "type": "string"
+          },
+          "pipeline": {
+            "description": "The workspace pipeline it is a run of: the one pipeline document\nwhose canonical hash is the run's. `null` when none is — the\ndocument was edited since, or removed — or when several are; such a\nrun is paired automatically only.",
+            "nullable": true,
+            "type": "string"
+          },
+          "pipeline_hash": {
+            "description": "The content hash of the canonical logical pipeline it ran.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "pipeline",
+          "pipeline_hash"
+        ],
+        "type": "object"
+      },
+      "Comparison": {
+        "description": "`POST /compare`: runs of one benchmark compared against a baseline.\n\nEvery list with one entry per run — a metric's values, a stage's cells —\nis in the order of [`runs`](Self::runs): the baseline first, then the\nother runs in the order the request gave them.",
+        "properties": {
+          "baseline": {
+            "description": "The baseline's id.",
+            "type": "string"
+          },
+          "cache_errors": {
+            "description": "Why derived figures could not be cached under the workspace's\n`cache/`, one entry per failure; empty otherwise. The response is\ncomplete either way.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "configuration": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ConfigurationMatrix"
+              }
+            ],
+            "description": "The configuration parameters not identical across the runs."
+          },
+          "ground_truth": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DatasetCheck"
+              }
+            ],
+            "description": "Whether the benchmark on disk is the one the runs were evaluated on,\nwhich the per-query deltas and the per-stage metrics are read\nagainst. Without `verified`, `query_deltas` is empty and no stage\ncell carries a metric; the table, the matrix, the stages and the\nlatency do not depend on it."
+          },
+          "latency": {
+            "description": "Each run's latency, node by node.",
+            "items": {
+              "$ref": "#/components/schemas/RunLatency"
+            },
+            "type": "array"
+          },
+          "metrics": {
+            "description": "One row per metric any run recorded, in name order.",
+            "items": {
+              "$ref": "#/components/schemas/MetricRow"
+            },
+            "type": "array"
+          },
+          "pairings": {
+            "description": "The manual pairings in use: one per run whose pipeline the workspace\nholds a pairing for with the baseline's, oriented from the baseline's\npipeline.",
+            "items": {
+              "$ref": "#/components/schemas/Pairing"
+            },
+            "type": "array"
+          },
+          "query_deltas": {
+            "description": "Each run other than the baseline: its per-query deltas against the\nbaseline, for every ranking metric both recorded.",
+            "items": {
+              "$ref": "#/components/schemas/RunDeltas"
+            },
+            "type": "array"
+          },
+          "runs": {
+            "description": "The runs compared, the baseline first.",
+            "items": {
+              "$ref": "#/components/schemas/ComparedRun"
+            },
+            "type": "array"
+          },
+          "stages": {
+            "description": "The stages the runs are aligned by, in pipeline order: those at least\none run has.",
+            "items": {
+              "$ref": "#/components/schemas/StageRow"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "baseline",
+          "runs",
+          "ground_truth",
+          "metrics",
+          "configuration",
+          "stages",
+          "pairings",
+          "query_deltas",
+          "latency",
+          "cache_errors"
+        ],
+        "type": "object"
+      },
+      "Confidence": {
+        "description": "How sure an automatic pairing is.",
+        "oneOf": [
+          {
+            "description": "Every graph was unambiguous at this stage, or the pairing is by hand.",
+            "enum": [
+              "high"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "A guess: the UI offers the manual pairing.",
+            "enum": [
+              "low"
+            ],
+            "type": "string"
+          }
+        ]
+      },
+      "ConfigurationMatrix": {
+        "description": "The configuration parameters not identical across the runs, or why that\ncould not be said.",
+        "oneOf": [
+          {
+            "description": "Every stored configuration lowered.",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "compared"
+                ],
+                "type": "string"
+              },
+              "parameters": {
+                "description": "Every parameter — family and `impl:` name included — whose value\nis not the same in every run, sorted by node and key.",
+                "items": {
+                  "$ref": "#/components/schemas/ParameterRow"
+                },
+                "type": "array"
+              },
+              "same_logical_form": {
+                "description": "Whether every canonical logical form hashes equal: runs that\ndiffer only in their wiring have no row, and are still not one\nconfiguration.",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "kind",
+              "parameters",
+              "same_logical_form"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "A run's stored configuration does not lower under this build.",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "unavailable"
+                ],
+                "type": "string"
+              },
+              "reason": {
+                "description": "What the parser or the validation pass said.",
+                "type": "string"
+              },
+              "run": {
+                "description": "That run's id.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "run",
+              "reason"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "DatasetCheck": {
         "description": "Whether the dataset on disk is the one a run was evaluated on: the\nbenchmark pinned to the run's `dataset_version`, digesting to it — and,\nfor passage text, its derived chunk set digesting to the run's\n`index_version`.",
         "properties": {
@@ -313,6 +537,106 @@
           "index_version"
         ],
         "type": "object"
+      },
+      "DeltaBin": {
+        "description": "One bin of the per-query histogram.",
+        "properties": {
+          "bin": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DeltaBinName"
+              }
+            ],
+            "description": "Which bin."
+          },
+          "count": {
+            "description": "How many queries it holds.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "lower": {
+            "description": "Its lower bound; `null` for the lowest.",
+            "format": "double",
+            "nullable": true,
+            "type": "number"
+          },
+          "queries": {
+            "description": "Those queries, by id.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "upper": {
+            "description": "Its upper bound; `null` for the highest.",
+            "format": "double",
+            "nullable": true,
+            "type": "number"
+          }
+        },
+        "required": [
+          "bin",
+          "count",
+          "lower",
+          "queries",
+          "upper"
+        ],
+        "type": "object"
+      },
+      "DeltaBinName": {
+        "description": "The seven bins of a delta `d`: by its sign, and its magnitude against\n0.1 and 0.3. A bound belongs to the bin nearer zero.",
+        "oneOf": [
+          {
+            "description": "`d < -0.3`.",
+            "enum": [
+              "much_worse"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "`-0.3 <= d < -0.1`.",
+            "enum": [
+              "worse"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "`-0.1 <= d < 0`.",
+            "enum": [
+              "slightly_worse"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "`d = 0`: the same score.",
+            "enum": [
+              "unchanged"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "`0 < d <= 0.1`.",
+            "enum": [
+              "slightly_better"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "`0.1 < d <= 0.3`.",
+            "enum": [
+              "better"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "`d > 0.3`.",
+            "enum": [
+              "much_better"
+            ],
+            "type": "string"
+          }
+        ]
       },
       "EdgeKind": {
         "description": "The kind of value travelling along an edge.",
@@ -643,6 +967,143 @@
         ],
         "type": "object"
       },
+      "MetricDeltas": {
+        "description": "One metric's per-query deltas, and their histogram.",
+        "properties": {
+          "bins": {
+            "description": "The seven bins, from the worst to the best: they partition the\nqueries with a delta.",
+            "items": {
+              "$ref": "#/components/schemas/DeltaBin"
+            },
+            "type": "array"
+          },
+          "deltas": {
+            "description": "Each such query's score in the run minus its score in the baseline,\nby query id.",
+            "items": {
+              "$ref": "#/components/schemas/QueryDelta"
+            },
+            "type": "array"
+          },
+          "judged_queries": {
+            "description": "How many queries have a delta: those judged, and scored at both\nruns' outputs.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "metric": {
+            "description": "The metric's name.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "metric",
+          "judged_queries",
+          "deltas",
+          "bins"
+        ],
+        "type": "object"
+      },
+      "MetricDirection": {
+        "description": "Which way a metric improves.",
+        "oneOf": [
+          {
+            "description": "A higher value is better.",
+            "enum": [
+              "higher"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "A lower value is better.",
+            "enum": [
+              "lower"
+            ],
+            "type": "string"
+          }
+        ]
+      },
+      "MetricRow": {
+        "description": "One metric across the runs compared.",
+        "properties": {
+          "best": {
+            "description": "The runs holding the best value, by `direction`: every one on a tie.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "deltas": {
+            "description": "Each run's value minus the baseline's; `null` where either did not\nrecord it. The baseline's own is `0`.",
+            "items": {
+              "format": "double",
+              "nullable": true,
+              "type": "number"
+            },
+            "type": "array"
+          },
+          "direction": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/MetricDirection"
+              }
+            ],
+            "description": "Which way it improves, read off its name: `lower` for a latency,\n`higher` for every other."
+          },
+          "name": {
+            "description": "The metric's name.",
+            "type": "string"
+          },
+          "values": {
+            "description": "Each run's value; `null` where the run did not record it.",
+            "items": {
+              "format": "double",
+              "nullable": true,
+              "type": "number"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "name",
+          "direction",
+          "values",
+          "deltas",
+          "best"
+        ],
+        "type": "object"
+      },
+      "NodeLatency": {
+        "description": "One node's latency over a run's queries.",
+        "properties": {
+          "family": {
+            "description": "Its component family, as a configuration's `component:` spells it.",
+            "type": "string"
+          },
+          "median_nanos": {
+            "description": "The median of its durations, in nanoseconds: the lower of the two\nmiddle values over an even count, so it is a duration that occurred.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "node": {
+            "description": "The node's id.",
+            "type": "string"
+          },
+          "queries": {
+            "description": "How many queries it ran for.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "node",
+          "family",
+          "median_nanos",
+          "queries"
+        ],
+        "type": "object"
+      },
       "NodeMetrics": {
         "description": "One node's ranking metrics over the run.",
         "properties": {
@@ -675,6 +1136,171 @@
           "metrics",
           "node",
           "produces_ranking"
+        ],
+        "type": "object"
+      },
+      "NodePair": {
+        "additionalProperties": false,
+        "description": "Two nodes compared with each other: the second is shown at the first's\nstage.",
+        "properties": {
+          "label": {
+            "description": "What the pair compares, replacing the stage's name in the row; absent\nfor none.",
+            "nullable": true,
+            "type": "string"
+          },
+          "node": {
+            "description": "A node of `pipeline`.",
+            "type": "string"
+          },
+          "other": {
+            "description": "A node of `other`.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "node",
+          "other"
+        ],
+        "type": "object"
+      },
+      "Pairing": {
+        "additionalProperties": false,
+        "description": "A manual pairing between two pipelines: a list of node pairs, kept under\n`pipelines/<pipeline>.pairing/<other>.json` and read in both directions.\nAlso the body's `pairing` in `POST /compare`, which keeps it.",
+        "properties": {
+          "other": {
+            "description": "The pipeline the pairs' `other` belongs to.",
+            "type": "string"
+          },
+          "pairs": {
+            "description": "The pairs. Empty in a request: \"Reset to automatic\", which removes\nthe pairing.",
+            "items": {
+              "$ref": "#/components/schemas/NodePair"
+            },
+            "type": "array"
+          },
+          "pipeline": {
+            "description": "The pipeline the pairs' `node` belongs to.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "pipeline",
+          "other",
+          "pairs"
+        ],
+        "type": "object"
+      },
+      "PairingSource": {
+        "description": "Where a stage's pairing comes from.",
+        "oneOf": [
+          {
+            "description": "Derived from the nodes' kinds and positions.",
+            "enum": [
+              "automatic"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "Drawn by hand, and remembered for the pair of pipelines.",
+            "enum": [
+              "manual"
+            ],
+            "type": "string"
+          }
+        ]
+      },
+      "ParameterName": {
+        "description": "A node's parameter, as a configuration spells it.",
+        "oneOf": [
+          {
+            "description": "The node's `component:` family.",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "component"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "The node's `impl:` name.",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "impl"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "A key under the node's `params:`.",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "param"
+                ],
+                "type": "string"
+              },
+              "name": {
+                "description": "The key.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "name"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "ParameterRow": {
+        "description": "One parameter that is not the same in every run.",
+        "properties": {
+          "key": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ParameterName"
+              }
+            ],
+            "description": "Which of the node's parameters."
+          },
+          "node": {
+            "description": "The node it belongs to.",
+            "type": "string"
+          },
+          "values": {
+            "description": "Each run's value; `null` where its configuration does not set it.",
+            "items": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/ParameterValue"
+                },
+                {
+                  "enum": [
+                    null
+                  ],
+                  "nullable": true
+                }
+              ]
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "node",
+          "key",
+          "values"
         ],
         "type": "object"
       },
@@ -985,7 +1611,8 @@
               "host_refused",
               "origin_refused",
               "route_not_found",
-              "method_not_allowed"
+              "method_not_allowed",
+              "runs_not_comparable"
             ],
             "type": "string"
           },
@@ -1039,6 +1666,25 @@
           "detail",
           "code",
           "hint"
+        ],
+        "type": "object"
+      },
+      "QueryDelta": {
+        "description": "One query's delta.",
+        "properties": {
+          "delta": {
+            "description": "Its score in the run minus its score in the baseline.",
+            "format": "double",
+            "type": "number"
+          },
+          "query": {
+            "description": "The query's id.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "query",
+          "delta"
         ],
         "type": "object"
       },
@@ -1112,6 +1758,27 @@
           "passages",
           "scores",
           "nodes"
+        ],
+        "type": "object"
+      },
+      "RunDeltas": {
+        "description": "One run's per-query deltas against the baseline.",
+        "properties": {
+          "metrics": {
+            "description": "One entry per ranking metric both it and the baseline recorded, in\nname order.",
+            "items": {
+              "$ref": "#/components/schemas/MetricDeltas"
+            },
+            "type": "array"
+          },
+          "run": {
+            "description": "The run's id.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run",
+          "metrics"
         ],
         "type": "object"
       },
@@ -1207,6 +1874,27 @@
           "index_version",
           "model_hashes",
           "engine_version"
+        ],
+        "type": "object"
+      },
+      "RunLatency": {
+        "description": "One run's latency, node by node.",
+        "properties": {
+          "nodes": {
+            "description": "Every node that ran, by id.",
+            "items": {
+              "$ref": "#/components/schemas/NodeLatency"
+            },
+            "type": "array"
+          },
+          "run": {
+            "description": "The run's id.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run",
+          "nodes"
         ],
         "type": "object"
       },
@@ -1445,6 +2133,193 @@
         "required": [
           "datasets",
           "services"
+        ],
+        "type": "object"
+      },
+      "StageCell": {
+        "description": "One run at one stage.",
+        "oneOf": [
+          {
+            "description": "The run's pipeline has no node at this stage: \"no stage here\", an\nabsence, never a zero.",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "absent"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "The run's nodes at this stage.",
+            "properties": {
+              "best": {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/StageValue"
+                },
+                "description": "Per metric, the best value among the nodes and the node it is\nfrom — for the legs, the best leg. Empty without a verified\nground truth.",
+                "type": "object"
+              },
+              "kind": {
+                "enum": [
+                  "present"
+                ],
+                "type": "string"
+              },
+              "nodes": {
+                "description": "Each node, in the pipeline's canonical order — several only for\nthe retrieval legs, or where a pair drawn by hand joined one.",
+                "items": {
+                  "$ref": "#/components/schemas/StageNode"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "kind",
+              "nodes",
+              "best"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "StageName": {
+        "description": "A stage of a pipeline, in the order a ranking travels through them.",
+        "oneOf": [
+          {
+            "description": "The retrievers.",
+            "enum": [
+              "retrieval_legs"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "The fusion.",
+            "enum": [
+              "after_fusion"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "The reranker.",
+            "enum": [
+              "after_rerank"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "The ranking the run's retrieval metrics were read at.",
+            "enum": [
+              "final_ranking"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "The generator's answer.",
+            "enum": [
+              "answer"
+            ],
+            "type": "string"
+          }
+        ]
+      },
+      "StageNode": {
+        "description": "A node at a stage.",
+        "properties": {
+          "metrics": {
+            "additionalProperties": {
+              "format": "double",
+              "type": "number"
+            },
+            "description": "Its ranking metrics averaged over the judged queries, as\n`GET /runs/{id}/queries` reports them; `null` without a verified\nground truth or when it ranked no judged query.",
+            "nullable": true,
+            "type": "object"
+          },
+          "node": {
+            "description": "The node's id.",
+            "type": "string"
+          },
+          "paired_by_hand": {
+            "description": "Whether a pair drawn by hand placed it here.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "metrics",
+          "node",
+          "paired_by_hand"
+        ],
+        "type": "object"
+      },
+      "StageRow": {
+        "description": "One stage across the runs compared.",
+        "properties": {
+          "cells": {
+            "description": "Each run's cell.",
+            "items": {
+              "$ref": "#/components/schemas/StageCell"
+            },
+            "type": "array"
+          },
+          "confidence": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Confidence"
+              }
+            ],
+            "description": "`low` when a pipeline's graph was ambiguous at this stage — two\nfusions, two rerankers, a reranker upstream of the fusion — and the\nautomatic pairing is a guess."
+          },
+          "label": {
+            "description": "What the row compares, in the words of the pair drawn by hand into\nit; `null` when no pair named it.",
+            "nullable": true,
+            "type": "string"
+          },
+          "source": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/PairingSource"
+              }
+            ],
+            "description": "`manual` when a pair drawn by hand placed a node in it."
+          },
+          "stage": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/StageName"
+              }
+            ],
+            "description": "Which stage."
+          }
+        },
+        "required": [
+          "cells",
+          "confidence",
+          "label",
+          "source",
+          "stage"
+        ],
+        "type": "object"
+      },
+      "StageValue": {
+        "description": "A metric's value at a stage, and the node it is read at.",
+        "properties": {
+          "node": {
+            "description": "The node.",
+            "type": "string"
+          },
+          "value": {
+            "description": "Its value.",
+            "format": "double",
+            "type": "number"
+          }
+        },
+        "required": [
+          "node",
+          "value"
         ],
         "type": "object"
       },
@@ -1878,6 +2753,45 @@
           }
         },
         "summary": "Imports a corpus on the server's disk as a local benchmark."
+      }
+    },
+    "/compare": {
+      "post": {
+        "description": "Two to five runs, each once, the baseline among them. More than five, or runs whose dataset_version differs, is runs_not_comparable (409), naming the ceiling or both versions; there is no comparison across benchmarks. A body's `pairing` is kept for its two workspace pipelines before the runs are compared, under `pipelines/<pipeline>.pairing/<other>.json`, and read in both directions after; with no pairs it is removed (\"Reset to automatic\"). A pair naming a node that is not a retriever, fusion or reranker of its pipeline is request_invalid, and nothing is kept.",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CompareRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Comparison"
+                }
+              }
+            },
+            "description": "Runs of one benchmark against a baseline: the metric table, the parameter matrix, the stages with their pairing, the per-query deltas and their bins, and the latency per node."
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "An error, as application/problem+json."
+          }
+        },
+        "summary": "Runs of one benchmark against a baseline: the metric table, the parameter matrix, the stages with their pairing, the per-query deltas and their bins, and the latency per node."
       }
     },
     "/pipelines": {

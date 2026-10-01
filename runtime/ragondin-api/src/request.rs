@@ -52,3 +52,19 @@ pub struct ProbeRequest {
     /// identity only for one; a context builder takes none. Absent is none.
     pub served_model: Option<String>,
 }
+
+/// `POST /compare`: the runs to compare, the baseline among them, and
+/// optionally a manual pairing to keep before comparing.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CompareRequest {
+    /// The runs, by id: two to five, each once, the baseline among them. The
+    /// answer puts the baseline first and the others in this order.
+    pub run_ids: Vec<String>,
+    /// The run the others are compared against.
+    pub baseline: String,
+    /// A manual pairing between two workspace pipelines, kept — replacing
+    /// any — before the runs are compared; with no pairs, it is removed and
+    /// the two pipelines pair automatically again. Absent changes nothing.
+    pub pairing: Option<crate::response::Pairing>,
+}

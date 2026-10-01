@@ -747,6 +747,359 @@ pub struct EdgeLocation {
     pub port: u64,
 }
 
+/// `POST /compare`: runs of one benchmark compared against a baseline.
+///
+/// Every list with one entry per run — a metric's values, a stage's cells —
+/// is in the order of [`runs`](Self::runs): the baseline first, then the
+/// other runs in the order the request gave them.
+#[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
+pub struct Comparison {
+    /// The baseline's id.
+    pub baseline: String,
+    /// The runs compared, the baseline first.
+    pub runs: Vec<ComparedRun>,
+    /// Whether the benchmark on disk is the one the runs were evaluated on,
+    /// which the per-query deltas and the per-stage metrics are read
+    /// against. Without `verified`, `query_deltas` is empty and no stage
+    /// cell carries a metric; the table, the matrix, the stages and the
+    /// latency do not depend on it.
+    pub ground_truth: DatasetCheck,
+    /// One row per metric any run recorded, in name order.
+    pub metrics: Vec<MetricRow>,
+    /// The configuration parameters not identical across the runs.
+    pub configuration: ConfigurationMatrix,
+    /// The stages the runs are aligned by, in pipeline order: those at least
+    /// one run has.
+    pub stages: Vec<StageRow>,
+    /// The manual pairings in use: one per run whose pipeline the workspace
+    /// holds a pairing for with the baseline's, oriented from the baseline's
+    /// pipeline.
+    pub pairings: Vec<Pairing>,
+    /// Each run other than the baseline: its per-query deltas against the
+    /// baseline, for every ranking metric both recorded.
+    pub query_deltas: Vec<RunDeltas>,
+    /// Each run's latency, node by node.
+    pub latency: Vec<RunLatency>,
+    /// Why derived figures could not be cached under the workspace's
+    /// `cache/`, one entry per failure; empty otherwise. The response is
+    /// complete either way.
+    pub cache_errors: Vec<String>,
+}
+
+/// One run of a comparison.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+#[schemars(transform = every_property_required)]
+pub struct ComparedRun {
+    /// The run's id.
+    pub id: String,
+    /// The content hash of the canonical logical pipeline it ran.
+    pub pipeline_hash: String,
+    /// The workspace pipeline it is a run of: the one pipeline document
+    /// whose canonical hash is the run's. `null` when none is — the
+    /// document was edited since, or removed — or when several are; such a
+    /// run is paired automatically only.
+    pub pipeline: Option<String>,
+}
+
+/// One metric across the runs compared.
+#[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
+pub struct MetricRow {
+    /// The metric's name.
+    pub name: String,
+    /// Which way it improves, read off its name: `lower` for a latency,
+    /// `higher` for every other.
+    pub direction: MetricDirection,
+    /// Each run's value; `null` where the run did not record it.
+    pub values: Vec<Option<f64>>,
+    /// Each run's value minus the baseline's; `null` where either did not
+    /// record it. The baseline's own is `0`.
+    pub deltas: Vec<Option<f64>>,
+    /// The runs holding the best value, by `direction`: every one on a tie.
+    pub best: Vec<String>,
+}
+
+/// Which way a metric improves.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum MetricDirection {
+    /// A higher value is better.
+    Higher,
+    /// A lower value is better.
+    Lower,
+}
+
+/// The configuration parameters not identical across the runs, or why that
+/// could not be said.
+#[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ConfigurationMatrix {
+    /// Every stored configuration lowered.
+    Compared {
+        /// Every parameter — family and `impl:` name included — whose value
+        /// is not the same in every run, sorted by node and key.
+        parameters: Vec<ParameterRow>,
+        /// Whether every canonical logical form hashes equal: runs that
+        /// differ only in their wiring have no row, and are still not one
+        /// configuration.
+        same_logical_form: bool,
+    },
+    /// A run's stored configuration does not lower under this build.
+    Unavailable {
+        /// That run's id.
+        run: String,
+        /// What the parser or the validation pass said.
+        reason: String,
+    },
+}
+
+/// One parameter that is not the same in every run.
+#[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
+pub struct ParameterRow {
+    /// The node it belongs to.
+    pub node: String,
+    /// Which of the node's parameters.
+    pub key: ParameterName,
+    /// Each run's value; `null` where its configuration does not set it.
+    pub values: Vec<Option<ParameterValue>>,
+}
+
+/// A node's parameter, as a configuration spells it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ParameterName {
+    /// The node's `component:` family.
+    Component,
+    /// The node's `impl:` name.
+    Impl,
+    /// A key under the node's `params:`.
+    Param {
+        /// The key.
+        name: String,
+    },
+}
+
+/// One stage across the runs compared.
+#[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
+#[schemars(transform = every_property_required)]
+pub struct StageRow {
+    /// Which stage.
+    pub stage: StageName,
+    /// What the row compares, in the words of the pair drawn by hand into
+    /// it; `null` when no pair named it.
+    pub label: Option<String>,
+    /// `manual` when a pair drawn by hand placed a node in it.
+    pub source: PairingSource,
+    /// `low` when a pipeline's graph was ambiguous at this stage — two
+    /// fusions, two rerankers, a reranker upstream of the fusion — and the
+    /// automatic pairing is a guess.
+    pub confidence: Confidence,
+    /// Each run's cell.
+    pub cells: Vec<StageCell>,
+}
+
+/// A stage of a pipeline, in the order a ranking travels through them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum StageName {
+    /// The retrievers.
+    RetrievalLegs,
+    /// The fusion.
+    AfterFusion,
+    /// The reranker.
+    AfterRerank,
+    /// The ranking the run's retrieval metrics were read at.
+    FinalRanking,
+    /// The generator's answer.
+    Answer,
+}
+
+/// Where a stage's pairing comes from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PairingSource {
+    /// Derived from the nodes' kinds and positions.
+    Automatic,
+    /// Drawn by hand, and remembered for the pair of pipelines.
+    Manual,
+}
+
+/// How sure an automatic pairing is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Confidence {
+    /// Every graph was unambiguous at this stage, or the pairing is by hand.
+    High,
+    /// A guess: the UI offers the manual pairing.
+    Low,
+}
+
+/// One run at one stage.
+#[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum StageCell {
+    /// The run's pipeline has no node at this stage: "no stage here", an
+    /// absence, never a zero.
+    Absent,
+    /// The run's nodes at this stage.
+    Present {
+        /// Each node, in the pipeline's canonical order — several only for
+        /// the retrieval legs, or where a pair drawn by hand joined one.
+        nodes: Vec<StageNode>,
+        /// Per metric, the best value among the nodes and the node it is
+        /// from — for the legs, the best leg. Empty without a verified
+        /// ground truth.
+        best: BTreeMap<String, StageValue>,
+    },
+}
+
+/// A node at a stage.
+#[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
+#[schemars(transform = every_property_required)]
+pub struct StageNode {
+    /// The node's id.
+    pub node: String,
+    /// Whether a pair drawn by hand placed it here.
+    pub paired_by_hand: bool,
+    /// Its ranking metrics averaged over the judged queries, as
+    /// `GET /runs/{id}/queries` reports them; `null` without a verified
+    /// ground truth or when it ranked no judged query.
+    pub metrics: Option<BTreeMap<String, f64>>,
+}
+
+/// A metric's value at a stage, and the node it is read at.
+#[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
+pub struct StageValue {
+    /// The node.
+    pub node: String,
+    /// Its value.
+    pub value: f64,
+}
+
+/// A manual pairing between two pipelines: a list of node pairs, kept under
+/// `pipelines/<pipeline>.pairing/<other>.json` and read in both directions.
+/// Also the body's `pairing` in `POST /compare`, which keeps it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, serde::Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Pairing {
+    /// The pipeline the pairs' `node` belongs to.
+    pub pipeline: String,
+    /// The pipeline the pairs' `other` belongs to.
+    pub other: String,
+    /// The pairs. Empty in a request: "Reset to automatic", which removes
+    /// the pairing.
+    pub pairs: Vec<NodePair>,
+}
+
+/// Two nodes compared with each other: the second is shown at the first's
+/// stage.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, serde::Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NodePair {
+    /// A node of `pipeline`.
+    pub node: String,
+    /// A node of `other`.
+    pub other: String,
+    /// What the pair compares, replacing the stage's name in the row; absent
+    /// for none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+}
+
+/// One run's per-query deltas against the baseline.
+#[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
+pub struct RunDeltas {
+    /// The run's id.
+    pub run: String,
+    /// One entry per ranking metric both it and the baseline recorded, in
+    /// name order.
+    pub metrics: Vec<MetricDeltas>,
+}
+
+/// One metric's per-query deltas, and their histogram.
+#[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
+pub struct MetricDeltas {
+    /// The metric's name.
+    pub metric: String,
+    /// How many queries have a delta: those judged, and scored at both
+    /// runs' outputs.
+    pub judged_queries: u64,
+    /// Each such query's score in the run minus its score in the baseline,
+    /// by query id.
+    pub deltas: Vec<QueryDelta>,
+    /// The seven bins, from the worst to the best: they partition the
+    /// queries with a delta.
+    pub bins: Vec<DeltaBin>,
+}
+
+/// One query's delta.
+#[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
+pub struct QueryDelta {
+    /// The query's id.
+    pub query: String,
+    /// Its score in the run minus its score in the baseline.
+    pub delta: f64,
+}
+
+/// One bin of the per-query histogram.
+#[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
+#[schemars(transform = every_property_required)]
+pub struct DeltaBin {
+    /// Which bin.
+    pub bin: DeltaBinName,
+    /// Its lower bound; `null` for the lowest.
+    pub lower: Option<f64>,
+    /// Its upper bound; `null` for the highest.
+    pub upper: Option<f64>,
+    /// How many queries it holds.
+    pub count: u64,
+    /// Those queries, by id.
+    pub queries: Vec<String>,
+}
+
+/// The seven bins of a delta `d`: by its sign, and its magnitude against
+/// 0.1 and 0.3. A bound belongs to the bin nearer zero.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DeltaBinName {
+    /// `d < -0.3`.
+    MuchWorse,
+    /// `-0.3 <= d < -0.1`.
+    Worse,
+    /// `-0.1 <= d < 0`.
+    SlightlyWorse,
+    /// `d = 0`: the same score.
+    Unchanged,
+    /// `0 < d <= 0.1`.
+    SlightlyBetter,
+    /// `0.1 < d <= 0.3`.
+    Better,
+    /// `d > 0.3`.
+    MuchBetter,
+}
+
+/// One run's latency, node by node.
+#[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
+pub struct RunLatency {
+    /// The run's id.
+    pub run: String,
+    /// Every node that ran, by id.
+    pub nodes: Vec<NodeLatency>,
+}
+
+/// One node's latency over a run's queries.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct NodeLatency {
+    /// The node's id.
+    pub node: String,
+    /// Its component family, as a configuration's `component:` spells it.
+    pub family: String,
+    /// The median of its durations, in nanoseconds: the lower of the two
+    /// middle values over an even count, so it is a duration that occurred.
+    pub median_nanos: u64,
+    /// How many queries it ran for.
+    pub queries: u64,
+}
+
 /// Marks every property of a struct's schema required.
 ///
 /// `schemars` leaves an `Option` field out of `required`, which a generated

@@ -97,6 +97,11 @@ impl Metrics {
         self.0.iter().map(|(name, _)| name.clone()).collect()
     }
 
+    /// The ranking metrics among them, by name, in name order.
+    pub(crate) fn ranking_names(&self) -> Vec<String> {
+        self.ranking().map(|(name, _)| name.clone()).collect()
+    }
+
     fn ranking(&self) -> impl Iterator<Item = &(String, Metric)> {
         self.0.iter().filter(|(_, metric)| metric.ranks())
     }

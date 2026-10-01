@@ -220,6 +220,13 @@ pub enum ApiError {
         /// The path as requested.
         path: String,
     },
+    /// Runs that cannot be compared: evaluated on different benchmarks, or
+    /// more of them than a comparison holds.
+    #[error("{detail}")]
+    RunsNotComparable {
+        /// Why, naming both benchmark versions or the ceiling.
+        detail: String,
+    },
 }
 
 impl ApiError {
@@ -250,6 +257,7 @@ impl ApiError {
         "origin_refused",
         "route_not_found",
         "method_not_allowed",
+        "runs_not_comparable",
     ];
 
     /// The stable code a client matches on.
@@ -272,7 +280,8 @@ impl ApiError {
             Self::RunExists { .. }
             | Self::DatasetDiffers { .. }
             | Self::BenchmarkExists { .. }
-            | Self::DownloadCancelled { .. } => StatusCode::CONFLICT,
+            | Self::DownloadCancelled { .. }
+            | Self::RunsNotComparable { .. } => StatusCode::CONFLICT,
             Self::RunUnreadable { .. } | Self::BackendFailed { .. } => {
                 StatusCode::INTERNAL_SERVER_ERROR
             }
@@ -337,6 +346,7 @@ impl ApiError {
             Self::OriginRefused { .. } => 22,
             Self::RouteNotFound { .. } => 23,
             Self::MethodNotAllowed { .. } => 24,
+            Self::RunsNotComparable { .. } => 25,
         }
     }
 
@@ -367,6 +377,7 @@ impl ApiError {
             Self::OriginRefused { .. } => "Origin refused",
             Self::RouteNotFound { .. } => "No such endpoint",
             Self::MethodNotAllowed { .. } => "Method not allowed",
+            Self::RunsNotComparable { .. } => "The runs cannot be compared",
         }
     }
 
@@ -458,6 +469,9 @@ impl ApiError {
             }
             Self::MethodNotAllowed { .. } => {
                 "Use one of the methods the `Allow` header lists.".to_owned()
+            }
+            Self::RunsNotComparable { .. } => {
+                "Compare runs of one benchmark, a baseline and at most four others.".to_owned()
             }
         }
     }
@@ -597,6 +611,9 @@ mod tests {
             ApiError::MethodNotAllowed {
                 method: String::new(),
                 path: String::new(),
+            },
+            ApiError::RunsNotComparable {
+                detail: String::new(),
             },
         ];
         assert_eq!(samples.len(), ApiError::CODES.len());
