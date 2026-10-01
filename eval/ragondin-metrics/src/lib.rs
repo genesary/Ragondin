@@ -34,6 +34,14 @@
 //! id absent from the map was never assessed, and is likewise treated as
 //! irrelevant — the standard closed-world assumption of TREC-style evaluation.
 //!
+//! The ids are **documents**, and a pipeline ranks chunks. The fold between
+//! the two is [`documents_by_first_occurrence`]: each document enters the
+//! ranking at its best-ranked chunk, BEIR's max-score-per-document rule. It is
+//! defined here, once, because two crates shape a metric's input — the harness
+//! when it writes a run's metrics, `ragondin-api` when it recomputes them from
+//! the stored traces — and a rule each kept its own copy of could drift
+//! between the figure written and the figure read back.
+//!
 //! # The gain function
 //!
 //! nDCG here uses **linear gain** with a `log2(i + 1)` discount:
@@ -163,8 +171,10 @@ use std::collections::BTreeSet;
 
 use ragondin_types::DocId;
 
+mod fold;
 mod generation;
 
+pub use fold::documents_by_first_occurrence;
 pub use generation::{exact_match, normalize_answer, token_f1};
 
 /// The relevance grade of `id`, with an unjudged document counting as `0`.

@@ -67,12 +67,13 @@ would not see it. The sign in a diff is a `tonic` channel or a generated
 client type in this crate.
 
 Its workspace dependencies today are `ragondin-experiments` — the `RunStore`
-trait, the `Run` record, the typed `Trace`, and `lower_configuration` —
-`ragondin-pipeline`, for the `LogicalPipeline` that lowering yields,
+trait, the `Run` record, the typed `Trace`, `lower_configuration`, and the
+walk to a run's ranking node — `ragondin-pipeline`, for the `LogicalPipeline` that lowering yields,
 `ragondin-benchmarks`, for the manifest, the download, the verification and
 the import the `Registry` file backend is written over, and for the digests
 and the chunk derivation passage text is verified against,
-`ragondin-metrics`, for the per-query and per-node scores, and
+`ragondin-metrics`, for the per-query and per-node scores and the fold
+they are computed over, and
 `ragondin-types`, for the ids they are computed over. `ragondin-benchmarks`
 and `ragondin-metrics` reach no engine and no component: their closure is the
 core's `ragondin-types` and its readers, and `just check-invariants` walks it
@@ -80,13 +81,14 @@ core's `ragondin-types` and its readers, and `just check-invariants` walks it
 reaches the engine and INV-12 fails through it. `ragondin-config` is within
 INV-12 and arrives with the endpoints that read it. **`ragondin-harness` is
 not a dependency, and may not become one** (INV-12 refuses it through the
-engine). The two rules the derived data shares with it — the
-chunk-to-document fold and ADR-C30 § 3's walk — are therefore **a temporary
-second definition** in `derived.rs`, each function naming its counterpart in
-`eval/ragondin-harness/src/evaluate.rs`. Nothing keeps the two in step: the
-invariant test in § *Derived data* pins this crate to the fixtures, not to the
-harness. #369 moves both rules into one definition both crates reach, and
-deletes these.
+engine). The two rules the derived data shares with it are therefore
+defined where both crates reach them, once, and `derived.rs` calls them as the
+harness does: the chunk-to-document fold is `ragondin-metrics`'
+`documents_by_first_occurrence`, and ADR-C30 § 3's walk is
+`ragondin-experiments`' `terminal` and `ranking_node`. A change to either rule
+reaches the figures the harness writes and the figures this crate reads back
+in the same build — ADR-C36's "one definition, used by the writer and the
+reader alike", applied to the rules as § 2 applies it to the trace shape.
 
 ## The traits and their backends
 
@@ -343,22 +345,23 @@ response; `tests/replay.rs` deletes it and compares.
 ### What a figure is
 
 A reading of the trace against the run's own ground truth, with
-`ragondin-metrics` and the harness's rules (`derived.rs`):
+`ragondin-metrics` and the rules the harness scores by, called rather than
+restated (`derived.rs`):
 
 - **The metrics are the ones the run recorded**, by name: `ndcg@<k>`,
   `recall@<k>`, `mrr` (uncut, as the harness records it), `exact_match`,
   `token_f1`, each at the cutoff its own name states. Other names — a latency
   percentile — are not per-query figures and are not listed.
 - **Documents, folded from chunks by first occurrence**: several chunks of one
-  document count once, at the rank of the best — `ragondin-harness`' rule, of
-  which `derived.rs` holds a temporary second definition until #369 (§ *INV-12*
-  says why, and what does not guard it meanwhile).
+  document count once, at the rank of the best —
+  `ragondin_metrics::documents_by_first_occurrence`, the fold the harness
+  applies (§ *INV-12* says why it lives there).
 - **The output ranking is found by ADR-C30 § 3's walk**, by port position: a
   terminal generator's context port names a context builder, whose chunks port
   names the ranking; a terminal builder is entered at its chunks port; any
-  other terminal node is its own ranking — the harness's walk, a second
-  definition until #369 as well. The answer is the terminal node's, when the
-  core says it produces one.
+  other terminal node is its own ranking — `ragondin_experiments::ranking_node`,
+  the walk the harness scores at. The answer is the terminal node's
+  (`ragondin_experiments::terminal`), when the core says it produces one.
 - **Per node**: every node whose output is a ranking is scored on the same
   metrics, per query, and averaged over the judged queries for which it
   produced one — a query without qrels is in no mean, as in the harness, and
@@ -372,9 +375,9 @@ A reading of the trace against the run's own ground truth, with
   fixtures — the M2 regression fixture, the SciFact and NFCorpus calibration
   fixtures, and the SQuAD generation fixture, whose per-query EM and F1 also
   average to its `metrics.json`. A divergence means the trace or the metric
-  lies. The test pins this crate's reading to those fixtures; it does not
-  compare this crate's rules with the harness's, which a change to the
-  harness alone would not trip.
+  lies. The test pins this crate's reading to those fixtures. That this crate
+  and the harness apply the same rules needs no test of its own: both call the
+  one fold and the one walk (§ *INV-12*), so a change to either reaches both.
 - **Node rows carry ranking metrics only.** The generator's EM and token-F1
   are a run-level figure: `metrics.json`'s, or the mean of the per-query
   scores, never a node row.
@@ -613,8 +616,9 @@ INV-4 deny-list, so the core cannot reach any of this.
 
 `ragondin-metrics` and `ragondin-types` are workspace crates of the core and
 the evaluation plane, within INV-12, for § *Derived data*. `ragondin-harness`
-is not, and the two rules restated from it are a temporary second definition
-until #369 (§ *INV-12*).
+is not; the two rules the derived data shares with it are defined in
+`ragondin-metrics` and `ragondin-experiments`, which both crates reach
+(§ *INV-12*).
 
 `reqwest` is a dependency for the `Registry` file backend's transport, with
 its workspace entry's features and none appended, on the one `hyper` already

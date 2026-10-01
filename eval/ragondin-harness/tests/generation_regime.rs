@@ -17,9 +17,10 @@ use std::path::PathBuf;
 use ragondin_benchmarks::{Benchmark, Qrels, ReferenceAnswers};
 use ragondin_config::{ConfigSource, LocalFile};
 use ragondin_engine::EngineContext;
-use ragondin_experiments::{ConfigDocument, Run};
+use ragondin_experiments::{ConfigDocument, Run, Trace, TraceSummary};
 use ragondin_harness::{evaluate, CorpusIndex, Evaluation, HarnessError};
-use ragondin_pipeline::{LogicalPipeline, ParamValue};
+use ragondin_metrics::{documents_by_first_occurrence, ndcg_at_k};
+use ragondin_pipeline::{LogicalPipeline, NodeId, ParamValue};
 use ragondin_stub::{StubContextBuilder, StubFusion, StubGenerator, StubRetriever};
 use ragondin_types::{DocId, Document, Query, QueryId};
 
@@ -365,4 +366,56 @@ async fn reference_answers_move_the_dataset_version_and_so_the_run_id() {
         "two benchmarks differing only in their references are two datasets (ADR-C30 § 5)"
     );
     assert_ne!(with.id, without.id);
+}
+
+#[tokio::test]
+async fn the_evaluation_scores_the_node_the_shared_walk_names_through_the_shared_fold() {
+    // The writer and the reader of a run's ranking metrics share one walk
+    // (`ragondin_experiments::ranking_node`) and one fold
+    // (`ragondin_metrics::documents_by_first_occurrence`). Recomputed here as
+    // `ragondin-api` recomputes it — from the stored traces, at the node the
+    // walk names, through the fold — the mean is the one the run recorded,
+    // bit for bit, on both generation fixtures.
+    let benchmark = benchmark(Pieces {
+        qrels: true,
+        references: false,
+    });
+
+    for name in ["stub-generation.yaml", "stub-context.yaml"] {
+        let (pipeline, _) = pipeline(name).await;
+        let node = ragondin_experiments::ranking_node(&pipeline)
+            .unwrap_or_else(|walk| panic!("{name}: the walk reaches a ranking: {walk}"));
+        assert_eq!(node, &NodeId::new("fused"), "{name}");
+
+        let run = run(name, &benchmark).await.expect("scored");
+
+        let (mut sum, mut judged) = (0.0, 0usize);
+        for query in benchmark.queries() {
+            let Some(judgments) = benchmark
+                .qrels()
+                .for_query(&query.id)
+                .filter(|judgments| !judgments.is_empty())
+            else {
+                continue;
+            };
+            let trace = Trace::try_from(&run.traces[&query.id]).expect("the stored trace reads");
+            let entry = trace
+                .nodes
+                .iter()
+                .find(|entry| &entry.node == node)
+                .expect("the ranking node is traced");
+            let Some(TraceSummary::RankedChunks { chunks }) = &entry.output else {
+                panic!("{name}: `{}` holds no ranking", node.as_str());
+            };
+            let ranked = documents_by_first_occurrence(chunks.iter().map(|chunk| &chunk.document));
+            sum += ndcg_at_k(&ranked, judgments, 10);
+            judged += 1;
+        }
+
+        assert_eq!(
+            run.metrics.get("ndcg@10"),
+            Some(sum / judged as f64),
+            "{name}: the figure read back at the walked node is the recorded one"
+        );
+    }
 }

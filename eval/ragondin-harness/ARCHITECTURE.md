@@ -135,8 +135,17 @@ family, both, or neither. A family the benchmark does not carry is absent from
   to the context's own chunks, which are cut to the builder's budget; when it
   finds no ranking over a benchmark that carries qrels, the query is refused
   with `HarnessError::NoRanking`, naming where the walk stopped
-  (`RankingWalkError`). `ranked_documents` is the one place a ranking is
-  extracted.
+  (`RankingWalkError`). **The walk and the fold are not defined here.** The
+  walk is `ragondin-experiments`' `terminal` and `ranking_node`, and the
+  chunk-to-document fold is `ragondin-metrics`' `documents_by_first_occurrence`:
+  `ragondin-api` recomputes per-query and per-node figures from the stored
+  traces and may not depend on this crate (INV-12), so the two rules live where
+  both reach them, and both call them (ADR-C36's "one definition, used by the
+  writer and the reader alike"). What stays here is reading a node's entry out
+  of the engine's `ExecutionTrace` (`documents_at`), and `RankingWalkError`,
+  which maps every stop of the shared `WalkError` to the variant of the same
+  name and message and adds `NoRankedChunks`, a question about the trace
+  rather than the pipeline's shape.
 - **The answer** is read from the terminal node's output entry in the trace
   (ADR-C31 § 5), the `{"answer": {"text": ...}}` a stored run's `traces.json`
   holds — the place the per-query fixture reads it, so the text scored here and
@@ -268,7 +277,9 @@ reader can disagree with it.
    names them in the order the node returned them, which the ranking contract
    makes descending score order, so the first chunk of a document
    is its best — which makes first-occurrence the max-score-per-document rule
-   BEIR evaluations use, without a second sort.
+   BEIR evaluations use, without a second sort. The fold itself is
+   `ragondin_metrics::documents_by_first_occurrence`, shared with
+   `ragondin-api`: the rule was chosen here, and is defined there.
 5. **A refusal is checked for every query once the benchmark carries the
    piece**, judged or not. `NoAnswer` is returned for the first query whose
    pipeline produced no answer over a benchmark carrying reference answers,
@@ -277,8 +288,9 @@ reader can disagree with it.
    or no judgment: a refusal that depended on which queries happen to be
    judged would accept a pipeline on one benchmark and refuse it on a subset of
    the same one. The walk's own failure modes are ADR-C30's; naming each of
-   them as a `RankingWalkError` variant, and finding the terminal node as the
-   one node no other node consumes, is this crate's reading of it.
+   them as a `RankingWalkError` variant is this crate's; finding the terminal
+   node as the one node no other node consumes is the shared walk's
+   (`ragondin_experiments::terminal`), which this crate's reading became.
 6. **One failing query fails the whole run.** Averaging over the queries that
    happened to succeed would report a smaller benchmark as the whole one, under
    an id that claims to name the whole one.
@@ -318,7 +330,12 @@ stubs (`tests/fixtures/stub-generation.yaml`, and `stub-context.yaml` without
 its generator). Its context builder keeps one chunk out of a two-document
 ranking, so a query judging the second document scores differently over the
 ranking and over the context — which is what pins the ranking ADR-C30 § 3 names
-as the one read.
+as the one read. One of its tests recomputes the run's `ndcg@10` as
+`ragondin-api` does — from the stored traces, at the node the shared walk
+names, through the shared fold — and asserts it equals the recorded figure bit
+for bit, on both pipelines. With one definition of each rule, a change to it
+cannot reach one of the two crates and not the other; the test is the record
+that the writer's reading and the reader's agree.
 
 `tests/progress_and_cancellation.rs` drives `evaluate_observed` over the BEIR
 fixture, with a retriever that wraps the stub's and counts its calls — the
