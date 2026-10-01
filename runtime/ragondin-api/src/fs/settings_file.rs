@@ -3,8 +3,8 @@
 //!
 //! **Why by hand.** A TOML parser is not among the dependencies ADR-C36 § 6
 //! admits, and that section makes any other entry a new decision — opened as
-//! #374, which weighs `toml_edit` (and the comments a person adds, which a
-//! write here does not keep) against this reader. The settings are two
+//! #374 and decided by ADR-C38, which replaces this reader; the code predates
+//! it. A write here does not keep the comments a person adds. The settings are two
 //! things — a datasets directory and `family/name → uri` bindings — so the
 //! file needs one top-level key, one table and strings. This module reads
 //! exactly that, and refuses everything else with the line it is on, so a

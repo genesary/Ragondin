@@ -385,7 +385,7 @@ datasets = "/data/benchmarks"   # optional; relative to the workspace
 and written by `fs/settings_file.rs`, a reader of exactly that subset of TOML,
 because a TOML parser is not among the dependencies ADR-C36 § 6 admits, and
 that section makes any other entry a new decision — opened as #374, and
-decided by ADR-C38 against this reader. It reads blank lines and
+decided by ADR-C38, which replaces this reader. It reads blank lines and
 `#` comments, `datasets` before any table, one `[services]` table of
 `"<family>/<name>" = <string>`, basic strings with TOML's escapes and literal
 strings, and a comment after a value; it refuses everything else — another

@@ -1,13 +1,13 @@
 ---
 id: ADR-C38
-title: The settings file `workspace.toml` is read and edited in place with `toml_edit`, a dependency of `ragondin-api` alone; its schema is checked by meaning, and a write changes only the key it names
+title: The settings file `workspace.toml` is read and edited in place with `toml_edit`, a dependency of `ragondin-api` alone; its schema is checked by meaning, and it is written by per-key operations that keep a person's comments
 status: accepted
 invariants: [INV-4, INV-12]
 supersedes: []
 superseded_by: null
 ---
 
-# ADR-C38: The settings file `workspace.toml` is read and edited in place with `toml_edit`, a dependency of `ragondin-api` alone; its schema is checked by meaning, and a write changes only the key it names
+# ADR-C38: The settings file `workspace.toml` is read and edited in place with `toml_edit`, a dependency of `ragondin-api` alone; its schema is checked by meaning, and it is written by per-key operations that keep a person's comments
 
 ## Context
 
@@ -81,16 +81,17 @@ by the independent challenge.
 `ragondin-api` alone. The file is parsed into a `toml_edit::Document` and then
 checked against its schema by meaning, every refusal naming its line.
 `WorkspaceSettings` writes by per-key operations, each applied under the file
-backend's lock to the document as it is on disk at that moment, so that a
-write changes the key it names and nothing else.**
+backend's lock to the document as it is on disk at that moment.**
 
 ### 1. The dependency
 
 - **The root `Cargo.toml` gains the entry**
   `toml_edit = { version = "0.25", default-features = false, features = ["parse", "display"] }`,
   and `ragondin-api` is the only crate that depends on it.
-- **This adds to ADR-C36 § 6 and does not supersede it.** ADR-C36 is
-  untouched.
+- **This adds to ADR-C36 § 6 and does not supersede it.** That section
+  closes its list with "Any other entry the implementation finds necessary is
+  a new decision", so a new entry is what it provides for, and this ADR is
+  that decision. ADR-C36 is untouched.
 
 ### 2. Reading
 
@@ -102,11 +103,12 @@ write changes the key it names and nothing else.**
   - any other key or table;
   - a sub-table, an array of tables, an inline table or a dotted key;
   - a value that is not a string;
-  - a service key without a `/`, or with an empty part on either side of it.
-- **It refuses by meaning, never by spelling.** A string is a string whether
-  it is written basic, literal or multi-line. `toml_edit` itself writes
-  `"""…"""` and `'…'`, so a refusal based on spelling would make the tool
-  refuse its own output.
+  - a service key without a `/`, or with an empty family or name, the key
+    split at its first `/` as ADR-C32 § 2 splits a binding.
+- **It refuses by meaning, never by string spelling.** The forms above are
+  refused by name; otherwise a key or a value is read by what it means,
+  however it is spelled. `toml_edit` itself writes `"""…"""` and `'…'`, so
+  a refusal based on spelling would make the tool refuse its own output.
 - **A parse error is reported as `file:line: message`.**
 
 ### 3. Writing
@@ -119,14 +121,15 @@ write changes the key it names and nothing else.**
   today.
 - **A write must**:
   - keep the trailing comment — the decor — of a value it replaces;
-  - move the prefix of a removed first key onto the item that follows it,
-    since that prefix is the file's header;
+  - move the prefix of a removed first key onto what follows, so that the
+    file's header is not deleted with it;
   - place the comments of a file holding only comments above the first item it
     creates, which is the case of `empty()` and of the first `PUT` on a fresh
     workspace;
   - change `datasets` only when the operation changes it, comparing resolved
     paths;
-  - leave the file byte-identical when nothing changes.
+  - perform no write when the operation changes no setting, so the file stays
+    byte-identical.
 
 Because each operation is applied to the document read under the lock, a hand
 edit made before it is kept. That closes today's race between a handler's read
@@ -166,15 +169,16 @@ This ADR cites it and does not restate it.
   above the workspace's `rust-version` unseen.
 - **`fs/settings_file.rs` is replaced.** Its `HEADER` and `empty()` are kept,
   so a fresh workspace starts with the same file.
-- **The `WorkspaceSettings` signature changes.** The trait is internal to
-  `ragondin-api`, so no other crate is affected.
+- **The `WorkspaceSettings` signature changes.** The trait is internal by
+  ADR-C21's test (ADR-C36 § 2); the binary uses only `read`, whose signature
+  is unchanged.
 - **The implementation carries these tests, on a commented fixture**:
   - comments above, beside and below an entry survive adding, replacing and
     removing it;
   - the header survives removing `datasets`, and creating `[services]` on a
     fresh `empty()` file;
   - key order and blank lines are kept;
-  - a write that changes nothing leaves the file byte-identical;
+  - an operation that changes no setting leaves the file byte-identical;
   - a service write leaves the `datasets` line byte-identical;
   - every refusal names its line;
   - for any settings, what is written is read back, including values holding
