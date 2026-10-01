@@ -63,6 +63,14 @@ fn workspace(test: &str) -> (PathBuf, FsRegistry) {
     (workspace, registry)
 }
 
+/// Waits until every file the fixture wrote is older than the registry's
+/// racy-timestamp margin (two seconds, `fs/memo.rs`): before that a verified
+/// dataset is served but not kept, since a same-size rewrite within one tick
+/// of a coarse filesystem clock would leave its stamps unchanged.
+async fn settle() {
+    tokio::time::sleep(std::time::Duration::from_millis(2_200)).await;
+}
+
 /// The file backend, keeping every verified dataset it hands out: two
 /// answers that are one allocation are one load. Each is kept alive here, so
 /// a freed allocation cannot be reused by a second load and pass for the
@@ -140,6 +148,7 @@ async fn fetch(workspace: &Path, registry: &Recording, run: &Run, path: &str) ->
 async fn consecutive_requests_on_one_run_load_and_digest_its_dataset_once() {
     let (workspace, registry) = workspace("memo_once");
     let registry = Recording::over(registry);
+    settle().await;
     let run = the_run();
 
     for path in ["/queries", "/queries", "/trace/q-1", "/trace/q-1"] {
@@ -162,6 +171,7 @@ async fn consecutive_requests_on_one_run_load_and_digest_its_dataset_once() {
 async fn one_byte_changed_between_requests_is_re_verified_and_differs() {
     let (workspace, registry) = workspace("memo_one_byte");
     let registry = Recording::over(registry);
+    settle().await;
     let run = the_run();
     let listing = fetch(&workspace, &registry, &run, "/queries").await;
     assert_eq!(listing["ground_truth"]["status"], "verified");
@@ -218,4 +228,22 @@ async fn a_dataset_removed_between_requests_is_absent() {
 
     let listing = fetch(&workspace, &registry, &run, "/queries").await;
     assert_eq!(listing["ground_truth"]["status"], "dataset_absent");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_dataset_just_written_is_served_but_not_kept() {
+    let (workspace, registry) = workspace("memo_racy");
+    let registry = Recording::over(registry);
+    let run = the_run();
+
+    for _ in 0..2 {
+        let listing = fetch(&workspace, &registry, &run, "/queries").await;
+        assert_eq!(listing["ground_truth"]["status"], "verified");
+    }
+
+    let handed_out = registry.handed_out();
+    assert!(
+        !Arc::ptr_eq(&handed_out[0], &handed_out[1]),
+        "files within the margin are loaded on every request"
+    );
 }

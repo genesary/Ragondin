@@ -61,7 +61,7 @@ impl FsRegistry {
         Self {
             datasets,
             manifest: Arc::new(manifest),
-            loaded: Arc::new(DatasetMemo::new(memo::CAPACITY)),
+            loaded: Arc::new(DatasetMemo::new(memo::CAPACITY, memo::RACY_MARGIN)),
         }
     }
 
