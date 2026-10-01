@@ -31,6 +31,24 @@ describe('#runs', () => {
   });
 });
 
+describe('#runs?sel=<id>,<id>…', () => {
+  it('carries the selection in order, joined by commas, and restores it from the hash on load', () => {
+    const route: Route = { screen: 'runs', sel: ['bbb', 'aaa'] };
+    expect(formatHash(route)).toBe('#runs?sel=bbb,aaa');
+    expect(load('#runs?sel=bbb,aaa')).toEqual(route);
+  });
+
+  it('leaves the selection out when it is empty', () => {
+    expect(formatHash({ screen: 'runs', sel: [] })).toBe('#runs');
+  });
+
+  it('encodes an id holding the separator, so it round-trips', () => {
+    const route: Route = { screen: 'runs', sel: ['a,b', 'c'] };
+    expect(formatHash(route)).toBe('#runs?sel=a%2Cb,c');
+    expect(parseHash(formatHash(route))).toEqual(route);
+  });
+});
+
 describe('#pipeline', () => {
   it('is the screen before a pipeline is chosen', () => {
     expect(formatHash({ screen: 'pipeline' })).toBe('#pipeline');
@@ -84,6 +102,13 @@ describe('#replay', () => {
   });
 });
 
+describe('#replay/<run>', () => {
+  it('carries the run before a query is chosen, and restores it from the hash on load', () => {
+    expect(formatHash({ screen: 'replay', run: 'aaa' })).toBe('#replay/aaa');
+    expect(load('#replay/aaa')).toEqual({ screen: 'replay', run: 'aaa' });
+  });
+});
+
 describe('#replay/<run>/q/<query>?with=<run>', () => {
   it('carries the run, the query and the run beside it, and restores them from the hash on load', () => {
     const route: Route = { screen: 'replay', run: 'aaa', query: '1395', with: 'bbb' };
@@ -129,10 +154,13 @@ describe('the address', () => {
     '#nowhere',
     '#pipeline/',
     '#pipeline/a/b',
-    '#replay/aaa',
     '#replay/aaa/1395',
+    '#replay/aaa?with=bbb',
     '#replay?with=bbb',
     '#runs/extra',
+    '#runs?sel=',
+    '#runs?sel=aaa,,bbb',
+    '#runs?sel=aaa,..',
     '#editor/%E0%A4%A',
     // A value of `.` or `..`, typed or escaped, would name another API path.
     '#pipeline/..',

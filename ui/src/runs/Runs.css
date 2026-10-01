@@ -1,0 +1,73 @@
+/* The Runs screen's layout only: where design/'s parts sit. The table, the
+   chips, the tiles and the controls are drawn by their own stylesheets; every
+   value here is a token (ARCHITECTURE.md § The design system). */
+.rg-runs__bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-4);
+}
+.rg-runs__filters,
+.rg-runs__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+.rg-runs__unreadable { padding: 0 var(--space-4) var(--space-4); }
+.rg-runs__unreadable ul {
+  margin: var(--space-2) 0 0;
+  padding-left: var(--space-5);
+  font: var(--type-dense);
+  color: var(--ink-2);
+}
+.rg-runs__unreadable code,
+.rg-runs__hash,
+.rg-runs__pipeline code { font: var(--type-hash); letter-spacing: var(--type-hash-tracking); }
+
+/* A group's heading: the name, the shape, the count, on one line that wraps. */
+.rg-runs__group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+.rg-runs__pipeline { color: var(--ink); font: var(--type-heading); }
+.rg-runs__shape {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.rg-runs__word,
+.rg-runs__note,
+.rg-runs__count { font: var(--type-caption); color: var(--ink-3); }
+
+/* The ring sits inside the row, so the table's own scroll box does not clip it. */
+.rg-runs__row:focus-visible { outline-offset: -2px; }
+.rg-runs__hash { color: var(--ink); }
+.rg-runs__prefix {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin-left: var(--space-2);
+  font: var(--type-caption);
+  color: var(--ink-3);
+}
+.rg-runs__metrics {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+.rg-runs__family {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+}
+.rg-runs__family-label { font: var(--type-caption); color: var(--ink-3); }
+.rg-runs__failure { color: var(--ink); white-space: normal; }

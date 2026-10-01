@@ -45,30 +45,41 @@ afterEach(() => {
 
 describe('the shell’s screens', () => {
   it.each([
-    ['#runs', 'Runs', 'No runs to show yet'],
+    ['#runs', 'Runs', 'No runs yet'],
     ['#pipeline', 'Pipeline', 'No pipeline chosen'],
     ['#pipeline/hybrid-rrf', 'Pipeline', 'Nothing to show for hybrid-rrf yet'],
     ['#compare', 'Compare', 'No runs chosen to compare'],
     ['#compare/aaa+bbb?baseline=aaa', 'Compare', 'Nothing to show for 2 runs yet'],
     ['#compare/aaa', 'Compare', 'Nothing to show for 1 run yet'],
     ['#replay', 'Replay', 'No query chosen'],
+    ['#replay/aaa', 'Replay', 'No query chosen for run aaa'],
     ['#replay/aaa/q/1395?with=bbb', 'Replay', 'Nothing to show for query 1395 yet'],
     ['#editor', 'Editor', 'No pipeline open'],
     ['#editor/hybrid-rrf', 'Editor', 'Nothing to show for hybrid-rrf yet'],
     ['#setup', 'Setup', 'No benchmarks or services shown yet'],
   ])('%s renders the %s screen, restored from the hash, in its empty state', async (hash, tab, heading) => {
-    mockApi({ 'GET /workspace': { body: WORKSPACE } }, { build: BUILD });
+    mockApi({ 'GET /workspace': { body: WORKSPACE }, 'GET /runs': { body: { runs: [], unreadable: [] } } }, { build: BUILD });
     show(hash);
     expect(within(main()).getByRole('heading', { level: 1 }).textContent).toBe(tab);
-    expect(within(main()).getByRole('heading', { level: 3 }).textContent).toBe(heading);
+    expect((await within(main()).findByRole('heading', { level: 3 })).textContent).toBe(heading);
     const nav = within(screen.getByRole('navigation', { name: 'Screens' }));
     expect(nav.getByRole('link', { name: tab }).getAttribute('aria-current')).toBe('page');
     await screen.findByText(WORKSPACE.path);
   });
 
+  it('hands Runs the selection its address carries', async () => {
+    const id = (c: string) => c.repeat(64);
+    const run = (c: string) => ({ id: id(c), pipeline: id('p'), dataset_version: id('d'), index_version: id('i'), engine_version: '0.0.0', metrics: {} });
+    mockApi({ 'GET /workspace': { body: WORKSPACE }, 'GET /runs': { body: { runs: [run('1'), run('2'), run('3')], unreadable: [] } } }, { build: BUILD });
+    show(`#runs?sel=${id('2')},${id('1')}`);
+    await within(main()).findAllByRole('checkbox');
+    expect(within(main()).getAllByRole('checkbox').map((b) => (b as HTMLInputElement).checked)).toEqual([true, true, false]);
+    expect(within(main()).getByRole('button', { name: /^Compare/ }).textContent).toBe('Compare 2 selected');
+  });
+
   it('lists the six screens, widest to narrowest, each a link to its screen', async () => {
     mockApi({ 'GET /workspace': { body: WORKSPACE } }, { build: BUILD });
-    show('#runs');
+    show('#setup');
     const links = within(screen.getByRole('navigation', { name: 'Screens' })).getAllByRole('link');
     expect(links.map((l) => [l.textContent, l.getAttribute('href')])).toEqual([
       ['Runs', '#runs'],
@@ -130,14 +141,14 @@ describe('the shell’s screens', () => {
 describe('the workspace indicator', () => {
   it('says the workspace is being read while GET /workspace is in flight', async () => {
     mockApi({ 'GET /workspace': { body: WORKSPACE } }, { build: BUILD });
-    show('#runs');
+    show('#setup');
     expect(within(screen.getByRole('banner')).getByRole('status').textContent).toBe('Reading the workspace');
     await screen.findByText(WORKSPACE.path);
   });
 
   it('shows the path, the service count and a reachable dot, from GET /workspace', async () => {
     const { requests } = mockApi({ 'GET /workspace': { body: WORKSPACE } }, { build: BUILD });
-    show('#runs');
+    show('#setup');
     await screen.findByText(WORKSPACE.path);
     const link = indicator();
     expect(link?.textContent).toBe('/home/ada/ragondin-ws, 2 services');
@@ -148,13 +159,13 @@ describe('the workspace indicator', () => {
 
   it('counts one service in the singular', async () => {
     mockApi({ 'GET /workspace': { body: { ...WORKSPACE, settings: { ...WORKSPACE.settings, services: WORKSPACE.settings.services.slice(0, 1) } } } }, { build: BUILD });
-    show('#runs');
+    show('#setup');
     await screen.findByText(WORKSPACE.path);
     expect(indicator()?.textContent).toBe('/home/ada/ragondin-ws, 1 service');
   });
 
   it('opens Setup when clicked', async () => {
-    mockApi({ 'GET /workspace': { body: WORKSPACE } }, { build: BUILD });
+    mockApi({ 'GET /workspace': { body: WORKSPACE }, 'GET /runs': { body: { runs: [], unreadable: [] } } }, { build: BUILD });
     show('#runs');
     await screen.findByText(WORKSPACE.path);
     const link = indicator();
@@ -165,7 +176,7 @@ describe('the workspace indicator', () => {
 
   it('shows the workspace unreachable, in words, and the failure with a retry, when the request fails', async () => {
     const { requests } = mockApi({ 'GET /workspace': [{ network: 'Failed to fetch' }, { body: WORKSPACE }] }, { build: BUILD });
-    show('#runs');
+    show('#setup');
     const alert = await within(main()).findByRole('alert');
     expect(alert.textContent).toContain('GET /api/v1/workspace');
     expect(alert.textContent).toContain('network_failed');
@@ -193,7 +204,7 @@ describe('the workspace indicator', () => {
       },
       { build: BUILD },
     );
-    show('#runs');
+    show('#setup');
     const alert = await within(main()).findByRole('alert');
     expect(alert.textContent).toContain('The run store could not be read.');
     expect(alert.textContent).toContain('Check the workspace directory, then retry.');
@@ -204,7 +215,7 @@ describe('the workspace indicator', () => {
 describe('the theme control', () => {
   it('sits in the top bar', async () => {
     mockApi({ 'GET /workspace': { body: WORKSPACE } }, { build: BUILD });
-    show('#runs');
+    show('#setup');
     expect(within(screen.getByRole('banner')).getByRole('radiogroup', { name: 'Theme' })).toBeTruthy();
     await screen.findByText(WORKSPACE.path);
   });
@@ -213,7 +224,7 @@ describe('the theme control', () => {
 describe('the build identity handshake', () => {
   it('continues without reloading when the server is this build', async () => {
     mockApi({ 'GET /workspace': { body: WORKSPACE } }, { build: BUILD });
-    const { reload } = show('#runs');
+    const { reload } = show('#setup');
     await screen.findByText(WORKSPACE.path);
     expect(reload).not.toHaveBeenCalled();
   });
@@ -234,19 +245,19 @@ describe('the build identity handshake', () => {
       },
       { build: '0.0.0+bbbbbbbbbbbb' },
     );
-    const { reload } = show('#runs');
+    const { reload } = show('#setup');
     await waitFor(() => expect(reload).toHaveBeenCalledTimes(1));
   });
 
   it('reloads once when another build answers, then refuses, naming both builds', async () => {
     mockApi({ 'GET /workspace': { body: WORKSPACE } }, { build: '0.0.0+bbbbbbbbbbbb' });
-    const first = show('#runs');
+    const first = show('#setup');
     await waitFor(() => expect(first.reload).toHaveBeenCalledTimes(1));
     expect(screen.queryByText(WORKSPACE.path)).toBeNull();
     first.unmount();
 
     // The reload fetched the same page again, and the same other build answers.
-    const second = show('#runs');
+    const second = show('#setup');
     const alert = await within(main()).findByRole('alert');
     expect(alert.textContent).toContain('0.0.0+aaaaaaaaaaaa');
     expect(alert.textContent).toContain('0.0.0+bbbbbbbbbbbb');
@@ -262,7 +273,7 @@ describe('the connection state', () => {
 
   it('shows the stream connected, then "disconnected — retrying" while it is down, and never current meanwhile', async () => {
     mockApi({ 'GET /workspace': { body: WORKSPACE } }, { build: BUILD });
-    show('#runs', { eventsPath: '/jobs/events' });
+    show('#setup', { eventsPath: '/jobs/events' });
     await screen.findByText(WORKSPACE.path);
     const banner = within(screen.getByRole('banner'));
     expect(banner.getByText('connecting')).toBeTruthy();
@@ -275,7 +286,7 @@ describe('the connection state', () => {
 
   it('re-checks the build identity when the stream reconnects, and reloads if the server became another build', async () => {
     const { requests } = mockApi({ 'GET /workspace': [{ body: WORKSPACE }, { body: WORKSPACE, build: '0.0.0+cccccccccccc' }] }, { build: BUILD });
-    const { reload } = show('#runs', { eventsPath: '/jobs/events' });
+    const { reload } = show('#setup', { eventsPath: '/jobs/events' });
     await screen.findByText(WORKSPACE.path);
     act(() => FakeEventSource.latest().open());
     act(() => FakeEventSource.latest().fail());
@@ -286,7 +297,7 @@ describe('the connection state', () => {
 
   it('closes its stream when the shell unmounts', async () => {
     mockApi({ 'GET /workspace': { body: WORKSPACE } }, { build: BUILD });
-    const { unmount } = show('#runs', { eventsPath: '/jobs/events' });
+    const { unmount } = show('#setup', { eventsPath: '/jobs/events' });
     await screen.findByText(WORKSPACE.path);
     unmount();
     expect(FakeEventSource.latest().closed).toBe(true);
@@ -294,7 +305,7 @@ describe('the connection state', () => {
 
   it('neither reads the workspace again nor reopens the stream when it re-renders with a new reload function', async () => {
     const { requests } = mockApi({ 'GET /workspace': { body: WORKSPACE } }, { build: BUILD });
-    const { rerender, client } = show('#runs', { eventsPath: '/jobs/events' });
+    const { rerender, client } = show('#setup', { eventsPath: '/jobs/events' });
     await screen.findByText(WORKSPACE.path);
     rerender(<App client={client} build={BUILD} reload={vi.fn()} eventsPath="/jobs/events" />);
     await act(async () => {});
@@ -304,7 +315,7 @@ describe('the connection state', () => {
 
   it('shows no connection state when no stream is open', async () => {
     mockApi({ 'GET /workspace': { body: WORKSPACE } }, { build: BUILD });
-    show('#runs');
+    show('#setup');
     await screen.findByText(WORKSPACE.path);
     expect(FakeEventSource.instances).toHaveLength(0);
     expect(screen.queryByText(/connect/)).toBeNull();

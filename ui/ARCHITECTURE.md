@@ -2,7 +2,7 @@
 
 The front end: a TypeScript application, built with Vite and React, that the `ragondin ui` subcommand serves (ADR-C36). It is **not a crate** and sits outside Cargo, but it is **load-bearing** in the sense `AGENTS.md` § Documentation ships with the code it describes means: this file is read before `ui/` is modified, and a diff that falsifies it corrects it in the same pull request (ADR-C36 § 5).
 
-Today it is the governed application, its design system under `design/` (§ The design system), and the shell every screen mounts into: the API client over types generated from the API's description (§ The client, § The generated types), the router and the URL state of the six screens (§ The router and the URL state), the top bar with the workspace, the theme and the connection state (§ The shell), and the build identity handshake (§ The build identity handshake). Each screen renders its empty state; its content is its own issue's.
+Today it is the governed application, its design system under `design/` (§ The design system), and the shell every screen mounts into: the API client over types generated from the API's description (§ The client, § The generated types), the router and the URL state of the six screens (§ The router and the URL state), the top bar with the workspace, the theme and the connection state (§ The shell), and the build identity handshake (§ The build identity handshake). The Runs screen is built (§ The Runs screen); each other screen renders its empty state, and its content is its own issue's.
 
 ## What lives here
 
@@ -36,6 +36,7 @@ ui/
 │   ├── routes.ts        # the URL state contract: the six screens and what each carries in the hash
 │   ├── build-identity.d.ts  # declares the build identity vite.config.ts bakes in
 │   ├── shell/           # the shell's parts: screens' empty states, the four states, workspace, theme, storage, handshake
+│   ├── runs/            # the Runs screen: its row model, the selection rules, the row, the group header, the screen
 │   └── api/             # the only module that may touch the network
 │       ├── base.ts      # the API's base address, '/api/v1'
 │       ├── types.ts     # generated from the API's description (`just gen-ui-types`); never edited
@@ -134,18 +135,18 @@ Tests mock the network at the request level: `src/api/testing.ts`'s `mockApi` re
 
 ## The router and the URL state
 
-`src/routes.ts` is the URL state contract: the `Route` union names each screen and the state it carries, `formatHash` writes it and `parseHash` reads it back, `useRoute` follows the hash, and `navigate` moves to a route — as a new history entry, or with `{ replace: true }` in place of the current one, so Back skips it (for a correction, such as a default filled in, never for a move the user made). The addresses are the design's (§ 3), so a link pasted into an issue reproduces the view:
+`src/routes.ts` is the URL state contract: the `Route` union names each screen and the state it carries, `formatHash` writes it and `parseHash` reads it back, `useRoute` follows the hash, and `navigate` moves to a route — as a new history entry, or with `{ replace: true }` in place of the current one, so Back skips it (for a correction, such as a default filled in, or for state within one view, such as Runs' selection — never for a move to another view). The addresses are the design's (§ 3), so a link pasted into an issue reproduces the view:
 
 | Hash | Screen and state |
 |---|---|
-| `#runs` (or empty) | Runs |
+| `#runs` (or empty), `#runs?sel=<id>,<id>…` | Runs, and the runs selected for Compare in the order they were checked |
 | `#pipeline`, `#pipeline/<name>` | Pipeline, before a pipeline is chosen and with one |
 | `#compare`, `#compare/<id>+<id>…?baseline=<id>` | Compare: the runs, joined by `+`, and the baseline |
-| `#replay`, `#replay/<run>/q/<query>?with=<run>` | Replay: one query of one run, optionally beside another run |
+| `#replay`, `#replay/<run>`, `#replay/<run>/q/<query>?with=<run>` | Replay: before a run is chosen; one run, before a query is chosen; one query of one run, optionally beside another run |
 | `#editor`, `#editor/<name>` | Editor |
 | `#setup` | Setup |
 
-Every value is percent-encoded, so an id holding `+` or `/` round-trips. An address that names no screen, or names one malformed — a missing segment, `?baseline=` without runs, an empty `baseline` or `with`, a value of `.` or `..` (typed, or escaped as `%2E%2E`), a broken escape — is **no route**, and the shell says so and offers Runs, rather than guessing a screen. A screen reads its state from the `Route` it is given and never parses the hash itself; a screen that needs more state extends its variant here, in its own issue.
+Every value is percent-encoded, so an id holding `+`, `,` or `/` round-trips. An address that names no screen, or names one malformed — a missing segment, `?baseline=` without runs, an empty `baseline`, `with` or `sel` value, a value of `.` or `..` (typed, or escaped as `%2E%2E`), a broken escape — is **no route**, and the shell says so and offers Runs, rather than guessing a screen. A screen reads its state from the `Route` it is given and never parses the hash itself; a screen that needs more state extends its variant here, in its own issue.
 
 **Hash routing**, as the design writes the addresses: a hash never reaches the server, so every deep link works whatever serves the page and from whatever context it is pasted. **The router is this module, with no dependency.** ADR-C36 § 5 asks for a typed client-side router; the two requirements are typed state and hash routing, and none of the candidates met both within the licence policy: TanStack Router depends on `isbot`, licensed Unlicense, and wouter is Unlicense itself, both off the allow list; React Router types a route's parameters only in its framework mode, through a build plugin that generates them, and in library mode hands a screen strings, so the typed contract above would still be written here and the package would add only the matching; `type-route`, typed and hash-capable, has not been released since 2023, and its hash mode writes its own `/#/…` address back as a path, giving `#/#/runs`. What the module has to do — six shapes, parse, format, follow `hashchange` — is short and tested per route. Taking a router package later is a runtime dependency named under its own heading; it would replace this module, never sit beside it.
 
@@ -174,13 +175,31 @@ The shell opens a stream only when it is given a path: no event stream exists in
 
 The indicator shows no benchmark count: `GET /workspace` does not report one, and no endpoint lists benchmarks yet.
 
-Below the bar is the screen the address shows (`src/shell/screens.tsx`), each today in its empty state: the screen's name as the page's heading, then one sentence on the default path and the one action that leads on — a real link to the screen it names (design/'s `ButtonLink`), so middle-click and "copy link" work. A failed workspace read is shown above it as a section error with Retry.
+Below the bar is the screen the address shows (`src/shell/screens.tsx`): Runs (§ The Runs screen), and each other screen today in its empty state: the screen's name as the page's heading, then one sentence on the default path and the one action that leads on — a real link to the screen it names (design/'s `ButtonLink`), so middle-click and "copy link" work. A failed workspace read is shown above it as a section error with Retry.
 
 **A route change moves focus to the new screen's heading** — an `<h1>` with `tabIndex={-1}`, the no-route message's included — so a screen reader announces the view and the keyboard starts from it. The load moves nothing: a deep link keeps the browser's own focus. The hook compares the address with the one the page loaded at rather than counting renders, because StrictMode runs a mount's effects twice; a test mounts the shell under `StrictMode` to hold it.
 
 The shell reads the workspace, and opens the stream, again only when its client, its build or the stream's path change; the `reload` it is given is kept in a ref, so a parent passing a new function does not refetch or reopen anything.
 
 **The four states** are `src/shell/states.tsx` beside design/'s `EmptyState`: `Loading`, only while a request is in flight and always a label, never a bare spinner (a request has no count to show); `ErrorState`, an `ApiProblem` rendered inline — its message, where a validation failure is, its hint and its code — through `InlineMessage`, never a modal, with Retry when the caller can retry; and `Resource`, which renders a request's `RequestState` as the loading, the error or the loaded state.
+
+## The Runs screen
+
+`src/runs/` is the first screen and the widest (the front-end design, § 3): what the store holds, **grouped by pipeline**, one row per run. A run is one pipeline on one benchmark, and its metrics are what that benchmark's ground truth allows (ADR-008).
+
+**What it reads.** `GET /runs`, once on mount and again on Retry; and `GET /runs/{id}` **once per pipeline group**, for the lowered graph its shape is drawn from — never once per run. The listing's `unreadable` runs are shown above the table, each short id with the reason the store gave, never dropped. Loading is `Loading` ("Reading runs"), a failed listing is `ErrorState` with Retry, and a store with no runs is design/'s `EmptyState` with one sentence and the way to the Editor.
+
+**The row model** (`model.ts`). The screen renders `RunRow`s and `RunGroup`s only; `rowsFromListing` fills them from `GET /runs`. A row carries its id, pipeline hash and name, benchmark key and name, a status, its metrics in groups by family, a latency, a start time and a prefix relation. **A field the source does not carry is null, and nothing is drawn for it**: the latency and start columns appear only when some row has one, a metric family's label only when the family is known, and no cell ever holds a dash for a metric the benchmark could not have produced. Today's listing carries only the id, the pipeline hash, the dataset version and a flat metric map, so every row is `done`, grouped by pipeline hash, labelled by its benchmark's short dataset digest (`dataset 331a9c8c4092`), and its metrics form one group of unsaid family, printed to four decimals. The benchmark's and the pipeline's names, the metric families, a latency and a start time are asked of `GET /runs` in #376; the browser keeps no copy of the metric catalogue to guess a family from, since that copy would drift from the crate that computes the metrics.
+
+**The hand-off to the job queue and to prefix runs.** The row model is the seam, so neither needs a second row shape. A `queued` or `running` status renders the **placeholder row** — the status chip alone, no checkbox, not a tab stop — which the job queue's rows fill with their progress. A `failed` status is a full row: the failed chip naming the node, and the error as a sentence where the metrics would be, so colour is never the only carrier; it opens in Replay like any run, and cannot be selected. A row whose `prefix` names a parent group sits in that group, labelled "prefix up to <node>". Each of these is filled by setting the row's field from its source; the components already render them, and their tests say so.
+
+**Grouping** (`groupRows`): by the pipeline's name when the source gives one, by its canonical hash otherwise; groups in the order their first run appears in the listing, runs in listing order. A group's header (`GroupHeader.tsx`) is a row-group header — the table stays one semantic table, a `tbody` per pipeline, so assistive technology reads each run under its pipeline — holding the pipeline's name (or "pipeline" and its short hash) as a link to `#pipeline/<name or full hash>`, the shape, and the run count. **The shape** is design/'s `FamilyTile` per node, its glyph named, in pipeline order: every node after the nodes it reads, ties in the graph's canonical order (`shapeOf`). A family design/ draws no tile for — an extension node — is written as its word. The mapping from a configuration's family to design/'s (`context_builder` is `context`) is this module's.
+
+**The selection** (`selection.ts`) is the state Runs hands to Compare. **It lives in the address**, `#runs?sel=<id>,<id>…`, so a link or a reload reproduces it, and it is written with `{ replace: true }`: checking a box is state within the view, not a move Back should undo. Its rules: ids in the order they were checked; **one benchmark** — once a run is checked, every run on another benchmark is refused, its checkbox disabled with the reason (design/'s `Checkbox` shows it as visible text that describes the box), and unchecking re-enables them; a failed or unfinished run is refused. An address carrying what no click could have selected — an id the listing does not hold, a duplicate, a run on a second benchmark — is corrected in place to what could have been. "Compare N selected", the screen's one primary action, opens `#compare/<ids>` in selection order and is refused, with its reason, below two runs and above five, Compare's ceiling of a baseline and four runs (the front-end design, § 3). "New pipeline" is the secondary action, a link to the Editor.
+
+**What it owns**: the benchmark filter (design/'s `FilterChip` per benchmark, with its count), local and unremembered; nothing else. **What it hands on**: to Compare, the selected ids in order; to Pipeline, the group's key; to Replay, a run id (`#replay/<run>`), from the run's short hash, which is a link, and from enter on its row.
+
+**Keyboard.** Each done or failed row is a tab stop: space toggles its selection when the run can be selected, enter opens it in Replay. A key pressed on the checkbox or the link inside a row is that control's, never the row's as well. The table is drawn with design/'s table classes (`rg-tablewrap`, `rg-table`, `rg-table__group`) rather than its `Table` component, because that component's rows take no focus or key handler and its group label is a string; `Runs.css` places the parts and restyles none of them.
 
 ## Toolchain
 

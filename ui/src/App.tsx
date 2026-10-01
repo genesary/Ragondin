@@ -122,7 +122,7 @@ export function App({ client, build, reload, eventsPath }: AppProps) {
                 </InlineMessage>
               </>
             ) : (
-              <Screen route={route} heading={heading} />
+              <Screen route={route} heading={heading} client={client} />
             )}
           </>
         )}
