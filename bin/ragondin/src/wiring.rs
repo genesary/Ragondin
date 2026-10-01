@@ -1034,18 +1034,18 @@ fn optional_usize(params: &Params, key: &str) -> Result<Option<usize>> {
 
 #[cfg(test)]
 mod tests {
-    use ragondin_pipeline::{validate, LogicalPipeline, RawPipeline};
+    use ragondin_pipeline::LogicalPipeline;
 
     use super::*;
     #[cfg(feature = "remote")]
     use crate::remote_fakes as remote;
 
-    /// Loads a pipeline from YAML, through the same lowering `ragondin-config`
-    /// runs: a hand-built `LogicalPipeline` would skip the validation that
-    /// decides what these functions are ever handed.
+    /// Loads a pipeline from YAML through `ragondin-config`'s
+    /// `parse_document`, the load every configuration goes through: a
+    /// hand-built `LogicalPipeline` would skip the validation that decides
+    /// what these functions are ever handed.
     fn pipeline(yaml: &str) -> LogicalPipeline {
-        let raw: RawPipeline = serde_yaml::from_str(yaml).expect("the fixture parses");
-        validate(raw).expect("the fixture validates")
+        ragondin_config::parse_document(yaml).expect("the fixture loads")
     }
 
     /// No `--remote` argument, as every test before bindings existed ran.

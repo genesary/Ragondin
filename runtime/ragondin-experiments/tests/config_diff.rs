@@ -294,3 +294,30 @@ fn a_stored_document_lowers_through_the_one_public_path() {
     .expect_err("a version this build cannot read is refused");
     assert!(refused.contains("schema version"), "{refused}");
 }
+
+/// Each refusal of the lowering, in the words a reader of a stored run sees:
+/// the load is `ragondin-config`'s, the sentence around its cause is this
+/// crate's, and neither changes when one moves.
+#[test]
+fn a_stored_document_that_does_not_lower_says_why_in_the_same_words() {
+    let lower = |text: &str| {
+        ragondin_experiments::lower_configuration(&ConfigDocument::new(text))
+            .expect_err("the document is refused")
+    };
+
+    assert_eq!(
+        lower("version: 99\npipeline:\n  inputs: [q]\n  nodes: []\n"),
+        "stored under a schema version this build cannot read: \
+         unsupported pipeline schema version 99: this build reads version 3"
+    );
+    assert_eq!(
+        lower("pipeline:\n  inputs: [q]\n"),
+        "the stored configuration does not parse: \
+         pipeline: missing field `nodes` at line 2 column 3"
+    );
+    assert_eq!(
+        lower("pipeline:\n  inputs: [q]\n  nodes:\n    - { id: r, component: retriever, impl: bm25, inputs: [nowhere] }\n"),
+        "the stored configuration does not validate: \
+         node `r`: input `nowhere` names neither a node nor a declared input"
+    );
+}

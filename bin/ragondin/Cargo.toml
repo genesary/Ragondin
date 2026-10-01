@@ -92,13 +92,6 @@ async-trait = { workspace = true, optional = true }
 [dev-dependencies]
 ragondin-stub = { workspace = true }
 assert_cmd = { workspace = true }
-# `src/wiring.rs` reads a node's `params` out of a validated pipeline, so its
-# tests need pipelines built the way the product builds them. The door
-# `ragondin-config` puts in front of that lowering takes a path and a runtime;
-# these tests want neither, so they parse the same YAML into the same
-# `RawPipeline` and run the same `validate`. It is the format's own parser, not
-# a second spelling of the configuration.
-serde_yaml = { workspace = true }
 # A test in `src/wiring.rs` checks the identity `bench` records for an ONNX
 # component against the digests of the files it read — computed independently,
 # with the crate the canonical logical-form hash already uses. `bench` itself
@@ -107,8 +100,9 @@ sha2 = { workspace = true }
 serde_json = { workspace = true } # the generation calibration derives its SQuAD subset and reads traces
 # The fake `Remote` services the `remote` tests bind: `tonic` servers over the
 # generated service traits, hosting in-test components through
-# `ragondin-remote`'s conversions, as a Rust-hosted service would. Already in
-# every build through `ragondin-config`.
+# `ragondin-remote`'s conversions, as a Rust-hosted service would. In a build
+# with the `remote` feature it is a normal dependency too, through
+# `ragondin-remote`.
 ragondin-proto = { workspace = true }
 async-trait = { workspace = true } # the fakes implement the contract traits
 

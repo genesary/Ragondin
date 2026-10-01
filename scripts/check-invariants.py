@@ -63,9 +63,10 @@ dependency, works on any runner with Python 3) and enforces:
           on any crate under `engine/` or `components/`, nor on
           `ragondin-remote` (ADR-C36 § 3). Closure, like INV-5, so the harness
           and the serving driver, which both reach the engine, are refused
-          through it. The known blind spot: `ragondin-proto` is reachable
-          through `ragondin-config`, so a client hand-built over its generated
-          stubs is left to review.
+          through it. The known blind spot: once the M7 `Stream` source
+          declares `ragondin-config`'s edge to `ragondin-proto`, that crate is
+          reachable through `ragondin-config`, so a client hand-built over its
+          generated stubs is left to review.
 
 INV-9 is absent because there is nothing to check yet, not because it is
 undecided. INV-9 forbids deriving *the wire format* from internal IR types

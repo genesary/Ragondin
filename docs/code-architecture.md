@@ -228,8 +228,8 @@ flowchart TB
   RAG --> SRV & HAR & EXP & CFG & ENG & MET & BEN & PIP
   SRV --> ENG
   HAR --> ENG & MET & BEN & EXP & PIP & TYP
-  EXP --> PIP & TYP
-  API --> EXP & PIP
+  EXP --> CFG & PIP & TYP
+  API --> CFG & EXP & MET & BEN & PIP & TYP
   ENG --> CON & PIP & TYP
   ENG -->|"optional, feature = remote"| REM
   RAG -->|"optional, feature = remote"| REM
@@ -238,7 +238,8 @@ flowchart TB
   REM --> CON & TYP & PRO
   MET --> TYP
   BEN --> TYP
-  CFG --> PIP & PRO
+  CFG --> PIP
+  CFG -.->|"sanctioned, unused today"| PRO
   CON -.->|"sanctioned, unused today"| PIP
   PIP --> TYP
   CON --> TYP
@@ -251,9 +252,9 @@ flowchart TB
 - `ragondin-engine` depends on `ragondin-contracts` (the traits) but on **no crate under `components/`**. This is load-bearing rule number one.
 - Crates under `components/` depend on `ragondin-contracts` and `ragondin-types` and **never the reverse**. A component is a **leaf**.
 - Only the **binary** knows both the engine and the concrete components. It is the **composition root**.
-- `ragondin-api` reaches **no crate under `engine/` or `components/`, nor `ragondin-remote`** (INV-12, ADR-C36 § 3): its workspace edges are `ragondin-experiments` and `ragondin-pipeline`, and the binary, which will mount its router, is where the UI meets the data plane — through the `Launcher` trait it implements. No binary depends on it yet.
+- `ragondin-api` reaches **no crate under `engine/` or `components/`, nor `ragondin-remote`** (INV-12, ADR-C36 § 3): its workspace edges are `ragondin-config`, `ragondin-experiments`, `ragondin-metrics`, `ragondin-benchmarks`, `ragondin-pipeline` and `ragondin-types`, none of which reaches the engine or a component, and the binary, which will mount its router, is where the UI meets the data plane — through the `Launcher` trait it implements. No binary depends on it yet.
 - `ragondin-types` is the ultimate leaf: everything depends on it; it depends on almost nothing.
-- A **dashed** arrow is an edge the architecture sanctions but that no `Cargo.toml` declares today. `ragondin-contracts → ragondin-pipeline` is the only one: a component receives values, not graphs, so no contract references a `ragondin-pipeline` type yet. The arrow stays because the day one does, adding the dependency needs no architectural argument. Solid arrows are edges that exist.
+- A **dashed** arrow is an edge the architecture sanctions but that no `Cargo.toml` declares today. There are two. `ragondin-contracts → ragondin-pipeline`: a component receives values, not graphs, so no contract references a `ragondin-pipeline` type yet. `ragondin-config → ragondin-proto`: the `Stream` source speaks the configuration-delivery service and is M7; the edge is left undeclared until then because `ragondin-api` and `ragondin-experiments` depend on `ragondin-config` for the one definition of a document's load, and a declared edge would carry `tonic` and `prost` into both for nothing. Each arrow stays because the day it is used, adding the dependency needs no architectural argument. Solid arrows are edges that exist.
 - Every box names a member listed in the root `Cargo.toml`, except `components/`, which stands for eight; nothing here is reserved any more. That box covers — `ragondin-retriever-bm25`, `ragondin-retriever-dense`, `ragondin-store-memory`, `ragondin-fusion-rrf`, `ragondin-embedder-onnx`, `ragondin-reranker-onnx`, `ragondin-context-concat` and `ragondin-stub`, the deterministic fixture the end-to-end tests are wired with — and they are drawn as one box because their edges are identical. §4.1's rule is now a fact and not a forecast: `cargo metadata` gives each of the eight exactly `ragondin-contracts` and `ragondin-types` as normal dependencies, and nothing else in the workspace. Each also carries `ragondin-conformance` as a **dev**-dependency, which is how a component proves it satisfies its contract; the graph draws normal dependencies only, so that edge is deliberately absent.
 - `testkit/` holds **reference implementations and fixtures** (ADR-C33 § 1), not only the conformance suite. `ragondin-generator-service` is a `Remote` `Generator` service: nothing in the workspace depends on it, its one normal dependency in the workspace is `ragondin-proto` (its tests also take `ragondin-remote`, `ragondin-contracts` and `ragondin-types` as dev-dependencies) — never the engine, never a component — and a caller reaches it over gRPC exactly as it would a service written in another language.
 - Two solid edges carry a condition. `ragondin-engine → ragondin-remote` and `ragondin → ragondin-remote` are each declared `optional = true` — in `engine/ragondin-engine/Cargo.toml` and `bin/ragondin/Cargo.toml` — and pulled in by that crate's own `remote` feature, so each is a real Cargo edge that the default build does not walk. They are drawn solid because the manifests declare them, and labelled because `cargo tree -e normal --depth 1` on either crate does not show them without `--features remote`. The binary's is the one that is used: it constructs the `Remote` adapters over a `--remote` binding (ADR-C32 § 3), and the engine calls nothing in `ragondin-remote`.

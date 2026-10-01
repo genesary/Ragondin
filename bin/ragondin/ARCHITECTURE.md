@@ -68,16 +68,19 @@ release.
   validates, and still hashes.
 - **The kind check is surfaced here, never implemented here.** ADR-C16 places
   the check of an edge's value kinds in `ragondin-pipeline`'s validation pass.
-  This crate matches on its `ValidationError::KindMismatch` to render a report —
-  the edge, the kind the port expects, the kind that arrives — and re-derives
-  none of the check's reasoning. An `extension` node's ports are unknown to the
-  core, so an edge at one is not kind-checked — though an edge arriving at a
-  position where the consuming node declares no port at all is refused whatever
-  produced it, extension included. `validate --help` states both, rather than
-  implying full coverage. The report names the producer first and the error
-  type's own `Display` names the consumer first; the divergence is deliberate —
-  the report follows the direction the value travels — and is argued where the
-  renderer is defined.
+  `validate` hands its `ConfigError::Invalid` verdict to `ragondin-config`'s
+  `incompatible_wiring`, which renders a `ValidationError::KindMismatch` as a
+  report — the edge, the kind the port expects, the kind that arrives — with
+  the file as its subject; `POST /pipelines/validate` renders the same report
+  through the same function. Neither re-derives any of the check's reasoning.
+  An `extension` node's ports are unknown to the core, so an edge at one is
+  not kind-checked — though an edge arriving at a position where the consuming
+  node declares no port at all is refused whatever produced it, extension
+  included. `validate --help` states both, rather than implying full coverage.
+  The report names the producer first and the error type's own `Display` names
+  the consumer first; the divergence is deliberate — the report follows the
+  direction the value travels — and is argued where the renderer is defined,
+  in `ragondin-config`.
 - **A bad configuration is a diagnosis, never a crash.** Every load-path failure
   reaches the user as an exit status and a message naming the file. There is no
   `unwrap` on the load path, and `tests/cli.rs` asserts the absence of a panic
@@ -674,28 +677,24 @@ dev-dependency for the fakes, because `Launcher` is an `async_trait` trait
 (frozen decision). `tokio` gains no feature: the
 workspace entry's `net` carries the listener.
 
-Seven more entries are *used* here without being added by it, so none is a new
+Six more entries are *used* here without being added by it, so none is a new
 utility role and none escalates. Four came with `--remote`. **`tonic`** and **`ragondin-remote`** are
 optional normal dependencies behind `remote`: the channel a binding is served
-over, and the adapters constructed over it — `tonic` already in every build
-through `ragondin-config`, and neither entry's feature list touched.
+over, and the adapters constructed over it — neither entry's feature list
+touched.
 **`ragondin-proto`** and **`async-trait`** are dev-dependencies, for the fake
 `Remote` services in `tests/support/remote.rs`: the generated server traits,
 and the attribute the contract traits the fakes implement are declared with.
 **`serde_json`** is a dev-dependency for `tests/calibration_generation.rs`
 alone, which derives its SQuAD subset from the dev file and reads a stored
 run's `traces.json`; the entry is the JSON codec every other crate here uses.
-The other two: **`sha2`** as a dev-dependency, the crate
+The other one: **`sha2`** as a dev-dependency, the crate
 the canonical logical-form hash and run identity already use, because a test in
 `src/wiring.rs` checks the identity `bench` records for an ONNX embedder
 against independently computed digests of its files — `bench` itself digests
-nothing, since each component reports its own identity; and **`serde_yaml`**
-as a dev-dependency, because
-`src/wiring.rs` reads a node's parameters out of a validated pipeline and its
-tests need pipelines built the way the product builds them — the door
-`ragondin-config` puts in front of that lowering takes a path and a runtime,
-which a unit test wants neither of, so the tests parse the same YAML into the
-same `RawPipeline` and run the same `validate`.
+nothing, since each component reports its own identity. The unit tests that
+need a validated pipeline load it through `ragondin-config`'s
+`parse_document`, as the product does, so `serde_yaml` is not a dependency.
 
 Two workspace crates also become normal dependencies of the binary with
 `bench`: **`ragondin-contracts`**, because the constructors `src/wiring.rs`

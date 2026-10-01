@@ -11,33 +11,19 @@
 //!
 //! # The load path
 //!
-//! ```text
-//! bytes on disk → RawPipeline (serde) → validate → LogicalPipeline
-//! ```
-//!
-//! This crate owns the first arrow and nothing else. The wire schema is
-//! `ragondin-pipeline`'s [`RawPipeline`], hand-maintained and independently
-//! versioned; the pass is that crate's [`validate()`]. Neither is re-implemented
-//! or paraphrased here, which is what INV-9 asks for: a file lands in the wire
-//! schema and reaches the in-memory model only through the pass, never by a
-//! deserializer pointed at an internal type.
-//!
-//! The version is read before the document is. That is not an optimization —
-//! it is the one fault a reader cannot fix by editing the file, and
-//! `SchemaVersion`'s own `Deserialize` refuses an unsupported version through
-//! `serde::de::Error::custom`, which keeps the wording and erases the type. A
-//! plain parse would therefore report *this build is too old* as a syntax
-//! error. [`peek_schema_version`] exists for this caller, and reading the
-//! version through it is what lets [`ConfigError`] keep the two apart.
+//! `LocalFile` reads the file and hands its text to
+//! [`parse_document`], the one definition of the load
+//! (`crate::document` says what it does and why the version is read first).
+//! What this module adds is the path: [`ConfigError`] is that verdict, or an
+//! unreadable file, with the file it is about.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
-use ragondin_pipeline::{
-    peek_schema_version, validate, LogicalPipeline, RawPipeline, SchemaVersionPeekError,
-    UnsupportedSchemaVersion, ValidationError,
-};
+use ragondin_pipeline::{LogicalPipeline, UnsupportedSchemaVersion, ValidationError};
+
+use crate::document::{parse_document, DocumentError};
 
 /// Where a data plane's configuration comes from.
 ///
@@ -127,31 +113,15 @@ impl ConfigSource for LocalFile {
             source,
         })?;
 
-        // The version first, for the reason this module documents. A peek that
-        // comes back `Unreadable` is *not* reported: the deserializer walked a
-        // document it could not make sense of, and `ragondin-pipeline` says
-        // what to do about that — fall through to the full parse below, which
-        // fails too and with the better-located message.
-        if let Err(SchemaVersionPeekError::Unsupported(source)) =
-            peek_schema_version(serde_yaml::Deserializer::from_str(&text))
-        {
-            return Err(ConfigError::UnsupportedSchemaVersion {
-                path: self.path.clone(),
-                source,
-            });
-        }
-
-        // Into the hand-maintained wire schema, never into an internal type
-        // (INV-9).
-        let raw: RawPipeline =
-            serde_yaml::from_str(&text).map_err(|source| ConfigError::Malformed {
-                path: self.path.clone(),
-                source,
-            })?;
-
-        validate(raw).map_err(|source| ConfigError::Invalid {
-            path: self.path.clone(),
-            source,
+        parse_document(&text).map_err(|error| {
+            let path = self.path.clone();
+            match error {
+                DocumentError::UnsupportedSchemaVersion(source) => {
+                    ConfigError::UnsupportedSchemaVersion { path, source }
+                }
+                DocumentError::Malformed(source) => ConfigError::Malformed { path, source },
+                DocumentError::Invalid(source) => ConfigError::Invalid { path, source },
+            }
         })
     }
 }

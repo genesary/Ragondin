@@ -20,10 +20,13 @@ rust-version.workspace = true
 # derivation passage text is verified against; `ragondin-metrics` for the
 # per-query and per-node scores read from a stored trace; and `ragondin-types`
 # for the ids those scores are computed over. Its closure holds no engine and
-# no component. `ragondin-config` is allowed by INV-12 and arrives with the
-# endpoints that read it.
+# no component. `ragondin-config`, which INV-12 allows, for the one definition
+# of a pipeline document's load and of its incompatible-wiring report
+# (`src/validation.rs`); its closure is `ragondin-pipeline`, the YAML parser
+# and two macro crates — no RPC or HTTP stack.
 [dependencies]
 ragondin-benchmarks = { workspace = true }
+ragondin-config = { workspace = true }
 ragondin-experiments = { workspace = true }
 ragondin-metrics = { workspace = true }
 ragondin-pipeline = { workspace = true }
@@ -39,9 +42,6 @@ axum = { workspace = true }        # the router and the Tower layers of the serv
 schemars = { workspace = true }    # the response types' schemas, assembled into the API description
 serde = { workspace = true }
 serde_json = { workspace = true }  # the JSON bodies, and the description document
-# A pipeline document is parsed into `ragondin-pipeline`'s wire schema, as
-# `ragondin validate` parses a file (`src/validation.rs`).
-serde_yaml = { workspace = true }
 # A pipeline document's etag: the SHA-256 of its bytes (`src/fs/pipelines.rs`).
 sha2 = { workspace = true }
 thiserror = { workspace = true }   # typed errors (ADR-C13): no anyhow in this crate

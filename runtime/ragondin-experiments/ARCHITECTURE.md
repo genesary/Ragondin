@@ -290,36 +290,33 @@ A choice made in this crate (`AGENTS.md` § Rules of engagement), recorded here.
 in. It takes that difference between the two stored configuration documents
 **lowered to `LogicalPipeline`**, never between their texts — two spellings of
 one configuration are one configuration (the spirit of INV-8) — and it lowers
-them **here**, from the kept text: `serde_yaml` into `ragondin-pipeline`'s own
-`RawPipeline`, then that crate's `validate`. That is the path `ragondin-config`
-runs over a file, and INV-9 is kept the same way: the text lands in the
-hand-maintained wire schema and reaches the in-memory model only through the
-pass.
+them from the kept text through `ragondin-config`'s `parse_document`, the one
+definition of a document's load, which `LocalFile` runs over a file. INV-9 is
+kept there: the text lands in `ragondin-pipeline`'s hand-maintained wire
+schema and reaches the in-memory model only through the pass.
 
 Why here and not elsewhere:
 
-- **Not through `ragondin-config`.** Its one source, `LocalFile`, reads a path,
-  asynchronously; a stored run is text, and its path is this crate's internal
-  layout, which no caller may name. A text entry point on `ragondin-config`
-  would make the change three crates, and an edge from this crate to that one
-  is not in `docs/code-architecture.md` § 4.3's graph.
-- **Not in the binary.** The binary would lower the same text the same way, with
-  `serde_yaml` promoted from its dev-dependencies, and the comparison is this
-  crate's (§ What lives here): the binary's `compare` is a packaging of it
-  (ADR-C15 makes the one binary a packaging decision) and renders it.
-- **`serde_yaml` is used here, not added.** The entry already exists in
-  `[workspace.dependencies]` for this format, so this fills no new utility role
-  and does not escalate. What this crate now has to follow is the wire schema:
-  a stored document that no longer lowers is reported as
-  `ConfigurationComparison::Unavailable`, naming the side and the reason — the
-  schema version is peeked first, as `ragondin-config` does, so a run stored
-  under a version this build cannot read says exactly that — and the metrics
-  are compared regardless. The store itself still never parses a document.
-- **The YAML format now has two readers.** `ragondin-config` reads a
-  configuration file; this crate reads the verbatim copy a run kept. Both land
-  the text in `ragondin-pipeline`'s `RawPipeline` and lower it through the same
-  `validate`, so the schema and the pass stay single; what is duplicated is the
-  few lines of `serde_yaml` in front of them.
+- **Through `ragondin-config`'s text entry point, not its `LocalFile`.** A
+  stored run is text, and its path is this crate's internal layout, which no
+  caller may name; `parse_document` takes the text and is synchronous. The
+  edge from this crate to `ragondin-config` is drawn in
+  `docs/code-architecture.md` § 4.3's graph, and that crate's closure is
+  `ragondin-pipeline`, the YAML parser and two macro crates — no RPC or HTTP
+  stack.
+- **Not in the binary.** The binary would lower the same text the same way,
+  and the comparison is this crate's (§ What lives here): the binary's
+  `compare` is a packaging of it (ADR-C15 makes the one binary a packaging
+  decision) and renders it.
+- **A stored document that no longer lowers** is reported as
+  `ConfigurationComparison::Unavailable`, naming the side and the reason —
+  `parse_document` peeks the schema version first, so a run stored under a
+  version this build cannot read says exactly that — and the metrics are
+  compared regardless. The store itself still never parses a document.
+- **The YAML format has one reader.** `ragondin-config`'s `parse_document`
+  reads a configuration file's text for `LocalFile` and the verbatim copy a
+  run kept for this crate; what is this crate's is only the sentence around
+  its verdict.
 - **The lowering is one public function, `lower_configuration`.** A reader of
   a stored run needs the same graph `compare` computes — `ragondin-api` draws
   a run's graph from it — so it calls this function rather than writing a

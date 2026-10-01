@@ -1933,7 +1933,6 @@ dependencies = [
  "ragondin-types",
  "rust-embed",
  "serde_json",
- "serde_yaml",
  "sha2",
  "tokio",
  "tonic",
@@ -1946,6 +1945,7 @@ dependencies = [
  "async-trait",
  "axum",
  "ragondin-benchmarks",
+ "ragondin-config",
  "ragondin-experiments",
  "ragondin-metrics",
  "ragondin-pipeline",
@@ -1954,7 +1954,6 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
- "serde_yaml",
  "sha2",
  "thiserror",
  "tokio",
@@ -1979,7 +1978,6 @@ version = "0.0.0"
 dependencies = [
  "async-trait",
  "ragondin-pipeline",
- "ragondin-proto",
  "serde_yaml",
  "thiserror",
  "tokio",
@@ -2051,11 +2049,11 @@ dependencies = [
 name = "ragondin-experiments"
 version = "0.0.0"
 dependencies = [
+ "ragondin-config",
  "ragondin-pipeline",
  "ragondin-types",
  "serde",
  "serde_json",
- "serde_yaml",
  "thiserror",
 ]
 
