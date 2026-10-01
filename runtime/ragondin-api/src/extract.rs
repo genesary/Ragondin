@@ -401,7 +401,10 @@ fn innermost(error: &(dyn Error + 'static)) -> String {
     cause.to_string()
 }
 
+// A throwaway router per test, to drive `ApiPath` alone: it serves no
+// request of the API's.
 #[cfg(test)]
+#[allow(clippy::disallowed_methods)]
 mod tests {
     use axum::body::Body;
     use axum::http::Request;

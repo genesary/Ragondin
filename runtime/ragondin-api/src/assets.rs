@@ -54,6 +54,9 @@ const INDEX: &str = "index.html";
 
 /// The router the assets are served by: one fallback, answering every path
 /// the API does not.
+// The assets' fallback is outside the /api router, and so outside ADR-C37
+// § 2's rule: `clippy.toml` refuses `Router::fallback` elsewhere.
+#[allow(clippy::disallowed_methods)]
 pub(crate) fn router(assets: Arc<dyn Assets>) -> Router {
     Router::new().fallback(serve).with_state(assets)
 }

@@ -53,6 +53,11 @@ struct Envelope {
 /// visible marker rather than dropped: a response without the header would
 /// read to the UI as a build that cannot be compared, which is the case the
 /// header exists to prevent.
+// The envelope's layers (ADR-C10), applied once, over the whole server, by
+// `router` in lib.rs: the one place `clippy.toml` lets a layer or a
+// middleware read the request, since anywhere else it would read it around
+// the ADR-C37 § 2 guard.
+#[allow(clippy::disallowed_methods)]
 pub(crate) fn wrap(router: Router, served: &str, build: &str) -> Router {
     let envelope = Arc::new(Envelope {
         served: served.to_owned(),

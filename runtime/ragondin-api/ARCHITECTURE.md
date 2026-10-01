@@ -588,13 +588,32 @@ every `Ti` an `ApiInput` — `State`, `ApiPath`, `ApiQuery`, `ApiHeaders` or
 `ApiJson` (`ApiInputs`, implemented by macro for up to eight arguments). A
 handler that takes axum's `Path`, `Query` or `Json` — bare, in an `Option`
 or in a `Result` — `Bytes`, `RawQuery`, the `Uri`, the `Request` or a
-`HeaderMap` does not compile, whatever it is imported as. The naming
-fallbacks are registered as fallbacks, outside `route`, which is ADR-C37
-§ 2's exception. `clippy.toml`, in this package and not at the workspace root
-(a root file would reach every crate), adds the crate's other code: it
-refuses `axum::extract::Path`, `axum::extract::Query` and
-`axum::http::HeaderMap` under `disallowed-types`, and `src/extract.rs` alone
-allows them, saying why. `axum::extract::Json` is not on that list, because
+`HeaderMap` does not compile, whatever it is imported as.
+
+**`Routes::route` is the only way in, by `clippy.toml`.** The guard binds
+only what is registered through it, so `clippy.toml` — in this package, not
+at the workspace root, where it would reach every crate — refuses, under
+`disallowed-methods`, every `axum::Router` method that adds a route, a
+service, a fallback or a layer (`route`, `route_service`, `nest`,
+`nest_service`, `merge`, `layer`, `route_layer`, `fallback`,
+`fallback_service`) and `axum::middleware::from_fn` and `from_fn_with_state`.
+Four sites allow them, each saying why:
+
+- `routes::Builder::into_router` — the one `Router::route` an /api handler
+  meets, every method router built through the guard;
+- `router` in `lib.rs` — the one assembly site: the nest under `/api`, the
+  bare-prefix route and the naming fallback (ADR-C37 § 2's exception: they
+  take the `Uri` and the `Method` only to name the request), and the assets
+  merged beside;
+- `layers::wrap` — the envelope's layers (ADR-C10), applied once by
+  `router`, the one place a middleware reads the request;
+- `assets::router` — the assets' fallback, outside the `/api` router.
+
+A route added anywhere else fails `just clippy`. Within those four sites,
+review holds the line. `clippy.toml` also refuses `axum::extract::Path`,
+`axum::extract::Query` and `axum::http::HeaderMap` under `disallowed-types`
+in the crate's other code, and `src/extract.rs` alone allows them, saying
+why. `axum::extract::Json` is not on that list, because
 it *is* `axum::Json`, the response every handler returns, and
 `disallowed-types` cannot tell an argument from a return type; the guard
 refuses it as an argument.

@@ -5,8 +5,9 @@
 # The route guard is what holds the rule for handlers: `routes::Routes::route`
 # registers a handler only when every argument is `State` or one of the
 # crate's extractors, so a raw extractor of any spelling does not compile
-# there. This file adds the crate's other code: no helper takes these types
-# either.
+# there. This file makes `route` the only way in (`disallowed-methods`
+# below), and keeps the raw types out of the crate's other code
+# (`disallowed-types`).
 #
 # This file is the package's, not the workspace root's: Clippy reads the
 # package directory first, and a root file would ban these types in every
@@ -14,6 +15,27 @@
 # `axum::Json`, the response every handler returns, and `disallowed-types`
 # cannot tell an argument from a return type; the route guard refuses it as
 # an argument.
+# The guard holds only if `Routes::route` is the one way into the router, so
+# the methods that add a route, a service, a fallback or a middleware to an
+# axum `Router` are refused too. Each is allowed, with its reason, at the
+# sites that assemble the server: `routes::Builder::into_router`, the
+# `router` function in `lib.rs` (the nest, the bare-prefix route, the naming
+# fallback, the assets), `layers::wrap` (the envelope's layers) and
+# `assets::router` (the assets' fallback, outside the `/api` router by
+# ADR-C37 § 2).
+disallowed-methods = [
+    { path = "axum::Router::route", reason = "register an /api route through `routes::Routes::route`, whose bound is the ADR-C37 § 2 guard" },
+    { path = "axum::Router::route_service", reason = "a service bypasses the ADR-C37 § 2 guard: register a handler through `routes::Routes::route`" },
+    { path = "axum::Router::nest", reason = "a nested router bypasses the ADR-C37 § 2 guard: the server is assembled in `router` in lib.rs only" },
+    { path = "axum::Router::nest_service", reason = "a nested service bypasses the ADR-C37 § 2 guard" },
+    { path = "axum::Router::merge", reason = "a merged router bypasses the ADR-C37 § 2 guard: the server is assembled in `router` in lib.rs only" },
+    { path = "axum::Router::layer", reason = "a layer reads the request around the ADR-C37 § 2 guard: the envelope's layers are applied in `layers::wrap` only" },
+    { path = "axum::Router::route_layer", reason = "a layer reads the request around the ADR-C37 § 2 guard" },
+    { path = "axum::Router::fallback", reason = "a fallback handler bypasses the ADR-C37 § 2 guard: the naming fallbacks are set in `router` in lib.rs only" },
+    { path = "axum::Router::fallback_service", reason = "a fallback service bypasses the ADR-C37 § 2 guard" },
+    { path = "axum::middleware::from_fn", reason = "middleware reads the request around the ADR-C37 § 2 guard: the envelope's layers are in `layers::wrap` only" },
+    { path = "axum::middleware::from_fn_with_state", reason = "middleware reads the request around the ADR-C37 § 2 guard: the envelope's layers are in `layers::wrap` only" },
+]
 disallowed-types = [
     { path = "axum::extract::Path", reason = "read a path parameter through `ApiPath<T>` (ADR-C37 § 2): axum's rejection is plain text" },
     { path = "axum::extract::Query", reason = "read the query string through `ApiQuery<T>` (ADR-C37 § 2, § 3): it validates strict percent-encoded UTF-8 first" },

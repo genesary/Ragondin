@@ -131,11 +131,19 @@ pub struct ServerConfig {
 /// is a `route_not_found` problem, never an asset. A path that merely starts
 /// with the same letters, such as `/apix`, is not under `/api` and is the
 /// assets' to answer.
+// The one assembly site: the nest, the bare-prefix route, the naming
+// fallback and the assets, none of them an /api handler reading input
+// (ADR-C37 § 2's exceptions). `clippy.toml` refuses these `Router` methods
+// everywhere else, so no route reaches the server around the guard.
+#[allow(clippy::disallowed_methods)]
 pub fn router(backends: Backends, config: ServerConfig, assets: Arc<dyn Assets>) -> Server {
     let (served, build) = (config.served.clone(), config.build.clone());
-    // Every route is listed once, in `routes::api`, and registered only
+    // Every /api route is listed once, in `routes::api`, and registered only
     // through `routes::Routes::route`, whose bound refuses a handler that
-    // takes anything but `State` and the crate's own extractors (ADR-C37 § 2).
+    // takes anything but `State` and the crate's own extractors (ADR-C37
+    // § 2). Nothing below adds an /api handler: `clippy.toml` refuses the
+    // `Router` methods that would, outside this function,
+    // `routes::Builder::into_router`, `layers::wrap` and `assets::router`.
     let mut routes = routes::Builder::default();
     routes::api(&mut routes);
     let api = routes
@@ -152,7 +160,6 @@ pub fn router(backends: Backends, config: ServerConfig, assets: Arc<dyn Assets>)
         router: layers::wrap(server, &served, &build),
     }
 }
-
 /// Serves `server` on `listener` until the listener fails: the one place the
 /// server meets a socket, so the binary names no HTTP stack.
 ///

@@ -284,6 +284,21 @@ describe('renderApiTypes', () => {
       /GET \/x.*`If-Match`.*twice/,
     ],
     [
+      'two headers whose names differ only in case, which HTTP reads as one',
+      description({}, {
+        '/x': {
+          get: {
+            parameters: [
+              { in: 'header', name: 'If-Match', required: false, schema: { type: 'string' } },
+              { in: 'header', name: 'if-match', required: false, schema: { type: 'string' } },
+            ],
+            responses: OK,
+          },
+        },
+      }),
+      /GET \/x.*`if-match`.*twice/,
+    ],
+    [
       'a parameter in no location it knows',
       description({}, { '/x': { get: { parameters: [{ in: 'body', name: 'b', required: true, schema: { type: 'string' } }], responses: OK } } }),
       /GET \/x.*body/,

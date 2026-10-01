@@ -264,8 +264,10 @@ function pathsType(paths, typeOf) {
         onlyKnown(p, PARAMETER_KEYS, where, 'parameter');
         const place = byPlace.get(p.in);
         if (place === undefined) return refuse(where, `a parameter in \`${String(p.in)}\`, which is not the path, the query string or a header`);
-        // One name per location: a second would be a second member of one type.
-        const key = `${p.in}\n${p.name}`;
+        // One name per location: a second would be a second member of one
+        // type. A header's name is case-insensitive in HTTP, so two that
+        // differ only in case are one header declared twice.
+        const key = `${p.in}\n${p.in === 'header' ? String(p.name).toLowerCase() : p.name}`;
         if (seen.has(key)) refuse(where, `the ${p.in} parameter \`${p.name}\` declared twice`);
         seen.add(key);
         // A path parameter is always required; a query or header one is

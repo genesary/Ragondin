@@ -9,7 +9,10 @@
 //! extractors (ADR-C37 § 2). A handler that takes axum's `Path`, `Query`,
 //! `Json` (bare, in an `Option` or a `Result`), `Bytes`, `RawQuery`, the
 //! `Uri`, the `Request` or a `HeaderMap` does not compile, whatever it is
-//! imported as.
+//! imported as. `clippy.toml` makes it the only way in: it refuses the
+//! `Router` methods that add a route, a service, a fallback or a layer
+//! outside [`Builder::into_router`] and the sites that assemble the server
+//! (`ARCHITECTURE.md` § Request input goes through one extractor module).
 
 use std::collections::BTreeMap;
 
@@ -108,6 +111,10 @@ impl Routes for Builder {
 }
 
 impl Builder {
+    // The one place an /api route meets `Router::route`: every method router
+    // here was built by `Routes::route`, through the guard. `clippy.toml`
+    // refuses `Router::route` elsewhere.
+    #[allow(clippy::disallowed_methods)]
     pub(crate) fn into_router(self) -> Router<AppState> {
         self.paths
             .into_iter()
