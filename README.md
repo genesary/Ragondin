@@ -185,3 +185,5 @@ and `compare`, which reads two of those runs back.
 ## License
 
 Apache-2.0. See [`LICENSE`](LICENSE).
+
+The UI that `ragondin ui` serves bundles third-party JavaScript and fonts under their own licences. `npm run build` writes their notices into the bundle, and the binary serves them at `/third-party-notices.txt` (`ui/ARCHITECTURE.md` § The third-party notices).

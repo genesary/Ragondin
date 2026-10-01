@@ -32,7 +32,7 @@ charter.
 | `tests/vertical_slice.rs` | The composition root assembled for real, end to end: a retrieval pipeline, and a generation one |
 | `tests/exit_criterion.rs` | The M2 exit criterion: hybrid retrieval with reranking beats dense-only, reproducibly, and `compare` says so |
 | `tests/exit_criterion_generation.rs` | The M3 exit criterion: the same two retrieval pipelines ending in a context builder and a `Remote` generator — hybrid with reranking answers more questions than dense-only, on exact match and F1, reproducibly, and `compare` says so |
-| `tests/ui.rs` | `ragondin ui`, exercised as a process: the loopback refusal, the assets and the API over a real connection, the capabilities, the release assertion; and the lean build's refusal |
+| `tests/ui.rs` | `ragondin ui`, exercised as a process: the loopback refusal, the assets and the API over a real connection, the capabilities, the third-party notices, the release assertion; and the lean build's refusal |
 | `tests/support/remote.rs` | Fake `Remote` services, `tonic` servers over in-test components, for the tests that bind one; shared with `src/wiring.rs`'s tests |
 | `tests/support/ui.rs` | A running `ragondin ui` and a hand-written HTTP/1.1 client, for `tests/ui.rs` |
 
@@ -497,13 +497,22 @@ than the assets.
 - **The notice page** carries no `<style>` and no `style=`, which the content
   security policy would refuse, and a `<meta name="ragondin-ui"
   content="not-built">` marker: the release assertion's test for it.
+- **The third-party notices.** `npm run build` writes
+  `ui/dist/third-party-notices.txt`, the licence notices of every package and
+  font the bundle carries (`ui/ARCHITECTURE.md` § The third-party notices).
+  It is embedded with the rest of `ui/dist/`, so a built binary serves it at
+  `/third-party-notices.txt` as `text/plain`, and `ui --help` says so beside
+  the binary's own licence. The notice page bundles no third-party code and
+  carries none.
 - **The release assertion.** `tests/ui.rs` starts the binary and asks for
-  `/`; under `RAGONDIN_REQUIRE_UI_ASSETS` it fails if the page is the notice.
-  CI's `ui` job runs `cargo test -p ragondin --features ui` with the variable
+  `/` and for `/third-party-notices.txt`; under `RAGONDIN_REQUIRE_UI_ASSETS`
+  it fails if the page is the notice, or if the notices are not served as
+  text under their heading. CI's `ui` job runs `cargo test -p ragondin --features ui` with the variable
   set, right after `npm run check` built `ui/dist/`, so the shipped shape is
   exercised on every pull request; the `check` job is unchanged and never
   runs Node. Both branches are tested without the variable: the notice fails
-  the check, a real page passes it.
+  the check, a real page passes it; a missing or foreign notices file fails
+  it, the real one passes it.
 
 ### The wiring
 

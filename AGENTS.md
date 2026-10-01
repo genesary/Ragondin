@@ -74,7 +74,8 @@ just map <entity>
 just map --conflicts
 
 # The front end's gates: `npm ci`, then the API types' freshness, lint,
-# typecheck, test, build and the licence and advisory audit, inside ui/
+# typecheck, test, build, the third-party notices' re-check, and the licence
+# and advisory audit, inside ui/
 # (ui/ARCHITECTURE.md). Needs the Node major pinned in ui/.node-version. No
 # cargo recipe needs Node.
 just check-ui

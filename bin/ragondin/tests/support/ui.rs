@@ -18,6 +18,13 @@ pub const REQUIRE_ASSETS: &str = "RAGONDIN_REQUIRE_UI_ASSETS";
 /// by `build.rs` into the notice it generates.
 const NOTICE_MARKER: &str = r#"<meta name="ragondin-ui" content="not-built">"#;
 
+/// Where a real build serves the third-party notices of its bundle: the file
+/// `npm run build` writes into `ui/dist/` (`ui/scripts/notices.mjs`).
+pub const NOTICES_PATH: &str = "/third-party-notices.txt";
+
+/// The first line of that file, as `ui/scripts/notices.mjs` writes it.
+pub const NOTICES_HEADING: &str = "Third-party notices of the ragondin UI";
+
 /// `ragondin ui` on a port the system chose, killed when dropped.
 pub struct Server {
     child: Child,
@@ -113,6 +120,16 @@ pub struct Response {
 }
 
 impl Response {
+    /// A response with one header, `Content-Type`, for a test of an assertion
+    /// over what a server answered.
+    pub fn new(status: u16, content_type: &str, body: &str) -> Self {
+        Self {
+            status,
+            headers: vec![("Content-Type".to_owned(), content_type.to_owned())],
+            body: body.to_owned(),
+        }
+    }
+
     /// The value of the header `name`, matched ignoring case.
     pub fn header(&self, name: &str) -> Option<&str> {
         self.headers
@@ -204,6 +221,28 @@ pub fn assert_shipped(required: bool, page: &str) -> Result<(), String> {
         return Err(format!(
             "{REQUIRE_ASSETS} is set, and this binary embeds the notice page rather than the \
              UI: build `ui/dist/` (`npm run build` in `ui/`) before building the binary"
+        ));
+    }
+    Ok(())
+}
+
+/// The release assertion's second half: when `required`, `notices` — what
+/// the binary answers at [`NOTICES_PATH`] — must be the third-party notices
+/// file, served as text. The bundle carries code under MIT, ISC and
+/// BSD-3-Clause, each of which requires its notice to accompany a copy.
+pub fn assert_notices_shipped(required: bool, notices: &Response) -> Result<(), String> {
+    if !required {
+        return Ok(());
+    }
+    let is_text = notices
+        .header("content-type")
+        .is_some_and(|value| value.starts_with("text/plain"));
+    if notices.status != 200 || !is_text || !notices.body.starts_with(NOTICES_HEADING) {
+        return Err(format!(
+            "{REQUIRE_ASSETS} is set, and this binary does not serve the third-party notices at \
+             {NOTICES_PATH} (status {}): build `ui/dist/` with `npm run build` in `ui/`, which \
+             writes them, before building the binary",
+            notices.status
         ));
     }
     Ok(())

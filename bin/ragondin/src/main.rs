@@ -168,7 +168,10 @@ enum Command {
         forward its port over SSH (`ssh -L <port>:127.0.0.1:<port> <host>`), \
         then open the printed address on this one.\n\n\
         `--port 0` asks the system for a free port. A build without the `ui` \
-        feature refuses this subcommand."
+        feature refuses this subcommand.\n\n\
+        ragondin is licensed under Apache-2.0. The UI it serves bundles \
+        third-party software and fonts under their own licences, whose notices \
+        it serves at `/third-party-notices.txt`."
     )]
     Ui {
         /// The workspace directory, its runs in `<dir>/runs`.

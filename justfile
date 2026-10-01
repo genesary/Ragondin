@@ -187,7 +187,8 @@ calibrate-generation:
         cargo test --release -p ragondin --features bm25,onnx,stub,remote --test calibration_generation -- --ignored --nocapture --test-threads=1
 
 # The front end's gates: install exactly the lockfile, then lint, typecheck,
-# test, build and audit it (ui/ARCHITECTURE.md § The gates). The one recipe here
+# test, build, re-check the notices and audit it (ui/ARCHITECTURE.md § The
+# gates). The one recipe here
 # that needs Node -- the version pinned in ui/.node-version. No cargo recipe
 # does, and none may: the Rust build stays Rust-only (ADR-C36 § 5), so
 # everything above runs on a machine without Node, and only `check`, which
