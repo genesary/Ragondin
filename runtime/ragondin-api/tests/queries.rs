@@ -295,6 +295,29 @@ async fn a_malformed_filter_is_parameter_invalid() {
     }
 }
 
+/// A `%` must be followed by two hexadecimal digits: a sign is not one, so
+/// `%+1` and `%-1` are malformed escapes, refused as such rather than decoded
+/// to a byte.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_malformed_escape_is_refused_as_one() {
+    for path in [
+        "?missing_gold_at=%+1",
+        "?missing_gold_at=%-1",
+        "?missing_gold_at=%1",
+        "?missing_gold_at=%zz",
+    ] {
+        let (status, body) =
+            get_queries(&stub_run(), verified(), path, "queries_malformed_escape").await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{path}");
+        assert_eq!(body["code"], "parameter_invalid", "{path}");
+        assert!(
+            body["detail"].as_str().unwrap().contains("percent-encoded"),
+            "{path}: refused as a malformed escape, not as a value: {}",
+            body["detail"]
+        );
+    }
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_repeated_filter_is_parameter_invalid() {
     let (status, body) = get_queries(

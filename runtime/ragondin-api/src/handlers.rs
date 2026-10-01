@@ -333,6 +333,11 @@ fn decode(text: &str) -> Result<String, ApiError> {
             b'+' => decoded.push(b' '),
             b'%' => {
                 let hex = bytes.get(at + 1..at + 3).ok_or_else(refused)?;
+                // Two hexadecimal digits, checked here: `from_str_radix`
+                // also accepts a leading sign, which would read `%+1` as 1.
+                if !hex.iter().all(u8::is_ascii_hexdigit) {
+                    return Err(refused());
+                }
                 let hex = std::str::from_utf8(hex).map_err(|_| refused())?;
                 decoded.push(u8::from_str_radix(hex, 16).map_err(|_| refused())?);
                 at += 2;
