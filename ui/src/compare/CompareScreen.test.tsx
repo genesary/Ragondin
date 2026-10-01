@@ -410,7 +410,7 @@ describe('answers that arrive out of order', () => {
     expect(window.history.length).toBe(before);
   });
 
-  it('drops a pairing answered after a newer comparison was asked for, and shows no error for it', async () => {
+  it('keeps the screen on a newer comparison over a pairing it overtook, yet says the pair was kept, asks again, and serves nothing stale', async () => {
     const h = held();
     show(THREE, routes(h.route));
     await (await h.call(0)).release('first');
@@ -426,10 +426,24 @@ describe('answers that arrive out of order', () => {
     const newer = await h.call(2);
     await newer.release('newer');
     await pairing.release('paired');
+    // The pairing's own answer never lands over the newer comparison…
     expect(screen.getByText('newer')).toBeTruthy();
     expect(screen.queryByText('paired')).toBeNull();
-    expect(document.querySelector('.rg-sheet')?.closest('[aria-busy="true"]')).toBeNull();
     expect(within(screen.getByRole('region', { name: 'Pair nodes' })).queryByRole('alert')).toBeNull();
+    // …but the API kept the pair, and the panel says so.
+    expect(within(screen.getByRole('region', { name: 'Pair nodes' })).getByRole('status').textContent).toBe(
+      'dense paired with rerank (kept; the comparison shown was asked for after it).',
+    );
+    // The newer comparison may have been read before the pair was written: it is asked for again.
+    const again = await h.call(3);
+    expect(again.body).toEqual({ run_ids: [DENSE, HYBRID, RERANK], baseline: HYBRID });
+    await again.release('again');
+    expect(screen.getByText('again')).toBeTruthy();
+    expect(document.querySelector('.rg-sheet')?.closest('[aria-busy="true"]')).toBeNull();
+    // An answer cached before the pair was kept is never served again.
+    baselineTo(DENSE);
+    const back = await h.call(4);
+    expect(back.body).toEqual({ run_ids: [DENSE, HYBRID, RERANK], baseline: DENSE });
   });
 
   it('adds a run to the address as it stands when the answer arrives, not as it was when Add was pressed', async () => {

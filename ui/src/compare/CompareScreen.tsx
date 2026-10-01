@@ -120,10 +120,16 @@ function Comparing({ client, ids, baseline }: { client: ApiClient; ids: readonly
     const body = { ...request.current, pairing };
     const asked = keyOf(body.run_ids, body.baseline);
     const result = await client.post('/compare', body);
-    if (mine !== latest.current) return { kind: 'superseded' };
+    // An answer means the API kept the pairing, whether or not the answer
+    // still lands: every answer in hand predates it and is never served again.
+    if (result.ok) answered.current.clear();
+    if (mine !== latest.current) {
+      // The newer comparison on screen, or in flight, may have been read
+      // before the pairing was written: ask again for the address as it stands.
+      if (result.ok) void compare();
+      return { kind: 'superseded', kept: result.ok };
+    }
     if (!result.ok) return { kind: 'refused', problem: result.problem };
-    // A kept pairing changes the answer for these runs: what disk holds now.
-    answered.current.clear();
     answered.current.set(asked, result.value);
     setRead({ state: { status: 'loaded', value: result.value }, key: asked, shown: result.value });
     return { kind: 'kept' };

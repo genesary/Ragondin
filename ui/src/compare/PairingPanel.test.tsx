@@ -144,8 +144,17 @@ describe('PairingPanel', () => {
     expect(region.getAttribute('aria-busy')).toBeNull();
   });
 
-  it('says nothing of an answer a newer comparison overtook', async () => {
-    panel(COMPARISON, vi.fn<OnPair>(async () => ({ kind: 'superseded' })));
+  it('confirms a pair the API kept though a newer comparison overtook its answer', async () => {
+    panel(COMPARISON, vi.fn<OnPair>(async () => ({ kind: 'superseded', kept: true })));
+    choose(RERANK);
+    fireEvent.click(node('dense, baseline'));
+    await act(async () => fireEvent.click(node('rerank, B')));
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.getByRole('status').textContent).toBe('dense paired with rerank (kept; the comparison shown was asked for after it).');
+  });
+
+  it('says nothing of a refusal a newer comparison overtook', async () => {
+    panel(COMPARISON, vi.fn<OnPair>(async () => ({ kind: 'superseded', kept: false })));
     choose(RERANK);
     fireEvent.click(node('dense, baseline'));
     await act(async () => fireEvent.click(node('rerank, B')));

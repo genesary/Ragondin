@@ -20,10 +20,11 @@ type Pick = { side: Side; node: string };
 
 /**
  * What became of a posted pairing: kept, refused by the API, or overtaken by
- * a newer comparison asked for meanwhile — whose answer is the one shown, so
- * the panel says nothing of it.
+ * a newer comparison asked for meanwhile — whose answer is the one shown.
+ * An overtaken pairing the API answered was still kept on disk (`kept`), and
+ * the panel says so; an overtaken refusal it says nothing of.
  */
-export type PairOutcome = { kind: 'kept' } | { kind: 'refused'; problem: ApiProblem } | { kind: 'superseded' };
+export type PairOutcome = { kind: 'kept' } | { kind: 'refused'; problem: ApiProblem } | { kind: 'superseded'; kept: boolean };
 
 export type PairingPanelProps = {
   id: string;
@@ -54,8 +55,12 @@ export function PairingPanel({ id, comparison, onPair }: PairingPanelProps) {
   const letter = (side: Side) => (side === 'base' ? 'baseline' : (series[other]?.short ?? ''));
   const unnamed = [base, them].find((r) => r !== undefined && r.pipeline === null);
 
-  /** Posts `pairs`, saying `doing` meanwhile and `done` once kept; refuses, in words, while another post is in flight. */
-  const save = async (pairs: NodePair[], doing: string, done: string) => {
+  /**
+   * Posts `pairs`, saying `doing` meanwhile, and once kept `what` with the
+   * count of pairs drawn by hand; refuses, in words, while another post is in
+   * flight.
+   */
+  const save = async (pairs: NodePair[], doing: string, what: string, count = true) => {
     if (base?.pipeline == null || them?.pipeline == null) return;
     setPick(null);
     if (saving.current) {
@@ -70,7 +75,9 @@ export function PairingPanel({ id, comparison, onPair }: PairingPanelProps) {
     saving.current = false;
     setBusy(false);
     setProblem(outcome.kind === 'refused' ? outcome.problem : null);
-    setMessage(outcome.kind === 'kept' ? done : '');
+    const done = count ? `${what}; ${byHand(pairs.length)}.` : `${what}.`;
+    const overtaken = `${what} (kept; the comparison shown was asked for after it).`;
+    setMessage(outcome.kind === 'kept' ? done : outcome.kind === 'superseded' && outcome.kept ? overtaken : '');
   };
 
   const manual = manualPairs(comparison, other);
@@ -78,7 +85,7 @@ export function PairingPanel({ id, comparison, onPair }: PairingPanelProps) {
     const [node, mate] = a.side === 'base' ? [a.node, b.node] : [b.node, a.node];
     // A node is paired once: a new pair replaces any pair either node was in.
     const pairs = [...manual.filter((p) => p.node !== node && p.other !== mate), { node, other: mate }];
-    void save(pairs, `Keeping ${node} paired with ${mate}…`, `${node} paired with ${mate}; ${byHand(pairs.length)}.`);
+    void save(pairs, `Keeping ${node} paired with ${mate}…`, `${node} paired with ${mate}`);
   };
 
   const choose = (target: Pick) => {
@@ -203,7 +210,7 @@ export function PairingPanel({ id, comparison, onPair }: PairingPanelProps) {
                     kind="quiet"
                     icon="close"
                     aria-label={`Remove the pair ${p.node} and ${p.other}`}
-                    onClick={() => void save(rest, `Removing the pair ${p.node} and ${p.other}…`, `${p.node} and ${p.other} unpaired; ${byHand(rest.length)}.`)}
+                    onClick={() => void save(rest, `Removing the pair ${p.node} and ${p.other}…`, `${p.node} and ${p.other} unpaired`)}
                   >
                     Remove
                   </Button>
@@ -217,7 +224,7 @@ export function PairingPanel({ id, comparison, onPair }: PairingPanelProps) {
                 Reset to automatic
               </Button>
             ) : (
-              <Button size="s" onClick={() => void save([], 'Resetting to automatic…', 'Reset to automatic.')}>
+              <Button size="s" onClick={() => void save([], 'Resetting to automatic…', 'Reset to automatic', false)}>
                 Reset to automatic
               </Button>
             )}
