@@ -39,6 +39,11 @@ axum = { workspace = true }        # the router and the Tower layers of the serv
 schemars = { workspace = true }    # the response types' schemas, assembled into the API description
 serde = { workspace = true }
 serde_json = { workspace = true }  # the JSON bodies, and the description document
+# A pipeline document is parsed into `ragondin-pipeline`'s wire schema, as
+# `ragondin validate` parses a file (`src/validation.rs`).
+serde_yaml = { workspace = true }
+# A pipeline document's etag: the SHA-256 of its bytes (`src/fs/pipelines.rs`).
+sha2 = { workspace = true }
 thiserror = { workspace = true }   # typed errors (ADR-C13): no anyhow in this crate
 # `spawn_blocking`: `RunStore` is synchronous and its file backend blocks, so a
 # handler moves the call off the async workers rather than stalling one.
@@ -52,8 +57,7 @@ tower = { workspace = true }
 
 [dev-dependencies]
 # The digests of the files a test's local server serves, for the manifest
-# entries the registry tests build.
-sha2 = { workspace = true }
+# entries the registry tests build, come from `sha2`, a normal dependency.
 
 [features]
 # The conformance suite for `Registry` backends (`src/conformance.rs`): a

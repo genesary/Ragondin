@@ -26,18 +26,26 @@ the response types, the typed errors, and the traits the service consumes.
 | `Backends` | The five backends, each an `Arc<dyn …>`: `RunStore`, `PipelineSource`, `Registry`, `WorkspaceSettings`, `Launcher` |
 | `backends` | The four traits this crate defines, and the values they exchange |
 | `response` | Every type the API serializes — the response bodies and `Problem` |
+| `request` | Every request body the API reads |
 | `error` | `ApiError`, its stable codes, its `application/problem+json` rendering |
 | `layers` | The server's defence of its origin, as Tower layers on the router |
 | `description` | The API description, assembled from the declared operations and the `schemars` schemas |
 | `derived` | The data derived from a stored run and its benchmark: per-query scores, per-node ranking metrics, the gold filter |
 | `cache` | The workspace's `cache/`: those derived figures, reconstructible, never a truth |
-| `fs` | The file backends: `FsRegistry` today |
+| `endpoints` | The handlers of the workspace's endpoints: pipelines, benchmarks, services |
+| `validation` | A pipeline document checked as `ragondin validate` checks a file |
+| `fs` | The workspace on disk and its file backends: `Workspace`, `FsSettings`, `FsPipelines`, `FsRegistry` |
 | `conformance` | The suite every `Registry` backend passes, behind the `conformance` feature |
 
-Served today: `GET /api/v1/workspace`, `GET /api/v1/runs`,
-`GET /api/v1/runs/{id}`, `GET /api/v1/runs/{id}/queries` and
-`GET /api/v1/runs/{id}/trace/{query}` — the last two described in
-§ *Derived data*. `/api`, `/api/` and every other path below them are
+Served today, under `/api/v1`: `GET /workspace`; `GET /runs`,
+`GET /runs/{id}`, `GET /runs/{id}/queries` and `GET /runs/{id}/trace/{query}`
+— the last two described in § *Derived data*; `GET /pipelines`,
+`POST /pipelines/validate`, `GET`/`PUT /pipelines/{name}`,
+`GET`/`PUT /pipelines/{name}/layout`; `GET /benchmarks`,
+`POST /benchmarks/import`; `GET /services`,
+`PUT`/`DELETE /services/{family}/{name}`,
+`POST /services/{family}/{name}/probe` — those described in § *The workspace
+on disk*. `/api`, `/api/` and every other path below them are
 the API's too: an unknown one answers `route_not_found`, and a method an
 endpoint does not serve answers `method_not_allowed` with axum's `Allow`
 header — problem bodies both, never an empty 404 or the assets' fallback.
@@ -80,7 +88,9 @@ and `ragondin-metrics` reach no engine and no component: their closure is the
 core's `ragondin-types` and its readers, and `just check-invariants` walks it
 — `scripts/test-check-invariants.py` holds a case in which `ragondin-benchmarks`
 reaches the engine and INV-12 fails through it. `ragondin-config` is within
-INV-12 and arrives with the endpoints that read it. **`ragondin-harness` is
+INV-12 too, and still not a dependency: its `LocalFile` reads a path, and a
+document checked from a request body is text, so `validation.rs` calls the
+`ragondin-pipeline` functions `LocalFile` calls (§ The pipelines). **`ragondin-harness` is
 not a dependency, and may not become one** (INV-12 refuses it through the
 engine). The two rules the derived data shares with it are therefore
 defined where both crates reach them, once, and `derived.rs` calls them as the
@@ -101,8 +111,8 @@ cluster: the binary picks each backend.
 | Trait | Defined in | Local backend | In a cluster |
 |---|---|---|---|
 | `RunStore` | `ragondin-experiments` | `FileSystemRunStore` there | an object store or volume |
-| `PipelineSource` | here | `fs`, over `pipelines/<name>.yaml` and its layout — not written yet | custom resources |
-| `WorkspaceSettings` | here | `fs`, over `workspace.toml` — not written yet | the deployment's bindings, read-only |
+| `PipelineSource` | here | `fs::FsPipelines`, over `pipelines/<name>.yaml` and its layout | custom resources |
+| `WorkspaceSettings` | here | `fs::FsSettings`, over `workspace.toml` | the deployment's bindings, read-only |
 | `Registry` | here | `fs::FsRegistry`, over the benchmark manifest and the datasets directory | an object store and the same manifest |
 | `Launcher` | here | the binary, over the composition root | a run custom resource and the controller |
 
@@ -113,8 +123,15 @@ cluster: the binary picks each backend.
   store call on a blocking thread with `tokio::task::spawn_blocking` rather
   than stalling an async worker on the disk.
 - **`Launcher` carries the shapes the design document § 7 gives**: `probe`
-  returns the identity a `Remote` service reports, `identity` the run id a
-  `Submission` announces, and `execute` a `Job`'s terminal `JobState`.
+  returns the identity a `Remote` service reports — for a served model, where
+  the family reports one per served model (ADR-C32 § 4) — `identity` the run
+  id a `Submission` announces, and `execute` a `Job`'s terminal `JobState`.
+  `check_binding` says whether the composition root would accept a binding,
+  in `--remote`'s words: only the binary knows the names it gives `Local`
+  components, so a binding is checked there before it is stored.
+  `check_document` likewise says whether it would accept a pipeline's keys,
+  in `bench`'s words, before a document is stored: only the binary knows
+  which keys each component reads.
   **`execute` is provisional**, and its doc comment says so: the job model
   and its queue (#349) settle its progress and cancellation. Nothing calls it
   yet, and the crate is internal, so widening it owes no one a deprecation.
@@ -148,8 +165,8 @@ supplies the HTTP transport, and converts what comes back in `convert.rs`.
   dataset's `CarriedPieces`, and is `null` when nothing loaded.
 - **The listing digests every dataset on every call.** Each entry on disk is
   loaded whole and digested, and nothing is cached: correct, and slow for a
-  large corpus. The endpoint that serves it (#342) should know this before
-  calling it per request; a cache is `cache/`'s business, not this backend's.
+  large corpus. `GET /benchmarks` and `GET /workspace`'s count call it on
+  each request; a cache is `cache/`'s business, not this backend's.
   `dataset` has the same cost, one dataset per call, and the derived-data
   endpoints pay it on every request — § *Derived data* says why, and what
   `cache/` saves them.
@@ -176,11 +193,10 @@ supplies the HTTP transport, and converts what comes back in `convert.rs`.
   `ServiceBinding` — and `BenchmarkStatus` is gone, replaced by
   `BenchmarkState`'s five states.
 - **`sweep_staging`** removes the staging directories an interrupted download
-  or import left. **Nothing calls it yet**: the binary must call
-  `FsRegistry::sweep_staging()` once at startup, before the queue runs —
-  owned by the issue that wires the workspace (#342) — since a running
-  download's staging directory has the same shape. Until then an interrupted
-  attempt leaves a `.`-named directory, which the listing ignores.
+  or import left. The binary calls it once at startup, before its listener
+  opens and so before any download can run, since a running download's
+  staging directory has the same shape (`bin/ragondin/ARCHITECTURE.md`
+  § The wiring).
 - **The conformance suite** (`src/conformance.rs`, behind the `conformance`
   feature, the model `ragondin-experiments` set for `RunStore`) checks the
   contract `Registry`'s documentation states: a fresh listing; a download
@@ -194,9 +210,10 @@ supplies the HTTP transport, and converts what comes back in `convert.rs`.
   fixture's `alter` hook does both behind the registry's back, as a person
   editing the datasets directory would. `tests/registry_conformance.rs` runs
   it against `FsRegistry`, with a faithful and a corrupted source served by a
-  dependency-free local HTTP server — no test touches the network. The only
-  route that calls the registry is the derived data's, through `dataset`; the
-  listing, the download and the import are the workspace's endpoints (#342).
+  dependency-free local HTTP server — no test touches the network. The
+  derived data's routes call `dataset`; `GET /benchmarks` lists the registry
+  and `POST /benchmarks/import` imports through it; a download is a job on
+  the queue's IO lane, and its route arrives with the queue (#349).
 
 ### `reqwest`, the transport
 
@@ -223,6 +240,220 @@ and TLS stack — `rustls`, `ring` and its C build, `webpki-roots`, `url` and
   selects, not the system's store. A network that intercepts TLS with its own
   authority therefore fails every download, and nothing here overrides that;
   such a user imports the dataset instead.
+
+## The workspace on disk
+
+`fs::Workspace` is the workspace of the design document § 6, opened: a root,
+and every path derived from it.
+
+```text
+<root>/
+  workspace.toml                the datasets directory and the services — deployment data, never hashed
+  pipelines/<name>.yaml         a pipeline document, the source of truth
+  pipelines/<name>.layout.json  its layout, never in its hash
+  layouts/                      layouts copied at launch — created here, written by the queue (#349)
+  runs/                         the run store, as `bench --store <root>/runs` writes it
+  jobs/                         the queue's state — created here, written by the queue (#349)
+  cache/                        derived data — created here, written by #343
+  datasets/                     benchmarks, when workspace.toml names no other directory
+```
+
+`Workspace::open` reads `workspace.toml` **first**, and refuses a malformed
+one with `WorkspaceError::Malformed` — the file and the line — before
+anything is created: reported, never repaired. Then it creates each missing
+directory and a missing `workspace.toml`, with nothing set; an existing
+workspace is left as it is. `open_with_store` takes the store's directory
+when it is not `<root>/runs` (the binary's `--store`).
+
+### `workspace.toml`, and why it is read by hand
+
+The settings are deployment data (ADR-C32 § 2): an address here stays out of
+every pipeline document and every run identity, which is what lets a
+workspace be shared or committed without carrying anyone's addresses into an
+experiment. The file:
+
+```toml
+datasets = "/data/benchmarks"   # optional; relative to the workspace
+
+[services]
+"generator/qwen" = "http://127.0.0.1:8080"
+```
+
+**A choice made here** (`AGENTS.md` § Rules of engagement): the file is read
+and written by `fs/settings_file.rs`, a reader of exactly that subset of TOML,
+because a TOML parser is not among the dependencies ADR-C36 § 6 admits, and
+that section makes any other entry a new decision — opened as #374, which
+weighs `toml_edit`, and the comments a person adds that a write here loses,
+against this reader. It reads blank lines and
+`#` comments, `datasets` before any table, one `[services]` table of
+`"<family>/<name>" = <string>`, basic strings with TOML's escapes and literal
+strings, and a comment after a value; it refuses everything else — another
+key or table, a duplicate, a value that is not a one-line string, a service
+key without its `/`, anything after a value, a control character other than
+a tab in a string or a comment, whitespace other than a space or a tab
+(named by its code point — a no-break space is `U+00A0`), an
+escape TOML does not define (a `\u` takes four hex digits, a `+` not one of
+them), and a byte-order mark, named as one — naming the line. Everything it
+accepts is valid TOML, so another reader agrees with it; a person who writes
+TOML it does not read is told where, rather than misread. Admitting a TOML
+crate later replaces one module.
+
+`FsSettings` reads the file on every call, so a hand edit is seen at once.
+The datasets directory is `<root>/datasets` when the file names none, and a
+relative one is read against the root; a write leaves the default unstated
+and writes a directory under the root relative to it. **A write replaces the
+file whole** — rendered, written beside as a `.`-named file, flushed, renamed
+over — so a reader sees the old file or the new one; it does not keep a
+comment a person added. `FsSettings` stores what it is given: whether a
+binding is acceptable is `Launcher::check_binding`'s to say, before the
+handler writes it.
+
+### The pipelines
+
+`fs::FsPipelines` is the `PipelineSource` over `pipelines/`.
+
+- **The verbatim rule.** A document is stored exactly as it was sent and read
+  exactly as it is stored, never parsed and re-serialized — for the reason
+  `bench` keeps a run's configuration text verbatim: the comments and the
+  formatting a person gave it are theirs, and a document read and written
+  back unchanged is byte-identical.
+- **The etag rule.** A document's revision — its etag — is the SHA-256 of its
+  bytes, in hex: bare in a JSON body, quoted in the `ETag` header. It needs no
+  clock, so it cannot race on a filesystem with coarse timestamps, and bytes
+  written back unchanged keep it. Every read answers it; every write states
+  what it expects, `If-Match: "<etag>"` to replace, `If-Match: *` to replace
+  whatever is stored (RFC 9110 § 13.1.1), `If-None-Match: *` to create, and
+  is refused `precondition_failed` — with the current etag in `ETag`, in the
+  detail and as the problem's `etag` member — when the stored bytes digest to
+  anything else, when a creation meets a file or `If-Match: *` meets none, or
+  when it states neither, since a write that does not say what it read
+  cannot be kept from overwriting a change. This is the server's half of
+  ADR-016's promise that the editor never overwrites a file changed since it
+  read it; the editor (#356) sends the header. The UI's type generator reads
+  path parameters only, so the headers are stated in the operations'
+  descriptions, not as described parameters. **They are to be declared as
+  `in: header` parameters once decision #371 lands, and #356 must not
+  hand-write header plumbing before then.**
+- **A write is checked, validated, then stored**: the document is lowered
+  (`validation::lower`, `pipeline_invalid`) and handed to
+  `Launcher::check_document` with the workspace's bindings — `bench`'s key
+  refusals, in its words (§ Validation, in the CLI's words) — then the
+  backend validates it, checks the precondition, and writes it beside the
+  file and renames it over — so a refused write changes nothing on disk.
+  Writes from this process are serialised; an editor outside it saving
+  between the check and the rename is the one race left, and the next
+  write's precondition reports it. `tests/pipelines.rs` sends eight writes
+  naming one etag at once and finds one stored and seven refused.
+- **Names** are one file name in the import names' alphabet,
+  `[A-Za-z0-9_-][A-Za-z0-9._-]*`, 64 bytes at most, no trailing `.`, not a
+  device name Windows reserves (`CON`, `PRN`, `AUX`, `NUL`, `COM1`–`COM9`,
+  `LPT1`–`LPT9`, in any case, with or without an extension — the rule
+  `ragondin-benchmarks` applies to an import, written again because it is
+  private there), and not `validate`, which the router gives
+  `POST /pipelines/validate` (a static segment outranks a parameter, so a
+  pipeline under that name could not be read). A read of any other name is
+  `pipeline_not_found`, a write `request_invalid`. **A name that differs
+  from a stored one only in case is `request_invalid`, naming the stored
+  one** — for a write, a read and a layout read or write alike: on a
+  filesystem that ignores case the two are one file, so a write would
+  replace the other behind its etag, a read would answer the other under
+  this name, and a layout would land beside the other; refused on every
+  filesystem, so the answer does not depend on which. Names keep their case
+  otherwise, so a file a person named `Hybrid.yaml` is still listed and
+  read as `Hybrid`. The listing skips a file whose stem is not a name —
+  staging files and hidden ones included — and is sorted by name; each entry
+  carries its etag, its modified time, and its hash or its validation error,
+  computed on the request.
+- **The layout format** — a choice made here, the design leaving it open
+  (ADR-C36 § 7): `pipelines/<name>.layout.json`, JSON,
+  `{"version": 1, "nodes": {"<node id>": {"x": <number>, "y": <number>}}}`.
+  `version` is `1`, the only one this build reads or writes; another is
+  `request_invalid` on a write and `backend_failed` on a read, never
+  guessed at. A node id the document does not hold is kept, not pruned: the
+  layout is UI metadata the editor owns. The layout is a separate file and
+  never enters the document's etag or hash (INV-8); it has no etag of its
+  own, last writer wins, which costs a position, never a pipeline. Writing a
+  layout needs the pipeline to exist (`pipeline_not_found` otherwise); it is
+  re-serialized as JSON, since the verbatim rule is the document's.
+
+### Validation, in the CLI's words
+
+`validation::check` runs the three steps `ragondin validate` runs, by calling
+`ragondin-pipeline`'s functions on the text — `peek_schema_version`, the
+document parsed into `RawPipeline` (INV-9: the wire schema, never an internal
+type), `validate`, and `content_hash` over the canonical logical form (INV-8)
+— the same functions `ragondin-config`'s `LocalFile` calls on a file's
+contents. `bin/ragondin`'s `tests/ui.rs` posts every fixture configuration
+under `bin/ragondin/tests` and compares the hash with the one `ragondin
+validate` prints for the same file, and a refusal with its refusal.
+
+- **The words** are the CLI's, less the file path a request has none of: the
+  cause `ragondin validate` prints under `caused by:`, prefixed as its top
+  line is ("could not parse configuration: …", "configuration is not a valid
+  pipeline: …"), and for an edge of the wrong kind its three report lines —
+  `edge: <producer> feeds <consumer> at port <n>`, `expected:`, `found:`.
+  The CLI's report is rendered in `bin/ragondin/src/validate.rs`, which this
+  crate cannot depend on, so the wording is written twice; the test above
+  compares the two over the incompatible-wiring fixture.
+- **The location**: a kind mismatch names its consumer and the edge; an
+  unknown component, a non-finite parameter, a dangling input, a duplicate id
+  or an id that is both an input and a node names the node; a cycle names its
+  first node. **What stays unlocated**: a syntax or shape error, which
+  `serde_yaml` locates by line and column (in the detail) and not by node; an
+  input-arity error; and a dangling input's edge, whose port the error does
+  not carry. Locating those would need `ragondin-pipeline`'s errors to carry
+  more, which is an INV-1 change and not this crate's.
+- **`POST /pipelines/validate` adds nothing**: it answers what `ragondin
+  validate` answers, which applies none of the composition root's checks
+  (ADR-C32 § 2). The bin parity test covers a fixture with a URL-valued
+  parameter, which both accept.
+- **A write adds the composition root's key refusals**, through
+  `Launcher::check_document`: the binary runs `bench`'s own `check_keys` —
+  a `dense` node's keys by the nature of the embedder it names, a
+  `cross_encoder`'s, a bound reranker's, one embedder per pipeline — with the
+  workspace's bindings deciding which names are bound, and answers
+  `pipeline_invalid` in `bench`'s words, naming the node. A key no component
+  of the node's nature reads is refused rather than hashed as inert (ADR-C32
+  § 1), whatever its value; a URL-valued key the component reads is a key
+  like any other. This crate does not look at values: it cannot know a
+  component's keys (INV-12), and a guess at what an address looks like
+  refused read parameters and passed unread ones. The one refusal `bench`
+  adds that depends on the build — an `onnx` embedder without the `onnx`
+  feature — is not made: a stored document is not a run.
+- **The three steps are written three times** — here, in `LocalFile::load`,
+  and in `ragondin-experiments`' `lower_configuration` — because
+  `ragondin-config` loads only from a path; one path-free loader there is
+  #375.
+
+### The services and the probe
+
+The bindings are `WorkspaceSettings`' services. A `PUT` asks
+`Launcher::check_binding` first — the composition root's refusals, in
+`--remote`'s words — then replaces the name's address or appends the binding;
+a `DELETE` removes it, or answers `service_not_found`. A service write holds
+a lock across its read and write of the settings, so two writes do not each
+start from what the other replaces. Neither touches a pipeline document or a
+run: an address is not in either.
+
+`POST /services/{family}/{name}/probe` reads the address the workspace binds
+the name to (`service_not_found` when there is none) and asks the launcher to
+read its identity, with the body's optional `served_model` — no body at all
+is a body with none. **What a probe
+learnt is this server's memory, not the workspace's**: per binding, the
+address last probed, whether that probe read an identity, and the identity
+last read with its address. `GET /services` reports a binding `connected`,
+with its identity, only when its last probe at its current address read one;
+an unreachable probe's detail carries the identity last read under the name,
+and the address it was read at when that was another; `GET /workspace`
+counts the connected ones. Nothing of it is written: a restart forgets, and
+the Setup screen probes again.
+
+### `GET /workspace`'s counts
+
+Computed on each request, nothing cached: the pipeline documents listed,
+the runs the store lists, the benchmarks whose state is `ready` or `local` —
+the registry verifies every dataset to say so (§ The `Registry` file
+backend) — and the services connected.
 
 ## Response types are this crate's own
 
@@ -254,8 +485,12 @@ listing — reported, never repaired.
 when it can be null: `RunDetail::prefix_of`, `Location::node` and
 `Location::edge` carry a `transform` that lists every property as required,
 since `schemars` would otherwise leave an `Option` out and a generated client
-would type it as possibly absent. `Problem::location`, omitted when there is
-none, stays optional. `Problem::code`'s schema is an enum of
+would type it as possibly absent. `Problem::location` and `Problem::etag`,
+each omitted when there is none, stay optional. **A request body refuses a
+field it does not read** (`deny_unknown_fields`), so a misspelled field is
+`request_invalid` rather than dropped; its schema says
+`additionalProperties: false`, which the UI's type generator reads as the
+closed object TypeScript gives anyway. `Problem::code`'s schema is an enum of
 `ApiError::CODES`, so a generated client can narrow on it.
 
 ## The error codes
@@ -269,9 +504,9 @@ code.
 
 | Code | Status | When | Raised today |
 |---|---|---|---|
-| `pipeline_invalid` | 422 | validation refused a document; `location` names the node and edge | no |
-| `impl_not_in_build` | 422 | an `impl:` this binary lacks | no |
-| `service_unreachable` | 502 | a probe or a submission reached no service | no |
+| `pipeline_invalid` | 422 | validation refused a document, or — on a write — the composition root refused its keys; `location` names the node and edge when they can be named | `POST /pipelines/validate`, `PUT /pipelines/{name}` |
+| `impl_not_in_build` | 422 | an `impl:` this binary lacks, or — with the feature named — a `Remote` component a build without `remote` cannot construct | the probe, in a build without `remote` |
+| `service_unreachable` | 502 | a probe or a submission reached no service; the detail carries the address, the network error and the identity last read under the name | the probe |
 | `run_exists` | 409 | a submission's run id is already stored or queued | no |
 | `run_unreadable` | 500 | a stored run this build cannot read: torn, malformed, or a configuration that no longer lowers | `GET /runs/{id}` |
 | `run_not_found` | 404 | no run under this id, or a string that is not a run id | `GET /runs/{id}` and below |
@@ -284,7 +519,12 @@ code.
 | `download_failed` | 502 | a fetch that failed, a file of the wrong size or digest, a snapshot of the wrong `dataset_version`, or a deadline passed; the detail names both values | `FsRegistry` |
 | `download_cancelled` | 409 | a download whose cancellation flag was set; nothing was kept | `FsRegistry` |
 | `import_refused` | 422 | an import name outside `[A-Za-z0-9_-][A-Za-z0-9._-]*` (64 bytes at most, no trailing `.`, no Windows device name), a path that cannot be read, or a corpus its adapter refuses — the adapter's error in the detail | `FsRegistry` |
-| `backend_failed` | 500 | a backend failed otherwise — listing the store, say | `GET /runs`, `GET /workspace` |
+| `pipeline_not_found` | 404 | no pipeline of this name, or a name that is not one file name | `GET /pipelines/{name}`, the layout endpoints |
+| `precondition_failed` | 412 | a pipeline write whose `If-Match` names another revision or, as `*`, meets no file, whose `If-None-Match: *` meets an existing file, or that states neither; the current etag in `ETag`, the detail and the `etag` member | `PUT /pipelines/{name}` |
+| `binding_refused` | 422 | a binding the composition root would refuse on `--remote`, in its words | `PUT /services/{family}/{name}`, the probe |
+| `service_not_found` | 404 | no service bound under this family and name | `DELETE /services/…`, the probe |
+| `request_invalid` | 400 | a body that is not the operation's JSON — a field missing, or one it does not read — a pipeline name that is not one file name on a write or differs from a stored one only in case, a layout of another version, a probe its family cannot answer as asked | every endpoint that reads a body |
+| `backend_failed` | 500 | a backend failed otherwise — listing the store, say | `GET /runs`, `GET /workspace`, the file backends |
 | `host_refused` | 421 | the `Host` layer refused the request | every path |
 | `origin_refused` | 403 | the `Origin` layer refused the request | every path |
 | `route_not_found` | 404 | a path under `/api` that names no endpoint | the API's fallback |
@@ -297,7 +537,8 @@ document § 8 lists seven codes and leaves the rest to the implementation:
   two are different facts — nothing is there, versus something is there this
   build cannot read — and a client acts differently on each. A string that
   cannot be a run id names no run either, and gets the same answer.
-- **Thirteen codes beyond the design's seven**: `run_not_found` for the above;
+- **Thirteen codes beyond the design's seven** before the workspace's
+  endpoints, eighteen with them: `run_not_found` for the above;
   `query_not_found`, for the same reason one level down — a run that exists
   and a query it did not execute; `parameter_invalid`, because an unknown,
   repeated or malformed query parameter is refused rather than ignored, on
@@ -321,6 +562,19 @@ document § 8 lists seven codes and leaves the rest to the implementation:
   pinned snapshot that does not load, or a manifest path outside its
   directory: the manifest pinned those bytes, so the defect is this build's,
   not the source's.
+- **Five codes for the workspace's endpoints**, each a different action for
+  the client. `pipeline_not_found` and `service_not_found` are their own
+  404s for the reason `run_not_found` is. `precondition_failed` is HTTP's 412
+  for all three ways a write's precondition fails, a missing one included:
+  a 428 would be a sixth code for one case, and the detail says which.
+  `binding_refused` is a 422 because the request named something the
+  composition root refuses, and its detail is the binary's words, untouched;
+  it was `backend_failed` (500) before, which told the client the server had
+  failed. `request_invalid` is the 400 every malformed body gets, as a
+  problem body rather than axum's plain-text rejection — so a body is read
+  as bytes and parsed here (`endpoints/mod.rs`); it is not
+  `parameter_invalid`, which names a query parameter, so a client can tell
+  which part of its request to correct.
 - **`dataset_absent` and `dataset_differs` have statuses**, 404 and 409, for
   an endpoint that needs the ground truth and cannot degrade: the
   `missing_gold_at` filter, which is a question about qrels. Where an endpoint
@@ -624,6 +878,9 @@ is not; the two rules the derived data shares with it are defined in
 `reqwest` is a dependency for the `Registry` file backend's transport, with
 its workspace entry's features and none appended, on the one `hyper` already
 in `Cargo.lock` — § *`reqwest`, the transport* says why it is here and not in
-`ragondin-benchmarks`. `sha2` is a dev-dependency, for the digests of what a
-test's local server serves. Neither is a new `[workspace.dependencies]`
-entry.
+`ragondin-benchmarks`. `sha2` is a normal dependency, for a pipeline
+document's etag, and the tests use it for the digests of what a local server
+serves. `serde_yaml` is a normal dependency, for parsing a pipeline document
+into `ragondin-pipeline`'s wire schema as `ragondin-config` does. None is a
+new `[workspace.dependencies]` entry, and none has a feature appended. No
+TOML crate is a dependency (§ `workspace.toml`, and why it is read by hand).

@@ -20,6 +20,7 @@ const WORKSPACE: Workspace = {
     ],
   },
   capabilities: { families: [], remote: true },
+  counts: { pipelines: 0, runs: 0, benchmarks_ready: 0, services_connected: 0 },
 };
 
 function show(hash: string, props: { reload?: () => void; eventsPath?: string } = {}) {

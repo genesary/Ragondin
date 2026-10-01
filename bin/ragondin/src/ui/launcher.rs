@@ -3,8 +3,9 @@
 //! The one path from the UI to the data plane (INV-12): `ragondin-api` holds
 //! an `Arc<dyn Launcher>` and never names a component; this module, in the
 //! only crate that knows them, answers for it. Everything here reuses what
-//! `bench` already runs: the capabilities are [`wiring::carried`], the probe is
-//! [`Bindings::parse`] and [`wiring::service_identity`].
+//! `bench` already runs: the capabilities are [`wiring::carried`], a binding's
+//! check is [`binding::check`] — `--remote`'s refusals, in its words — and the
+//! probe is [`wiring::service_identity`], the read `bench` makes before a run.
 //!
 //! `identity` and `execute` answer "not available in this build yet": a run's
 //! identity at submission and its execution over `bench`'s path are the
@@ -12,16 +13,24 @@
 
 use async_trait::async_trait;
 use ragondin_api::{
-    ApiError, Capabilities, FamilyCapabilities, Job, JobState, Launcher, ServiceIdentity,
-    Submission,
+    ApiError, Capabilities, FamilyCapabilities, Job, JobState, Launcher, Location, ServiceBinding,
+    ServiceIdentity, Submission,
 };
 use ragondin_experiments::RunId;
+use ragondin_pipeline::LogicalPipeline;
 
-use crate::binding::{Bindings, Family};
+use crate::binding::{self, Binding, Bindings, Family};
 use crate::wiring;
 
 /// What `identity` and `execute` answer until the launcher's issue fills them.
 const NOT_YET: &str = "running a pipeline from the UI is not available in this build yet";
+
+/// How long a probe waits for its connection: a person is waiting on the
+/// answer, and an address that drops packets would otherwise hold them for
+/// the operating system's TCP timeout — about 75 s on macOS, two minutes on
+/// Linux. Long enough for a service across a slow tunnel.
+#[cfg(feature = "remote")]
+const PROBE_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// The binary's `Launcher`. It holds nothing: the build's capabilities are
 /// fixed at compile time, and a probe builds its channel per call.
@@ -48,24 +57,58 @@ impl Launcher for BinaryLauncher {
         }
     }
 
-    /// The binding `family/name=uri` goes through every refusal `--remote`
-    /// applies to an argument, and then through the identity read `bench`
-    /// makes before a run. A service that could not be reached is
-    /// `service_unreachable`; any other refusal — a malformed binding, a
-    /// family whose identity needs a served model or has none, a build
-    /// without `remote` — is `backend_failed` with the reason, since the API
-    /// has no code for a request the build cannot honour.
+    /// `--remote`'s refusals of one argument, as `binding_refused`. A build
+    /// without `remote` accepts a well-formed binding here: storing one is
+    /// deployment data, and only calling it needs the feature.
+    fn check_binding(&self, family: &str, name: &str, uri: &str) -> Result<(), ApiError> {
+        binding::check(family, name, uri)
+            .map(|_| ())
+            .map_err(refused)
+    }
+
+    /// `bench`'s key refusals ([`wiring::check_keys`]), with the workspace's
+    /// bindings deciding which names are bound: what `bench` would refuse to
+    /// read is refused here, in its words, before the document is stored.
+    /// The build-specific refusal `bench` adds — an `onnx` embedder in a build
+    /// without the feature — is not made: a stored document is not a run.
+    ///
+    /// Only the bindings a node of the document uses are considered, as
+    /// `bench` would only be given those: startup does not check
+    /// `workspace.toml`'s bindings, and a malformed one nothing here names
+    /// must not block the save of every document. One the document does use
+    /// is checked, and refused as `binding_refused` naming it.
+    fn check_document(
+        &self,
+        pipeline: &LogicalPipeline,
+        bindings: &[ServiceBinding],
+    ) -> Result<(), ApiError> {
+        let bindings = bindings
+            .iter()
+            .filter(|binding| binding::used_by(pipeline, &binding.family, &binding.name))
+            .map(|binding| binding::check(&binding.family, &binding.name, &binding.uri))
+            .collect::<anyhow::Result<Vec<_>>>()
+            .map_err(refused)?;
+        wiring::check_keys(pipeline, &Bindings::from_checked(bindings)).map_err(|refusal| {
+            let node = refusal.node.clone();
+            ApiError::PipelineInvalid {
+                detail: format!("{:#}", refusal.into_error()),
+                location: Location { node, edge: None },
+            }
+        })
+    }
+
+    /// The binding goes through [`check_binding`](Self::check_binding), then
+    /// through the identity read `bench` makes before a run, with
+    /// `served_model` where the family reports an identity per served model.
     async fn probe(
         &self,
         family: &str,
         name: &str,
         uri: &str,
+        served_model: Option<&str>,
     ) -> Result<ServiceIdentity, ApiError> {
-        let refused = |error: anyhow::Error| ApiError::BackendFailed {
-            detail: format!("{error:#}"),
-        };
-        let bindings = Bindings::parse(&[format!("{family}/{name}={uri}")]).map_err(refused)?;
-        read_identity(bindings, uri).await
+        let binding = binding::check(family, name, uri).map_err(refused)?;
+        read_identity(binding, served_model).await
     }
 
     async fn identity(&self, _submission: &Submission) -> Result<RunId, ApiError> {
@@ -82,53 +125,71 @@ impl Launcher for BinaryLauncher {
     }
 }
 
-/// The identity of the one binding in `bindings`, served at `uri`.
-#[cfg(feature = "remote")]
-async fn read_identity(bindings: Bindings, uri: &str) -> Result<ServiceIdentity, ApiError> {
-    use ragondin_contracts::ComponentError;
-
-    let binding = bindings
-        .iter()
-        .next()
-        .cloned()
-        .expect("one argument parsed is one binding");
-    let result = async {
-        let bound = wiring::Bound::new(bindings)?;
-        wiring::service_identity(&bound, binding.family, &binding.name, None).await
-    }
-    .await;
-    match result {
-        Ok(identity) => Ok(ServiceIdentity {
-            identity: identity.as_str().to_owned(),
-        }),
-        Err(error)
-            if error.chain().any(|cause| {
-                matches!(
-                    cause.downcast_ref::<ComponentError>(),
-                    Some(ComponentError::Unavailable(_))
-                )
-            }) =>
-        {
-            Err(ApiError::ServiceUnreachable {
-                uri: uri.to_owned(),
-                reason: format!("{error:#}"),
-            })
-        }
-        Err(error) => Err(ApiError::BackendFailed {
-            detail: format!("{error:#}"),
-        }),
+fn refused(error: anyhow::Error) -> ApiError {
+    ApiError::BindingRefused {
+        detail: format!("{error:#}"),
     }
 }
 
-/// A build without `remote` refuses every binding when it is parsed, so
-/// [`BinaryLauncher::probe`] does not get here; answered rather than
-/// asserted, since a panic would take the server down with it.
+/// The identity of `binding`'s service. A failure is classified by where it
+/// arose: a `ComponentError` from the service call — `Unavailable` is the
+/// service unreachable, `InvalidRequest` a request the service refused, such
+/// as a served model it does not serve — or a refusal before any call, which
+/// is the request's to correct: a family whose service reports no identity,
+/// or one that needs a served model and was given none.
+#[cfg(feature = "remote")]
+async fn read_identity(
+    binding: Binding,
+    served_model: Option<&str>,
+) -> Result<ServiceIdentity, ApiError> {
+    use ragondin_contracts::ComponentError;
+
+    let uri = binding.uri.clone();
+    let result = async {
+        let bindings = Bindings::parse(&[format!(
+            "{}/{}={}",
+            binding.family, binding.name, binding.uri
+        )])?;
+        let bound = wiring::Bound::with_connect_timeout(bindings, PROBE_CONNECT_TIMEOUT)?;
+        wiring::service_identity(&bound, binding.family, &binding.name, served_model).await
+    }
+    .await;
+    let error = match result {
+        Ok(identity) => {
+            return Ok(ServiceIdentity {
+                identity: identity.as_str().to_owned(),
+            })
+        }
+        Err(error) => error,
+    };
+    let detail = format!("{error:#}");
+    Err(
+        match error
+            .chain()
+            .find_map(|cause| cause.downcast_ref::<ComponentError>())
+        {
+            Some(ComponentError::Unavailable(_)) => ApiError::ServiceUnreachable {
+                uri,
+                reason: detail,
+                last_identity: None,
+            },
+            Some(ComponentError::InvalidRequest(_)) | None => ApiError::RequestInvalid { detail },
+            Some(_) => ApiError::BackendFailed { detail },
+        },
+    )
+}
+
+/// A build without `remote` cannot construct the `Remote` adapter a probe
+/// reads through: `impl_not_in_build`, naming the feature.
 #[cfg(not(feature = "remote"))]
-async fn read_identity(_bindings: Bindings, _uri: &str) -> Result<ServiceIdentity, ApiError> {
-    Err(ApiError::BackendFailed {
-        detail: "this build cannot construct a `Remote` component; rebuild with the `remote` \
-                 feature"
-            .to_owned(),
+async fn read_identity(
+    binding: Binding,
+    _served_model: Option<&str>,
+) -> Result<ServiceIdentity, ApiError> {
+    Err(ApiError::ImplNotInBuild {
+        family: binding.family.name().to_owned(),
+        implementation: binding.name,
+        feature: Some("remote".to_owned()),
     })
 }
 
@@ -262,35 +323,207 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_binding_is_checked_with_the_words_of_remote() {
+        for (family, name, uri, words) in [
+            ("store", "qdrant", "http://host", "`store` is not a family"),
+            (
+                "generator",
+                "qwen",
+                "https://host",
+                "is not an `http://` URI",
+            ),
+            ("context_builder", "concat", "http://host", "`Local`"),
+        ] {
+            let error = BinaryLauncher
+                .check_binding(family, name, uri)
+                .expect_err("refused");
+
+            assert!(
+                matches!(&error, ApiError::BindingRefused { detail }
+                    if detail.contains(&format!("`--remote {family}/{name}={uri}`"))
+                        && detail.contains(words)),
+                "{error:?}"
+            );
+        }
+        // Whatever the build: storing a binding needs no `remote`.
+        BinaryLauncher
+            .check_binding("generator", "qwen", "http://[::1]:8080")
+            .expect("well formed");
+    }
+
+    fn pipeline(nodes: &str) -> ragondin_pipeline::LogicalPipeline {
+        let yaml = format!("pipeline:\n  inputs: [question]\n  nodes:\n{nodes}");
+        let raw: ragondin_pipeline::RawPipeline =
+            serde_yaml::from_str(&yaml).expect("the fixture parses");
+        ragondin_pipeline::validate(raw).expect("the fixture validates")
+    }
+
+    const CROSS_ENCODER_NODE: &str = "    - id: lexical\n      component: retriever\n      \
+         impl: bm25\n      inputs: [question]\n      params: { top_k: 10 }\n\
+         \x20   - id: ranked\n      component: reranker\n      impl: cross_encoder\n      \
+         inputs: [question, lexical]\n      params: { top_k: 5, model: m.onnx, tokenizer: t.json";
+
+    #[test]
+    fn a_document_with_a_key_its_component_does_not_read_is_refused_in_bench_s_words() {
+        let document = pipeline(&format!(
+            "{CROSS_ENCODER_NODE}, endpoint: \"http://10.0.0.5:50051\" }}\n"
+        ));
+
+        let error = BinaryLauncher
+            .check_document(&document, &[])
+            .expect_err("`endpoint` is read by nothing");
+
+        match error {
+            ApiError::PipelineInvalid { detail, location } => {
+                assert_eq!(
+                    detail,
+                    "node `ranked`: `endpoint` is not a key the ONNX cross-encoder reads: \
+                     refused rather than hashed as inert"
+                );
+                assert_eq!(location.node.as_deref(), Some("ranked"));
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_url_valued_parameter_a_component_reads_is_accepted() {
+        // A prefix is read by every `dense` node, whatever it holds.
+        let document = pipeline(
+            "    - id: vectors\n      component: retriever\n      impl: dense\n      \
+             inputs: [question]\n      params: { top_k: 10, embedder: onnx, model: m.onnx, \
+             tokenizer: t.json, query_prefix: \"http://example.org/q \" }\n",
+        );
+
+        BinaryLauncher
+            .check_document(&document, &[])
+            .expect("every key is one the ONNX embedder's node reads");
+    }
+
+    fn binding(family: &str, name: &str, uri: &str) -> ragondin_api::ServiceBinding {
+        ragondin_api::ServiceBinding {
+            family: family.to_owned(),
+            name: name.to_owned(),
+            uri: uri.to_owned(),
+        }
+    }
+
+    const BM25_ONLY: &str =
+        "    - id: lexical\n      component: retriever\n      impl: bm25\n      \
+         inputs: [question]\n      params: { top_k: 10 }\n";
+
+    #[test]
+    fn a_bad_binding_no_node_uses_does_not_affect_the_document() {
+        // Hand-edited into `workspace.toml`, which startup reads without
+        // checking its bindings: a family that is none, a URI that is not
+        // `http://`, and a malformed binding of a name no node names.
+        let bindings = [
+            binding("store", "q", "ftp://h"),
+            binding("generator", "qwen", "ftp://h"),
+            binding("reranker", "unused", "https://h"),
+        ];
+
+        BinaryLauncher
+            .check_document(&pipeline(BM25_ONLY), &bindings)
+            .expect("no node uses any of them");
+    }
+
+    #[test]
+    fn a_bad_binding_the_document_uses_is_refused_naming_it() {
+        let document = pipeline(
+            "    - id: lexical\n      component: retriever\n      impl: bm25\n      \
+             inputs: [question]\n      params: { top_k: 10 }\n\
+             \x20   - id: ranked\n      component: reranker\n      impl: bge-reranker\n      \
+             inputs: [question, lexical]\n      params: { top_k: 5, served_model: r }\n",
+        );
+
+        let error = BinaryLauncher
+            .check_document(
+                &document,
+                &[
+                    binding("store", "q", "ftp://h"),
+                    binding("reranker", "bge-reranker", "ftp://h"),
+                ],
+            )
+            .expect_err("`ranked` names a binding `--remote` refuses");
+
+        assert!(
+            matches!(&error, ApiError::BindingRefused { detail }
+                if detail.contains("`--remote reranker/bge-reranker=ftp://h`")),
+            "{error:?}"
+        );
+    }
+
+    #[test]
+    fn the_workspace_bindings_decide_what_a_bound_name_may_carry() {
+        let document = pipeline(
+            "    - id: lexical\n      component: retriever\n      impl: bm25\n      \
+             inputs: [question]\n      params: { top_k: 10 }\n\
+             \x20   - id: ranked\n      component: reranker\n      impl: bge-reranker\n      \
+             inputs: [question, lexical]\n      params: { top_k: 5, served_model: r }\n",
+        );
+        let bound = [ragondin_api::ServiceBinding {
+            family: "reranker".to_owned(),
+            name: "bge-reranker".to_owned(),
+            uri: "http://127.0.0.1:9000".to_owned(),
+        }];
+
+        BinaryLauncher
+            .check_document(&document, &bound)
+            .expect("a bound reranker reads `top_k` and `served_model`");
+        let stray = pipeline(
+            "    - id: lexical\n      component: retriever\n      impl: bm25\n      \
+             inputs: [question]\n      params: { top_k: 10 }\n\
+             \x20   - id: ranked\n      component: reranker\n      impl: bge-reranker\n      \
+             inputs: [question, lexical]\n      params: { top_k: 5, served_model: r, model: m }\n",
+        );
+        let error = BinaryLauncher
+            .check_document(&stray, &bound)
+            .expect_err("a bound reranker reads no `model`");
+        assert!(
+            matches!(&error, ApiError::PipelineInvalid { detail, .. }
+                if detail.contains("`model` is not a key the bound reranker `bge-reranker` reads")),
+            "{error:?}"
+        );
+    }
+
     #[tokio::test]
     async fn a_probe_that_is_not_a_well_formed_binding_is_refused_with_the_binding_s_reason() {
         let error = BinaryLauncher
-            .probe("store", "qdrant", "http://127.0.0.1:1")
+            .probe("store", "qdrant", "http://127.0.0.1:1", None)
             .await
             .expect_err("`store` is not a family a name is bound in");
 
         assert!(
-            matches!(&error, ApiError::BackendFailed { detail } if detail.contains("store/qdrant")),
+            matches!(&error, ApiError::BindingRefused { detail } if detail.contains("store/qdrant")),
             "{error:?}"
         );
     }
 
     #[cfg(not(feature = "remote"))]
     #[tokio::test]
-    async fn a_build_without_remote_refuses_every_probe_naming_the_feature() {
+    async fn a_build_without_remote_answers_every_probe_with_impl_not_in_build() {
         let error = BinaryLauncher
-            .probe("context_builder", "lines", "http://127.0.0.1:1")
+            .probe("context_builder", "lines", "http://127.0.0.1:1", None)
             .await
             .expect_err("this build cannot reach a `Remote` component");
 
-        assert!(
-            matches!(&error, ApiError::BackendFailed { detail } if detail.contains("`remote` feature")),
-            "{error:?}"
+        assert_eq!(
+            error,
+            ApiError::ImplNotInBuild {
+                family: "context_builder".to_owned(),
+                implementation: "lines".to_owned(),
+                feature: Some("remote".to_owned()),
+            }
         );
+        assert_eq!(error.code(), "impl_not_in_build");
     }
 
     #[cfg(feature = "remote")]
     mod remote {
+        use std::time::{Duration, Instant};
+
         use super::*;
         use crate::remote_fakes as fakes;
 
@@ -299,7 +532,7 @@ mod tests {
             let service = fakes::serve_context_builder();
 
             let identity = BinaryLauncher
-                .probe("context_builder", "lines", &service.uri)
+                .probe("context_builder", "lines", &service.uri, None)
                 .await
                 .expect("the service answers");
 
@@ -307,11 +540,60 @@ mod tests {
         }
 
         #[tokio::test]
+        async fn the_probe_returns_the_identity_bench_would_record_for_a_served_model() {
+            let generator = fakes::serve_generator();
+            let embedder = fakes::serve_embedder(fakes::FakeEmbedder::default());
+            let reranker = fakes::serve_reranker();
+            for (family, uri, model, expected) in [
+                (
+                    "generator",
+                    &generator.uri,
+                    fakes::GENERATOR_MODEL,
+                    fakes::GENERATOR_IDENTITY,
+                ),
+                (
+                    "embedder",
+                    &embedder.uri,
+                    fakes::EMBEDDER_MODEL,
+                    fakes::EMBEDDER_IDENTITY,
+                ),
+                (
+                    "reranker",
+                    &reranker.uri,
+                    fakes::RERANKER_MODEL,
+                    fakes::RERANKER_IDENTITY,
+                ),
+            ] {
+                let identity = BinaryLauncher
+                    .probe(family, "served", uri, Some(model))
+                    .await
+                    .unwrap_or_else(|error| panic!("{family}: {error:?}"));
+
+                assert_eq!(identity.identity, expected, "{family}");
+            }
+        }
+
+        #[tokio::test]
+        async fn a_service_that_refuses_the_served_model_answers_request_invalid() {
+            let generator = fakes::serve_generator();
+
+            let error = BinaryLauncher
+                .probe("generator", "served", &generator.uri, Some("not-served"))
+                .await
+                .expect_err("the fake serves one model");
+
+            assert!(
+                matches!(&error, ApiError::RequestInvalid { detail } if detail.contains("not-served")),
+                "{error:?}"
+            );
+        }
+
+        #[tokio::test]
         async fn a_probe_of_a_closed_port_is_service_unreachable() {
             let uri = fakes::unreachable_uri();
 
             let error = BinaryLauncher
-                .probe("context_builder", "lines", &uri)
+                .probe("context_builder", "lines", &uri, None)
                 .await
                 .expect_err("nothing listens there");
 
@@ -322,19 +604,41 @@ mod tests {
         }
 
         #[tokio::test]
+        async fn a_probe_of_an_address_that_drops_packets_gives_up_after_its_connect_timeout() {
+            // A non-routable address: packets to it are dropped, so only the
+            // connect timeout ends the attempt. Where the network answers at
+            // once that it is unreachable, the test passes sooner.
+            let started = Instant::now();
+
+            let error = BinaryLauncher
+                .probe("context_builder", "lines", "http://10.255.255.1:9", None)
+                .await
+                .expect_err("nothing answers there");
+
+            assert!(
+                matches!(&error, ApiError::ServiceUnreachable { .. }),
+                "{error:?}"
+            );
+            assert!(
+                started.elapsed() < PROBE_CONNECT_TIMEOUT + Duration::from_secs(5),
+                "took {:?}",
+                started.elapsed()
+            );
+        }
+
+        #[tokio::test]
         async fn a_family_whose_identity_names_a_served_model_cannot_be_probed_without_one() {
-            // The probe carries no served model, and an embedder, a reranker
-            // or a generator reports an identity only for one: refused before
-            // any call, rather than reported as the service's failure.
+            // Refused before any call, rather than reported as the service's
+            // failure.
             let service = fakes::serve_generator();
             for family in ["embedder", "reranker", "generator"] {
                 let error = BinaryLauncher
-                    .probe(family, "vllm", &service.uri)
+                    .probe(family, "vllm", &service.uri, None)
                     .await
                     .expect_err("no served model to read the identity for");
 
                 assert!(
-                    matches!(&error, ApiError::BackendFailed { detail } if detail.contains("served model")),
+                    matches!(&error, ApiError::RequestInvalid { detail } if detail.contains("served model")),
                     "{family}: {error:?}"
                 );
             }
@@ -344,12 +648,12 @@ mod tests {
         async fn a_family_whose_service_reports_no_identity_cannot_be_probed() {
             for family in ["retriever", "fusion"] {
                 let error = BinaryLauncher
-                    .probe(family, "remote-one", &fakes::unreachable_uri())
+                    .probe(family, "remote-one", &fakes::unreachable_uri(), None)
                     .await
                     .expect_err("a retriever or a fusion service reports no identity");
 
                 assert!(
-                    matches!(&error, ApiError::BackendFailed { detail } if detail.contains("reports no identity")),
+                    matches!(&error, ApiError::RequestInvalid { detail } if detail.contains("reports no identity")),
                     "{family}: {error:?}"
                 );
             }
@@ -358,12 +662,12 @@ mod tests {
         #[tokio::test]
         async fn a_name_this_build_gives_a_local_component_is_refused() {
             let error = BinaryLauncher
-                .probe("context_builder", "concat", &fakes::unreachable_uri())
+                .probe("context_builder", "concat", &fakes::unreachable_uri(), None)
                 .await
                 .expect_err("`concat` is a `Local` context builder");
 
             assert!(
-                matches!(&error, ApiError::BackendFailed { detail } if detail.contains("`Local`")),
+                matches!(&error, ApiError::BindingRefused { detail } if detail.contains("`Local`")),
                 "{error:?}"
             );
         }

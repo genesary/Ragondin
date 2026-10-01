@@ -64,6 +64,7 @@ async fn impl_not_in_build() {
     let (status, body) = render(ApiError::ImplNotInBuild {
         family: "retriever".to_owned(),
         implementation: "bm25".to_owned(),
+        feature: None,
     })
     .await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
@@ -76,15 +77,35 @@ async fn impl_not_in_build() {
 }
 
 #[tokio::test]
+async fn impl_not_in_build_names_the_feature_when_one_is_known() {
+    let (status, body) = render(ApiError::ImplNotInBuild {
+        family: "generator".to_owned(),
+        implementation: "qwen".to_owned(),
+        feature: Some("remote".to_owned()),
+    })
+    .await;
+    assert_problem(&body, status, "impl_not_in_build");
+    assert!(body["detail"]
+        .as_str()
+        .unwrap()
+        .contains("`remote` feature"));
+    assert_eq!(body["hint"], "Rebuild with the `remote` feature.");
+}
+
+#[tokio::test]
 async fn service_unreachable() {
     let (status, body) = render(ApiError::ServiceUnreachable {
         uri: "http://127.0.0.1:50051".to_owned(),
         reason: "connection refused".to_owned(),
+        last_identity: Some("qwen@rev3".to_owned()),
     })
     .await;
     assert_eq!(status, StatusCode::BAD_GATEWAY);
     assert_problem(&body, status, "service_unreachable");
-    assert!(body["detail"].as_str().unwrap().contains("127.0.0.1:50051"));
+    let detail = body["detail"].as_str().unwrap();
+    assert!(detail.contains("127.0.0.1:50051"), "{detail}");
+    assert!(detail.contains("connection refused"), "{detail}");
+    assert!(detail.contains("qwen@rev3"), "{detail}");
 }
 
 #[tokio::test]
@@ -227,6 +248,71 @@ async fn import_refused() {
 }
 
 #[tokio::test]
+async fn pipeline_not_found() {
+    let (status, body) = render(ApiError::PipelineNotFound {
+        name: "hybrid".to_owned(),
+    })
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_problem(&body, status, "pipeline_not_found");
+    assert!(body["detail"].as_str().unwrap().contains("hybrid"));
+}
+
+#[tokio::test]
+async fn precondition_failed_sends_the_current_etag() {
+    let response = ApiError::PreconditionFailed {
+        reason: "pipeline hybrid changed since it was read".to_owned(),
+        current: Some("ab".repeat(32)),
+    }
+    .into_response();
+    assert_eq!(
+        response.headers()["etag"],
+        format!("\"{}\"", "ab".repeat(32)).as_str()
+    );
+
+    let (status, body) = render(ApiError::PreconditionFailed {
+        reason: "pipeline hybrid changed since it was read".to_owned(),
+        current: None,
+    })
+    .await;
+    assert_eq!(status, StatusCode::PRECONDITION_FAILED);
+    assert_problem(&body, status, "precondition_failed");
+}
+
+#[tokio::test]
+async fn binding_refused() {
+    let (status, body) = render(ApiError::BindingRefused {
+        detail: "`--remote store/qdrant=http://host`: `store` is not a family".to_owned(),
+    })
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_problem(&body, status, "binding_refused");
+    assert!(body["detail"].as_str().unwrap().contains("--remote"));
+}
+
+#[tokio::test]
+async fn service_not_found() {
+    let (status, body) = render(ApiError::ServiceNotFound {
+        family: "generator".to_owned(),
+        name: "qwen".to_owned(),
+    })
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_problem(&body, status, "service_not_found");
+    assert!(body["detail"].as_str().unwrap().contains("generator/qwen"));
+}
+
+#[tokio::test]
+async fn request_invalid() {
+    let (status, body) = render(ApiError::RequestInvalid {
+        detail: "the body is not this operation's JSON".to_owned(),
+    })
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_problem(&body, status, "request_invalid");
+}
+
+#[tokio::test]
 async fn backend_failed() {
     let (status, body) = render(ApiError::BackendFailed {
         detail: "runs/: permission denied".to_owned(),
@@ -287,7 +373,7 @@ fn every_variant_has_a_distinct_code() {
     assert_eq!(sorted.len(), codes.len(), "codes are unique: {codes:?}");
     assert_eq!(
         codes.len(),
-        20,
+        25,
         "a variant added without a test here: {codes:?}"
     );
 }

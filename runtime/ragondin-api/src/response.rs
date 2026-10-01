@@ -21,7 +21,7 @@ use serde::Serialize;
 /// answering and what that build can run.
 #[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
 pub struct Workspace {
-    /// The workspace directory, as the binary was given it.
+    /// The workspace's root directory, as the binary resolved it.
     pub path: String,
     /// The deployment settings the workspace holds.
     pub settings: SettingsSummary,
@@ -31,6 +31,23 @@ pub struct Workspace {
     pub build: String,
     /// What this build can run, as the launcher reports it.
     pub capabilities: Capabilities,
+    /// What the workspace holds, counted on this request.
+    pub counts: WorkspaceCounts,
+}
+
+/// What a workspace holds, counted when asked: nothing here is cached.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct WorkspaceCounts {
+    /// The pipeline documents under `pipelines/`, valid or not.
+    pub pipelines: u64,
+    /// The runs the store lists, readable or not.
+    pub runs: u64,
+    /// The benchmarks on disk whose digest is the one expected of them:
+    /// `ready` or `local`.
+    pub benchmarks_ready: u64,
+    /// The bound services whose last probe, by this server, at their current
+    /// address, read an identity.
+    pub services_connected: u64,
 }
 
 /// The workspace's settings: deployment data, never hashed into a run.
@@ -67,9 +84,12 @@ pub struct Capabilities {
 /// One family's local implementations in this build.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct FamilyCapabilities {
-    /// The family, spelled as a configuration's `component:` value.
+    /// The family, spelled as `--remote` and a service binding spell it: a
+    /// node family as a configuration's `component:` value, or `embedder`,
+    /// which no node is and a `dense` node names with `embedder:`.
     pub family: String,
-    /// The `impl:` names this build registers in it.
+    /// The names this build gives a `Local` component in it: `impl:` values,
+    /// or for `embedder`, `embedder:` values.
     pub local: Vec<String>,
 }
 
@@ -537,6 +557,144 @@ pub enum GroundTruth {
     Both,
 }
 
+/// `GET /benchmarks`: every benchmark the registry knows.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct BenchmarkListing {
+    /// The manifest's entries in manifest order, then the imports by name.
+    pub benchmarks: Vec<BenchmarkEntry>,
+}
+
+/// `GET /pipelines`: every pipeline document in the workspace.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct PipelineListing {
+    /// One entry per document, by name.
+    pub pipelines: Vec<PipelineSummary>,
+}
+
+/// A pipeline, as the listing shows it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+#[schemars(transform = every_property_required)]
+pub struct PipelineSummary {
+    /// Its name: the file stem.
+    pub name: String,
+    /// The digest of its bytes, the value `If-Match` names to write it.
+    pub etag: String,
+    /// When its file was last modified, in milliseconds since the Unix epoch.
+    pub modified_ms: u64,
+    /// The content hash of its canonical logical form, when it validates.
+    pub hash: Option<String>,
+    /// Why it does not validate, when it does not.
+    pub error: Option<PipelineError>,
+}
+
+/// `GET /pipelines/{name}`: one pipeline document, verbatim.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+#[schemars(transform = every_property_required)]
+pub struct PipelineDetail {
+    /// Its name.
+    pub name: String,
+    /// The document, byte for byte as the file holds it.
+    pub document: String,
+    /// The digest of those bytes; also the response's `ETag` header, quoted.
+    pub etag: String,
+    /// The content hash of its canonical logical form, when it validates.
+    pub hash: Option<String>,
+    /// Why it does not validate, when it does not.
+    pub error: Option<PipelineError>,
+}
+
+/// Why a pipeline document does not validate: `pipeline_invalid`'s detail and
+/// location, inside a response that still answers.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct PipelineError {
+    /// What the validation pass said, in the words `ragondin validate` uses.
+    pub detail: String,
+    /// The node and the edge it concerns, when they can be named.
+    pub location: Location,
+}
+
+/// `PUT /pipelines/{name}`: what was written.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct PipelineWritten {
+    /// The pipeline's name.
+    pub name: String,
+    /// The etag of the bytes now stored; also the `ETag` header, quoted.
+    pub etag: String,
+    /// The content hash of their canonical logical form.
+    pub hash: String,
+}
+
+/// `POST /pipelines/validate`: the document validates, and this is its hash.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct PipelineValidated {
+    /// The content hash of the canonical logical form, as `ragondin validate`
+    /// prints it.
+    pub hash: String,
+}
+
+/// `GET /pipelines/{name}/layout`: the layout beside the document, if it has
+/// one. Without one the UI lays the graph out itself, and says so.
+#[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
+#[schemars(transform = every_property_required)]
+pub struct PipelineLayout {
+    /// The layout, or `null` when the pipeline has none.
+    pub layout: Option<Layout>,
+}
+
+/// Where the editor draws each node: UI metadata beside the document, never
+/// in its hash. Also the body of `PUT /pipelines/{name}/layout`.
+#[derive(Clone, Debug, PartialEq, Serialize, serde::Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Layout {
+    /// The layout format's version: `1`, the only one this build reads.
+    pub version: u32,
+    /// Each node's position, by node id.
+    pub nodes: BTreeMap<String, Position>,
+}
+
+/// A node's position on the editor's canvas.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, serde::Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Position {
+    /// Horizontal, in canvas units.
+    pub x: f64,
+    /// Vertical, in canvas units.
+    pub y: f64,
+}
+
+/// `GET /services`, and the answer of every write to a service: the bindings
+/// `workspace.toml` holds.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct ServiceListing {
+    /// Every binding, in the file's order.
+    pub services: Vec<ServiceStatus>,
+}
+
+/// One binding, and what this server last learnt by probing it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+#[schemars(transform = every_property_required)]
+pub struct ServiceStatus {
+    /// The family the name is bound in.
+    pub family: String,
+    /// The implementation name a node uses.
+    pub name: String,
+    /// The service's address, as written.
+    pub uri: String,
+    /// Whether this server's last probe of it, at this address, read an
+    /// identity. `false` before any probe.
+    pub connected: bool,
+    /// The identity last read at this address, if any was.
+    pub identity: Option<String>,
+}
+
+/// `POST /services/{family}/{name}/probe`: the identity a run would record.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct ProbeResult {
+    /// What the service reported, read as the composition root reads it
+    /// before a run.
+    pub identity: String,
+}
+
 /// An error, as `application/problem+json` (RFC 9457) with this API's own
 /// members: a stable `code`, a `hint` naming the action, and a `location` for
 /// a validation failure.
@@ -561,6 +719,11 @@ pub struct Problem {
     /// `pipeline_invalid`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub location: Option<Location>,
+    /// The stored document's etag, for `precondition_failed` when one is
+    /// stored — the value the `ETag` header carries quoted, for a client
+    /// that reads the body alone. Present only then.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub etag: Option<String>,
 }
 
 /// Where in a pipeline a validation failure is.

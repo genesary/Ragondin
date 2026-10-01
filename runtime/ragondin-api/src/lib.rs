@@ -25,18 +25,22 @@
 //!   reaches it: the single-page fallback, the content types.
 //! - [`response`] — every type the API serializes; this crate's own, never a
 //!   core type serialized directly.
+//! - [`request`] — every request body the API reads; this crate's own too.
 //! - [`error`] — [`ApiError`] and its `application/problem+json` rendering.
 //! - [`description`] — the API description, kept as a golden file.
-//! - [`fs`] — the file backends: [`fs::FsRegistry`] today.
+//! - [`fs`] — the workspace on disk and its file backends:
+//!   [`fs::Workspace`], [`fs::FsSettings`], [`fs::FsPipelines`],
+//!   [`fs::FsRegistry`].
 //! - `conformance` — behind the `conformance` feature, the suite every
 //!   [`Registry`] backend passes.
 //!
-//! Every path is under `/api/v1`: `GET /workspace`, `GET /runs`,
-//! `GET /runs/{id}`, `GET /runs/{id}/queries` and
-//! `GET /runs/{id}/trace/{query}`. The last two serve derived data — per-query
-//! scores, per-node metrics, passage text — computed on read against the run's
-//! own dataset, cached under the workspace's `cache/`, and never written into
-//! the run (`ARCHITECTURE.md` § Derived data).
+//! Every path is under `/api/v1`, and [`description::OPERATIONS`] lists
+//! them: the workspace, the runs, the pipelines and their layouts, the
+//! benchmarks and the services. `GET /runs/{id}/queries` and
+//! `GET /runs/{id}/trace/{query}` serve derived data — per-query scores,
+//! per-node metrics, passage text — computed on read against the run's own
+//! dataset, cached under the workspace's `cache/`, and never written into the
+//! run (`ARCHITECTURE.md` § Derived data).
 
 #![warn(missing_docs)]
 
@@ -48,7 +52,7 @@ use std::task::{Context, Poll};
 use axum::body::Body;
 use axum::extract::Request;
 use axum::response::Response;
-use axum::routing::{any, get, IntoMakeService};
+use axum::routing::{any, get, post, put, IntoMakeService};
 use axum::{Router, ServiceExt};
 use tower::Service;
 
@@ -59,25 +63,30 @@ pub mod conformance;
 pub mod description;
 pub mod error;
 pub mod fs;
+pub mod request;
 pub mod response;
 
 mod cache;
 mod convert;
 mod derived;
+mod endpoints;
 mod handlers;
 mod layers;
+mod validation;
+
+use endpoints::{benchmarks, pipelines, services};
 
 pub use assets::{content_type_for, Asset, Assets, NoAssets};
 pub use backends::{
-    Backends, DownloadProgress, Job, JobState, Launcher, PipelineEntry, PipelineFile,
-    PipelineSource, ProgressSink, Registry, Revision, RunDataset, ServiceIdentity, Settings,
+    Backends, DownloadProgress, Job, JobState, Launcher, PipelineFile, PipelineSource,
+    Precondition, ProgressSink, Registry, Revision, RunDataset, ServiceIdentity, Settings,
     Submission, WorkspaceSettings,
 };
 pub use error::ApiError;
 pub use layers::BUILD_HEADER;
 pub use response::{
     BenchmarkEntry, BenchmarkState, Capabilities, EdgeLocation, FamilyCapabilities, GroundTruth,
-    Location, Problem, ServiceBinding,
+    Layout, Location, Position, Problem, ServiceBinding,
 };
 
 /// What the binary fixes when it builds the router.
@@ -142,11 +151,52 @@ pub fn router(backends: Backends, config: ServerConfig, assets: Arc<dyn Assets>)
             "/v1/runs/:id/trace/:query",
             get(handlers::trace).fallback(handlers::method_not_allowed),
         )
+        .route(
+            "/v1/pipelines",
+            get(pipelines::list).fallback(handlers::method_not_allowed),
+        )
+        // A static segment outranks a parameter, so `validate` is never a
+        // pipeline's name: the file backend refuses it as one.
+        .route(
+            "/v1/pipelines/validate",
+            post(pipelines::validate).fallback(handlers::method_not_allowed),
+        )
+        .route(
+            "/v1/pipelines/:name",
+            get(pipelines::read)
+                .put(pipelines::write)
+                .fallback(handlers::method_not_allowed),
+        )
+        .route(
+            "/v1/pipelines/:name/layout",
+            get(pipelines::read_layout)
+                .put(pipelines::write_layout)
+                .fallback(handlers::method_not_allowed),
+        )
+        .route(
+            "/v1/benchmarks",
+            get(benchmarks::list).fallback(handlers::method_not_allowed),
+        )
+        .route(
+            "/v1/benchmarks/import",
+            post(benchmarks::import).fallback(handlers::method_not_allowed),
+        )
+        .route(
+            "/v1/services",
+            get(services::list).fallback(handlers::method_not_allowed),
+        )
+        .route(
+            "/v1/services/:family/:name",
+            put(services::bind)
+                .delete(services::unbind)
+                .fallback(handlers::method_not_allowed),
+        )
+        .route(
+            "/v1/services/:family/:name/probe",
+            post(services::probe).fallback(handlers::method_not_allowed),
+        )
         .fallback(handlers::route_not_found)
-        .with_state(handlers::AppState {
-            backends,
-            config: Arc::new(config),
-        });
+        .with_state(handlers::AppState::new(backends, config));
     let server = Router::new()
         .nest(handlers::API_PREFIX, api)
         // axum 0.7's `nest` leaves the prefix with a trailing slash to the

@@ -194,7 +194,12 @@ function renderer(names) {
    * @param {string} indent
    */
   function objectType(schema, where, indent) {
-    const extra = schema.additionalProperties;
+    // `additionalProperties: false` beside `properties` closes the object to
+    // other members — what a request body refusing an unknown field states.
+    // A TypeScript object type is closed to literals already, so it changes
+    // no type, and is read as absent. Alone, or as `true`, it is refused below.
+    const closed = schema.additionalProperties === false && schema.properties !== undefined;
+    const extra = closed ? undefined : schema.additionalProperties;
     if (schema.properties === undefined && extra === undefined) refuse(where, 'an object with neither `properties` nor `additionalProperties`');
     if (extra !== undefined && (typeof extra !== 'object' || extra === null)) refuse(where, '`additionalProperties` that is not a schema');
     if (extra !== undefined && schema.properties !== undefined) refuse(where, 'both `properties` and `additionalProperties`');

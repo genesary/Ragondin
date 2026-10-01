@@ -26,7 +26,9 @@ use ragondin_benchmarks::Benchmark;
 use ragondin_experiments::{RunId, RunStore};
 
 use crate::error::ApiError;
-use crate::response::{BenchmarkEntry, Capabilities, ServiceBinding};
+use ragondin_pipeline::LogicalPipeline;
+
+use crate::response::{BenchmarkEntry, Capabilities, Layout, ServiceBinding};
 
 /// Every backend the router consumes, constructed by the binary and passed in.
 #[derive(Clone)]
@@ -46,54 +48,88 @@ pub struct Backends {
 
 /// The workspace's pipeline documents and their layouts.
 ///
-/// Locally, `pipelines/<name>.yaml` beside `<name>.layout.json`, a backend whose
-/// home is this crate's `fs` module, not written yet; in a cluster, custom resources with the
-/// layout as an annotation. The document is the source of truth and is never
-/// rewritten by the API: what `write` receives is what the file holds.
+/// Locally, `pipelines/<name>.yaml` beside `<name>.layout.json`
+/// ([`FsPipelines`](crate::fs::FsPipelines)); in a cluster, custom resources
+/// with the layout as an annotation. The document is the source of truth and
+/// is never rewritten by the API: what `write` receives is what is stored,
+/// byte for byte, and what `read` returns is what is stored. The layout is
+/// beside it and never part of it, so writing one changes neither the
+/// document's revision nor its hash.
 #[async_trait]
 pub trait PipelineSource: Send + Sync {
-    /// Every pipeline in the workspace, by name, with its current revision.
-    async fn list(&self) -> Result<Vec<PipelineEntry>, ApiError>;
+    /// Every pipeline in the workspace, by name.
+    async fn list(&self) -> Result<Vec<PipelineFile>, ApiError>;
 
-    /// One pipeline's document, its layout if it has one, and the revision
-    /// both were read at.
+    /// One pipeline's document, and the revision it was read at.
+    ///
+    /// # Errors
+    ///
+    /// `pipeline_not_found` for a name that names no pipeline.
     async fn read(&self, name: &str) -> Result<PipelineFile, ApiError>;
 
-    /// Writes a pipeline's document and, when given, its layout, and returns
-    /// the new revision. With `expected`, a backend refuses the write when
-    /// the stored revision is another one — the editor's guard against
-    /// overwriting a file changed under it.
+    /// Stores `document` as the pipeline `name`, when it validates and
+    /// `precondition` holds, and returns what is now stored.
+    ///
+    /// # Errors
+    ///
+    /// `request_invalid` for a name that is not one file name, or that
+    /// differs from a stored one only in case; `pipeline_invalid` for a
+    /// document that does not validate; `precondition_failed` when the stored
+    /// revision is not the one `precondition` expects — the editor's guard
+    /// against overwriting a file changed under it. Nothing is written on
+    /// any of them.
     async fn write(
         &self,
         name: &str,
         document: &str,
-        layout: Option<&str>,
-        expected: Option<&Revision>,
-    ) -> Result<Revision, ApiError>;
+        precondition: &Precondition,
+    ) -> Result<PipelineFile, ApiError>;
+
+    /// The layout beside the pipeline `name`, or `None` when it has none.
+    ///
+    /// # Errors
+    ///
+    /// `pipeline_not_found` when the pipeline itself is not there.
+    async fn read_layout(&self, name: &str) -> Result<Option<Layout>, ApiError>;
+
+    /// Stores `layout` beside the pipeline `name`, replacing any.
+    ///
+    /// # Errors
+    ///
+    /// `pipeline_not_found` when the pipeline itself is not there.
+    async fn write_layout(&self, name: &str, layout: &Layout) -> Result<(), ApiError>;
 }
 
-/// A pipeline, as a listing names it.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PipelineEntry {
-    /// The pipeline's name: its file stem locally.
-    pub name: String,
-    /// The revision it is at.
-    pub revision: Revision,
-}
-
-/// A pipeline's document and layout, read together.
+/// A pipeline's document, as stored.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PipelineFile {
+    /// The pipeline's name: its file stem locally.
+    pub name: String,
     /// The document, verbatim.
     pub document: String,
-    /// The layout, verbatim, if the pipeline has one.
-    pub layout: Option<String>,
-    /// The revision both were read at.
+    /// The revision it was read at.
     pub revision: Revision,
+    /// When it was last modified.
+    pub modified: SystemTime,
 }
 
-/// An opaque token that changes whenever a pipeline's document or layout
-/// does — an etag. The editor compares two; nothing else reads one.
+/// What a write expects of what is stored.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Precondition {
+    /// The stored document is at this revision — `If-Match`.
+    Matches(Revision),
+    /// A document is stored, at any revision — `If-Match: *` (RFC 9110
+    /// § 13.1.1).
+    Exists,
+    /// Nothing is stored under the name — `If-None-Match: *`, a creation.
+    Absent,
+    /// The request stated neither, which a write refuses: an editor that
+    /// does not say what it read cannot be kept from overwriting a change.
+    Unstated,
+}
+
+/// An opaque token that changes whenever a pipeline's document does — an
+/// etag. The editor compares two; nothing else reads one.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Revision(String);
 
@@ -240,8 +276,10 @@ pub type ProgressSink = Arc<dyn Fn(DownloadProgress) + Send + Sync>;
 /// The workspace's deployment settings — data about where things run, never
 /// hashed into a run (ADR-C32).
 ///
-/// Locally, `workspace.toml`, a backend whose home is this crate's `fs` module, not written yet; in a
-/// cluster, the deployment's bindings, read-only.
+/// Locally, `workspace.toml` ([`FsSettings`](crate::fs::FsSettings)); in a
+/// cluster, the deployment's bindings, read-only. A backend stores what it is
+/// given: whether a binding is one the composition root would accept is
+/// [`Launcher::check_binding`]'s to say, before it is written.
 #[async_trait]
 pub trait WorkspaceSettings: Send + Sync {
     /// The current settings.
@@ -275,10 +313,53 @@ pub trait Launcher: Send + Sync {
     /// whether it carries `remote`.
     fn capabilities(&self) -> Capabilities;
 
+    /// Whether the composition root would accept `family`/`name` bound to
+    /// `uri` — the refusals `ragondin bench --remote` applies to one
+    /// argument, in its words.
+    ///
+    /// # Errors
+    ///
+    /// `binding_refused`, with the composition root's refusal.
+    fn check_binding(&self, family: &str, name: &str, uri: &str) -> Result<(), ApiError>;
+
+    /// Whether the composition root would accept `pipeline`'s keys, with the
+    /// workspace's `bindings` deciding which names are bound — the key
+    /// refusals `ragondin bench` makes before anything is loaded (ADR-C32
+    /// § 1): a key no component of the node's nature reads is refused rather
+    /// than hashed as inert. A pipeline is checked here before it is stored;
+    /// `POST /pipelines/validate` does not call it, as `ragondin validate`
+    /// applies none of these checks (ADR-C32 § 2).
+    ///
+    /// # Errors
+    ///
+    /// `pipeline_invalid`, in the composition root's words, naming the node
+    /// when one is at fault; `binding_refused` for a binding in `bindings`
+    /// the composition root refuses.
+    fn check_document(
+        &self,
+        pipeline: &LogicalPipeline,
+        bindings: &[ServiceBinding],
+    ) -> Result<(), ApiError>;
+
     /// Reads the identity of the `Remote` service bound as `family`/`name`
-    /// at `uri` — the same read the composition root makes before a run.
-    async fn probe(&self, family: &str, name: &str, uri: &str)
-        -> Result<ServiceIdentity, ApiError>;
+    /// at `uri` — the same read the composition root makes before a run, for
+    /// `served_model` where the family reports an identity per served model
+    /// (ADR-C32 § 4).
+    ///
+    /// # Errors
+    ///
+    /// `binding_refused` for a binding [`check_binding`](Self::check_binding)
+    /// refuses; `request_invalid` for a family that reports no identity, or
+    /// one that needs a served model and was given none;
+    /// `impl_not_in_build` in a build that cannot construct a `Remote`
+    /// component; `service_unreachable` when the service did not answer.
+    async fn probe(
+        &self,
+        family: &str,
+        name: &str,
+        uri: &str,
+        served_model: Option<&str>,
+    ) -> Result<ServiceIdentity, ApiError>;
 
     /// The run id a submission announces, computed from constructed
     /// components and the services' identities, so that an existing run is

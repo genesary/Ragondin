@@ -9,7 +9,7 @@
 //!                [--remote <family>/<name>=<uri>]...
 //! ragondin compare <run-a> <run-b> --store <path>   # compare two runs
 //! ragondin serve <config>                           # serve the pipeline
-//! ragondin ui --workspace <dir> [--port <port>] [--bind <loopback>]  # the UI
+//! ragondin ui [--workspace <dir> | --store <dir>] [--port <port>] [--bind <loopback>]  # the UI
 //! ragondin validate <config>                        # validate a configuration
 //! ```
 //!
@@ -150,10 +150,18 @@ enum Command {
     /// Serve the UI and its API on a loopback address.
     #[command(
         long_about = "Serve the UI and its JSON API on a loopback address.\n\n\
-        The UI's pages are served at `/` and the API under `/api/v1/`, over the \
-        workspace given with `--workspace`; its runs are read from \
-        `<workspace>/runs`, where `bench --store <workspace>/runs` writes them. \
-        The address is printed on start. Nothing opens a browser.\n\n\
+        The UI's pages are served at `/` and the API under `/api/v1/`, over a \
+        workspace: `workspace.toml` (the datasets directory and the services), \
+        `pipelines/`, `layouts/`, `runs/`, `jobs/`, `cache/` and `datasets/`, \
+        each created when missing. `--workspace <dir>` names it, its runs in \
+        `<dir>/runs`. `--store <dir>` names the run store instead, as `bench \
+        --store` does: the workspace is the store's parent when the store is \
+        called `runs`, and the store's own directory otherwise, so `bench \
+        --store <ws>/runs` writes where `ui --store <ws>/runs` reads. With \
+        neither, `./runs` is opened when it is a directory, and otherwise \
+        `~/.ragondin` is, created on first use. A malformed `workspace.toml` is \
+        refused, naming its line, and never repaired. The workspace, its store \
+        and the address are printed on start. Nothing opens a browser.\n\n\
         The server listens on loopback only: `--bind` accepts `127.0.0.1` (the \
         default) or `::1`, and refuses any other address, because the server has \
         no authentication yet. To use it from another machine, run it there and \
@@ -163,9 +171,13 @@ enum Command {
         feature refuses this subcommand."
     )]
     Ui {
-        /// The workspace directory the server reads.
+        /// The workspace directory, its runs in `<dir>/runs`.
+        #[arg(long, conflicts_with = "store")]
+        workspace: Option<PathBuf>,
+        /// The run store, as `bench --store` names it; the workspace is its
+        /// parent when it is called `runs`.
         #[arg(long)]
-        workspace: PathBuf,
+        store: Option<PathBuf>,
         /// The port to listen on; 0 for any free port. [default: 7341]
         #[arg(long)]
         port: Option<u16>,
@@ -224,11 +236,13 @@ async fn dispatch(cli: Cli) -> Result<()> {
         #[cfg(feature = "ui")]
         Command::Ui {
             workspace,
+            store,
             port,
             bind,
         } => {
             ui::run(&ui::Request {
-                workspace: &workspace,
+                workspace: workspace.as_deref(),
+                store: store.as_deref(),
                 port,
                 bind: bind.as_deref(),
             })

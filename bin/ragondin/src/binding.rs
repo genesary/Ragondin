@@ -123,6 +123,14 @@ impl Bindings {
         Ok(Self { entries })
     }
 
+    /// Bindings each already through [`check`]: the workspace's, which
+    /// `ragondin ui` holds whatever the build, and which key a family and a
+    /// name once each by construction.
+    #[cfg(feature = "ui")]
+    pub fn from_checked(entries: Vec<Binding>) -> Self {
+        Self { entries }
+    }
+
     /// The bindings as the run records them: family, name and URI as
     /// written, in the order given, outside the run's identity.
     pub fn record(&self) -> Vec<RunBinding> {
@@ -179,6 +187,30 @@ impl Bindings {
         }
         Ok(())
     }
+}
+
+/// Runs every refusal `--remote` applies to one argument on its text alone —
+/// the form, the family, the URI, a `Local` name — on the binding of `name`
+/// in `family` to `uri`, and returns it. The refusal is worded as `bench`
+/// words it, naming the argument `--remote <family>/<name>=<uri>`.
+///
+/// Unlike [`Bindings::parse`], it does not refuse a well-formed binding in a
+/// build without the `remote` feature: `ragondin ui` stores a binding as
+/// deployment data whatever the build, and refuses only to call it.
+#[cfg(feature = "ui")]
+pub fn check(family: &str, name: &str, uri: &str) -> Result<Binding> {
+    parse_one(&format!("{family}/{name}={uri}"))
+}
+
+/// Whether some node of `pipeline` names `name` in the family spelled
+/// `family` — the use [`Bindings::refuse_unused`] looks for. A family that is
+/// none of [`Family::ALL`] is used by nothing.
+#[cfg(feature = "ui")]
+pub fn used_by(pipeline: &LogicalPipeline, family: &str, name: &str) -> bool {
+    Family::ALL
+        .into_iter()
+        .find(|known| known.name() == family)
+        .is_some_and(|family| pipeline.nodes().iter().any(|node| uses(node, family, name)))
 }
 
 /// Whether `node` names `name` in `family`.

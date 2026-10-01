@@ -22,7 +22,7 @@ charter.
 | `src/bench.rs` | Evaluates a configuration against a benchmark and records the run |
 | `src/binding.rs` | `--remote <family>/<name>=<uri>`: the bindings, parsed and checked (ADR-C32 § 2) |
 | `src/wiring.rs` | A node's `Params` on one side, a constructed component on the other; a binding's channel, and the `Remote` adapter over it |
-| `src/ui/` | `ragondin ui`, behind the `ui` feature: the loopback rule (`address.rs`), the embedded asset table `ragondin-api` serves (`assets.rs`), `Launcher` (`launcher.rs`), the temporary empty backends (`stopgap.rs`), and the handler that wires them (`mod.rs`) |
+| `src/ui/` | `ragondin ui`, behind the `ui` feature: the loopback rule (`address.rs`), the embedded asset table `ragondin-api` serves (`assets.rs`), `Launcher` (`launcher.rs`), where the workspace is (`location.rs`), and the handler that opens it and wires the backends (`mod.rs`) |
 | `build.rs` | Under `ui`: what `rust-embed` embeds — `ui/dist/`, or a generated notice page — and the commit the build identity names |
 | `tests/cli.rs` | `validate` and the rest of the command line, exercised as a process |
 | `tests/compare.rs` | `compare`, exercised as a process, against runs written straight into a store |
@@ -393,12 +393,12 @@ release.
 
 ## The ui subcommand
 
-`ragondin ui --workspace <dir> [--port <port>] [--bind <address>]`, behind the
-`ui` feature (ADR-C36 § 1; ADR-C15, one binary; ADR-C14, off by default). It
-serves the UI's embedded assets at `/` and `ragondin-api`'s JSON API under
-`/api/v1/`, over the workspace given, and prints
-`ragondin ui: serving <dir> at http://<address>/` once it listens. It opens no
-browser.
+`ragondin ui [--workspace <dir> | --store <dir>] [--port <port>] [--bind <address>]`,
+behind the `ui` feature (ADR-C36 § 1; ADR-C15, one binary; ADR-C14, off by
+default). It serves the UI's embedded assets at `/` and `ragondin-api`'s JSON
+API under `/api/v1/`, over a workspace (§ The workspace it opens), and prints
+one line once it listens — `ragondin ui: serving the workspace <root> (<why>;
+runs in <store>) at http://<address>/`. It opens no browser.
 
 - **The lean build declares it and refuses it.** `Command::Ui` exists in
   every build, so the subcommand set is one surface (ADR-C15); without the
@@ -507,24 +507,56 @@ than the assets.
 
 ### The wiring
 
-The backends `ragondin-api` consumes, constructed here:
+The backends `ragondin-api` consumes, constructed here over the opened
+`ragondin_api::fs::Workspace`:
 
-| Backend | In this build | Replaced by |
-|---|---|---|
-| `RunStore` | `FileSystemRunStore` over `<workspace>/runs`, where `bench --store <workspace>/runs` writes | — |
-| `PipelineSource` | `stopgap::NoPipelines`: lists nothing, refuses a read or a write | the workspace on disk (#342) |
-| `Registry` | `stopgap::NoBenchmarks`: lists nothing, refuses a verification, a download or an import | `ragondin-api`'s `FsRegistry`, wired by the workspace on disk (#342) |
-| `WorkspaceSettings` | `stopgap::NoSettings`: no datasets directory, no binding; refuses a write | the workspace on disk (#342) |
-| `Launcher` | `launcher::BinaryLauncher` | extended by the launcher (#353) |
+| Backend | In this build |
+|---|---|
+| `RunStore` | `FileSystemRunStore` over the workspace's store, where `bench --store` with the same argument writes |
+| `PipelineSource` | `ragondin-api`'s `FsPipelines`, over `pipelines/` |
+| `Registry` | `ragondin-api`'s `FsRegistry`, over the datasets directory `workspace.toml` names (`<root>/datasets` when it names none) and `ragondin_benchmarks::manifest::manifest()` |
+| `WorkspaceSettings` | `ragondin-api`'s `FsSettings`, over `workspace.toml` |
+| `Launcher` | `launcher::BinaryLauncher`, extended by the launcher's issue (#353) |
 
-**The three stopgaps are temporary, and carry no behaviour**: a listing is
-empty, anything else is `backend_failed` saying it is not available in this
-build yet and naming the issue that replaces it. Each is deleted by that
-issue, not extended. `FsRegistry` exists (#341), but is not wired here:
-it needs the datasets directory the workspace's settings name, and one call
-to `FsRegistry::sweep_staging` at startup before any download runs — both
-#342's, and no route calls the registry yet. `--workspace` is required, and must be a directory; the
-argument-less default and `workspace.toml` are #342's.
+**The startup order** is the address refused or accepted first, then the
+workspace resolved and opened, then `FsRegistry::sweep_staging()` — the
+staging directories an interrupted download or import left
+(`.<name>.download-<pid>-<n>`, `.<name>.import-<pid>-<n>`) are removed — and
+only then the listener bound. So the sweep runs before anything that could
+start a download, whose staging directory has the same shape; `tests/ui.rs`
+leaves one and finds it gone once the server answers.
+
+### The workspace it opens
+
+`src/ui/location.rs` resolves the workspace (the design document § 3 and
+§ 6), and `ragondin_api::fs::Workspace` opens it:
+
+- **`--workspace <dir>`** names the workspace; its store is `<dir>/runs`.
+- **`--store <dir>`** names the store, as `bench --store` does, so one
+  argument means one store to both commands: the workspace is the store's
+  parent when the store's last component is `runs` — `--store <ws>/runs`
+  opens `<ws>` — and the store's own directory otherwise. **In that second
+  case the workspace's directories and `workspace.toml` are created inside
+  the run store**, beside its run directories: the store lists only
+  directories named by a run id, so they do not disturb it, but a store
+  shared with `bench` gains them. Name the store `runs`, or use
+  `--workspace`, to keep the two apart. The two flags are exclusive.
+- **Neither**: `./runs` when it is a directory, the workspace then being the
+  current directory; otherwise `$HOME/.ragondin`, its store `runs/` inside,
+  so the first launch is a screen and not an error. Without `HOME` and
+  without `./runs`, the command refuses, naming `--workspace`.
+- **A workspace an argument names must already be a directory**: a typo is
+  refused, never created. Only the home workspace is created whole.
+- **Opening** reads `workspace.toml` first and refuses a malformed one
+  before anything is created — the error names the file and the line, and
+  the workspace is left as it was — then creates each missing directory
+  (`pipelines/`, `layouts/`, the store, `jobs/`, `cache/`, `datasets/`) and
+  a missing `workspace.toml`, with nothing set.
+
+`--workspace` is kept beside `--store` because #339 shipped it and it names
+the workspace directly; `--store` is the argument the parity with `bench`
+needs. Recorded here as this crate's choice (`AGENTS.md` § Rules of
+engagement).
 
 ### What `Launcher` answers here
 
@@ -539,18 +571,47 @@ API crate holds it as an `Arc<dyn Launcher>` and names no component.
   not a `component:` value, because `onnx` is a `Local` implementation a
   `dense` node names. A family whose every implementation is gated off is
   listed with none.
-- **`probe(family, name, uri)`**: the argument `family/name=uri` goes through
-  `Bindings::parse` — every refusal `--remote` makes — and then through
-  `wiring::service_identity`, the identity read `bench` makes before a run,
-  over a lazily connecting channel. A service that cannot be reached
-  (`ComponentError::Unavailable`) is `service_unreachable`; every other
-  refusal is `backend_failed` with the reason, the API having no code for a
-  request the build cannot honour. A build without `remote` refuses every
-  probe, naming the feature. **Only a `context_builder` can be probed
-  today**: an embedder, a reranker and a generator report an identity for a
-  served model only (ADR-C32 § 4, ADR-C31 § 4), and `Launcher::probe` carries
-  none, so they are refused before any call; a retriever's and a fusion's
-  services have no identity rpc at all.
+- **`check_binding(family, name, uri)`**: `binding::check`, which runs the
+  refusals `--remote` makes of one argument on its text — the form, the
+  family, the URI, a `Local` name — and words them as `bench` does, naming
+  `--remote <family>/<name>=<uri>`; a refusal is `binding_refused`. It does
+  not refuse a well-formed binding in a build without `remote`: a binding in
+  `workspace.toml` is deployment data, and only calling it needs the
+  feature. ADR-C32 § 2's two other refusals do not apply to a stored binding:
+  a `PUT` of a bound name replaces its address rather than binding it twice,
+  and "no node uses it" needs a pipeline, which a workspace binding is not
+  tied to.
+- **`check_document(pipeline, bindings)`**: `wiring::check_keys`, the part
+  of `bench`'s `check_nodes` that holds in every build — a `dense` node's
+  keys by the nature of its embedder, a `cross_encoder`'s, a bound
+  reranker's, one embedder per pipeline — with the workspace's bindings
+  deciding which names are bound. **Only the bindings a node of the document
+  uses count** (`binding::used_by`, the use `refuse_unused` looks for), as
+  `bench` would be given only those: startup does not check the bindings in
+  `workspace.toml`, and one hand-edited out of shape must not block the save
+  of every document. A binding the document does use goes through
+  `binding::check` (gathered by `Bindings::from_checked`), and one `--remote`
+  would refuse is `binding_refused`, naming it. A refusal is `pipeline_invalid` in
+  `bench`'s words (`node `<id>`: …`) with the node as its location. A key no
+  component reads is refused whatever its value, and a URL-valued key a
+  component reads is accepted. `check_nodes`' one build-dependent refusal —
+  `embedder: onnx` without the `onnx` feature — is not made: a stored
+  document is not a run.
+- **`probe(family, name, uri, served_model)`**: the binding goes through
+  `binding::check`, then through `wiring::service_identity`, the identity
+  read `bench` makes before a run, with `served_model` for an embedder, a
+  reranker or a generator, which report an identity per served model only
+  (ADR-C32 § 4, ADR-C31 § 4). The channel is built by
+  `Bound::with_connect_timeout`, which gives up connecting after 5 s: against
+  an address that drops packets, a lazily connecting channel would otherwise
+  wait out the operating system's TCP timeout (about 75 s on macOS) while a
+  person waits on the Setup screen; `bench` keeps `Bound::new`. A failure is
+  classified by where it arose: `ComponentError::Unavailable` is
+  `service_unreachable`; `InvalidRequest`, or a refusal before any call — a
+  retriever or fusion service, which has no identity rpc, or a served model
+  missing — is `request_invalid`; any other component error is
+  `backend_failed`. A build without `remote` answers `impl_not_in_build`,
+  naming the feature.
 - **`identity` and `execute`** answer that running a pipeline from the UI is
   not available in this build yet — `backend_failed`, and `JobState::Failed`
   — until the launcher's issue (#353) replaces both with `bench`'s path.
@@ -596,8 +657,8 @@ A third enters with `ragondin ui`, admitted by ADR-C36 § 6 by name:
 Two existing entries become optional normal dependencies behind `ui`, none
 with its feature list touched. **`ragondin-api`**, the crate that builds and
 serves the server and whose traits `src/ui/` implements. **`async-trait`**, already a
-dev-dependency for the fakes, because `Launcher` and the three stopgap traits
-are `async_trait` traits (frozen decision). `tokio` gains no feature: the
+dev-dependency for the fakes, because `Launcher` is an `async_trait` trait
+(frozen decision). `tokio` gains no feature: the
 workspace entry's `net` carries the listener.
 
 Seven more entries are *used* here without being added by it, so none is a new
