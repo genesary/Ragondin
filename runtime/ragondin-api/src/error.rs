@@ -25,21 +25,28 @@ pub enum ApiError {
         /// The node and the edge it concerns.
         location: Location,
     },
-    /// An `impl:` name this binary registers no local implementation for.
-    #[error("this build has no local {family} named `{implementation}`")]
+    /// An `impl:` name this binary registers no local implementation for —
+    /// or, with `feature`, a component this build cannot construct at all
+    /// without that feature, such as any `Remote` one without `remote`.
+    #[error("{}", impl_not_in_build(family, implementation, feature.as_deref()))]
     ImplNotInBuild {
         /// The family the node is in.
         family: String,
         /// The `impl:` name.
         implementation: String,
+        /// The build feature that would carry it, when one is known.
+        feature: Option<String>,
     },
     /// A `Remote` service that did not answer, at a probe or a submission.
-    #[error("the service at {uri} did not answer: {reason}")]
+    #[error("the service at {uri} did not answer: {reason}{}", last_read(last_identity.as_deref()))]
     ServiceUnreachable {
         /// The address it was reached at.
         uri: String,
         /// The network error, or what the identity read found.
         reason: String,
+        /// The identity this server last read under the same binding, if it
+        /// read one, with the address it read it at when that was another.
+        last_identity: Option<String>,
     },
     /// A submission whose run id the store or the queue already holds.
     #[error("run {run_id} already exists")]
@@ -139,6 +146,47 @@ pub enum ApiError {
         /// Why, in the adapter's words when it refused the corpus.
         reason: String,
     },
+    /// No pipeline of this name in the workspace — or a name that is not one
+    /// file name, which names no pipeline either.
+    #[error("no pipeline {name} in this workspace")]
+    PipelineNotFound {
+        /// The name as the request spelled it.
+        name: String,
+    },
+    /// A write whose precondition does not hold: an `If-Match` naming
+    /// another revision than the stored one, an `If-None-Match: *` over a
+    /// pipeline that exists, or neither header. Nothing was written.
+    #[error("{reason}")]
+    PreconditionFailed {
+        /// Which precondition failed, and the current etag when there is one.
+        reason: String,
+        /// The stored revision's etag, sent back in the `ETag` header; `None`
+        /// when nothing is stored.
+        current: Option<String>,
+    },
+    /// A service binding refused: a family, name or address the composition
+    /// root would refuse on `--remote`, in its words.
+    #[error("{detail}")]
+    BindingRefused {
+        /// The composition root's refusal.
+        detail: String,
+    },
+    /// No service bound under this family and name.
+    #[error("no service is bound as {family}/{name}")]
+    ServiceNotFound {
+        /// The family.
+        family: String,
+        /// The name.
+        name: String,
+    },
+    /// A request this API cannot read: a body that is not the operation's
+    /// JSON, a name that is not one file name, a layout of another version,
+    /// a probe missing what its family needs.
+    #[error("{detail}")]
+    RequestInvalid {
+        /// What is wrong with it.
+        detail: String,
+    },
     /// A backend failed for a reason that is none of the above — an I/O
     /// error listing the store, say.
     #[error("{detail}")]
@@ -192,6 +240,11 @@ impl ApiError {
         "download_failed",
         "download_cancelled",
         "import_refused",
+        "pipeline_not_found",
+        "precondition_failed",
+        "binding_refused",
+        "service_not_found",
+        "request_invalid",
         "backend_failed",
         "host_refused",
         "origin_refused",
@@ -209,8 +262,10 @@ impl ApiError {
         match self {
             Self::PipelineInvalid { .. }
             | Self::ImplNotInBuild { .. }
-            | Self::ImportRefused { .. } => StatusCode::UNPROCESSABLE_ENTITY,
-            Self::ParameterInvalid { .. } => StatusCode::BAD_REQUEST,
+            | Self::ImportRefused { .. }
+            | Self::BindingRefused { .. } => StatusCode::UNPROCESSABLE_ENTITY,
+            Self::PreconditionFailed { .. } => StatusCode::PRECONDITION_FAILED,
+            Self::ParameterInvalid { .. } | Self::RequestInvalid { .. } => StatusCode::BAD_REQUEST,
             Self::ServiceUnreachable { .. } | Self::DownloadFailed { .. } => {
                 StatusCode::BAD_GATEWAY
             }
@@ -225,6 +280,8 @@ impl ApiError {
             | Self::QueryNotFound { .. }
             | Self::DatasetAbsent { .. }
             | Self::BenchmarkNotFound { .. }
+            | Self::PipelineNotFound { .. }
+            | Self::ServiceNotFound { .. }
             | Self::RouteNotFound { .. } => StatusCode::NOT_FOUND,
             Self::HostRefused { .. } => StatusCode::MISDIRECTED_REQUEST,
             Self::OriginRefused { .. } => StatusCode::FORBIDDEN,
@@ -266,11 +323,16 @@ impl ApiError {
             Self::DownloadFailed { .. } => 12,
             Self::DownloadCancelled { .. } => 13,
             Self::ImportRefused { .. } => 14,
-            Self::BackendFailed { .. } => 15,
-            Self::HostRefused { .. } => 16,
-            Self::OriginRefused { .. } => 17,
-            Self::RouteNotFound { .. } => 18,
-            Self::MethodNotAllowed { .. } => 19,
+            Self::PipelineNotFound { .. } => 15,
+            Self::PreconditionFailed { .. } => 16,
+            Self::BindingRefused { .. } => 17,
+            Self::ServiceNotFound { .. } => 18,
+            Self::RequestInvalid { .. } => 19,
+            Self::BackendFailed { .. } => 20,
+            Self::HostRefused { .. } => 21,
+            Self::OriginRefused { .. } => 22,
+            Self::RouteNotFound { .. } => 23,
+            Self::MethodNotAllowed { .. } => 24,
         }
     }
 
@@ -291,6 +353,11 @@ impl ApiError {
             Self::DownloadFailed { .. } => "The download did not verify",
             Self::DownloadCancelled { .. } => "The download was cancelled",
             Self::ImportRefused { .. } => "The import was refused",
+            Self::PipelineNotFound { .. } => "No such pipeline",
+            Self::PreconditionFailed { .. } => "The pipeline changed since it was read",
+            Self::BindingRefused { .. } => "The binding was refused",
+            Self::ServiceNotFound { .. } => "No such service",
+            Self::RequestInvalid { .. } => "The request is invalid",
             Self::BackendFailed { .. } => "A backend failed",
             Self::HostRefused { .. } => "Host refused",
             Self::OriginRefused { .. } => "Origin refused",
@@ -304,7 +371,15 @@ impl ApiError {
             Self::PipelineInvalid { .. } => {
                 "Correct the node or edge named in `location`, then validate again.".to_owned()
             }
-            Self::ImplNotInBuild { family, implementation } => format!(
+            Self::ImplNotInBuild {
+                feature: Some(feature),
+                ..
+            } => format!("Rebuild with the `{feature}` feature."),
+            Self::ImplNotInBuild {
+                family,
+                implementation,
+                feature: None,
+            } => format!(
                 "Rebuild with the feature that carries `{implementation}`, or bind a Remote {family} under this name."
             ),
             Self::ServiceUnreachable { uri, .. } => {
@@ -349,6 +424,22 @@ impl ApiError {
                 "Correct what the detail names — the name, the path, or the dataset's files — and import again."
                     .to_owned()
             }
+            Self::PipelineNotFound { .. } => {
+                "Check the name against the pipeline list.".to_owned()
+            }
+            Self::PreconditionFailed { .. } => {
+                "Read the pipeline again, reapply the change to what it holds now, and write it with the etag that read returned."
+                    .to_owned()
+            }
+            Self::BindingRefused { .. } => {
+                "Correct the family, the name or the address the detail names.".to_owned()
+            }
+            Self::ServiceNotFound { .. } => {
+                "Bind the name first, with PUT /services/{family}/{name}.".to_owned()
+            }
+            Self::RequestInvalid { .. } => {
+                "Correct the request against the API description, api/v1.json.".to_owned()
+            }
             Self::BackendFailed { .. } => {
                 "Check the workspace on disk: the detail names what failed.".to_owned()
             }
@@ -368,13 +459,41 @@ impl ApiError {
     }
 }
 
+/// `ImplNotInBuild`'s detail: a local name this build lacks, or a component
+/// it cannot construct without a feature.
+fn impl_not_in_build(family: &str, implementation: &str, feature: Option<&str>) -> String {
+    match feature {
+        Some(feature) => format!(
+            "this build cannot construct the {family} `{implementation}` without the `{feature}` feature"
+        ),
+        None => format!("this build has no local {family} named `{implementation}`"),
+    }
+}
+
+/// `ServiceUnreachable`'s tail: the identity last read, when there is one.
+fn last_read(identity: Option<&str>) -> String {
+    identity
+        .map(|identity| format!("; the identity last read under this name was {identity}"))
+        .unwrap_or_default()
+}
+
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
+        let etag = match &self {
+            Self::PreconditionFailed {
+                current: Some(current),
+                ..
+            } => HeaderValue::from_str(&format!("\"{current}\"")).ok(),
+            _ => None,
+        };
         let mut response = (self.status(), axum::Json(self.problem())).into_response();
         response.headers_mut().insert(
             header::CONTENT_TYPE,
             HeaderValue::from_static("application/problem+json"),
         );
+        if let Some(etag) = etag {
+            response.headers_mut().insert(header::ETAG, etag);
+        }
         response
     }
 }
@@ -398,10 +517,12 @@ mod tests {
             ApiError::ImplNotInBuild {
                 family: String::new(),
                 implementation: String::new(),
+                feature: None,
             },
             ApiError::ServiceUnreachable {
                 uri: String::new(),
                 reason: String::new(),
+                last_identity: None,
             },
             ApiError::RunExists {
                 run_id: String::new(),
@@ -443,6 +564,23 @@ mod tests {
             ApiError::ImportRefused {
                 name: String::new(),
                 reason: String::new(),
+            },
+            ApiError::PipelineNotFound {
+                name: String::new(),
+            },
+            ApiError::PreconditionFailed {
+                reason: String::new(),
+                current: None,
+            },
+            ApiError::BindingRefused {
+                detail: String::new(),
+            },
+            ApiError::ServiceNotFound {
+                family: String::new(),
+                name: String::new(),
+            },
+            ApiError::RequestInvalid {
+                detail: String::new(),
             },
             ApiError::BackendFailed {
                 detail: String::new(),

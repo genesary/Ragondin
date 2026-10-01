@@ -1,0 +1,531 @@
+//! The pipeline endpoints over the file backend: `GET /pipelines`,
+//! `GET`/`PUT /pipelines/{name}`, `GET`/`PUT /pipelines/{name}/layout` and
+//! `POST /pipelines/validate`, against a real workspace on disk.
+
+mod support;
+
+use std::fs;
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use axum::http::StatusCode;
+use ragondin_api::fs::{FsPipelines, Workspace};
+use serde_json::{json, Value};
+use support::{
+    app_with_backends, fakes, get, json as body_json, send, write_request, FakeRunStore,
+};
+
+/// The pipeline the tests write: valid, and formatted the way a person
+/// formats one — comments, a flow map — so that a re-serialization would show.
+const HYBRID: &str = "# a hand-written pipeline\npipeline:\n  inputs: [question]\n  nodes:\n    - id: lexical\n      component: retriever\n      impl: bm25\n      inputs: [question]\n      params: { top_k: 10 }   # keep it small\n";
+
+/// The same pipeline, formatted otherwise.
+const HYBRID_REFORMATTED: &str = "pipeline:\n  inputs:\n    - question\n  nodes:\n    - id: lexical\n      component: retriever\n      impl: bm25\n      inputs:\n        - question\n      params:\n        top_k: 10\n";
+
+/// A configuration whose reranker is fed (chunks, query): the kind check
+/// refuses it.
+const MIS_KINDED: &str = "pipeline:\n  inputs: [question]\n  nodes:\n    - id: legs\n      component: retriever\n      impl: stub_retriever\n      inputs: [question]\n      params: { top_k: 3 }\n    - id: ranked\n      component: reranker\n      impl: some_reranker\n      inputs: [legs, question]\n";
+
+fn scratch(test_name: &str) -> Workspace {
+    let path = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
+        .join("pipelines")
+        .join(test_name);
+    let _ = fs::remove_dir_all(&path);
+    fs::create_dir_all(&path).expect("the scratch directory is creatable");
+    Workspace::open(&path).expect("a workspace opens")
+}
+
+fn server(workspace: &Workspace) -> ragondin_api::Server {
+    let mut backends = fakes(FakeRunStore::default());
+    backends.pipelines = Arc::new(FsPipelines::new(workspace));
+    app_with_backends(backends)
+}
+
+fn document(text: &str) -> Value {
+    json!({ "document": text })
+}
+
+/// Writes `text` as a new pipeline, through the API, and returns its etag.
+async fn create(workspace: &Workspace, name: &str, text: &str) -> String {
+    let response = send(
+        server(workspace),
+        write_request(
+            "PUT",
+            &format!("/api/v1/pipelines/{name}"),
+            &document(text),
+            &[("if-none-match", "*")],
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let etag = response
+        .headers()
+        .get("etag")
+        .expect("a write answers its etag")
+        .to_str()
+        .unwrap()
+        .to_owned();
+    etag
+}
+
+fn on_disk(workspace: &Workspace, name: &str) -> Vec<u8> {
+    fs::read(workspace.pipelines().join(format!("{name}.yaml"))).expect("the file is there")
+}
+
+#[tokio::test]
+async fn a_pipeline_read_carries_the_etag_of_its_bytes() {
+    let workspace = scratch("etag");
+    fs::write(workspace.pipelines().join("hybrid.yaml"), HYBRID).unwrap();
+
+    let response = send(server(&workspace), get("/api/v1/pipelines/hybrid")).await;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let header = response
+        .headers()
+        .get("etag")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_owned();
+    let body = body_json(response).await;
+    assert_eq!(body["document"], HYBRID);
+    assert_eq!(body["name"], "hybrid");
+    // The etag is a digest of the bytes: quoted in the header, bare in the body.
+    assert_eq!(header, format!("\"{}\"", body["etag"].as_str().unwrap()));
+    assert_eq!(body["etag"].as_str().unwrap().len(), 64);
+    assert!(body["hash"].is_string(), "{body}");
+    assert_eq!(body["error"], Value::Null);
+
+    // Other bytes, another etag, though the pipeline is the same.
+    fs::write(
+        workspace.pipelines().join("hybrid.yaml"),
+        HYBRID_REFORMATTED,
+    )
+    .unwrap();
+    let again = body_json(send(server(&workspace), get("/api/v1/pipelines/hybrid")).await).await;
+    assert_ne!(again["etag"], body["etag"]);
+    assert_eq!(again["hash"], body["hash"]);
+}
+
+#[tokio::test]
+async fn an_absent_pipeline_is_pipeline_not_found() {
+    let workspace = scratch("absent");
+
+    for name in ["absent", "..%2Fescape"] {
+        let response = send(
+            server(&workspace),
+            get(&format!("/api/v1/pipelines/{name}")),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND, "{name}");
+        assert_eq!(body_json(response).await["code"], "pipeline_not_found");
+    }
+}
+
+#[tokio::test]
+async fn the_listing_names_each_pipeline_with_its_hash_or_its_error() {
+    let workspace = scratch("listing");
+    fs::write(workspace.pipelines().join("hybrid.yaml"), HYBRID).unwrap();
+    fs::write(workspace.pipelines().join("broken.yaml"), MIS_KINDED).unwrap();
+    fs::write(workspace.pipelines().join("hybrid.layout.json"), "{}").unwrap();
+    fs::write(workspace.pipelines().join(".hybrid.write-1-1.yaml"), HYBRID).unwrap();
+
+    let body = body_json(send(server(&workspace), get("/api/v1/pipelines")).await).await;
+
+    let pipelines = body["pipelines"].as_array().expect("a list");
+    let names: Vec<&str> = pipelines
+        .iter()
+        .map(|p| p["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["broken", "hybrid"]);
+    assert_eq!(pipelines[0]["hash"], Value::Null);
+    assert_eq!(pipelines[0]["error"]["location"]["node"], "ranked");
+    assert!(pipelines[1]["hash"].is_string());
+    assert_eq!(pipelines[1]["error"], Value::Null);
+    assert!(pipelines[1]["modified_ms"].as_u64().unwrap() > 0);
+    assert_eq!(pipelines[1]["etag"].as_str().unwrap().len(), 64);
+}
+
+#[tokio::test]
+async fn a_write_with_a_stale_etag_is_refused_with_412_and_the_current_etag() {
+    let workspace = scratch("stale");
+    let first = create(&workspace, "hybrid", HYBRID).await;
+    let current = {
+        let response = send(
+            server(&workspace),
+            write_request(
+                "PUT",
+                "/api/v1/pipelines/hybrid",
+                &document(HYBRID_REFORMATTED),
+                &[("if-match", &first)],
+            ),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        response
+            .headers()
+            .get("etag")
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_owned()
+    };
+    let before = on_disk(&workspace, "hybrid");
+
+    let response = send(
+        server(&workspace),
+        write_request(
+            "PUT",
+            "/api/v1/pipelines/hybrid",
+            &document(HYBRID),
+            &[("if-match", &first)],
+        ),
+    )
+    .await;
+
+    assert_eq!(response.status(), StatusCode::PRECONDITION_FAILED);
+    assert_eq!(
+        response.headers().get("etag").unwrap().to_str().unwrap(),
+        current
+    );
+    let problem = body_json(response).await;
+    assert_eq!(problem["code"], "precondition_failed");
+    assert!(
+        problem["detail"]
+            .as_str()
+            .unwrap()
+            .contains(current.trim_matches('"')),
+        "{problem}"
+    );
+    assert_eq!(on_disk(&workspace, "hybrid"), before);
+}
+
+#[tokio::test]
+async fn a_write_without_a_precondition_or_creating_over_a_file_is_refused() {
+    let workspace = scratch("preconditions");
+    create(&workspace, "hybrid", HYBRID).await;
+
+    for headers in [vec![], vec![("if-none-match", "*")]] {
+        let response = send(
+            server(&workspace),
+            write_request(
+                "PUT",
+                "/api/v1/pipelines/hybrid",
+                &document(HYBRID_REFORMATTED),
+                &headers,
+            ),
+        )
+        .await;
+
+        assert_eq!(
+            response.status(),
+            StatusCode::PRECONDITION_FAILED,
+            "{headers:?}"
+        );
+        assert_eq!(on_disk(&workspace, "hybrid"), HYBRID.as_bytes());
+    }
+    // `If-Match` on a file that is not there: nothing to match.
+    let response = send(
+        server(&workspace),
+        write_request(
+            "PUT",
+            "/api/v1/pipelines/other",
+            &document(HYBRID),
+            &[("if-match", "\"0000\"")],
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::PRECONDITION_FAILED);
+    assert!(!workspace.pipelines().join("other.yaml").exists());
+}
+
+#[tokio::test]
+async fn a_write_with_the_current_etag_stores_the_exact_bytes_sent() {
+    let workspace = scratch("current");
+    let etag = create(&workspace, "hybrid", HYBRID).await;
+    assert_eq!(on_disk(&workspace, "hybrid"), HYBRID.as_bytes());
+
+    let response = send(
+        server(&workspace),
+        write_request(
+            "PUT",
+            "/api/v1/pipelines/hybrid",
+            &document(HYBRID_REFORMATTED),
+            &[("if-match", &etag)],
+        ),
+    )
+    .await;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let header = response
+        .headers()
+        .get("etag")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_owned();
+    let written = body_json(response).await;
+    assert_eq!(on_disk(&workspace, "hybrid"), HYBRID_REFORMATTED.as_bytes());
+    assert_eq!(header, format!("\"{}\"", written["etag"].as_str().unwrap()));
+    assert!(written["hash"].is_string());
+
+    let read = body_json(send(server(&workspace), get("/api/v1/pipelines/hybrid")).await).await;
+    assert_eq!(read["document"], HYBRID_REFORMATTED);
+    assert_eq!(read["etag"], written["etag"]);
+}
+
+#[tokio::test]
+async fn a_write_that_does_not_validate_is_refused_and_changes_nothing() {
+    let workspace = scratch("invalid");
+    let etag = create(&workspace, "hybrid", HYBRID).await;
+
+    for text in [
+        MIS_KINDED,
+        "pipeline: [not, a, graph",
+        "pipeline:\n  nodes: []\n",
+    ] {
+        let response = send(
+            server(&workspace),
+            write_request(
+                "PUT",
+                "/api/v1/pipelines/hybrid",
+                &document(text),
+                &[("if-match", &etag)],
+            ),
+        )
+        .await;
+
+        assert_eq!(
+            response.status(),
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{text}"
+        );
+        assert_eq!(body_json(response).await["code"], "pipeline_invalid");
+        assert_eq!(on_disk(&workspace, "hybrid"), HYBRID.as_bytes());
+    }
+    // Nor is a new file created by an invalid write.
+    let response = send(
+        server(&workspace),
+        write_request(
+            "PUT",
+            "/api/v1/pipelines/fresh",
+            &document(MIS_KINDED),
+            &[("if-none-match", "*")],
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let names: Vec<String> = fs::read_dir(workspace.pipelines())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(names, ["hybrid.yaml"]);
+}
+
+#[tokio::test]
+async fn a_document_written_back_unchanged_keeps_its_bytes_etag_and_hash() {
+    let workspace = scratch("unchanged");
+    fs::write(workspace.pipelines().join("hybrid.yaml"), HYBRID).unwrap();
+    let read = body_json(send(server(&workspace), get("/api/v1/pipelines/hybrid")).await).await;
+    let etag = format!("\"{}\"", read["etag"].as_str().unwrap());
+
+    let written = body_json(
+        send(
+            server(&workspace),
+            write_request(
+                "PUT",
+                "/api/v1/pipelines/hybrid",
+                &document(read["document"].as_str().unwrap()),
+                &[("if-match", &etag)],
+            ),
+        )
+        .await,
+    )
+    .await;
+
+    assert_eq!(written["etag"], read["etag"]);
+    assert_eq!(written["hash"], read["hash"]);
+    assert_eq!(on_disk(&workspace, "hybrid"), HYBRID.as_bytes());
+}
+
+#[tokio::test]
+async fn a_document_carrying_a_service_address_is_refused() {
+    let workspace = scratch("address");
+    let text = HYBRID.replace(
+        "params: { top_k: 10 }",
+        "params: { top_k: 10, endpoint: \"http://10.0.0.5:50051\" }",
+    );
+
+    let response = send(
+        server(&workspace),
+        write_request(
+            "PUT",
+            "/api/v1/pipelines/hybrid",
+            &document(&text),
+            &[("if-none-match", "*")],
+        ),
+    )
+    .await;
+
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let problem = body_json(response).await;
+    assert_eq!(problem["code"], "pipeline_invalid");
+    assert_eq!(problem["location"]["node"], "lexical");
+    let detail = problem["detail"].as_str().unwrap();
+    assert!(detail.contains("http://10.0.0.5:50051"), "{detail}");
+    assert!(detail.contains("`endpoint`"), "{detail}");
+    assert!(!workspace.pipelines().join("hybrid.yaml").exists());
+}
+
+#[tokio::test]
+async fn a_name_that_is_not_one_file_name_is_refused() {
+    let workspace = scratch("names");
+
+    for name in [".hidden", "a.", "validate", &"x".repeat(65)] {
+        let response = send(
+            server(&workspace),
+            write_request(
+                "PUT",
+                &format!("/api/v1/pipelines/{name}"),
+                &document(HYBRID),
+                &[("if-none-match", "*")],
+            ),
+        )
+        .await;
+
+        assert!(
+            response.status().is_client_error(),
+            "{name}: {}",
+            response.status()
+        );
+    }
+    let names: Vec<_> = fs::read_dir(workspace.pipelines()).unwrap().collect();
+    assert!(names.is_empty());
+}
+
+#[tokio::test]
+async fn validate_returns_the_hash_of_the_canonical_form() {
+    let workspace = scratch("validate");
+
+    let first = body_json(
+        send(
+            server(&workspace),
+            write_request("POST", "/api/v1/pipelines/validate", &document(HYBRID), &[]),
+        )
+        .await,
+    )
+    .await;
+    let second = body_json(
+        send(
+            server(&workspace),
+            write_request(
+                "POST",
+                "/api/v1/pipelines/validate",
+                &document(HYBRID_REFORMATTED),
+                &[],
+            ),
+        )
+        .await,
+    )
+    .await;
+
+    assert_eq!(first["hash"].as_str().unwrap().len(), 64);
+    assert_eq!(first["hash"], second["hash"]);
+}
+
+#[tokio::test]
+async fn validate_locates_a_mis_kinded_edge_in_the_cli_words() {
+    let workspace = scratch("mis_kinded");
+
+    let response = send(
+        server(&workspace),
+        write_request(
+            "POST",
+            "/api/v1/pipelines/validate",
+            &document(MIS_KINDED),
+            &[],
+        ),
+    )
+    .await;
+
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let problem = body_json(response).await;
+    assert_eq!(problem["code"], "pipeline_invalid");
+    assert_eq!(
+        problem["location"],
+        json!({ "node": "ranked", "edge": { "from": "legs", "to": "ranked", "port": 0 } })
+    );
+    let detail = problem["detail"].as_str().unwrap();
+    for line in [
+        "wires two nodes incompatibly",
+        "edge: `legs` feeds `ranked` at port 0",
+        "expected: query",
+        "found: chunks",
+    ] {
+        assert!(detail.contains(line), "{line:?} in {detail}");
+    }
+}
+
+#[tokio::test]
+async fn a_body_that_is_not_the_request_s_json_is_request_invalid() {
+    let workspace = scratch("bad_body");
+
+    for body in [json!("just a string"), json!({ "doc": HYBRID })] {
+        let response = send(
+            server(&workspace),
+            write_request("POST", "/api/v1/pipelines/validate", &body, &[]),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{body}");
+        assert_eq!(body_json(response).await["code"], "request_invalid");
+    }
+}
+
+#[tokio::test]
+async fn the_layout_round_trips_beside_the_document_and_never_changes_the_hash() {
+    let workspace = scratch("layout");
+    create(&workspace, "hybrid", HYBRID).await;
+    let before = body_json(send(server(&workspace), get("/api/v1/pipelines/hybrid")).await).await;
+
+    let absent =
+        body_json(send(server(&workspace), get("/api/v1/pipelines/hybrid/layout")).await).await;
+    assert_eq!(absent, json!({ "layout": null }));
+
+    let layout = json!({ "version": 1, "nodes": { "lexical": { "x": 120.5, "y": -40.0 } } });
+    let response = send(
+        server(&workspace),
+        write_request("PUT", "/api/v1/pipelines/hybrid/layout", &layout, &[]),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    assert!(workspace.pipelines().join("hybrid.layout.json").is_file());
+    let read =
+        body_json(send(server(&workspace), get("/api/v1/pipelines/hybrid/layout")).await).await;
+    assert_eq!(read, json!({ "layout": layout }));
+    let after = body_json(send(server(&workspace), get("/api/v1/pipelines/hybrid")).await).await;
+    assert_eq!(after["hash"], before["hash"]);
+    assert_eq!(after["etag"], before["etag"]);
+    assert_eq!(on_disk(&workspace, "hybrid"), HYBRID.as_bytes());
+
+    // A layout of another version, or of a pipeline that is not there, is refused.
+    let refused = send(
+        server(&workspace),
+        write_request(
+            "PUT",
+            "/api/v1/pipelines/hybrid/layout",
+            &json!({ "version": 2, "nodes": {} }),
+            &[],
+        ),
+    )
+    .await;
+    assert_eq!(refused.status(), StatusCode::BAD_REQUEST);
+    let absent = send(
+        server(&workspace),
+        write_request("PUT", "/api/v1/pipelines/absent/layout", &layout, &[]),
+    )
+    .await;
+    assert_eq!(absent.status(), StatusCode::NOT_FOUND);
+}

@@ -245,6 +245,258 @@ mod with_the_feature {
         );
     }
 
+    /// Every directory a workspace holds, and its settings file.
+    const LAYOUT: [&str; 7] = [
+        "workspace.toml",
+        "pipelines",
+        "layouts",
+        "runs",
+        "jobs",
+        "cache",
+        "datasets",
+    ];
+
+    #[test]
+    fn ui_with_no_argument_creates_the_home_workspace() {
+        let root = workspace("no_argument_home");
+        let (home, cwd) = (root.join("home"), root.join("empty"));
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&cwd).unwrap();
+
+        let server = Server::start_with(&[], Some(&cwd), Some(&home));
+
+        let created = home.join(".ragondin");
+        for entry in LAYOUT {
+            assert!(
+                created.join(entry).exists(),
+                "{entry} under {}",
+                created.display()
+            );
+        }
+        assert!(
+            server.banner().contains(created.to_str().unwrap()),
+            "the resolved root is printed: {}",
+            server.banner()
+        );
+        // Nothing was created where the command ran.
+        assert_eq!(std::fs::read_dir(&cwd).unwrap().count(), 0);
+        let runs = http::get(server.authority(), "/api/v1/runs");
+        assert_eq!(runs.status, 200, "{runs:?}");
+    }
+
+    #[test]
+    fn ui_with_no_argument_opens_a_local_runs_directory() {
+        let root = workspace("no_argument_local");
+        let home = root.join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        let local = root.join("project");
+        std::fs::create_dir_all(local.join("runs")).unwrap();
+
+        let server = Server::start_with(&[], Some(&local), Some(&home));
+
+        for entry in LAYOUT {
+            assert!(local.join(entry).exists(), "{entry}");
+        }
+        assert!(
+            !home.join(".ragondin").exists(),
+            "the home workspace is not created"
+        );
+        let body: serde_json::Value =
+            serde_json::from_str(&http::get(server.authority(), "/api/v1/workspace").body).unwrap();
+        let reported = std::path::PathBuf::from(body["path"].as_str().unwrap());
+        assert_eq!(
+            reported.canonicalize().unwrap(),
+            local.canonicalize().unwrap()
+        );
+    }
+
+    #[test]
+    fn a_store_named_runs_has_its_parent_as_the_workspace() {
+        let root = workspace("store_named_runs");
+
+        let server = Server::start_with(
+            &["--store", root.join("runs").to_str().unwrap()],
+            None,
+            None,
+        );
+
+        for entry in LAYOUT {
+            assert!(root.join(entry).exists(), "{entry}");
+        }
+        let body: serde_json::Value =
+            serde_json::from_str(&http::get(server.authority(), "/api/v1/workspace").body).unwrap();
+        assert_eq!(body["path"], root.to_str().unwrap());
+    }
+
+    /// `bench --store <ws>/runs` writes a run, and `ui --store <ws>/runs`
+    /// lists it: one argument, one store. The run needs a retriever and a
+    /// generator in process, so this runs where `stub` and `bm25` are built.
+    #[cfg(all(feature = "stub", feature = "bm25"))]
+    #[test]
+    fn ui_and_bench_resolve_the_same_store_from_the_same_argument() {
+        let root = workspace("same_store");
+        let store = root.join("runs");
+        let fixtures = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+        let bench = ragondin(&[
+            "bench",
+            fixtures
+                .join("stub-generation-bench.yaml")
+                .to_str()
+                .unwrap(),
+            "--benchmark",
+            "beir-qa/qa-mini",
+            "--datasets",
+            fixtures.to_str().unwrap(),
+            "--store",
+            store.to_str().unwrap(),
+        ]);
+        assert!(bench.status.success(), "{}", stderr(&bench));
+        let printed = String::from_utf8(bench.stdout).unwrap();
+        let run_id = printed
+            .split_whitespace()
+            .find(|word| word.len() == 64 && word.bytes().all(|byte| byte.is_ascii_hexdigit()))
+            .unwrap_or_else(|| panic!("bench prints the run id: {printed}"))
+            .to_owned();
+
+        let server = Server::start_with(&["--store", store.to_str().unwrap()], None, None);
+
+        let runs: serde_json::Value =
+            serde_json::from_str(&http::get(server.authority(), "/api/v1/runs").body).unwrap();
+        let ids: Vec<&str> = runs["runs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|run| run["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(ids, [run_id.as_str()]);
+    }
+
+    #[test]
+    fn a_malformed_workspace_toml_is_refused_naming_the_file_and_the_line() {
+        let root = workspace("malformed_settings");
+        let settings = root.join("workspace.toml");
+        std::fs::write(&settings, "datasets = \"/data\"\n[jobs]\n").unwrap();
+
+        let output = ragondin(&["ui", "--workspace", root.to_str().unwrap(), "--port", "0"]);
+
+        assert!(!output.status.success());
+        let report = stderr(&output);
+        assert!(
+            report.contains(&format!("{}:2", settings.display())),
+            "{report}"
+        );
+        // Touched nothing: no directory created, the file as it was.
+        let entries: Vec<_> = std::fs::read_dir(&root).unwrap().collect();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(
+            std::fs::read_to_string(&settings).unwrap(),
+            "datasets = \"/data\"\n[jobs]\n"
+        );
+    }
+
+    #[test]
+    fn a_staging_directory_an_interrupted_download_left_is_swept_at_startup() {
+        let root = workspace("sweep");
+        let staging = root.join("datasets").join(".scifact.download-4242-1");
+        std::fs::create_dir_all(&staging).unwrap();
+        std::fs::write(staging.join("corpus.jsonl"), "{}\n").unwrap();
+
+        let _server = Server::start(&root, &[]);
+
+        assert!(!staging.exists(), "the leftover is removed before serving");
+        assert!(root.join("datasets").is_dir());
+    }
+
+    /// Every configuration under `tests/fixtures`, recursively.
+    fn fixture_configurations() -> Vec<PathBuf> {
+        let mut found = Vec::new();
+        let mut pending = vec![PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures")];
+        while let Some(directory) = pending.pop() {
+            for entry in std::fs::read_dir(&directory).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    pending.push(path);
+                } else if path
+                    .extension()
+                    .is_some_and(|extension| extension == "yaml")
+                {
+                    found.push(path);
+                }
+            }
+        }
+        found.sort();
+        assert!(found.len() > 10, "the fixtures are found: {found:?}");
+        found
+    }
+
+    #[test]
+    fn validate_returns_the_hash_the_cli_prints_for_the_same_bytes() {
+        let server = Server::start(&workspace("validate_parity"), &[]);
+
+        for path in fixture_configurations() {
+            let text = std::fs::read_to_string(&path).unwrap();
+            let cli = ragondin(&["validate", path.to_str().unwrap()]);
+            let body = serde_json::json!({ "document": text }).to_string();
+            let api = http::send_json(
+                server.authority(),
+                "POST",
+                "/api/v1/pipelines/validate",
+                &body,
+            );
+            let answer: serde_json::Value = serde_json::from_str(&api.body).unwrap();
+
+            if cli.status.success() {
+                let printed = String::from_utf8(cli.stdout).unwrap();
+                let hash = printed
+                    .lines()
+                    .find_map(|line| line.strip_prefix("content hash: "))
+                    .unwrap_or_else(|| panic!("{}: {printed}", path.display()));
+                assert_eq!(api.status, 200, "{}: {}", path.display(), api.body);
+                assert_eq!(answer["hash"], hash, "{}", path.display());
+            } else {
+                assert_eq!(api.status, 422, "{}: {}", path.display(), api.body);
+                assert_eq!(answer["code"], "pipeline_invalid", "{}", path.display());
+            }
+        }
+    }
+
+    #[test]
+    fn validate_locates_a_mis_kinded_edge_in_the_cli_words() {
+        let server = Server::start(&workspace("validate_words"), &[]);
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/incompatible-wiring.yaml");
+        let text = std::fs::read_to_string(&path).unwrap();
+
+        let cli = stderr(&ragondin(&["validate", path.to_str().unwrap()]));
+        let body = serde_json::json!({ "document": text }).to_string();
+        let api = http::send_json(
+            server.authority(),
+            "POST",
+            "/api/v1/pipelines/validate",
+            &body,
+        );
+
+        let answer: serde_json::Value = serde_json::from_str(&api.body).unwrap();
+        let detail = answer["detail"].as_str().unwrap();
+        // The report's lines after its first, which names the file: the
+        // edge, the kind expected, the kind found — the same in both.
+        let report: Vec<&str> = cli
+            .lines()
+            .map(str::trim)
+            .filter(|line| {
+                ["edge:", "expected:", "found:"]
+                    .iter()
+                    .any(|key| line.starts_with(key))
+            })
+            .collect();
+        assert_eq!(report.len(), 3, "{cli}");
+        for line in report {
+            assert!(detail.contains(line), "{line:?} in {detail}");
+        }
+        assert_eq!(answer["location"]["edge"]["from"], "legs");
+        assert_eq!(answer["location"]["edge"]["to"], "ranked");
+    }
+
     /// The release assertion (ADR-C36 § 5): the job that ships a binary sets
     /// `RAGONDIN_REQUIRE_UI_ASSETS`, and then this fails if what the binary
     /// serves at `/` is the notice page rather than a real build. Without the

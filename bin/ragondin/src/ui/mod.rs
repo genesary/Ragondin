@@ -2,40 +2,41 @@
 //! listener (ADR-C36 § 1).
 //!
 //! The handler is the composition root's, and thin: it checks the address,
-//! binds the listener, constructs the backends `ragondin-api` consumes, hands
-//! them in with the embedded assets as data, and hands what comes back to
-//! `ragondin_api::serve`. The router, its endpoints, the routes that serve
-//! the assets and the four security layers are all `ragondin-api`'s, applied
-//! last over the API and the assets alike; this crate names no HTTP stack at
-//! all, so it cannot add a route outside them.
+//! resolves and opens the workspace, constructs the backends `ragondin-api`
+//! consumes, binds the listener, hands the backends in with the embedded
+//! assets as data, and hands what comes back to `ragondin_api::serve`. The
+//! router, its endpoints, the routes that serve the assets and the four
+//! security layers are all `ragondin-api`'s, applied last over the API and the
+//! assets alike; this crate names no HTTP stack at all, so it cannot add a
+//! route outside them.
 //!
 //! - [`address`] — the loopback rule, and its refusal.
 //! - [`assets`] — the embedded UI, or the notice page, as `ragondin-api`'s
 //!   asset table.
-//! - [`launcher`] — `Launcher`: capabilities, the identity probe.
-//! - [`stopgap`] — the empty backends the file backends replace.
+//! - [`launcher`] — `Launcher`: capabilities, a binding's check, the
+//!   identity probe.
+//! - [`location`] — where the workspace is, from `--workspace`, `--store` or
+//!   nothing.
 
 use std::path::Path;
 use std::sync::Arc;
 
-use anyhow::{bail, Context, Result};
-use ragondin_api::{Backends, ServerConfig};
+use anyhow::{Context, Result};
+use ragondin_api::fs::{FsPipelines, FsRegistry, FsSettings};
+use ragondin_api::{Backends, ServerConfig, WorkspaceSettings};
 use ragondin_experiments::FileSystemRunStore;
 
 mod address;
 mod assets;
 mod launcher;
-mod stopgap;
-
-/// The directory under the workspace the run store is rooted at: where
-/// `bench --store <workspace>/runs` writes, so the UI reads what the command
-/// line records (the design document § 6).
-const RUNS: &str = "runs";
+mod location;
 
 /// One `ragondin ui`'s arguments.
 pub struct Request<'a> {
-    /// The workspace directory.
-    pub workspace: &'a Path,
+    /// `--workspace`, when given.
+    pub workspace: Option<&'a Path>,
+    /// `--store`, when given.
+    pub store: Option<&'a Path>,
     /// `--port`, when given.
     pub port: Option<u16>,
     /// `--bind`, when given.
@@ -44,18 +45,34 @@ pub struct Request<'a> {
 
 /// Runs the server until the process is stopped.
 ///
-/// The address is refused before anything opens; the workspace must be a
-/// directory. Once bound, the URL is printed on stdout — the port the system
-/// chose, under `--port 0` — and the served authority handed to the `Host`
-/// check is exactly the one printed.
+/// The address is refused before anything opens. Then the workspace is
+/// resolved ([`location::resolve`]) and opened — `workspace.toml` read
+/// first, a malformed one refused before anything is created — and the
+/// staging directories an interrupted download or import left under the
+/// datasets directory are swept, before the listener opens and so before
+/// any download can start. Once bound, one line is printed on stdout: the
+/// workspace, its store, and the URL — the port the system chose, under
+/// `--port 0` — whose authority is exactly the one the `Host` check accepts.
 pub async fn run(request: &Request<'_>) -> Result<()> {
     let address = address::listen_address(request.bind, request.port)?;
-    if !request.workspace.is_dir() {
-        bail!(
-            "the workspace `{}` is not a directory",
-            request.workspace.display()
-        );
-    }
+    let location = location::resolve(
+        request.workspace,
+        request.store,
+        &std::env::current_dir().context("the current directory cannot be read")?,
+        std::env::var_os("HOME").as_deref().map(Path::new),
+    )?;
+    let workspace = location.open()?;
+
+    let settings = FsSettings::new(&workspace);
+    let datasets = settings
+        .read()
+        .await
+        .map_err(|error| anyhow::anyhow!("{error}"))?
+        .datasets;
+    let registry = FsRegistry::new(datasets, ragondin_benchmarks::manifest::manifest());
+    registry
+        .sweep_staging()
+        .map_err(|error| anyhow::anyhow!("{error}"))?;
 
     let listener = tokio::net::TcpListener::bind(address)
         .await
@@ -66,10 +83,10 @@ pub async fn run(request: &Request<'_>) -> Result<()> {
         .to_string();
 
     let backends = Backends {
-        runs: Arc::new(FileSystemRunStore::new(request.workspace.join(RUNS))),
-        pipelines: Arc::new(stopgap::NoPipelines),
-        registry: Arc::new(stopgap::NoBenchmarks),
-        settings: Arc::new(stopgap::NoSettings),
+        runs: Arc::new(FileSystemRunStore::new(workspace.runs())),
+        pipelines: Arc::new(FsPipelines::new(&workspace)),
+        registry: Arc::new(registry),
+        settings: Arc::new(settings),
         launcher: Arc::new(launcher::BinaryLauncher),
     };
     let server = ragondin_api::router(
@@ -77,14 +94,16 @@ pub async fn run(request: &Request<'_>) -> Result<()> {
         ServerConfig {
             served: served.clone(),
             build: build_identity(),
-            workspace: request.workspace.to_path_buf(),
+            workspace: workspace.root().to_path_buf(),
         },
         Arc::new(assets::Embedded),
     );
 
     println!(
-        "ragondin ui: serving {} at http://{served}/",
-        request.workspace.display()
+        "ragondin ui: serving the workspace {} ({}; runs in {}) at http://{served}/",
+        workspace.root().display(),
+        location.reason(),
+        workspace.runs().display(),
     );
     ragondin_api::serve(listener, server)
         .await

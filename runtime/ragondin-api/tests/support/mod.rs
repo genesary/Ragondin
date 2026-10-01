@@ -21,8 +21,8 @@ use axum::body::Body;
 use axum::http::{Request, Response};
 use ragondin_api::{
     content_type_for, router, ApiError, Asset, Assets, Backends, BenchmarkEntry, Capabilities,
-    FamilyCapabilities, Job, JobState, Launcher, PipelineEntry, PipelineFile, PipelineSource,
-    ProgressSink, Registry, Revision, RunDataset, Server, ServerConfig, ServiceBinding,
+    FamilyCapabilities, Job, JobState, Launcher, Layout, PipelineFile, PipelineSource,
+    Precondition, ProgressSink, Registry, RunDataset, Server, ServerConfig, ServiceBinding,
     ServiceIdentity, Settings, Submission, WorkspaceSettings,
 };
 use ragondin_benchmarks::identity::dataset_version;
@@ -98,7 +98,23 @@ impl RunStore for FakeRunStore {
     }
 }
 
-/// A launcher that answers capabilities and nothing else.
+/// What [`FakeLauncher`] reports as the identity a probe read, followed by
+/// the binding and the served model it was asked about.
+pub const PROBED_IDENTITY: &str = "fake-identity";
+
+/// The six families the binary binds names in, as the fake checks them.
+const FAMILIES: [&str; 6] = [
+    "retriever",
+    "fusion",
+    "reranker",
+    "context_builder",
+    "generator",
+    "embedder",
+];
+
+/// A launcher that answers capabilities, checks a binding the way the binary
+/// words it — `--remote` and the argument first — and probes by address:
+/// port 1 is unreachable, any other answers [`PROBED_IDENTITY`].
 pub struct FakeLauncher {
     pub capabilities: Capabilities,
 }
@@ -129,15 +145,41 @@ impl Launcher for FakeLauncher {
         self.capabilities.clone()
     }
 
+    fn check_binding(&self, family: &str, name: &str, uri: &str) -> Result<(), ApiError> {
+        let argument = format!("`--remote {family}/{name}={uri}`");
+        if !FAMILIES.contains(&family) {
+            return Err(ApiError::BindingRefused {
+                detail: format!("{argument}: `{family}` is not a family a name can be bound in"),
+            });
+        }
+        if !uri.starts_with("http://") {
+            return Err(ApiError::BindingRefused {
+                detail: format!("{argument}: `{uri}` is not an `http://` URI"),
+            });
+        }
+        Ok(())
+    }
+
     async fn probe(
         &self,
-        _family: &str,
-        _name: &str,
+        family: &str,
+        name: &str,
         uri: &str,
+        served_model: Option<&str>,
     ) -> Result<ServiceIdentity, ApiError> {
-        Err(ApiError::ServiceUnreachable {
-            uri: uri.to_owned(),
-            reason: "the fake launcher probes nothing".to_owned(),
+        self.check_binding(family, name, uri)?;
+        if uri.ends_with(":1") {
+            return Err(ApiError::ServiceUnreachable {
+                uri: uri.to_owned(),
+                reason: "connection refused".to_owned(),
+                last_identity: None,
+            });
+        }
+        let served = served_model
+            .map(|model| format!("#{model}"))
+            .unwrap_or_default();
+        Ok(ServiceIdentity {
+            identity: format!("{PROBED_IDENTITY}:{family}/{name}@{uri}{served}"),
         })
     }
 
@@ -188,24 +230,37 @@ pub struct FakePipelines;
 
 #[async_trait]
 impl PipelineSource for FakePipelines {
-    async fn list(&self) -> Result<Vec<PipelineEntry>, ApiError> {
+    async fn list(&self) -> Result<Vec<PipelineFile>, ApiError> {
         Ok(Vec::new())
     }
 
     async fn read(&self, name: &str) -> Result<PipelineFile, ApiError> {
-        Err(ApiError::BackendFailed {
-            detail: format!("no pipeline named {name}"),
+        Err(ApiError::PipelineNotFound {
+            name: name.to_owned(),
         })
     }
 
     async fn write(
         &self,
-        _name: &str,
+        name: &str,
         _document: &str,
-        _layout: Option<&str>,
-        _expected: Option<&Revision>,
-    ) -> Result<Revision, ApiError> {
-        Ok(Revision::new("0"))
+        _precondition: &Precondition,
+    ) -> Result<PipelineFile, ApiError> {
+        Err(ApiError::BackendFailed {
+            detail: format!("the fake workspace keeps no pipeline, {name} included"),
+        })
+    }
+
+    async fn read_layout(&self, name: &str) -> Result<Option<Layout>, ApiError> {
+        Err(ApiError::PipelineNotFound {
+            name: name.to_owned(),
+        })
+    }
+
+    async fn write_layout(&self, name: &str, _layout: &Layout) -> Result<(), ApiError> {
+        Err(ApiError::PipelineNotFound {
+            name: name.to_owned(),
+        })
     }
 }
 
@@ -352,14 +407,11 @@ fn serve(
     workspace: PathBuf,
     assets: Arc<dyn Assets>,
 ) -> Server {
+    let mut backends = fakes(store);
+    backends.registry = registry;
+    backends.launcher = Arc::new(launcher);
     router(
-        Backends {
-            runs: Arc::new(store),
-            pipelines: Arc::new(FakePipelines),
-            registry,
-            settings: Arc::new(FakeSettings::default()),
-            launcher: Arc::new(launcher),
-        },
+        backends,
         ServerConfig {
             served: SERVED.to_owned(),
             build: BUILD.to_owned(),
@@ -369,11 +421,57 @@ fn serve(
     )
 }
 
+/// The default fakes over `store`, for a test to replace one of.
+pub fn fakes(store: FakeRunStore) -> Backends {
+    Backends {
+        runs: Arc::new(store),
+        pipelines: Arc::new(FakePipelines),
+        registry: Arc::new(FakeRegistry),
+        settings: Arc::new(FakeSettings::default()),
+        launcher: Arc::new(FakeLauncher::default()),
+    }
+}
+
+/// The router over `backends`, with no assets.
+pub fn app_with_backends(backends: Backends) -> Server {
+    router(
+        backends,
+        ServerConfig {
+            served: SERVED.to_owned(),
+            build: BUILD.to_owned(),
+            workspace: PathBuf::from("/workspace"),
+        },
+        Arc::new(ragondin_api::NoAssets),
+    )
+}
+
 /// A `GET` that passes the `Host` check.
 pub fn get(path: &str) -> Request<Body> {
     Request::get(path)
         .header("host", SERVED)
         .body(Body::empty())
+        .unwrap()
+}
+
+/// A state-changing request that passes the `Host` and `Origin` checks,
+/// with `body` as JSON and `headers` added.
+pub fn write_request(
+    method: &str,
+    path: &str,
+    body: &serde_json::Value,
+    headers: &[(&str, &str)],
+) -> Request<Body> {
+    let mut request = Request::builder()
+        .method(method)
+        .uri(path)
+        .header("host", SERVED)
+        .header("origin", OWN_ORIGIN)
+        .header("content-type", "application/json");
+    for (name, value) in headers {
+        request = request.header(*name, *value);
+    }
+    request
+        .body(Body::from(serde_json::to_vec(body).unwrap()))
         .unwrap()
 }
 

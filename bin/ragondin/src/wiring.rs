@@ -215,14 +215,40 @@ impl Bound {
     /// `remote` feature, it must be called inside a Tokio runtime, because a
     /// lazy channel spawns the task that will connect it.
     pub fn new(bindings: Bindings) -> Result<Self> {
+        Self::build(
+            bindings,
+            #[cfg(feature = "remote")]
+            None,
+        )
+    }
+
+    /// Builds the channels as [`new`](Self::new) does, each giving up on
+    /// connecting after `timeout`: the identity probe of `ragondin ui`, which
+    /// answers a person waiting on a screen, would otherwise wait out the
+    /// operating system's TCP timeout against an address that drops packets.
+    /// `bench` keeps [`new`](Self::new)'s behaviour.
+    #[cfg(all(feature = "remote", feature = "ui"))]
+    pub fn with_connect_timeout(bindings: Bindings, timeout: std::time::Duration) -> Result<Self> {
+        Self::build(bindings, Some(timeout))
+    }
+
+    fn build(
+        bindings: Bindings,
+        #[cfg(feature = "remote")] connect_timeout: Option<std::time::Duration>,
+    ) -> Result<Self> {
         #[cfg(feature = "remote")]
         let channels = bindings
             .iter()
             .map(|binding| {
-                let channel = tonic::transport::Endpoint::from_shared(binding.uri.clone())
-                    .with_context(|| format!("`{}/{}`", binding.family, binding.name))?
-                    .connect_lazy();
-                Ok(((binding.family, binding.name.clone()), channel))
+                let mut endpoint = tonic::transport::Endpoint::from_shared(binding.uri.clone())
+                    .with_context(|| format!("`{}/{}`", binding.family, binding.name))?;
+                if let Some(timeout) = connect_timeout {
+                    endpoint = endpoint.connect_timeout(timeout);
+                }
+                Ok((
+                    (binding.family, binding.name.clone()),
+                    endpoint.connect_lazy(),
+                ))
             })
             .collect::<Result<_>>()?;
         Ok(Self {

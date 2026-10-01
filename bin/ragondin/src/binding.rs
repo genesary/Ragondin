@@ -181,6 +181,19 @@ impl Bindings {
     }
 }
 
+/// Runs every refusal `--remote` applies to one argument on its text alone —
+/// the form, the family, the URI, a `Local` name — on the binding of `name`
+/// in `family` to `uri`, and returns it. The refusal is worded as `bench`
+/// words it, naming the argument `--remote <family>/<name>=<uri>`.
+///
+/// Unlike [`Bindings::parse`], it does not refuse a well-formed binding in a
+/// build without the `remote` feature: `ragondin ui` stores a binding as
+/// deployment data whatever the build, and refuses only to call it.
+#[cfg(feature = "ui")]
+pub fn check(family: &str, name: &str, uri: &str) -> Result<Binding> {
+    parse_one(&format!("{family}/{name}={uri}"))
+}
+
 /// Whether `node` names `name` in `family`.
 fn uses(node: &LogicalNode, family: Family, name: &str) -> bool {
     match (family, node) {

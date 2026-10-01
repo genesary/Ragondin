@@ -1,6 +1,8 @@
-//! The handlers of the read endpoints. Each reads its backends, converts
-//! what it read into this crate's response types, and answers; every failure
-//! is an [`ApiError`].
+//! The handlers of the read endpoints over the workspace's summary and the
+//! run store, and the state every handler reads. Each reads its backends,
+//! converts what it read into this crate's response types, and answers;
+//! every failure is an [`ApiError`]. The workspace's other endpoints are in
+//! `endpoints/`.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
@@ -17,23 +19,72 @@ use ragondin_types::QueryId;
 
 use crate::backends::{Backends, RunDataset};
 use crate::derived::{self, Metrics, Outputs};
+use crate::endpoints::services::{self, Probes};
 use crate::error::ApiError;
 use crate::response::{
-    QueryScores, QueryTrace, RunDetail, RunListing, RunQueries, SettingsSummary, UnreadableRun,
-    Workspace,
+    BenchmarkState, QueryScores, QueryTrace, RunDetail, RunListing, RunQueries, SettingsSummary,
+    UnreadableRun, Workspace, WorkspaceCounts,
 };
 use crate::{cache, convert, ServerConfig};
 
-/// What every handler reads: the backends and the fixed configuration.
+/// What every handler reads: the backends, the fixed configuration, and what
+/// this server remembers while it runs.
 #[derive(Clone)]
 pub(crate) struct AppState {
     pub(crate) backends: Backends,
     pub(crate) config: Arc<ServerConfig>,
+    /// What each service's last probe learnt.
+    pub(crate) probes: Probes,
+    /// Held across a service write's read and write of the settings, so two
+    /// writes do not each start from what the other is replacing.
+    pub(crate) services_writing: Arc<tokio::sync::Mutex<()>>,
 }
 
-/// `GET /workspace`.
+impl AppState {
+    pub(crate) fn new(backends: Backends, config: ServerConfig) -> Self {
+        Self {
+            backends,
+            config: Arc::new(config),
+            probes: Probes::default(),
+            services_writing: Arc::default(),
+        }
+    }
+}
+
+/// `GET /workspace`. The counts are computed on this request: the pipelines
+/// and the runs listed, the benchmarks verified, the services' probes
+/// remembered.
 pub(crate) async fn workspace(State(state): State<AppState>) -> Result<Json<Workspace>, ApiError> {
     let settings = state.backends.settings.read().await?;
+    let pipelines = state.backends.pipelines.list().await?.len();
+    let runs = blocking(state.backends.runs.clone(), |store| {
+        store
+            .ids()
+            .map(|ids| ids.len())
+            .map_err(|error| ApiError::BackendFailed {
+                detail: format!("the run store cannot be listed: {error}"),
+            })
+    })
+    .await?;
+    let benchmarks_ready = state
+        .backends
+        .registry
+        .benchmarks()
+        .await?
+        .iter()
+        .filter(|entry| {
+            matches!(
+                entry.state,
+                BenchmarkState::Ready { .. } | BenchmarkState::Local { .. }
+            )
+        })
+        .count();
+    let services_connected = services::listing(&settings, &state.probes)
+        .services
+        .iter()
+        .filter(|service| service.connected)
+        .count();
+    let count = |n: usize| u64::try_from(n).unwrap_or(u64::MAX);
     Ok(Json(Workspace {
         path: state.config.workspace.display().to_string(),
         settings: SettingsSummary {
@@ -42,6 +93,12 @@ pub(crate) async fn workspace(State(state): State<AppState>) -> Result<Json<Work
         },
         build: state.config.build.clone(),
         capabilities: state.backends.launcher.capabilities(),
+        counts: WorkspaceCounts {
+            pipelines: count(pipelines),
+            runs: count(runs),
+            benchmarks_ready: count(benchmarks_ready),
+            services_connected: count(services_connected),
+        },
     }))
 }
 

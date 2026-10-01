@@ -33,7 +33,7 @@ One binary, five subcommands — the whole user-facing surface:
 ragondin bench <config> --benchmark beir/scifact --datasets <dir> --store <dir>  # evaluate a pipeline against a benchmark
 ragondin compare <run-a> <run-b> --store <dir>                                   # compare two runs
 ragondin serve <config>                                                          # serve the pipeline
-ragondin ui --workspace <dir>                                                    # the front end, on loopback
+ragondin ui [--workspace <dir> | --store <dir>]                                  # the front end, on loopback
 ragondin validate <config>                                                       # validate a configuration
 ```
 

@@ -1,6 +1,188 @@
 {
   "components": {
     "schemas": {
+      "BenchmarkEntry": {
+        "description": "One benchmark the registry knows: named by the manifest, or imported.",
+        "properties": {
+          "format": {
+            "description": "The format that reads it: `beir`, `beir-qa` or `squad`; `unknown` for\nan import whose record cannot be read.",
+            "type": "string"
+          },
+          "ground_truth": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GroundTruth"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "The ground truth it carries, read off the loaded dataset; `null` when\nnothing on disk loaded."
+          },
+          "licence": {
+            "description": "The dataset's licence, for a benchmark the manifest names, whatever\nits state: a downloaded dataset keeps the notice it was obtained\nunder. `null` for an import, whose licence is its owner's.",
+            "nullable": true,
+            "type": "string"
+          },
+          "licence_url": {
+            "description": "Where that licence is stated; `null` with it.",
+            "nullable": true,
+            "type": "string"
+          },
+          "name": {
+            "description": "Its selector, `<format>/<dir>` — `beir/scifact` — as `ragondin bench\n--benchmark` takes it; for an import whose record cannot be read, its\ndirectory's name alone.",
+            "type": "string"
+          },
+          "state": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/BenchmarkState"
+              }
+            ],
+            "description": "Where it stands against the digest expected of it."
+          }
+        },
+        "required": [
+          "format",
+          "ground_truth",
+          "licence",
+          "licence_url",
+          "name",
+          "state"
+        ],
+        "type": "object"
+      },
+      "BenchmarkListing": {
+        "description": "`GET /benchmarks`: every benchmark the registry knows.",
+        "properties": {
+          "benchmarks": {
+            "description": "The manifest's entries in manifest order, then the imports by name.",
+            "items": {
+              "$ref": "#/components/schemas/BenchmarkEntry"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "benchmarks"
+        ],
+        "type": "object"
+      },
+      "BenchmarkState": {
+        "description": "Where a benchmark stands. Every verdict is a statement about digests: the\ndataset on disk is loaded and its `dataset_version` compared with the one\nexpected — the manifest's, or the one recorded at import.",
+        "oneOf": [
+          {
+            "description": "On disk, and its digest is the manifest's.",
+            "properties": {
+              "dataset_version": {
+                "description": "What it digests to.",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "ready"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "dataset_version"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "Named by the manifest, not on disk.",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "available"
+                ],
+                "type": "string"
+              },
+              "size_bytes": {
+                "description": "The snapshot's size.",
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "kind",
+              "size_bytes"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "On disk, and its digest is another.",
+            "properties": {
+              "expected": {
+                "description": "The digest expected.",
+                "type": "string"
+              },
+              "found": {
+                "description": "The digest on disk.",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "differs"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "expected",
+              "found"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "On disk, and it does not load.",
+            "properties": {
+              "error": {
+                "description": "The adapter's error.",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "unreadable"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "error"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "Imported, and its digest is the one recorded at import.",
+            "properties": {
+              "dataset_version": {
+                "description": "What it digests to.",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "local"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "dataset_version"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "Capabilities": {
         "description": "What this build can run: the local implementations of each family, and\nwhether it can call a `Remote` one.",
         "properties": {
@@ -201,11 +383,11 @@
         "description": "One family's local implementations in this build.",
         "properties": {
           "family": {
-            "description": "The family, spelled as a configuration's `component:` value.",
+            "description": "The family, spelled as `--remote` and a service binding spell it: a\nnode family as a configuration's `component:` value, or `embedder`,\nwhich no node is and a `dense` node names with `embedder:`.",
             "type": "string"
           },
           "local": {
-            "description": "The `impl:` names this build registers in it.",
+            "description": "The names this build gives a `Local` component in it: `impl:` values,\nor for `embedder`, `embedder:` values.",
             "items": {
               "type": "string"
             },
@@ -356,6 +538,80 @@
         ],
         "type": "object"
       },
+      "GroundTruth": {
+        "description": "The ground truth a benchmark carries: which metric families a run over it\ncan compute.",
+        "oneOf": [
+          {
+            "description": "Neither qrels nor reference answers.",
+            "enum": [
+              "none"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "Qrels: the retrieval metrics.",
+            "enum": [
+              "qrels"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "Reference answers: the generation metrics against reference.",
+            "enum": [
+              "reference_answers"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "Both.",
+            "enum": [
+              "both"
+            ],
+            "type": "string"
+          }
+        ]
+      },
+      "ImportRequest": {
+        "description": "`POST /benchmarks/import`: a corpus on disk, and the name to import it as.",
+        "properties": {
+          "name": {
+            "description": "The local benchmark's name: one directory name.",
+            "type": "string"
+          },
+          "path": {
+            "description": "The directory holding the corpus and its ground truth, on the\nserver's disk.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "path"
+        ],
+        "type": "object"
+      },
+      "Layout": {
+        "description": "Where the editor draws each node: UI metadata beside the document, never\nin its hash. Also the body of `PUT /pipelines/{name}/layout`.",
+        "properties": {
+          "nodes": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/Position"
+            },
+            "description": "Each node's position, by node id.",
+            "type": "object"
+          },
+          "version": {
+            "description": "The layout format's version: `1`, the only one this build reads.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version",
+          "nodes"
+        ],
+        "type": "object"
+      },
       "Location": {
         "description": "Where in a pipeline a validation failure is.",
         "properties": {
@@ -450,6 +706,250 @@
         ],
         "description": "A node parameter's value."
       },
+      "PipelineDetail": {
+        "description": "`GET /pipelines/{name}`: one pipeline document, verbatim.",
+        "properties": {
+          "document": {
+            "description": "The document, byte for byte as the file holds it.",
+            "type": "string"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PipelineError"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "Why it does not validate, when it does not."
+          },
+          "etag": {
+            "description": "The digest of those bytes; also the response's `ETag` header, quoted.",
+            "type": "string"
+          },
+          "hash": {
+            "description": "The content hash of its canonical logical form, when it validates.",
+            "nullable": true,
+            "type": "string"
+          },
+          "name": {
+            "description": "Its name.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "document",
+          "error",
+          "etag",
+          "hash",
+          "name"
+        ],
+        "type": "object"
+      },
+      "PipelineDocument": {
+        "description": "`PUT /pipelines/{name}` and `POST /pipelines/validate`: a pipeline\ndocument, as text.",
+        "properties": {
+          "document": {
+            "description": "The YAML document. Stored byte for byte when it is written: never\nre-serialized.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "document"
+        ],
+        "type": "object"
+      },
+      "PipelineError": {
+        "description": "Why a pipeline document does not validate: `pipeline_invalid`'s detail and\nlocation, inside a response that still answers.",
+        "properties": {
+          "detail": {
+            "description": "What the validation pass said, in the words `ragondin validate` uses.",
+            "type": "string"
+          },
+          "location": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Location"
+              }
+            ],
+            "description": "The node and the edge it concerns, when they can be named."
+          }
+        },
+        "required": [
+          "detail",
+          "location"
+        ],
+        "type": "object"
+      },
+      "PipelineLayout": {
+        "description": "`GET /pipelines/{name}/layout`: the layout beside the document, if it has\none. Without one the UI lays the graph out itself, and says so.",
+        "properties": {
+          "layout": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Layout"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "The layout, or `null` when the pipeline has none."
+          }
+        },
+        "required": [
+          "layout"
+        ],
+        "type": "object"
+      },
+      "PipelineListing": {
+        "description": "`GET /pipelines`: every pipeline document in the workspace.",
+        "properties": {
+          "pipelines": {
+            "description": "One entry per document, by name.",
+            "items": {
+              "$ref": "#/components/schemas/PipelineSummary"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "pipelines"
+        ],
+        "type": "object"
+      },
+      "PipelineSummary": {
+        "description": "A pipeline, as the listing shows it.",
+        "properties": {
+          "error": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PipelineError"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "Why it does not validate, when it does not."
+          },
+          "etag": {
+            "description": "The digest of its bytes, the value `If-Match` names to write it.",
+            "type": "string"
+          },
+          "hash": {
+            "description": "The content hash of its canonical logical form, when it validates.",
+            "nullable": true,
+            "type": "string"
+          },
+          "modified_ms": {
+            "description": "When its file was last modified, in milliseconds since the Unix epoch.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "name": {
+            "description": "Its name: the file stem.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "error",
+          "etag",
+          "hash",
+          "modified_ms",
+          "name"
+        ],
+        "type": "object"
+      },
+      "PipelineValidated": {
+        "description": "`POST /pipelines/validate`: the document validates, and this is its hash.",
+        "properties": {
+          "hash": {
+            "description": "The content hash of the canonical logical form, as `ragondin validate`\nprints it.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "hash"
+        ],
+        "type": "object"
+      },
+      "PipelineWritten": {
+        "description": "`PUT /pipelines/{name}`: what was written.",
+        "properties": {
+          "etag": {
+            "description": "The etag of the bytes now stored; also the `ETag` header, quoted.",
+            "type": "string"
+          },
+          "hash": {
+            "description": "The content hash of their canonical logical form.",
+            "type": "string"
+          },
+          "name": {
+            "description": "The pipeline's name.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "etag",
+          "hash"
+        ],
+        "type": "object"
+      },
+      "Position": {
+        "description": "A node's position on the editor's canvas.",
+        "properties": {
+          "x": {
+            "description": "Horizontal, in canvas units.",
+            "format": "double",
+            "type": "number"
+          },
+          "y": {
+            "description": "Vertical, in canvas units.",
+            "format": "double",
+            "type": "number"
+          }
+        },
+        "required": [
+          "x",
+          "y"
+        ],
+        "type": "object"
+      },
+      "ProbeRequest": {
+        "description": "`POST /services/{family}/{name}/probe`: what the identity read needs\nbesides the binding.",
+        "properties": {
+          "served_model": {
+            "description": "The name the service serves the model under — a node's\n`served_model`. An embedder, a reranker or a generator reports an\nidentity only for one; a context builder takes none. Absent is none.",
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "ProbeResult": {
+        "description": "`POST /services/{family}/{name}/probe`: the identity a run would record.",
+        "properties": {
+          "identity": {
+            "description": "What the service reported, read as the composition root reads it\nbefore a run.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "identity"
+        ],
+        "type": "object"
+      },
       "Problem": {
         "description": "An error, as `application/problem+json` (RFC 9457) with this API's own\nmembers: a stable `code`, a `hint` naming the action, and a `location` for\na validation failure.",
         "properties": {
@@ -471,6 +971,11 @@
               "download_failed",
               "download_cancelled",
               "import_refused",
+              "pipeline_not_found",
+              "precondition_failed",
+              "binding_refused",
+              "service_not_found",
+              "request_invalid",
               "backend_failed",
               "host_refused",
               "origin_refused",
@@ -825,6 +1330,19 @@
         ],
         "type": "object"
       },
+      "ServiceAddress": {
+        "description": "`PUT /services/{family}/{name}`: the address to bind the name to.",
+        "properties": {
+          "uri": {
+            "description": "The service's address — the scheme `http`, a host and an optional\nport, nothing else — as `ragondin bench --remote` takes it.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "uri"
+        ],
+        "type": "object"
+      },
       "ServiceBinding": {
         "description": "A `Remote` component bound by family and name to the address it answers\nat — in the workspace's settings, and as a run recorded it.",
         "properties": {
@@ -843,6 +1361,56 @@
         },
         "required": [
           "family",
+          "name",
+          "uri"
+        ],
+        "type": "object"
+      },
+      "ServiceListing": {
+        "description": "`GET /services`, and the answer of every write to a service: the bindings\n`workspace.toml` holds.",
+        "properties": {
+          "services": {
+            "description": "Every binding, in the file's order.",
+            "items": {
+              "$ref": "#/components/schemas/ServiceStatus"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "services"
+        ],
+        "type": "object"
+      },
+      "ServiceStatus": {
+        "description": "One binding, and what this server last learnt by probing it.",
+        "properties": {
+          "connected": {
+            "description": "Whether this server's last probe of it, at this address, read an\nidentity. `false` before any probe.",
+            "type": "boolean"
+          },
+          "family": {
+            "description": "The family the name is bound in.",
+            "type": "string"
+          },
+          "identity": {
+            "description": "The identity last read at this address, if any was.",
+            "nullable": true,
+            "type": "string"
+          },
+          "name": {
+            "description": "The implementation name a node uses.",
+            "type": "string"
+          },
+          "uri": {
+            "description": "The service's address, as written.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "connected",
+          "family",
+          "identity",
           "name",
           "uri"
         ],
@@ -1160,8 +1728,16 @@
             ],
             "description": "What this build can run, as the launcher reports it."
           },
+          "counts": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/WorkspaceCounts"
+              }
+            ],
+            "description": "What the workspace holds, counted on this request."
+          },
           "path": {
-            "description": "The workspace directory, as the binary was given it.",
+            "description": "The workspace's root directory, as the binary resolved it.",
             "type": "string"
           },
           "settings": {
@@ -1177,7 +1753,44 @@
           "path",
           "settings",
           "build",
-          "capabilities"
+          "capabilities",
+          "counts"
+        ],
+        "type": "object"
+      },
+      "WorkspaceCounts": {
+        "description": "What a workspace holds, counted when asked: nothing here is cached.",
+        "properties": {
+          "benchmarks_ready": {
+            "description": "The benchmarks on disk whose digest is the one expected of them:\n`ready` or `local`.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "pipelines": {
+            "description": "The pipeline documents under `pipelines/`, valid or not.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "runs": {
+            "description": "The runs the store lists, readable or not.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "services_connected": {
+            "description": "The bound services whose last probe, by this server, at their current\naddress, read an identity.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "pipelines",
+          "runs",
+          "benchmarks_ready",
+          "services_connected"
         ],
         "type": "object"
       }
@@ -1190,6 +1803,304 @@
   },
   "openapi": "3.0.3",
   "paths": {
+    "/benchmarks": {
+      "get": {
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BenchmarkListing"
+                }
+              }
+            },
+            "description": "Every benchmark the registry knows, with its state and licence."
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "An error, as application/problem+json."
+          }
+        },
+        "summary": "Every benchmark the registry knows, with its state and licence."
+      }
+    },
+    "/benchmarks/import": {
+      "post": {
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImportRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BenchmarkEntry"
+                }
+              }
+            },
+            "description": "Imports a corpus on the server's disk as a local benchmark."
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "An error, as application/problem+json."
+          }
+        },
+        "summary": "Imports a corpus on the server's disk as a local benchmark."
+      }
+    },
+    "/pipelines": {
+      "get": {
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PipelineListing"
+                }
+              }
+            },
+            "description": "Every pipeline document: its etag, its hash or why it does not validate."
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "An error, as application/problem+json."
+          }
+        },
+        "summary": "Every pipeline document: its etag, its hash or why it does not validate."
+      }
+    },
+    "/pipelines/validate": {
+      "post": {
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PipelineDocument"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PipelineValidated"
+                }
+              }
+            },
+            "description": "The canonical hash `ragondin validate` prints for a document, or `pipeline_invalid`, located."
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "An error, as application/problem+json."
+          }
+        },
+        "summary": "The canonical hash `ragondin validate` prints for a document, or `pipeline_invalid`, located."
+      }
+    },
+    "/pipelines/{name}": {
+      "get": {
+        "description": "The etag is also the response's `ETag` header, quoted. Not declared as a header: the UI's type generator reads path parameters only.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PipelineDetail"
+                }
+              }
+            },
+            "description": "One pipeline document, verbatim, with its etag and its hash or why it does not validate."
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "An error, as application/problem+json."
+          }
+        },
+        "summary": "One pipeline document, verbatim, with its etag and its hash or why it does not validate."
+      },
+      "put": {
+        "description": "Requires the header `If-Match: \"<etag>\"` to replace the stored document, or `If-None-Match: *` to create one. A stale etag, a creation over an existing document, or neither header is precondition_failed (412), with the current etag in the `ETag` header and the detail, and nothing written. The answer's etag is also its `ETag` header. Not declared as headers: the UI's type generator reads path parameters only.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PipelineDocument"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PipelineWritten"
+                }
+              }
+            },
+            "description": "Stores a document byte for byte when it validates and its precondition holds."
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "An error, as application/problem+json."
+          }
+        },
+        "summary": "Stores a document byte for byte when it validates and its precondition holds."
+      }
+    },
+    "/pipelines/{name}/layout": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PipelineLayout"
+                }
+              }
+            },
+            "description": "The layout beside a pipeline document, or `null`."
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "An error, as application/problem+json."
+          }
+        },
+        "summary": "The layout beside a pipeline document, or `null`."
+      },
+      "put": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Layout"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PipelineLayout"
+                }
+              }
+            },
+            "description": "Replaces the layout beside a pipeline document; never changes its etag or hash."
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "An error, as application/problem+json."
+          }
+        },
+        "summary": "Replaces the layout beside a pipeline document; never changes its etag or hash."
+      }
+    },
     "/runs": {
       "get": {
         "parameters": [],
@@ -1338,7 +2249,7 @@
         "summary": "One query's trace, node by node, with passage text when the run's own dataset is on disk."
       }
     },
-    "/workspace": {
+    "/services": {
       "get": {
         "parameters": [],
         "responses": {
@@ -1346,11 +2257,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Workspace"
+                  "$ref": "#/components/schemas/ServiceListing"
                 }
               }
             },
-            "description": "The workspace: its path, its settings, this build and its capabilities."
+            "description": "The `Remote` bindings the workspace holds, and what their last probe read."
           },
           "default": {
             "content": {
@@ -1363,7 +2274,188 @@
             "description": "An error, as application/problem+json."
           }
         },
-        "summary": "The workspace: its path, its settings, this build and its capabilities."
+        "summary": "The `Remote` bindings the workspace holds, and what their last probe read."
+      }
+    },
+    "/services/{family}/{name}": {
+      "delete": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "family",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServiceListing"
+                }
+              }
+            },
+            "description": "Unbinds a name."
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "An error, as application/problem+json."
+          }
+        },
+        "summary": "Unbinds a name."
+      },
+      "put": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "family",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ServiceAddress"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServiceListing"
+                }
+              }
+            },
+            "description": "Binds a name to an address, refused in the words `ragondin bench --remote` uses."
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "An error, as application/problem+json."
+          }
+        },
+        "summary": "Binds a name to an address, refused in the words `ragondin bench --remote` uses."
+      }
+    },
+    "/services/{family}/{name}/probe": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "family",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProbeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProbeResult"
+                }
+              }
+            },
+            "description": "Reads a bound service's identity as a run would, or `service_unreachable`."
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "An error, as application/problem+json."
+          }
+        },
+        "summary": "Reads a bound service's identity as a run would, or `service_unreachable`."
+      }
+    },
+    "/workspace": {
+      "get": {
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Workspace"
+                }
+              }
+            },
+            "description": "The workspace: its path, its settings, this build, its capabilities and its counts."
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "An error, as application/problem+json."
+          }
+        },
+        "summary": "The workspace: its path, its settings, this build, its capabilities and its counts."
       }
     }
   },

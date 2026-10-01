@@ -25,22 +25,36 @@ pub struct Server {
     // later write.
     _stdout: BufReader<ChildStdout>,
     url: String,
+    line: String,
 }
 
 impl Server {
     /// Starts the server over `workspace` with `--port 0` and `extra`
     /// arguments, and waits for the line that prints its address.
     pub fn start(workspace: &Path, extra: &[&str]) -> Self {
-        let mut child = Command::new(assert_cmd::cargo::cargo_bin("ragondin"))
+        let mut arguments = vec!["--workspace", workspace.to_str().expect("UTF-8 path")];
+        arguments.extend_from_slice(extra);
+        Self::start_with(&arguments, None, None)
+    }
+
+    /// Starts `ragondin ui --port 0` with `arguments`, in `cwd` and with
+    /// `HOME` set to `home` when given, and waits for the line that prints
+    /// its address.
+    pub fn start_with(arguments: &[&str], cwd: Option<&Path>, home: Option<&Path>) -> Self {
+        let mut command = Command::new(assert_cmd::cargo::cargo_bin("ragondin"));
+        command
             .arg("ui")
-            .arg("--workspace")
-            .arg(workspace)
             .args(["--port", "0"])
-            .args(extra)
+            .args(arguments)
             .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
-            .spawn()
-            .expect("the binary starts");
+            .stderr(Stdio::inherit());
+        if let Some(cwd) = cwd {
+            command.current_dir(cwd);
+        }
+        if let Some(home) = home {
+            command.env("HOME", home);
+        }
+        let mut child = command.spawn().expect("the binary starts");
         let mut stdout = BufReader::new(child.stdout.take().expect("stdout is piped"));
         let mut line = String::new();
         stdout
@@ -50,12 +64,20 @@ impl Server {
             .split_whitespace()
             .find(|word| word.starts_with("http://"))
             .unwrap_or_else(|| panic!("the first line names the URL: {line:?}"))
-            .to_owned();
+            .trim_end_matches('/')
+            .to_owned()
+            + "/";
         Self {
             child,
             _stdout: stdout,
             url,
+            line,
         }
+    }
+
+    /// The line it printed on start: the workspace, the store and the URL.
+    pub fn banner(&self) -> &str {
+        &self.line
     }
 
     /// The URL it printed, e.g. `http://127.0.0.1:49152/`.
@@ -113,6 +135,24 @@ pub fn get_as(authority: &str, host: &str, path: &str) -> Response {
         "GET {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n"
     )
     .expect("the request is written");
+    read_response(stream)
+}
+
+/// A state-changing request — `method path` with `body` as JSON — from the
+/// page the server serves: its own `Host` and `Origin`.
+pub fn send_json(authority: &str, method: &str, path: &str, body: &str) -> Response {
+    let mut stream = TcpStream::connect(authority).expect("the server accepts a connection");
+    write!(
+        stream,
+        "{method} {path} HTTP/1.1\r\nHost: {authority}\r\nOrigin: http://{authority}\r\n\
+         Content-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    )
+    .expect("the request is written");
+    read_response(stream)
+}
+
+fn read_response(mut stream: TcpStream) -> Response {
     let mut raw = Vec::new();
     stream.read_to_end(&mut raw).expect("the response is read");
     let raw = String::from_utf8(raw).expect("the response is UTF-8");

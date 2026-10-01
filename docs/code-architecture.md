@@ -175,11 +175,11 @@ A single binary, `ragondin`, is the composition root and the entire user-facing 
 ragondin bench <config> --benchmark beir/scifact --datasets <dir> --store <dir>  # evaluate a pipeline against a benchmark
 ragondin compare <run-a> <run-b> --store <dir>                                   # compare two runs
 ragondin serve <config>                                                          # serve the pipeline
-ragondin ui --workspace <dir> [--port <port>] [--bind 127.0.0.1|::1]             # the front end, on loopback
+ragondin ui [--workspace <dir> | --store <dir>] [--port <port>] [--bind 127.0.0.1|::1]  # the front end, on loopback
 ragondin validate <config>                                                       # validate a configuration
 ```
 
-`ui` sits behind a `ui` feature (ADR-C36 § 1, ADR-C14): it serves the front end's embedded assets at `/` and its JSON API under `/api/`, on a loopback address only, and a build without the feature declares it and refuses it. `serve` stays the data plane.
+`ui` sits behind a `ui` feature (ADR-C36 § 1, ADR-C14): it serves the front end's embedded assets at `/` and its JSON API under `/api/`, on a loopback address only, and a build without the feature declares it and refuses it. With no argument it opens `./runs` when that is a run store, and `~/.ragondin` otherwise; `--store` names a store as `bench --store` does, so the two commands given one argument share it (`bin/ragondin/ARCHITECTURE.md` § The workspace it opens). `serve` stays the data plane.
 
 **Rationale.** Separate binaries for the data plane and the command-line workflow would force a user to understand the internal architecture before running anything. One subcommanded binary makes the standalone-first promise (P2) real: **one binary, one configuration file, it runs.**
 

@@ -7,7 +7,7 @@ mod support;
 use std::path::Path;
 
 use axum::http::StatusCode;
-use support::{app, get, send, FakeRunStore};
+use support::{app, get, send, write_request, FakeRunStore};
 
 #[test]
 fn the_committed_description_is_current() {
@@ -91,11 +91,12 @@ fn the_problem_code_is_an_enum_of_every_stable_code() {
 }
 
 /// The description is written from a table, and the router from code: this
-/// is what keeps the two saying the same thing.
+/// is what keeps the two saying the same thing. Each operation is sent with
+/// its method and an empty JSON body; whatever it answers, it is neither the
+/// API's "no such endpoint" nor its "not this method".
 #[tokio::test]
 async fn every_described_operation_is_routed() {
     for operation in ragondin_api::description::OPERATIONS {
-        assert_eq!(operation.method, "get", "only reads are routed yet");
         // An axum path parameter is spelled `:id`, the description's `{id}`.
         let path = operation
             .path
@@ -103,13 +104,34 @@ async fn every_described_operation_is_routed() {
                 "{id}",
                 "b41e0752792e728f5dd893043b42d2a2d71f0b0039157a177e0a267e0420ea6f",
             )
-            .replace("{query}", "q-1");
+            .replace("{query}", "q-1")
+            .replace("{name}", "hybrid")
+            .replace("{family}", "generator");
+        let request = match operation.method {
+            "get" => get(&format!("/api/v1{path}")),
+            method => write_request(
+                &method.to_uppercase(),
+                &format!("/api/v1{path}"),
+                &serde_json::json!({}),
+                &[],
+            ),
+        };
         let response = send(
             app(FakeRunStore::holding([support::fixture_run()])),
-            get(&format!("/api/v1{path}")),
+            request,
         )
         .await;
-        assert_eq!(response.status(), StatusCode::OK, "{path}");
+        let status = response.status();
+        let body = support::body(response).await;
+        assert!(
+            !body.contains("\"route_not_found\"") && !body.contains("\"method_not_allowed\""),
+            "{} {path}: {status} {body}",
+            operation.method
+        );
+        // The reads that name nothing the fakes lack answer outright.
+        if operation.method == "get" && !path.contains("hybrid") {
+            assert_eq!(status, StatusCode::OK, "{path}: {body}");
+        }
     }
 }
 

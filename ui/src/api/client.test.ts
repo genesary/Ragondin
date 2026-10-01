@@ -11,6 +11,7 @@ const WORKSPACE: Workspace = {
   build: '0.0.0+0123456789ab',
   settings: { datasets: '/home/ada/ws/datasets', services: [] },
   capabilities: { families: [], remote: false },
+  counts: { pipelines: 0, runs: 0, benchmarks_ready: 0, services_connected: 0 },
 };
 
 const json = (body: unknown, init: { status?: number; type?: string; build?: string | null } = {}) => {
@@ -208,8 +209,8 @@ describe('the API client, on a network failure', () => {
 });
 
 describe('the API client, writing', () => {
-  // No path of the description takes a write yet, so the typed signatures
-  // admit none; the cast reaches the one request builder they all share.
+  // `/runs` takes no write, so no typed signature admits this call; the cast
+  // reaches the one request builder the three methods share.
   it.each([
     ['post', 'POST'],
     ['put', 'PUT'],
@@ -217,7 +218,8 @@ describe('the API client, writing', () => {
   ] as const)('%s sends its body as JSON', async (method, verb) => {
     const spy = stubFetch(async () => json({ job_id: 'j1' }, { status: 202 }));
     const client = createApiClient();
-    const result = await client[method]('/runs' as never, { pipeline: 'p' } as never);
+    const write = client[method] as (path: string, body: unknown) => Promise<unknown>;
+    const result = await write('/runs', { pipeline: 'p' });
     const init = spy.mock.calls[0]?.[1];
     expect(init?.method).toBe(verb);
     expect(init?.body).toBe('{"pipeline":"p"}');

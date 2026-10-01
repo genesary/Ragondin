@@ -3,6 +3,71 @@
 // file is not what the description generates (ui/ARCHITECTURE.md § The
 // generated types).
 
+/** One benchmark the registry knows: named by the manifest, or imported. */
+export type BenchmarkEntry = {
+  /**
+   * The format that reads it: `beir`, `beir-qa` or `squad`; `unknown` for
+   * an import whose record cannot be read.
+   */
+  format: string;
+  /**
+   * The ground truth it carries, read off the loaded dataset; `null` when
+   * nothing on disk loaded.
+   */
+  ground_truth: GroundTruth | null;
+  /**
+   * The dataset's licence, for a benchmark the manifest names, whatever
+   * its state: a downloaded dataset keeps the notice it was obtained
+   * under. `null` for an import, whose licence is its owner's.
+   */
+  licence: string | null;
+  /** Where that licence is stated; `null` with it. */
+  licence_url: string | null;
+  /**
+   * Its selector, `<format>/<dir>` — `beir/scifact` — as `ragondin bench
+   * --benchmark` takes it; for an import whose record cannot be read, its
+   * directory's name alone.
+   */
+  name: string;
+  /** Where it stands against the digest expected of it. */
+  state: BenchmarkState;
+};
+
+/** `GET /benchmarks`: every benchmark the registry knows. */
+export type BenchmarkListing = {
+  /** The manifest's entries in manifest order, then the imports by name. */
+  benchmarks: BenchmarkEntry[];
+};
+
+/**
+ * Where a benchmark stands. Every verdict is a statement about digests: the
+ * dataset on disk is loaded and its `dataset_version` compared with the one
+ * expected — the manifest's, or the one recorded at import.
+ */
+export type BenchmarkState = {
+  /** What it digests to. */
+  dataset_version: string;
+  kind: "ready";
+} | {
+  kind: "available";
+  /** The snapshot's size. */
+  size_bytes: number;
+} | {
+  /** The digest expected. */
+  expected: string;
+  /** The digest on disk. */
+  found: string;
+  kind: "differs";
+} | {
+  /** The adapter's error. */
+  error: string;
+  kind: "unreadable";
+} | {
+  /** What it digests to. */
+  dataset_version: string;
+  kind: "local";
+};
+
 /**
  * What this build can run: the local implementations of each family, and
  * whether it can call a `Remote` one.
@@ -65,9 +130,16 @@ export type EdgeLocation = {
 
 /** One family's local implementations in this build. */
 export type FamilyCapabilities = {
-  /** The family, spelled as a configuration's `component:` value. */
+  /**
+   * The family, spelled as `--remote` and a service binding spell it: a
+   * node family as a configuration's `component:` value, or `embedder`,
+   * which no node is and a `dense` node names with `embedder:`.
+   */
   family: string;
-  /** The `impl:` names this build registers in it. */
+  /**
+   * The names this build gives a `Local` component in it: `impl:` values,
+   * or for `embedder`, `embedder:` values.
+   */
   local: string[];
 };
 
@@ -135,6 +207,34 @@ export type GraphNode = {
   parameters: Record<string, ParameterValue>;
 };
 
+/**
+ * The ground truth a benchmark carries: which metric families a run over it
+ * can compute.
+ */
+export type GroundTruth = "none" | "qrels" | "reference_answers" | "both";
+
+/** `POST /benchmarks/import`: a corpus on disk, and the name to import it as. */
+export type ImportRequest = {
+  /** The local benchmark's name: one directory name. */
+  name: string;
+  /**
+   * The directory holding the corpus and its ground truth, on the
+   * server's disk.
+   */
+  path: string;
+};
+
+/**
+ * Where the editor draws each node: UI metadata beside the document, never
+ * in its hash. Also the body of `PUT /pipelines/{name}/layout`.
+ */
+export type Layout = {
+  /** Each node's position, by node id. */
+  nodes: Record<string, Position>;
+  /** The layout format's version: `1`, the only one this build reads. */
+  version: number;
+};
+
 /** Where in a pipeline a validation failure is. */
 export type Location = {
   /** The edge concerned, when there is one. */
@@ -169,6 +269,121 @@ export type NodeMetrics = {
 /** A node parameter's value. */
 export type ParameterValue = boolean | number | string | ParameterValue[];
 
+/** `GET /pipelines/{name}`: one pipeline document, verbatim. */
+export type PipelineDetail = {
+  /** The document, byte for byte as the file holds it. */
+  document: string;
+  /** Why it does not validate, when it does not. */
+  error: PipelineError | null;
+  /** The digest of those bytes; also the response's `ETag` header, quoted. */
+  etag: string;
+  /** The content hash of its canonical logical form, when it validates. */
+  hash: string | null;
+  /** Its name. */
+  name: string;
+};
+
+/**
+ * `PUT /pipelines/{name}` and `POST /pipelines/validate`: a pipeline
+ * document, as text.
+ */
+export type PipelineDocument = {
+  /**
+   * The YAML document. Stored byte for byte when it is written: never
+   * re-serialized.
+   */
+  document: string;
+};
+
+/**
+ * Why a pipeline document does not validate: `pipeline_invalid`'s detail and
+ * location, inside a response that still answers.
+ */
+export type PipelineError = {
+  /** What the validation pass said, in the words `ragondin validate` uses. */
+  detail: string;
+  /** The node and the edge it concerns, when they can be named. */
+  location: Location;
+};
+
+/**
+ * `GET /pipelines/{name}/layout`: the layout beside the document, if it has
+ * one. Without one the UI lays the graph out itself, and says so.
+ */
+export type PipelineLayout = {
+  /** The layout, or `null` when the pipeline has none. */
+  layout: Layout | null;
+};
+
+/** `GET /pipelines`: every pipeline document in the workspace. */
+export type PipelineListing = {
+  /** One entry per document, by name. */
+  pipelines: PipelineSummary[];
+};
+
+/** A pipeline, as the listing shows it. */
+export type PipelineSummary = {
+  /** Why it does not validate, when it does not. */
+  error: PipelineError | null;
+  /** The digest of its bytes, the value `If-Match` names to write it. */
+  etag: string;
+  /** The content hash of its canonical logical form, when it validates. */
+  hash: string | null;
+  /** When its file was last modified, in milliseconds since the Unix epoch. */
+  modified_ms: number;
+  /** Its name: the file stem. */
+  name: string;
+};
+
+/** `POST /pipelines/validate`: the document validates, and this is its hash. */
+export type PipelineValidated = {
+  /**
+   * The content hash of the canonical logical form, as `ragondin validate`
+   * prints it.
+   */
+  hash: string;
+};
+
+/** `PUT /pipelines/{name}`: what was written. */
+export type PipelineWritten = {
+  /** The etag of the bytes now stored; also the `ETag` header, quoted. */
+  etag: string;
+  /** The content hash of their canonical logical form. */
+  hash: string;
+  /** The pipeline's name. */
+  name: string;
+};
+
+/** A node's position on the editor's canvas. */
+export type Position = {
+  /** Horizontal, in canvas units. */
+  x: number;
+  /** Vertical, in canvas units. */
+  y: number;
+};
+
+/**
+ * `POST /services/{family}/{name}/probe`: what the identity read needs
+ * besides the binding.
+ */
+export type ProbeRequest = {
+  /**
+   * The name the service serves the model under — a node's
+   * `served_model`. An embedder, a reranker or a generator reports an
+   * identity only for one; a context builder takes none. Absent is none.
+   */
+  served_model?: string | null;
+};
+
+/** `POST /services/{family}/{name}/probe`: the identity a run would record. */
+export type ProbeResult = {
+  /**
+   * What the service reported, read as the composition root reads it
+   * before a run.
+   */
+  identity: string;
+};
+
 /**
  * An error, as `application/problem+json` (RFC 9457) with this API's own
  * members: a stable `code`, a `hint` naming the action, and a `location` for
@@ -179,7 +394,7 @@ export type Problem = {
    * The stable code a client matches on: one of `ApiError::CODES`, which
    * the schema lists as an enum so a generated client can narrow on it.
    */
-  code: "pipeline_invalid" | "impl_not_in_build" | "service_unreachable" | "run_exists" | "run_unreadable" | "run_not_found" | "query_not_found" | "parameter_invalid" | "dataset_absent" | "dataset_differs" | "benchmark_not_found" | "benchmark_exists" | "download_failed" | "download_cancelled" | "import_refused" | "backend_failed" | "host_refused" | "origin_refused" | "route_not_found" | "method_not_allowed";
+  code: "pipeline_invalid" | "impl_not_in_build" | "service_unreachable" | "run_exists" | "run_unreadable" | "run_not_found" | "query_not_found" | "parameter_invalid" | "dataset_absent" | "dataset_differs" | "benchmark_not_found" | "benchmark_exists" | "download_failed" | "download_cancelled" | "import_refused" | "pipeline_not_found" | "precondition_failed" | "binding_refused" | "service_not_found" | "request_invalid" | "backend_failed" | "host_refused" | "origin_refused" | "route_not_found" | "method_not_allowed";
   /** What happened, in this occurrence's words. */
   detail: string;
   /** The action that would resolve it. */
@@ -360,6 +575,15 @@ export type RunSummary = {
   pipeline: string;
 };
 
+/** `PUT /services/{family}/{name}`: the address to bind the name to. */
+export type ServiceAddress = {
+  /**
+   * The service's address — the scheme `http`, a host and an optional
+   * port, nothing else — as `ragondin bench --remote` takes it.
+   */
+  uri: string;
+};
+
 /**
  * A `Remote` component bound by family and name to the address it answers
  * at — in the workspace's settings, and as a run recorded it.
@@ -367,6 +591,32 @@ export type RunSummary = {
 export type ServiceBinding = {
   /** The family the name is bound in: `generator`, `embedder`, …. */
   family: string;
+  /** The implementation name a node uses. */
+  name: string;
+  /** The service's address, as written. */
+  uri: string;
+};
+
+/**
+ * `GET /services`, and the answer of every write to a service: the bindings
+ * `workspace.toml` holds.
+ */
+export type ServiceListing = {
+  /** Every binding, in the file's order. */
+  services: ServiceStatus[];
+};
+
+/** One binding, and what this server last learnt by probing it. */
+export type ServiceStatus = {
+  /**
+   * Whether this server's last probe of it, at this address, read an
+   * identity. `false` before any probe.
+   */
+  connected: boolean;
+  /** The family the name is bound in. */
+  family: string;
+  /** The identity last read at this address, if any was. */
+  identity: string | null;
   /** The implementation name a node uses. */
   name: string;
   /** The service's address, as written. */
@@ -475,14 +725,98 @@ export type Workspace = {
   build: string;
   /** What this build can run, as the launcher reports it. */
   capabilities: Capabilities;
-  /** The workspace directory, as the binary was given it. */
+  /** What the workspace holds, counted on this request. */
+  counts: WorkspaceCounts;
+  /** The workspace's root directory, as the binary resolved it. */
   path: string;
   /** The deployment settings the workspace holds. */
   settings: SettingsSummary;
 };
 
+/** What a workspace holds, counted when asked: nothing here is cached. */
+export type WorkspaceCounts = {
+  /**
+   * The benchmarks on disk whose digest is the one expected of them:
+   * `ready` or `local`.
+   */
+  benchmarks_ready: number;
+  /** The pipeline documents under `pipelines/`, valid or not. */
+  pipelines: number;
+  /** The runs the store lists, readable or not. */
+  runs: number;
+  /**
+   * The bound services whose last probe, by this server, at their current
+   * address, read an identity.
+   */
+  services_connected: number;
+};
+
 /** Every path under the API's base address: per method, its path parameters, its request body and its success response. */
 export type Paths = {
+  "/benchmarks": {
+    /** Every benchmark the registry knows, with its state and licence. */
+    get: {
+      params: Record<string, never>;
+      response: BenchmarkListing;
+    };
+  };
+  "/benchmarks/import": {
+    /** Imports a corpus on the server's disk as a local benchmark. */
+    post: {
+      params: Record<string, never>;
+      body: ImportRequest;
+      response: BenchmarkEntry;
+    };
+  };
+  "/pipelines": {
+    /** Every pipeline document: its etag, its hash or why it does not validate. */
+    get: {
+      params: Record<string, never>;
+      response: PipelineListing;
+    };
+  };
+  "/pipelines/validate": {
+    /** The canonical hash `ragondin validate` prints for a document, or `pipeline_invalid`, located. */
+    post: {
+      params: Record<string, never>;
+      body: PipelineDocument;
+      response: PipelineValidated;
+    };
+  };
+  "/pipelines/{name}": {
+    /** One pipeline document, verbatim, with its etag and its hash or why it does not validate. */
+    get: {
+      params: {
+        name: string;
+      };
+      response: PipelineDetail;
+    };
+    /** Stores a document byte for byte when it validates and its precondition holds. */
+    put: {
+      params: {
+        name: string;
+      };
+      body: PipelineDocument;
+      response: PipelineWritten;
+    };
+  };
+  "/pipelines/{name}/layout": {
+    /** The layout beside a pipeline document, or `null`. */
+    get: {
+      params: {
+        name: string;
+      };
+      response: PipelineLayout;
+    };
+    /** Replaces the layout beside a pipeline document; never changes its etag or hash. */
+    put: {
+      params: {
+        name: string;
+      };
+      body: Layout;
+      response: PipelineLayout;
+    };
+  };
   "/runs": {
     /** Every run the store holds, and every one it cannot read. */
     get: {
@@ -518,8 +852,45 @@ export type Paths = {
       response: QueryTrace;
     };
   };
+  "/services": {
+    /** The `Remote` bindings the workspace holds, and what their last probe read. */
+    get: {
+      params: Record<string, never>;
+      response: ServiceListing;
+    };
+  };
+  "/services/{family}/{name}": {
+    /** Unbinds a name. */
+    delete: {
+      params: {
+        family: string;
+        name: string;
+      };
+      response: ServiceListing;
+    };
+    /** Binds a name to an address, refused in the words `ragondin bench --remote` uses. */
+    put: {
+      params: {
+        family: string;
+        name: string;
+      };
+      body: ServiceAddress;
+      response: ServiceListing;
+    };
+  };
+  "/services/{family}/{name}/probe": {
+    /** Reads a bound service's identity as a run would, or `service_unreachable`. */
+    post: {
+      params: {
+        family: string;
+        name: string;
+      };
+      body: ProbeRequest;
+      response: ProbeResult;
+    };
+  };
   "/workspace": {
-    /** The workspace: its path, its settings, this build and its capabilities. */
+    /** The workspace: its path, its settings, this build, its capabilities and its counts. */
     get: {
       params: Record<string, never>;
       response: Workspace;
