@@ -446,8 +446,8 @@ async fn a_ranking_with_two_chunks_of_one_document_is_folded_and_read_in_order()
     // - unfolded, `doc-a, doc-b, doc-a, doc-c`: `doc-c` drops to rank 4
     //   (`ndcg_at_k` credits a repeat once, but the repeat still takes up its
     //   rank), DCG `1 / log2(3) + 2 / log2(5)`;
-    // - the chunks read in reverse, folded to `doc-a, doc-c, doc-b`: DCG
-    //   `2 / log2(3) + 1 / log2(4)`;
+    // - the chunks read in reverse, `doc-c, doc-a, doc-b, doc-a`, folded to
+    //   `doc-c, doc-a, doc-b`: DCG `2 + 1 / log2(4)`;
     // - the folded list reversed, `doc-c, doc-b, doc-a`: DCG
     //   `2 + 1 / log2(3)`, a perfect 1;
     // - cut to the first document: 0.
