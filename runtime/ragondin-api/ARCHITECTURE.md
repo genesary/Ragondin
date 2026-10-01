@@ -218,8 +218,9 @@ supplies the HTTP transport, and converts what comes back in `convert.rs`.
   benchmark by their digests, answers `Absent` before the download,
   `Unknown` for a digest nothing is pinned to, `Differs` once a downloaded
   benchmark that verified has its content changed and `Unreadable` once it
-  is broken — the fixture's `alter` hook does both behind the registry's back, as a person
-  editing the datasets directory would. `tests/registry_conformance.rs` runs
+  is broken — the fixture's `alter` hook does both behind the registry's
+  back, as a person editing the datasets directory would.
+  `tests/registry_conformance.rs` runs
   it against `FsRegistry`, with a faithful and a corrupted source served by a
   dependency-free local HTTP server — no test touches the network. The
   derived data's routes call `dataset`; `GET /benchmarks` lists the registry
@@ -248,7 +249,10 @@ changes, and nothing is written to disk.
   path, kind, size and modification time, and on Unix its inode and status
   change time. A symbolic link is stamped by its target and, when that is a
   directory, walked through as the loader reads it; a directory already
-  walked, by its canonical path, is not walked again, so a link loop ends.
+  walked — the same device and inode on Unix, the same canonical path
+  elsewhere — is not walked again, so a link loop ends, and on Unix a bind
+  mount of a directory inside itself too (elsewhere such a mount loop is
+  not caught).
   Any difference — one byte rewritten in place, a file added, renamed or
   removed, a change under a linked directory — loads and digests again, and
   the verdict is whatever that digest says. **A fingerprint is not a
@@ -263,8 +267,12 @@ changes, and nothing is written to disk.
   coarsely — so a same-size rewrite, on the same inode, within one tick of
   the previous write leaves the stamp equal. A dataset any of whose
   modification or status change times falls within two seconds of the moment
-  the fingerprint was taken, or after it, is therefore served but not kept;
-  once its files are older, a rewrite lands on a later tick and is seen.
+  the fingerprint was taken, or after it, is therefore served but not kept
+  for later requests: it is held only for the requests already waiting on
+  its load — those whose fingerprint, equal to the loader's, was taken
+  before the load finished, which that load answers as truly as their own
+  would — and the next request after it loads again. Once its files are
+  older, a rewrite lands on a later tick and is seen.
   **What remains unseen**: timestamps set back by hand on a platform that
   keeps no status change time (not Unix), and a file server whose clock runs
   more than the margin behind this machine's.
@@ -282,16 +290,20 @@ changes, and nothing is written to disk.
 - **Concurrency**: a call fingerprints with no lock held, locks the list only
   to find its slot, then locks that slot alone while it compares and, if it
   must, loads. Several requests for one dataset — the matrix fetching N runs
-  at once — wait for one load and share it; a request for another dataset is
-  not held up.
+  at once, right after a download too — wait for one load and share it; a
+  request for another dataset is not held up. A slot dropped by the bound
+  while its load runs is no longer listed, so a request arriving meanwhile
+  makes a new slot and loads again: a duplicate load, never a wrong answer.
 - **Tested** in `fs/memo.rs`, with a counting loader — one load while the
   files are unchanged, another after each kind of change (including under a
   linked directory, dated explicitly so no test depends on the clock's
-  tick), a link loop, the racy margin, the bound and its order, one load
-  under concurrent calls — and over the API in `tests/dataset_memo.rs`:
-  consecutive `/queries` and `/trace` requests are answered from one load,
-  one byte changed between requests is `dataset_differs`, and a dataset just
-  written is loaded on every request.
+  tick), a link loop, the racy margin and a stamp in the future, the bound
+  and its order, one load under concurrent calls, within the margin too, and
+  a slow load of one dataset holding up no other — and over the API in
+  `tests/dataset_memo.rs`: consecutive `/queries` and `/trace` requests are
+  answered from one load, one byte changed between requests is
+  `dataset_differs`, and a dataset just written is loaded again by each
+  request that follows another's load.
 
 ### `reqwest`, the transport
 

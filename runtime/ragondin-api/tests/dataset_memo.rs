@@ -235,6 +235,10 @@ async fn a_dataset_just_written_is_served_but_not_kept() {
     let (workspace, registry) = workspace("memo_racy");
     let registry = Recording::over(registry);
     let run = the_run();
+    // Written again just before the requests, same content, so the files are
+    // within the margin however long the runner took since the copy.
+    let queries = workspace.join("datasets").join(DIR).join("queries.jsonl");
+    fs::write(&queries, fs::read(&queries).unwrap()).unwrap();
 
     for _ in 0..2 {
         let listing = fetch(&workspace, &registry, &run, "/queries").await;

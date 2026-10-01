@@ -26,7 +26,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use crate::backends::{LoadedDataset, RunDataset};
 
@@ -49,9 +49,14 @@ pub(super) const RACY_MARGIN: Duration = Duration::from_secs(2);
 /// the directory with no lock held, locks the list only to find its slot,
 /// then locks the slot alone while it compares and, if it must, loads: a
 /// second request for the same dataset waits for that load and is served by
-/// it, while a request for another dataset is not held up. Serving costs one
-/// walk of the directory per request — a `stat` per entry, O(entries), no
-/// file read.
+/// it — within the margin too, when it fingerprinted before the load
+/// finished — while a request for another dataset is not held up. Serving
+/// costs one walk of the directory per request — a `stat` per entry,
+/// O(entries), no file read.
+///
+/// A slot dropped by the bound while its load runs is no longer in the list,
+/// so a request arriving meanwhile makes a new slot and loads again: a
+/// duplicate load, never a wrong answer, since each load is digested.
 pub(super) struct DatasetMemo {
     capacity: usize,
     margin: Duration,
@@ -73,6 +78,17 @@ struct Key {
 struct Held {
     fingerprint: Fingerprint,
     dataset: Arc<LoadedDataset>,
+    /// For a dataset whose stamps were within the margin: when its load
+    /// finished. It is served only to a request that fingerprinted before
+    /// then — one that was already waiting, and that the load answers as
+    /// truly as its own would have — and loaded again by any later one.
+    racy_until: Option<Instant>,
+}
+
+impl Held {
+    fn serves(&self, fingerprint: &Fingerprint, taken: Instant) -> bool {
+        self.fingerprint == *fingerprint && self.racy_until.is_none_or(|until| taken < until)
+    }
 }
 
 impl DatasetMemo {
@@ -89,8 +105,9 @@ impl DatasetMemo {
 
     /// The verdict on the directory `dir`, pinned to `version` under `name`:
     /// the dataset held for it while the directory's fingerprint is
-    /// unchanged; otherwise `load(name)`'s, kept when it is `Verified` and
-    /// none of the directory's stamps is within the margin.
+    /// unchanged; otherwise `load(name)`'s, kept when it is `Verified` — for
+    /// any later request when none of the directory's stamps is within the
+    /// margin, and otherwise only for the requests already waiting on it.
     ///
     /// The fingerprint is taken *before* `load` reads the files — and before
     /// waiting for another request's load of the same dataset — so a file
@@ -112,12 +129,15 @@ impl DatasetMemo {
         let fingerprint = Fingerprint::of(dir);
         let slot = self.slot(&key);
         let mut held = lock(&slot);
-        let Ok((fingerprint, taken_at)) = fingerprint else {
+        let Ok((fingerprint, taken_at, taken)) = fingerprint else {
             *held = None;
             self.forget(&key, &slot);
             return load(name);
         };
-        if let Some(kept) = held.as_ref().filter(|kept| kept.fingerprint == fingerprint) {
+        if let Some(kept) = held
+            .as_ref()
+            .filter(|kept| kept.serves(&fingerprint, taken))
+        {
             return RunDataset::Verified {
                 name,
                 dataset: Arc::clone(&kept.dataset),
@@ -128,10 +148,12 @@ impl DatasetMemo {
         *held = None;
         let found = load(name);
         match &found {
-            RunDataset::Verified { dataset, .. } if !fingerprint.is_racy(taken_at, self.margin) => {
+            RunDataset::Verified { dataset, .. } => {
+                let racy = fingerprint.is_racy(taken_at, self.margin);
                 *held = Some(Held {
                     fingerprint,
                     dataset: Arc::clone(dataset),
+                    racy_until: racy.then(Instant::now),
                 });
             }
             _ => self.forget(&key, &slot),
@@ -198,14 +220,16 @@ struct Stamp {
 }
 
 impl Fingerprint {
-    /// The directory's fingerprint, and the moment the walk finished.
-    fn of(dir: &Path) -> io::Result<(Self, SystemTime)> {
+    /// The directory's fingerprint, and the moment the walk finished, by the
+    /// wall clock the stamps are compared with and by the monotonic clock
+    /// requests are ordered by.
+    fn of(dir: &Path) -> io::Result<(Self, SystemTime, Instant)> {
         let mut stamps = Vec::new();
         let mut visited = HashSet::new();
-        visited.insert(fs::canonicalize(dir)?);
+        visited.insert(dir_id(dir, &fs::metadata(dir)?)?);
         walk(dir, Path::new(""), &mut visited, &mut stamps)?;
         stamps.sort_by(|a, b| a.path.cmp(&b.path));
-        Ok((Self(stamps), SystemTime::now()))
+        Ok((Self(stamps), SystemTime::now(), Instant::now()))
     }
 
     /// Whether a stamp is within `margin` of `taken_at`, or after it: a
@@ -230,11 +254,12 @@ impl Fingerprint {
 
 /// Stamps every entry under `dir`. A symbolic link is stamped by its target
 /// and, when that is a directory, walked through — as the loader reads it —
-/// unless that directory was already walked, so a link loop cannot recurse.
+/// unless that directory was already walked, so a link loop — or, on Unix, a
+/// bind mount of a directory inside itself — cannot recurse.
 fn walk(
     dir: &Path,
     relative: &Path,
-    visited: &mut HashSet<PathBuf>,
+    visited: &mut HashSet<DirId>,
     stamps: &mut Vec<Stamp>,
 ) -> io::Result<()> {
     for entry in fs::read_dir(dir)? {
@@ -249,11 +274,30 @@ fn walk(
             modified: metadata.modified().ok(),
             status: status(&metadata),
         });
-        if metadata.is_dir() && visited.insert(fs::canonicalize(&path)?) {
+        if metadata.is_dir() && visited.insert(dir_id(&path, &metadata)?) {
             walk(&path, &relative, visited, stamps)?;
         }
     }
     Ok(())
+}
+
+/// What makes a directory the same one: its device and inode on Unix, read
+/// from metadata already fetched, which sees through links and mounts alike;
+/// elsewhere its canonical path, which sees through links only.
+#[cfg(unix)]
+type DirId = (u64, u64);
+#[cfg(not(unix))]
+type DirId = PathBuf;
+
+#[cfg(unix)]
+fn dir_id(_: &Path, metadata: &fs::Metadata) -> io::Result<DirId> {
+    use std::os::unix::fs::MetadataExt;
+    Ok((metadata.dev(), metadata.ino()))
+}
+
+#[cfg(not(unix))]
+fn dir_id(path: &Path, _: &fs::Metadata) -> io::Result<DirId> {
+    fs::canonicalize(path)
 }
 
 #[cfg(unix)]
@@ -459,6 +503,106 @@ mod tests {
         get(&memo, &dir, &loader);
         get(&memo, &dir, &loader);
         assert_eq!(loader.calls(), 3, "kept once older than the margin");
+    }
+
+    /// Within the margin, requests that fingerprinted before a load finished
+    /// share it — the matrix fetching N runs right after a download — while a
+    /// request after it loads again.
+    #[test]
+    fn concurrent_requests_within_the_margin_share_one_load() {
+        let dir = dataset_dir("racy_concurrent", "mini");
+        let memo = Arc::new(DatasetMemo::new(CAPACITY, Duration::from_secs(60)));
+        let loader = Arc::new(Loader::new());
+        let start = Arc::new(Barrier::new(4));
+
+        let handles: Vec<_> = (0..4)
+            .map(|_| {
+                let (memo, loader, start, dir) = (
+                    Arc::clone(&memo),
+                    Arc::clone(&loader),
+                    Arc::clone(&start),
+                    dir.clone(),
+                );
+                thread::spawn(move || {
+                    start.wait();
+                    memo.dataset(VERSION, &dir, "beir/mini".to_owned(), |name| {
+                        thread::sleep(Duration::from_millis(300));
+                        loader.verified(name)
+                    })
+                })
+            })
+            .collect();
+        for handle in handles {
+            assert!(matches!(
+                handle.join().unwrap(),
+                RunDataset::Verified { .. }
+            ));
+        }
+        assert_eq!(loader.calls(), 1, "one load, shared");
+
+        get(&memo, &dir, &loader);
+        assert_eq!(loader.calls(), 2, "a request after the load loads again");
+    }
+
+    /// A stamp after the fingerprint — a clock ahead, a date set by hand — is
+    /// as racy as a recent one.
+    #[test]
+    fn a_stamp_in_the_future_is_racy() {
+        let dir = dataset_dir("future", "mini");
+        fs::File::options()
+            .write(true)
+            .open(dir.join("corpus.jsonl"))
+            .unwrap()
+            .set_modified(SystemTime::now() + Duration::from_secs(3_600))
+            .unwrap();
+        let memo = DatasetMemo::new(CAPACITY, Duration::ZERO);
+        let loader = Loader::new();
+
+        get(&memo, &dir, &loader);
+        get(&memo, &dir, &loader);
+
+        assert_eq!(loader.calls(), 2, "never kept");
+    }
+
+    /// A slow load of one dataset holds up no request for another.
+    #[test]
+    fn a_slow_load_of_one_dataset_does_not_block_another() {
+        let slow = dataset_dir("two_keys", "slow");
+        let other = dataset_dir("two_keys", "other");
+        let memo = Arc::new(DatasetMemo::new(CAPACITY, Duration::ZERO));
+        let (started, has_started) = std::sync::mpsc::channel();
+        let (release, released) = std::sync::mpsc::channel::<()>();
+
+        let loading = {
+            let memo = Arc::clone(&memo);
+            thread::spawn(move || {
+                memo.dataset(VERSION, &slow, "beir/slow".to_owned(), |name| {
+                    started.send(()).unwrap();
+                    released.recv().unwrap();
+                    Loader::new().verified(name)
+                })
+            })
+        };
+        has_started.recv().unwrap();
+        let (answered, answer) = std::sync::mpsc::channel();
+        let reading = {
+            let memo = Arc::clone(&memo);
+            thread::spawn(move || {
+                let found = memo.dataset(VERSION, &other, "beir/other".to_owned(), |name| {
+                    Loader::new().verified(name)
+                });
+                answered.send(found).unwrap();
+            })
+        };
+
+        let found = answer.recv_timeout(Duration::from_secs(10));
+        release.send(()).unwrap();
+        loading.join().unwrap();
+        reading.join().unwrap();
+        assert!(
+            matches!(found, Ok(RunDataset::Verified { .. })),
+            "the other dataset waited for the slow one: {found:?}"
+        );
     }
 
     #[test]
