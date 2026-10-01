@@ -397,6 +397,12 @@ export type Problem = {
   code: "pipeline_invalid" | "impl_not_in_build" | "service_unreachable" | "run_exists" | "run_unreadable" | "run_not_found" | "query_not_found" | "parameter_invalid" | "dataset_absent" | "dataset_differs" | "benchmark_not_found" | "benchmark_exists" | "download_failed" | "download_cancelled" | "import_refused" | "pipeline_not_found" | "precondition_failed" | "binding_refused" | "service_not_found" | "request_invalid" | "backend_failed" | "host_refused" | "origin_refused" | "route_not_found" | "method_not_allowed";
   /** What happened, in this occurrence's words. */
   detail: string;
+  /**
+   * The stored document's etag, for `precondition_failed` when one is
+   * stored — the value the `ETag` header carries quoted, for a client
+   * that reads the body alone. Present only then.
+   */
+  etag?: string | null;
   /** The action that would resolve it. */
   hint: string;
   /**

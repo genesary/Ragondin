@@ -2,13 +2,16 @@
 //! written by hand.
 //!
 //! **Why by hand.** A TOML parser is not among the dependencies ADR-C36 § 6
-//! admits, and that section makes any other entry a new decision. The
-//! settings are two things — a datasets directory and `family/name → uri`
-//! bindings — so the file needs one top-level key, one table and strings.
-//! This module reads exactly that, and refuses everything else with the line
-//! it is on, so a hand-edited file that leaves the subset is reported rather
-//! than misread. What it reads is valid TOML, so any TOML reader agrees with
-//! it on every file it accepts.
+//! admits, and that section makes any other entry a new decision — opened as
+//! #374, which weighs `toml_edit` (and the comments a person adds, which a
+//! write here does not keep) against this reader. The settings are two
+//! things — a datasets directory and `family/name → uri` bindings — so the
+//! file needs one top-level key, one table and strings. This module reads
+//! exactly that, and refuses everything else with the line it is on, so a
+//! hand-edited file that leaves the subset is reported rather than misread.
+//! What it reads is valid TOML, so any TOML reader agrees with it on every
+//! file it accepts; `tests/fs_workspace.rs` holds the invalid forms it
+//! refuses.
 //!
 //! ```toml
 //! datasets = "/data/benchmarks"   # optional; relative to the workspace
@@ -20,9 +23,14 @@
 //! Read: blank lines and `#` comments, `datasets = <string>` before any
 //! table, one `[services]` table of `"<family>/<name>" = <string>`, strings
 //! basic (`"…"`, with TOML's escapes) or literal (`'…'`), and a trailing
-//! comment after a value. Refused: any other key or table, a duplicate key
-//! or table, a value that is not a one-line string, a service key without
-//! its `/`, and anything left on a line after its value.
+//! comment after a value. Whitespace is TOML's — a space or a tab, nothing
+//! else. Refused: any other key or table, a duplicate key or table, a value
+//! that is not a one-line string, a service key without its `/`, anything
+//! left on a line after its value, a control character other than a tab in
+//! a string or a comment, an escape TOML does not define, and a byte-order
+//! mark.
+
+use std::collections::HashSet;
 
 /// The settings as the file states them, before the datasets directory is
 /// resolved against the workspace.
@@ -59,27 +67,38 @@ pub(crate) fn empty() -> String {
 
 /// Reads `text`.
 pub(crate) fn parse(text: &str) -> Result<SettingsFile, GrammarError> {
+    if text.starts_with('\u{feff}') {
+        return Err(GrammarError {
+            line: 1,
+            reason: "the file begins with a byte-order mark (U+FEFF), which this reader does \
+                     not read: save it as UTF-8 without one"
+                .to_owned(),
+        });
+    }
     let mut file = SettingsFile::default();
+    let mut bound: HashSet<(String, String)> = HashSet::new();
     let mut in_services = false;
     let mut seen_services = false;
     for (index, raw) in text.lines().enumerate() {
         let line = index + 1;
         let refuse = |reason: String| GrammarError { line, reason };
-        let content = raw.trim();
-        if content.is_empty() || content.starts_with('#') {
+        let content = trim(raw);
+        if content.is_empty() {
+            continue;
+        }
+        if content.starts_with('#') {
+            check_comment(content).map_err(refuse)?;
             continue;
         }
         if let Some(header) = content.strip_prefix('[') {
             let (name, rest) = header
                 .split_once(']')
                 .ok_or_else(|| refuse("a table header that is not closed".to_owned()))?;
-            if !is_blank_or_comment(rest) {
-                return Err(refuse(format!("`{}` after a table header", rest.trim())));
-            }
-            if name.trim() != "services" {
+            check_end(rest, "a table header").map_err(refuse)?;
+            if trim(name) != "services" {
                 return Err(refuse(format!(
                     "the table `[{}]`: only `[services]` is read",
-                    name.trim()
+                    trim(name)
                 )));
             }
             if seen_services {
@@ -90,14 +109,11 @@ pub(crate) fn parse(text: &str) -> Result<SettingsFile, GrammarError> {
             continue;
         }
         let (key, rest) = parse_key(content).map_err(refuse)?;
-        let rest = rest
-            .trim_start()
+        let rest = trim_start(rest)
             .strip_prefix('=')
             .ok_or_else(|| refuse(format!("the key `{key}` is not followed by `=`")))?;
-        let (value, rest) = parse_string(rest.trim_start()).map_err(refuse)?;
-        if !is_blank_or_comment(rest) {
-            return Err(refuse(format!("`{}` after the value", rest.trim())));
-        }
+        let (value, rest) = parse_string(trim_start(rest)).map_err(refuse)?;
+        check_end(rest, "the value").map_err(refuse)?;
         if in_services {
             let Some((family, name)) = key.split_once('/') else {
                 return Err(refuse(format!(
@@ -109,11 +125,7 @@ pub(crate) fn parse(text: &str) -> Result<SettingsFile, GrammarError> {
                     "the service key `{key}` has an empty family or name"
                 )));
             }
-            if file
-                .services
-                .iter()
-                .any(|(f, n, _)| f == family && n == name)
-            {
+            if !bound.insert((family.to_owned(), name.to_owned())) {
                 return Err(refuse(format!("`{key}` is bound twice")));
             }
             file.services
@@ -152,9 +164,45 @@ pub(crate) fn render(file: &SettingsFile) -> String {
     text
 }
 
-fn is_blank_or_comment(rest: &str) -> bool {
-    let rest = rest.trim();
-    rest.is_empty() || rest.starts_with('#')
+/// TOML's whitespace: a space or a tab, and nothing else — a no-break space
+/// is not whitespace there, so `str::trim` would accept what TOML refuses.
+const WHITESPACE: [char; 2] = [' ', '\t'];
+
+fn trim(text: &str) -> &str {
+    text.trim_matches(WHITESPACE)
+}
+
+fn trim_start(text: &str) -> &str {
+    text.trim_start_matches(WHITESPACE)
+}
+
+/// A control character TOML forbids in a string or a comment: U+0000 to
+/// U+001F but the tab, and U+007F.
+fn is_forbidden_control(c: char) -> bool {
+    (c <= '\u{1f}' && c != '\t') || c == '\u{7f}'
+}
+
+/// A comment, from its `#`: anything but a forbidden control character.
+fn check_comment(comment: &str) -> Result<(), String> {
+    match comment.chars().find(|c| is_forbidden_control(*c)) {
+        Some(c) => Err(format!(
+            "a control character (U+{:04X}) in a comment",
+            c as u32
+        )),
+        None => Ok(()),
+    }
+}
+
+/// What follows `what` on its line: nothing, or a comment.
+fn check_end(rest: &str, what: &str) -> Result<(), String> {
+    let rest = trim(rest);
+    if rest.is_empty() {
+        Ok(())
+    } else if rest.starts_with('#') {
+        check_comment(rest)
+    } else {
+        Err(format!("`{rest}` after {what}"))
+    }
 }
 
 /// A bare key (`[A-Za-z0-9_-]+`) or a quoted one, and what follows it.
@@ -181,6 +229,12 @@ fn parse_string(text: &str) -> Result<(String, &str), String> {
         let end = body
             .find('\'')
             .ok_or_else(|| "a literal string that is not closed".to_owned())?;
+        if let Some(c) = body[..end].chars().find(|c| is_forbidden_control(*c)) {
+            return Err(format!(
+                "a control character (U+{:04X}) inside a string",
+                c as u32
+            ));
+        }
         return Ok((body[..end].to_owned(), &body[end + 1..]));
     }
     let Some(body) = text.strip_prefix('"') else {
@@ -208,18 +262,24 @@ fn parse_string(text: &str) -> Result<(String, &str), String> {
                         let digits: String = (0..width)
                             .filter_map(|_| chars.next().map(|(_, digit)| digit))
                             .collect();
-                        let decoded = u32::from_str_radix(&digits, 16)
-                            .ok()
-                            .filter(|_| digits.len() == width)
-                            .and_then(char::from_u32)
-                            .ok_or_else(|| format!("`\\{escape}{digits}` is not a character"))?;
+                        // Checked digit by digit first: `from_str_radix`
+                        // alone would take a leading `+`.
+                        let decoded = (digits.chars().count() == width
+                            && digits.chars().all(|digit| digit.is_ascii_hexdigit()))
+                        .then(|| u32::from_str_radix(&digits, 16).ok())
+                        .flatten()
+                        .and_then(char::from_u32)
+                        .ok_or_else(|| format!("`\\{escape}{digits}` is not a character"))?;
                         value.push(decoded);
                     }
                     other => return Err(format!("`\\{other}` is not an escape TOML knows")),
                 }
             }
-            c if c.is_control() && c != '\t' => {
-                return Err("a control character inside a string".to_owned())
+            c if is_forbidden_control(c) => {
+                return Err(format!(
+                    "a control character (U+{:04X}) inside a string",
+                    c as u32
+                ))
             }
             c => value.push(c),
         }
@@ -237,7 +297,7 @@ fn quote(value: &str) -> String {
             '\t' => quoted.push_str("\\t"),
             '\n' => quoted.push_str("\\n"),
             '\r' => quoted.push_str("\\r"),
-            c if c.is_control() => quoted.push_str(&format!("\\u{:04X}", c as u32)),
+            c if is_forbidden_control(c) => quoted.push_str(&format!("\\u{:04X}", c as u32)),
             c => quoted.push(c),
         }
     }

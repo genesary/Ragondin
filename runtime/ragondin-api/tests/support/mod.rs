@@ -28,6 +28,7 @@ use ragondin_api::{
 use ragondin_benchmarks::identity::dataset_version;
 use ragondin_benchmarks::Benchmark;
 use ragondin_experiments::{FileSystemRunStore, Run, RunId, RunStore, RunStoreError};
+use ragondin_pipeline::{LogicalNode, LogicalPipeline};
 
 /// The address every test router serves, and so the `Host` a request names.
 pub const SERVED: &str = "127.0.0.1:7878";
@@ -102,6 +103,10 @@ impl RunStore for FakeRunStore {
 /// the binding and the served model it was asked about.
 pub const PROBED_IDENTITY: &str = "fake-identity";
 
+/// The one node parameter [`FakeLauncher::check_document`] refuses, as the
+/// binary refuses a key no component reads.
+pub const UNREAD_KEY: &str = "unread_by_anything";
+
 /// The six families the binary binds names in, as the fake checks them.
 const FAMILIES: [&str; 6] = [
     "retriever",
@@ -156,6 +161,37 @@ impl Launcher for FakeLauncher {
             return Err(ApiError::BindingRefused {
                 detail: format!("{argument}: `{uri}` is not an `http://` URI"),
             });
+        }
+        Ok(())
+    }
+
+    fn check_document(
+        &self,
+        pipeline: &LogicalPipeline,
+        _bindings: &[ServiceBinding],
+    ) -> Result<(), ApiError> {
+        for node in pipeline.nodes() {
+            let params = match node {
+                LogicalNode::Retriever(node) => &node.params,
+                LogicalNode::Fusion(node) => &node.params,
+                LogicalNode::Reranker(node) => &node.params,
+                LogicalNode::ContextBuilder(node) => &node.params,
+                LogicalNode::Generator(node) => &node.params,
+                LogicalNode::Extension(node) => &node.params,
+            };
+            if params.contains_key(UNREAD_KEY) {
+                let id = node.id().as_str();
+                return Err(ApiError::PipelineInvalid {
+                    detail: format!(
+                        "node `{id}`: `{UNREAD_KEY}` is not a key the fake component reads: \
+                         refused rather than hashed as inert"
+                    ),
+                    location: ragondin_api::Location {
+                        node: Some(id.to_owned()),
+                        edge: None,
+                    },
+                });
+            }
         }
         Ok(())
     }

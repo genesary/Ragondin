@@ -141,11 +141,26 @@ pub fn get_as(authority: &str, host: &str, path: &str) -> Response {
 /// A state-changing request — `method path` with `body` as JSON — from the
 /// page the server serves: its own `Host` and `Origin`.
 pub fn send_json(authority: &str, method: &str, path: &str, body: &str) -> Response {
+    send_json_with(authority, method, path, body, &[])
+}
+
+/// [`send_json`], with `headers` added.
+pub fn send_json_with(
+    authority: &str,
+    method: &str,
+    path: &str,
+    body: &str,
+    headers: &[(&str, &str)],
+) -> Response {
     let mut stream = TcpStream::connect(authority).expect("the server accepts a connection");
+    let extra: String = headers
+        .iter()
+        .map(|(name, value)| format!("{name}: {value}\r\n"))
+        .collect();
     write!(
         stream,
         "{method} {path} HTTP/1.1\r\nHost: {authority}\r\nOrigin: http://{authority}\r\n\
-         Content-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+         Content-Type: application/json\r\nContent-Length: {}\r\n{extra}Connection: close\r\n\r\n{body}",
         body.len()
     )
     .expect("the request is written");

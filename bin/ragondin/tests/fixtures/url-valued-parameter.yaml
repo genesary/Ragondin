@@ -1,0 +1,20 @@
+# A valid configuration one of whose parameters is a URL: a `dense` node's
+# `query_prefix`, which every `dense` node may carry (ADR-C32 § 1). A value
+# that looks like an address is not, for that, an address: what decides is
+# whether the component reads the key, and this one does.
+#
+# `tests/ui.rs` holds `POST /pipelines/validate` to the hash `ragondin validate`
+# prints for it, and `PUT /pipelines/{name}` to accepting it.
+pipeline:
+  inputs: [question]
+  nodes:
+    - id: vectors
+      component: retriever
+      impl: dense
+      inputs: [question]
+      params:
+        top_k: 10
+        embedder: onnx
+        model: models/embedder.onnx
+        tokenizer: models/tokenizer.json
+        query_prefix: "http://example.org/query "

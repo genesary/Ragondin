@@ -572,6 +572,7 @@
         ]
       },
       "ImportRequest": {
+        "additionalProperties": false,
         "description": "`POST /benchmarks/import`: a corpus on disk, and the name to import it as.",
         "properties": {
           "name": {
@@ -590,6 +591,7 @@
         "type": "object"
       },
       "Layout": {
+        "additionalProperties": false,
         "description": "Where the editor draws each node: UI metadata beside the document, never\nin its hash. Also the body of `PUT /pipelines/{name}/layout`.",
         "properties": {
           "nodes": {
@@ -751,6 +753,7 @@
         "type": "object"
       },
       "PipelineDocument": {
+        "additionalProperties": false,
         "description": "`PUT /pipelines/{name}` and `POST /pipelines/validate`: a pipeline\ndocument, as text.",
         "properties": {
           "document": {
@@ -907,6 +910,7 @@
         "type": "object"
       },
       "Position": {
+        "additionalProperties": false,
         "description": "A node's position on the editor's canvas.",
         "properties": {
           "x": {
@@ -927,6 +931,7 @@
         "type": "object"
       },
       "ProbeRequest": {
+        "additionalProperties": false,
         "description": "`POST /services/{family}/{name}/probe`: what the identity read needs\nbesides the binding.",
         "properties": {
           "served_model": {
@@ -986,6 +991,11 @@
           },
           "detail": {
             "description": "What happened, in this occurrence's words.",
+            "type": "string"
+          },
+          "etag": {
+            "description": "The stored document's etag, for `precondition_failed` when one is\nstored — the value the `ETag` header carries quoted, for a client\nthat reads the body alone. Present only then.",
+            "nullable": true,
             "type": "string"
           },
           "hint": {
@@ -1331,6 +1341,7 @@
         "type": "object"
       },
       "ServiceAddress": {
+        "additionalProperties": false,
         "description": "`PUT /services/{family}/{name}`: the address to bind the name to.",
         "properties": {
           "uri": {
@@ -1973,7 +1984,7 @@
         "summary": "One pipeline document, verbatim, with its etag and its hash or why it does not validate."
       },
       "put": {
-        "description": "Requires the header `If-Match: \"<etag>\"` to replace the stored document, or `If-None-Match: *` to create one. A stale etag, a creation over an existing document, or neither header is precondition_failed (412), with the current etag in the `ETag` header and the detail, and nothing written. The answer's etag is also its `ETag` header. Not declared as headers: the UI's type generator reads path parameters only.",
+        "description": "Requires the header `If-Match: \"<etag>\"` to replace the stored document (`If-Match: *` for whatever is stored), or `If-None-Match: *` to create one. A stale etag, `If-Match: *` with nothing stored, a creation over an existing document, or neither header is precondition_failed (412), with the current etag in the `ETag` header, the detail and the problem's `etag` member, and nothing written. A document the composition root refuses — a key no component reads — is pipeline_invalid, in `ragondin bench`'s words. The answer's etag is also its `ETag` header. Not declared as headers: the UI's type generator reads path parameters only.",
         "parameters": [
           {
             "in": "path",

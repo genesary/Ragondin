@@ -3,9 +3,11 @@
 //!
 //! The etag is the document's [`Revision`], in hex: bare in a JSON body,
 //! quoted in the `ETag` header, as HTTP spells an entity tag. A write names
-//! the revision it read with `If-Match`, or creates with `If-None-Match: *`;
-//! one that names neither is refused, since nothing would then stop it
-//! overwriting a change it never saw.
+//! the revision it read with `If-Match` — or `If-Match: *`, any stored
+//! revision — or creates with `If-None-Match: *`; one that names neither is
+//! refused, since nothing would then stop it overwriting a change it never
+//! saw. A write is checked by the composition root
+//! (`Launcher::check_document`) before it is stored; `validate` is not.
 
 use std::time::UNIX_EPOCH;
 
@@ -80,6 +82,14 @@ pub(crate) async fn write(
 ) -> Result<Response, ApiError> {
     let precondition = precondition(&headers)?;
     let request: PipelineDocument = json_body(&body)?;
+    // The composition root's key refusals, with the workspace's bindings
+    // deciding which names are bound: what `bench` would refuse is not stored.
+    let pipeline = validation::lower(&request.document)?;
+    let settings = state.backends.settings.read().await?;
+    state
+        .backends
+        .launcher
+        .check_document(&pipeline, &settings.services)?;
     let PipelineFile {
         name,
         document,
@@ -177,6 +187,7 @@ fn precondition(headers: &HeaderMap) -> Result<Precondition, ApiError> {
         (Some(_), Some(_)) => Err(ApiError::RequestInvalid {
             detail: "a write states `If-Match` or `If-None-Match: *`, not both".to_owned(),
         }),
+        (Some(star), None) if star == "*" => Ok(Precondition::Exists),
         (Some(etag), None) => Ok(Precondition::Matches(Revision::new(
             etag.strip_prefix("W/")
                 .unwrap_or(&etag)

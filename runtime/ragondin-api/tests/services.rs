@@ -244,6 +244,77 @@ async fn an_unreachable_probe_names_the_address_and_the_identity_last_read() {
     assert_eq!(listing["services"][0]["connected"], false);
 }
 
+/// A probe needs nothing but the binding for a context builder, so a client
+/// may send no body at all: it reads as `{}`.
+#[tokio::test]
+async fn a_probe_with_no_body_reads_as_one_with_no_served_model() {
+    let workspace = scratch("probe_empty_body");
+    let app = server(&workspace);
+    send(
+        app.clone(),
+        put_service(
+            "/api/v1/services/context_builder/lines",
+            "http://127.0.0.1:8080",
+        ),
+    )
+    .await;
+    let request = axum::http::Request::post("/api/v1/services/context_builder/lines/probe")
+        .header("host", support::SERVED)
+        .header("origin", support::OWN_ORIGIN)
+        .body(axum::body::Body::empty())
+        .unwrap();
+
+    let response = send(app, request).await;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        body_json(response).await["identity"],
+        format!("{PROBED_IDENTITY}:context_builder/lines@http://127.0.0.1:8080")
+    );
+}
+
+/// A misspelled field is refused, not dropped: dropped, `served_modle`
+/// would probe without the served model the client meant.
+#[tokio::test]
+async fn a_probe_body_field_this_api_does_not_read_is_request_invalid() {
+    let workspace = scratch("probe_unknown_field");
+    let app = server(&workspace);
+    send(
+        app.clone(),
+        put_service("/api/v1/services/generator/qwen", "http://127.0.0.1:8080"),
+    )
+    .await;
+
+    for (path, body) in [
+        (
+            "/api/v1/services/generator/qwen/probe",
+            json!({ "served_modle": "qwen2.5" }),
+        ),
+        (
+            "/api/v1/services/generator/qwen",
+            json!({ "uri": "http://127.0.0.1:8080", "url": "x" }),
+        ),
+    ] {
+        let method = if path.ends_with("probe") {
+            "POST"
+        } else {
+            "PUT"
+        };
+        let response = send(app.clone(), write_request(method, path, &body, &[])).await;
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{path}");
+        let problem = body_json(response).await;
+        assert_eq!(problem["code"], "request_invalid");
+        assert!(
+            problem["detail"]
+                .as_str()
+                .unwrap()
+                .contains("unknown field"),
+            "{problem}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn probing_a_name_that_is_not_bound_is_service_not_found() {
     let workspace = scratch("probe_unbound");

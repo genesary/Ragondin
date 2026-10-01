@@ -123,7 +123,7 @@ pub const OPERATIONS: &[Operation] = &[
         response: "PipelineWritten",
         request: Some("PipelineDocument"),
         description: Some(
-            "Requires the header `If-Match: \"<etag>\"` to replace the stored document, or `If-None-Match: *` to create one. A stale etag, a creation over an existing document, or neither header is precondition_failed (412), with the current etag in the `ETag` header and the detail, and nothing written. The answer's etag is also its `ETag` header. Not declared as headers: the UI's type generator reads path parameters only.",
+            "Requires the header `If-Match: \"<etag>\"` to replace the stored document (`If-Match: *` for whatever is stored), or `If-None-Match: *` to create one. A stale etag, `If-Match: *` with nothing stored, a creation over an existing document, or neither header is precondition_failed (412), with the current etag in the `ETag` header, the detail and the problem's `etag` member, and nothing written. A document the composition root refuses — a key no component reads — is pipeline_invalid, in `ragondin bench`'s words. The answer's etag is also its `ETag` header. Not declared as headers: the UI's type generator reads path parameters only.",
         ),
     },
     Operation {

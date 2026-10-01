@@ -586,6 +586,7 @@ pub fn refuse_unsupported(pipeline: &LogicalPipeline) -> Result<()> {
 /// without the `onnx` feature is named here, because no planner will ever look
 /// an embedder up to name it.
 pub fn check_nodes(pipeline: &LogicalPipeline, bindings: &Bindings) -> Result<()> {
+    check_keys(pipeline, bindings).map_err(KeyRefusal::into_error)?;
     let embedder = embedder_spec(pipeline, bindings)?;
     if matches!(embedder, Some(EmbedderSpec::Onnx { .. })) && !cfg!(feature = "onnx") {
         let node = pipeline
@@ -603,20 +604,63 @@ pub fn check_nodes(pipeline: &LogicalPipeline, bindings: &Bindings) -> Result<()
              carry: rebuild with the `onnx` feature"
         );
     }
+    Ok(())
+}
 
-    for node in pipeline.nodes() {
-        if let LogicalNode::Reranker(node) = node {
-            let checked = if node.implementation == CROSS_ENCODER {
-                reranker_of(&node.params).map(drop)
-            } else if bindings.binds(Family::Reranker, &node.implementation) {
-                bound_reranker_of(&node.params, &node.implementation).map(drop)
-            } else {
-                Ok(())
-            };
-            checked.with_context(|| format!("node `{}`", node.id.as_str()))?;
+/// A key refusal of [`check_keys`]: the node at fault, when one node is, and
+/// the refusal in `bench`'s words.
+#[derive(Debug)]
+pub struct KeyRefusal {
+    /// The node whose keys are refused; `None` when the refusal is about two
+    /// nodes together, which its words name.
+    pub node: Option<String>,
+    /// The refusal.
+    pub error: anyhow::Error,
+}
+
+impl KeyRefusal {
+    /// The refusal as `bench` reports it: under the context naming the node,
+    /// when one node is at fault.
+    pub fn into_error(self) -> anyhow::Error {
+        match self.node {
+            Some(node) => self.error.context(format!("node `{node}`")),
+            None => self.error,
         }
     }
-    Ok(())
+}
+
+/// The keys of every node whose keys this composition root owns — the part
+/// of [`check_nodes`] that holds in every build: a `dense` node's keys by the
+/// nature of the embedder it names, a `cross_encoder` node's, a bound
+/// reranker's, and the agreement of every `dense` node on one embedder
+/// (ADR-C32 § 1). `ragondin ui` asks it of a document before storing it, so
+/// what is stored is what `bench` would accept.
+pub fn check_keys(pipeline: &LogicalPipeline, bindings: &Bindings) -> Result<(), KeyRefusal> {
+    for node in pipeline.nodes() {
+        let checked = match node {
+            LogicalNode::Retriever(node) if node.implementation == DENSE => {
+                embedder_of(&node.params, bindings).map(drop)
+            }
+            LogicalNode::Reranker(node) if node.implementation == CROSS_ENCODER => {
+                reranker_of(&node.params).map(drop)
+            }
+            LogicalNode::Reranker(node)
+                if bindings.binds(Family::Reranker, &node.implementation) =>
+            {
+                bound_reranker_of(&node.params, &node.implementation).map(drop)
+            }
+            _ => Ok(()),
+        };
+        checked.map_err(|error| KeyRefusal {
+            node: Some(node.id().as_str().to_owned()),
+            error,
+        })?;
+    }
+    // Every node's own keys are sound; what is left is two `dense` nodes
+    // disagreeing, which names both.
+    embedder_spec(pipeline, bindings)
+        .map(drop)
+        .map_err(|error| KeyRefusal { node: None, error })
 }
 
 /// The embedder every `dense` node of `pipeline` is configured with, if it has

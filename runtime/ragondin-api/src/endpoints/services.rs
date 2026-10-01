@@ -131,7 +131,13 @@ pub(crate) async fn probe(
     Path((family, name)): Path<(String, String)>,
     body: Bytes,
 ) -> Result<Json<ProbeResult>, ApiError> {
-    let ProbeRequest { served_model } = json_body(&body)?;
+    // A context builder needs nothing but the binding, so no body at all is
+    // the request with no served model.
+    let ProbeRequest { served_model } = if body.is_empty() {
+        ProbeRequest::default()
+    } else {
+        json_body(&body)?
+    };
     let settings = state.backends.settings.read().await?;
     let uri = settings
         .services

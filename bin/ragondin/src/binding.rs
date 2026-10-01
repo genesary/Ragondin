@@ -123,6 +123,14 @@ impl Bindings {
         Ok(Self { entries })
     }
 
+    /// Bindings each already through [`check`]: the workspace's, which
+    /// `ragondin ui` holds whatever the build, and which key a family and a
+    /// name once each by construction.
+    #[cfg(feature = "ui")]
+    pub fn from_checked(entries: Vec<Binding>) -> Self {
+        Self { entries }
+    }
+
     /// The bindings as the run records them: family, name and URI as
     /// written, in the order given, outside the run's identity.
     pub fn record(&self) -> Vec<RunBinding> {

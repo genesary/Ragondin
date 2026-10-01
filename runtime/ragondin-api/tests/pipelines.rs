@@ -12,7 +12,7 @@ use axum::http::StatusCode;
 use ragondin_api::fs::{FsPipelines, Workspace};
 use serde_json::{json, Value};
 use support::{
-    app_with_backends, fakes, get, json as body_json, send, write_request, FakeRunStore,
+    app_with_backends, fakes, get, json as body_json, send, write_request, FakeRunStore, UNREAD_KEY,
 };
 
 /// The pipeline the tests write: valid, and formatted the way a person
@@ -198,6 +198,8 @@ async fn a_write_with_a_stale_etag_is_refused_with_412_and_the_current_etag() {
             .contains(current.trim_matches('"')),
         "{problem}"
     );
+    // And as a member of its own, for a client that reads the body alone.
+    assert_eq!(problem["etag"], current.trim_matches('"'));
     assert_eq!(on_disk(&workspace, "hybrid"), before);
 }
 
@@ -349,12 +351,14 @@ async fn a_document_written_back_unchanged_keeps_its_bytes_etag_and_hash() {
     assert_eq!(on_disk(&workspace, "hybrid"), HYBRID.as_bytes());
 }
 
+/// A key the composition root says no component reads: the fake launcher
+/// refuses it as the binary refuses an unread key, naming the node.
 #[tokio::test]
-async fn a_document_carrying_a_service_address_is_refused() {
-    let workspace = scratch("address");
+async fn a_write_the_composition_root_refuses_is_refused_in_its_words() {
+    let workspace = scratch("unread_key");
     let text = HYBRID.replace(
         "params: { top_k: 10 }",
-        "params: { top_k: 10, endpoint: \"http://10.0.0.5:50051\" }",
+        &format!("params: {{ top_k: 10, {UNREAD_KEY}: 3 }}"),
     );
 
     let response = send(
@@ -373,16 +377,168 @@ async fn a_document_carrying_a_service_address_is_refused() {
     assert_eq!(problem["code"], "pipeline_invalid");
     assert_eq!(problem["location"]["node"], "lexical");
     let detail = problem["detail"].as_str().unwrap();
-    assert!(detail.contains("http://10.0.0.5:50051"), "{detail}");
-    assert!(detail.contains("`endpoint`"), "{detail}");
+    assert!(
+        detail.contains(&format!("node `lexical`: `{UNREAD_KEY}` is not a key")),
+        "{detail}"
+    );
     assert!(!workspace.pipelines().join("hybrid.yaml").exists());
+
+    // `validate` applies none of the composition root's checks (ADR-C32 § 2),
+    // as `ragondin validate` applies none: the document hashes.
+    let validated = send(
+        server(&workspace),
+        write_request("POST", "/api/v1/pipelines/validate", &document(&text), &[]),
+    )
+    .await;
+    assert_eq!(validated.status(), StatusCode::OK);
+}
+
+/// A parameter whose value is a URL is a parameter like any other: whether
+/// it is read is the composition root's to say, and nothing here looks at
+/// the value.
+#[tokio::test]
+async fn a_url_valued_parameter_is_accepted() {
+    let workspace = scratch("url_valued");
+    let text = HYBRID.replace(
+        "params: { top_k: 10 }",
+        "params: { top_k: 10, query_prefix: \"http://example.org/q \" }",
+    );
+
+    for request in [
+        write_request(
+            "PUT",
+            "/api/v1/pipelines/hybrid",
+            &document(&text),
+            &[("if-none-match", "*")],
+        ),
+        write_request("POST", "/api/v1/pipelines/validate", &document(&text), &[]),
+    ] {
+        let response = send(server(&workspace), request).await;
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+    assert_eq!(on_disk(&workspace, "hybrid"), text.as_bytes());
+}
+
+#[tokio::test]
+async fn if_match_star_matches_any_stored_document_and_nothing_absent() {
+    let workspace = scratch("if_match_star");
+    create(&workspace, "hybrid", HYBRID).await;
+
+    let replaced = send(
+        server(&workspace),
+        write_request(
+            "PUT",
+            "/api/v1/pipelines/hybrid",
+            &document(HYBRID_REFORMATTED),
+            &[("if-match", "*")],
+        ),
+    )
+    .await;
+    assert_eq!(replaced.status(), StatusCode::OK);
+    assert_eq!(on_disk(&workspace, "hybrid"), HYBRID_REFORMATTED.as_bytes());
+
+    let absent = send(
+        server(&workspace),
+        write_request(
+            "PUT",
+            "/api/v1/pipelines/other",
+            &document(HYBRID),
+            &[("if-match", "*")],
+        ),
+    )
+    .await;
+    assert_eq!(absent.status(), StatusCode::PRECONDITION_FAILED);
+    assert!(!workspace.pipelines().join("other.yaml").exists());
+}
+
+/// Eight writes naming the same etag, at once: one stores its bytes, the
+/// seven others are refused with the etag the winner left.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_writes_with_the_same_etag_have_exactly_one_winner() {
+    let workspace = scratch("concurrent");
+    let etag = create(&workspace, "hybrid", HYBRID).await;
+    let app = server(&workspace);
+
+    let writes = (0..8).map(|n| {
+        let (app, etag) = (app.clone(), etag.clone());
+        let text = format!("# writer {n}\n{HYBRID}");
+        tokio::spawn(async move {
+            let response = send(
+                app,
+                write_request(
+                    "PUT",
+                    "/api/v1/pipelines/hybrid",
+                    &document(&text),
+                    &[("if-match", &etag)],
+                ),
+            )
+            .await;
+            (response.status(), text)
+        })
+    });
+    let mut outcomes = Vec::new();
+    for write in writes.collect::<Vec<_>>() {
+        outcomes.push(write.await.unwrap());
+    }
+
+    let winners: Vec<&String> = outcomes
+        .iter()
+        .filter(|(status, _)| *status == StatusCode::OK)
+        .map(|(_, text)| text)
+        .collect();
+    assert_eq!(winners.len(), 1, "{outcomes:?}");
+    assert!(
+        outcomes
+            .iter()
+            .all(|(status, _)| *status == StatusCode::OK
+                || *status == StatusCode::PRECONDITION_FAILED)
+    );
+    assert_eq!(on_disk(&workspace, "hybrid"), winners[0].as_bytes());
+}
+
+#[tokio::test]
+async fn a_name_differing_from_a_stored_one_only_in_case_is_refused() {
+    let workspace = scratch("case_alias");
+    create(&workspace, "hybrid", HYBRID).await;
+
+    let response = send(
+        server(&workspace),
+        write_request(
+            "PUT",
+            "/api/v1/pipelines/Hybrid",
+            &document(HYBRID_REFORMATTED),
+            &[("if-none-match", "*")],
+        ),
+    )
+    .await;
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let problem = body_json(response).await;
+    assert_eq!(problem["code"], "request_invalid");
+    assert!(
+        problem["detail"].as_str().unwrap().contains("`hybrid`"),
+        "{problem}"
+    );
+    assert_eq!(on_disk(&workspace, "hybrid"), HYBRID.as_bytes());
+    let names: Vec<_> = fs::read_dir(workspace.pipelines()).unwrap().collect();
+    assert_eq!(names.len(), 1);
 }
 
 #[tokio::test]
 async fn a_name_that_is_not_one_file_name_is_refused() {
     let workspace = scratch("names");
 
-    for name in [".hidden", "a.", "validate", &"x".repeat(65)] {
+    for name in [
+        ".hidden",
+        "a.",
+        "validate",
+        &"x".repeat(65),
+        "CON",
+        "nul",
+        "Aux.v1",
+        "com1",
+        "LPT9",
+    ] {
         let response = send(
             server(&workspace),
             write_request(
@@ -471,7 +627,11 @@ async fn validate_locates_a_mis_kinded_edge_in_the_cli_words() {
 async fn a_body_that_is_not_the_request_s_json_is_request_invalid() {
     let workspace = scratch("bad_body");
 
-    for body in [json!("just a string"), json!({ "doc": HYBRID })] {
+    for body in [
+        json!("just a string"),
+        json!({ "doc": HYBRID }),
+        json!({ "document": HYBRID, "documnet": HYBRID }),
+    ] {
         let response = send(
             server(&workspace),
             write_request("POST", "/api/v1/pipelines/validate", &body, &[]),

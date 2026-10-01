@@ -6,10 +6,15 @@
 //! document is parsed into `RawPipeline`, never into an internal type; INV-8:
 //! the hash is the canonical form's).
 //!
-//! One refusal is added, and only one: a parameter holding a service's
-//! address (ADR-C32 § 1). `ragondin validate` does not make it — the
-//! composition root does, when `bench` reads the node — and a document the
-//! editor saves must not carry one into the workspace.
+//! Nothing is added to those checks: `POST /pipelines/validate` answers what
+//! `ragondin validate` answers. The composition root's key refusals, which
+//! `validate` does not make (ADR-C32 § 2), are `Launcher::check_document`'s,
+//! called before a document is stored.
+//!
+//! The three steps are written here a third time, beside `LocalFile::load`
+//! and `ragondin-experiments`' `lower_configuration`, because
+//! `ragondin-config` loads only from a path; one path-free loader there is
+//! #375.
 //!
 //! The words are the CLI's, without the file path a request does not have:
 //! the cause `ragondin validate` prints under `caused by:`, and for an edge
@@ -18,20 +23,22 @@
 //! bytes.
 
 use ragondin_pipeline::{
-    peek_schema_version, validate, LogicalNode, NodeId, ParamValue, RawPipeline,
-    SchemaVersionPeekError, ValidationError, ValueKind,
+    peek_schema_version, validate, LogicalPipeline, NodeId, RawPipeline, SchemaVersionPeekError,
+    ValidationError, ValueKind,
 };
 
 use crate::error::ApiError;
 use crate::response::{EdgeLocation, Location};
 
-/// The URI schemes a parameter value is refused as an address under: the
-/// ones a `Remote` service is reached by, or would be once TLS is decided.
-const ADDRESS_SCHEMES: [&str; 4] = ["http://", "https://", "grpc://", "grpcs://"];
-
 /// The content hash of `document`'s canonical logical form, or why it is
 /// not a pipeline, as `pipeline_invalid`.
 pub(crate) fn check(document: &str) -> Result<String, ApiError> {
+    Ok(lower(document)?.content_hash().to_string())
+}
+
+/// `document`'s validated logical pipeline, or why it is not one, as
+/// `pipeline_invalid`.
+pub(crate) fn lower(document: &str) -> Result<LogicalPipeline, ApiError> {
     if let Err(SchemaVersionPeekError::Unsupported(source)) =
         peek_schema_version(serde_yaml::Deserializer::from_str(document))
     {
@@ -50,9 +57,7 @@ pub(crate) fn check(document: &str) -> Result<String, ApiError> {
             unlocated(),
         )
     })?;
-    let pipeline = validate(raw).map_err(|error| refused(&error))?;
-    refuse_addresses(pipeline.nodes())?;
-    Ok(pipeline.content_hash().to_string())
+    validate(raw).map_err(|error| refused(&error))
 }
 
 fn invalid(detail: String, location: Location) -> ApiError {
@@ -139,50 +144,6 @@ fn incompatible_wiring(
     )
 }
 
-/// Refuses a node whose parameters hold a service's address, at any depth
-/// of a list: an address is deployment data, bound to an implementation
-/// name outside the document, and in a parameter it would enter the hash.
-fn refuse_addresses(nodes: &[LogicalNode]) -> Result<(), ApiError> {
-    for node in nodes {
-        let params = match node {
-            LogicalNode::Retriever(node) => &node.params,
-            LogicalNode::Fusion(node) => &node.params,
-            LogicalNode::Reranker(node) => &node.params,
-            LogicalNode::ContextBuilder(node) => &node.params,
-            LogicalNode::Generator(node) => &node.params,
-            LogicalNode::Extension(node) => &node.params,
-        };
-        for (key, value) in params {
-            if let Some(address) = address_in(value) {
-                return Err(invalid(
-                    format!(
-                        "node `{}`: parameter `{key}` holds the address `{address}`; an address \
-                         never enters a pipeline — bind the node's implementation name to it as \
-                         a service instead",
-                        node.id().as_str()
-                    ),
-                    at_node(node.id()),
-                ));
-            }
-        }
-    }
-    Ok(())
-}
-
-fn address_in(value: &ParamValue) -> Option<&str> {
-    match value {
-        ParamValue::String(text) => {
-            let lower = text.to_ascii_lowercase();
-            ADDRESS_SCHEMES
-                .iter()
-                .any(|scheme| lower.starts_with(scheme))
-                .then_some(text.as_str())
-        }
-        ParamValue::List(values) => values.iter().find_map(address_in),
-        ParamValue::Int(_) | ParamValue::Float(_) | ParamValue::Bool(_) => None,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -228,22 +189,13 @@ mod tests {
     }
 
     #[test]
-    fn an_address_nested_in_a_list_is_refused() {
-        let (detail, location) = detail(&VALID.replace(
-            "params: { top_k: 10 }",
-            "params: { top_k: 10, mirrors: [a, \"GRPC://host:1\"] }",
-        ));
-
-        assert!(detail.contains("`mirrors`"), "{detail}");
-        assert_eq!(location.node.as_deref(), Some("lexical"));
-    }
-
-    #[test]
-    fn a_path_or_a_name_is_not_an_address() {
+    fn a_url_valued_parameter_is_a_parameter_like_any_other() {
+        // What a key holds is not looked at here: whether the key is read is
+        // the composition root's to say, through `Launcher::check_document`.
         check(&VALID.replace(
             "params: { top_k: 10 }",
-            "params: { top_k: 10, model: /models/bge.onnx, note: \"see http docs\" }",
+            "params: { top_k: 10, endpoint: \"http://10.0.0.5:50051\" }",
         ))
-        .expect("no address");
+        .expect("validates, as `ragondin validate` validates it");
     }
 }

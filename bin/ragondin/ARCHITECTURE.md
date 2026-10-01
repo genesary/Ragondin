@@ -535,8 +535,12 @@ leaves one and finds it gone once the server answers.
 - **`--store <dir>`** names the store, as `bench --store` does, so one
   argument means one store to both commands: the workspace is the store's
   parent when the store's last component is `runs` — `--store <ws>/runs`
-  opens `<ws>` — and the store's own directory otherwise. The two flags are
-  exclusive.
+  opens `<ws>` — and the store's own directory otherwise. **In that second
+  case the workspace's directories and `workspace.toml` are created inside
+  the run store**, beside its run directories: the store lists only
+  directories named by a run id, so they do not disturb it, but a store
+  shared with `bench` gains them. Name the store `runs`, or use
+  `--workspace`, to keep the two apart. The two flags are exclusive.
 - **Neither**: `./runs` when it is a directory, the workspace then being the
   current directory; otherwise `$HOME/.ragondin`, its store `runs/` inside,
   so the first launch is a screen and not an error. Without `HOME` and
@@ -577,6 +581,17 @@ API crate holds it as an `Arc<dyn Launcher>` and names no component.
   a `PUT` of a bound name replaces its address rather than binding it twice,
   and "no node uses it" needs a pipeline, which a workspace binding is not
   tied to.
+- **`check_document(pipeline, bindings)`**: `wiring::check_keys`, the part
+  of `bench`'s `check_nodes` that holds in every build — a `dense` node's
+  keys by the nature of its embedder, a `cross_encoder`'s, a bound
+  reranker's, one embedder per pipeline — with the workspace's bindings
+  (each through `binding::check`, gathered by `Bindings::from_checked`)
+  deciding which names are bound. A refusal is `pipeline_invalid` in
+  `bench`'s words (`node `<id>`: …`) with the node as its location. A key no
+  component reads is refused whatever its value, and a URL-valued key a
+  component reads is accepted. `check_nodes`' one build-dependent refusal —
+  `embedder: onnx` without the `onnx` feature — is not made: a stored
+  document is not a run.
 - **`probe(family, name, uri, served_model)`**: the binding goes through
   `binding::check`, then through `wiring::service_identity`, the identity
   read `bench` makes before a run, with `served_model` for an embedder, a

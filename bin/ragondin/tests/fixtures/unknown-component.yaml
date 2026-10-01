@@ -1,0 +1,11 @@
+# A configuration that parses, and names a component family no node variant
+# exists for. The validation pass refuses it, naming the node: the error text
+# `tests/ui.rs` compares between `ragondin validate` and
+# `POST /pipelines/validate`.
+pipeline:
+  inputs: [question]
+  nodes:
+    - id: legs
+      component: summarizer
+      impl: anything
+      inputs: [question]

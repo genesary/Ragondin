@@ -303,6 +303,10 @@ impl ApiError {
                 Self::PipelineInvalid { location, .. } => Some(location.clone()),
                 _ => None,
             },
+            etag: match self {
+                Self::PreconditionFailed { current, .. } => current.clone(),
+                _ => None,
+            },
         }
     }
 

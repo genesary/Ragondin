@@ -644,6 +644,7 @@ pub struct PipelineLayout {
 /// Where the editor draws each node: UI metadata beside the document, never
 /// in its hash. Also the body of `PUT /pipelines/{name}/layout`.
 #[derive(Clone, Debug, PartialEq, Serialize, serde::Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct Layout {
     /// The layout format's version: `1`, the only one this build reads.
     pub version: u32,
@@ -653,6 +654,7 @@ pub struct Layout {
 
 /// A node's position on the editor's canvas.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, serde::Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct Position {
     /// Horizontal, in canvas units.
     pub x: f64,
@@ -717,6 +719,11 @@ pub struct Problem {
     /// `pipeline_invalid`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub location: Option<Location>,
+    /// The stored document's etag, for `precondition_failed` when one is
+    /// stored — the value the `ETag` header carries quoted, for a client
+    /// that reads the body alone. Present only then.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub etag: Option<String>,
 }
 
 /// Where in a pipeline a validation failure is.

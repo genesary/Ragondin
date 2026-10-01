@@ -118,6 +118,16 @@ fn every_form_outside_the_settings_grammar_is_refused_naming_its_line() {
         ("datasets = \"\"\"x\"\"\"\n", 1),
         ("datasets = \"unterminated\n", 1),
         ("datasets = \"a\" trailing\n", 1),
+        // Not TOML, and so not read: a control character in a literal
+        // string or in a comment, whitespace TOML does not count as such
+        // (a no-break space here), and a `\u` escape that is not four hex
+        // digits — `u32::from_str_radix` alone would take the `+`.
+        ("datasets = 'a\u{1}b'\n", 1),
+        ("# a comment \u{7f} with DEL\ndatasets = \"a\"\n", 1),
+        ("datasets = \"a\" # \u{0}\n", 1),
+        ("\u{a0}datasets = \"a\"\n", 1),
+        ("datasets\u{a0}= \"a\"\n", 1),
+        ("datasets = \"\\u+041\"\n", 1),
     ] {
         let root = scratch("grammar");
         fs::write(root.join("workspace.toml"), text).expect("written");
@@ -129,6 +139,16 @@ fn every_form_outside_the_settings_grammar_is_refused_naming_its_line() {
             other => panic!("{text:?}: {other:?}"),
         }
     }
+}
+
+#[test]
+fn a_byte_order_mark_is_refused_by_name() {
+    let root = scratch("bom");
+    fs::write(root.join("workspace.toml"), "\u{feff}datasets = \"a\"\n").expect("written");
+
+    let error = Workspace::open(&root).expect_err("refused");
+
+    assert!(error.to_string().contains("a byte-order mark"), "{error}");
 }
 
 #[tokio::test]

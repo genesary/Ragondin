@@ -1,0 +1,19 @@
+# A configuration that parses, and feeds a node at a port it does not have.
+#
+# A reranker's ports are the pair (query, chunks); `ranked` lists a third
+# input. The kind check reports the edge with no expected kind — the node
+# declares no port at position 2 — which is the branch of `ragondin validate`'s
+# incompatible-wiring report this fixture is here for.
+pipeline:
+  inputs: [question]
+  nodes:
+    - id: legs
+      component: retriever
+      impl: stub_retriever
+      inputs: [question]
+      params: { top_k: 3 }
+
+    - id: ranked
+      component: reranker
+      impl: some_reranker
+      inputs: [question, legs, legs]

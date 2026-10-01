@@ -13,12 +13,13 @@
 
 use async_trait::async_trait;
 use ragondin_api::{
-    ApiError, Capabilities, FamilyCapabilities, Job, JobState, Launcher, ServiceIdentity,
-    Submission,
+    ApiError, Capabilities, FamilyCapabilities, Job, JobState, Launcher, Location, ServiceBinding,
+    ServiceIdentity, Submission,
 };
 use ragondin_experiments::RunId;
+use ragondin_pipeline::LogicalPipeline;
 
-use crate::binding::{self, Binding, Family};
+use crate::binding::{self, Binding, Bindings, Family};
 use crate::wiring;
 
 /// What `identity` and `execute` answer until the launcher's issue fills them.
@@ -63,6 +64,30 @@ impl Launcher for BinaryLauncher {
         binding::check(family, name, uri)
             .map(|_| ())
             .map_err(refused)
+    }
+
+    /// `bench`'s key refusals ([`wiring::check_keys`]), with the workspace's
+    /// bindings deciding which names are bound: what `bench` would refuse to
+    /// read is refused here, in its words, before the document is stored.
+    /// The build-specific refusal `bench` adds — an `onnx` embedder in a build
+    /// without the feature — is not made: a stored document is not a run.
+    fn check_document(
+        &self,
+        pipeline: &LogicalPipeline,
+        bindings: &[ServiceBinding],
+    ) -> Result<(), ApiError> {
+        let bindings = bindings
+            .iter()
+            .map(|binding| binding::check(&binding.family, &binding.name, &binding.uri))
+            .collect::<anyhow::Result<Vec<_>>>()
+            .map_err(refused)?;
+        wiring::check_keys(pipeline, &Bindings::from_checked(bindings)).map_err(|refusal| {
+            let node = refusal.node.clone();
+            ApiError::PipelineInvalid {
+                detail: format!("{:#}", refusal.into_error()),
+                location: Location { node, edge: None },
+            }
+        })
     }
 
     /// The binding goes through [`check_binding`](Self::check_binding), then
@@ -111,8 +136,6 @@ async fn read_identity(
     served_model: Option<&str>,
 ) -> Result<ServiceIdentity, ApiError> {
     use ragondin_contracts::ComponentError;
-
-    use crate::binding::Bindings;
 
     let uri = binding.uri.clone();
     let result = async {
@@ -322,6 +345,88 @@ mod tests {
             .expect("well formed");
     }
 
+    fn pipeline(nodes: &str) -> ragondin_pipeline::LogicalPipeline {
+        let yaml = format!("pipeline:\n  inputs: [question]\n  nodes:\n{nodes}");
+        let raw: ragondin_pipeline::RawPipeline =
+            serde_yaml::from_str(&yaml).expect("the fixture parses");
+        ragondin_pipeline::validate(raw).expect("the fixture validates")
+    }
+
+    const CROSS_ENCODER_NODE: &str = "    - id: lexical\n      component: retriever\n      \
+         impl: bm25\n      inputs: [question]\n      params: { top_k: 10 }\n\
+         \x20   - id: ranked\n      component: reranker\n      impl: cross_encoder\n      \
+         inputs: [question, lexical]\n      params: { top_k: 5, model: m.onnx, tokenizer: t.json";
+
+    #[test]
+    fn a_document_with_a_key_its_component_does_not_read_is_refused_in_bench_s_words() {
+        let document = pipeline(&format!(
+            "{CROSS_ENCODER_NODE}, endpoint: \"http://10.0.0.5:50051\" }}\n"
+        ));
+
+        let error = BinaryLauncher
+            .check_document(&document, &[])
+            .expect_err("`endpoint` is read by nothing");
+
+        match error {
+            ApiError::PipelineInvalid { detail, location } => {
+                assert_eq!(
+                    detail,
+                    "node `ranked`: `endpoint` is not a key the ONNX cross-encoder reads: \
+                     refused rather than hashed as inert"
+                );
+                assert_eq!(location.node.as_deref(), Some("ranked"));
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_url_valued_parameter_a_component_reads_is_accepted() {
+        // A prefix is read by every `dense` node, whatever it holds.
+        let document = pipeline(
+            "    - id: vectors\n      component: retriever\n      impl: dense\n      \
+             inputs: [question]\n      params: { top_k: 10, embedder: onnx, model: m.onnx, \
+             tokenizer: t.json, query_prefix: \"http://example.org/q \" }\n",
+        );
+
+        BinaryLauncher
+            .check_document(&document, &[])
+            .expect("every key is one the ONNX embedder's node reads");
+    }
+
+    #[test]
+    fn the_workspace_bindings_decide_what_a_bound_name_may_carry() {
+        let document = pipeline(
+            "    - id: lexical\n      component: retriever\n      impl: bm25\n      \
+             inputs: [question]\n      params: { top_k: 10 }\n\
+             \x20   - id: ranked\n      component: reranker\n      impl: bge-reranker\n      \
+             inputs: [question, lexical]\n      params: { top_k: 5, served_model: r }\n",
+        );
+        let bound = [ragondin_api::ServiceBinding {
+            family: "reranker".to_owned(),
+            name: "bge-reranker".to_owned(),
+            uri: "http://127.0.0.1:9000".to_owned(),
+        }];
+
+        BinaryLauncher
+            .check_document(&document, &bound)
+            .expect("a bound reranker reads `top_k` and `served_model`");
+        let stray = pipeline(
+            "    - id: lexical\n      component: retriever\n      impl: bm25\n      \
+             inputs: [question]\n      params: { top_k: 10 }\n\
+             \x20   - id: ranked\n      component: reranker\n      impl: bge-reranker\n      \
+             inputs: [question, lexical]\n      params: { top_k: 5, served_model: r, model: m }\n",
+        );
+        let error = BinaryLauncher
+            .check_document(&stray, &bound)
+            .expect_err("a bound reranker reads no `model`");
+        assert!(
+            matches!(&error, ApiError::PipelineInvalid { detail, .. }
+                if detail.contains("`model` is not a key the bound reranker `bge-reranker` reads")),
+            "{error:?}"
+        );
+    }
+
     #[tokio::test]
     async fn a_probe_that_is_not_a_well_formed_binding_is_refused_with_the_binding_s_reason() {
         let error = BinaryLauncher
@@ -405,6 +510,21 @@ mod tests {
 
                 assert_eq!(identity.identity, expected, "{family}");
             }
+        }
+
+        #[tokio::test]
+        async fn a_service_that_refuses_the_served_model_answers_request_invalid() {
+            let generator = fakes::serve_generator();
+
+            let error = BinaryLauncher
+                .probe("generator", "served", &generator.uri, Some("not-served"))
+                .await
+                .expect_err("the fake serves one model");
+
+            assert!(
+                matches!(&error, ApiError::RequestInvalid { detail } if detail.contains("not-served")),
+                "{error:?}"
+            );
         }
 
         #[tokio::test]

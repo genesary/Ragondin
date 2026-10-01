@@ -89,6 +89,25 @@ impl FsPipelines {
         }))
     }
 
+    /// A stored pipeline whose name is `name` in another case, if any.
+    fn alias_of(&self, name: &str) -> Result<Option<String>, ApiError> {
+        let entries = fs::read_dir(self.directory.as_ref())
+            .map_err(|error| failed(&self.directory, error))?;
+        for entry in entries {
+            let entry = entry.map_err(|error| failed(&self.directory, error))?;
+            let file_name = entry.file_name();
+            if let Some(stored) = file_name
+                .to_str()
+                .and_then(|file_name| file_name.strip_suffix(DOCUMENT))
+            {
+                if stored != name && stored.eq_ignore_ascii_case(name) {
+                    return Ok(Some(stored.to_owned()));
+                }
+            }
+        }
+        Ok(None)
+    }
+
     fn require(&self, name: &str) -> Result<PipelineFile, ApiError> {
         if !is_name(name) {
             return Err(not_found(name));
@@ -149,7 +168,7 @@ impl PipelineSource for FsPipelines {
                 detail: format!(
                     "`{name}` is not a pipeline name: one file name of letters, digits, `_`, \
                      `-` and `.`, not starting with `.` nor ending with one, 64 bytes at most, \
-                     and not `{RESERVED}`"
+                     not a device name Windows reserves, and not `{RESERVED}`"
                 ),
             });
         }
@@ -162,6 +181,16 @@ impl PipelineSource for FsPipelines {
             precondition.clone(),
         );
         blocking(move || {
+            // On a case-insensitive filesystem `Hybrid.yaml` is `hybrid.yaml`:
+            // a write under the one would replace the other behind its etag.
+            if let Some(stored) = this.alias_of(&name)? {
+                return Err(ApiError::RequestInvalid {
+                    detail: format!(
+                        "`{name}` differs from the stored pipeline `{stored}` only in case, and \
+                         on a filesystem that ignores case the two are one file; write `{stored}`"
+                    ),
+                });
+            }
             let stored = this.load(&name)?;
             let current = stored
                 .as_ref()
@@ -176,6 +205,11 @@ impl PipelineSource for FsPipelines {
                 )),
                 (Precondition::Matches(_), None) => Some(format!(
                     "pipeline {name} is not stored, so `If-Match` matches nothing; create it \
+                     with `If-None-Match: *`"
+                )),
+                (Precondition::Exists, Some(_)) => None,
+                (Precondition::Exists, None) => Some(format!(
+                    "pipeline {name} is not stored, so `If-Match: *` matches nothing; create it \
                      with `If-None-Match: *`"
                 )),
                 (Precondition::Absent, None) => None,
@@ -270,7 +304,7 @@ fn revision_of(bytes: &[u8]) -> Revision {
 
 /// Whether `name` is one file name a pipeline may have: the import names'
 /// alphabet, `[A-Za-z0-9_-][A-Za-z0-9._-]*`, 64 bytes at most, no trailing
-/// `.` — and not the name the router reserves.
+/// `.`, no Windows device name — and not the name the router reserves.
 fn is_name(name: &str) -> bool {
     let mut bytes = name.bytes();
     let first_ok = bytes
@@ -283,6 +317,19 @@ fn is_name(name: &str) -> bool {
         && name
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
+        && !is_device_name(name)
+}
+
+/// Whether `name`'s stem — up to its first `.` — is a device name Windows
+/// reserves in every directory, in any case: `CON`, `PRN`, `AUX`, `NUL`,
+/// `COM1`–`COM9`, `LPT1`–`LPT9`. The rule `ragondin-benchmarks` applies to an
+/// import's name, written again here because that check is private to it.
+fn is_device_name(name: &str) -> bool {
+    let stem = name.split('.').next().unwrap_or(name).to_ascii_uppercase();
+    matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || (stem.len() == 4
+            && (stem.starts_with("COM") || stem.starts_with("LPT"))
+            && matches!(stem.as_bytes()[3], b'1'..=b'9'))
 }
 
 fn not_found(name: &str) -> ApiError {
@@ -324,8 +371,18 @@ mod tests {
             "é",
             "a b",
             &"x".repeat(65),
+            "CON",
+            "prn",
+            "Aux.v1",
+            "nul",
+            "COM1",
+            "lpt9",
         ] {
             assert!(!is_name(name), "{name}");
+        }
+        // Not device names: `COM0`, `COM10`, a longer word starting the same.
+        for name in ["com0", "com10", "console", "nullable", "lpt"] {
+            assert!(is_name(name), "{name}");
         }
     }
 }

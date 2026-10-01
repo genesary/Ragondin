@@ -33,6 +33,28 @@ function typeOf(source: string, name: string): string {
   return (match[1] ?? '').replace(/\s+/g, ' ').trim();
 }
 
+describe('renderApiTypes, a closed object', () => {
+  // `additionalProperties: false` is what a request body that refuses an
+  // unknown field states; a TypeScript object type is closed to literals
+  // already, so the type is the one the same properties give without it.
+  it('renders properties with `additionalProperties: false` as it renders them without', () => {
+    const properties = { name: { type: 'string' }, note: { type: 'string', nullable: true } };
+    const open = renderApiTypes(description({ X: { type: 'object', required: ['name'], properties } }));
+    const closed = renderApiTypes(
+      description({ X: { type: 'object', required: ['name'], properties, additionalProperties: false } }),
+    );
+    expect(typeOf(closed, 'X')).toBe(typeOf(open, 'X'));
+    expect(typeOf(closed, 'X')).toBe('{ name: string; note?: string | null; }');
+  });
+
+  it.each([
+    ['`additionalProperties: true`', { type: 'object', properties: {}, additionalProperties: true }],
+    ['`additionalProperties: false` with no properties', { type: 'object', additionalProperties: false }],
+  ])('still refuses %s', (_, schema) => {
+    expect(() => renderApiTypes(description({ X: schema }))).toThrow();
+  });
+});
+
 describe('renderApiTypes', () => {
   it('renders an object with its required and optional properties', () => {
     const out = renderApiTypes(

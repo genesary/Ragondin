@@ -456,8 +456,84 @@ mod with_the_feature {
             } else {
                 assert_eq!(api.status, 422, "{}: {}", path.display(), api.body);
                 assert_eq!(answer["code"], "pipeline_invalid", "{}", path.display());
+                // The refusal in the CLI's words: its incompatible-wiring
+                // report's lines, or else the cause it prints last, which
+                // carries the deserializer's or the validation pass's text.
+                let detail = answer["detail"].as_str().unwrap();
+                let report = String::from_utf8(cli.stderr).unwrap();
+                let lines: Vec<&str> = report
+                    .lines()
+                    .map(str::trim)
+                    .filter(|line| {
+                        ["edge:", "expected:", "found:"]
+                            .iter()
+                            .any(|key| line.starts_with(key))
+                    })
+                    .collect();
+                let compared: Vec<&str> = if lines.is_empty() {
+                    let cause = report
+                        .lines()
+                        .rev()
+                        .find_map(|line| line.trim().strip_prefix("caused by: "))
+                        .unwrap_or_else(|| panic!("{}: {report}", path.display()));
+                    vec![cause]
+                } else {
+                    lines
+                };
+                for line in compared {
+                    assert!(
+                        detail.contains(line),
+                        "{}: {line:?} in {detail}",
+                        path.display()
+                    );
+                }
             }
         }
+    }
+
+    /// The composition root's key refusals, on `PUT` only: a key the
+    /// component does not read is refused in `bench`'s words, a URL-valued
+    /// key it reads is stored.
+    #[test]
+    fn a_write_is_refused_as_bench_refuses_its_keys_and_a_url_valued_read_key_is_stored() {
+        let root = workspace("put_keys");
+        let server = Server::start(&root, &[]);
+        let fixtures = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+        let accepted = std::fs::read_to_string(fixtures.join("url-valued-parameter.yaml")).unwrap();
+        let refused = accepted.replace(
+            "        query_prefix:",
+            "        endpoint: \"http://10.0.0.5:50051\"\n        query_prefix:",
+        );
+        let put = |name: &str, text: &str| {
+            http::send_json_with(
+                server.authority(),
+                "PUT",
+                &format!("/api/v1/pipelines/{name}"),
+                &serde_json::json!({ "document": text }).to_string(),
+                &[("If-None-Match", "*")],
+            )
+        };
+
+        let stored = put("url-valued", &accepted);
+        assert_eq!(stored.status, 200, "{stored:?}");
+        assert_eq!(
+            std::fs::read_to_string(root.join("pipelines/url-valued.yaml")).unwrap(),
+            accepted
+        );
+
+        let answer = put("stray-key", &refused);
+        assert_eq!(answer.status, 422, "{answer:?}");
+        let problem: serde_json::Value = serde_json::from_str(&answer.body).unwrap();
+        assert_eq!(problem["code"], "pipeline_invalid");
+        assert_eq!(problem["location"]["node"], "vectors");
+        assert!(
+            problem["detail"]
+                .as_str()
+                .unwrap()
+                .contains("node `vectors`: `endpoint` is not a key"),
+            "{problem}"
+        );
+        assert!(!root.join("pipelines/stray-key.yaml").exists());
     }
 
     #[test]

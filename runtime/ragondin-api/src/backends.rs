@@ -26,6 +26,8 @@ use ragondin_benchmarks::Benchmark;
 use ragondin_experiments::{RunId, RunStore};
 
 use crate::error::ApiError;
+use ragondin_pipeline::LogicalPipeline;
+
 use crate::response::{BenchmarkEntry, Capabilities, Layout, ServiceBinding};
 
 /// Every backend the router consumes, constructed by the binary and passed in.
@@ -70,9 +72,9 @@ pub trait PipelineSource: Send + Sync {
     ///
     /// # Errors
     ///
-    /// `request_invalid` for a name that is not one file name;
-    /// `pipeline_invalid` for a document that does not validate, or that
-    /// carries a service's address; `precondition_failed` when the stored
+    /// `request_invalid` for a name that is not one file name, or that
+    /// differs from a stored one only in case; `pipeline_invalid` for a
+    /// document that does not validate; `precondition_failed` when the stored
     /// revision is not the one `precondition` expects — the editor's guard
     /// against overwriting a file changed under it. Nothing is written on
     /// any of them.
@@ -116,6 +118,9 @@ pub struct PipelineFile {
 pub enum Precondition {
     /// The stored document is at this revision — `If-Match`.
     Matches(Revision),
+    /// A document is stored, at any revision — `If-Match: *` (RFC 9110
+    /// § 13.1.1).
+    Exists,
     /// Nothing is stored under the name — `If-None-Match: *`, a creation.
     Absent,
     /// The request stated neither, which a write refuses: an editor that
@@ -316,6 +321,25 @@ pub trait Launcher: Send + Sync {
     ///
     /// `binding_refused`, with the composition root's refusal.
     fn check_binding(&self, family: &str, name: &str, uri: &str) -> Result<(), ApiError>;
+
+    /// Whether the composition root would accept `pipeline`'s keys, with the
+    /// workspace's `bindings` deciding which names are bound — the key
+    /// refusals `ragondin bench` makes before anything is loaded (ADR-C32
+    /// § 1): a key no component of the node's nature reads is refused rather
+    /// than hashed as inert. A pipeline is checked here before it is stored;
+    /// `POST /pipelines/validate` does not call it, as `ragondin validate`
+    /// applies none of these checks (ADR-C32 § 2).
+    ///
+    /// # Errors
+    ///
+    /// `pipeline_invalid`, in the composition root's words, naming the node
+    /// when one is at fault; `binding_refused` for a binding in `bindings`
+    /// the composition root refuses.
+    fn check_document(
+        &self,
+        pipeline: &LogicalPipeline,
+        bindings: &[ServiceBinding],
+    ) -> Result<(), ApiError>;
 
     /// Reads the identity of the `Remote` service bound as `family`/`name`
     /// at `uri` — the same read the composition root makes before a run, for
