@@ -46,6 +46,15 @@ describe('the group heading', () => {
     expect(screen.getByRole('link', { name: 'hybrid-copy' }).getAttribute('href')).toBe('#pipeline/hybrid-copy');
   });
 
+  it('separates the names, so the heading reads as a list and not as one run-together word', () => {
+    show(group({ names: ['hybrid', 'hybrid-copy', 'hybrid-old'] }));
+    const header = document.querySelector('th[scope="rowgroup"]') as HTMLElement;
+    expect(header.textContent).toContain('hybrid, hybrid-copy, hybrid-old');
+    // Only between names: none before the first, none after the last.
+    expect(header.textContent?.startsWith('hybrid')).toBe(true);
+    expect(header.textContent).not.toContain('hybrid-old,');
+  });
+
   it('names a pipeline without a name by its short hash, linking by the full one', () => {
     show(group({ names: [] }));
     expect(screen.getByRole('link', { name: 'pipeline 821bafbd3fa0' }).getAttribute('href')).toBe(`#pipeline/${HASH}`);

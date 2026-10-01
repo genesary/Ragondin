@@ -240,6 +240,7 @@ impl Registry for FsRegistry {
         })
         .await
     }
+
     async fn pinned(&self) -> Result<Vec<PinnedBenchmark>, ApiError> {
         let registry = self.clone();
         blocking(move || {

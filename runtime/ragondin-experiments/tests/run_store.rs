@@ -229,7 +229,10 @@ fn a_malformed_times_file_is_malformed() {
 #[test]
 fn times_are_not_part_of_identity() {
     // The harness computes the id before any time exists, so one run saved
-    // with times and the same run saved without them are one run.
+    // with times and the same run saved without them are one run. This test
+    // holds the store to that; the guard on the digest itself is
+    // `RECORDED_RUN_ID` in `ragondin-harness`'s `identity.rs`, which fails if
+    // anything new reaches the identity tuple.
     let store = store("times_not_identity");
     let without = a_run(run_id(0x18), &[("ndcg@10", 0.42)]);
     let mut with = without.clone();

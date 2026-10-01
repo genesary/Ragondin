@@ -341,6 +341,19 @@ impl RunTimes {
         Self { started, finished }
     }
 
+    /// The times from two clock readings, as
+    /// [`UnixMillis::from_system_time`] gives them: known only when both
+    /// are, since half a record is not a time a run can be ordered or timed
+    /// by. Taken as read, never reordered.
+    pub fn from_readings(
+        started: Option<UnixMillis>,
+        finished: Option<UnixMillis>,
+    ) -> Option<Self> {
+        started
+            .zip(finished)
+            .map(|(started, finished)| Self::new(started, finished))
+    }
+
     /// When the run started: before its preparation, so the identity read,
     /// the benchmark load and the index build count toward it.
     pub fn started(&self) -> UnixMillis {
@@ -404,6 +417,22 @@ mod tests {
         assert_eq!(
             UnixMillis::from_system_time(almost_two).map(UnixMillis::get),
             Some(1)
+        );
+    }
+
+    #[test]
+    fn times_from_readings_need_both() {
+        let (a, b) = (UnixMillis::new(1), UnixMillis::new(2));
+        assert_eq!(
+            RunTimes::from_readings(Some(a), Some(b)),
+            Some(RunTimes::new(a, b))
+        );
+        assert_eq!(RunTimes::from_readings(None, Some(b)), None);
+        assert_eq!(RunTimes::from_readings(Some(a), None), None);
+        // As read, never reordered.
+        assert_eq!(
+            RunTimes::from_readings(Some(b), Some(a)),
+            Some(RunTimes::new(b, a))
         );
     }
 

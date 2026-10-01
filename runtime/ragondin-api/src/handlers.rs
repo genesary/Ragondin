@@ -107,7 +107,10 @@ pub(crate) async fn workspace(State(state): State<AppState>) -> Result<Json<Work
 ///
 /// The workspace's pipelines and the registry's pins are each read once for
 /// the whole listing, never once per run; and each pipeline's shape is
-/// lowered once, from the first of its runs whose document lowers.
+/// lowered once, from the first of its runs whose document lowers. A
+/// pipeline source or a registry that fails fails the listing, by design:
+/// answering with every name list silently empty would read as "no
+/// pipeline, no benchmark" rather than as the fault it is.
 pub(crate) async fn runs(State(state): State<AppState>) -> Result<Json<RunListing>, ApiError> {
     let pipelines = lineage::pipelines_by_hash(state.backends.pipelines.as_ref()).await?;
     let mut benchmarks: HashMap<String, Vec<String>> = HashMap::new();

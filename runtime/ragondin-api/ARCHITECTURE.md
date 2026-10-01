@@ -522,7 +522,9 @@ and `convert::detail` share `graph`), so a screen draws every group's shape
 from the listing. One canonical hash is one canonical form and so one graph;
 it is lowered from the first of its runs whose document lowers, and a
 pipeline none of whose documents lowers has no entry. The workspace's
-pipelines and the registry's pins are each read once per request.
+pipelines and the registry's pins are each read once per request, and a
+failure of either fails the listing, by design, rather than answering with
+every name list silently empty.
 
 **A field serialized on every response is required in its schema**, nullable
 when it can be null: `RunDetail::prefix_of`, the two times of `RunDetail`

@@ -3,6 +3,7 @@
 // shape as design/'s family tiles in pipeline order, and how many runs it
 // holds. The shape comes with the listing, so the heading is whole when it is
 // first drawn: nothing loads into it later, and nothing moves under it.
+import { Fragment } from 'react';
 import { FAMILY_LABEL, FamilyTile } from '../../design/index.ts';
 import { formatHash } from '../routes.ts';
 import { shortHash, type RunGroup, type ShapeNode } from './model.ts';
@@ -25,10 +26,14 @@ export function GroupLabel({ group, shape }: GroupLabelProps) {
         </a>
       ) : (
         <span className="rg-runs__names">
-          {group.names.map((name) => (
-            <a key={name} className="rg-runs__pipeline" href={formatHash({ screen: 'pipeline', name })}>
-              {name}
-            </a>
+          {group.names.map((name, i) => (
+            <Fragment key={name}>
+              {/* Heard, not seen: the gap shows the names apart, and this keeps them apart for a screen reader. */}
+              {i === 0 ? null : <span className="rg-visually-hidden">, </span>}
+              <a className="rg-runs__pipeline" href={formatHash({ screen: 'pipeline', name })}>
+                {name}
+              </a>
+            </Fragment>
           ))}
         </span>
       )}

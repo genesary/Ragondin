@@ -104,7 +104,10 @@ pub async fn run(request: &Request<'_>) -> Result<()> {
     // the index build and the embedding all count toward the run's time, so
     // `finished − started` is its wall time, preparation included. A clock
     // before the epoch gives no reading, and the run is then saved with its
-    // times unknown rather than with a made-up one.
+    // times unknown rather than with a made-up one. This reading belongs at
+    // the head of whatever shared execution path is extracted from here for
+    // the UI's launcher (#353), so a run launched from the UI is timed by
+    // this one definition and never a second.
     let started = UnixMillis::from_system_time(SystemTime::now());
 
     // Refused on their text alone: a malformed binding is found before the
@@ -173,9 +176,7 @@ pub async fn run(request: &Request<'_>) -> Result<()> {
     // happened — is not an input of the experiment (ADR-C32 § 2, INV-8).
     let run = Run {
         bindings: bound.bindings().record(),
-        times: started
-            .zip(finished)
-            .map(|(started, finished)| RunTimes::new(started, finished)),
+        times: RunTimes::from_readings(started, finished),
         ..run
     };
 
