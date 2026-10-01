@@ -197,18 +197,20 @@ build-ui: check-node
 # The front end's gates: install exactly the lockfile, then lint, typecheck,
 # test, build, re-check the notices and audit it (ui/ARCHITECTURE.md § The
 # gates). It, `build-ui` and `gen-ui-types` are the recipes here that need
-# Node -- the version pinned in ui/.node-version. No cargo recipe does, and none may: the Rust
-# build stays Rust-only (ADR-C36 § 5), so everything above runs on a machine
-# without Node, and only `check`, which covers both worlds, needs it.
+# Node -- the version pinned in ui/.node-version. No cargo recipe does, and
+# none may: the Rust build stays Rust-only (ADR-C36 § 5), so everything above
+# runs on a machine without Node, and only `check`, which covers both worlds,
+# needs it.
 #
 # The install and the build are `build-ui`'s, a dependency, so `check`, which
 # names both, builds once: just runs a recipe once per invocation. The other
-# steps are read from `npm run check` rather than named, as `clippy` reads the
-# binary's features, so a gate added there runs here without an edit; and if
-# that script stops naming `npm run build` as a step, this fails rather than
-# silently building twice.
+# steps come from ui/scripts/check-steps.mjs, which reads them from
+# `npm run check` rather than naming them, as `clippy` reads the binary's
+# features, so a gate added there runs here without an edit; and if that
+# script stops naming `npm run build` as a step, it fails rather than let this
+# build twice.
 check-ui: build-ui
-    cd ui && steps="$(node -p "const s = require('./package.json').scripts.check.split(' && '); if (!s.includes('npm run build')) throw new Error('the check script of ui/package.json no longer runs npm run build as a step; update check-ui in the justfile'); s.filter((x) => x !== 'npm run build').join(' && ')")" && echo "$steps" && sh -c "$steps"
+    cd ui && steps="$(node scripts/check-steps.mjs)" && echo "$steps" && sh -c "$steps"
 
 # Fails at once, and says why, when Node is missing -- rather than as exit 127
 # at the end of `check`, after the whole cargo pipeline has run. Like
