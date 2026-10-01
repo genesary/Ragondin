@@ -1,0 +1,17 @@
+# ADR-C37 § 2: a handler of the `/api` router reads request input only
+# through this crate's own extractors, in `src/extract.rs` — the one module
+# that allows these types, and says why.
+#
+# This file is the package's, not the workspace root's: Clippy reads the
+# package directory first, and a root file would ban these types in every
+# crate.
+#
+# `axum::extract::Json` is not listed: it is the same type as `axum::Json`,
+# the response every handler returns, and `disallowed-types` cannot tell an
+# argument from a return type. `tests/extractors.rs` scans the source for a
+# binding typed `Json<…>` instead.
+disallowed-types = [
+    { path = "axum::extract::Path", reason = "read a path parameter through `ApiPath<T>` (ADR-C37 § 2): axum's rejection is plain text" },
+    { path = "axum::extract::Query", reason = "read the query string through `ApiQuery<T>` (ADR-C37 § 2, § 3): it validates strict percent-encoded UTF-8 first" },
+    { path = "axum::http::HeaderMap", reason = "read a request header through `ApiHeaders<T>` (ADR-C37 § 2, § 4), so the description declares it" },
+]

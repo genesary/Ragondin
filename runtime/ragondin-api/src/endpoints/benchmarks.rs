@@ -5,12 +5,11 @@
 
 use std::path::PathBuf;
 
-use axum::body::Bytes;
 use axum::extract::State;
 use axum::Json;
 
-use super::json_body;
 use crate::error::ApiError;
+use crate::extract::{ApiJson, ApiQuery, NoParameters};
 use crate::handlers::AppState;
 use crate::request::ImportRequest;
 use crate::response::{BenchmarkEntry, BenchmarkListing};
@@ -19,6 +18,7 @@ use crate::response::{BenchmarkEntry, BenchmarkListing};
 /// call; nothing is cached here.
 pub(crate) async fn list(
     State(state): State<AppState>,
+    _: ApiQuery<NoParameters>,
 ) -> Result<Json<BenchmarkListing>, ApiError> {
     Ok(Json(BenchmarkListing {
         benchmarks: state.backends.registry.benchmarks().await?,
@@ -28,9 +28,9 @@ pub(crate) async fn list(
 /// `POST /benchmarks/import`: the corpus at `path`, imported as `name`.
 pub(crate) async fn import(
     State(state): State<AppState>,
-    body: Bytes,
+    _: ApiQuery<NoParameters>,
+    ApiJson(ImportRequest { name, path }): ApiJson<ImportRequest>,
 ) -> Result<Json<BenchmarkEntry>, ApiError> {
-    let ImportRequest { name, path } = json_body(&body)?;
     Ok(Json(
         state
             .backends

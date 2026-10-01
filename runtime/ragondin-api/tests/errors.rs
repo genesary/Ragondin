@@ -156,13 +156,28 @@ async fn query_not_found() {
 #[tokio::test]
 async fn parameter_invalid() {
     let (status, body) = render(ApiError::ParameterInvalid {
-        name: "missing_gold_at".to_owned(),
+        name: Some("missing_gold_at".to_owned()),
         reason: "`ten` is not a positive integer".to_owned(),
     })
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_problem(&body, status, "parameter_invalid");
     assert!(body["detail"].as_str().unwrap().contains("missing_gold_at"));
+    assert_eq!(body["name"], "missing_gold_at");
+}
+
+/// A parameter the reason does not attribute is named nowhere: the problem
+/// has no `name`, and its detail does not invent one.
+#[tokio::test]
+async fn parameter_invalid_without_a_name() {
+    let (status, body) = render(ApiError::ParameterInvalid {
+        name: None,
+        reason: "unknown field `other`, there are no fields".to_owned(),
+    })
+    .await;
+    assert_problem(&body, status, "parameter_invalid");
+    assert!(body.get("name").is_none(), "{body}");
+    assert!(body["detail"].as_str().unwrap().contains("unknown field"));
 }
 
 #[tokio::test]
@@ -378,6 +393,16 @@ async fn runs_not_comparable() {
         .contains("at most four runs"));
 }
 
+#[tokio::test]
+async fn body_too_large() {
+    let (status, body) = render(ApiError::BodyTooLarge {
+        detail: "length limit exceeded".to_owned(),
+    })
+    .await;
+    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+    assert_problem(&body, status, "body_too_large");
+}
+
 #[test]
 fn every_variant_has_a_distinct_code() {
     let codes = ApiError::CODES;
@@ -387,7 +412,7 @@ fn every_variant_has_a_distinct_code() {
     assert_eq!(sorted.len(), codes.len(), "codes are unique: {codes:?}");
     assert_eq!(
         codes.len(),
-        26,
+        27,
         "a variant added without a test here: {codes:?}"
     );
 }

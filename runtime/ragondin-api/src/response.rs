@@ -758,6 +758,10 @@ pub struct Problem {
     /// that reads the body alone. Present only then.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub etag: Option<String>,
+    /// The parameter, path parameter or header a `parameter_invalid` is
+    /// about, when it is known. Absent otherwise — never guessed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
 }
 
 /// Where in a pipeline a validation failure is.

@@ -25,7 +25,10 @@
 //!   reaches it: the single-page fallback, the content types.
 //! - [`response`] — every type the API serializes; this crate's own, never a
 //!   core type serialized directly.
-//! - [`request`] — every request body the API reads; this crate's own too.
+//! - [`request`] — every request body the API reads, and the types its
+//!   query parameters and request headers are read into; this crate's own
+//!   too. A handler reads every input through the crate's own extractors,
+//!   in one private module (ADR-C37), so every refusal is a problem body.
 //! - [`error`] — [`ApiError`] and its `application/problem+json` rendering.
 //! - [`description`] — the API description, kept as a golden file.
 //! - [`fs`] — the workspace on disk and its file backends:
@@ -71,6 +74,7 @@ mod comparison;
 mod convert;
 mod derived;
 mod endpoints;
+mod extract;
 mod handlers;
 mod layers;
 mod lineage;

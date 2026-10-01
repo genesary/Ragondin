@@ -7,7 +7,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
-use axum::extract::{Path, State};
+use axum::extract::State;
 use axum::http::{Method, Uri};
 use axum::Json;
 use ragondin_benchmarks::identity::CorpusIndex;
@@ -21,6 +21,8 @@ use crate::backends::{Backends, RunDataset};
 use crate::derived::{self, Metrics, Outputs};
 use crate::endpoints::services::{self, Probes};
 use crate::error::ApiError;
+use crate::extract::{ApiPath, ApiQuery, NoParameters};
+use crate::request::{MissingGoldAt, RunQueriesParameters};
 use crate::response::{
     BenchmarkState, QueryScores, QueryTrace, RunDetail, RunListing, RunQueries, SettingsSummary,
     UnreadableRun, Workspace, WorkspaceCounts,
@@ -54,7 +56,10 @@ impl AppState {
 /// `GET /workspace`. The counts are computed on this request: the pipelines
 /// and the runs listed, the benchmarks verified, the services' probes
 /// remembered.
-pub(crate) async fn workspace(State(state): State<AppState>) -> Result<Json<Workspace>, ApiError> {
+pub(crate) async fn workspace(
+    State(state): State<AppState>,
+    _: ApiQuery<NoParameters>,
+) -> Result<Json<Workspace>, ApiError> {
     let settings = state.backends.settings.read().await?;
     let pipelines = state.backends.pipelines.list().await?.len();
     let runs = blocking(state.backends.runs.clone(), |store| {
@@ -111,7 +116,10 @@ pub(crate) async fn workspace(State(state): State<AppState>) -> Result<Json<Work
 /// pipeline source or a registry that fails fails the listing, by design:
 /// answering with every name list silently empty would read as "no
 /// pipeline, no benchmark" rather than as the fault it is.
-pub(crate) async fn runs(State(state): State<AppState>) -> Result<Json<RunListing>, ApiError> {
+pub(crate) async fn runs(
+    State(state): State<AppState>,
+    _: ApiQuery<NoParameters>,
+) -> Result<Json<RunListing>, ApiError> {
     let pipelines = lineage::pipelines_by_hash(state.backends.pipelines.as_ref()).await?;
     let mut benchmarks: HashMap<String, Vec<String>> = HashMap::new();
     for pinned in state.backends.registry.pinned().await? {
@@ -164,7 +172,8 @@ pub(crate) async fn runs(State(state): State<AppState>) -> Result<Json<RunListin
 /// read is `run_unreadable`.
 pub(crate) async fn run(
     State(state): State<AppState>,
-    Path(id): Path<String>,
+    ApiPath(id): ApiPath<String>,
+    _: ApiQuery<NoParameters>,
 ) -> Result<Json<RunDetail>, ApiError> {
     let run = load_run(&state, id).await?;
     Ok(Json(convert::detail(&run)?))
@@ -179,23 +188,10 @@ pub(crate) async fn run(
 /// it the answer is `dataset_absent` or `dataset_differs`.
 pub(crate) async fn queries(
     State(state): State<AppState>,
-    Path(id): Path<String>,
-    uri: Uri,
+    ApiPath(id): ApiPath<String>,
+    ApiQuery(parameters): ApiQuery<RunQueriesParameters>,
 ) -> Result<Json<RunQueries>, ApiError> {
-    let mut parameters = parameters(uri.query(), &[MISSING_GOLD_AT])?;
-    let filter = parameters
-        .remove(MISSING_GOLD_AT)
-        .map(|value| {
-            value
-                .parse::<usize>()
-                .ok()
-                .filter(|k| *k > 0)
-                .ok_or_else(|| ApiError::ParameterInvalid {
-                    name: MISSING_GOLD_AT.to_owned(),
-                    reason: format!("`{value}` is not a positive integer"),
-                })
-        })
-        .transpose()?;
+    let filter = parameters.missing_gold_at.map(|MissingGoldAt(k)| k);
     let run = load_run(&state, id).await?;
     let pipeline = lower(&run)?;
     let traces = Arc::new(read_traces(&run)?);
@@ -281,10 +277,9 @@ pub(crate) async fn queries(
 /// why. The scores and per-node metrics need the dataset alone.
 pub(crate) async fn trace(
     State(state): State<AppState>,
-    Path((id, query)): Path<(String, String)>,
-    uri: Uri,
+    ApiPath((id, query)): ApiPath<(String, String)>,
+    _: ApiQuery<NoParameters>,
 ) -> Result<Json<QueryTrace>, ApiError> {
-    parameters(uri.query(), &[])?;
     let run = load_run(&state, id).await?;
     let pipeline = lower(&run)?;
     let query_id = QueryId::new(&query);
@@ -381,78 +376,6 @@ pub(crate) fn figures(
     };
     let failure = read_failure.or(cache::write(workspace, key, &figures).err());
     (figures, failure)
-}
-
-/// The one parameter `GET /runs/{id}/queries` takes.
-const MISSING_GOLD_AT: &str = "missing_gold_at";
-
-/// The query string's parameters, each name and value percent-decoded (`+`
-/// read as a space, as a form encodes it). A parameter not in `allowed`, one
-/// given twice, or one that does not decode to UTF-8 is `parameter_invalid`:
-/// refused rather than ignored, since an ignored filter answers a question
-/// nobody asked.
-fn parameters(query: Option<&str>, allowed: &[&str]) -> Result<BTreeMap<String, String>, ApiError> {
-    let mut parameters = BTreeMap::new();
-    for pair in query
-        .unwrap_or("")
-        .split('&')
-        .filter(|pair| !pair.is_empty())
-    {
-        let (name, value) = pair.split_once('=').unwrap_or((pair, ""));
-        let name = decode(name)?;
-        let value = decode(value).map_err(|_| ApiError::ParameterInvalid {
-            name: name.clone(),
-            reason: "its value is not percent-encoded UTF-8".to_owned(),
-        })?;
-        if !allowed.contains(&name.as_str()) {
-            let takes = match allowed {
-                [] => "this endpoint takes no parameter".to_owned(),
-                names => format!("this endpoint takes only `{}`", names.join("`, `")),
-            };
-            return Err(ApiError::ParameterInvalid {
-                name,
-                reason: takes,
-            });
-        }
-        if parameters.contains_key(&name) {
-            return Err(ApiError::ParameterInvalid {
-                name,
-                reason: "it is given more than once".to_owned(),
-            });
-        }
-        parameters.insert(name, value);
-    }
-    Ok(parameters)
-}
-
-/// Percent-decodes one name or value of a query string.
-fn decode(text: &str) -> Result<String, ApiError> {
-    let refused = || ApiError::ParameterInvalid {
-        name: text.to_owned(),
-        reason: "it is not percent-encoded UTF-8".to_owned(),
-    };
-    let bytes = text.as_bytes();
-    let mut decoded = Vec::with_capacity(bytes.len());
-    let mut at = 0;
-    while at < bytes.len() {
-        match bytes[at] {
-            b'+' => decoded.push(b' '),
-            b'%' => {
-                let hex = bytes.get(at + 1..at + 3).ok_or_else(refused)?;
-                // Two hexadecimal digits, checked here: `from_str_radix`
-                // also accepts a leading sign, which would read `%+1` as 1.
-                if !hex.iter().all(u8::is_ascii_hexdigit) {
-                    return Err(refused());
-                }
-                let hex = std::str::from_utf8(hex).map_err(|_| refused())?;
-                decoded.push(u8::from_str_radix(hex, 16).map_err(|_| refused())?);
-                at += 2;
-            }
-            byte => decoded.push(byte),
-        }
-        at += 1;
-    }
-    String::from_utf8(decoded).map_err(|_| refused())
 }
 
 /// Loads a run by the id a path named: `run_not_found` for an id that is not

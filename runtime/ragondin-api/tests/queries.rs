@@ -396,3 +396,24 @@ async fn an_unknown_run_is_run_not_found() {
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
     assert_eq!(json(response).await["code"], "run_not_found");
 }
+
+/// What the parameter type refuses besides the filters above: a negative or
+/// a non-numeric value, refused by the value's own type, which names itself
+/// since serde's reason names no parameter.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_negative_or_non_numeric_filter_is_parameter_invalid() {
+    for path in ["?missing_gold_at=-1", "?missing_gold_at=abc"] {
+        let (status, body) =
+            get_queries(&stub_run(), verified(), path, "queries_typed_filter").await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{path}");
+        assert_eq!(body["code"], "parameter_invalid", "{path}");
+        assert!(
+            body["detail"]
+                .as_str()
+                .unwrap()
+                .contains("`missing_gold_at` is a positive integer"),
+            "{path}: {}",
+            body["detail"]
+        );
+    }
+}

@@ -100,24 +100,27 @@ protox = "0.8"                                     # build-dependency of ragondi
 # `hyper` 1 — `cargo tree -i hyper` shows one `hyper` in `Cargo.lock` with this
 # entry in place, so no second server stack enters the lockfile. Moving to
 # another line moves with `tonic`, and escalates. `default-features = false`,
-# and three features:
+# and four features:
 #
 #   - `json`: the `Json` response the endpoints return (no handler takes
-#     its extractor: a body is read as bytes and parsed in the crate);
+#     its extractor: a body is read through `ragondin-api`'s own `ApiJson`);
 #   - `tokio` and `http1`: `axum::serve`, inside `ragondin_api::serve`, over
 #     the listener `ragondin ui` binds on the loopback. They are named now,
 #     in the pull request that creates the entry, because appending a
 #     feature to an existing entry later is a change to every crate naming
 #     it and escalates (AGENTS.md § Rules of engagement), while ADR-C36 § 6
 #     leaves each entry's features to this pull request. HTTP/1.1 only: a
-#     loopback server for one browser gains nothing from `http2`.
+#     loopback server for one browser gains nothing from `http2`;
+#   - `query`: axum's `Query`, with which `ragondin-api`'s own `ApiQuery`
+#     deserializes a query string once it has validated it as strict
+#     percent-encoded UTF-8 — the one grant ADR-C37 § 1 makes. It adds no
+#     crate: `serde_urlencoded` is already in the closure through `reqwest`,
+#     so `Cargo.lock` keeps the same packages and versions and gains only the
+#     `axum → serde_urlencoded` edge.
 #
-# The defaults it drops are the form and query extractors no endpoint reads,
-# `matched-path` and `original-uri`, which no handler uses, and
-# `tracing`/`tower-log`, since the crate emits no telemetry. ADR-C37 § 1
-# admits `query`, for `ragondin-api`'s own `ApiQuery` extractor; it is not
-# on the list yet, and is appended in the pull request that first uses it,
-# where this comment names it among the features above. `form` stays off.
+# The defaults it drops are the form extractor no endpoint reads (`form`
+# stays off), `matched-path` and `original-uri`, which no handler uses, and
+# `tracing`/`tower-log`, since the crate emits no telemetry.
 # `cargo tree -i hyper -e normal --all-features` still shows one `hyper`,
 # reached through `axum`, `tonic` and their stack and from no core crate.
 # `hyper` is on the INV-4 deny-list, so the core cannot reach this.
@@ -125,6 +128,7 @@ axum = { version = "0.7", default-features = false, features = [
     "json",
     "tokio",
     "http1",
+    "query",
 ] }
 # The API description's schemas (ADR-C36 § 6), used by `ragondin-api` only.
 # Default features: `derive` is what the response types use, `std` what it
