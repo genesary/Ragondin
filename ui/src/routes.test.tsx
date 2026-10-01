@@ -1,7 +1,7 @@
 /** @vitest-environment happy-dom */
 import { act, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { formatHash, navigate, parseHash, useRoute, type Route } from './routes.ts';
+import { formatHash, navigate, parseHash, useRoute, viewOf, type Route } from './routes.ts';
 
 /** Renders what the router reads from the address, as a screen receives it. */
 function Probe() {
@@ -28,6 +28,24 @@ describe('#runs', () => {
   it('is what an empty hash shows', () => {
     expect(load('')).toEqual({ screen: 'runs' });
     expect(parseHash('#')).toEqual({ screen: 'runs' });
+  });
+});
+
+describe('#runs?sel=<id>,<id>…', () => {
+  it('carries the selection in order, joined by commas, and restores it from the hash on load', () => {
+    const route: Route = { screen: 'runs', sel: ['bbb', 'aaa'] };
+    expect(formatHash(route)).toBe('#runs?sel=bbb,aaa');
+    expect(load('#runs?sel=bbb,aaa')).toEqual(route);
+  });
+
+  it('leaves the selection out when it is empty', () => {
+    expect(formatHash({ screen: 'runs', sel: [] })).toBe('#runs');
+  });
+
+  it('encodes an id holding the separator, so it round-trips', () => {
+    const route: Route = { screen: 'runs', sel: ['a,b', 'c'] };
+    expect(formatHash(route)).toBe('#runs?sel=a%2Cb,c');
+    expect(parseHash(formatHash(route))).toEqual(route);
   });
 });
 
@@ -84,6 +102,13 @@ describe('#replay', () => {
   });
 });
 
+describe('#replay/<run>', () => {
+  it('carries the run before a query is chosen, and restores it from the hash on load', () => {
+    expect(formatHash({ screen: 'replay', run: 'aaa' })).toBe('#replay/aaa');
+    expect(load('#replay/aaa')).toEqual({ screen: 'replay', run: 'aaa' });
+  });
+});
+
 describe('#replay/<run>/q/<query>?with=<run>', () => {
   it('carries the run, the query and the run beside it, and restores them from the hash on load', () => {
     const route: Route = { screen: 'replay', run: 'aaa', query: '1395', with: 'bbb' };
@@ -124,15 +149,26 @@ describe('#setup', () => {
   });
 });
 
+describe('viewOf', () => {
+  it('is the screen and its path, without the state its query carries', () => {
+    expect(viewOf({ screen: 'runs', sel: ['a', 'b'] })).toBe('#runs');
+    expect(viewOf({ screen: 'compare', ids: ['a', 'b'], baseline: 'a' })).toBe('#compare/a+b');
+    expect(viewOf({ screen: 'replay', run: 'aaa', query: '1395', with: 'bbb' })).toBe('#replay/aaa/q/1395');
+  });
+});
+
 describe('the address', () => {
   it.each([
     '#nowhere',
     '#pipeline/',
     '#pipeline/a/b',
-    '#replay/aaa',
     '#replay/aaa/1395',
+    '#replay/aaa?with=bbb',
     '#replay?with=bbb',
     '#runs/extra',
+    '#runs?sel=',
+    '#runs?sel=aaa,,bbb',
+    '#runs?sel=aaa,..',
     '#editor/%E0%A4%A',
     // A value of `.` or `..`, typed or escaped, would name another API path.
     '#pipeline/..',

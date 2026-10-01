@@ -3,7 +3,7 @@ import { render } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import { declared } from '../testing/css.ts';
 import css from './glyphs.css?raw';
-import { FamilyTile } from './FamilyTile.tsx';
+import { FamilyTile, familyOfComponent } from './FamilyTile.tsx';
 import { FAMILIES } from './Glyph.tsx';
 
 describe('FamilyTile', () => {
@@ -28,5 +28,22 @@ describe('FamilyTile', () => {
   it('names the family for assistive technology when asked to', () => {
     const { getByRole } = render(<FamilyTile family="context" labelled />);
     expect(getByRole('img', { name: 'context builder' })).toBeTruthy();
+  });
+});
+
+describe('familyOfComponent', () => {
+  it.each([
+    ['retriever', 'retriever'],
+    ['fusion', 'fusion'],
+    ['reranker', 'reranker'],
+    ['context_builder', 'context'],
+    ['generator', 'generator'],
+  ] as const)('draws a configuration’s `%s` node with the %s tile', (component, family) => {
+    expect(familyOfComponent(component)).toBe(family);
+  });
+
+  it('draws no tile for an extension node or a family it does not know, so the caller writes its word', () => {
+    expect(familyOfComponent('extension')).toBeNull();
+    expect(familyOfComponent('embedder')).toBeNull();
   });
 });

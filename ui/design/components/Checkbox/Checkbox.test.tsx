@@ -44,3 +44,22 @@ describe('Checkbox disabled', () => {
     expect(box.getAttribute('aria-describedby')).toBe(reason.id);
   });
 });
+
+describe('Checkbox named apart from its label', () => {
+  it('takes an accessible name that says which item it selects, keeping its visible label', () => {
+    render(<Checkbox label="beir/scifact" accessibleLabel="Select run a1b2c3d4e5f6 on beir/scifact" checked={false} onChange={() => {}} />);
+    expect(screen.getByRole('checkbox', { name: 'Select run a1b2c3d4e5f6 on beir/scifact' })).toBeTruthy();
+    expect(screen.getByText('beir/scifact')).toBeTruthy();
+  });
+});
+
+describe('Checkbox inside a one-tab-stop group', () => {
+  it('can leave the tab order, while a click still toggles it', () => {
+    const onChange = vi.fn();
+    render(<Checkbox label="beir/scifact" checked={false} onChange={onChange} tabIndex={-1} />);
+    const box = screen.getByRole('checkbox');
+    expect(box.getAttribute('tabindex')).toBe('-1');
+    fireEvent.click(box);
+    expect(onChange).toHaveBeenCalledWith(true);
+  });
+});

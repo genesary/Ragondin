@@ -10,10 +10,14 @@ export type CheckboxProps = {
   /** Some, not all, of a group is selected. */
   indeterminate?: boolean;
   onChange: (checked: boolean) => void;
+  /** The box's accessible name when the visible label alone does not say which item it selects. */
+  accessibleLabel?: string;
+  /** -1 inside a one-tab-stop group, whose row takes the keyboard; a click still toggles the box. */
+  tabIndex?: number;
 } & Disabled;
 
 /** A native checkbox whose whole row is the target; disabled, it stays visible and says why. */
-export function Checkbox({ label, checked, indeterminate = false, onChange, disabled, disabledReason }: CheckboxProps) {
+export function Checkbox({ label, checked, indeterminate = false, onChange, accessibleLabel, tabIndex, disabled, disabledReason }: CheckboxProps) {
   const ref = useRef<HTMLInputElement>(null);
   const reasonId = useId();
   // `indeterminate` is a DOM property with no attribute, so React cannot set it.
@@ -27,6 +31,8 @@ export function Checkbox({ label, checked, indeterminate = false, onChange, disa
         type="checkbox"
         checked={checked}
         disabled={disabled}
+        aria-label={accessibleLabel}
+        tabIndex={tabIndex}
         aria-describedby={disabled ? reasonId : undefined}
         onChange={(e) => onChange(e.target.checked)}
       />

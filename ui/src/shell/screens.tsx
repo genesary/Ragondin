@@ -1,10 +1,13 @@
-// The six screens, widest to narrowest (the front-end design, § 3). Each is
-// its empty state here: one sentence on the default path and the action that
-// leads on. A screen's own issue replaces its empty state with its content and
-// keeps the route shape src/routes.ts gives it.
+// The six screens, widest to narrowest (the front-end design, § 3). Runs is
+// built (src/runs/); each other screen is its empty state here: one sentence
+// on the default path and the action that leads on. A screen's own issue
+// replaces its empty state with its content and keeps the route shape
+// src/routes.ts gives it.
 import { useEffect, useRef, type RefObject } from 'react';
 import { ButtonLink, EmptyState, Sheet } from '../../design/index.ts';
+import type { ApiClient } from '../api/client.ts';
 import { formatHash, type Route, type ScreenName } from '../routes.ts';
+import { RunsScreen } from '../runs/RunsScreen.tsx';
 
 export const SCREENS: readonly { screen: ScreenName; label: string; bare: Route }[] = [
   { screen: 'runs', label: 'Runs', bare: { screen: 'runs' } },
@@ -23,14 +26,8 @@ const openCompare: Action = { label: 'Open Compare', to: { screen: 'compare', id
 const count = (n: number, one: string) => `${n.toLocaleString('en-US')} ${one}${n === 1 ? '' : 's'}`;
 
 /** What a screen shows before it has data, given the state its route carries. */
-function emptyOf(route: Route): Empty {
+function emptyOf(route: Exclude<Route, { screen: 'runs' }>): Empty {
   switch (route.screen) {
-    case 'runs':
-      return {
-        heading: 'No runs to show yet',
-        sentence: 'Runs are listed here once one is launched. A first run starts in Setup, with a benchmark to download.',
-        action: { label: 'Open Setup', to: { screen: 'setup' } },
-      };
     case 'pipeline':
       return route.name === undefined
         ? { heading: 'No pipeline chosen', sentence: 'Choose a pipeline in Runs to see each of its nodes against every benchmark it ran on.', action: openRuns }
@@ -44,6 +41,9 @@ function emptyOf(route: Route): Empty {
             action: openRuns,
           };
     case 'replay':
+      if ('run' in route && route.query === undefined) {
+        return { heading: `No query chosen for run ${route.run.slice(0, 12)}`, sentence: 'A query of this run, node by node through the pipeline, appears here.', action: openCompare };
+      }
       return 'run' in route
         ? { heading: `Nothing to show for query ${route.query} yet`, sentence: 'This query, node by node through the pipeline, appears here.', action: openCompare }
         : { heading: 'No query chosen', sentence: 'Open a query from Compare to follow it through the pipeline, node by node.', action: openCompare };
@@ -74,14 +74,25 @@ export function useFocusOnChange(heading: RefObject<HTMLElement | null>, address
 }
 
 /** The screen a route shows: its name as the page's heading, then its state. */
-export function Screen({ route, heading }: { route: Route; heading: RefObject<HTMLHeadingElement | null> }) {
+export function Screen({ route, heading, client }: { route: Route; heading: RefObject<HTMLHeadingElement | null>; client: ApiClient }) {
   const label = SCREENS.find((s) => s.screen === route.screen)?.label ?? route.screen;
+  const title = (
+    <h1 ref={heading} tabIndex={-1} className="rg-visually-hidden">
+      {label}
+    </h1>
+  );
+  if (route.screen === 'runs') {
+    return (
+      <>
+        {title}
+        <RunsScreen client={client} sel={route.sel ?? []} />
+      </>
+    );
+  }
   const empty = emptyOf(route);
   return (
     <>
-      <h1 ref={heading} tabIndex={-1} className="rg-visually-hidden">
-        {label}
-      </h1>
+      {title}
       <Sheet>
         <EmptyState
           heading={empty.heading}

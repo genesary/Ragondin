@@ -3,6 +3,7 @@ import { render } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import { declared } from '../../testing/css.ts';
 import css from './StatusChip.css?raw';
+import { Glyph } from '../../glyphs/Glyph.tsx';
 import { StatusChip } from './StatusChip.tsx';
 
 const chip = (el: HTMLElement) => el.querySelector('.rg-status') as HTMLElement;
@@ -28,6 +29,18 @@ describe('StatusChip running', () => {
     const meter = chip(container).querySelector('.rg-status__meter i') as HTMLElement;
     expect(meter.style.width).toBe('38%');
     expect(css).not.toMatch(/animation/);
+  });
+});
+
+describe('StatusChip cancelled', () => {
+  it('reads "cancelled" beside a close mark, in the neutral ink: a stop someone chose, not a failure', () => {
+    const { container } = render(<StatusChip state="cancelled" />);
+    expect(chip(container).textContent).toBe('cancelled');
+    const close = render(<Glyph name="close" />).container.querySelector('svg')?.innerHTML;
+    expect(chip(container).querySelector('svg')?.innerHTML).toBe(close);
+    expect(chip(container).dataset.state).toBe('cancelled');
+    expect(css).not.toMatch(/data-state="cancelled"/);
+    expect(declared(css, '.rg-status', '--st')).toBe('var(--ink-3)');
   });
 });
 

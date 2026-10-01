@@ -1,6 +1,6 @@
 // The design system's primitives. A screen imports from here; base.css is
 // loaded once by the application's entry.
-export { FamilyTile } from './glyphs/FamilyTile.tsx';
+export { FamilyTile, familyOfComponent } from './glyphs/FamilyTile.tsx';
 export { FAMILIES, FAMILY_LABEL, GLYPH_NAMES, Glyph, type Family, type GlyphName } from './glyphs/Glyph.tsx';
 export { Button, ButtonLink, type ButtonKind } from './components/Button/Button.tsx';
 export { Checkbox } from './components/Checkbox/Checkbox.tsx';

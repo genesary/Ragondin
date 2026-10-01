@@ -6,8 +6,12 @@
 import { useSyncExternalStore } from 'react';
 
 export type Route =
-  /** `#runs`: the workspace's runs. An empty hash shows it. */
-  | { screen: 'runs' }
+  /**
+   * `#runs?sel=<id>,<id>…`: the workspace's runs, and the runs selected for
+   * Compare in the order they were checked; `#runs`, or an empty hash, with
+   * none selected.
+   */
+  | { screen: 'runs'; sel?: string[] }
   /** `#pipeline/<name>`: one pipeline's node × benchmark matrix; `#pipeline` before one is chosen. */
   | { screen: 'pipeline'; name?: string }
   /**
@@ -15,8 +19,10 @@ export type Route =
    * baseline; `#compare`, with no ids, before any is chosen.
    */
   | { screen: 'compare'; ids: string[]; baseline?: string }
-  /** `#replay`: before a query is chosen. */
+  /** `#replay`: before a run is chosen. */
   | { screen: 'replay' }
+  /** `#replay/<run>`: one run, before a query is chosen. */
+  | { screen: 'replay'; run: string; query?: never }
   /** `#replay/<run>/q/<query>?with=<run>`: one query of one run, node by node, optionally beside another run. */
   | { screen: 'replay'; run: string; query: string; with?: string }
   /** `#editor/<name>`: one pipeline, edited on the canvas; `#editor` before one is opened. */
@@ -32,8 +38,9 @@ const enc = encodeURIComponent;
 export function formatHash(route: Route): string {
   switch (route.screen) {
     case 'runs':
+      return route.sel === undefined || route.sel.length === 0 ? '#runs' : `#runs?sel=${route.sel.map(enc).join(',')}`;
     case 'setup':
-      return `#${route.screen}`;
+      return '#setup';
     case 'pipeline':
     case 'editor':
       return route.name === undefined ? `#${route.screen}` : `#${route.screen}/${enc(route.name)}`;
@@ -44,10 +51,20 @@ export function formatHash(route: Route): string {
     }
     case 'replay': {
       if (!('run' in route)) return '#replay';
+      if (route.query === undefined) return `#replay/${enc(route.run)}`;
       const query = route.with === undefined ? '' : `?with=${enc(route.with)}`;
       return `#replay/${enc(route.run)}/q/${enc(route.query)}${query}`;
     }
   }
+}
+
+/**
+ * The view a route shows, apart from the state within it: its hash up to the
+ * query. A change of query alone — Runs' selection, Compare's baseline — is
+ * state within one view, and the shell moves no focus for it.
+ */
+export function viewOf(route: Route): string {
+  return formatHash(route).split('?')[0] as string;
 }
 
 /**
@@ -77,7 +94,20 @@ export function parseHash(hash: string): Route | null {
   switch (screen) {
     case undefined:
       return { screen: 'runs' };
-    case 'runs':
+    case 'runs': {
+      if (rest.length !== 0) return null;
+      // Read from the raw query, split before decoding, so an encoded `,`
+      // stays inside its id.
+      const raw = search.split('&').find((pair) => pair.startsWith('sel='));
+      if (raw === undefined) return { screen };
+      let sel: string[];
+      try {
+        sel = raw.slice('sel='.length).split(',').map((id) => decodeURIComponent(id));
+      } catch {
+        return null;
+      }
+      return sel.every(isValue) ? { screen, sel } : null;
+    }
     case 'setup':
       return rest.length === 0 ? { screen } : null;
     case 'pipeline':
@@ -96,6 +126,7 @@ export function parseHash(hash: string): Route | null {
     case 'replay': {
       const other = query.get('with');
       if (rest.length === 0) return other === null ? { screen } : null;
+      if (rest.length === 1) return other === null && nonEmpty ? { screen, run: rest[0] as string } : null;
       if (rest.length !== 3 || rest[1] !== 'q' || !nonEmpty || (other !== null && !isValue(other))) return null;
       const [run, , q] = rest as [string, string, string];
       return other === null ? { screen, run, query: q } : { screen, run, query: q, with: other };
