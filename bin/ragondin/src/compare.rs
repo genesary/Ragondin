@@ -139,13 +139,12 @@ fn render_value(value: &ParamValue) -> String {
 
 /// One metric's line: both runs' values, and which side scored higher.
 ///
-/// "Higher" is reported, never "better": this module knows no metric's
-/// direction — whether nDCG or wall-clock latency improves by going up or
-/// down — because [`Metrics`](ragondin_experiments::Metrics) fixes no
-/// catalogue of names (quality, cost and latency all land in the same map,
-/// per `docs/system-architecture.md` §6.5). A reader supplies the direction
-/// for the metric they are looking at, exactly as they would reading the
-/// store's own `metrics.json` beside it.
+/// "Higher" is reported, never "better", so that this command's output stays
+/// byte for byte what it has always been. `ragondin-experiments` now reads a
+/// direction off a metric's name (`Direction::of`) for the comparison view,
+/// but rendering it here would change every line a script may parse; a
+/// reader supplies the direction, as they would reading the store's own
+/// `metrics.json` beside it.
 fn render_metric(metric: &MetricComparison) -> String {
     match (metric.left, metric.right) {
         (Some(left), Some(right)) if metric.is_identical() => {

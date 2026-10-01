@@ -20,7 +20,7 @@ view of the product.
 | `Trace` | The stored trace document's one typed definition, converted to and from `TraceDocument` |
 | `terminal`, `ranking_node` | The walk (ADR-C30 § 3): which node's ranking a pipeline's retrieval metrics are read from, with `WalkError` naming where it stops |
 | `conformance` | Behind the `conformance` feature: the suite every `RunStore` backend passes |
-| `compare` | The diff behind `ragondin compare`: metric by metric, and the configuration parameters the two runs differ in |
+| `compare`, `compare_runs` | The diff behind `ragondin compare`: metric by metric, and the configuration parameters the two runs differ in; and the same over a baseline and further runs of one benchmark, behind `POST /compare` |
 
 **Deliberately absent**, and each for its own reason: the **export adapters**
 (MLflow, OpenTelemetry) — additive to the plane and not what a local benchmark
@@ -336,3 +336,44 @@ node's `inputs`, the pipeline's declared inputs — is not listed parameter by
 parameter; whether the two canonical forms hash equal
 (`LogicalPipeline::content_hash`) is carried beside the list, so two
 configurations that differ only there are never reported identical.
+
+## Several runs against a baseline
+
+`compare_runs(baseline, others)` is the comparison the front end's Compare
+screen reads, through `ragondin-api` (the design document § 3): the metric
+table — every metric any run recorded, one value per run, the best of each
+row and each run's delta to the baseline — and the configuration matrix —
+every parameter, family and `impl:` included, whose value is not the same
+in every run, absence included. The columns are the baseline, then the
+others in the order given.
+
+- **`compare` is its two-run case.** Both are built from one metric table
+  and one configuration matrix, so the pairwise diff `ragondin compare`
+  prints cannot drift from the comparison the UI shows. `tests/compare_runs.rs`
+  holds the two to the same answer over two runs, and the binary's output did
+  not change.
+- **Runs of different benchmarks are refused**, by `NotComparable` naming
+  the first such run and both `dataset_version`s: a metric is what a
+  benchmark's ground truth allows, so two benchmarks' figures side by side
+  compare the benchmarks. `compare` keeps answering for any two stored runs,
+  as `ragondin compare` always has.
+- **The ceiling is not here.** A baseline and at most four runs is the design
+  system's — four run inks — and `ragondin-api` refuses a sixth; this
+  function compares however many it is given.
+
+Choices made here (`AGENTS.md` § Rules of engagement):
+
+- **Which way a metric improves is read off its name** (`Direction::of`),
+  since the metrics are no fixed catalogue (§ Local invariants): a name
+  holding `latency` is better lower, every other better higher — as every
+  metric the harness records is. The direction is part of each row, so a
+  reader sees which one was used.
+- **`best` and `deltas` are methods of `MetricRow`**, computed from its
+  values rather than stored beside them: a row cannot hold a best value its
+  values contradict. A tie names every run holding the value; a run that did
+  not record the metric is never the best, and its delta is absent, never
+  zero.
+- **`ConfigurationMatrix::Unavailable` names the run and its column**, the
+  first whose configuration does not lower: the column is what lets
+  `compare` say *left* or *right* even when one run is compared with
+  itself.

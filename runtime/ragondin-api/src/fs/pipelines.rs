@@ -11,12 +11,16 @@ use sha2::{Digest, Sha256};
 use super::{blocking, write_atomically, Workspace};
 use crate::backends::{PipelineFile, PipelineSource, Precondition, Revision};
 use crate::error::ApiError;
-use crate::response::Layout;
+use crate::response::{Layout, NodePair, Pairing};
 use crate::validation;
 
 /// A document's extension, and its layout's.
 const DOCUMENT: &str = ".yaml";
 const LAYOUT: &str = ".layout.json";
+/// The directory a pipeline's manual pairings are kept in, beside it.
+const PAIRING: &str = ".pairing";
+/// The one pairing format this build reads and writes.
+const PAIRING_VERSION: u32 = 1;
 /// The one layout format this build reads and writes.
 const LAYOUT_VERSION: u32 = 1;
 /// A name the router gives a route of its own, `POST /pipelines/validate`,
@@ -301,6 +305,181 @@ impl PipelineSource for FsPipelines {
         })
         .await
     }
+
+    async fn read_pairing(&self, pipeline: &str, other: &str) -> Result<Option<Pairing>, ApiError> {
+        let (this, pipeline, other) = (self.clone(), pipeline.to_owned(), other.to_owned());
+        blocking(move || {
+            this.require(&pipeline)?;
+            this.require(&other)?;
+            if let Some(kept) = this.load_pairing(&pipeline, &other)? {
+                return Ok(Some(kept));
+            }
+            // Kept the other way round: the same pairs, each turned around.
+            Ok(this.load_pairing(&other, &pipeline)?.map(|kept| Pairing {
+                pipeline: kept.other,
+                other: kept.pipeline,
+                pairs: kept
+                    .pairs
+                    .into_iter()
+                    .map(|pair| NodePair {
+                        node: pair.other,
+                        other: pair.node,
+                        label: pair.label,
+                    })
+                    .collect(),
+            }))
+        })
+        .await
+    }
+
+    async fn write_pairing(&self, pairing: &Pairing) -> Result<(), ApiError> {
+        let _writing = self.writing.lock().await;
+        let (this, pairing) = (self.clone(), pairing.clone());
+        blocking(move || {
+            this.require(&pairing.pipeline)?;
+            this.require(&pairing.other)?;
+            let path = this.pairing(&pairing.pipeline, &pairing.other);
+            let directory = this
+                .directory
+                .join(format!("{}{PAIRING}", pairing.pipeline));
+            fs::create_dir_all(&directory).map_err(|error| failed(&directory, error))?;
+            let file = PairingFile {
+                version: PAIRING_VERSION,
+                pipeline: pairing.pipeline.clone(),
+                other: pairing.other.clone(),
+                pairs: pairing
+                    .pairs
+                    .iter()
+                    .map(|pair| FilePair {
+                        node: pair.node.clone(),
+                        other: pair.other.clone(),
+                        label: pair.label.clone(),
+                    })
+                    .collect(),
+            };
+            let mut text =
+                serde_json::to_string_pretty(&file).map_err(|error| ApiError::BackendFailed {
+                    detail: format!("{}: {error}", path.display()),
+                })?;
+            text.push('\n');
+            write_atomically(&path, text.as_bytes()).map_err(|error| failed(&path, error))?;
+            // One pairing per pair of pipelines: one kept the other way round
+            // would be a second truth, read only when this one is gone.
+            this.remove_pairing(&pairing.other, &pairing.pipeline)
+        })
+        .await
+    }
+
+    async fn delete_pairing(&self, pipeline: &str, other: &str) -> Result<(), ApiError> {
+        let _writing = self.writing.lock().await;
+        let (this, pipeline, other) = (self.clone(), pipeline.to_owned(), other.to_owned());
+        blocking(move || {
+            this.require(&pipeline)?;
+            this.require(&other)?;
+            this.remove_pairing(&pipeline, &other)?;
+            this.remove_pairing(&other, &pipeline)
+        })
+        .await
+    }
+}
+
+impl FsPipelines {
+    fn pairing(&self, pipeline: &str, other: &str) -> PathBuf {
+        self.directory
+            .join(format!("{pipeline}{PAIRING}"))
+            .join(format!("{other}.json"))
+    }
+
+    /// The pairing kept as `pipelines/<pipeline>.pairing/<other>.json`, if
+    /// any: refused, never guessed at, when its version is not this build's
+    /// or the names inside are not the two its path gives — a file renamed
+    /// by hand would otherwise pair nodes of another pipeline.
+    fn load_pairing(&self, pipeline: &str, other: &str) -> Result<Option<Pairing>, ApiError> {
+        let path = self.pairing(pipeline, other);
+        let text = match fs::read_to_string(&path) {
+            Ok(text) => text,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(failed(&path, error)),
+        };
+        let file: PairingFile =
+            serde_json::from_str(&text).map_err(|error| ApiError::BackendFailed {
+                detail: format!(
+                    "{}: not a pairing this build reads: {error}",
+                    path.display()
+                ),
+            })?;
+        if file.version != PAIRING_VERSION {
+            return Err(ApiError::BackendFailed {
+                detail: format!(
+                    "{}: pairing version {}, and this build reads version {PAIRING_VERSION}",
+                    path.display(),
+                    file.version
+                ),
+            });
+        }
+        if file.pipeline != pipeline || file.other != other {
+            return Err(ApiError::BackendFailed {
+                detail: format!(
+                    "{}: the file pairs {} with {}, and its path says {pipeline} with {other} — \
+                     renamed by hand? Rename it back, or reset the pairing to automatic",
+                    path.display(),
+                    file.pipeline,
+                    file.other
+                ),
+            });
+        }
+        Ok(Some(Pairing {
+            pipeline: file.pipeline,
+            other: file.other,
+            pairs: file
+                .pairs
+                .into_iter()
+                .map(|pair| NodePair {
+                    node: pair.node,
+                    other: pair.other,
+                    label: pair.label,
+                })
+                .collect(),
+        }))
+    }
+
+    /// Removes `pipelines/<pipeline>.pairing/<other>.json`, and the
+    /// directory once it is empty; absent is already removed.
+    fn remove_pairing(&self, pipeline: &str, other: &str) -> Result<(), ApiError> {
+        let path = self.pairing(pipeline, other);
+        match fs::remove_file(&path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(failed(&path, error)),
+        }
+        // Fails while another pairing is kept there, which is what is meant.
+        if let Some(directory) = path.parent() {
+            let _ = fs::remove_dir(directory);
+        }
+        Ok(())
+    }
+}
+
+/// A pairing as `pipelines/<pipeline>.pairing/<other>.json` holds it: both
+/// pipelines named inside, so that a file renamed by hand is detected.
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PairingFile {
+    version: u32,
+    pipeline: String,
+    other: String,
+    pairs: Vec<FilePair>,
+}
+
+/// One pair as the file holds it: its own type, not the API's `NodePair`,
+/// so that a change to the API cannot change the format on disk unseen.
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FilePair {
+    node: String,
+    other: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    label: Option<String>,
 }
 
 /// The SHA-256 of `bytes`, in lowercase hex.

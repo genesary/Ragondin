@@ -12,7 +12,7 @@ rust-version.workspace = true
 # through any other crate — `scripts/check-invariants.py` walks the closure.
 # Its workspace dependencies are therefore the experiment plane, the core and
 # the benchmarks: `ragondin-experiments` for the `RunStore` trait, the run
-# record and the lowering of a stored configuration; `ragondin-pipeline` for
+# record, the lowering of a stored configuration and the comparison of runs; `ragondin-pipeline` for
 # the `LogicalPipeline` that lowering yields, which the handlers convert into
 # this crate's own graph type; and `ragondin-benchmarks` for the manifest, the
 # digest-verified download and the import the `Registry` file backend

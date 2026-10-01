@@ -28,7 +28,7 @@ use ragondin_experiments::{RunId, RunStore};
 use crate::error::ApiError;
 use ragondin_pipeline::LogicalPipeline;
 
-use crate::response::{BenchmarkEntry, Capabilities, Layout, ServiceBinding};
+use crate::response::{BenchmarkEntry, Capabilities, Layout, Pairing, ServiceBinding};
 
 /// Every backend the router consumes, constructed by the binary and passed in.
 #[derive(Clone)]
@@ -98,6 +98,34 @@ pub trait PipelineSource: Send + Sync {
     ///
     /// `pipeline_not_found` when the pipeline itself is not there.
     async fn write_layout(&self, name: &str, layout: &Layout) -> Result<(), ApiError>;
+
+    /// The manual pairing between the pipelines `pipeline` and `other`, in
+    /// whichever direction it was kept, oriented from `pipeline` — each
+    /// pair's `node` in `pipeline`, its `other` in `other` — or `None` when
+    /// they have none. UI metadata like a layout, never in a hash (INV-8).
+    ///
+    /// # Errors
+    ///
+    /// `pipeline_not_found` when either pipeline is not there;
+    /// `backend_failed` for a pairing this build cannot read, or one that
+    /// names other pipelines than the two it is kept for.
+    async fn read_pairing(&self, pipeline: &str, other: &str) -> Result<Option<Pairing>, ApiError>;
+
+    /// Keeps `pairing` for its two pipelines, replacing any in either
+    /// direction.
+    ///
+    /// # Errors
+    ///
+    /// `pipeline_not_found` when either pipeline is not there.
+    async fn write_pairing(&self, pairing: &Pairing) -> Result<(), ApiError>;
+
+    /// Removes the pairing between `pipeline` and `other`, in either
+    /// direction; removing none is not an error.
+    ///
+    /// # Errors
+    ///
+    /// `pipeline_not_found` when either pipeline is not there.
+    async fn delete_pairing(&self, pipeline: &str, other: &str) -> Result<(), ApiError>;
 }
 
 /// A pipeline's document, as stored.

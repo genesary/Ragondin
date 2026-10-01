@@ -21,7 +21,7 @@ use axum::body::Body;
 use axum::http::{Request, Response};
 use ragondin_api::{
     content_type_for, router, ApiError, Asset, Assets, Backends, BenchmarkEntry, Capabilities,
-    FamilyCapabilities, Job, JobState, Launcher, Layout, PipelineFile, PipelineSource,
+    FamilyCapabilities, Job, JobState, Launcher, Layout, Pairing, PipelineFile, PipelineSource,
     Precondition, ProgressSink, Registry, RunDataset, Server, ServerConfig, ServiceBinding,
     ServiceIdentity, Settings, Submission, WorkspaceSettings,
 };
@@ -294,6 +294,24 @@ impl PipelineSource for FakePipelines {
     }
 
     async fn write_layout(&self, name: &str, _layout: &Layout) -> Result<(), ApiError> {
+        Err(ApiError::PipelineNotFound {
+            name: name.to_owned(),
+        })
+    }
+
+    async fn read_pairing(&self, name: &str, _other: &str) -> Result<Option<Pairing>, ApiError> {
+        Err(ApiError::PipelineNotFound {
+            name: name.to_owned(),
+        })
+    }
+
+    async fn write_pairing(&self, pairing: &Pairing) -> Result<(), ApiError> {
+        Err(ApiError::PipelineNotFound {
+            name: pairing.pipeline.clone(),
+        })
+    }
+
+    async fn delete_pairing(&self, name: &str, _other: &str) -> Result<(), ApiError> {
         Err(ApiError::PipelineNotFound {
             name: name.to_owned(),
         })

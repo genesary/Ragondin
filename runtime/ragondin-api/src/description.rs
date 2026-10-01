@@ -16,11 +16,13 @@ use schemars::generate::SchemaSettings;
 use schemars::SchemaGenerator;
 use serde_json::{json, Map, Value};
 
-use crate::request::{ImportRequest, PipelineDocument, ProbeRequest, ServiceAddress};
+use crate::request::{
+    CompareRequest, ImportRequest, PipelineDocument, ProbeRequest, ServiceAddress,
+};
 use crate::response::{
-    BenchmarkListing, PipelineDetail, PipelineLayout, PipelineListing, PipelineValidated,
-    PipelineWritten, ProbeResult, Problem, QueryTrace, RunDetail, RunListing, RunQueries,
-    ServiceListing, Workspace,
+    BenchmarkListing, Comparison, PipelineDetail, PipelineLayout, PipelineListing,
+    PipelineValidated, PipelineWritten, ProbeResult, Problem, QueryTrace, RunDetail, RunListing,
+    RunQueries, ServiceListing, Workspace,
 };
 
 /// One operation the router serves, as the description declares it.
@@ -89,6 +91,16 @@ pub const OPERATIONS: &[Operation] = &[
         response: "QueryTrace",
         request: None,
         description: None,
+    },
+    Operation {
+        method: "post",
+        path: "/compare",
+        summary: "Runs of one benchmark against a baseline: the metric table, the parameter matrix, the stages with their pairing, the per-query deltas and their bins, and the latency per node.",
+        response: "Comparison",
+        request: Some("CompareRequest"),
+        description: Some(
+            "Two to five runs, each once, the baseline among them. More than five, or runs whose dataset_version differs, is runs_not_comparable (409), naming the ceiling or both versions; there is no comparison across benchmarks. A body's `pairing` — between the baseline's pipeline and another compared run's — is checked first and applied to this comparison, and kept under `pipelines/<pipeline>.pairing/<other>.json` only once the response is built, so a refused request keeps nothing; it is read in both directions after. With no pairs it is removed (\"Reset to automatic\"). A pairing of other pipelines, or a pair naming a node that is not a retriever, fusion or reranker of its pipeline, is request_invalid.",
+        ),
     },
     Operation {
         method: "get",
@@ -209,6 +221,7 @@ fn description() -> Value {
     generator.subschema_for::<RunDetail>();
     generator.subschema_for::<RunQueries>();
     generator.subschema_for::<QueryTrace>();
+    generator.subschema_for::<Comparison>();
     generator.subschema_for::<PipelineListing>();
     generator.subschema_for::<PipelineDetail>();
     generator.subschema_for::<PipelineWritten>();
@@ -223,6 +236,7 @@ fn description() -> Value {
     generator.subschema_for::<ImportRequest>();
     generator.subschema_for::<ServiceAddress>();
     generator.subschema_for::<ProbeRequest>();
+    generator.subschema_for::<CompareRequest>();
     let schemas: Map<String, Value> = generator.take_definitions(true);
 
     let mut paths: BTreeMap<&str, Map<String, Value>> = BTreeMap::new();

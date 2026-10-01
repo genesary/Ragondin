@@ -10,8 +10,8 @@ use ragondin_benchmarks::datasets::{
 use ragondin_benchmarks::manifest::ManifestEntry;
 use ragondin_benchmarks::CarriedPieces;
 use ragondin_experiments::{
-    lower_configuration, Run, RunBinding, RunInputs as StoredInputs, Trace, TraceChunk,
-    TraceSummary,
+    lower_configuration, Direction, ParameterKey, Run, RunBinding, RunInputs as StoredInputs,
+    Trace, TraceChunk, TraceSummary,
 };
 use ragondin_pipeline::{
     produced_kind, LogicalNode, LogicalPipeline, NodeId, ParamValue, ValueKind,
@@ -21,10 +21,10 @@ use crate::backends::RunDataset;
 use crate::derived::NodeFigures;
 use crate::error::ApiError;
 use crate::response::{
-    BenchmarkEntry, BenchmarkState, DatasetCheck, DatasetStatus, DatasetVersions, EdgeKind,
-    FoundVersions, Graph, GraphEdge, GraphInput, GraphNode, GroundTruth, NodeMetrics,
-    ParameterValue, RunDetail, RunInputs, RunSummary, ServiceBinding, TraceNodeView, TracePassage,
-    TraceValue,
+    BenchmarkEntry, BenchmarkState, ConfigurationMatrix, DatasetCheck, DatasetStatus,
+    DatasetVersions, EdgeKind, FoundVersions, Graph, GraphEdge, GraphInput, GraphNode, GroundTruth,
+    MetricDirection, MetricRow, NodeMetrics, ParameterName, ParameterRow, ParameterValue,
+    RunDetail, RunInputs, RunSummary, ServiceBinding, TraceNodeView, TracePassage, TraceValue,
 };
 
 /// One run, as the listing shows it.
@@ -145,6 +145,70 @@ fn node(node: &LogicalNode) -> GraphNode {
             .iter()
             .map(|(key, value)| (key.clone(), parameter(value)))
             .collect(),
+    }
+}
+
+/// A node's component family, as a configuration's `component:` spells it —
+/// the graph's spelling.
+pub(crate) fn family(of: &LogicalNode) -> String {
+    node(of).family
+}
+
+/// The metric table of a comparison, each row's best runs named by id.
+pub(crate) fn metric_rows(comparison: &ragondin_experiments::Comparison) -> Vec<MetricRow> {
+    comparison
+        .metrics
+        .iter()
+        .map(|row| MetricRow {
+            name: row.name.clone(),
+            direction: match row.direction {
+                Direction::HigherIsBetter => MetricDirection::Higher,
+                Direction::LowerIsBetter => MetricDirection::Lower,
+            },
+            values: row.values.clone(),
+            deltas: row.deltas(),
+            best: row
+                .best()
+                .into_iter()
+                .map(|column| comparison.runs[column].to_string())
+                .collect(),
+        })
+        .collect()
+}
+
+/// The configuration matrix of a comparison.
+pub(crate) fn configuration_matrix(
+    matrix: &ragondin_experiments::ConfigurationMatrix,
+) -> ConfigurationMatrix {
+    match matrix {
+        ragondin_experiments::ConfigurationMatrix::Compared {
+            parameters,
+            same_logical_form,
+        } => ConfigurationMatrix::Compared {
+            parameters: parameters
+                .iter()
+                .map(|row| ParameterRow {
+                    node: row.node.as_str().to_owned(),
+                    key: match &row.key {
+                        ParameterKey::Component => ParameterName::Component,
+                        ParameterKey::Impl => ParameterName::Impl,
+                        ParameterKey::Param(name) => ParameterName::Param { name: name.clone() },
+                    },
+                    values: row
+                        .values
+                        .iter()
+                        .map(|value| value.as_ref().map(parameter))
+                        .collect(),
+                })
+                .collect(),
+            same_logical_form: *same_logical_form,
+        },
+        ragondin_experiments::ConfigurationMatrix::Unavailable { run, reason, .. } => {
+            ConfigurationMatrix::Unavailable {
+                run: run.to_string(),
+                reason: reason.clone(),
+            }
+        }
     }
 }
 

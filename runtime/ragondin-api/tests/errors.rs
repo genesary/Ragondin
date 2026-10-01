@@ -364,6 +364,20 @@ async fn method_not_allowed() {
     assert_problem(&body, status, "method_not_allowed");
 }
 
+#[tokio::test]
+async fn runs_not_comparable() {
+    let (status, body) = render(ApiError::RunsNotComparable {
+        detail: "6 runs: a comparison holds a baseline and at most four runs".to_owned(),
+    })
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_problem(&body, status, "runs_not_comparable");
+    assert!(body["detail"]
+        .as_str()
+        .unwrap()
+        .contains("at most four runs"));
+}
+
 #[test]
 fn every_variant_has_a_distinct_code() {
     let codes = ApiError::CODES;
@@ -373,7 +387,7 @@ fn every_variant_has_a_distinct_code() {
     assert_eq!(sorted.len(), codes.len(), "codes are unique: {codes:?}");
     assert_eq!(
         codes.len(),
-        25,
+        26,
         "a variant added without a test here: {codes:?}"
     );
 }

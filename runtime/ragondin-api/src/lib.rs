@@ -35,8 +35,8 @@
 //!   [`Registry`] backend passes.
 //!
 //! Every path is under `/api/v1`, and [`description::OPERATIONS`] lists
-//! them: the workspace, the runs, the pipelines and their layouts, the
-//! benchmarks and the services. `GET /runs/{id}/queries` and
+//! them: the workspace, the runs, the comparison of runs, the pipelines and
+//! their layouts, the benchmarks and the services. `GET /runs/{id}/queries` and
 //! `GET /runs/{id}/trace/{query}` serve derived data — per-query scores,
 //! per-node metrics, passage text — computed on read against the run's own
 //! dataset, cached under the workspace's `cache/`, and never written into the
@@ -67,14 +67,17 @@ pub mod request;
 pub mod response;
 
 mod cache;
+mod comparison;
 mod convert;
 mod derived;
 mod endpoints;
 mod handlers;
 mod layers;
+mod lineage;
+mod stages;
 mod validation;
 
-use endpoints::{benchmarks, pipelines, services};
+use endpoints::{benchmarks, compare, pipelines, services};
 
 pub use assets::{content_type_for, Asset, Assets, NoAssets};
 pub use backends::{
@@ -86,7 +89,7 @@ pub use error::ApiError;
 pub use layers::BUILD_HEADER;
 pub use response::{
     BenchmarkEntry, BenchmarkState, Capabilities, EdgeLocation, FamilyCapabilities, GroundTruth,
-    Layout, Location, Position, Problem, ServiceBinding,
+    Layout, Location, NodePair, Pairing, Position, Problem, ServiceBinding,
 };
 
 /// What the binary fixes when it builds the router.
@@ -150,6 +153,10 @@ pub fn router(backends: Backends, config: ServerConfig, assets: Arc<dyn Assets>)
         .route(
             "/v1/runs/:id/trace/:query",
             get(handlers::trace).fallback(handlers::method_not_allowed),
+        )
+        .route(
+            "/v1/compare",
+            post(compare::compare).fallback(handlers::method_not_allowed),
         )
         .route(
             "/v1/pipelines",

@@ -32,14 +32,18 @@ the response types, the typed errors, and the traits the service consumes.
 | `description` | The API description, assembled from the declared operations and the `schemars` schemas |
 | `derived` | The data derived from a stored run and its benchmark: per-query scores, per-node ranking metrics, the gold filter |
 | `cache` | The workspace's `cache/`: those derived figures, reconstructible, never a truth |
-| `endpoints` | The handlers of the workspace's endpoints: pipelines, benchmarks, services |
+| `endpoints` | The handlers of the workspace's endpoints — pipelines, benchmarks, services — and of `POST /compare` |
+| `stages` | A pipeline's stages, derived from its nodes' kinds and positions, by which a comparison aligns runs |
+| `lineage` | Which workspace pipeline a run is a run of, by canonical hash — interim, pending the decision on run identity |
+| `comparison` | The runs aligned by stage with the pairs drawn by hand, the bins of the per-query deltas, a node's median latency |
 | `validation` | A pipeline document checked as `ragondin validate` checks a file |
 | `fs` | The workspace on disk and its file backends: `Workspace`, `FsSettings`, `FsPipelines`, `FsRegistry` |
 | `conformance` | The suite every `Registry` backend passes, behind the `conformance` feature |
 
 Served today, under `/api/v1`: `GET /workspace`; `GET /runs`,
 `GET /runs/{id}`, `GET /runs/{id}/queries` and `GET /runs/{id}/trace/{query}`
-— the last two described in § *Derived data*; `GET /pipelines`,
+— the last two described in § *Derived data*; `POST /compare`, described
+in § *Compare*; `GET /pipelines`,
 `POST /pipelines/validate`, `GET`/`PUT /pipelines/{name}`,
 `GET`/`PUT /pipelines/{name}/layout`; `GET /benchmarks`,
 `POST /benchmarks/import`; `GET /services`,
@@ -75,8 +79,8 @@ would not see it. The sign in a diff is a `tonic` channel or a generated
 client type in this crate.
 
 Its workspace dependencies today are `ragondin-experiments` — the `RunStore`
-trait, the `Run` record, the typed `Trace`, `lower_configuration`, and the
-walk to a run's ranking node — `ragondin-pipeline`, for the `LogicalPipeline`
+trait, the `Run` record, the typed `Trace`, `lower_configuration`, the
+walk to a run's ranking node, and `compare_runs` — `ragondin-pipeline`, for the `LogicalPipeline`
 that lowering yields,
 `ragondin-benchmarks`, for the manifest, the download, the verification and
 the import the `Registry` file backend is written over, and for the digests
@@ -111,7 +115,7 @@ cluster: the binary picks each backend.
 | Trait | Defined in | Local backend | In a cluster |
 |---|---|---|---|
 | `RunStore` | `ragondin-experiments` | `FileSystemRunStore` there | an object store or volume |
-| `PipelineSource` | here | `fs::FsPipelines`, over `pipelines/<name>.yaml` and its layout | custom resources |
+| `PipelineSource` | here | `fs::FsPipelines`, over `pipelines/<name>.yaml`, its layout and its pairings | custom resources |
 | `WorkspaceSettings` | here | `fs::FsSettings`, over `workspace.toml` | the deployment's bindings, read-only |
 | `Registry` | here | `fs::FsRegistry`, over the benchmark manifest and the datasets directory | an object store and the same manifest |
 | `Launcher` | here | the binary, over the composition root | a run custom resource and the controller |
@@ -251,6 +255,7 @@ and every path derived from it.
   workspace.toml                the datasets directory and the services — deployment data, never hashed
   pipelines/<name>.yaml         a pipeline document, the source of truth
   pipelines/<name>.layout.json  its layout, never in its hash
+  pipelines/<name>.pairing/     its manual pairings, one file per other pipeline — never hashed (§ Compare)
   layouts/                      layouts copied at launch — created here, written by the queue (#349)
   runs/                         the run store, as `bench --store <root>/runs` writes it
   jobs/                         the queue's state — created here, written by the queue (#349)
@@ -486,7 +491,8 @@ when it can be null: `RunDetail::prefix_of`, `Location::node` and
 `Location::edge` carry a `transform` that lists every property as required,
 since `schemars` would otherwise leave an `Option` out and a generated client
 would type it as possibly absent. `Problem::location` and `Problem::etag`,
-each omitted when there is none, stay optional. **A request body refuses a
+each omitted when there is none, stay optional, as does `NodePair::label`,
+which a request may leave out. **A request body refuses a
 field it does not read** (`deny_unknown_fields`), so a misspelled field is
 `request_invalid` rather than dropped; its schema says
 `additionalProperties: false`, which the UI's type generator reads as the
@@ -529,6 +535,7 @@ code.
 | `origin_refused` | 403 | the `Origin` layer refused the request | every path |
 | `route_not_found` | 404 | a path under `/api` that names no endpoint | the API's fallback |
 | `method_not_allowed` | 405 | an endpoint asked for with a method it does not serve; `Allow` lists the ones it does | each endpoint |
+| `runs_not_comparable` | 409 | runs evaluated on different benchmarks — the detail names both `dataset_version`s — or more than a baseline and four runs, naming the ceiling | `POST /compare` |
 
 Choices made here (`AGENTS.md` § Rules of engagement), since the design
 document § 8 lists seven codes and leaves the rest to the implementation:
@@ -575,6 +582,11 @@ document § 8 lists seven codes and leaves the rest to the implementation:
   as bytes and parsed here (`endpoints/mod.rs`); it is not
   `parameter_invalid`, which names a query parameter, so a client can tell
   which part of its request to correct.
+- **`runs_not_comparable` for `POST /compare`**, a 409 as the issue that
+  added it asked: `pipeline_invalid` would tell the client a document is
+  wrong, and `request_invalid` that the body is — here the request is
+  well-formed and the runs it names cannot stand side by side, and the
+  client's action is to pick other runs.
 - **`dataset_absent` and `dataset_differs` have statuses**, 404 and 409, for
   an endpoint that needs the ground truth and cannot degrade: the
   `missing_gold_at` filter, which is a question about qrels. Where an endpoint
@@ -726,13 +738,152 @@ binary's build identity (#365) provides; its doc comment says so.
   load is the cost of every request, so **a memo on keeping a verified
   dataset in memory between requests is owed before the screens that call
   these endpoints per interaction — the matrix (#346) and replay (#350) —
-  land**.
+  land**. `POST /compare` pays the same load, once per comparison.
 
 **Per-node metrics are served by `GET /runs/{id}/queries`**, beside the
 per-query scores they are computed with, and not by `GET /runs/{id}` as the
 design document § 5's table once listed them (its row now points here): the
 detail endpoint reads the store alone, and putting the metrics there would
 make every run's detail load and digest its dataset.
+
+## Compare
+
+`POST /compare` compares runs of one benchmark against a baseline (the
+design document § 3, § 5). Its options travel in the JSON body —
+`{run_ids, baseline, pairing?}`, read as every body is, refusing a field it
+does not read — and never in the query string, which decision #371 has yet
+to settle. Two to five run ids, each once, the baseline among them, or
+`request_invalid`; the response lists the baseline first, then the others
+in the order given.
+
+### The table and the matrix
+
+The metric table — every metric any run recorded, each run's value, the best
+of each row by the direction its name implies, each run's delta to the
+baseline — and the parameter matrix — every parameter not identical across
+the runs — are `ragondin-experiments`' `compare_runs`, converted in
+`convert.rs`: the computation `ragondin compare` prints for two runs, so the
+two cannot drift. Runs of different `dataset_version`s are refused there, and
+answered `runs_not_comparable` naming both. **The ceiling is here**: more than
+five run ids is `runs_not_comparable` naming it, before any run is loaded —
+the design system has four run inks, and a sixth run is refused rather than
+given an invented colour (ADR-016).
+
+### The stages
+
+`stages.rs` derives each run's stages from its lowered graph — nothing but
+the nodes' kinds and positions, read through `ragondin-pipeline`'s public
+surface, so no notion is added to the core (INV-1):
+
+- **retrieval legs** — every retriever node;
+- **after fusion** — the fusion node;
+- **after rerank** — the reranker node;
+- **final ranking** — the node the run's retrieval metrics were read at:
+  ADR-C30 § 3's walk, `ragondin_experiments::ranking_node`, through
+  `derived::Outputs`, the node `GET /runs/{id}/queries` names as
+  `ranking_node`. Every pipeline has one;
+- **answer** — the terminal node, when it produces an answer.
+
+A row is kept for each stage at least one run has, in that order; a run
+without the stage has an `absent` cell — "no stage here", never a zero. A
+present cell lists its nodes, each with its ranking metrics, and per metric
+the best of them with its node — for the legs, the best leg.
+
+Choices made here (`AGENTS.md` § Rules of engagement):
+
+- **Every retriever is a leg.** The narrower rule — a retriever that feeds
+  a fusion or is the ranking output — agrees with it on the dense-only,
+  hybrid and reranked pipelines, and on a retriever feeding a reranker
+  directly gives the leg no stage at all, where this gives it its own.
+- **An ambiguous graph is read by position, and says so.** With two
+  fusions or two rerankers, the one furthest from the inputs — the longest
+  path to it — is the stage, ties by id; that, or a reranker upstream of the
+  fusion, marks the derivation a guess, and the after-fusion and after-rerank
+  rows answer `confidence: low`, so the UI offers the manual pairing.
+- **A stage's metrics are the per-node figures `GET /runs/{id}/queries`
+  serves**, from the same function, `handlers::figures`, and the same cache
+  entry: a stage figure is that endpoint's node row, and the averaging rules
+  stay `derived.rs`'s alone. The dataset is resolved once per comparison —
+  the runs share one `dataset_version` — and loaded as § *Derived data* says;
+  without `verified`, no cell carries a metric and `ground_truth` says why.
+
+### The manual pairing
+
+When the automatic pairing is wrong — two retrievers against one — a person
+pairs nodes by hand. The rows are the baseline's: a pair (the baseline's
+node, the other run's node) moves the other run's node out of the stage its
+kind gives it and into the stage of the baseline's node, and that row then
+answers `source: manual`, under the pair's label when it has one. Only the
+stages a kind decides take part — legs, after fusion, after rerank; the final
+ranking and the answer are the walk's, and a pair never moves them.
+
+- **A run is matched to its workspace pipeline by content — interim
+  behaviour.** A run names no pipeline; until the decision on run → pipeline
+  identity, which is pending, settles it, its pipeline is the one document
+  under `pipelines/` whose canonical hash is the run's (INV-8: the
+  canonical form, never the text), reported as each run's `pipeline`. No
+  document, or several, is `null`, and such a run pairs automatically only.
+  So a document edited since a run no longer names that run, and its pairing
+  reaches the runs of what the file holds now. The index is `lineage.rs`,
+  `pub(crate)` for the pipeline matrix to read too.
+- **Pairings apply between the baseline's pipeline and each other run's**,
+  read with `PipelineSource::read_pairing` and listed, oriented from the
+  baseline's, in the response's `pairings`. A pairing between two runs
+  neither of which is the baseline is not applied — the rows are the
+  baseline's — and the body may not keep one (`request_invalid`): a pairing
+  kept through a comparison is one that comparison shows.
+- **The file**, a choice made here: `pipelines/<pipeline>.pairing/<other>.json`,
+  `{"version": 1, "pipeline": "<pipeline>", "other": "<other>", "pairs":
+  [{"node": "<in pipeline>", "other": "<in other>", "label": "<optional>"}]}`,
+  written and read through types of its own, so a change to the API's
+  `Pairing` cannot change it unseen. Both names are inside, so a file renamed
+  by hand is detected: names that are not the two its path gives, another
+  version, or a file that is not this JSON are `backend_failed`, naming the
+  file — reported, never repaired; a reset removes it. It is UI metadata like
+  a layout, never in a hash (INV-8).
+- **Read in both directions, kept in one.** A read for (B, A) finds the
+  file kept for (A, B) and turns each pair around. A write is whole — beside
+  the file, renamed over it — and removes the file kept the other way round,
+  so one pair of pipelines has one pairing.
+- **Kept through `POST /compare`**, as the design document § 5 gives the
+  body a `pairing`: the body's pairing replaces the one kept for its two
+  pipelines, and one with no pairs removes it — "Reset to automatic". It is
+  checked early, writing nothing — two different pipelines, the baseline's
+  and another compared run's, both in the workspace (`pipeline_not_found`),
+  every node a retriever, fusion or reranker of its pipeline's current
+  document and none paired twice (`request_invalid`) — and applied to the
+  comparison in place of what disk holds. It is written **last**, once the
+  response is built and every step that can refuse has run, so a refused
+  request — an unreadable run, runs not comparable — changes nothing on disk.
+
+### The per-query deltas and their bins
+
+For each run other than the baseline, and each ranking metric both recorded,
+a query's delta is its score in the run minus its score in the baseline —
+the per-query scores of `GET /runs/{id}/queries`, so a query judged on
+nothing, or without a ranking at either output, has none, and
+`judged_queries` counts those that do. Seven bins partition the queries
+with a delta — `much_worse`, `worse`, `slightly_worse`, `unchanged`,
+`slightly_better`, `better`, `much_better` — each with its bounds and its
+queries.
+
+**The bin edges are a choice made in this crate**, not the design's — no
+document of the repository fixes them: the delta's sign, and its absolute
+magnitude against 0.1 and 0.3, applied to every ranking metric alike; **a
+bound belongs to the bin nearer zero** (−0.3 is `worse`, 0.1
+`slightly_better`), so the bins are symmetric; and **`unchanged` is a
+delta of exactly zero.** A per-query score is a deterministic reading of a
+stored trace, so a ranking left as it was gives exactly the same score, and a
+tolerance would be a threshold nobody chose. Moving the edges is a change to
+`comparison::BINS` and `bin_of`.
+
+### The latency
+
+Each run's nodes that ran, in the canonical order, with the median of their
+`duration_nanos` over the queries — the lower of the two middle values over
+an even count, a duration that occurred, a choice made here — and how many
+queries that is. The run's latency percentiles are `metrics.json`'s, in the
+table, and are not recomputed.
 
 ## The assets
 

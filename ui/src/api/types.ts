@@ -80,6 +80,121 @@ export type Capabilities = {
 };
 
 /**
+ * `POST /compare`: the runs to compare, the baseline among them, and
+ * optionally a manual pairing to keep before comparing.
+ */
+export type CompareRequest = {
+  /** The run the others are compared against. */
+  baseline: string;
+  /**
+   * A manual pairing between the baseline's workspace pipeline and
+   * another compared run's: applied to this comparison, then kept —
+   * replacing any — once the answer is built, so a refused request keeps
+   * nothing. With no pairs, it is removed and the two pipelines pair
+   * automatically again. Absent changes nothing.
+   */
+  pairing?: Pairing | null;
+  /**
+   * The runs, by id: two to five, each once, the baseline among them. The
+   * answer puts the baseline first and the others in this order.
+   */
+  run_ids: string[];
+};
+
+/** One run of a comparison. */
+export type ComparedRun = {
+  /** The run's id. */
+  id: string;
+  /**
+   * The workspace pipeline it is a run of: the one pipeline document
+   * whose canonical hash is the run's. `null` when none is — the
+   * document was edited since, or removed — or when several are; such a
+   * run is paired automatically only.
+   */
+  pipeline: string | null;
+  /** The content hash of the canonical logical pipeline it ran. */
+  pipeline_hash: string;
+};
+
+/**
+ * `POST /compare`: runs of one benchmark compared against a baseline.
+ *
+ * Every list with one entry per run — a metric's values, a stage's cells —
+ * is in the order of [`runs`](Self::runs): the baseline first, then the
+ * other runs in the order the request gave them.
+ */
+export type Comparison = {
+  /** The baseline's id. */
+  baseline: string;
+  /**
+   * Why derived figures could not be cached under the workspace's
+   * `cache/`, one entry per failure; empty otherwise. The response is
+   * complete either way.
+   */
+  cache_errors: string[];
+  /** The configuration parameters not identical across the runs. */
+  configuration: ConfigurationMatrix;
+  /**
+   * Whether the benchmark on disk is the one the runs were evaluated on,
+   * which the per-query deltas and the per-stage metrics are read
+   * against. Without `verified`, `query_deltas` is empty and no stage
+   * cell carries a metric; the table, the matrix, the stages and the
+   * latency do not depend on it.
+   */
+  ground_truth: DatasetCheck;
+  /** Each run's latency, node by node. */
+  latency: RunLatency[];
+  /** One row per metric any run recorded, in name order. */
+  metrics: MetricRow[];
+  /**
+   * The manual pairings in use: one per run whose pipeline the workspace
+   * holds a pairing for with the baseline's, oriented from the baseline's
+   * pipeline.
+   */
+  pairings: Pairing[];
+  /**
+   * Each run other than the baseline: its per-query deltas against the
+   * baseline, for every ranking metric both recorded.
+   */
+  query_deltas: RunDeltas[];
+  /** The runs compared, the baseline first. */
+  runs: ComparedRun[];
+  /**
+   * The stages the runs are aligned by, in pipeline order: those at least
+   * one run has.
+   */
+  stages: StageRow[];
+};
+
+/** How sure an automatic pairing is. */
+export type Confidence = "high" | "low";
+
+/**
+ * The configuration parameters not identical across the runs, or why that
+ * could not be said.
+ */
+export type ConfigurationMatrix = {
+  kind: "compared";
+  /**
+   * Every parameter — family and `impl:` name included — whose value
+   * is not the same in every run, sorted by node and key.
+   */
+  parameters: ParameterRow[];
+  /**
+   * Whether every canonical logical form hashes equal: runs that
+   * differ only in their wiring have no row, and are still not one
+   * configuration.
+   */
+  same_logical_form: boolean;
+} | {
+  kind: "unavailable";
+  /** What the parser or the validation pass said. */
+  reason: string;
+  /** That run's id. */
+  run: string;
+};
+
+/**
  * Whether the dataset on disk is the one a run was evaluated on: the
  * benchmark pinned to the run's `dataset_version`, digesting to it — and,
  * for passage text, its derived chunk set digesting to the run's
@@ -114,6 +229,26 @@ export type DatasetVersions = {
   /** The derived chunk set's digest. */
   index_version: string;
 };
+
+/** One bin of the per-query histogram. */
+export type DeltaBin = {
+  /** Which bin. */
+  bin: DeltaBinName;
+  /** How many queries it holds. */
+  count: number;
+  /** Its lower bound; `null` for the lowest. */
+  lower: number | null;
+  /** Those queries, by id. */
+  queries: string[];
+  /** Its upper bound; `null` for the highest. */
+  upper: number | null;
+};
+
+/**
+ * The seven bins of a delta `d`: by its sign, and its magnitude against
+ * 0.1 and 0.3. A bound belongs to the bin nearer zero.
+ */
+export type DeltaBinName = "much_worse" | "worse" | "slightly_worse" | "unchanged" | "slightly_better" | "better" | "much_better";
 
 /** The kind of value travelling along an edge. */
 export type EdgeKind = "query" | "chunks" | "context" | "answer" | "opaque";
@@ -243,6 +378,65 @@ export type Location = {
   node: string | null;
 };
 
+/** One metric's per-query deltas, and their histogram. */
+export type MetricDeltas = {
+  /**
+   * The seven bins, from the worst to the best: they partition the
+   * queries with a delta.
+   */
+  bins: DeltaBin[];
+  /**
+   * Each such query's score in the run minus its score in the baseline,
+   * by query id.
+   */
+  deltas: QueryDelta[];
+  /**
+   * How many queries have a delta: those judged, and scored at both
+   * runs' outputs.
+   */
+  judged_queries: number;
+  /** The metric's name. */
+  metric: string;
+};
+
+/** Which way a metric improves. */
+export type MetricDirection = "higher" | "lower";
+
+/** One metric across the runs compared. */
+export type MetricRow = {
+  /** The runs holding the best value, by `direction`: every one on a tie. */
+  best: string[];
+  /**
+   * Each run's value minus the baseline's; `null` where either did not
+   * record it. The baseline's own is `0`.
+   */
+  deltas: (number | null)[];
+  /**
+   * Which way it improves, read off its name: `lower` for a latency,
+   * `higher` for every other.
+   */
+  direction: MetricDirection;
+  /** The metric's name. */
+  name: string;
+  /** Each run's value; `null` where the run did not record it. */
+  values: (number | null)[];
+};
+
+/** One node's latency over a run's queries. */
+export type NodeLatency = {
+  /** Its component family, as a configuration's `component:` spells it. */
+  family: string;
+  /**
+   * The median of its durations, in nanoseconds: the lower of the two
+   * middle values over an even count, so it is a duration that occurred.
+   */
+  median_nanos: number;
+  /** The node's id. */
+  node: string;
+  /** How many queries it ran for. */
+  queries: number;
+};
+
 /** One node's ranking metrics over the run. */
 export type NodeMetrics = {
   /**
@@ -264,6 +458,63 @@ export type NodeMetrics = {
    * builder, a generator and a node that failed on every query did not.
    */
   produces_ranking: boolean;
+};
+
+/**
+ * Two nodes compared with each other: the second is shown at the first's
+ * stage.
+ */
+export type NodePair = {
+  /**
+   * What the pair compares, replacing the stage's name in the row; absent
+   * for none.
+   */
+  label?: string | null;
+  /** A node of `pipeline`. */
+  node: string;
+  /** A node of `other`. */
+  other: string;
+};
+
+/**
+ * A manual pairing between two pipelines: a list of node pairs, kept under
+ * `pipelines/<pipeline>.pairing/<other>.json` and read in both directions.
+ * Also the body's `pairing` in `POST /compare`, which keeps it.
+ */
+export type Pairing = {
+  /** The pipeline the pairs' `other` belongs to. */
+  other: string;
+  /**
+   * The pairs. Empty in a request: "Reset to automatic", which removes
+   * the pairing.
+   */
+  pairs: NodePair[];
+  /** The pipeline the pairs' `node` belongs to. */
+  pipeline: string;
+};
+
+/** Where a stage's pairing comes from. */
+export type PairingSource = "automatic" | "manual";
+
+/** A node's parameter, as a configuration spells it. */
+export type ParameterName = {
+  kind: "component";
+} | {
+  kind: "impl";
+} | {
+  kind: "param";
+  /** The key. */
+  name: string;
+};
+
+/** One parameter that is not the same in every run. */
+export type ParameterRow = {
+  /** Which of the node's parameters. */
+  key: ParameterName;
+  /** The node it belongs to. */
+  node: string;
+  /** Each run's value; `null` where its configuration does not set it. */
+  values: (ParameterValue | null)[];
 };
 
 /** A node parameter's value. */
@@ -394,7 +645,7 @@ export type Problem = {
    * The stable code a client matches on: one of `ApiError::CODES`, which
    * the schema lists as an enum so a generated client can narrow on it.
    */
-  code: "pipeline_invalid" | "impl_not_in_build" | "service_unreachable" | "run_exists" | "run_unreadable" | "run_not_found" | "query_not_found" | "parameter_invalid" | "dataset_absent" | "dataset_differs" | "benchmark_not_found" | "benchmark_exists" | "download_failed" | "download_cancelled" | "import_refused" | "pipeline_not_found" | "precondition_failed" | "binding_refused" | "service_not_found" | "request_invalid" | "backend_failed" | "host_refused" | "origin_refused" | "route_not_found" | "method_not_allowed";
+  code: "pipeline_invalid" | "impl_not_in_build" | "service_unreachable" | "run_exists" | "run_unreadable" | "run_not_found" | "query_not_found" | "parameter_invalid" | "dataset_absent" | "dataset_differs" | "benchmark_not_found" | "benchmark_exists" | "download_failed" | "download_cancelled" | "import_refused" | "pipeline_not_found" | "precondition_failed" | "binding_refused" | "service_not_found" | "request_invalid" | "backend_failed" | "host_refused" | "origin_refused" | "route_not_found" | "method_not_allowed" | "runs_not_comparable";
   /** What happened, in this occurrence's words. */
   detail: string;
   /**
@@ -416,6 +667,14 @@ export type Problem = {
   title: string;
   /** `urn:ragondin:problem:<code>`. */
   type: string;
+};
+
+/** One query's delta. */
+export type QueryDelta = {
+  /** Its score in the run minus its score in the baseline. */
+  delta: number;
+  /** The query's id. */
+  query: string;
 };
 
 /** One query, as the run executed it. */
@@ -461,6 +720,17 @@ export type QueryTrace = {
   scores: Record<string, number>;
 };
 
+/** One run's per-query deltas against the baseline. */
+export type RunDeltas = {
+  /**
+   * One entry per ranking metric both it and the baseline recorded, in
+   * name order.
+   */
+  metrics: MetricDeltas[];
+  /** The run's id. */
+  run: string;
+};
+
 /** `GET /runs/{id}`: one run, whole. */
 export type RunDetail = {
   /** The `Remote` bindings it used, outside its identity. */
@@ -497,6 +767,14 @@ export type RunInputs = {
   model_hashes: Record<string, string>;
   /** The content hash of the canonical logical pipeline. */
   pipeline: string;
+};
+
+/** One run's latency, node by node. */
+export type RunLatency = {
+  /** Every node that ran, by id. */
+  nodes: NodeLatency[];
+  /** The run's id. */
+  run: string;
 };
 
 /**
@@ -637,6 +915,70 @@ export type SettingsSummary = {
   services: ServiceBinding[];
 };
 
+/** One run at one stage. */
+export type StageCell = {
+  kind: "absent";
+} | {
+  /**
+   * Per metric, the best value among the nodes and the node it is
+   * from — for the legs, the best leg. Empty without a verified
+   * ground truth.
+   */
+  best: Record<string, StageValue>;
+  kind: "present";
+  /**
+   * Each node, in the pipeline's canonical order — several only for
+   * the retrieval legs, or where a pair drawn by hand joined one.
+   */
+  nodes: StageNode[];
+};
+
+/** A stage of a pipeline, in the order a ranking travels through them. */
+export type StageName = "retrieval_legs" | "after_fusion" | "after_rerank" | "final_ranking" | "answer";
+
+/** A node at a stage. */
+export type StageNode = {
+  /**
+   * Its ranking metrics averaged over the judged queries, as
+   * `GET /runs/{id}/queries` reports them; `null` without a verified
+   * ground truth or when it ranked no judged query.
+   */
+  metrics: Record<string, number> | null;
+  /** The node's id. */
+  node: string;
+  /** Whether a pair drawn by hand placed it here. */
+  paired_by_hand: boolean;
+};
+
+/** One stage across the runs compared. */
+export type StageRow = {
+  /** Each run's cell. */
+  cells: StageCell[];
+  /**
+   * `low` when a pipeline's graph was ambiguous at this stage — two
+   * fusions, two rerankers, a reranker upstream of the fusion — and the
+   * automatic pairing is a guess.
+   */
+  confidence: Confidence;
+  /**
+   * What the row compares, in the words of the pair drawn by hand into
+   * it; `null` when no pair named it.
+   */
+  label: string | null;
+  /** `manual` when a pair drawn by hand placed a node in it. */
+  source: PairingSource;
+  /** Which stage. */
+  stage: StageName;
+};
+
+/** A metric's value at a stage, and the node it is read at. */
+export type StageValue = {
+  /** The node. */
+  node: string;
+  /** Its value. */
+  value: number;
+};
+
 /** One node of a query's trace. */
 export type TraceNodeView = {
   /** How long its component took, in nanoseconds. */
@@ -772,6 +1114,14 @@ export type Paths = {
       params: Record<string, never>;
       body: ImportRequest;
       response: BenchmarkEntry;
+    };
+  };
+  "/compare": {
+    /** Runs of one benchmark against a baseline: the metric table, the parameter matrix, the stages with their pairing, the per-query deltas and their bins, and the latency per node. */
+    post: {
+      params: Record<string, never>;
+      body: CompareRequest;
+      response: Comparison;
     };
   };
   "/pipelines": {
