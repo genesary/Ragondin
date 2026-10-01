@@ -16,10 +16,11 @@ const R5 = hex('6');
 const R6 = hex('7');
 const FIQA_RUN = hex('8');
 
-const summary = (id: string, dataset: string): RunSummary => ({ id, pipeline: hex('9'), dataset_version: dataset, index_version: hex('0'), engine_version: '0.0.0', metrics: {} });
+const summary = (id: string, dataset: string): RunSummary => ({ id, pipeline: hex('9'), dataset_version: dataset, index_version: hex('0'), engine_version: '0.0.0', metrics: {}, pipeline_names: [], benchmark_names: [], started_at_ms: null, finished_at_ms: null });
 const LISTING: RunListing = {
   runs: [summary(DENSE, SCIFACT), summary(HYBRID, SCIFACT), summary(RERANK, SCIFACT), summary(R4, SCIFACT), summary(R5, SCIFACT), summary(R6, SCIFACT), summary(FIQA_RUN, OTHER_BENCH)],
   unreadable: [],
+  shapes: {},
 };
 
 const problem = (code: Problem['code'], detail: string, hint: string, status = 409): Problem => ({ type: `urn:ragondin:problem:${code}`, title: code, status, detail, code, hint });

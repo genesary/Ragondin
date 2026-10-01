@@ -331,6 +331,17 @@ release.
   code path. A bound embedder's run-time read goes through `wiring::embedder`
   instead, the adapter the `dense` node is built over, and the probe's
   embedder arm is its own.
+- **`bench` stamps when the run ran, and nothing else does.** The
+  clock is read as `bench::run`'s first statement — before the bindings are
+  parsed and the configuration loaded — so the identity read, the benchmark
+  load, the index build and the embedding count toward the run's time; it is
+  read again once `evaluate` returns `Ok`, before the save. Both readings go
+  through `UnixMillis::from_system_time`, and a clock before the epoch leaves
+  `Run::times` as `None` rather than recording a made-up time. The harness
+  assembles the run with no times, as with no bindings, and `bench` sets both
+  before saving. The times are outside identity (INV-8), and `bench`'s
+  printed summary does not show them, so its output is what it was before
+  they were recorded.
 - **A `Remote` component is bound on the command line, never in the
   configuration (ADR-C32 § 1–§ 3).** `bench --remote <family>/<name>=<uri>`,
   repeatable, binds an `impl:` name — or, for `embedder`, an `embedder:`

@@ -21,9 +21,9 @@ use axum::body::Body;
 use axum::http::{Request, Response};
 use ragondin_api::{
     content_type_for, router, ApiError, Asset, Assets, Backends, BenchmarkEntry, Capabilities,
-    FamilyCapabilities, Job, JobState, Launcher, Layout, Pairing, PipelineFile, PipelineSource,
-    Precondition, ProgressSink, Registry, RunDataset, Server, ServerConfig, ServiceBinding,
-    ServiceIdentity, Settings, Submission, WorkspaceSettings,
+    FamilyCapabilities, Job, JobState, Launcher, Layout, Pairing, PinnedBenchmark, PipelineFile,
+    PipelineSource, Precondition, ProgressSink, Registry, Revision, RunDataset, Server,
+    ServerConfig, ServiceBinding, ServiceIdentity, Settings, Submission, WorkspaceSettings,
 };
 use ragondin_benchmarks::identity::dataset_version;
 use ragondin_benchmarks::Benchmark;
@@ -355,6 +355,113 @@ impl Registry for FakeRegistry {
     async fn dataset(&self, _dataset_version: &str) -> Result<RunDataset, ApiError> {
         Ok(RunDataset::Unknown)
     }
+
+    async fn pinned(&self) -> Result<Vec<PinnedBenchmark>, ApiError> {
+        Ok(Vec::new())
+    }
+}
+
+/// A workspace holding the given documents, by name, in memory: what
+/// `list` answers. Reads and writes nothing else.
+#[derive(Default)]
+pub struct HeldPipelines {
+    pub files: Vec<(String, String)>,
+}
+
+#[async_trait]
+impl PipelineSource for HeldPipelines {
+    async fn list(&self) -> Result<Vec<PipelineFile>, ApiError> {
+        Ok(self
+            .files
+            .iter()
+            .map(|(name, document)| PipelineFile {
+                name: name.clone(),
+                document: document.clone(),
+                revision: Revision::new(name.clone()),
+                modified: std::time::UNIX_EPOCH,
+            })
+            .collect())
+    }
+
+    async fn read(&self, name: &str) -> Result<PipelineFile, ApiError> {
+        FakePipelines.read(name).await
+    }
+
+    async fn write(
+        &self,
+        name: &str,
+        document: &str,
+        precondition: &Precondition,
+    ) -> Result<PipelineFile, ApiError> {
+        FakePipelines.write(name, document, precondition).await
+    }
+
+    async fn read_layout(&self, name: &str) -> Result<Option<Layout>, ApiError> {
+        FakePipelines.read_layout(name).await
+    }
+
+    async fn write_layout(&self, name: &str, layout: &Layout) -> Result<(), ApiError> {
+        FakePipelines.write_layout(name, layout).await
+    }
+
+    async fn read_pairing(&self, name: &str, other: &str) -> Result<Option<Pairing>, ApiError> {
+        FakePipelines.read_pairing(name, other).await
+    }
+
+    async fn write_pairing(&self, pairing: &Pairing) -> Result<(), ApiError> {
+        FakePipelines.write_pairing(pairing).await
+    }
+
+    async fn delete_pairing(&self, name: &str, other: &str) -> Result<(), ApiError> {
+        FakePipelines.delete_pairing(name, other).await
+    }
+}
+
+/// A registry whose entries are pinned to the given digests, as
+/// `(selector, dataset_version)`: what `pinned` answers. Loads, lists,
+/// downloads and imports nothing.
+#[derive(Default)]
+pub struct PinningRegistry {
+    pub pins: Vec<(String, String)>,
+}
+
+#[async_trait]
+impl Registry for PinningRegistry {
+    async fn benchmarks(&self) -> Result<Vec<BenchmarkEntry>, ApiError> {
+        panic!("naming a run's benchmarks verifies no benchmark")
+    }
+
+    async fn verify(&self, name: &str) -> Result<BenchmarkEntry, ApiError> {
+        FakeRegistry.verify(name).await
+    }
+
+    async fn download(
+        &self,
+        name: &str,
+        progress: ProgressSink,
+        cancel: Arc<std::sync::atomic::AtomicBool>,
+    ) -> Result<BenchmarkEntry, ApiError> {
+        FakeRegistry.download(name, progress, cancel).await
+    }
+
+    async fn import(&self, name: &str, path: &Path) -> Result<BenchmarkEntry, ApiError> {
+        FakeRegistry.import(name, path).await
+    }
+
+    async fn dataset(&self, _version: &str) -> Result<RunDataset, ApiError> {
+        panic!("naming a run's benchmarks loads no dataset")
+    }
+
+    async fn pinned(&self) -> Result<Vec<PinnedBenchmark>, ApiError> {
+        Ok(self
+            .pins
+            .iter()
+            .map(|(name, dataset_version)| PinnedBenchmark {
+                name: name.clone(),
+                dataset_version: dataset_version.clone(),
+            })
+            .collect())
+    }
 }
 
 /// A registry holding benchmarks in memory, each on "disk" and verified: a
@@ -410,6 +517,17 @@ impl Registry for FixtureRegistry {
                     benchmark: Arc::clone(benchmark),
                 }
             }))
+    }
+
+    async fn pinned(&self) -> Result<Vec<PinnedBenchmark>, ApiError> {
+        Ok(self
+            .held
+            .iter()
+            .map(|(name, benchmark)| PinnedBenchmark {
+                name: name.clone(),
+                dataset_version: dataset_version(benchmark),
+            })
+            .collect())
     }
 }
 

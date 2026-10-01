@@ -102,21 +102,47 @@ pub struct RunListing {
     /// The runs the store lists and cannot load — reported, never dropped
     /// and never repaired.
     pub unreadable: Vec<UnreadableRun>,
+    /// The shape of every pipeline a readable run ran, once per pipeline,
+    /// keyed by its canonical hash ([`RunSummary::pipeline`]): the graph
+    /// `GET /runs/{id}` serves for a run of it, by the same conversion. A
+    /// pipeline whose every run's stored document no longer lowers has no
+    /// entry, as `GET /runs/{id}` has no graph for it.
+    pub shapes: BTreeMap<String, Graph>,
 }
 
 /// One run, as the listing shows it.
 #[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
+#[schemars(transform = every_property_required)]
 pub struct RunSummary {
     /// The run's content address: 64 lowercase hex digits.
     pub id: String,
     /// The content hash of the canonical logical pipeline it ran.
     pub pipeline: String,
+    /// Every workspace pipeline document whose canonical hash is the run's,
+    /// sorted; empty when none is. Found by content, so a document edited
+    /// since the run no longer names it. Of the two facts ADR-C39 § 4 exposes
+    /// about a run's pipeline, this is the content one; the launch record it
+    /// sits beside is not served yet, and the two are never resolved into one
+    /// name.
+    pub pipeline_names: Vec<String>,
     /// The benchmark dataset's version.
     pub dataset_version: String,
+    /// Every registry entry pinned to [`dataset_version`](Self::dataset_version)
+    /// — a manifest entry or an import — sorted; empty when none is. The
+    /// pinning `GET /runs/{id}/queries` locates the run's dataset by, never
+    /// resolved by closeness (ADR-C36 § 4); naming a benchmark here loads and
+    /// verifies nothing.
+    pub benchmark_names: Vec<String>,
     /// The index's version.
     pub index_version: String,
     /// The engine's version.
     pub engine_version: String,
+    /// When the run started, in milliseconds since the Unix epoch, as the
+    /// process that ran it recorded; `null` when unknown.
+    pub started_at_ms: Option<u64>,
+    /// When the run's evaluation finished, in milliseconds since the Unix
+    /// epoch, as the process that ran it recorded; `null` when unknown.
+    pub finished_at_ms: Option<u64>,
     /// What the run scored, by metric name.
     pub metrics: BTreeMap<String, f64>,
 }
@@ -144,6 +170,12 @@ pub struct RunDetail {
     pub configuration: String,
     /// The `Remote` bindings it used, outside its identity.
     pub bindings: Vec<ServiceBinding>,
+    /// When it started, in milliseconds since the Unix epoch, outside its
+    /// identity; `null` when unknown.
+    pub started_at_ms: Option<u64>,
+    /// When its evaluation finished, in milliseconds since the Unix epoch,
+    /// outside its identity; `null` when unknown.
+    pub finished_at_ms: Option<u64>,
     /// The graph lowered from [`configuration`](Self::configuration) by the
     /// pipeline grammar's one implementation — never by the browser.
     pub graph: Graph,
@@ -579,8 +611,10 @@ pub struct PipelineSummary {
     pub name: String,
     /// The digest of its bytes, the value `If-Match` names to write it.
     pub etag: String,
-    /// When its file was last modified, in milliseconds since the Unix epoch.
-    pub modified_ms: u64,
+    /// When its file was last modified, in milliseconds since the Unix
+    /// epoch; `null` for a time before the epoch, which is unknown, never
+    /// `0`.
+    pub modified_ms: Option<u64>,
     /// The content hash of its canonical logical form, when it validates.
     pub hash: Option<String>,
     /// Why it does not validate, when it does not.

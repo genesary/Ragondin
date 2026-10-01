@@ -9,13 +9,14 @@
 //! saw. A write is checked by the composition root
 //! (`Launcher::check_document`) before it is stored; `validate` is not.
 
-use std::time::UNIX_EPOCH;
+use std::time::SystemTime;
 
 use axum::body::Bytes;
 use axum::extract::{Path, State};
 use axum::http::{header, HeaderMap, HeaderValue};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
+use ragondin_experiments::UnixMillis;
 
 use super::json_body;
 use crate::backends::{PipelineFile, Precondition, Revision};
@@ -37,11 +38,7 @@ pub(crate) async fn list(State(state): State<AppState>) -> Result<Json<PipelineL
             .map(|file| {
                 let (hash, error) = verdict(&file.document);
                 PipelineSummary {
-                    modified_ms: file
-                        .modified
-                        .duration_since(UNIX_EPOCH)
-                        .map(|elapsed| u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX))
-                        .unwrap_or_default(),
+                    modified_ms: modified_ms(file.modified),
                     name: file.name,
                     etag: file.revision.as_str().to_owned(),
                     hash,
@@ -50,6 +47,14 @@ pub(crate) async fn list(State(state): State<AppState>) -> Result<Json<PipelineL
             })
             .collect(),
     }))
+}
+
+/// A file's modification time in milliseconds since the epoch, by the one
+/// rule a time follows everywhere in the API (`UnixMillis`): before the
+/// epoch it is unknown, `None` — never `0`, which is a real time and would
+/// sort as the oldest there is.
+fn modified_ms(modified: SystemTime) -> Option<u64> {
+    UnixMillis::from_system_time(modified).map(UnixMillis::get)
 }
 
 /// `GET /pipelines/{name}`.
@@ -211,4 +216,21 @@ fn with_etag(body: impl IntoResponse, revision: &Revision) -> Response {
         response.headers_mut().insert(header::ETAG, value);
     }
     response
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{Duration, UNIX_EPOCH};
+
+    use super::*;
+
+    #[test]
+    fn a_pre_epoch_modification_time_is_null() {
+        assert_eq!(modified_ms(UNIX_EPOCH - Duration::from_millis(1)), None);
+        assert_eq!(modified_ms(UNIX_EPOCH), Some(0));
+        assert_eq!(
+            modified_ms(UNIX_EPOCH + Duration::from_micros(1999)),
+            Some(1)
+        );
+    }
 }

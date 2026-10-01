@@ -5,9 +5,9 @@ import { compareRefusal, refusal, sanitize, toggle, unknownIds } from './selecti
 const row = (id: string, benchmark: string, over: Partial<RunRow> = {}): RunRow => ({
   source: { kind: 'run', id },
   pipeline: 'p',
-  pipelineName: null,
+  pipelineNames: [],
   benchmark,
-  benchmarkName: benchmark === 'sci' ? 'beir/scifact' : benchmark === 'fiqa' ? 'beir/fiqa' : null,
+  benchmarkNames: benchmark === 'sci' ? ['beir/scifact'] : benchmark === 'fiqa' ? ['beir/fiqa'] : [],
   status: { state: 'done' },
   metrics: [],
   latencyMs: null,

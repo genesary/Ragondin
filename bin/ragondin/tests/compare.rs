@@ -60,6 +60,7 @@ fn a_run(id: RunId, metrics: &[(&str, f64)]) -> Run {
         config: ConfigDocument::new(a_configuration(10)),
         traces: BTreeMap::new(),
         bindings: Vec::new(),
+        times: None,
     }
 }
 

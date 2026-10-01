@@ -2,10 +2,15 @@
 
 mod support;
 
+use std::sync::Arc;
+
 use axum::http::StatusCode;
-use ragondin_experiments::{ConfigDocument, Run};
+use ragondin_experiments::{ConfigDocument, Run, RunTimes, UnixMillis};
 use serde_json::json;
-use support::{app, fixture_run, get, json, send, FakeRunStore, FIXTURE_RUN};
+use support::{
+    app, app_with_backends, fakes, fixture_run, get, json, send, FakeRunStore, HeldPipelines,
+    PinningRegistry, FIXTURE_RUN,
+};
 
 const OTHER_RUN: &str = "00000000000000000000000000000000000000000000000000000000000000aa";
 
@@ -44,7 +49,111 @@ async fn the_listing_holds_every_run_the_store_holds_in_its_order() {
 #[tokio::test]
 async fn an_empty_store_lists_nothing() {
     let body = json(send(app(FakeRunStore::default()), get("/api/v1/runs")).await).await;
-    assert_eq!(body, json!({ "runs": [], "unreadable": [] }));
+    assert_eq!(body, json!({ "runs": [], "unreadable": [], "shapes": {} }));
+}
+
+#[tokio::test]
+async fn the_listing_carries_the_run_s_times_or_null() {
+    let mut timed = another_run();
+    timed.times = Some(RunTimes::new(
+        UnixMillis::new(1_700_000_000_000),
+        UnixMillis::new(1_700_000_004_250),
+    ));
+    let store = || FakeRunStore::holding([fixture_run(), timed.clone()]);
+
+    let body = json(send(app(store()), get("/api/v1/runs")).await).await;
+
+    // Read from the run, never computed: the fixture was stored with no
+    // `times.json`, so both of its times are unknown.
+    assert_eq!(body["runs"][0]["id"], OTHER_RUN);
+    assert_eq!(body["runs"][0]["started_at_ms"], 1_700_000_000_000u64);
+    assert_eq!(body["runs"][0]["finished_at_ms"], 1_700_000_004_250u64);
+    assert_eq!(body["runs"][1]["started_at_ms"], serde_json::Value::Null);
+    assert_eq!(body["runs"][1]["finished_at_ms"], serde_json::Value::Null);
+
+    let detail = json(send(app(store()), get(&format!("/api/v1/runs/{OTHER_RUN}"))).await).await;
+    assert_eq!(detail["started_at_ms"], 1_700_000_000_000u64);
+    assert_eq!(detail["finished_at_ms"], 1_700_000_004_250u64);
+    let detail = json(send(app(store()), get(&format!("/api/v1/runs/{FIXTURE_RUN}"))).await).await;
+    assert_eq!(detail["started_at_ms"], serde_json::Value::Null);
+    assert_eq!(detail["finished_at_ms"], serde_json::Value::Null);
+}
+
+#[tokio::test]
+async fn every_benchmark_pinned_to_the_digest_is_named() {
+    let pinned = fixture_run().inputs.dataset_version;
+    let mut elsewhere = another_run();
+    elsewhere.inputs.dataset_version = "0".repeat(64);
+    let mut backends = fakes(FakeRunStore::holding([fixture_run(), elsewhere]));
+    backends.registry = Arc::new(PinningRegistry {
+        pins: vec![
+            ("squad/mini".to_owned(), pinned.clone()),
+            ("beir/other".to_owned(), "f".repeat(64)),
+            // A manifest entry and an import pinned to one digest: both are
+            // the run's dataset exactly, so both are named, sorted.
+            ("beir/fixture".to_owned(), pinned),
+        ],
+    });
+
+    let body = json(send(app_with_backends(backends), get("/api/v1/runs")).await).await;
+
+    assert_eq!(body["runs"][0]["id"], OTHER_RUN);
+    assert_eq!(body["runs"][0]["benchmark_names"], json!([]));
+    assert_eq!(
+        body["runs"][1]["benchmark_names"],
+        json!(["beir/fixture", "squad/mini"])
+    );
+}
+
+#[tokio::test]
+async fn every_pipeline_sharing_the_hash_is_named() {
+    let text = fixture_run().config.as_str().to_owned();
+    let mut backends = fakes(FakeRunStore::holding([fixture_run()]));
+    backends.pipelines = Arc::new(HeldPipelines {
+        files: vec![
+            // One canonical form, two spellings: the second only adds a
+            // comment, which the canonical form does not see (INV-8).
+            ("stub-copy".to_owned(), format!("# a copy\n{text}")),
+            ("other".to_owned(), "pipeline: {}\n".to_owned()),
+            ("stub".to_owned(), text),
+        ],
+    });
+
+    let body = json(send(app_with_backends(backends), get("/api/v1/runs")).await).await;
+
+    assert_eq!(
+        body["runs"][0]["pipeline_names"],
+        json!(["stub", "stub-copy"])
+    );
+}
+
+#[tokio::test]
+async fn a_run_no_workspace_document_hashes_to_names_no_pipeline() {
+    let body = json(
+        send(
+            app(FakeRunStore::holding([fixture_run()])),
+            get("/api/v1/runs"),
+        )
+        .await,
+    )
+    .await;
+
+    assert_eq!(body["runs"][0]["pipeline_names"], json!([]));
+    assert_eq!(body["runs"][0]["benchmark_names"], json!([]));
+}
+
+#[tokio::test]
+async fn the_listing_carries_each_pipeline_s_shape_once() {
+    // Two runs of one pipeline.
+    let store = || FakeRunStore::holding([fixture_run(), another_run()]);
+
+    let body = json(send(app(store()), get("/api/v1/runs")).await).await;
+    let detail = json(send(app(store()), get(&format!("/api/v1/runs/{FIXTURE_RUN}"))).await).await;
+
+    let shapes = body["shapes"].as_object().expect("the shapes are a map");
+    let hash = fixture_run().inputs.pipeline.to_string();
+    assert_eq!(shapes.keys().collect::<Vec<_>>(), [&hash]);
+    assert_eq!(shapes[&hash], detail["graph"]);
 }
 
 #[tokio::test]

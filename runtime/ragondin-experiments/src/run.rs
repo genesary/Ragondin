@@ -1,5 +1,6 @@
 //! What a run *is*: [`RunId`], [`RunInputs`], [`Metrics`], [`ConfigDocument`],
-//! [`TraceDocument`], [`RunBinding`] and the [`Run`] record that holds them.
+//! [`TraceDocument`], [`RunBinding`], [`RunTimes`] and the [`Run`] record that
+//! holds them.
 //!
 //! A run is one execution of a pipeline over a benchmark, together with its
 //! metrics and its traces, and it is named by the content-addressed tuple of
@@ -20,6 +21,7 @@
 use std::collections::BTreeMap;
 use std::fmt;
 use std::str::FromStr;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use ragondin_pipeline::PipelineHash;
 use ragondin_types::QueryId;
@@ -284,6 +286,73 @@ pub struct RunBinding {
     pub uri: String,
 }
 
+/// A wall-clock time, in whole milliseconds since the Unix epoch.
+///
+/// Built only from a reading taken by whoever stamps it
+/// ([`from_system_time`](Self::from_system_time)), or from a number read back
+/// out of a record ([`new`](Self::new)). A time before the epoch has no value
+/// of this type: it is unknown, and an unknown time is `None` at the call
+/// site, never `0` — which would be a real time, the epoch itself, and would
+/// sort as the oldest run there is.
+///
+/// Serialized as a bare number, because that is what a reader in another
+/// language parses without a schema.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct UnixMillis(u64);
+
+impl UnixMillis {
+    /// Wraps a number of milliseconds since the epoch, as a record stores it.
+    pub fn new(millis: u64) -> Self {
+        Self(millis)
+    }
+
+    /// The time `at`, truncated to the millisecond; `None` before the epoch,
+    /// and `None` past the year 584 million, which `u64` milliseconds cannot
+    /// hold.
+    pub fn from_system_time(at: SystemTime) -> Option<Self> {
+        let since = at.duration_since(UNIX_EPOCH).ok()?;
+        u64::try_from(since.as_millis()).ok().map(Self)
+    }
+
+    /// The number of milliseconds since the epoch.
+    pub fn get(self) -> u64 {
+        self.0
+    }
+}
+
+/// When a run started and finished, by the clock of the process that ran it.
+///
+/// For display and ordering only, and outside identity: not in [`RunInputs`],
+/// and not digested into the [`RunId`] (INV-8), so a run with times and the
+/// same run without them have one id. Nothing is validated: a `finished`
+/// earlier than `started` — a clock stepped back mid-run — is kept as it was
+/// read, because a record that silently reordered or dropped it would be
+/// reporting something nobody measured.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RunTimes {
+    started: UnixMillis,
+    finished: UnixMillis,
+}
+
+impl RunTimes {
+    /// The two readings, as taken.
+    pub fn new(started: UnixMillis, finished: UnixMillis) -> Self {
+        Self { started, finished }
+    }
+
+    /// When the run started: before its preparation, so the identity read,
+    /// the benchmark load and the index build count toward it.
+    pub fn started(&self) -> UnixMillis {
+        self.started
+    }
+
+    /// When the run's evaluation returned, before it was saved.
+    pub fn finished(&self) -> UnixMillis {
+        self.finished
+    }
+}
+
 /// One execution of a pipeline over a benchmark: what identified it, what it
 /// scored, and what it did.
 ///
@@ -305,4 +374,42 @@ pub struct Run {
     /// empty for a run bound to nothing, which is every run stored before
     /// bindings were recorded. Outside identity: see [`RunBinding`].
     pub bindings: Vec<RunBinding>,
+    /// When the run started and finished, stamped by the composition root
+    /// that executed it; `None` when unknown — a run stored before times were
+    /// recorded, or assembled by a caller with no clock reading. Outside
+    /// identity: see [`RunTimes`].
+    pub times: Option<RunTimes>,
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::*;
+
+    #[test]
+    fn a_pre_epoch_time_is_unknown_never_zero() {
+        let before = UNIX_EPOCH - Duration::from_millis(1);
+        assert_eq!(UnixMillis::from_system_time(before), None);
+        // The epoch itself is a time, and it is zero.
+        assert_eq!(
+            UnixMillis::from_system_time(UNIX_EPOCH),
+            Some(UnixMillis::new(0))
+        );
+    }
+
+    #[test]
+    fn millis_truncate() {
+        let almost_two = UNIX_EPOCH + Duration::from_micros(1999);
+        assert_eq!(
+            UnixMillis::from_system_time(almost_two).map(UnixMillis::get),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn unix_millis_serializes_as_a_bare_number() {
+        let json = serde_json::to_string(&UnixMillis::new(1_700_000_000_123)).unwrap();
+        assert_eq!(json, "1700000000123");
+    }
 }

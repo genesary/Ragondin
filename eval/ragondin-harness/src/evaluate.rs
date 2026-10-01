@@ -290,6 +290,9 @@ where
         config: evaluation.config.clone(),
         traces,
         bindings: Vec::new(),
+        // The harness has no clock reading to give: the composition root that
+        // executed the run stamps its times before saving it.
+        times: None,
     })
 }
 

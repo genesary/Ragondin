@@ -39,6 +39,11 @@
 //! 5. **Incomplete run.** A run `tear` has damaged is reported
 //!    [`Incomplete`](RunStoreError::Incomplete) by `load` and by `save`,
 //!    never repaired, and is still listed by `ids`.
+//! 6. **Times.** A run's [`RunTimes`] round-trip when known; a run saved with
+//!    none reads back with none, so a backend never invents a time; a rerun
+//!    under a stored id keeps the first record's times, as it keeps the rest
+//!    of the first record; and a `finished` earlier than `started` reads back
+//!    as written.
 //!
 //! # Why two closures
 //!
@@ -58,7 +63,9 @@ use ragondin_pipeline::PipelineHash;
 use ragondin_types::QueryId;
 use serde_json::json;
 
-use crate::run::{ConfigDocument, Run, RunBinding, RunId, RunInputs, TraceDocument};
+use crate::run::{
+    ConfigDocument, Run, RunBinding, RunId, RunInputs, RunTimes, TraceDocument, UnixMillis,
+};
 use crate::store::{RunStore, RunStoreError};
 
 /// Runs every case against stores built by `fresh`, damaging a stored run
@@ -78,6 +85,10 @@ where
     listing(&fresh());
     non_finite_metric(&fresh());
     incomplete_run(&fresh(), &mut tear);
+    times_round_trip(&fresh());
+    no_times_round_trip_as_none(&fresh());
+    a_rerun_keeps_the_first_record_s_times(&fresh());
+    finished_before_started_reads_back_as_written(&fresh());
 }
 
 fn run_id(byte: u8) -> RunId {
@@ -123,7 +134,74 @@ fn a_run(id: RunId) -> Run {
             name: "vllm".to_owned(),
             uri: "http://localhost:8000".to_owned(),
         }],
+        times: None,
     }
+}
+
+fn times(started: u64, finished: u64) -> RunTimes {
+    RunTimes::new(UnixMillis::new(started), UnixMillis::new(finished))
+}
+
+/// Saves `run` and reads it back, panicking with `case` on any failure.
+fn save_and_load(store: &impl RunStore, run: &Run, case: &str) -> Run {
+    store
+        .save(run)
+        .unwrap_or_else(|error| panic!("{case}: `save` failed: {error}"));
+    store
+        .load(&run.id)
+        .unwrap_or_else(|error| panic!("{case}: `load` failed: {error}"))
+}
+
+fn times_round_trip(store: &impl RunStore) {
+    let mut run = a_run(run_id(0x55));
+    run.times = Some(times(1_700_000_000_000, 1_700_000_004_250));
+    let read = save_and_load(store, &run, "times round trip");
+    assert_eq!(
+        read.times, run.times,
+        "times round trip: the times read back are the times written"
+    );
+    assert_eq!(read, run, "times round trip: and so is the rest of the run");
+}
+
+fn no_times_round_trip_as_none(store: &impl RunStore) {
+    let run = a_run(run_id(0x66));
+    let read = save_and_load(store, &run, "no times round trip");
+    assert_eq!(
+        read.times, None,
+        "no times round trip: a run saved with unknown times reads back unknown — \
+         a backend never invents a time"
+    );
+}
+
+fn a_rerun_keeps_the_first_record_s_times(store: &impl RunStore) {
+    let mut first = a_run(run_id(0x77));
+    first.times = Some(times(1_000, 2_000));
+    save_and_load(store, &first, "rerun keeps the first times");
+
+    let mut rerun = a_run(first.id);
+    rerun.times = Some(times(5_000, 9_000));
+    let kept = save_and_load(store, &rerun, "rerun keeps the first times");
+    assert_eq!(
+        kept.times, first.times,
+        "rerun keeps the first times: the first record wins, times included"
+    );
+
+    // Nor does a rerun with no times erase the ones stored.
+    let mut unknown = a_run(first.id);
+    unknown.times = None;
+    let kept = save_and_load(store, &unknown, "rerun keeps the first times");
+    assert_eq!(kept.times, first.times, "rerun keeps the first times");
+}
+
+fn finished_before_started_reads_back_as_written(store: &impl RunStore) {
+    let mut run = a_run(run_id(0x88));
+    run.times = Some(times(9_000, 1_000));
+    let read = save_and_load(store, &run, "finished before started");
+    assert_eq!(
+        read.times, run.times,
+        "finished before started: stored and read back as written, neither \
+         refused nor reordered"
+    );
 }
 
 fn round_trip(store: &impl RunStore) {

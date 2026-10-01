@@ -27,16 +27,46 @@ use crate::response::{
     RunDetail, RunInputs, RunSummary, ServiceBinding, TraceNodeView, TracePassage, TraceValue,
 };
 
-/// One run, as the listing shows it.
-pub(crate) fn summary(run: &Run) -> RunSummary {
+/// One run, as the listing shows it, with the names the request found for
+/// it: the workspace pipelines sharing its hash and the benchmarks pinned to
+/// its digest, each sorted here.
+pub(crate) fn summary(
+    run: &Run,
+    mut pipeline_names: Vec<String>,
+    mut benchmark_names: Vec<String>,
+) -> RunSummary {
+    pipeline_names.sort();
+    benchmark_names.sort();
+    let (started_at_ms, finished_at_ms) = times(run);
     RunSummary {
         id: run.id.to_string(),
         pipeline: run.inputs.pipeline.to_string(),
+        pipeline_names,
         dataset_version: run.inputs.dataset_version.clone(),
+        benchmark_names,
         index_version: run.inputs.index_version.clone(),
         engine_version: run.inputs.engine_version.clone(),
+        started_at_ms,
+        finished_at_ms,
         metrics: metrics(run),
     }
+}
+
+/// The run's times as the API spells them, read from the run and never
+/// computed: both `None` when the run recorded none.
+fn times(run: &Run) -> (Option<u64>, Option<u64>) {
+    match run.times {
+        Some(times) => (Some(times.started().get()), Some(times.finished().get())),
+        None => (None, None),
+    }
+}
+
+/// The shape `GET /runs/{id}` serves for `run`: the graph lowered from its
+/// stored document; `None` when the document no longer lowers.
+pub(crate) fn shape(run: &Run) -> Option<Graph> {
+    lower_configuration(&run.config)
+        .ok()
+        .map(|pipeline| graph(&pipeline))
 }
 
 /// One run, whole: its stored fields and the graph lowered from its stored
@@ -47,12 +77,15 @@ pub(crate) fn detail(run: &Run) -> Result<RunDetail, ApiError> {
         run_id: run.id.to_string(),
         reason,
     })?;
+    let (started_at_ms, finished_at_ms) = times(run);
     Ok(RunDetail {
         id: run.id.to_string(),
         inputs: inputs(&run.inputs),
         metrics: metrics(run),
         configuration: run.config.as_str().to_owned(),
         bindings: run.bindings.iter().map(binding).collect(),
+        started_at_ms,
+        finished_at_ms,
         graph: graph(&pipeline),
         prefix_of: None,
     })

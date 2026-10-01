@@ -11,9 +11,9 @@ const ID = 'a1b2c3d4e5f6'.padEnd(64, '0');
 const done = (over: Partial<RunRow> = {}): RunRow => ({
   source: { kind: 'run', id: ID },
   pipeline: 'p'.repeat(64),
-  pipelineName: 'hybrid',
+  pipelineNames: ['hybrid'],
   benchmark: 'd'.repeat(64),
-  benchmarkName: 'beir/scifact',
+  benchmarkNames: ['beir/scifact'],
   status: { state: 'done' },
   metrics: [],
   latencyMs: null,

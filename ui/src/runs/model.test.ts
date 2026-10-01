@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { Graph, RunListing } from '../api/types.ts';
+import type { Graph, RunListing, RunSummary } from '../api/types.ts';
 import { benchmarkLabel, formatMetric, groupRows, openRoute, rowKey, rowsFromListing, runningLabel, shapeOf, shortHash, type RunRow } from './model.ts';
 
 const hex = (c: string) => c.repeat(64);
@@ -7,9 +7,9 @@ const hex = (c: string) => c.repeat(64);
 const row = (id: string, over: Partial<RunRow> = {}): RunRow => ({
   source: { kind: 'run', id },
   pipeline: hex('p'),
-  pipelineName: null,
+  pipelineNames: [],
   benchmark: hex('b'),
-  benchmarkName: null,
+  benchmarkNames: [],
   status: { state: 'done' },
   metrics: [],
   latencyMs: null,
@@ -20,15 +20,25 @@ const row = (id: string, over: Partial<RunRow> = {}): RunRow => ({
 
 const ids = (rows: RunRow[]) => rows.map((r) => r.source.id);
 
+const summary = (id: string, over: Partial<RunSummary> = {}): RunSummary => ({
+  id,
+  pipeline: hex('a'),
+  pipeline_names: [],
+  dataset_version: hex('d'),
+  benchmark_names: [],
+  index_version: hex('i'),
+  engine_version: '0',
+  started_at_ms: null,
+  finished_at_ms: null,
+  metrics: {},
+  ...over,
+});
+
+const listingOf = (...runs: RunSummary[]): RunListing => ({ runs, unreadable: [], shapes: {} });
+
 describe('rowsFromListing', () => {
   it('reads every summary as a done run row keyed by its pipeline hash and its dataset version, in listing order', () => {
-    const listing: RunListing = {
-      runs: [
-        { id: hex('1'), pipeline: hex('a'), dataset_version: hex('d'), index_version: hex('i'), engine_version: '0.0.0', metrics: { 'ndcg@10': 0.5, mrr: 0.25 } },
-        { id: hex('2'), pipeline: hex('c'), dataset_version: hex('e'), index_version: hex('i'), engine_version: '0.0.0', metrics: {} },
-      ],
-      unreadable: [],
-    };
+    const listing = listingOf(summary(hex('1'), { metrics: { 'ndcg@10': 0.5, mrr: 0.25 } }), summary(hex('2'), { pipeline: hex('c'), dataset_version: hex('e') }));
     const rows = rowsFromListing(listing);
     expect(rows.map((r) => [r.source, r.pipeline, r.benchmark, r.status.state])).toEqual([
       [{ kind: 'run', id: hex('1') }, hex('a'), hex('d'), 'done'],
@@ -37,29 +47,36 @@ describe('rowsFromListing', () => {
   });
 
   it('keeps the metrics as the run recorded them, in one group whose family the listing does not say', () => {
-    const listing: RunListing = {
-      runs: [{ id: hex('1'), pipeline: hex('a'), dataset_version: hex('d'), index_version: hex('i'), engine_version: '0', metrics: { mrr: 0.25, 'ndcg@10': 0.5 } }],
-      unreadable: [],
-    };
+    const listing = listingOf(summary(hex('1'), { metrics: { mrr: 0.25, 'ndcg@10': 0.5 } }));
     expect(rowsFromListing(listing)[0]?.metrics).toEqual([
       { family: null, metrics: [{ name: 'mrr', value: 0.25 }, { name: 'ndcg@10', value: 0.5 }] },
     ]);
   });
 
   it('gives a run that recorded no metric no group at all, so no empty cell is drawn', () => {
-    const listing: RunListing = {
-      runs: [{ id: hex('1'), pipeline: hex('a'), dataset_version: hex('d'), index_version: hex('i'), engine_version: '0', metrics: {} }],
-      unreadable: [],
-    };
-    expect(rowsFromListing(listing)[0]?.metrics).toEqual([]);
+    expect(rowsFromListing(listingOf(summary(hex('1'))))[0]?.metrics).toEqual([]);
   });
 
   it('leaves what the listing does not carry empty rather than invented', () => {
-    const listing: RunListing = {
-      runs: [{ id: hex('1'), pipeline: hex('a'), dataset_version: hex('d'), index_version: hex('i'), engine_version: '0', metrics: {} }],
-      unreadable: [],
-    };
-    expect(rowsFromListing(listing)[0]).toMatchObject({ pipelineName: null, benchmarkName: null, latencyMs: null, startedAt: null, prefix: null });
+    expect(rowsFromListing(listingOf(summary(hex('1'))))[0]).toMatchObject({ pipelineNames: [], benchmarkNames: [], latencyMs: null, startedAt: null, prefix: null });
+  });
+
+  it('carries every pipeline and benchmark name the listing gives, and the start time as an instant', () => {
+    const [read] = rowsFromListing(listingOf(summary(hex('1'), { pipeline_names: ['hybrid', 'hybrid-copy'], benchmark_names: ['beir/scifact', 'scifact-local'], started_at_ms: Date.UTC(2026, 8, 30, 14, 3) })));
+    expect(read).toMatchObject({ pipelineNames: ['hybrid', 'hybrid-copy'], benchmarkNames: ['beir/scifact', 'scifact-local'], startedAt: '2026-09-30T14:03:00.000Z' });
+  });
+
+  it('runs sort most recent first, unknown last, ties by id', () => {
+    const sorted = rowsFromListing(
+      listingOf(
+        summary(hex('3'), { started_at_ms: null }),
+        summary(hex('2'), { started_at_ms: 1000 }),
+        summary(hex('9'), { started_at_ms: 2000 }),
+        summary(hex('1'), { started_at_ms: null }),
+        summary(hex('4'), { started_at_ms: 2000 }),
+      ),
+    );
+    expect(ids(sorted)).toEqual([hex('4'), hex('9'), hex('2'), hex('1'), hex('3')]);
   });
 });
 
@@ -88,35 +105,35 @@ describe('the running state', () => {
 });
 
 describe('groupRows', () => {
-  it('groups by pipeline name when there is one, keeping the order each group first appears in', () => {
+  it('groups by canonical hash, keeping the order each group first appears in, with every name the pipeline has', () => {
     const groups = groupRows([
-      row('1', { pipeline: hex('a'), pipelineName: 'hybrid' }),
-      row('2', { pipeline: hex('c'), pipelineName: 'dense' }),
-      row('3', { pipeline: hex('a'), pipelineName: 'hybrid' }),
+      row('1', { pipeline: hex('a'), pipelineNames: ['hybrid', 'hybrid-copy'] }),
+      row('2', { pipeline: hex('c'), pipelineNames: ['dense'] }),
+      row('3', { pipeline: hex('a'), pipelineNames: ['hybrid', 'hybrid-copy'] }),
     ]);
-    expect(groups.map((g) => [g.key, g.name, ids(g.rows)])).toEqual([
-      ['hybrid', 'hybrid', ['1', '3']],
-      ['dense', 'dense', ['2']],
+    expect(groups.map((g) => [g.key, g.names, ids(g.rows)])).toEqual([
+      [hex('a'), ['hybrid', 'hybrid-copy'], ['1', '3']],
+      [hex('c'), ['dense'], ['2']],
     ]);
   });
 
-  it('groups by canonical hash when the pipeline has no name', () => {
+  it('names no pipeline when no workspace document has the hash', () => {
     const groups = groupRows([row('1', { pipeline: hex('a') }), row('2', { pipeline: hex('a') }), row('3', { pipeline: hex('c') })]);
-    expect(groups.map((g) => [g.key, g.name, g.rows.length])).toEqual([
-      [hex('a'), null, 2],
-      [hex('c'), null, 1],
+    expect(groups.map((g) => [g.key, g.names, g.rows.length])).toEqual([
+      [hex('a'), [], 2],
+      [hex('c'), [], 1],
     ]);
   });
 
-  it('puts a prefix run inside its parent pipeline’s group when the parent is named by its name', () => {
-    const groups = groupRows([row('1', { pipeline: hex('a'), pipelineName: 'hybrid' }), row('2', { pipeline: hex('f'), prefix: { parent: 'hybrid', upTo: 'rerank' } })]);
+  it('puts a prefix run inside its parent pipeline’s group when the parent is named by one of its names', () => {
+    const groups = groupRows([row('1', { pipeline: hex('a'), pipelineNames: ['hybrid', 'other'] }), row('2', { pipeline: hex('f'), prefix: { parent: 'other', upTo: 'rerank' } })]);
     expect(groups).toHaveLength(1);
     expect(ids(groups[0]?.rows ?? [])).toEqual(['1', '2']);
   });
 
-  it('puts a prefix run inside its parent pipeline’s group when the parent is named by its hash, though the group is keyed by its name', () => {
-    const groups = groupRows([row('1', { pipeline: hex('a'), pipelineName: 'hybrid' }), row('2', { pipeline: hex('f'), prefix: { parent: hex('a'), upTo: 'rerank' } })]);
-    expect(groups.map((g) => [g.key, ids(g.rows)])).toEqual([['hybrid', ['1', '2']]]);
+  it('puts a prefix run inside its parent pipeline’s group when the parent is named by its hash', () => {
+    const groups = groupRows([row('1', { pipeline: hex('a'), pipelineNames: ['hybrid'] }), row('2', { pipeline: hex('f'), prefix: { parent: hex('a'), upTo: 'rerank' } })]);
+    expect(groups.map((g) => [g.key, ids(g.rows)])).toEqual([[hex('a'), ['1', '2']]]);
   });
 
   it('puts a prefix run inside the group of the run its parent is named by', () => {
@@ -124,18 +141,17 @@ describe('groupRows', () => {
     expect(groups.map((g) => ids(g.rows))).toEqual([['r1', '2']]);
   });
 
-  it('gives a prefix run whose parent has no run here a group of the parent’s own, so it is still shown', () => {
+  it('gives a prefix run whose parent has no run here a group of the parent’s own, so it is still shown, with no shape', () => {
     const groups = groupRows([row('2', { pipeline: hex('f'), prefix: { parent: 'hybrid', upTo: 'rerank' } })]);
-    expect(groups.map((g) => [g.key, g.name, ids(g.rows), g.shapeFrom])).toEqual([['hybrid', null, ['2'], null]]);
+    expect(groups.map((g) => [g.key, g.names, ids(g.rows), g.shapeKey])).toEqual([['hybrid', [], ['2'], null]]);
   });
 
-  it('takes a group’s pipeline — for its shape and its link — from a run of its own, not a prefix and not a job', () => {
+  it('takes a group’s pipeline — for its shape and its link — from a row of its own, not a prefix', () => {
     const groups = groupRows([
-      row('2', { pipeline: hex('f'), prefix: { parent: 'hybrid', upTo: 'rerank' } }),
-      row('j', { pipeline: hex('a'), pipelineName: 'hybrid', source: { kind: 'job', id: 'j', runId: null }, status: { state: 'queued' } }),
-      row('1', { pipeline: hex('a'), pipelineName: 'hybrid' }),
+      row('2', { pipeline: hex('f'), prefix: { parent: hex('a'), upTo: 'rerank' } }),
+      row('1', { pipeline: hex('a'), pipelineNames: ['hybrid'] }),
     ]);
-    expect(groups[0]).toMatchObject({ key: 'hybrid', name: 'hybrid', pipeline: hex('a'), shapeFrom: '1' });
+    expect(groups[0]).toMatchObject({ key: hex('a'), names: ['hybrid'], pipeline: hex('a'), shapeKey: hex('a') });
   });
 });
 
@@ -144,8 +160,9 @@ describe('labels', () => {
     expect(shortHash(hex('a'))).toBe('aaaaaaaaaaaa');
   });
 
-  it('names a benchmark by its name, or by its short dataset digest when it has none', () => {
-    expect(benchmarkLabel(row('1', { benchmarkName: 'beir/scifact' }))).toBe('beir/scifact');
+  it('names a benchmark by every name pinned to its digest, or by its short dataset digest when it has none', () => {
+    expect(benchmarkLabel(row('1', { benchmarkNames: ['beir/scifact'] }))).toBe('beir/scifact');
+    expect(benchmarkLabel(row('1', { benchmarkNames: ['beir/scifact', 'scifact-local'] }))).toBe('beir/scifact, scifact-local');
     expect(benchmarkLabel(row('1', { benchmark: hex('d') }))).toBe('dataset dddddddddddd');
   });
 

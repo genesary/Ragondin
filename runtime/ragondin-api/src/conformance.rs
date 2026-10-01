@@ -48,6 +48,9 @@
 //!    disk is `Absent`, and a digest nothing is pinned to is `Unknown`; a
 //!    downloaded benchmark whose content is then changed is `Differs`, with
 //!    the digest found, and one then broken is `Unreadable`.
+//! 8. **Pins.** [`Registry::pinned`] names `obtainable` with its
+//!    `dataset_version` before anything is downloaded, as after, and an
+//!    import with the digest it recorded, no name twice.
 //!
 //! # Why a fixture
 //!
@@ -68,7 +71,7 @@ use std::sync::{Arc, Mutex};
 
 use ragondin_benchmarks::identity::dataset_version;
 
-use crate::backends::{DownloadProgress, Registry, RunDataset};
+use crate::backends::{DownloadProgress, PinnedBenchmark, Registry, RunDataset};
 use crate::error::ApiError;
 use crate::response::{BenchmarkEntry, BenchmarkState, GroundTruth};
 
@@ -120,6 +123,7 @@ where
     run_dataset(fresh(), fresh()).await;
     altered_dataset(fresh(), Alteration::ChangeContent).await;
     altered_dataset(fresh(), Alteration::Break).await;
+    pinned(fresh(), fresh()).await;
 }
 
 fn not_cancelled() -> Arc<AtomicBool> {
@@ -387,6 +391,66 @@ async fn run_dataset<R: Registry>(fixture: RegistryFixture<R>, untouched: Regist
         matches!(unknown, RunDataset::Unknown),
         "dataset: a digest nothing is pinned to is {unknown:?}, not unknown"
     );
+}
+
+async fn pinned<R: Registry>(fixture: RegistryFixture<R>, untouched: RegistryFixture<R>) {
+    let name = fixture.obtainable.as_str();
+    let downloaded = fixture
+        .registry
+        .download(name, Arc::new(|_| {}), not_cancelled())
+        .await
+        .unwrap_or_else(|error| panic!("pinned: {name} does not download: {error}"));
+    let BenchmarkState::Ready {
+        dataset_version: version,
+    } = &downloaded.state
+    else {
+        panic!("pinned: {name} is {:?}, not ready", downloaded.state);
+    };
+    let pin = |name: &str, version: &str| PinnedBenchmark {
+        name: name.to_owned(),
+        dataset_version: version.to_owned(),
+    };
+
+    // A manifest entry is pinned to its digest whether or not it is on disk:
+    // the pinning is the manifest's, and nothing is loaded to answer.
+    let before = untouched
+        .registry
+        .pinned()
+        .await
+        .unwrap_or_else(|error| panic!("pinned: a fresh registry does not answer: {error}"));
+    assert!(
+        before.contains(&pin(name, version)),
+        "pinned: {name} is pinned to {version} before any download, got {before:?}"
+    );
+
+    let imported = fixture
+        .registry
+        .import("pinned-import", &fixture.importable)
+        .await
+        .unwrap_or_else(|error| panic!("pinned: the fixture does not import: {error}"));
+    let BenchmarkState::Local {
+        dataset_version: imported_version,
+    } = &imported.state
+    else {
+        panic!("pinned: {:?} is not local", imported.state);
+    };
+    let after = fixture
+        .registry
+        .pinned()
+        .await
+        .unwrap_or_else(|error| panic!("pinned: does not answer: {error}"));
+    assert!(
+        after.contains(&pin(name, version)),
+        "pinned: {name} is still pinned to {version}, got {after:?}"
+    );
+    assert!(
+        after.contains(&pin(&imported.name, imported_version)),
+        "pinned: an import is pinned to the digest it recorded, got {after:?}"
+    );
+    let mut names: Vec<&str> = after.iter().map(|pinned| pinned.name.as_str()).collect();
+    names.sort_unstable();
+    names.dedup();
+    assert_eq!(names.len(), after.len(), "pinned: no name twice: {after:?}");
 }
 
 async fn altered_dataset<R: Registry>(fixture: RegistryFixture<R>, alteration: Alteration) {
