@@ -62,8 +62,9 @@ Six invariants are enforced as blocking CI checks, not just documented:
   `ragondin-api`, which answers the browser, depends on no crate under
   `engine/` or `components/`, nor on `ragondin-remote`, directly or through
   another crate. Code that needs the engine goes behind the `Launcher` trait,
-  which the binary implements. One blind spot is left to review:
-  `ragondin-proto` is reachable through `ragondin-config`.
+  which the binary implements. One blind spot is left to review: once the
+  M7 `Stream` source declares it, `ragondin-proto` is reachable through
+  `ragondin-config`.
 
 Run them directly with `just check-invariants` (implemented in
 `scripts/check-invariants.py`). If a check blocks you, it is the architecture

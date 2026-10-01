@@ -349,7 +349,7 @@ fn check_uri(uri: &str) -> Result<(), &'static str> {
 
 #[cfg(test)]
 mod tests {
-    use ragondin_pipeline::{validate, RawPipeline};
+    use ragondin_pipeline::LogicalPipeline;
 
     use super::*;
 
@@ -517,8 +517,7 @@ mod tests {
 
     fn pipeline(nodes: &str) -> LogicalPipeline {
         let yaml = format!("pipeline:\n  inputs: [question]\n  nodes:\n{nodes}");
-        let raw: RawPipeline = serde_yaml::from_str(&yaml).expect("the fixture parses");
-        validate(raw).expect("the fixture validates")
+        ragondin_config::parse_document(&yaml).expect("the fixture loads")
     }
 
     #[cfg(feature = "remote")]

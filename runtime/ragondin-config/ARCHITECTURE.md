@@ -13,9 +13,12 @@ YAML run locally **is** the Kubernetes custom resource, modulo the wire format.
 
 | Piece | Role |
 |---|---|
+| `parse_document` | The one definition of a pipeline document's load, over text |
+| `DocumentError` | Its three refusals, with no path: version, parse, validation |
+| `incompatible_wiring` | The report for an edge of the wrong kind, naming a given subject |
 | `ConfigSource` | The trait a binary holds, as `Box<dyn ConfigSource>` |
-| `LocalFile` | The one implementation: a YAML file on disk (standalone, P2) |
-| `ConfigError` | Four typed diagnoses, one per thing the reader must do |
+| `LocalFile` | The one implementation: a YAML file on disk (standalone, P2), read and handed to `parse_document` |
+| `ConfigError` | Four typed diagnoses, one per thing the reader must do, each naming the file |
 
 `Stream` — a configuration pushed from the controller over the
 configuration-delivery service — is **M7 and deliberately absent**.
@@ -55,6 +58,18 @@ nothing here presupposes an answer to it.
   the shape #198 is open on; that issue's subject is the component contract
   rather than this one, and a configuration is read once, at startup, off a
   local file — never per request on a serving path.
-- **`ragondin-proto` is declared and unused.** The edge
-  `docs/code-architecture.md` §4.3 draws, kept so that M7 adds a source rather
-  than a dependency.
+- **The load is defined once, here, and takes text.** `parse_document` is
+  what `LocalFile` runs over a file's contents, what `ragondin-api` runs over
+  a request's body and what `ragondin-experiments` runs over a stored run's
+  configuration; `incompatible_wiring` is the report both `ragondin validate`
+  and `POST /pipelines/validate` print. A caller adds only its own words
+  around the verdict — a path, a problem body, a sentence about a stored run.
+  A second reader of the format written beside these is the drift this rules
+  out.
+- **The closure stays light, because two planes depend on this crate.**
+  `ragondin-api` and `ragondin-experiments` reach `parse_document` through it,
+  so its normal dependencies are `ragondin-pipeline`, `serde_yaml`,
+  `thiserror` and `async-trait`. `ragondin-proto`, the edge
+  `docs/code-architecture.md` §4.3 draws for the `Stream` source, is not
+  declared: it would carry `tonic` and `prost` into both planes for nothing.
+  The M7 work adds it with the source that uses it.

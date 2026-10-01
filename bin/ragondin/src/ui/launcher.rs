@@ -354,9 +354,7 @@ mod tests {
 
     fn pipeline(nodes: &str) -> ragondin_pipeline::LogicalPipeline {
         let yaml = format!("pipeline:\n  inputs: [question]\n  nodes:\n{nodes}");
-        let raw: ragondin_pipeline::RawPipeline =
-            serde_yaml::from_str(&yaml).expect("the fixture parses");
-        ragondin_pipeline::validate(raw).expect("the fixture validates")
+        ragondin_config::parse_document(&yaml).expect("the fixture loads")
     }
 
     const CROSS_ENCODER_NODE: &str = "    - id: lexical\n      component: retriever\n      \

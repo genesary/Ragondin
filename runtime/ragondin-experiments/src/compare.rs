@@ -15,17 +15,15 @@
 //! inputs — is not listed parameter by parameter; whether the two canonical
 //! forms hash equal is carried beside the list, so a difference there is
 //! still reported. Both documents are lowered to [`LogicalPipeline`] first,
-//! through `ragondin-pipeline`'s own [`RawPipeline`] and [`validate()`], so
-//! the difference is one between canonical logical forms and never between
+//! through `ragondin-config`'s [`parse_document`] — into `ragondin-pipeline`'s
+//! wire schema, then through its validation pass — so the difference is one between canonical logical forms and never between
 //! texts (the spirit of INV-8): a document respelled — keys reordered, flow
 //! style for block style — differs in nothing.
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use ragondin_pipeline::{
-    peek_schema_version, validate, LogicalNode, LogicalPipeline, NodeId, ParamValue, RawPipeline,
-    SchemaVersionPeekError,
-};
+use ragondin_config::{parse_document, DocumentError};
+use ragondin_pipeline::{LogicalNode, LogicalPipeline, NodeId, ParamValue};
 
 use crate::run::{ConfigDocument, Run, RunId};
 
@@ -185,29 +183,27 @@ fn matrix(runs: &[&Run]) -> ConfigurationMatrix {
     }
 }
 
-/// Lowers a stored configuration document to its [`LogicalPipeline`]: the
-/// load path `ragondin-config` runs over a file, run over the kept text —
-/// into the hand-maintained wire schema, then through the validation pass,
-/// never a deserializer pointed at an internal type (INV-9).
-///
-/// The schema version is peeked first, as `ragondin-config` does, so a run
-/// stored under a version this build cannot read says that rather than
-/// reporting a syntax error. The `Err` is that reason, in words.
+/// Lowers a stored configuration document to its [`LogicalPipeline`]:
+/// `ragondin-config`'s [`parse_document`], the one definition of the load,
+/// run over the kept text. The `Err` is its verdict, in a sentence about a
+/// stored run: a run stored under a version this build cannot read says that
+/// rather than reporting a syntax error.
 ///
 /// Public because a reader of a stored run needs the same lowering
 /// [`compare`] does — `ragondin-api` draws a run's graph from it — and one
 /// path is kept rather than a second written beside it.
 pub fn lower_configuration(document: &ConfigDocument) -> Result<LogicalPipeline, String> {
-    if let Err(SchemaVersionPeekError::Unsupported(source)) =
-        peek_schema_version(serde_yaml::Deserializer::from_str(document.as_str()))
-    {
-        return Err(format!(
-            "stored under a schema version this build cannot read: {source}"
-        ));
-    }
-    let raw: RawPipeline = serde_yaml::from_str(document.as_str())
-        .map_err(|error| format!("the stored configuration does not parse: {error}"))?;
-    validate(raw).map_err(|error| format!("the stored configuration does not validate: {error}"))
+    parse_document(document.as_str()).map_err(|error| match error {
+        DocumentError::UnsupportedSchemaVersion(source) => {
+            format!("stored under a schema version this build cannot read: {source}")
+        }
+        DocumentError::Malformed(source) => {
+            format!("the stored configuration does not parse: {source}")
+        }
+        DocumentError::Invalid(source) => {
+            format!("the stored configuration does not validate: {source}")
+        }
+    })
 }
 
 /// Every node's component family, `impl:` name and parameters, keyed by node

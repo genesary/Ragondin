@@ -72,13 +72,17 @@ the binary. `scripts/check-invariants.py` walks this crate's `--all-features`
 closure, so `ragondin-harness` and `ragondin-server`, which reach the engine,
 are refused through it.
 
-**The blind spot, left to review:** `ragondin-proto` is reachable through
-`ragondin-config`, which INV-12 allows. A client hand-built here over its
-generated stubs would call a service without `ragondin-remote`, and the check
-would not see it. The sign in a diff is a `tonic` channel or a generated
-client type in this crate.
+**The blind spot, left to review:** `ragondin-config`, which INV-12 allows,
+no longer depends on `ragondin-proto`; the M7 `Stream` source adds that edge
+back, and from then `ragondin-proto` is reachable through it. A client
+hand-built here over its generated stubs would call a service without
+`ragondin-remote`, and the check would not see it. The sign in a diff is a
+`tonic` channel or a generated client type in this crate.
 
-Its workspace dependencies today are `ragondin-experiments` — the `RunStore`
+Its workspace dependencies today are `ragondin-config` — `parse_document`,
+the one definition of a pipeline document's load, and `incompatible_wiring`,
+the CLI's report for an edge of the wrong kind (§ The pipelines); its closure
+is `ragondin-pipeline` and the YAML parser — `ragondin-experiments` — the `RunStore`
 trait, the `Run` record, the typed `Trace`, `lower_configuration`, the
 walk to a run's ranking node, and `compare_runs` — `ragondin-pipeline`, for the `LogicalPipeline`
 that lowering yields,
@@ -91,10 +95,7 @@ they are computed over, and
 and `ragondin-metrics` reach no engine and no component: their closure is the
 core's `ragondin-types` and its readers, and `just check-invariants` walks it
 — `scripts/test-check-invariants.py` holds a case in which `ragondin-benchmarks`
-reaches the engine and INV-12 fails through it. `ragondin-config` is within
-INV-12 too, and still not a dependency: its `LocalFile` reads a path, and a
-document checked from a request body is text, so `validation.rs` calls the
-`ragondin-pipeline` functions `LocalFile` calls (§ The pipelines). **`ragondin-harness` is
+reaches the engine and INV-12 fails through it. **`ragondin-harness` is
 not a dependency, and may not become one** (INV-12 refuses it through the
 engine). The two rules the derived data shares with it are therefore
 defined where both crates reach them, once, and `derived.rs` calls them as the
@@ -384,23 +385,27 @@ handler writes it.
 
 ### Validation, in the CLI's words
 
-`validation::check` runs the three steps `ragondin validate` runs, by calling
-`ragondin-pipeline`'s functions on the text — `peek_schema_version`, the
-document parsed into `RawPipeline` (INV-9: the wire schema, never an internal
-type), `validate`, and `content_hash` over the canonical logical form (INV-8)
-— the same functions `ragondin-config`'s `LocalFile` calls on a file's
-contents. `bin/ragondin`'s `tests/ui.rs` posts every fixture configuration
-under `bin/ragondin/tests` and compares the hash with the one `ragondin
-validate` prints for the same file, and a refusal with its refusal.
+`validation::check` runs the load `ragondin validate` runs, by calling
+`ragondin-config`'s `parse_document` on the text — the one definition of it,
+which `LocalFile` calls on a file's contents: the version peeked, the document
+parsed into `RawPipeline` (INV-9: the wire schema, never an internal type),
+`validate` — and renders `content_hash` over the canonical logical form
+(INV-8). It is the one place this crate renders a document's hash: the
+listing, a write and `lineage.rs` all read it there. `bin/ragondin`'s
+`tests/ui.rs` posts every fixture configuration under `bin/ragondin/tests`,
+and one document per refusal the load can make, and compares the answer with
+what `ragondin validate` prints for the same file: the hash, or the refusal
+byte for byte, less the file path. `tests/pipelines.rs` pins every refusal's
+whole problem body.
 
-- **The words** are the CLI's, less the file path a request has none of: the
-  cause `ragondin validate` prints under `caused by:`, prefixed as its top
-  line is ("could not parse configuration: …", "configuration is not a valid
-  pipeline: …"), and for an edge of the wrong kind its three report lines —
-  `edge: <producer> feeds <consumer> at port <n>`, `expected:`, `found:`.
-  The CLI's report is rendered in `bin/ragondin/src/validate.rs`, which this
-  crate cannot depend on, so the wording is written twice; the test above
-  compares the two over the incompatible-wiring fixture.
+- **The words** are the CLI's, less the file path a request has none of:
+  `DocumentError`'s heading ("could not parse configuration", "configuration
+  is not a valid pipeline", "the configuration is written in a schema version
+  this build cannot read"), a colon, and the cause `ragondin validate` prints
+  under `caused by:`; and for an edge of the wrong kind, `ragondin-config`'s
+  `incompatible_wiring` report — the one the CLI prints — with "the
+  configuration" as its subject where the CLI names the file. Neither is
+  written here.
 - **The location**: a kind mismatch names its consumer and the edge; an
   unknown component, a non-finite parameter, a dangling input, a duplicate id
   or an id that is both an input and a node names the node; a cycle names its
@@ -426,10 +431,9 @@ validate` prints for the same file, and a refusal with its refusal.
   refused read parameters and passed unread ones. The one refusal `bench`
   adds that depends on the build — an `onnx` embedder without the `onnx`
   feature — is not made: a stored document is not a run.
-- **The three steps are written three times** — here, in `LocalFile::load`,
-  and in `ragondin-experiments`' `lower_configuration` — because
-  `ragondin-config` loads only from a path; one path-free loader there is
-  #375.
+- **The load is written once**, in `ragondin-config`: this crate,
+  `LocalFile::load` and `ragondin-experiments`' `lower_configuration` each
+  call `parse_document` and add only their own words around its verdict.
 
 ### The services and the probe
 
@@ -474,8 +478,8 @@ from `response.rs`'s types only, is where a reviewer would see one arrive.
 
 **The lowered graph is computed on the server**, by the lowering
 `ragondin-experiments`' `compare` already runs — `lower_configuration`, which
-parses the kept text into `ragondin-pipeline`'s `RawPipeline` and validates
-it. This crate calls that function; it does not parse YAML itself. A node
+runs `ragondin-config`'s `parse_document` over the kept text. This crate calls
+that function; it does not parse YAML itself. A node
 carries its id, family, `impl:` name and parameters; an edge carries its
 producer, consumer, port and the kind of value its producer puts on it — the
 query for a declared input, and otherwise `produced_kind` of the producing
@@ -1062,7 +1066,6 @@ its workspace entry's features and none appended, on the one `hyper` already
 in `Cargo.lock` — § *`reqwest`, the transport* says why it is here and not in
 `ragondin-benchmarks`. `sha2` is a normal dependency, for a pipeline
 document's etag, and the tests use it for the digests of what a local server
-serves. `serde_yaml` is a normal dependency, for parsing a pipeline document
-into `ragondin-pipeline`'s wire schema as `ragondin-config` does. None is a
-new `[workspace.dependencies]` entry, and none has a feature appended. No
+serves. `serde_yaml` is not a dependency: a pipeline document is parsed by
+`ragondin-config`. None is a new `[workspace.dependencies]` entry, and none has a feature appended. No
 TOML crate is a dependency (§ `workspace.toml`, and why it is read by hand).

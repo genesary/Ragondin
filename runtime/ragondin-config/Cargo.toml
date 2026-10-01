@@ -11,10 +11,12 @@ rust-version.workspace = true
 # wire/config format is separate from the in-memory IR and versioned
 # independently (INV-9).
 #
-# `ragondin-proto` is declared and not yet used: the `Stream` source speaks the
-# configuration-delivery service (`ragondin-proto::config`), and that is M7.
-# The edge is the one `docs/code-architecture.md` §4.3 draws, kept so the M7
-# work adds a source rather than a dependency.
+# The load is defined once, here, over text (`src/document.rs`), and
+# `ragondin-api` and `ragondin-experiments` depend on this crate for it. So the
+# closure stays at `ragondin-pipeline`, the YAML parser and two macro crates:
+# `ragondin-proto`, which `docs/code-architecture.md` §4.3 draws for the `Stream`
+# source, would carry `tonic` and `prost` into both, and is added by the M7 work
+# with the source that uses it.
 #
 # `serde_yaml` is supplied at this edge because `ragondin-pipeline` carries no
 # format implementation (INV-4) and does no I/O (INV-3) — which is why its
@@ -24,7 +26,6 @@ rust-version.workspace = true
 # feature gate applies.
 [dependencies]
 ragondin-pipeline = { workspace = true }
-ragondin-proto = { workspace = true }
 async-trait = { workspace = true } # dyn-compatible async traits (frozen: async_trait, not RPITIT)
 serde_yaml = { workspace = true }
 thiserror = { workspace = true }
