@@ -14,7 +14,7 @@ import {
   type NodeProps,
 } from '@xyflow/react';
 import '@xyflow/react/dist/base.css';
-import { memo, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { memo, useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import type { Graph } from '../api/types.ts';
 import { Button, FAMILY_LABEL } from '../../design/index.ts';
 import { EdgeLine } from './Edge.tsx';
@@ -198,13 +198,12 @@ function Surface({ graph, label, mode = 'read', layout, overlay = NO_OVERLAY, se
     if (placed !== '{}') report.current?.(JSON.parse(placed) as Record<string, Position>);
   }, [placed]);
 
-  const focusNode = (id: string) => root.current?.querySelector<HTMLElement>(`.react-flow__node[data-id="${CSS.escape(id)}"]`)?.focus();
-  const closeMenu = useRef<(refocus: boolean) => void>(() => {});
-  closeMenu.current = (refocus) => {
-    const id = menu;
+  // The menu's node is passed back by the menu, so this closure holds no
+  // render's state and is made once.
+  const closeMenu = useCallback((id: string, refocus: boolean) => {
     setMenu(null);
-    if (refocus && id !== null) focusNode(id);
-  };
+    if (refocus) root.current?.querySelector<HTMLElement>(`.react-flow__node[data-id="${CSS.escape(id)}"]`)?.focus();
+  }, []);
 
   const nodes: CardNode[] = useMemo(() => {
     const downstream = new Set(model.edges.map((e) => e.from));
@@ -231,14 +230,14 @@ function Surface({ graph, label, mode = 'read', layout, overlay = NO_OVERLAY, se
           editable,
           menu:
             menu === node.id ? (
-              <NodeMenu node={node.id} onClose={(refocus) => closeMenu.current(refocus)}>
+              <NodeMenu node={node.id} onClose={(refocus) => closeMenu(node.id, refocus)}>
                 {entries?.(node.id)}
               </NodeMenu>
             ) : null,
         },
       };
     });
-  }, [model, resolved, selected, overlay, menu, entries, editable]);
+  }, [model, resolved, selected, overlay, menu, entries, editable, closeMenu]);
 
   const edges: LineEdge[] = useMemo(
     () =>
@@ -256,9 +255,9 @@ function Surface({ graph, label, mode = 'read', layout, overlay = NO_OVERLAY, se
 
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     const target = event.target as HTMLElement;
+    // The open menu handles its own keys, Escape included.
     if (event.key === 'Escape') {
-      if (menu !== null) closeMenu.current(true);
-      else select(null);
+      select(null);
       return;
     }
     const id = target.closest('.react-flow__node')?.getAttribute('data-id');

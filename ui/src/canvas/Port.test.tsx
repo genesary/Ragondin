@@ -6,6 +6,8 @@
 import { render } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import '../../design/base.css';
+import { Canvas } from './Canvas.tsx';
+import { GATED_GEN } from './fixtures.ts';
 import type { PortKind } from './model.ts';
 import { NodeCard, type NodeCardProps } from './NodeCard.tsx';
 
@@ -57,5 +59,27 @@ describe('port marks', () => {
   it('fills a connected port and leaves an unconnected one hollow', () => {
     expect(marks(STATES['unconnected']!)['query']!.fill).toBe('hollow');
     expect(marks(STATES['connected']!)['query']!.fill).toBe('filled');
+  });
+});
+
+describe('port marks on the real canvas, with its stylesheet', () => {
+  it.each([
+    ['at rest', undefined],
+    ['in replay', { answer: {}, gate: {} }],
+  ])('keeps a connected opaque port hollow, apart from a connected query port, with its dot showing, %s', (_, overlay) => {
+    const { container } = render(<Canvas graph={GATED_GEN} label="gated" overlay={overlay} />);
+    const port = (node: string, side: string, kind: string) =>
+      container.querySelector<HTMLElement>(`.react-flow__node[data-id="${node}"] .rg-port[data-side="${side}"][data-kind="${kind}"]`)!;
+    const opaqueIn = port('answer', 'in', 'opaque');
+    const opaqueOut = port('gate', 'out', 'opaque');
+    const queryIn = port('answer', 'in', 'query');
+    for (const p of [opaqueIn, opaqueOut, queryIn]) expect(p.getAttribute('data-connected')).toBe('true');
+    const fill = (el: HTMLElement) => getComputedStyle(el).backgroundColor;
+    expect(fill(queryIn)).not.toBe('');
+    for (const opaque of [opaqueIn, opaqueOut]) {
+      expect(fill(opaque)).not.toBe(fill(queryIn));
+      const dot = opaque.querySelector<HTMLElement>('.rg-port__dot')!;
+      expect(fill(dot)).not.toBe(fill(opaque));
+    }
   });
 });

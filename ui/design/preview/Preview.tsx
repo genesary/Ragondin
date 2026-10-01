@@ -29,7 +29,7 @@ import {
   TopBar,
   type ButtonKind,
 } from '../index.ts';
-import { HYBRID_RERANK_GEN } from '../../src/canvas/fixtures.ts';
+import { GATED_GEN, HYBRID_RERANK_GEN } from '../../src/canvas/fixtures.ts';
 import { Canvas, NodeCard, type NodeCardProps } from '../../src/canvas/index.ts';
 import './preview.css';
 
@@ -426,6 +426,9 @@ function Column({ theme }: { theme: 'light' | 'dark' }) {
         </div>
         <div className="rg-preview__flow">
           <Canvas graph={HYBRID_RERANK_GEN} label={`hybrid-rerank-gen replayed, ${theme}`} overlay={REPLAY} />
+        </div>
+        <div className="rg-preview__flow">
+          <Canvas graph={GATED_GEN} label={`gated-gen, an opaque edge, ${theme}`} />
         </div>
       </Block>
     </div>

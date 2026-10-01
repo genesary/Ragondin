@@ -51,9 +51,11 @@
 .rg-canvas .react-flow__node:focus-visible { outline: none; }
 
 /* A port is a library handle drawn as the design system's port: none of the
-   library's own placement or fill. */
-.react-flow__handle.rg-port { transform: none; min-width: 0; min-height: 0; background: var(--surface); }
-.react-flow__handle.rg-port[data-connected="true"] { background: var(--ink-3); }
+   library's own placement, and its fill handed to Port.css. The library's own
+   rule is given the surface through its variable rather than overridden
+   here, so no rule in this file competes with Port.css's fills — connected,
+   and the opaque ring that stays hollow. */
+.react-flow__handle.rg-port { transform: none; min-width: 0; min-height: 0; --xy-handle-background-color: var(--surface); }
 .react-flow__handle.rg-port[data-kind="context"] { transform: rotate(45deg) scale(0.9); }
 
 /* Edges. */
