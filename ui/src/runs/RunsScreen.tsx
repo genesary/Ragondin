@@ -5,7 +5,7 @@
 // Runs screen.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button, ButtonLink, EmptyState, FilterChip, InlineMessage, Sheet, Table, type TableRow } from '../../design/index.ts';
-import type { ApiClient } from '../api/client.ts';
+import type { ApiClient, ApiProblem } from '../api/client.ts';
 import type { RunListing } from '../api/types.ts';
 import { formatHash, navigate } from '../routes.ts';
 import { ErrorState, Loading, type RequestState } from '../shell/states.tsx';
@@ -26,11 +26,15 @@ const select = (sel: string[]) => navigate({ screen: 'runs', sel }, { replace: t
 
 const runs = (n: number) => `${n.toLocaleString('en-US')} run${n === 1 ? '' : 's'}`;
 
-/** A listing, with the selection the address carried when it was asked for: what it is authoritative about. */
-type Read = { listing: RequestState<RunListing>; askedWith: ReadonlySet<string> };
+/**
+ * A listing, with the selection the address carried when it was asked for —
+ * what it is authoritative about — and the failure of a later re-read, which
+ * keeps the listing on screen rather than replacing it.
+ */
+type Read = { listing: RequestState<RunListing>; askedWith: ReadonlySet<string>; refresh: ApiProblem | null };
 
 export function RunsScreen({ client, sel }: RunsScreenProps) {
-  const [read, setRead] = useState<Read>({ listing: { status: 'loading' }, askedWith: new Set() });
+  const [read, setRead] = useState<Read>({ listing: { status: 'loading' }, askedWith: new Set(), refresh: null });
   const latest = useRef(0);
   const selNow = useRef(sel);
   selNow.current = sel;
@@ -41,7 +45,12 @@ export function RunsScreen({ client, sel }: RunsScreenProps) {
     const askedWith = new Set(selNow.current);
     const result = await client.get('/runs');
     if (mine !== latest.current) return;
-    setRead({ listing: result.ok ? { status: 'loaded', value: result.value } : { status: 'error', problem: result.problem }, askedWith });
+    setRead((prev) => {
+      if (result.ok) return { listing: { status: 'loaded', value: result.value }, askedWith, refresh: null };
+      // A re-read that fails leaves the listing already shown in place.
+      if (prev.listing.status === 'loaded') return { ...prev, refresh: result.problem };
+      return { listing: { status: 'error', problem: result.problem }, askedWith, refresh: null };
+    });
   }, [client]);
 
   useEffect(() => {
@@ -63,7 +72,7 @@ export function RunsScreen({ client, sel }: RunsScreenProps) {
     case 'error':
       return <ErrorState problem={read.listing.problem} onRetry={retry} />;
     case 'loaded':
-      return <Loaded client={client} listing={read.listing.value} askedWith={read.askedWith} sel={sel} reread={() => void fetchListing()} />;
+      return <Loaded client={client} listing={read.listing.value} askedWith={read.askedWith} refresh={read.refresh} sel={sel} reread={() => void fetchListing()} />;
   }
 }
 
@@ -72,12 +81,14 @@ type LoadedProps = {
   listing: RunListing;
   /** The selection the address carried when `listing` was asked for. */
   askedWith: ReadonlySet<string>;
+  /** Why the last re-read failed, if it did. */
+  refresh: ApiProblem | null;
   sel: readonly string[];
   /** Reads the listing again, keeping this one on screen meanwhile. */
   reread: () => void;
 };
 
-function Loaded({ client, listing, askedWith, sel, reread }: LoadedProps) {
+function Loaded({ client, listing, askedWith, refresh, sel, reread }: LoadedProps) {
   const rows = useMemo(() => rowsFromListing(listing), [listing]);
   const [filter, setFilter] = useState<readonly string[]>([]);
   const shapes = useShapes(client, rows);
@@ -148,7 +159,9 @@ function Loaded({ client, listing, askedWith, sel, reread }: LoadedProps) {
   const refusals = new Map(rows.map((r) => [rowKey(r), refusal(r, selection, rows)]));
   // A failed run says why on its own row; the selection's rules are said once.
   const rules = [...new Set([...refusals.values()].filter((r) => r !== null && (r.short === 'Other benchmark' || r.short === 'Five selected')).map((r) => r?.full as string))];
-  const refused = compareRefusal(selection);
+  // An id still being read for is kept in the address but is not yet a run Compare can open.
+  const comparable = selection.filter((id) => rows.some((r) => runId(r) === id));
+  const refused = compareRefusal(comparable);
   const loadingShapes = groups.filter((g) => g.shapeFrom !== null && (shapes.state[g.key]?.status ?? 'loading') === 'loading').length;
 
   const byKey = new Map(rows.map((r) => [rowKey(r), r]));
@@ -196,30 +209,28 @@ function Loaded({ client, listing, askedWith, sel, reread }: LoadedProps) {
         <div className="rg-runs__actions">
           <ButtonLink href={formatHash({ screen: 'editor' })}>New pipeline</ButtonLink>
           {refused === null ? (
-            <Button kind="primary" onClick={() => navigate({ screen: 'compare', ids: selection })}>
-              Compare {selection.length} selected
+            <Button kind="primary" onClick={() => navigate({ screen: 'compare', ids: comparable })}>
+              Compare {comparable.length} selected
             </Button>
           ) : (
             <Button kind="primary" disabled disabledReason={refused}>
-              Compare {selection.length} selected
+              Compare {comparable.length} selected
             </Button>
           )}
         </div>
       </div>
       {unreadable}
-      {rules.length === 0 ? null : (
+      <Table caption="Runs, grouped by pipeline" columns={header} rows={tableRows} onOpen={onOpen} onToggle={onToggle} />
+      {/* Below the table: what comes and goes as boxes are checked must not move the rows under the pointer. */}
+      {refresh === null && rules.length === 0 && loadingShapes === 0 ? null : (
         <div className="rg-runs__rules">
+          {refresh === null ? null : <ErrorState problem={refresh} onRetry={reread} />}
           {rules.map((rule) => (
             <InlineMessage key={rule} tone="info" title={rule} />
           ))}
+          {loadingShapes === 0 ? null : <Loading label={`Reading the shapes of ${loadingShapes} pipeline${loadingShapes === 1 ? '' : 's'}`} />}
         </div>
       )}
-      {loadingShapes === 0 ? null : (
-        <div className="rg-runs__rules">
-          <Loading label={`Reading the shapes of ${loadingShapes} pipeline${loadingShapes === 1 ? '' : 's'}`} />
-        </div>
-      )}
-      <Table caption="Runs, grouped by pipeline" columns={header} rows={tableRows} onOpen={onOpen} onToggle={onToggle} />
     </Sheet>
   );
 }

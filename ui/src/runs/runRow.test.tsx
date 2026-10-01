@@ -55,6 +55,16 @@ describe('a done run', () => {
     expect(tr.getAttribute('aria-label')).toBe('Run a1b2c3d4e5f6 on beir/scifact');
   });
 
+  it('says in its name that it is selected, so Space on the row is announced', () => {
+    const { tr } = show(done(), { selected: true });
+    expect(tr.getAttribute('aria-label')).toBe('Run a1b2c3d4e5f6 on beir/scifact, selected');
+  });
+
+  it('says in its name why it cannot be selected', () => {
+    const { tr } = show(done(), { refusal: { short: 'Other benchmark', full: 'f' } });
+    expect(tr.getAttribute('aria-label')).toBe('Run a1b2c3d4e5f6 on beir/scifact, cannot be selected: Other benchmark');
+  });
+
   it('shows its checkbox, labelled by its benchmark and named by its run, and out of the tab order', () => {
     show(done());
     const box = screen.getByRole('checkbox', { name: 'Select run a1b2c3d4e5f6 on beir/scifact' });

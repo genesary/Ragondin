@@ -125,6 +125,19 @@ describe('Table rows that take the keyboard', () => {
     expect(document.activeElement).toBe(rowOf('Run r1'));
   });
 
+  it('stops at the ends rather than wrapping round', () => {
+    show();
+    fireEvent.keyDown(rowOf('Run r3'), { key: 'ArrowDown' });
+    expect(document.activeElement).toBe(rowOf('Run r3'));
+    fireEvent.keyDown(rowOf('Run r1'), { key: 'ArrowUp' });
+    expect(document.activeElement).toBe(rowOf('Run r1'));
+  });
+
+  it('takes the keyboard with only one of the two actions', () => {
+    render(<Table caption="m" columns={columns} rows={live} onToggle={() => {}} />);
+    expect(rowOf('Run r1').getAttribute('tabindex')).toBe('0');
+  });
+
   it('opens a row with Enter and toggles it with Space', () => {
     const { onOpen, onToggle } = show();
     fireEvent.keyDown(rowOf('Run r2'), { key: 'Enter' });

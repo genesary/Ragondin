@@ -1,5 +1,5 @@
 import { useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
-import { nextEnabled, tabStop } from '../../roving.ts';
+import { tabStop } from '../../roving.ts';
 import './Table.css';
 
 export type TableColumn = {
@@ -37,11 +37,11 @@ export type TableProps = {
   columns: readonly TableColumn[];
   rows: readonly TableRow[];
   /**
-   * Enter on a row. With `onToggle`, it makes the rows one tab stop, moved by
-   * the up and down arrows, Home and End.
+   * Enter on a row. Either this or `onToggle` makes the rows one tab stop,
+   * moved by the up and down arrows — stopping at the ends — Home and End.
    */
   onOpen?: (id: string) => void;
-  /** Space on a row. */
+  /** Space on a row; either this or `onOpen` makes the rows one tab stop. */
   onToggle?: (id: string) => void;
 };
 
@@ -91,7 +91,8 @@ export function Table({ caption, columns, rows, onOpen, onToggle }: TableProps) 
       case 'ArrowDown':
       case 'ArrowUp':
         handled();
-        move(nextEnabled(keyed.map(() => false), at, event.key === 'ArrowDown' ? 1 : -1));
+        // Clamped, not wrapped: a table's ends are its first and last rows, as a list's are.
+        move(Math.min(Math.max(at + (event.key === 'ArrowDown' ? 1 : -1), 0), keyed.length - 1));
         break;
       case 'Home':
         handled();

@@ -133,5 +133,8 @@ export function runRow(row: RunRow, { selected, refusal, columns, onToggle }: Ru
     };
   }
 
-  return { id: rowKey(row), label: name, cells: [box, run, <StatusChip state="done" />, metrics(row), ...extra] };
+  // The row keeps focus when Space toggles it, so its name carries the state:
+  // a change to it is what a screen reader announces.
+  const state = selected ? ', selected' : refusal === null ? '' : `, cannot be selected: ${refusal.short}`;
+  return { id: rowKey(row), label: `${name}${state}`, cells: [box, run, <StatusChip state="done" />, metrics(row), ...extra] };
 }

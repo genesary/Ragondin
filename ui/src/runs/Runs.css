@@ -16,9 +16,8 @@
   align-items: center;
   gap: var(--space-2);
 }
-.rg-runs__unreadable,
-.rg-runs__rules { padding: 0 var(--space-4) var(--space-4); }
-.rg-runs__rules { display: grid; gap: var(--space-2); }
+.rg-runs__unreadable { padding: 0 var(--space-4) var(--space-4); }
+.rg-runs__rules { display: grid; gap: var(--space-2); padding: var(--space-4); }
 .rg-runs__unreadable ul {
   margin: var(--space-2) 0 0;
   padding-left: var(--space-5);

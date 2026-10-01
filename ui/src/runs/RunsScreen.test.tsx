@@ -255,6 +255,24 @@ describe('the selection', () => {
     expect(screen.getAllByText('The selected runs are on dataset 555555555555. Compare takes runs on one benchmark.')).toHaveLength(1);
   });
 
+  it('says the rule below the table, so the rows do not move under the pointer when it appears', async () => {
+    show('#runs');
+    await loaded();
+    const table = screen.getByRole('table');
+    const before = (el: Element) => {
+      const wrap = el.closest('.rg-tablewrap') as Element;
+      const out: string[] = [];
+      for (let s = wrap.previousElementSibling; s !== null; s = s.previousElementSibling) out.push(s.outerHTML.replace(/ aria-pressed="(true|false)"/g, ''));
+      return out;
+    };
+    const above = before(table);
+    fireEvent.click(box(R1));
+    const rule = await screen.findByText('The selected runs are on dataset 555555555555. Compare takes runs on one benchmark.');
+    // Only the action bar's own text changes above the table ("Compare 1 selected"); nothing is inserted.
+    expect(before(screen.getByRole('table')).length).toBe(above.length);
+    expect(screen.getByRole('table').compareDocumentPosition(rule) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
   it('refuses a sixth run once five are selected, saying why', async () => {
     const six = [R1, R3, R4, R5, hex('7'), hex('8')];
     show(`#runs?sel=${six.slice(0, 5).join(',')}`, routes({ body: { runs: six.map((id) => summary(id, DENSE, SCIFACT)), unreadable: [] } }));
@@ -301,6 +319,39 @@ describe('the selection', () => {
     await loaded();
     act(() => navigate({ screen: 'runs', sel: [R1, R5] }, { replace: true }));
     await waitFor(() => expect(window.location.hash).toBe(`#runs?sel=${R1}`));
+  });
+
+  it('keeps the table when a re-read fails, saying so inline with Retry', async () => {
+    const problem: Problem = { type: 'urn:ragondin:problem:internal', title: 'Internal', status: 500, detail: 'the store is busy', code: 'run_unreadable', hint: 'Try again.' };
+    show('#runs', routes([{ body: LISTING }, { problem }, { body: LATER }]));
+    await loaded();
+    act(() => navigate({ screen: 'runs', sel: [R5] }, { replace: true }));
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('the store is busy');
+    expect(rowOf(R1)).toBeTruthy();
+    expect(window.location.hash).toBe(`#runs?sel=${R5}`);
+    fireEvent.click(within(alert).getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(box(R5).checked).toBe(true));
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('does not count a run it is still reading for toward "Compare N selected"', async () => {
+    const answers: ((r: ApiResult<RunListing>) => void)[] = [];
+    const client = {
+      get: (path: string) =>
+        path === '/runs'
+          ? new Promise<ApiResult<RunListing>>((resolve) => answers.push(resolve))
+          : Promise.resolve({ ok: true, value: detail(R1, HYBRID, HYBRID_GRAPH), build: null }),
+    } as unknown as ApiClient;
+    window.history.replaceState(null, '', '/#runs');
+    render(<Shell client={client} />);
+    await act(async () => answers[0]?.({ ok: true, value: LISTING, build: null }));
+    await loaded();
+    act(() => navigate({ screen: 'runs', sel: [R1, R4, R5] }, { replace: true }));
+    await waitFor(() => expect(answers).toHaveLength(2));
+    expect(compare().textContent).toBe('Compare 2 selected');
+    fireEvent.click(compare());
+    await waitFor(() => expect(window.location.hash).toBe(`#compare/${R1}+${R4}`));
   });
 
   it('takes the answer of the last listing asked for, not of the last to arrive', async () => {
