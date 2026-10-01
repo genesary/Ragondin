@@ -102,7 +102,8 @@ protox = "0.8"                                     # build-dependency of ragondi
 # another line moves with `tonic`, and escalates. `default-features = false`,
 # and three features:
 #
-#   - `json`: the extractor and response every endpoint uses;
+#   - `json`: the `Json` response the endpoints return (no handler takes
+#     its extractor: a body is read as bytes and parsed in the crate);
 #   - `tokio` and `http1`: `axum::serve`, inside `ragondin_api::serve`, over
 #     the listener `ragondin ui` binds on the loopback. They are named now,
 #     in the pull request that creates the entry, because appending a
@@ -113,10 +114,13 @@ protox = "0.8"                                     # build-dependency of ragondi
 #
 # The defaults it drops are the form and query extractors no endpoint reads,
 # `matched-path` and `original-uri`, which no handler uses, and
-# `tracing`/`tower-log`, since the crate emits no telemetry. `cargo tree -i
-# hyper -e normal --all-features` still shows one `hyper`, reached through
-# `axum`, `tonic` and their stack and from no core crate. `hyper` is on the
-# INV-4 deny-list, so the core cannot reach this.
+# `tracing`/`tower-log`, since the crate emits no telemetry. ADR-C37 § 1
+# admits `query`, for `ragondin-api`'s own `ApiQuery` extractor; it is not
+# on the list yet, and is appended in the pull request that first uses it,
+# where this comment names it among the features above. `form` stays off.
+# `cargo tree -i hyper -e normal --all-features` still shows one `hyper`,
+# reached through `axum`, `tonic` and their stack and from no core crate.
+# `hyper` is on the INV-4 deny-list, so the core cannot reach this.
 axum = { version = "0.7", default-features = false, features = [
     "json",
     "tokio",

@@ -336,9 +336,10 @@ handler writes it.
   ADR-016's promise that the editor never overwrites a file changed since it
   read it; the editor (#356) sends the header. The UI's type generator reads
   path parameters only, so the headers are stated in the operations'
-  descriptions, not as described parameters. **They are to be declared as
-  `in: header` parameters once decision #371 lands, and #356 must not
-  hand-write header plumbing before then.**
+  descriptions, not as described parameters. **ADR-C37 decides that they are
+  declared as `in: header` parameters, read through `ApiHeaders<T>`
+  (§ Request input goes through one extractor module); until that lands,
+  #356 must not hand-write header plumbing.**
 - **A write is checked, validated, then stored**: the document is lowered
   (`validation::lower`, `pipeline_invalid`) and handed to
   `Launcher::check_document` with the workspace's bindings — `bench`'s key
@@ -498,6 +499,33 @@ field it does not read** (`deny_unknown_fields`), so a misspelled field is
 `additionalProperties: false`, which the UI's type generator reads as the
 closed object TypeScript gives anyway. `Problem::code`'s schema is an enum of
 `ApiError::CODES`, so a generated client can narrow on it.
+
+## Request input goes through one extractor module
+
+**ADR-C37 requires that a handler of the `/api` router reads request input
+only through this crate's own extractors**, defined in one module:
+`ApiPath<T>`, `ApiQuery<T>`, `ApiHeaders<T>` and `ApiJson<T>`, each with
+`Rejection = ApiError`, so every refusal is a problem body (ADR-C37 § 2). No
+such handler takes `axum::extract::Query`, `axum::extract::Path`,
+`axum::extract::Json` or a `HeaderMap` to read a request header, and none
+reads `Uri::query()`. The fallbacks that take the `Uri` only to name the
+request, and the assets fallback `assets::serve`, which reads the `Method` and
+the `Uri` to choose the file it serves, are outside the rule, as are the
+layers, which are the envelope. A query string is validated as strict
+percent-encoded UTF-8 before axum's `Query` deserializes it; a query parameter
+type is a closed struct of self-validating values, and it and every request
+header a handler reads are declared in the description from their schemas
+(ADR-C37 § 3 to § 5). A new endpoint that reads raw input is the sign a
+reviewer looks for.
+
+**Today's handlers predate the rule.** `GET /runs/{id}/queries` and
+`GET /runs/{id}/trace/{query}` still read the query string with the
+hand-written `parameters` function, the path-taking handlers take
+`axum::extract::Path` — so an undecodable path segment such as `%FF` answers
+axum's plain-text `400` — `PUT /pipelines/{name}` reads its headers from a
+`HeaderMap`, and a body is read as bytes and parsed in `endpoints/mod.rs`.
+The pull request that implements ADR-C37 replaces all four, and appends
+`query` to the `axum` entry with its first user (§ Dependencies).
 
 ## The error codes
 
@@ -1011,7 +1039,9 @@ All admitted by ADR-C36 § 6, each argued in its root `Cargo.toml` comment:
 false`; `json` for the endpoints, and `tokio` and `http1` for `axum::serve`,
 inside `serve`,
 named now because appending a feature to the entry later would escalate — one
-`hyper` in `Cargo.lock`, which no core crate reaches), `schemars`, and `tokio`,
+`hyper` in `Cargo.lock`, which no core crate reaches; ADR-C37 § 1 admits one
+more, `query`, appended in the pull request that first uses it and not
+before), `schemars`, and `tokio`,
 whose workspace entry now names `net`, `sync` and `time`. `tower`, the
 workspace's serving-envelope entry, is a dependency for the `Service` trait
 `Server` implements, which needs no feature; the tests also use
