@@ -250,12 +250,23 @@ function pathsType(paths, typeOf) {
     const operations = Object.entries(methods).map(([method, op]) => {
       const where = `${method.toUpperCase()} ${path}`;
       onlyKnown(op, OPERATION_KEYS, where, 'operation');
-      const params = (/** @type {Schema[]} */ (op.parameters ?? [])).map((p) => {
+      /** @type {Record<string, string[]>} */
+      const byPlace = { path: [], query: [], header: [] };
+      for (const p of /** @type {Schema[]} */ (op.parameters ?? [])) {
         onlyKnown(p, PARAMETER_KEYS, where, 'parameter');
-        if (p.in !== 'path') refuse(where, `a parameter in \`${p.in}\`, not in the path`);
-        return `        ${propertyName(p.name)}: ${typeOf(p.schema ?? {}, `${where} ${p.name}`, '        ')};`;
-      });
-      const lines = [params.length === 0 ? '      params: Record<string, never>;' : `      params: {\n${params.join('\n')}\n      };`];
+        const place = byPlace[p.in];
+        if (place === undefined) refuse(where, `a parameter in \`${p.in}\`, which is not the path, the query string or a header`);
+        // A path parameter is always required; a query or header one is
+        // optional unless the description says otherwise.
+        const optional = p.in !== 'path' && p.required !== true ? '?' : '';
+        const comment = p.in === 'path' ? '' : doc(p.description, '        ');
+        place.push(`${comment}        ${propertyName(p.name)}${optional}: ${typeOf(p.schema ?? {}, `${where} ${p.name}`, '        ')};`);
+      }
+      const block = (/** @type {string} */ key, /** @type {string[]} */ members) => `      ${key}: {\n${members.join('\n')}\n      };`;
+      const inPath = byPlace.path ?? [];
+      const lines = [inPath.length === 0 ? '      params: Record<string, never>;' : block('params', inPath)];
+      if (byPlace.query?.length) lines.push(block('query', byPlace.query));
+      if (byPlace.header?.length) lines.push(block('headers', byPlace.header));
       if (op.requestBody !== undefined) {
         onlyKnown(op.requestBody, REQUEST_BODY_KEYS, where, 'request body');
         if (op.requestBody.required === false) refuse(where, 'an optional request body, which the client always sends');

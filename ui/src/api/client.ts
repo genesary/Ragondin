@@ -3,8 +3,9 @@ import { EMPTY_ANSWERS, type Paths, type Problem } from './types.ts';
 
 /**
  * The header every response carries the answering build's identity in —
- * `BUILD_HEADER` in runtime/ragondin-api. The description declares no header,
- * so this one name is written here rather than generated.
+ * `BUILD_HEADER` in runtime/ragondin-api. The description declares request
+ * headers only, never a response's, so this one name is written here rather
+ * than generated.
  */
 export const BUILD_HEADER = 'x-ragondin-build';
 
@@ -47,14 +48,48 @@ type ParamsArg<P extends keyof Paths, M extends Method> = Operation<P, M> extend
     ? []
     : [params: Q]
   : never;
+type QueryOf<O> = O extends { query: infer Q } ? Q : never;
+type HeadersOf<O> = O extends { headers: infer H } ? H : never;
+/** Whether every member of `T` may be left out. */
+type AllOptional<T> = Partial<T> extends T ? true : false;
+/** `{ key: T }`, optional when every member of `T` is; nothing when the operation declares no `T`. */
+type Field<K extends string, T> = [T] extends [never] ? unknown : AllOptional<T> extends true ? { [Key in K]?: T } : { [Key in K]: T };
+/** The query parameters and request headers an operation declares, as the description types them. */
+export type RequestOptions<P extends keyof Paths, M extends Method> = Field<'query', QueryOf<Operation<P, M>>> & Field<'headers', HeadersOf<Operation<P, M>>>;
+/** No argument for an operation with neither; the options otherwise, optional unless one of them is required. */
+type OptionsArg<P extends keyof Paths, M extends Method> = [QueryOf<Operation<P, M>> | HeadersOf<Operation<P, M>>] extends [never]
+  ? []
+  : AllOptional<RequestOptions<P, M>> extends true
+    ? [options?: RequestOptions<P, M>]
+    : [options: RequestOptions<P, M>];
+/** The arguments after the path (and the body): its path parameters, then its query and headers. */
+type Args<P extends keyof Paths, M extends Method> = [...ParamsArg<P, M>, ...OptionsArg<P, M>];
 
 export type ApiClient = {
-  get<P extends PathWith<'get'>>(path: P, ...params: ParamsArg<P, 'get'>): Promise<ApiResult<Answer<P, 'get'>>>;
-  post<P extends PathWith<'post'>>(path: P, body: Body<P, 'post'>, ...params: ParamsArg<P, 'post'>): Promise<ApiResult<Answer<P, 'post'>>>;
-  put<P extends PathWith<'put'>>(path: P, body: Body<P, 'put'>, ...params: ParamsArg<P, 'put'>): Promise<ApiResult<Answer<P, 'put'>>>;
-  patch<P extends PathWith<'patch'>>(path: P, body: Body<P, 'patch'>, ...params: ParamsArg<P, 'patch'>): Promise<ApiResult<Answer<P, 'patch'>>>;
-  del<P extends PathWith<'delete'>>(path: P, ...params: ParamsArg<P, 'delete'>): Promise<ApiResult<Answer<P, 'delete'>>>;
+  get<P extends PathWith<'get'>>(path: P, ...args: Args<P, 'get'>): Promise<ApiResult<Answer<P, 'get'>>>;
+  post<P extends PathWith<'post'>>(path: P, body: Body<P, 'post'>, ...args: Args<P, 'post'>): Promise<ApiResult<Answer<P, 'post'>>>;
+  put<P extends PathWith<'put'>>(path: P, body: Body<P, 'put'>, ...args: Args<P, 'put'>): Promise<ApiResult<Answer<P, 'put'>>>;
+  patch<P extends PathWith<'patch'>>(path: P, body: Body<P, 'patch'>, ...args: Args<P, 'patch'>): Promise<ApiResult<Answer<P, 'patch'>>>;
+  del<P extends PathWith<'delete'>>(path: P, ...args: Args<P, 'delete'>): Promise<ApiResult<Answer<P, 'delete'>>>;
 };
+
+/** What the request builder reads off the arguments after the path. */
+type Sent = { params: Record<string, string> | undefined; query: Record<string, unknown> | undefined; headers: Record<string, unknown> | undefined };
+
+/**
+ * The query string of `query`, serialized by `URLSearchParams` — every
+ * reserved character percent-encoded, a space as `+`, which the server reads
+ * as one — with an absent parameter left out; empty, without its `?`, when
+ * none is left.
+ */
+function search(query: Record<string, unknown> | undefined): string {
+  const encoded = new URLSearchParams();
+  for (const [name, value] of Object.entries(query ?? {})) {
+    if (value !== undefined && value !== null) encoded.append(name, String(value));
+  }
+  const text = encoded.toString();
+  return text === '' ? '' : `?${text}`;
+}
 
 /**
  * A path template of the description, its `{name}` segments filled and
@@ -107,7 +142,7 @@ const unreadable = (request: string, status: number, why: string): ApiProblem =>
  * `ApiProblem` the caller must render, never an exception it could forget.
  */
 export function createApiClient(): ApiClient {
-  async function request(method: Method, template: string, body: unknown, params: Record<string, string> | undefined): Promise<ApiResult<never>> {
+  async function request(method: Method, template: string, body: unknown, { params, query, headers }: Sent): Promise<ApiResult<never>> {
     const verb = method.toUpperCase();
     const path = fill(template, params);
     if (path === null) {
@@ -123,12 +158,18 @@ export function createApiClient(): ApiClient {
         },
       };
     }
-    const url = `${API_BASE}${path}`;
+    const url = `${API_BASE}${path}${search(query)}`;
     const name = `${verb} ${url}`;
-    const init: RequestInit = { method: verb, headers: { accept: 'application/json, application/problem+json' } };
+    const sent: Record<string, string> = { accept: 'application/json, application/problem+json' };
+    // The headers the description declares for this operation, typed by
+    // `Paths`: only the ones given are sent.
+    for (const [header, value] of Object.entries(headers ?? {})) {
+      if (value !== undefined && value !== null) sent[header] = String(value);
+    }
+    const init: RequestInit = { method: verb, headers: sent };
     if (body !== undefined) {
       init.body = JSON.stringify(body);
-      init.headers = { ...init.headers, 'content-type': 'application/json' };
+      init.headers = { ...sent, 'content-type': 'application/json' };
     }
     const networkFailed = (e: unknown, status: number | null, what: string): ApiResult<never> => ({
       ok: false,
@@ -186,12 +227,18 @@ export function createApiClient(): ApiClient {
     }
   }
 
-  const params = (rest: unknown[]) => rest[0] as Record<string, string> | undefined;
+  // A path with a `{name}` takes its parameters first; the query and the
+  // headers, when the operation declares either, come after.
+  const sent = (template: string, rest: unknown[]): Sent => {
+    const hasParams = template.includes('{');
+    const options = (rest[hasParams ? 1 : 0] ?? {}) as { query?: Record<string, unknown>; headers?: Record<string, unknown> };
+    return { params: hasParams ? (rest[0] as Record<string, string>) : undefined, query: options.query, headers: options.headers };
+  };
   return {
-    get: (path, ...rest) => request('get', path, undefined, params(rest)),
-    post: (path, body, ...rest) => request('post', path, body, params(rest)),
-    put: (path, body, ...rest) => request('put', path, body, params(rest)),
-    patch: (path, body, ...rest) => request('patch', path, body, params(rest)),
-    del: (path, ...rest) => request('delete', path, undefined, params(rest)),
+    get: (path, ...rest) => request('get', path, undefined, sent(path, rest)),
+    post: (path, body, ...rest) => request('post', path, body, sent(path, rest)),
+    put: (path, body, ...rest) => request('put', path, body, sent(path, rest)),
+    patch: (path, body, ...rest) => request('patch', path, body, sent(path, rest)),
+    del: (path, ...rest) => request('delete', path, undefined, sent(path, rest)),
   };
 }

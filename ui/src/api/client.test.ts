@@ -90,6 +90,67 @@ describe('the API client, on success', () => {
   });
 });
 
+describe('the API client, with query and header parameters', () => {
+  // An untyped door onto the same request builder, for a parameter the
+  // description has no operation for.
+  type Untyped = (path: string, ...rest: unknown[]) => Promise<unknown>;
+
+  it('serializes a declared query parameter after the filled path, on the relative base address', async () => {
+    const spy = stubFetch(async () => json({}));
+    await createApiClient().get('/runs/{id}/queries', { id: 'r 1' }, { query: { missing_gold_at: 3 } });
+    expect(spy.mock.calls[0]?.[0]).toBe('/api/v1/runs/r%201/queries?missing_gold_at=3');
+  });
+
+  it('percent-encodes reserved characters in a name and a value, as URLSearchParams does', async () => {
+    const spy = stubFetch(async () => json({}));
+    await (createApiClient().get as Untyped)('/runs/{id}/queries', { id: 'r1' }, { query: { 'a&b': 'c=d e/é?#' } });
+    expect(spy.mock.calls[0]?.[0]).toBe('/api/v1/runs/r1/queries?a%26b=c%3Dd+e%2F%C3%A9%3F%23');
+  });
+
+  it('omits an absent optional parameter, and the `?` when none is left', async () => {
+    const spy = stubFetch(async () => json({}));
+    const client = createApiClient();
+    await client.get('/runs/{id}/queries', { id: 'r1' });
+    await client.get('/runs/{id}/queries', { id: 'r1' }, { query: {} });
+    await (client.get as Untyped)('/runs/{id}/queries', { id: 'r1' }, { query: { missing_gold_at: undefined } });
+    expect(spy.mock.calls.map((call) => call[0])).toEqual([
+      '/api/v1/runs/r1/queries',
+      '/api/v1/runs/r1/queries',
+      '/api/v1/runs/r1/queries',
+    ]);
+  });
+
+  it('sends a declared header with the request', async () => {
+    const spy = stubFetch(async () => json({ name: 'p', etag: 'e2', hash: 'h' }));
+    await createApiClient().put('/pipelines/{name}', { document: 'pipeline: {}' }, { name: 'p' }, { headers: { 'If-Match': '"e1"' } });
+    const headers = new Headers(spy.mock.calls[0]?.[1]?.headers);
+    expect(headers.get('if-match')).toBe('"e1"');
+    expect(headers.get('content-type')).toBe('application/json');
+    expect(spy.mock.calls[0]?.[0]).toBe('/api/v1/pipelines/p');
+  });
+
+  it('types the options by the description: none where it declares none, and only the declared ones', async () => {
+    stubFetch(async () => json({}));
+    const client = createApiClient();
+    // @ts-expect-error `/workspace` declares no query parameter and no header.
+    await client.get('/workspace', { query: { x: 1 } });
+    // @ts-expect-error `missing_gold_at` is a number.
+    await client.get('/runs/{id}/queries', { id: 'r1' }, { query: { missing_gold_at: 'three' } });
+    // @ts-expect-error `/runs/{id}/queries` declares no header.
+    await client.get('/runs/{id}/queries', { id: 'r1' }, { headers: { 'If-Match': '*' } });
+    // @ts-expect-error a header the write does not declare.
+    await client.put('/pipelines/{name}', { document: '' }, { name: 'p' }, { headers: { 'X-Other': '1' } });
+  });
+
+  it('sends no header that was not given', async () => {
+    const spy = stubFetch(async () => json({ name: 'p', etag: 'e2', hash: 'h' }));
+    await createApiClient().put('/pipelines/{name}', { document: 'pipeline: {}' }, { name: 'p' }, { headers: { 'If-None-Match': '*' } });
+    const headers = new Headers(spy.mock.calls[0]?.[1]?.headers);
+    expect(headers.get('if-none-match')).toBe('*');
+    expect(headers.has('if-match')).toBe(false);
+  });
+});
+
 describe('the API client, on a problem', () => {
   const problem: Problem = {
     type: 'urn:ragondin:problem:run_not_found',
