@@ -45,7 +45,7 @@ ui/
 │       ├── events.ts    # the event stream wrapper: reconnection and the connection state
 │       └── testing.ts   # test doubles: request-level API mocks, a fake event stream; only tests import it
 ├── scripts/             # the dependency audit (npm and fonts), the third-party notices, the token generator, the API type generator, the build identity
-└── tests/               # tests of the governance itself: lint rule, audit, DEPENDENCIES.md, tokens, one origin, preview
+└── tests/               # tests of the governance itself: lint rule, audit, notices, DEPENDENCIES.md, tokens, one origin, preview
 ```
 
 A component's test sits beside it, in `src/` or `design/`; a test of a rule about `ui/` sits in `tests/`. `tests/setup.ts` unmounts what each test rendered: Vitest's globals are off, so Testing Library cannot register that cleanup itself.
@@ -114,12 +114,18 @@ Adding a dependency is governed by `DEPENDENCIES.md`, whose rule is `AGENTS.md` 
 
 The binary embeds `dist/` and redistributes it, and MIT, ISC and BSD-3-Clause each require the copyright and permission notice to accompany a copy. So the build writes `dist/third-party-notices.txt`, which the binary serves at `/third-party-notices.txt` (§ How the assets reach the binary). The logic is `scripts/notices.mjs`, a Vite plugin registered in `vite.config.ts`, read from the installed tree as the licence audit is rather than by a generator package, for the reason the audit gives: it has to be read to be trusted.
 
-**What it lists.** One block per package — name, version, the licence field of its `package.json`, and the text of its own `LICENSE`, `LICENCE` or `COPYING` file — then one per font licence text in `design/fonts/LICENSES.md`, with the font files it covers. The packages are:
+**What it lists.** One block per package — name, version, the licence field of its `package.json`, and the text of its own licence file: `LICENSE`, `LICENCE` or `COPYING`, any case, bare or with a `.` or `-` suffix (`LICENSE.md`, `LICENSE-MIT`, `LICENSE.APACHE2`) — then one per font licence text in `design/fonts/LICENSES.md`, with the font files it covers. The packages are:
 
 - **every runtime package of the lockfile**: each entry not marked `dev` or `devOptional`, which is the whole closure `dependencies` can bundle. It is a superset of what the bundle holds — the canvas library's tree is listed before a screen imports it, and `@types/*` packages carry no code — and a superset errs on the side the licences require;
 - **Vite**, a development package, because the build writes Vite's own code into the bundle: the modulepreload polyfill and the CommonJS helpers (from `@rollup/plugin-commonjs`, whose notice Vite's `LICENSE.md` carries). `VIRTUAL` in `scripts/notices.mjs` maps each such virtual module to its package.
 
-**What fails the build.** A listed package that is not installed or ships no licence file. And a module of the build's graph that comes from neither `ui/`'s own code nor a listed package — a development package imported by application code, a file outside `ui/`, or a virtual module `VIRTUAL` does not name — so a bundled package without a notice cannot ship. An optional package this machine did not install is skipped, since the build cannot have bundled it.
+**What fails the build.** A listed package that is not installed or ships no licence file. And a module of the build's graph that comes from neither `ui/`'s own code nor a listed package — a development package imported by application code, a file outside `ui/`, or a virtual module `VIRTUAL` does not name — so a package that reaches the bundle as a module cannot ship without a notice. An optional package this machine did not install is skipped, since the build cannot have bundled it.
+
+**What the graph check does not see.** It reads the build's module graph, and two things reach the bundle without being modules of it: an asset reached through a CSS `url()` — a font or an image a stylesheet names, which is emitted as a file and never enters the graph — and the glue code Rollup and esbuild write around modules (chunk wrappers, interop and JSX-runtime shims of their own). Today every `url()` names a font under `design/fonts/`, whose licences the font blocks cover, and the glue is the tools' own output, not a package's code. A stylesheet that names an asset from a package needs that package listed by hand.
+
+**A package that ships no licence file.** The build refuses it, by design: a notice is the package's own text, never a guess. When a package that has to be bundled ships none, the remedy is an explicit, reviewed override: a map in `scripts/notices.mjs` from `package@version` to a text file committed under `ui/` holding the licence text, with the reason it is needed (where the text was taken from, and why the package ships none). An entry is keyed to one version, so an upgrade drops it and the build asks again; it is added only when a real package needs it, in the pull request that adds that package, and named there under its own heading. No such map exists today, because no package needs one.
+
+**Out of scope here.** The Rust crates linked into the binary carry notice obligations of their own; they are tracked as #387.
 
 **What re-checks it.** `npm run notices`, after the build, re-reads the written file and fails when the block of a runtime package or a font licence — name, version, licence and text, exactly as written — is absent, so a file edited or left stale fails. `tests/notices.test.ts` tests each rule over throwaway lockfiles, runs the real production build into a temporary directory and checks what it wrote, and fails if `npm run check` stops running the re-check after the build. In `bin/ragondin`, the release assertion fails a shipped binary that does not serve the file (`bin/ragondin/ARCHITECTURE.md` § The assets and the notice page).
 

@@ -507,12 +507,16 @@ than the assets.
 - **The release assertion.** `tests/ui.rs` starts the binary and asks for
   `/` and for `/third-party-notices.txt`; under `RAGONDIN_REQUIRE_UI_ASSETS`
   it fails if the page is the notice, or if the notices are not served as
-  text under their heading. CI's `ui` job runs `cargo test -p ragondin --features ui` with the variable
-  set, right after `npm run check` built `ui/dist/`, so the shipped shape is
-  exercised on every pull request; the `check` job is unchanged and never
-  runs Node. Both branches are tested without the variable: the notice fails
-  the check, a real page passes it; a missing or foreign notices file fails
-  it, the real one passes it.
+  text under their heading. CI's `ui` job runs
+  `cargo test -p ragondin --features ui` with the variable set, right after
+  `npm run check` built `ui/dist/`, so the shipped shape is exercised on
+  every pull request; the `check` job is unchanged and never runs Node. Both
+  branches are tested without the variable: the notice fails the check, a
+  real page passes it; a missing or foreign notices file fails it, the real
+  one passes it. A `ui/dist/` built before the notices existed fails
+  `a_built_ui_serves_its_third_party_notices` with a message saying to
+  rebuild it: `just check` runs the Rust tests before `check-ui` rebuilds
+  `ui/dist/`.
 
 ### The wiring
 

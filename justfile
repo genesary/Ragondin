@@ -188,11 +188,10 @@ calibrate-generation:
 
 # The front end's gates: install exactly the lockfile, then lint, typecheck,
 # test, build, re-check the notices and audit it (ui/ARCHITECTURE.md § The
-# gates). The one recipe here
-# that needs Node -- the version pinned in ui/.node-version. No cargo recipe
-# does, and none may: the Rust build stays Rust-only (ADR-C36 § 5), so
-# everything above runs on a machine without Node, and only `check`, which
-# covers both worlds, needs it.
+# gates). The one recipe here that needs Node -- the version pinned in
+# ui/.node-version. No cargo recipe does, and none may: the Rust build stays
+# Rust-only (ADR-C36 § 5), so everything above runs on a machine without
+# Node, and only `check`, which covers both worlds, needs it.
 check-ui: check-node
     cd ui && npm ci && npm run check
 

@@ -28,8 +28,11 @@ const VIRTUAL = new Map([
 /** The development packages whose code the build writes into the bundle: the targets of VIRTUAL. */
 export const BUILD_INJECTED = [...new Set(VIRTUAL.values())];
 
-/** A package's licence file: LICENSE, LICENCE or COPYING, with or without an extension, any case. */
-const LICENSE_FILE = /^(licen[cs]e|copying)(\.[a-z]+)?$/i;
+/**
+ * A package's licence file: LICENSE, LICENCE or COPYING, any case, bare or
+ * followed by a `.` or `-` suffix — LICENSE.md, LICENSE-MIT, LICENSE.APACHE2.
+ */
+const LICENSE_FILE = /^(licen[cs]e|copying)([-.][\w.-]+)?$/i;
 
 /**
  * @typedef {{ key: string, name: string, version: string, license: string, text: string }} NoticeEntry

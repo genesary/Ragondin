@@ -71,7 +71,7 @@ describe('noticeEntries', () => {
     expect(noticeEntries(root, ['node_modules/vite']).map((e) => e.name)).toEqual(['lib', 'vite']);
   });
 
-  it.each(['LICENSE', 'LICENSE.md', 'LICENCE.txt', 'license', 'COPYING'])('reads the licence text from %s', (file) => {
+  it.each(['LICENSE', 'LICENSE.md', 'LICENCE.txt', 'license', 'COPYING', 'LICENSE-MIT', 'LICENSE.APACHE2', 'license-apache.txt'])('reads the licence text from %s', (file) => {
     const root = project({ a: { files: { [file]: 'the text' } } });
     expect(noticeEntries(root)[0]?.text).toBe('the text');
   });

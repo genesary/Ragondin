@@ -627,7 +627,13 @@ mod with_the_feature {
         let notices = http::get(server.authority(), http::NOTICES_PATH);
 
         if env!("RAGONDIN_UI_ASSETS_KIND") == "built" {
-            assert_eq!(notices.status, 200, "{notices:?}");
+            // `just check` runs `test` before `check-ui` rebuilds `ui/dist/`,
+            // so a `dist/` built before the notices existed lands here.
+            assert_eq!(
+                notices.status, 200,
+                "ui/dist predates the third-party notices; run `npm run build` in ui/ \
+                 and rebuild the binary: {notices:?}"
+            );
             assert_eq!(
                 notices.header("content-type"),
                 Some("text/plain; charset=utf-8")
