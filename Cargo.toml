@@ -103,13 +103,13 @@ protox = "0.8"                                     # build-dependency of ragondi
 # and three features:
 #
 #   - `json`: the extractor and response every endpoint uses;
-#   - `tokio` and `http1`: `axum::serve`, the listener `ragondin ui` binds on
-#     the loopback. They are named now, in the pull request that creates the
-#     entry, because appending a feature to an existing entry later is a
-#     change to every crate naming it and escalates (AGENTS.md § Rules of
-#     engagement), while ADR-C36 § 6 leaves each entry's features to this
-#     pull request. HTTP/1.1 only: a loopback server for one browser gains
-#     nothing from `http2`.
+#   - `tokio` and `http1`: `axum::serve`, inside `ragondin_api::serve`, over
+#     the listener `ragondin ui` binds on the loopback. They are named now,
+#     in the pull request that creates the entry, because appending a
+#     feature to an existing entry later is a change to every crate naming
+#     it and escalates (AGENTS.md § Rules of engagement), while ADR-C36 § 6
+#     leaves each entry's features to this pull request. HTTP/1.1 only: a
+#     loopback server for one browser gains nothing from `http2`.
 #
 # The defaults it drops are the form and query extractors no endpoint reads,
 # `matched-path` and `original-uri`, which no handler uses, and
@@ -127,6 +127,25 @@ axum = { version = "0.7", default-features = false, features = [
 # needs. No OpenAPI generator crate: the description is assembled by hand from
 # these schemas.
 schemars = "1"
+# The UI's built assets, embedded into the binary (ADR-C36 § 6), used by
+# `bin/ragondin` only, behind its `ui` feature. `default-features = false`
+# (there are none today) and one feature, `debug-embed`: a debug build embeds
+# the files too, instead of reading them from disk at run time, so the binary
+# a test runs carries what a shipped one carries, and the release assertion
+# tests the embedding.
+#
+# Not `interpolate-folder-path`: it pulls `shellexpand`, `dirs` and
+# `option-ext`, whose MPL-2.0 is not on `deny.toml`'s allow list. The binary's
+# build script writes the derive, with the folder it chose — `ui/dist/`, or a
+# generated notice page — as a literal (ADR-C36 § 5: the Rust build never needs
+# Node). No `mime-guess` feature: no runtime `mime_guess`, but a fixed table
+# `ragondin-api` controls (`content_type_for`). (8.12's `rust-embed-impl`
+# pulls `mime_guess` at build time whatever the features; 8.11's does not.)
+#
+# Held below 8.12 until the workspace's `sha2` moves to 0.11: 8.12's
+# `rust-embed-utils` depends on `sha2` 0.11, a second copy of the whole
+# `digest` family beside the 0.10 every other crate here uses.
+rust-embed = { version = "~8.11", default-features = false, features = ["debug-embed"] }
 
 # The workspace's HTTP client, decided in ADR-C33 § 2, and today reached by two
 # crates: `testkit/ragondin-generator-service`, optional, behind its `service`

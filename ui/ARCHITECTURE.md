@@ -61,7 +61,7 @@ A component's test sits beside it, in `src/` or `design/`; a test of a rule abou
 | `build` | `vite build` into `dist/`. |
 | `audit` | The font licence audit, the npm licence audit, then the advisory audit (§ The dependency audit). |
 
-`just check-ui` runs `npm ci` first, so the gate always installs exactly the lockfile. **The Rust build does not need Node** (ADR-C36 § 5): no cargo command and no cargo-based `just` recipe reads anything under `ui/`. Only `just check`, which covers both worlds, does.
+`just check-ui` runs `npm ci` first, so the gate always installs exactly the lockfile. **The Rust build does not need Node** (ADR-C36 § 5): no cargo command and no cargo-based `just` recipe runs anything under `ui/`. The one thing cargo reads there is `dist/`, the build's output: `bin/ragondin`'s build script embeds it under the `ui` feature when it exists, and a page saying the UI was not built when it does not (`bin/ragondin/ARCHITECTURE.md` § The ui subcommand). Only `just check`, which covers both worlds, runs Node.
 
 ## The one-address rule
 
@@ -195,7 +195,9 @@ The choices ADR-C36 § 5 left to the implementation, and why each was made:
 
 ## How the assets reach the binary
 
-`npm run build` writes `dist/`, which is ignored by git: nothing here commits built assets. Embedding `dist/` into `bin/ragondin` behind its `ui` feature, and what a build does when `dist/` is absent, belong to the `ragondin ui` subcommand's issue (#339) and to ADR-C36 § 1 and § 5; nothing on the Rust side reads `ui/` yet.
+`npm run build` writes `dist/`, which is ignored by the repository: nothing here commits built assets. `bin/ragondin`, built with its `ui` feature, embeds `dist/` as it was at compile time, and `ragondin-api` serves it at `/`, answering every path whose last segment names no file with `index.html` so the UI routes itself (`runtime/ragondin-api/ARCHITECTURE.md` § The assets); when `dist/` is absent it embeds a page saying the UI was not built and how to build it, so `cargo build --all-features` never needs Node (ADR-C36 § 5). Build the UI before the binary, then, for a binary that carries it. CI's `ui` job does exactly that after `npm run check`, and its test step fails if the binary embedded the notice page (`bin/ragondin/ARCHITECTURE.md` § The ui subcommand says how).
+
+Everything the binary serves, `index.html` included, is under the content security policy `default-src 'self'` (§ The one-address rule): an inline `<script>` or `<style>` in the built page would be refused by the browser. Vite's default output carries neither.
 
 ## The design system
 

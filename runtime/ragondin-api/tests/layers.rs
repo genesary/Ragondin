@@ -6,9 +6,9 @@ mod support;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use axum::routing::get as get_route;
-use axum::Router;
-use support::{app, app_with_assets, get, json, send, FakeRunStore, BUILD, OWN_ORIGIN, SERVED};
+use support::{
+    app, app_with_assets, get, json, send, FakeAssets, FakeRunStore, BUILD, OWN_ORIGIN, SERVED,
+};
 
 fn request(method: &str, path: &str) -> axum::http::request::Builder {
     Request::builder().method(method).uri(path)
@@ -177,16 +177,14 @@ async fn a_host_header_that_is_not_text_is_refused_not_read_from_the_uri() {
     assert_eq!(json(response).await["code"], "host_refused");
 }
 
-/// The UI's pages as the binary will mount them: one route, and a fallback
-/// for every path the application routes on the client.
-fn assets() -> Router {
-    Router::new()
-        .route("/", get_route(|| async { "<!doctype html>" }))
-        .fallback(|| async { "<!doctype html> (fallback)" })
+/// The UI's pages as the binary hands them in: an index page, answered at `/`
+/// and on every path the application routes on the client.
+fn assets() -> FakeAssets {
+    FakeAssets::built()
 }
 
 #[tokio::test]
-async fn the_assets_route_and_fallback_carry_both_headers() {
+async fn the_index_page_and_a_client_route_carry_both_headers() {
     for path in ["/", "/runs/some/client/route"] {
         let response = send(app_with_assets(assets()), get(path)).await;
         assert_eq!(response.status(), StatusCode::OK, "{path}");
@@ -204,7 +202,7 @@ async fn the_assets_route_and_fallback_carry_both_headers() {
 }
 
 #[tokio::test]
-async fn the_assets_route_and_fallback_are_refused_on_a_foreign_host() {
+async fn the_index_page_and_a_client_route_are_refused_on_a_foreign_host() {
     for path in ["/", "/runs/some/client/route"] {
         let response = send(
             app_with_assets(assets()),

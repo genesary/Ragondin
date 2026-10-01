@@ -1,11 +1,16 @@
 [package]
 name = "ragondin"
-description = "The platform binary. Subcommands: bench, compare, serve, validate. The composition root."
+description = "The platform binary. Subcommands: bench, compare, serve, ui, validate. The composition root."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
+
+# Under the `ui` feature, decides what `rust-embed` embeds — `ui/dist/` when it
+# has been built, a generated notice page when not — and the build identity.
+# Without the feature it does nothing (`build.rs` says why).
+build = "build.rs"
 
 [[bin]]
 name = "ragondin"
@@ -63,6 +68,16 @@ ragondin-stub = { workspace = true, optional = true }
 # the composition root, over a channel built here (ADR-C32 § 3).
 ragondin-remote = { workspace = true, optional = true }
 tonic = { workspace = true, optional = true }
+# The UI server, behind the `ui` feature below (ADR-C36 § 1): the API crate,
+# which builds the server and listens with it (`ragondin_api::serve`), and
+# `rust-embed` for the assets it serves, handed in as data (ADR-C36 § 6). No
+# `axum`: ADR-C36 § 6 keeps it to `ragondin-api`, and this crate names no HTTP
+# stack at all.
+ragondin-api = { workspace = true, optional = true }
+rust-embed = { workspace = true, optional = true }
+# `Launcher` is an `async_trait` trait (frozen decision), and the binary
+# implements it under `ui`. Also a dev-dependency, below, for the fakes.
+async-trait = { workspace = true, optional = true }
 
 # Test-only, and deliberately so. `ragondin-stub` is the fixture component
 # crate the vertical slice in `tests/` wires: `bench` registers the real
@@ -137,3 +152,9 @@ remote = [
     "dep:ragondin-retriever-dense",
     "dep:ragondin-store-memory",
 ]
+# `ragondin ui`: the JSON API and the UI's embedded assets on a loopback
+# listener (ADR-C36 § 1). Off by default (ADR-C14): a build without it declares
+# the subcommand and refuses it, naming the feature. It gates no component, so
+# the capabilities it reports are the other features'. No `tokio` feature
+# beyond the workspace entry's: `net` already carries the listener.
+ui = ["dep:ragondin-api", "dep:rust-embed", "dep:async-trait"]

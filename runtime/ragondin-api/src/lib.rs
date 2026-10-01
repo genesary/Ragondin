@@ -12,15 +12,17 @@
 //! the UI to the data plane is [`Launcher`], implemented by the binary.
 //!
 //! [`router`] builds the whole server from [`Backends`], a [`ServerConfig`]
-//! and the assets `Router`, all passed in by the binary, applies the server's
-//! layers last, and returns a [`Server`]: something `axum::serve` listens
-//! with and no route can be added to, so every route it answers is one the
-//! layers wrap. Nothing here is a static or a global, and nothing binds a
-//! port — the listener is the binary's.
+//! and the UI's [`Assets`], all passed in by the binary, applies the server's
+//! layers last, and returns a [`Server`]: something [`serve`] listens with and
+//! no route can be added to, so every route it answers is one the layers
+//! wrap. Nothing here is a static or a global, and nothing binds a port — the
+//! listener is the binary's, handed to [`serve`].
 //!
 //! The modules:
 //!
 //! - [`backends`] — the traits and the values they exchange.
+//! - [`assets`] — the [`Assets`] table the binary hands in, and how a request
+//!   reaches it: the single-page fallback, the content types.
 //! - [`response`] — every type the API serializes; this crate's own, never a
 //!   core type serialized directly.
 //! - [`error`] — [`ApiError`] and its `application/problem+json` rendering.
@@ -46,6 +48,7 @@ use axum::routing::{any, get, IntoMakeService};
 use axum::{Router, ServiceExt};
 use tower::Service;
 
+pub mod assets;
 pub mod backends;
 #[cfg(feature = "conformance")]
 pub mod conformance;
@@ -58,6 +61,7 @@ mod convert;
 mod handlers;
 mod layers;
 
+pub use assets::{content_type_for, Asset, Assets, NoAssets};
 pub use backends::{
     Backends, DownloadProgress, Job, JobState, Launcher, PipelineEntry, PipelineFile,
     PipelineSource, ProgressSink, Registry, Revision, ServiceIdentity, Settings, Submission,
@@ -88,18 +92,19 @@ pub struct ServerConfig {
 /// The whole server: the API under `/api`, `assets` beside it, and the
 /// server's layers around both.
 ///
-/// `assets` is whatever else the server answers — the UI's pages, and the
-/// fallback that serves them on every client-side route. It is taken here
-/// because `Router::layer` wraps only the routes that exist when it is
-/// called: the envelope is applied last, here, over everything the server
-/// answers, and what comes back is a [`Server`], which has no method that
-/// adds a route. Pass `Router::new()` for no assets.
+/// `assets` is the UI's files, as data: every path outside `/api` is looked
+/// up in it, with the single-page fallback [`assets`](mod@assets) describes.
+/// The routes that serve them are written here, because `Router::layer`
+/// wraps only the routes that exist when it is called: the envelope is
+/// applied last, here, over everything the server answers, and what comes
+/// back is a [`Server`], which has no method that adds a route. Pass
+/// [`NoAssets`] for none.
 ///
 /// `/api`, `/api/` and every path below them are the API's: an unknown one
-/// is a `route_not_found` problem, never the assets' fallback. A path that
-/// merely starts with the same letters, such as `/apix`, is not under `/api`
-/// and is the assets' to answer.
-pub fn router(backends: Backends, config: ServerConfig, assets: Router) -> Server {
+/// is a `route_not_found` problem, never an asset. A path that merely starts
+/// with the same letters, such as `/apix`, is not under `/api` and is the
+/// assets' to answer.
+pub fn router(backends: Backends, config: ServerConfig, assets: Arc<dyn Assets>) -> Server {
     let (served, build) = (config.served.clone(), config.build.clone());
     // Each route answers a method it does not serve with a problem body;
     // axum still sets `Allow`.
@@ -127,27 +132,37 @@ pub fn router(backends: Backends, config: ServerConfig, assets: Router) -> Serve
         // axum 0.7's `nest` leaves the prefix with a trailing slash to the
         // outer router, where the assets' fallback would answer it.
         .route("/api/", any(handlers::prefix_not_found))
-        .merge(assets);
+        .merge(assets::router(assets));
     Server {
         router: layers::wrap(server, &served, &build),
     }
 }
 
-/// The server [`router`] builds, enveloped: what `axum::serve` listens with,
-/// and nothing more.
+/// Serves `server` on `listener` until the listener fails: the one place the
+/// server meets a socket, so the binary names no HTTP stack.
+///
+/// Each connection gets a clone of `server`, and every request it answers is
+/// inside the envelope [`router`] applied.
+pub async fn serve(listener: tokio::net::TcpListener, server: Server) -> std::io::Result<()> {
+    axum::serve(listener, server.into_make_service()).await
+}
+
+/// The server [`router`] builds, enveloped: what [`serve`] listens with, and
+/// nothing more.
 ///
 /// Opaque on purpose. A `Router` can be extended, and a route added to it
 /// after the layers would answer outside them; a `Server` has no method that
 /// adds a route, merges a router or sets a fallback, and does not convert
 /// back into a `Router`. What it offers is what serving needs:
-/// [`into_make_service`](Self::into_make_service) for `axum::serve`, and
+/// [`into_make_service`](Self::into_make_service), which [`serve`] hands
+/// to `axum::serve`, and
 /// `tower::Service` over one request, which is what a connection calls —
 /// the network envelope, where ADR-C10 puts Tower (INV-11 is about
 /// components, and this is none).
 ///
 /// ```
-/// # fn serve(server: ragondin_api::Server, listener: tokio::net::TcpListener) {
-/// let _serving = axum::serve(listener, server.into_make_service());
+/// # async fn run(server: ragondin_api::Server, listener: tokio::net::TcpListener) {
+/// let _stopped = ragondin_api::serve(listener, server).await;
 /// # }
 /// ```
 ///
@@ -169,8 +184,8 @@ pub fn router(backends: Backends, config: ServerConfig, assets: Router) -> Serve
 ///
 /// A caller can still write a second router of its own around a `Server`,
 /// answering routes it adds itself. That is a new server outside this
-/// envelope, written by hand in the binary — a diff a reviewer sees, not a
-/// method call that looks like extending this one.
+/// envelope, written by hand — and in the binary it would need `axum`, which
+/// the binary does not depend on: a diff a reviewer sees in its manifest.
 #[derive(Clone)]
 pub struct Server {
     router: Router,

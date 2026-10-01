@@ -27,17 +27,17 @@ embedder, a vector store) each get their own crate behind a feature flag, so the
 default build stays lean — none of them has been written yet, and `cargo build`
 today pulls in no search engine, no inference runtime and no store client.
 
-One binary, four subcommands — the whole user-facing surface:
+One binary, five subcommands — the whole user-facing surface:
 
 ```text
 ragondin bench <config> --benchmark beir/scifact --datasets <dir> --store <dir>  # evaluate a pipeline against a benchmark
 ragondin compare <run-a> <run-b> --store <dir>                                   # compare two runs
 ragondin serve <config>                                                          # serve the pipeline
+ragondin ui --workspace <dir>                                                    # the front end, on loopback
 ragondin validate <config>                                                       # validate a configuration
 ```
 
-**None of the four is implemented yet.** That is the planned surface, not a
-description of today; [§ Status](#status) says what is on `main`.
+That is the planned surface; [§ Status](#status) says what of it is on `main`.
 
 ## Architecture in one breath
 
@@ -88,7 +88,7 @@ generator served in-process by the test, and requires the hybrid pipeline with
 reranking to answer more questions than the dense-only one — on exact match and
 token F1 — reproducibly.
 
-**Three of the four subcommands are implemented.**
+**Four of the five subcommands are implemented**, `ui` behind its `ui` feature.
 `bin/ragondin/ARCHITECTURE.md` § What lives here carries the current list and what each one does; `serve` is the one that parses
 its arguments and then reports that this build does not implement it. `bench` is
 where the composition root does its job: it loads a configuration, reads a
@@ -146,13 +146,15 @@ exist yet.
 flowchart TB
     CFG["pipeline.yaml<br/>one configuration file"]
 
-    subgraph CLI["On main — three of the four subcommands"]
+    subgraph CLI["On main — four of the five subcommands"]
         direction LR
         VAL["ragondin validate<br/>is this pipeline well-formed?"]
         BEN["ragondin bench<br/>run it over a benchmark"]
         RUNS[("runs · traces · metrics")]
         CMP["ragondin compare<br/>which configuration won?"]
+        UI["ragondin ui<br/>browse the runs in a browser"]
         BEN --> RUNS --> CMP
+        RUNS --> UI
     end
 
     subgraph SERVE["Reserved — declared and refusing"]
