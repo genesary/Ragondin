@@ -1,7 +1,7 @@
 ---
 id: ADR-016
 title: Single front end; graph replay is load-bearing and built first; visual editing is built with it, over pipeline files that stay the source of truth
-status: accepted
+status: amended
 invariants: [INV-8, INV-9]
 supersedes: [ADR-014]
 superseded_by: null
@@ -117,9 +117,12 @@ and the object a user versions.**
   of the front end's own, exported to YAML on request. Rejected because it makes
   two truths: in a cluster, the custom resource is already the serialization of
   the pipeline (ADR-7), and a second store would compete with it; locally, a
-  researcher's git history would stop being the pipeline's history. The history
-  that matters — which version of a pipeline produced which run — is already in
-  the run store, since every run keeps its configuration document.
+  researcher's git history would stop being the pipeline's history. The run
+  store keeps the configuration document of every version that ran, since
+  every run keeps its own, but not the name each version was launched under;
+  that is the run's launch record (ADR-C39). See the Amendments section: an
+  earlier wording of this sentence said the run store already held which
+  version of a pipeline produced which run.
 - **Export only** — the canvas writes YAML, but never reads a document a person
   wrote. Rejected because it breaks the round trip that makes the file and the
   canvas one object: a pipeline edited by hand could no longer be opened in the
@@ -167,6 +170,37 @@ and the object a user versions.**
   and the editor's saving cadence, which are the implementing crates' leaf
   choices; and control-flow rendering (§ 6 above).
 
+## Amendments
+
+### 2026-10-01 — the run store keeps each version's text, not the name it was launched under
+
+**Retracted.** This ADR's Alternatives rejected, in the bullet on the canvas as
+the source of truth, originally read, verbatim:
+
+> The history that matters — which version of a pipeline produced which run —
+> is already in the run store, since every run keeps its configuration document.
+
+**Why it is false.** A run keeps the canonical hash of what it ran and its
+configuration document verbatim, so the store holds the text of every version
+that ran. It does not hold the name each version was launched under: no run
+records a name, and the pipeline document has no name field. Which version of
+a named pipeline produced a run therefore cannot be read from the store.
+Matching a run's hash against the current documents, the only link the stored
+content allows, loses it at every edit, on an unedited fork, and on a rename or
+a delete. Decision issue #390 found this, and ADR-C39 decides how a run records
+the name it was launched as.
+
+**Why the decision still stands.** The retracted sentence was not the ground of
+the rejection. The bullet rejects the canvas as the source of truth because it
+makes two truths, in a cluster and locally, and that ground is untouched: the
+rejection stands on it. ADR-C39's launch record does not reopen it either: it
+records a fact about a past launch, it stores no pipeline, and the file stays
+the truth.
+
+**On whose authority.** The repository owner, deciding #390 on 2026-10-01; its
+amendment 10 assigns this retraction to a pull request of its own. The Decision
+section is untouched, as process rule 2 requires.
+
 ## Status
 
-Accepted.
+Accepted (amended 2026-10-01).
