@@ -1,10 +1,12 @@
-//! Run comparison: [`compare`], [`RunComparison`], [`MetricComparison`] and
-//! [`ConfigurationComparison`].
+//! Run comparison: [`compare`] for two runs, [`compare_runs`] for several
+//! against a baseline.
 //!
-//! The diff between two runs is the view the platform exists for
+//! The diff between runs is the view the platform exists for
 //! (`docs/system-architecture.md` §6.5): *this configuration against that one,
-//! side by side*. This module is its data — the `ragondin compare` command and
-//! any later interface render what [`compare`] returns.
+//! side by side*. This module is its data — the `ragondin compare` command
+//! renders what [`compare`] returns, and `ragondin-api`'s `POST /compare`
+//! what [`compare_runs`] returns. The two are one computation: [`compare`] is
+//! the two-run case of the same metric table and configuration matrix.
 //!
 //! It compares **metrics**, and **which configuration parameters differ**:
 //! the node-level parameters, `impl:` names and component families one run's

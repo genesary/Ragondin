@@ -1,5 +1,6 @@
 //! The handlers of the workspace's endpoints — pipelines, benchmarks,
-//! services — beside the read endpoints of `handlers.rs`. Each reads or
+//! services — and of `POST /compare`, beside the read endpoints of
+//! `handlers.rs`. Each reads or
 //! writes through the backends, converts into this crate's own types, and
 //! answers; every failure is an [`ApiError`].
 

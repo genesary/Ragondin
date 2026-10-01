@@ -26,7 +26,8 @@
 //!   [`RunStore`] backend passes.
 //! - [`mod@compare`] — [`compare()`], the diff behind `ragondin compare`:
 //!   metric by metric, and the configuration parameters the two runs differ
-//!   in and, later, the comparison view (§6.5).
+//!   in; and [`compare_runs`], the same table and matrix over a baseline and
+//!   further runs of one benchmark, behind the comparison view (§6.5).
 //!
 //! Not here, and deliberately: **export adapters** to MLflow or OpenTelemetry
 //! (additive to the plane, and not what a local benchmark needs), the

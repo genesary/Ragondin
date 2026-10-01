@@ -35,8 +35,8 @@
 //!   [`Registry`] backend passes.
 //!
 //! Every path is under `/api/v1`, and [`description::OPERATIONS`] lists
-//! them: the workspace, the runs, the pipelines and their layouts, the
-//! benchmarks and the services. `GET /runs/{id}/queries` and
+//! them: the workspace, the runs, the comparison of runs, the pipelines and
+//! their layouts, the benchmarks and the services. `GET /runs/{id}/queries` and
 //! `GET /runs/{id}/trace/{query}` serve derived data — per-query scores,
 //! per-node metrics, passage text — computed on read against the run's own
 //! dataset, cached under the workspace's `cache/`, and never written into the
