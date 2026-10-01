@@ -1,8 +1,8 @@
 /** @vitest-environment happy-dom */
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createApiClient, type ApiClient } from '../api/client.ts';
-import { mockApi, type MockRoutes } from '../api/testing.ts';
+import { mockApi, type MockReply, type MockRoutes } from '../api/testing.ts';
 import type { CompareRequest, Comparison, Problem, RunListing, RunSummary } from '../api/types.ts';
 import { useRoute } from '../routes.ts';
 import { CompareScreen } from './CompareScreen.tsx';
@@ -121,7 +121,8 @@ describe('the run bar', () => {
     const items = within(screen.getByRole('list', { name: 'Runs compared' })).getAllByRole('listitem');
     expect(items.map((li) => li.querySelector('.rg-swatch')?.getAttribute('data-run'))).toEqual(['base', 'a', 'b']);
     expect(items[1]?.textContent).toContain('hybrid');
-    expect(within(items[1] as HTMLElement).getByRole('button', { name: `Copy run hash ${HYBRID}` })).toBeTruthy();
+    expect(within(items[0] as HTMLElement).getByRole('button', { name: 'Copy the hash of the baseline' })).toBeTruthy();
+    expect(within(items[1] as HTMLElement).getByRole('button', { name: 'Copy the hash of run A' }).getAttribute('title')).toBe(HYBRID);
     expect(screen.getByText('beir/scifact')).toBeTruthy();
   });
 
@@ -228,6 +229,24 @@ describe('the charts', () => {
     expect(links[0]?.getAttribute('href')).toBe(`#replay/${RERANK}/q/q1?with=${DENSE}`);
   });
 
+  it('says in the bars\' table which values the stars mark, every run of a tie', async () => {
+    show(THREE);
+    await loaded();
+    fireEvent.click(screen.getAllByRole('button', { name: 'Show as a table' })[0] as HTMLElement);
+    const table = screen.getByRole('table', { name: 'Each metric per run, as a table' });
+    const recall = within(table).getByText('recall@100').closest('tr') as HTMLElement;
+    expect([...recall.querySelectorAll('td[data-best]')].map((td) => td.textContent)).toEqual(['0.9310 (best)', '0.9310 (best)']);
+    const ndcg = within(table).getByText('ndcg@10').closest('tr') as HTMLElement;
+    expect([...ndcg.querySelectorAll('td[data-best]')].map((td) => td.textContent)).toEqual(['0.7032 (best)']);
+  });
+
+  it('names its two metric choices apart', async () => {
+    show(THREE);
+    await loaded();
+    expect((screen.getByLabelText('Stage metric') as HTMLSelectElement).value).toBe('mrr@10');
+    expect((screen.getByLabelText('Per-query metric') as HTMLSelectElement).value).toBe('mrr@10');
+  });
+
   it('gives every chart a table, one keyboard stop away', async () => {
     show(THREE);
     await loaded();
@@ -313,5 +332,134 @@ describe('the pairing', () => {
     fireEvent.click(within(screen.getByRole('region', { name: 'Pair nodes' })).getByRole('button', { name: 'Reset to automatic' }));
     expect(await screen.findByText('Paired automatically')).toBeTruthy();
     expect(api.bodies.at(-1)).toEqual({ run_ids: [DENSE, HYBRID, RERANK], baseline: DENSE, pairing: { pipeline: 'dense-only', other: 'hybrid-rerank', pairs: [] } });
+  });
+});
+
+/**
+ * A `POST /compare` whose answers the test releases one by one, in any order.
+ * Each answer names the benchmark it is released with, so the screen shows
+ * which answer it holds.
+ */
+function held() {
+  const calls: { body: CompareRequest; release: (benchmark: string) => Promise<void> }[] = [];
+  const route = (body: CompareRequest) =>
+    new Promise<MockReply<Comparison>>((resolve) => {
+      calls.push({
+        body,
+        release: async (benchmark) => {
+          const reply = answer(body);
+          await act(async () => {
+            resolve('body' in reply ? { body: { ...reply.body, ground_truth: { ...reply.body.ground_truth, benchmark } } } : reply);
+            await new Promise((r) => setTimeout(r, 0));
+          });
+        },
+      });
+    });
+  const call = async (n: number) => {
+    await waitFor(() => expect(calls.length).toBeGreaterThan(n));
+    return calls[n] as (typeof calls)[number];
+  };
+  return { calls, route, call };
+}
+
+const baselineTo = (id: string) => fireEvent.change(screen.getByLabelText('Baseline'), { target: { value: id } });
+const busyNote = () => document.querySelector('.rg-compare__busy') as HTMLElement;
+
+describe('answers that arrive out of order', () => {
+  it('lands only the comparison asked for last', async () => {
+    const h = held();
+    show(THREE, routes(h.route));
+    await (await h.call(0)).release('first');
+    await screen.findByText('first');
+    baselineTo(HYBRID);
+    const second = await h.call(1);
+    baselineTo(RERANK);
+    const third = await h.call(2);
+    await third.release('third');
+    expect(screen.getByText('third')).toBeTruthy();
+    await second.release('second');
+    expect(screen.queryByText('second')).toBeNull();
+    expect(screen.getByText('third')).toBeTruthy();
+  });
+
+  it('keeps the comparison on screen while a newer one is read, every section busy, and says so in a status that stays', async () => {
+    const h = held();
+    show(THREE, routes(h.route));
+    await (await h.call(0)).release('first');
+    await screen.findByText('first');
+    expect(busyNote().getAttribute('role')).toBe('status');
+    expect(busyNote().textContent).toBe('');
+    expect(document.querySelector('.rg-sheet')?.closest('[aria-busy="true"]')).toBeNull();
+    baselineTo(HYBRID);
+    const second = await h.call(1);
+    expect(screen.getByText('first')).toBeTruthy();
+    expect(document.querySelector('.rg-sheet')?.closest('[aria-busy="true"]')).toBeTruthy();
+    expect(busyNote().textContent).toBe('Comparing again…');
+    await second.release('second');
+    expect(screen.getByText('second')).toBeTruthy();
+    expect(document.querySelector('.rg-sheet')?.closest('[aria-busy="true"]')).toBeNull();
+    expect(busyNote().textContent).toBe('');
+  });
+
+  it('writes a new baseline in place: Back does not step through baselines', async () => {
+    show(THREE);
+    await loaded();
+    const before = window.history.length;
+    baselineTo(HYBRID);
+    await waitFor(() => expect(window.location.hash).toContain(`baseline=${HYBRID}`));
+    expect(window.history.length).toBe(before);
+  });
+
+  it('drops a pairing answered after a newer comparison was asked for, and shows no error for it', async () => {
+    const h = held();
+    show(THREE, routes(h.route));
+    await (await h.call(0)).release('first');
+    await screen.findByText('first');
+    fireEvent.click(screen.getByRole('button', { name: 'Pair nodes…' }));
+    const panel = screen.getByRole('region', { name: 'Pair nodes' });
+    fireEvent.change(within(panel).getByLabelText('Pair the baseline with'), { target: { value: RERANK } });
+    fireEvent.click(within(panel).getByRole('button', { name: 'dense, baseline' }));
+    fireEvent.click(within(panel).getByRole('button', { name: 'rerank, B' }));
+    const pairing = await h.call(1);
+    expect(pairing.body.pairing?.pairs).toEqual([{ node: 'dense', other: 'rerank' }]);
+    baselineTo(HYBRID);
+    const newer = await h.call(2);
+    await newer.release('newer');
+    await pairing.release('paired');
+    expect(screen.getByText('newer')).toBeTruthy();
+    expect(screen.queryByText('paired')).toBeNull();
+    expect(document.querySelector('.rg-sheet')?.closest('[aria-busy="true"]')).toBeNull();
+    expect(within(screen.getByRole('region', { name: 'Pair nodes' })).queryByRole('alert')).toBeNull();
+  });
+
+  it('adds a run to the address as it stands when the answer arrives, not as it was when Add was pressed', async () => {
+    const h = held();
+    show(THREE, routes(h.route));
+    await (await h.call(0)).release('first');
+    await screen.findByText('first');
+    const select = (await screen.findByLabelText('Add a run')) as HTMLSelectElement;
+    await waitFor(() => expect(select.options.length).toBe(4));
+    fireEvent.change(select, { target: { value: R4 } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }));
+    const adding = await h.call(1);
+    baselineTo(HYBRID);
+    await waitFor(() => expect(window.location.hash).toContain(`baseline=${HYBRID}`));
+    await (await h.call(2)).release('newer');
+    await adding.release('added');
+    await waitFor(() => expect(window.location.hash).toBe(`#compare/${DENSE}+${HYBRID}+${RERANK}+${R4}?baseline=${HYBRID}`));
+  });
+
+  it('keeps the Add button\'s words while it adds, so its width never moves the button beside it', async () => {
+    const h = held();
+    show(THREE, routes(h.route));
+    await (await h.call(0)).release('first');
+    const select = (await screen.findByLabelText('Add a run')) as HTMLSelectElement;
+    await waitFor(() => expect(select.options.length).toBe(4));
+    fireEvent.change(select, { target: { value: R4 } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }));
+    await h.call(1);
+    const add = screen.getByRole('button', { name: 'Add' });
+    expect(add.getAttribute('aria-busy')).toBe('true');
+    expect(add.textContent).toBe('Add');
   });
 });

@@ -126,6 +126,7 @@ export function ValuesTable({
   values,
   format,
   gap,
+  best,
 }: {
   caption: string;
   first: string;
@@ -135,6 +136,8 @@ export function ValuesTable({
   values: (row: number, series: number) => number | null;
   format: (v: number) => string;
   gap: (row: number, series: number) => string;
+  /** Whether a value is its row's best — the chart's star — so the table says "(best)" for it too. */
+  best?: (row: number, series: number) => boolean;
 }) {
   return (
     <Table
@@ -142,6 +145,7 @@ export function ValuesTable({
       columns={[{ id: 'row', label: first }, ...series.map((s) => ({ id: s.id, label: s.label, numeric: true }))]}
       rows={rows.map((r, i) => ({
         id: r.id,
+        bestColumn: best === undefined ? [] : series.flatMap((_, s) => (best(i, s) && values(i, s) !== null ? [s + 1] : [])),
         cells: [
           r.label,
           ...series.map((_, s) => {

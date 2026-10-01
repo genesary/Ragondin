@@ -115,9 +115,11 @@
 }
 .rg-hist__col:hover,
 .rg-hist__col[data-preview-state="hover"] { background: var(--accent-wash); }
+/* The open bin: an outline and an underline in the accent, no wash, which in the
+   dark theme would read like the neutral middle bar. Focus, below, draws over it. */
+.rg-hist__col[aria-expanded="true"] { outline: 1px solid var(--accent); outline-offset: -1px; box-shadow: inset 0 -2px 0 var(--accent); }
 .rg-hist__col:focus-visible,
 .rg-hist__col[data-preview-state="focus"] { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
-.rg-hist__col[aria-expanded="true"] { box-shadow: inset 0 -2px 0 var(--accent); background: var(--accent-wash); }
 .rg-hist__count { font: var(--type-label); font-variant-numeric: tabular-nums; color: var(--ink); }
 .rg-hist__track { display: flex; align-items: flex-end; min-height: 0; border-bottom: 1px solid var(--line-strong); }
 .rg-hist__bar { display: block; width: 100%; min-height: 0; border-radius: var(--radius-xs) var(--radius-xs) 0 0; }

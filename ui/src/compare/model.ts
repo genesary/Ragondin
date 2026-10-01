@@ -40,7 +40,9 @@ export const formatValue = (direction: MetricDirection, value: number) => (direc
 /** A delta against the baseline: its sign, what it means by the metric's direction, and the arrow. */
 export function deltaOf(direction: MetricDirection, delta: number): { text: string; meaning: 'better' | 'worse' | 'same'; direction: 'up' | 'down' | 'none' } {
   const magnitude = formatValue(direction, Math.abs(delta));
-  if (delta === 0) return { text: magnitude, meaning: 'same', direction: 'none' };
+  // A delta that prints as zero reads as unchanged: a coloured "+0.0000"
+  // would claim a change the number on screen does not show.
+  if (Number(magnitude) === 0) return { text: magnitude, meaning: 'same', direction: 'none' };
   const up = delta > 0;
   return { text: `${up ? '+' : MINUS}${magnitude}`, meaning: up === (direction === 'higher') ? 'better' : 'worse', direction: up ? 'up' : 'down' };
 }
@@ -162,6 +164,16 @@ export function verdict(md: MetricDeltas, run: string): string {
   const edge = extreme?.upper ?? 0;
   const clause = extreme === undefined || edge === 0 ? '' : ` — ${n(extreme.count)} by more than ${String(Math.abs(edge))}`;
   return `On ${md.metric}, ${run} against the baseline: ${counts}${clause}.`;
+}
+
+/**
+ * Why no verdict can be read for `run`: either the ground truth is verified
+ * and the two runs share no ranking metric, or it is not, and its detail says
+ * why.
+ */
+export function noVerdict(c: Comparison, run: string): string {
+  if (c.ground_truth.status === 'verified') return `${run} and the baseline share no ranking metric, so no query can be compared.`;
+  return `No query of ${run} can be compared with the baseline: ${c.ground_truth.detail}.`;
 }
 
 /** The queries that get worse, and the one whose delta is lowest: where Replay opens first. */

@@ -57,7 +57,7 @@ export function RunBar({ comparison, ids, baseline, listing, onRetryListing, onA
           const letter = series[i]?.short ?? '';
           return (
             <li key={run.id} className="rg-compare__run">
-              <RunSwatch slot={series[i]?.ink ?? 'd'} name={pipelineName(run)} hash={run.id} onCopyHash={copy} />
+              <RunSwatch slot={series[i]?.ink ?? 'd'} name={pipelineName(run)} hash={run.id} onCopyHash={copy} copyLabel={i === 0 ? 'the baseline' : `run ${letter}`} />
               {!removable ? null : ids.length > 2 ? (
                 <Button
                   size="s"
@@ -102,7 +102,8 @@ export function RunBar({ comparison, ids, baseline, listing, onRetryListing, onA
               Add
             </Button>
           ) : (
-            <Button icon="plus" busy={adding} busyLabel="Adding" onClick={() => void add()}>
+            // Busy without a busy label: "Adding" is wider than "Add", and would push the button beside it.
+            <Button icon="plus" busy={adding} onClick={() => void add()}>
               Add
             </Button>
           )}

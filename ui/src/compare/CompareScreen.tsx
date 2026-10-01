@@ -6,6 +6,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ButtonLink, EmptyState, Sheet } from '../../design/index.ts';
 import type { ApiClient, ApiProblem } from '../api/client.ts';
 import type { CompareRequest, Comparison, Pairing, RunListing } from '../api/types.ts';
+import type { PairOutcome } from './PairingPanel.tsx';
 import { formatHash, navigate } from '../routes.ts';
 import { ErrorState, Loading, type RequestState } from '../shell/states.tsx';
 import { ComparisonView } from './ComparisonView.tsx';
@@ -64,6 +65,8 @@ function Comparing({ client, ids, baseline }: { client: ApiClient; ids: readonly
   // compared before the address moved, and is not asked for twice.
   const answered = useRef(new Map<string, Comparison>());
   const latest = useRef(0);
+  // The address as it stands now: an answer that arrives later builds on
+  // this, never on the ids and baseline it captured when it was asked.
   const request = useRef<CompareRequest>({ run_ids: [...ids], baseline });
   request.current = { run_ids: [...ids], baseline };
 
@@ -99,23 +102,31 @@ function Comparing({ client, ids, baseline }: { client: ApiClient; ids: readonly
   }, [readListing]);
 
   const onAdd = async (id: string): Promise<ApiProblem | null> => {
-    const next = [...ids, id];
-    const result = await client.post('/compare', { run_ids: next, baseline });
+    const asked = { run_ids: [...request.current.run_ids, id], baseline: request.current.baseline };
+    const result = await client.post('/compare', asked);
     if (!result.ok) return result.problem;
-    answered.current.set(keyOf(next, baseline), result.value);
-    navigate({ screen: 'compare', ids: next, baseline });
+    answered.current.set(keyOf(asked.run_ids, asked.baseline), result.value);
+    // The address may have moved while the run was being compared — a new
+    // baseline, a run removed: the run joins the address as it stands now.
+    const now = request.current;
+    navigate({ screen: 'compare', ids: now.run_ids.includes(id) ? now.run_ids : [...now.run_ids, id], baseline: now.baseline });
     return null;
   };
 
-  const onPair = async (pairing: Pairing): Promise<ApiProblem | null> => {
-    const result = await client.post('/compare', { run_ids: [...ids], baseline, pairing });
-    if (!result.ok) return result.problem;
+  const onPair = async (pairing: Pairing): Promise<PairOutcome> => {
+    // A pairing's answer is a comparison like any other: it lands only if
+    // nothing newer was asked for meanwhile.
+    const mine = ++latest.current;
+    const body = { ...request.current, pairing };
+    const asked = keyOf(body.run_ids, body.baseline);
+    const result = await client.post('/compare', body);
+    if (mine !== latest.current) return { kind: 'superseded' };
+    if (!result.ok) return { kind: 'refused', problem: result.problem };
     // A kept pairing changes the answer for these runs: what disk holds now.
     answered.current.clear();
-    answered.current.set(key, result.value);
-    latest.current++;
-    setRead({ state: { status: 'loaded', value: result.value }, key, shown: result.value });
-    return null;
+    answered.current.set(asked, result.value);
+    setRead({ state: { status: 'loaded', value: result.value }, key: asked, shown: result.value });
+    return { kind: 'kept' };
   };
 
   const { state, shown } = read;

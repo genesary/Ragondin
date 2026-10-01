@@ -1,5 +1,6 @@
 import { useRef, useState, type KeyboardEvent } from 'react';
 import { Glyph } from '../glyphs/Glyph.tsx';
+import { arrowStep } from '../roving.ts';
 import './Charts.css';
 
 export type HistogramBin = {
@@ -49,16 +50,9 @@ export function Histogram({ label, bins, halves, active, onActivate, controls }:
   };
   const onKeyDown = (i: number) => (event: KeyboardEvent<HTMLButtonElement>) => {
     const last = bins.length - 1;
-    const to =
-      event.key === 'ArrowRight' || event.key === 'ArrowDown'
-        ? Math.min(i + 1, last)
-        : event.key === 'ArrowLeft' || event.key === 'ArrowUp'
-          ? Math.max(i - 1, 0)
-          : event.key === 'Home'
-            ? 0
-            : event.key === 'End'
-              ? last
-              : null;
+    const step = arrowStep(event.key);
+    // The arrows stop at the ends rather than wrap: an axis has two ends.
+    const to = step !== null ? Math.min(Math.max(i + step, 0), last) : event.key === 'Home' ? 0 : event.key === 'End' ? last : null;
     if (to === null) return;
     event.preventDefault();
     move(to);

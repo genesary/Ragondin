@@ -100,4 +100,11 @@ describe('Histogram', () => {
     expect(open.tabIndex).toBe(0);
     expect(screen.getByRole('button', { name: /^much worse,/ }).getAttribute('aria-expanded')).toBe('false');
   });
+
+  it('marks the open bin with an outline and an underline, never a wash that reads like the neutral middle bar', () => {
+    const open = (prop: string) => declared(css, '.rg-hist__col[aria-expanded="true"]', prop);
+    expect(open('background')).toBeUndefined();
+    expect(open('outline')).toBe('1px solid var(--accent)');
+    expect(open('box-shadow')).toBe('inset 0 -2px 0 var(--accent)');
+  });
 });

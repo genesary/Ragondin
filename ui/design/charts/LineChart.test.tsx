@@ -92,6 +92,8 @@ describe('LineChart', () => {
     const { container } = render(<LineChart {...PROPS} values={[[0.5, null, null, 0.7], [0.55, 0.6, 0.7, 0.701]]} />);
     const ys = [...container.querySelectorAll('.rg-chart__end')].map((t) => Number(t.getAttribute('y')));
     expect(Math.abs((ys[0] as number) - (ys[1] as number))).toBeGreaterThanOrEqual(12);
+    // Spread both ways about the points, not only pushed down from the first.
+    expect(((ys[0] as number) + (ys[1] as number)) / 2).toBeCloseTo((cy(0.7) + cy(0.701)) / 2);
   });
 
   it('asks the caller why a value is missing, when it says per point', () => {

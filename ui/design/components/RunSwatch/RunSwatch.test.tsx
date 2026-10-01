@@ -62,3 +62,10 @@ describe('RunSwatch small', () => {
     expect(declared(css, '.rg-swatch--s[data-run="base"]', 'border-width')).toBe('1.5px');
   });
 });
+
+describe('RunSwatch hash label, named', () => {
+  it('names which run it copies, when several sit side by side', () => {
+    render(<RunSwatch slot="a" name="hybrid" hash={HASH} copyLabel="run A" />);
+    expect(screen.getByRole('button', { name: 'Copy the hash of run A' }).getAttribute('title')).toBe(HASH);
+  });
+});

@@ -10,6 +10,7 @@ import {
   formatParameter,
   latencyBars,
   manualPairs,
+  noVerdict,
   pairableNodes,
   pairsByHandLabel,
   regressions,
@@ -48,6 +49,12 @@ describe('deltaOf', () => {
     expect(deltaOf('lower', 129)).toEqual({ text: '+129.0', meaning: 'worse', direction: 'up' });
     expect(deltaOf('lower', -2)).toEqual({ text: '−2.0', meaning: 'better', direction: 'down' });
     expect(deltaOf('higher', 0)).toEqual({ text: '0.0000', meaning: 'same', direction: 'none' });
+  });
+
+  it('reads a delta too small to print as unchanged, never as a coloured +0.0000', () => {
+    expect(deltaOf('higher', 0.00004)).toEqual({ text: '0.0000', meaning: 'same', direction: 'none' });
+    expect(deltaOf('higher', -0.00004)).toEqual({ text: '0.0000', meaning: 'same', direction: 'none' });
+    expect(deltaOf('lower', 0.04)).toEqual({ text: '0.0', meaning: 'same', direction: 'none' });
   });
 });
 
@@ -146,6 +153,12 @@ describe('verdict', () => {
 
   it('adds no clause when no query gets worse by more than the first bound', () => {
     expect(verdict(metricDeltas('ndcg@10', [0, 0, 2, 0, 3, 0, 0]), 'A')).toBe('On ndcg@10, A against the baseline: 3 queries improve, 0 are unchanged, 2 get worse.');
+  });
+
+  it('says why no verdict can be read: no shared ranking metric, or a ground truth not verified', () => {
+    expect(noVerdict(COMPARISON, 'A · hybrid')).toBe('A · hybrid and the baseline share no ranking metric, so no query can be compared.');
+    const absent: Comparison = { ...COMPARISON, ground_truth: { ...COMPARISON.ground_truth, status: 'dataset_absent', detail: 'no dataset on disk is pinned to dataset 5555' } };
+    expect(noVerdict(absent, 'A · hybrid')).toBe('No query of A · hybrid can be compared with the baseline: no dataset on disk is pinned to dataset 5555.');
   });
 
   it('says when no query could be compared', () => {

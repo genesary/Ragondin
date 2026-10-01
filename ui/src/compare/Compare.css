@@ -8,7 +8,8 @@
 .rg-compare__id { font: var(--type-hash); letter-spacing: var(--type-hash-tracking); color: var(--ink-3); }
 .rg-compare__controls { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--space-3) var(--space-4); }
 .rg-compare__add { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--space-2); }
-.rg-compare__busy { font: var(--type-caption); color: var(--ink-3); }
+/* The busy line is reserved whether it says anything or not, so the run bar never moves. */
+.rg-compare__busy { min-height: var(--space-4); margin: 0 0 var(--space-2); font: var(--type-caption); color: var(--ink-3); }
 .rg-compare__problem { margin-top: var(--space-3); }
 
 .rg-compare__note { margin: 0; font: var(--type-caption); color: var(--ink-3); }
@@ -66,8 +67,9 @@
 .rg-pair__legend { display: flex; flex-wrap: wrap; gap: var(--space-4); font: var(--type-caption); color: var(--ink-2); }
 .rg-pair__legend span::before { content: ""; display: inline-block; width: 24px; margin-right: var(--space-1); vertical-align: middle; border-top: 2px solid var(--accent); }
 .rg-pair__legend span[data-source="automatic"]::before { border-top: 1.5px dashed var(--line-control); }
-.rg-pair__pairs { display: grid; gap: var(--space-1); margin: 0; padding: 0; list-style: none; font: var(--type-dense); color: var(--ink); }
-.rg-pair__pairs li { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
+.rg-pair__pairs { display: grid; gap: var(--space-1); min-height: var(--size-control-s); margin: 0; padding: 0; list-style: none; font: var(--type-dense); color: var(--ink); }
+.rg-pair__none { color: var(--ink-3); }
+.rg-pair__pairs li { display: flex; min-height: var(--size-control-s); align-items: center; justify-content: space-between; gap: var(--space-2); }
 .rg-pair__actions { display: flex; justify-content: flex-end; }
 /* The picked node's line: always there, empty or not, so picking moves nothing below it. */
 .rg-pair__status { min-height: var(--space-4); margin: 0; font: var(--type-caption); color: var(--ink-2); }

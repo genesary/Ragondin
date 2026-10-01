@@ -10,7 +10,7 @@ export const HYBRID = hex('b');
 export const RERANK = hex('e');
 export const SCIFACT = hex('5');
 
-/** The bounds `comparison::BINS` gives each bin: the API's choice, read here as data. */
+/** The bounds each bin carries in the API's answer — the product's bins (the front-end design, § 3) — read here as data. */
 const BOUNDS: [DeltaBinName, number | null, number | null][] = [
   ['much_worse', null, -0.3],
   ['worse', -0.3, -0.1],

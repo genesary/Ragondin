@@ -26,6 +26,19 @@ describe('mockApi, writing', () => {
     ]);
   });
 
+  it('holds an answer until the test resolves it, so answers can arrive out of order', async () => {
+    let release: (reply: { body: Comparison }) => void = () => {};
+    mockApi({ 'POST /compare': () => new Promise((resolve) => (release = resolve)) });
+    const pending = createApiClient().post('/compare', { run_ids: ['a', 'b'], baseline: 'a' });
+    let settled = false;
+    void pending.then(() => (settled = true));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(settled).toBe(false);
+    release({ body: ANSWER });
+    const result = await pending;
+    expect(result.ok && result.value).toEqual(ANSWER);
+  });
+
   it('records no body for a GET', async () => {
     const api = mockApi({ 'GET /runs': { body: { runs: [], unreadable: [] } } });
     await createApiClient().get('/runs');

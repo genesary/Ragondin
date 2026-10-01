@@ -39,23 +39,41 @@ function runsOf(values: readonly (number | null)[]): number[][] {
 const LETTER_GAP = 12;
 
 /**
- * Where each series' letter goes: beside its last point, and pushed apart
- * from the letters already placed at the same position, so two runs ending on
- * nearly the same value both stay legible. Null for a series with no value.
+ * Where each series' letter goes: beside its last point. Letters at the same
+ * position closer than `LETTER_GAP` are gathered and spread evenly about the
+ * mean of their points, both ways, so two runs ending on nearly the same value
+ * both stay legible and each letter stays near its own point. Null for a
+ * series with no value.
  */
 function endLabels(values: readonly (readonly (number | null)[])[], y: (v: number) => number): ({ at: number; y: number } | null)[] {
   const raw = values.map((row) => {
     const at = row.reduce<number>((last, v, i) => (v === null ? last : i), -1);
     return at < 0 ? null : { at, y: y(row[at] as number) };
   });
-  const order = raw.map((end, i) => ({ end, i })).filter((e) => e.end !== null) as { end: { at: number; y: number }; i: number }[];
-  order.sort((a, b) => a.end.at - b.end.at || a.end.y - b.end.y);
-  const out = [...raw];
-  let previous: { at: number; y: number } | null = null;
-  for (const { end, i } of order) {
-    const placed: { at: number; y: number } = previous !== null && previous.at === end.at && end.y - previous.y < LETTER_GAP ? { at: end.at, y: previous.y + LETTER_GAP } : end;
-    out[i] = placed;
-    previous = placed;
+  const out: ({ at: number; y: number } | null)[] = [...raw];
+  const positions = new Set(raw.flatMap((e) => (e === null ? [] : [e.at])));
+  for (const at of positions) {
+    type Cluster = { members: { i: number; y: number }[]; center: number };
+    const half = (c: Cluster) => ((c.members.length - 1) / 2) * LETTER_GAP;
+    let clusters: Cluster[] = raw
+      .flatMap((e, i) => (e !== null && e.at === at ? [{ i, y: e.y }] : []))
+      .sort((a, b) => a.y - b.y)
+      .map((m) => ({ members: [m], center: m.y }));
+    // Merge neighbours until every pair of clusters is far enough apart.
+    for (let merged = true; merged; ) {
+      merged = false;
+      for (let k = 0; k + 1 < clusters.length; k++) {
+        const a = clusters[k] as Cluster;
+        const b = clusters[k + 1] as Cluster;
+        if (b.center - half(b) - (a.center + half(a)) < LETTER_GAP) {
+          const members = [...a.members, ...b.members];
+          clusters = [...clusters.slice(0, k), { members, center: members.reduce((sum, m) => sum + m.y, 0) / members.length }, ...clusters.slice(k + 2)];
+          merged = true;
+          break;
+        }
+      }
+    }
+    for (const c of clusters) c.members.forEach((m, j) => (out[m.i] = { at, y: c.center - half(c) + j * LETTER_GAP }));
   }
   return out;
 }
