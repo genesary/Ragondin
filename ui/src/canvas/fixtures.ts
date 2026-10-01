@@ -1,0 +1,39 @@
+import type { Graph } from '../api/types.ts';
+
+/**
+ * `hybrid-rerank-gen`: the graph `GET /runs/{id}` serves for the M3 exit
+ * criterion's generation pipeline (bm25 and dense legs, rrf, a cross-encoder,
+ * a context builder, a generator), lowered as the API lowers it — nodes sorted
+ * by id, one edge per entry of a node's inputs in port order. The parameters
+ * are trimmed, and `max_chunks` and `temperature` set, so that every family
+ * shows its key parameter. The tests and the design-system preview draw it;
+ * nothing in the bundle imports it.
+ */
+export const HYBRID_RERANK_GEN: Graph = {
+  inputs: [{ id: 'question', kind: 'query' }],
+  nodes: [
+    {
+      id: 'answer',
+      family: 'generator',
+      implementation: 'answerer',
+      parameters: { served_model: 'qwen2.5-7b-instruct', temperature: 0.2 },
+    },
+    { id: 'fused', family: 'fusion', implementation: 'rrf', parameters: { k: 60 } },
+    { id: 'lexical', family: 'retriever', implementation: 'bm25', parameters: { top_k: 3 } },
+    { id: 'prompt', family: 'context_builder', implementation: 'concat', parameters: { max_chunks: 5, separator: '\n' } },
+    { id: 'reranked', family: 'reranker', implementation: 'cross_encoder', parameters: { top_k: 10 } },
+    { id: 'vectors', family: 'retriever', implementation: 'dense', parameters: { top_k: 3, embedder: 'onnx' } },
+  ],
+  edges: [
+    { from: 'question', to: 'answer', port: 0, kind: 'query' },
+    { from: 'prompt', to: 'answer', port: 1, kind: 'context' },
+    { from: 'lexical', to: 'fused', port: 0, kind: 'chunks' },
+    { from: 'vectors', to: 'fused', port: 1, kind: 'chunks' },
+    { from: 'question', to: 'lexical', port: 0, kind: 'query' },
+    { from: 'question', to: 'prompt', port: 0, kind: 'query' },
+    { from: 'reranked', to: 'prompt', port: 1, kind: 'chunks' },
+    { from: 'question', to: 'reranked', port: 0, kind: 'query' },
+    { from: 'fused', to: 'reranked', port: 1, kind: 'chunks' },
+    { from: 'question', to: 'vectors', port: 0, kind: 'query' },
+  ],
+};

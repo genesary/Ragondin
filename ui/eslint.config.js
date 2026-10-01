@@ -19,6 +19,12 @@ const SOURCES = '**/*.{js,mjs,cjs,jsx,ts,mts,cts,tsx}';
 const TESTING_FROM_ANYWHERE = '(^|/)api/testing(\\.[cm]?[jt]sx?)?$';
 const testingMessage =
   'src/api/testing.ts holds test doubles; only tests import it, so none of it reaches the bundle (ui/ARCHITECTURE.md § The client).';
+// The canvas library, reached by any of its package names or paths.
+const CANVAS_LIBRARY = '^@xyflow/';
+const canvasMessage =
+  'The canvas library stays behind src/canvas/ (ui/ARCHITECTURE.md § The canvas): a screen imports the Canvas, never the library.';
+const TESTING_PATTERN = { regex: TESTING_FROM_ANYWHERE, message: testingMessage };
+const CANVAS_PATTERN = { regex: CANVAS_LIBRARY, message: canvasMessage };
 const message =
   'Network access is confined to src/api/ (ui/ARCHITECTURE.md § The network lint): the UI reaches its own origin only, through that module.';
 
@@ -50,9 +56,19 @@ export default defineConfig([
   {
     // The network's test doubles stay out of the bundle: only a test may
     // import them. ARCHITECTURE.md § The client; tests/test-doubles.test.ts.
+    // And the canvas library stays behind src/canvas/: ARCHITECTURE.md § The
+    // canvas; tests/canvas-confinement.test.ts.
     files: [SOURCES],
     ignores: ['**/*.test.*', 'tests/**'],
-    rules: { 'no-restricted-imports': ['error', { patterns: [{ regex: TESTING_FROM_ANYWHERE, message: testingMessage }] }] },
+    rules: { 'no-restricted-imports': ['error', { patterns: [TESTING_PATTERN, CANVAS_PATTERN] }] },
+  },
+  {
+    // Inside src/canvas/ the library is allowed. A later block replaces the
+    // rule's options rather than adding to them, so the test doubles' pattern
+    // is listed again.
+    files: ['src/canvas/**/*.{js,mjs,cjs,jsx,ts,mts,cts,tsx}'],
+    ignores: ['**/*.test.*'],
+    rules: { 'no-restricted-imports': ['error', { patterns: [TESTING_PATTERN] }] },
   },
   {
     // Inside src/api/ the module is a sibling (`./testing`) or a parent's
@@ -66,7 +82,8 @@ export default defineConfig([
         'error',
         {
           patterns: [
-            { regex: TESTING_FROM_ANYWHERE, message: testingMessage },
+            TESTING_PATTERN,
+            CANVAS_PATTERN,
             { regex: '^(\\./|(\\.\\./)+)testing(\\.[cm]?[jt]sx?)?$', message: testingMessage },
           ],
         },

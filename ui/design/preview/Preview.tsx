@@ -29,13 +29,15 @@ import {
   TopBar,
   type ButtonKind,
 } from '../index.ts';
+import { HYBRID_RERANK_GEN } from '../../src/canvas/fixtures.ts';
+import { Canvas, NodeCard, type NodeCardProps } from '../../src/canvas/index.ts';
 import './preview.css';
 
 /** Every primitive the preview shows; its test holds this to the list the design system commits. */
 export const COMPONENTS = [
   'Glyph', 'Button', 'Input', 'Select', 'Checkbox', 'StatusChip', 'MetricChip', 'FilterChip', 'RunSwatch', 'Table',
   'Sheet', 'Inspector', 'Toast', 'InlineMessage', 'Progress', 'EmptyState', 'RankStrip', 'SegmentedControl', 'Tabs', 'TopBar',
-  'StatusDot',
+  'StatusDot', 'NodeCard', 'Canvas',
 ] as const;
 
 const KINDS: ButtonKind[] = ['primary', 'secondary', 'quiet', 'destructive'];
@@ -91,6 +93,42 @@ function FragmentRow({ label, children }: { label: string; children: ReactNode }
     </>
   );
 }
+
+const RERANKER: NodeCardProps = {
+  family: 'reranker',
+  name: 'reranked',
+  impl: 'reranker/cross_encoder',
+  param: { name: 'top_k', value: '10' },
+  inputs: ['query', 'chunks'],
+  output: 'chunks',
+};
+
+/** Every state the design system defines for a node card. */
+const CARDS: [string, NodeCardProps][] = [
+  ['default', { ...RERANKER, family: 'retriever', name: 'vectors', impl: 'retriever/dense', inputs: ['query'] }],
+  ['hover', { ...RERANKER, previewState: 'hover' }],
+  ['keyboard focus', { ...RERANKER, previewState: 'focus' }],
+  ['selected', { ...RERANKER, selected: true }],
+  ['invalid', { ...RERANKER, param: { name: 'top_k', value: '0' }, status: { kind: 'invalid', message: 'top_k must be at least 1. Launch waits for this fix.' } }],
+  ['running', { family: 'generator', name: 'answer', impl: 'generator/answerer', inputs: ['query', 'context'], output: 'answer', status: { kind: 'running', value: 3982, total: 10570, label: '3,982 / 10,570' } }],
+  ['queued', { family: 'context', name: 'prompt', impl: 'context_builder/concat', param: { name: 'max_chunks', value: '5' }, inputs: ['query', 'chunks'], output: 'context', status: { kind: 'queued' } }],
+  ['dragging', { family: 'fusion', name: 'fused', impl: 'fusion/rrf', param: { name: 'k', value: '60' }, inputs: ['chunks', 'chunks'], output: 'chunks', dragging: true }],
+  ['ghost drop target', { ...RERANKER, name: 'Drop to add', variant: 'ghost', output: null }],
+  ['not in this build', { family: 'generator', name: 'local-llama', impl: 'not in this build', inputs: ['context'], output: 'answer', variant: 'unavailable' }],
+  ['query input', { family: 'query', name: 'question', impl: 'pipeline input', output: 'query' }],
+  ['control flow (neutral)', { family: 'control', name: 'branch', impl: 'extension/branch', inputs: ['chunks'], output: 'opaque' }],
+  ['replay', { ...RERANKER, overlay: { metric: { name: 'nDCG@10', value: '0.861' }, ranks: [1, 2], discarded: 90, durationMs: 349, share: 0.85 } }],
+  ['replay, selected', { ...RERANKER, family: 'fusion', name: 'fused', impl: 'fusion/rrf', selected: true, overlay: { metric: { name: 'nDCG@10', value: '0.647' }, ranks: [2, 3], durationMs: 1, share: 0.01 } }],
+  ['replay, failed', { ...RERANKER, overlay: { error: 'The service at 127.0.0.1:7001 did not answer within 30 s.' } }],
+  ['replay, absent from the other run', { ...RERANKER, family: 'retriever', name: 'lexical', impl: 'retriever/bm25', inputs: ['query'], overlay: { onlyHere: 'only in B', ranks: [3, 7], durationMs: 9, share: 0.02 } }],
+];
+
+const REPLAY = {
+  lexical: { ranks: [3, 7], durationMs: 9, share: 0.02 },
+  vectors: { ranks: [2, 5], durationMs: 31, share: 0.08 },
+  fused: { ranks: [2, 3], durationMs: 1, share: 0.01 },
+  reranked: { metric: { name: 'nDCG@10', value: '0.861' }, ranks: [1, 2], discarded: 90, durationMs: 349, share: 0.85 },
+};
 
 /** Stateful demos keep their own state per theme column. */
 function useDemoState() {
@@ -368,6 +406,26 @@ function Column({ theme }: { theme: 'light' | 'dark' }) {
         <div className="rg-preview__row">
           <StatusDot connected />
           <StatusDot connected={false} />
+        </div>
+      </Block>
+
+      <Block name="NodeCard">
+        <div className="rg-preview__cards">
+          {CARDS.map(([caption, props]) => (
+            <figure key={caption}>
+              <Caption>{caption}</Caption>
+              <NodeCard {...props} />
+            </figure>
+          ))}
+        </div>
+      </Block>
+
+      <Block name="Canvas">
+        <div className="rg-preview__flow">
+          <Canvas graph={HYBRID_RERANK_GEN} label={`hybrid-rerank-gen, ${theme}`} />
+        </div>
+        <div className="rg-preview__flow">
+          <Canvas graph={HYBRID_RERANK_GEN} label={`hybrid-rerank-gen replayed, ${theme}`} overlay={REPLAY} />
         </div>
       </Block>
     </div>

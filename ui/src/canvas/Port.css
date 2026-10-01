@@ -1,0 +1,21 @@
+/* A port: 10px mark, 24px hit target, typed by shape (Port.tsx). */
+.rg-port {
+  position: absolute;
+  width: var(--size-port);
+  height: var(--size-port);
+  background: var(--surface);
+  border: 1.5px solid var(--ink-3);
+  border-radius: 50%;
+}
+.rg-port::after { content: ""; position: absolute; inset: -8px; }
+.rg-port[data-side="in"] { left: -6px; }
+.rg-port[data-side="out"] { right: -6px; }
+.rg-port[data-kind="chunks"] { border-radius: 2px; }
+.rg-port[data-kind="context"] { border-radius: 1px; transform: rotate(45deg) scale(0.9); }
+.rg-port[data-kind="answer"] { border-radius: 5px 1px 5px 1px; }
+.rg-port[data-kind="opaque"] { border-style: dashed; }
+.rg-port[data-connected="true"] { background: var(--ink-3); }
+
+/* In flow, as the legend draws it. */
+.rg-port[data-swatch="true"] { position: relative; display: inline-block; flex: none; }
+.rg-port[data-swatch="true"]::after { content: none; }
