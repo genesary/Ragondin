@@ -1,13 +1,13 @@
 ---
 id: ADR-C37
-title: Every request input reaches `ragondin-api` through the crate's own extractors, over axum's `query` feature; a parameter is a closed, typed struct, and every query parameter and required header is declared in the API description
+title: Request input reaches `ragondin-api`'s `/api` handlers only through the crate's own extractors, over axum's `query` feature; every query parameter and every request header a handler reads is typed and declared in the API description
 status: accepted
 invariants: [INV-1, INV-11, INV-12]
 supersedes: []
 superseded_by: null
 ---
 
-# ADR-C37: Every request input reaches `ragondin-api` through the crate's own extractors, over axum's `query` feature; a parameter is a closed, typed struct, and every query parameter and required header is declared in the API description
+# ADR-C37: Request input reaches `ragondin-api`'s `/api` handlers only through the crate's own extractors, over axum's `query` feature; every query parameter and every request header a handler reads is typed and declared in the API description
 
 ## Context
 
@@ -18,14 +18,15 @@ entry it admitted was created with `default-features = false` and three
 features, `json`, `tokio` and `http1`, so the `Query` and `Form` extractors are
 off.
 
-One endpoint reads a query string today. `GET /runs/{id}/queries` takes
-`missing_gold_at=<k>` (#343, PR #368), and parses it with a hand-written
-percent-decoder in `ragondin-api`'s handlers: the function `parameters`, over
-`decode`. Review hardened it: a malformed escape, a sign inside an escape,
-a duplicate and an unknown name are all refused. More endpoints with
-parameters are coming, among them `POST /compare` options (#344) and `/jobs`
-filtering (#349), and a second hand-rolled parser must not grow beside the
-first.
+Two endpoints read a query string today. `GET /runs/{id}/queries` takes
+`missing_gold_at=<k>` (#343, PR #368), and `GET /runs/{id}/trace/{query}`
+reads its query string too, to refuse any parameter. Both parse it with a
+hand-written percent-decoder in `ragondin-api`'s handlers: the function
+`parameters`, over `decode`. Review hardened it: a malformed escape, a sign
+inside an escape, a duplicate and an unknown name are all refused. More
+endpoints with parameters are coming, among them `POST /compare` options
+(#344) and `/jobs` filtering (#349), and a second hand-rolled parser must not
+grow beside the first.
 
 Both standard routes escalate under `AGENTS.md` § Rules of engagement:
 
@@ -51,8 +52,11 @@ Every claim below was checked against the crates `Cargo.lock` resolves.
   `Query<T>` rejection would break that. The hole already exists for `Path`:
   `GET /api/v1/runs/%FF` answers `400` with a plain-text body today, because
   `%FF` does not decode to UTF-8 and the handler takes `axum::extract::Path`.
-  Bodies avoid it already: every endpoint that reads one takes it as bytes and
-  parses it in the crate, so a malformed body is `request_invalid`.
+  Bodies avoid it only in part. Every endpoint that reads one takes it as
+  `Bytes` and parses it in the crate, so a malformed body is
+  `request_invalid`; but the `Bytes` extractor's own refusals, the body-limit
+  refusal (`413`) and a body that fails to buffer, are still axum's plain
+  text.
 - **The decoding is lenient.** `serde_urlencoded` decodes through
   `form_urlencoded`, which follows the WHATWG URL standard:
   - a `%` not followed by two hex digits passes through literally;
@@ -80,9 +84,9 @@ pinned crates and amended it: the lenient decoding above is closed by a
 validation pass before the deserializer runs, the `Path` hole is closed in the
 same move, and the parameter types are constrained so that the lost checks
 cannot come back through a map or a flattened field. The controller of that
-round added one amendment, approved in the same round: required request
-headers are declared and read the same way, so that the generator's limit is
-closed once for both.
+round added one amendment, approved in the same round: every request header a
+handler reads is declared and read the same way, so that the generator's limit
+is closed once for both.
 
 Decided in #371, by the repository owner on 2026-10-01: option 1, with the
 review's amendments and the controller's.
@@ -90,12 +94,13 @@ review's amendments and the controller's.
 ## Decision
 
 **The `axum` workspace entry gains the `query` feature, and that is the only
-grant. `ragondin-api` reads every request input — path, query string, required
-headers and JSON body — only through its own extractors, defined in one
-module, each rejecting with `ApiError`. A query string is validated as strict
-percent-encoded UTF-8 before it is deserialized. A parameter type is a closed
-struct whose values are self-validating types. Every query parameter and every
-header a handler requires is declared in the API description from its type, and
+grant. The handlers of the `/api` router read every request input — path,
+query string, every request header a handler reads, and JSON body — only
+through `ragondin-api`'s own extractors, defined in one module, each rejecting
+with `ApiError`. A query string is validated as strict percent-encoded UTF-8
+before it is deserialized. A query parameter type is a closed struct whose
+values are self-validating types. Every query parameter and every request
+header a handler reads is declared in the API description from its type, and
 the UI's type generator reads both.**
 
 ### 1. The grant
@@ -107,10 +112,10 @@ the UI's type generator reads both.**
   request that first uses it, and the entry's comment names the feature and
   this ADR.
 - **This adds to ADR-C36 § 6 and does not supersede it.** That section admits
-  `axum` and leaves its features to the implementing pull request, and it says
-  that any other entry is a new decision. The feature list of a shared entry is
-  that kind of change, so this ADR is the decision. ADR-C36 is otherwise
-  untouched.
+  `axum` and leaves its features to the implementing pull request. Appending a
+  feature to an existing `[workspace.dependencies]` entry escalates under
+  `AGENTS.md` § Rules of engagement (ADR-C27), so this ADR is the decision.
+  ADR-C36 is untouched.
 
 ### 2. The extractors
 
@@ -118,15 +123,22 @@ the UI's type generator reads both.**
   input**:
   - `ApiPath<T>`, for path parameters;
   - `ApiQuery<T>`, for the query string;
-  - `ApiHeaders<T>`, for the request headers a handler requires;
+  - `ApiHeaders<T>`, for every request header a handler reads;
   - `ApiJson<T>`, for a JSON body.
 
   Each has `Rejection = ApiError`, so every refusal is a problem body.
-- **No handler reads request input any other way.** No handler takes
-  `axum::extract::Query`, `axum::extract::Path`, `axum::extract::Json` or a
-  `HeaderMap` to read a request header, and none reads `Uri::query()`. A
-  handler that receives the `Uri` to name the request in an error, as the
-  fallbacks do, reads no input from it.
+- **No handler of the `/api` router reads request input any other way.** No
+  such handler takes `axum::extract::Query`, `axum::extract::Path`,
+  `axum::extract::Json` or a `HeaderMap` to read a request header, and none
+  reads `Uri::query()`. `HEAD` on an API route is axum's implicit
+  `HEAD`-on-`GET`, through the same extractors.
+- **Two kinds of handler are explicit exceptions.**
+  - The fallbacks that take the `Uri`, and the `Method`, only to name the
+    request in an error (`route_not_found`, `prefix_not_found`,
+    `method_not_allowed`) read no input from them.
+  - The assets fallback, `assets::serve`, is outside the `/api` router. It
+    reads the `Method` and the `Uri` to choose the file it serves, answers
+    `HEAD` itself, and refuses any other method with its own `405`.
 - **The layers are outside this rule.** The `Host` and `Origin` layers read
   headers as the network envelope, where ADR-C10 puts them, not as a handler's
   input.
@@ -144,40 +156,64 @@ the UI's type generator reads both.**
 The hand-written decoder survives only as the validator of step 1. It no
 longer produces values.
 
+**`ParameterInvalid`'s `name` becomes optional.** It names the parameter, the
+path parameter or the header whenever the extractor knows it, and it is
+absent when serde's reason does not report it.
+
 ### 4. What a parameter type is
 
-- **A `struct`, `#[serde(deny_unknown_fields)]`, deriving `Deserialize` and
-  `JsonSchema`.** Never a map, never a `#[serde(flatten)]` field, and never a
-  bare `String` field. Each of those loses a check: the map and the flattened
-  field the unknown and duplicate checks, the bare string the value's own.
+- **A query parameter type is a `struct`, `#[serde(deny_unknown_fields)]`,
+  deriving `Deserialize` and `JsonSchema`.** Never a map, never a
+  `#[serde(flatten)]` field, and never a bare `String` field. Each of those
+  loses a check: the map and the flattened field the unknown and duplicate
+  checks, the bare string the value's own.
 - **Each value is an integer, an enum, or a validated newtype.** A newtype's
   error describes itself, since serde's reason does not name the parameter,
   and it refuses the empty string.
-- **An endpoint with no parameters takes `ApiQuery<NoParameters>`**, so that
-  any parameter sent to it is refused rather than ignored.
+- **An endpoint with no parameters takes `ApiQuery<NoParameters>`.**
+  `NoParameters` is an empty braced struct, `struct NoParameters {}`, with
+  `#[serde(deny_unknown_fields)]`, so that any parameter sent to it is refused
+  rather than ignored.
 - **A repeated parameter is refused.** A list travels as one comma-separated
   parameter, with its own newtype, or in a JSON body.
 
-`ApiHeaders<T>` follows the same rule for its type: a struct whose fields name
-the headers it reads, deriving `JsonSchema`, each value typed. It reads the
-headers with the module's own code, since no admitted crate deserializes a
-`HeaderMap`. Its refusals are problem bodies with the codes the endpoint gives
-today.
+**`ApiHeaders<T>` follows the same rule for its type, except closure.** Its
+type is a struct whose fields name the headers it reads, spelled as on the
+wire (through a serde rename, for example to `If-Match`), deriving
+`JsonSchema`, each value typed and each optional or not as the endpoint
+needs; `If-Match` and `If-None-Match` are each optional. It is not closed: a
+request carries headers no handler reads, and `ApiHeaders<T>` ignores every
+header its type does not name. It reads the headers with the module's own
+code, since no admitted crate deserializes a `HeaderMap`. A header it names
+that appears more than once is refused as `parameter_invalid`, naming the
+header, as a repeated query parameter is. Its other refusals are problem
+bodies with the codes the endpoint gives today.
+
+**`ApiPath<T>` refuses an invalid path value as `parameter_invalid`**, naming
+the path parameter the segment fills, whether the segment does not decode to
+UTF-8 or its value does not deserialize.
+
+**`ApiJson<T>` takes over the reading of a body**, including its buffering:
+the body-limit refusal (`413`) and a body that fails to buffer become problem
+bodies, with codes the crate records in `runtime/ragondin-api/ARCHITECTURE.md`
+§ The error codes.
 
 ### 5. Declared in the API description
 
 - **`description.rs` declares each operation's query parameters from the
   parameter type's schema**, as `in: query` parameters, each `required` as the
-  schema says. **It declares each required header the same way**, as
-  `in: header` parameters from the header type's schema.
-- **It refuses a parameter schema whose `additionalProperties` is not
+  schema says. **It declares every request header a handler reads the same
+  way**, as `in: header` parameters from the header type's schema, each
+  `required` as the schema says.
+- **It refuses a query parameter schema whose `additionalProperties` is not
   `false`**, so a type that would accept an unknown parameter cannot be
-  declared.
+  declared. The check does not apply to a header type, which is not closed
+  (§ 4).
 - **Two tests hold the rule over every operation in `OPERATIONS`**:
   - an undeclared query parameter sent to each answers `parameter_invalid`;
   - an invalid path value sent to each operation with a path parameter answers
-    `application/problem+json`. Which code it carries is the crate's choice,
-    recorded in `runtime/ragondin-api/ARCHITECTURE.md` § The error codes.
+    `application/problem+json` with the code `parameter_invalid`, naming the
+    path parameter.
 - **The UI's type generator learns `in: query` and `in: header`.**
   `ui/scripts/api-types.mjs` accepts both, renders them in `Paths`, optional
   per `required`, and still refuses `in: cookie`, with a test. The client in
@@ -203,9 +239,10 @@ today.
   ADR-C10 keeps for the envelope's own work. The extractors reject correctly in
   the first place.
 - **`serde_path_to_error`, to name the parameter in a value error.** Rejected
-  for now because it is three entries, the crate and its wiring for the query
-  and the body, and while the parameter structs are small a self-describing
-  value type names its own problem. A later decision may grant it.
+  for now because it costs a new workspace entry and its wiring into both the
+  query and the body extractors, and while the parameter structs are small a
+  self-describing value type names its own problem. A later decision may
+  grant it.
 - **Lenient WHATWG decoding, as `form_urlencoded` does it.** Rejected because
   it substitutes silently: a malformed escape becomes literal text and invalid
   UTF-8 becomes U+FFFD. The API's rule is that what it cannot read is refused
@@ -218,21 +255,29 @@ today.
   `axum → serde_urlencoded` edge, which no invariant checks, since
   `serde_urlencoded` is on no deny-list.
 - **The `Path` hole closes.** `GET /api/v1/runs/%FF`, and every invalid path
-  value, answers a problem body.
+  value, answers a `parameter_invalid` problem body.
 - **#343's `parameters()` is replaced by `ApiQuery<…>`**, and its tests stay
   green: every refusal they assert is still `parameter_invalid`.
-- **The bodies keep their behaviour.** `ApiJson<T>` takes over today's reading
-  of a body as bytes, parsed in the crate as `request_invalid`. What it accepts
-  and refuses does not change.
+- **The bodies keep what they accept and refuse.** `ApiJson<T>` takes over
+  today's reading of a body as bytes, parsed in the crate as
+  `request_invalid`. Only the rendering of the body-limit and buffering
+  refusals changes, from plain text to problem bodies.
+- **`ParameterInvalid`'s `name` becomes optional**, in `ApiError`, in the
+  problem body and in the generated types.
 - **`api/v1.json` declares what it states in prose today.** `missing_gold_at`
   becomes an `in: query` parameter, and `If-Match` and `If-None-Match` become
-  `in: header` parameters; the prose goes. The generator refuses both
+  optional `in: header` parameters; the prose goes. The generator refuses both
   locations today, so these declarations land in the same pull request as:
   - the generator change in `ui/scripts/api-types.mjs`, with its tests;
   - the client's serialization in `ui/src/api/client.ts`;
   - the regenerated `ui/src/api/types.ts`.
 - **The root `Cargo.toml` comment on `axum` names `query` and this ADR**, in
   the pull request that appends the feature.
+- **A handler merged before the implementation lands is retrofitted by it.**
+  #346's new path endpoint, the pipeline matrix, is one if it merges first.
+  #370 changes the same #343 handlers (`GET /runs/{id}/queries` and
+  `GET /runs/{id}/trace/{query}`) in `handlers.rs`, so whichever of the two
+  merges second rebases onto the other.
 - **The endpoints still to come have no room to hand-roll.** #344 and #349
   take their parameters through `ApiQuery<T>`. #350 no longer carries the
   `missing_gold_at` obligation, since the generated client has the parameter.

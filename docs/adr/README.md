@@ -90,7 +90,7 @@ index of citable decisions is worse than none — `just check` fails when it dri
 | [`ADR-C34`](ADR-C34-protobuf-compiler-obtained-from-protox.md) | The protobuf compiler is `protox`, a build-dependency of `ragondin-proto`; no `protoc` is needed | INV-4 | accepted |
 | [`ADR-C35`](ADR-C35-component-error-crosses-the-wire-as-three-status-codes.md) | A `ComponentError` crosses the wire as one of three gRPC status codes; every `Remote` adapter maps a status back with one total function in `ragondin-remote` | INV-1 | accepted |
 | [`ADR-C36`](ADR-C36-front-end-served-by-the-binary-over-an-internal-api.md) | The front end is served by `ragondin ui` from an internal crate that reaches no engine and no component, over a versioned JSON API that is not yet promised; replay resolves passages at read time against a verified dataset; the UI is a TypeScript application under `ui/`, governed like the workspace | INV-1, INV-2, INV-4, INV-5, INV-6, INV-8, INV-9, INV-10, INV-11, INV-12 | accepted |
-| [`ADR-C37`](ADR-C37-request-input-read-through-own-extractors.md) | Every request input reaches `ragondin-api` through the crate's own extractors, over axum's `query` feature; a parameter is a closed, typed struct, and every query parameter and required header is declared in the API description | INV-1, INV-11, INV-12 | accepted |
+| [`ADR-C37`](ADR-C37-request-input-read-through-own-extractors.md) | Request input reaches `ragondin-api`'s `/api` handlers only through the crate's own extractors, over axum's `query` feature; every query parameter and every request header a handler reads is typed and declared in the API description | INV-1, INV-11, INV-12 | accepted |
 
 <!-- END GENERATED ADR INDEX -->
 

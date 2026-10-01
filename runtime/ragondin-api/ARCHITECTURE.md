@@ -496,17 +496,21 @@ closed object TypeScript gives anyway. `Problem::code`'s schema is an enum of
 
 ## Request input goes through one extractor module
 
-**A handler reads request input only through this crate's own extractors**,
-defined in one module: `ApiPath<T>`, `ApiQuery<T>`, `ApiHeaders<T>` and
-`ApiJson<T>`, each with `Rejection = ApiError`, so every refusal is a problem
-body (ADR-C37 § 2). No handler takes `axum::extract::Query`,
-`axum::extract::Path`, `axum::extract::Json` or a `HeaderMap` to read a
-request header, and none reads `Uri::query()`; the layers, which are the
-envelope, are outside the rule. A query string is validated as strict
-percent-encoded UTF-8 before axum's `Query` deserializes it, and a parameter
-type is a closed struct of self-validating values, declared in the
-description from its schema (ADR-C37 § 3 to § 5). A new endpoint that reads
-raw input is the sign a reviewer looks for.
+**ADR-C37 requires that a handler of the `/api` router reads request input
+only through this crate's own extractors**, defined in one module:
+`ApiPath<T>`, `ApiQuery<T>`, `ApiHeaders<T>` and `ApiJson<T>`, each with
+`Rejection = ApiError`, so every refusal is a problem body (ADR-C37 § 2). No
+such handler takes `axum::extract::Query`, `axum::extract::Path`,
+`axum::extract::Json` or a `HeaderMap` to read a request header, and none
+reads `Uri::query()`. The fallbacks that take the `Uri` only to name the
+request, and the assets fallback `assets::serve`, which reads the `Method` and
+the `Uri` to choose the file it serves, are outside the rule, as are the
+layers, which are the envelope. A query string is validated as strict
+percent-encoded UTF-8 before axum's `Query` deserializes it; a query parameter
+type is a closed struct of self-validating values, and it and every request
+header a handler reads are declared in the description from their schemas
+(ADR-C37 § 3 to § 5). A new endpoint that reads raw input is the sign a
+reviewer looks for.
 
 **Today's handlers predate the rule.** `GET /runs/{id}/queries` and
 `GET /runs/{id}/trace/{query}` still read the query string with the
