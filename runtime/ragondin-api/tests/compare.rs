@@ -872,3 +872,253 @@ async fn a_run_no_pipeline_document_matches_has_no_pipeline_name() {
     assert_eq!(body["runs"][0]["pipeline"], Value::Null);
     assert_eq!(body["runs"][1]["pipeline"], "hybrid-rerank");
 }
+
+/// A pairing of `hybrid-rerank`'s `rrf` with `colbert-rerank`'s `colbert`.
+fn rrf_with_colbert() -> Value {
+    json!({
+        "pipeline": "hybrid-rerank",
+        "other": "colbert-rerank",
+        "pairs": [{ "node": "rrf", "other": "colbert" }],
+    })
+}
+
+fn pairing_file(workspace: &Workspace, pipeline: &str, other: &str) -> std::path::PathBuf {
+    workspace
+        .pipelines()
+        .join(format!("{pipeline}.pairing"))
+        .join(format!("{other}.json"))
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_request_refused_for_an_unreadable_run_keeps_no_pairing() {
+    let (hybrid, colbert) = (hybrid_rerank_run(0x01), colbert_rerank_run(0x02));
+    let mut unreadable = dense_only_run(0x03);
+    unreadable.config =
+        ragondin_experiments::ConfigDocument::new(format!("version: 99\n{DENSE_ONLY}"));
+    let (root, workspace) = paired_workspace("compare_unreadable_keeps_nothing");
+
+    let (status, body) = post_compare(
+        app(
+            vec![hybrid.clone(), colbert.clone(), unreadable.clone()],
+            &root,
+            Some(FsPipelines::new(&workspace)),
+        ),
+        json!({
+            "run_ids": ids(&[&hybrid, &colbert, &unreadable]),
+            "baseline": hybrid.id.to_string(),
+            "pairing": rrf_with_colbert(),
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+    assert_eq!(body["code"], "run_unreadable");
+    assert!(!workspace.pipelines().join("hybrid-rerank.pairing").exists());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_request_refused_as_not_comparable_keeps_no_pairing() {
+    let (hybrid, mut colbert) = (hybrid_rerank_run(0x01), colbert_rerank_run(0x02));
+    colbert.inputs.dataset_version = "elsewhere@1".to_owned();
+    let (root, workspace) = paired_workspace("compare_not_comparable_keeps_nothing");
+
+    let (status, body) = post_compare(
+        app(
+            vec![hybrid.clone(), colbert.clone()],
+            &root,
+            Some(FsPipelines::new(&workspace)),
+        ),
+        json!({
+            "run_ids": ids(&[&hybrid, &colbert]),
+            "baseline": hybrid.id.to_string(),
+            "pairing": rrf_with_colbert(),
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["code"], "runs_not_comparable");
+    assert!(!workspace.pipelines().join("hybrid-rerank.pairing").exists());
+}
+
+/// Compares the hybrid and colbert runs, the baseline `hybrid`, over a
+/// pairing file written by hand as `file`.
+async fn compare_over_a_kept_file(test: &str, file: &str) -> (StatusCode, Value) {
+    let (hybrid, colbert) = (hybrid_rerank_run(0x01), colbert_rerank_run(0x02));
+    let (root, workspace) = paired_workspace(test);
+    let path = pairing_file(&workspace, "hybrid-rerank", "colbert-rerank");
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(&path, file).unwrap();
+    post_compare(
+        app(
+            vec![hybrid.clone(), colbert.clone()],
+            &root,
+            Some(FsPipelines::new(&workspace)),
+        ),
+        json!({ "run_ids": ids(&[&hybrid, &colbert]), "baseline": hybrid.id.to_string() }),
+    )
+    .await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_pairing_file_naming_other_pipelines_than_its_path_is_reported() {
+    let (status, body) = compare_over_a_kept_file(
+        "compare_pairing_renamed",
+        r#"{"version":1,"pipeline":"hybrid","other":"colbert-rerank","pairs":[]}"#,
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+    assert_eq!(body["code"], "backend_failed");
+    let detail = body["detail"].as_str().unwrap();
+    assert!(detail.contains("renamed"), "{detail}");
+    assert!(detail.contains("colbert-rerank.json"), "{detail}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_pairing_file_of_another_version_is_reported() {
+    let (status, body) = compare_over_a_kept_file(
+        "compare_pairing_version",
+        r#"{"version":2,"pipeline":"hybrid-rerank","other":"colbert-rerank","pairs":[]}"#,
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+    assert_eq!(body["code"], "backend_failed");
+    assert!(body["detail"].as_str().unwrap().contains("version 2"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_pairing_file_that_is_not_json_is_reported() {
+    let (status, body) = compare_over_a_kept_file("compare_pairing_garbled", "{ not json").await;
+
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+    assert_eq!(body["code"], "backend_failed");
+    assert!(body["detail"].as_str().unwrap().contains("not a pairing"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_reset_clears_a_pairing_file_that_does_not_read() {
+    let (hybrid, colbert) = (hybrid_rerank_run(0x01), colbert_rerank_run(0x02));
+    let (root, workspace) = paired_workspace("compare_reset_clears_garbled");
+    let path = pairing_file(&workspace, "hybrid-rerank", "colbert-rerank");
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(&path, "{ not json").unwrap();
+
+    let (status, body) = post_compare(
+        app(
+            vec![hybrid.clone(), colbert.clone()],
+            &root,
+            Some(FsPipelines::new(&workspace)),
+        ),
+        json!({
+            "run_ids": ids(&[&hybrid, &colbert]),
+            "baseline": hybrid.id.to_string(),
+            "pairing": { "pipeline": "hybrid-rerank", "other": "colbert-rerank", "pairs": [] },
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(
+        !path.exists(),
+        "the reset removes the file that did not read"
+    );
+    assert_eq!(body["pairings"], json!([]));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_pipeline_paired_with_itself_is_refused() {
+    let (hybrid, colbert) = (hybrid_rerank_run(0x01), colbert_rerank_run(0x02));
+    let (root, workspace) = paired_workspace("compare_pairing_itself");
+
+    let (status, body) = post_compare(
+        app(
+            vec![hybrid.clone(), colbert.clone()],
+            &root,
+            Some(FsPipelines::new(&workspace)),
+        ),
+        json!({
+            "run_ids": ids(&[&hybrid, &colbert]),
+            "baseline": hybrid.id.to_string(),
+            "pairing": {
+                "pipeline": "hybrid-rerank",
+                "other": "hybrid-rerank",
+                "pairs": [{ "node": "rrf", "other": "rrf" }],
+            },
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["code"], "request_invalid");
+    assert!(!workspace.pipelines().join("hybrid-rerank.pairing").exists());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_pairing_written_the_other_way_round_replaces_the_earlier_file() {
+    let (hybrid, colbert) = (hybrid_rerank_run(0x01), colbert_rerank_run(0x02));
+    let (root, workspace) = paired_workspace("compare_pairing_reverse_write");
+    let app = || {
+        app(
+            vec![hybrid.clone(), colbert.clone()],
+            &root,
+            Some(FsPipelines::new(&workspace)),
+        )
+    };
+    let runs = ids(&[&hybrid, &colbert]);
+
+    let (status, _) = post_compare(
+        app(),
+        json!({ "run_ids": runs, "baseline": hybrid.id.to_string(), "pairing": rrf_with_colbert() }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, body) = post_compare(
+        app(),
+        json!({
+            "run_ids": runs,
+            "baseline": colbert.id.to_string(),
+            "pairing": {
+                "pipeline": "colbert-rerank",
+                "other": "hybrid-rerank",
+                "pairs": [{ "node": "colbert", "other": "dense", "label": "the dense legs" }],
+            },
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(!pairing_file(&workspace, "hybrid-rerank", "colbert-rerank").exists());
+    assert!(pairing_file(&workspace, "colbert-rerank", "hybrid-rerank").is_file());
+    assert_eq!(body["pairings"][0]["pairs"][0]["other"], "dense");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_pairing_of_pipelines_the_comparison_does_not_set_side_by_side_is_refused() {
+    let (hybrid, colbert, dense) = (
+        hybrid_rerank_run(0x01),
+        colbert_rerank_run(0x02),
+        dense_only_run(0x03),
+    );
+    let (root, workspace) = paired_workspace("compare_pairing_elsewhere");
+
+    // The baseline is `dense`: neither paired pipeline is its.
+    let (status, body) = post_compare(
+        app(
+            vec![hybrid.clone(), colbert.clone(), dense.clone()],
+            &root,
+            Some(FsPipelines::new(&workspace)),
+        ),
+        json!({
+            "run_ids": ids(&[&dense, &hybrid, &colbert]),
+            "baseline": dense.id.to_string(),
+            "pairing": rrf_with_colbert(),
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["code"], "request_invalid");
+    assert!(!workspace.pipelines().join("hybrid-rerank.pairing").exists());
+}

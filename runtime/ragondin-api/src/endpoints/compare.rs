@@ -13,7 +13,7 @@ use std::sync::Arc;
 use axum::body::Bytes;
 use axum::extract::State;
 use axum::Json;
-use ragondin_experiments::{compare_runs, Run, Trace};
+use ragondin_experiments::{compare_runs, Direction, Run, Trace};
 use ragondin_pipeline::LogicalPipeline;
 use ragondin_types::QueryId;
 
@@ -30,7 +30,7 @@ use crate::response::{
     StageValue,
 };
 use crate::stages::{Stage, Stages};
-use crate::{cache, convert, validation};
+use crate::{cache, convert, lineage, validation};
 
 /// The most runs one comparison holds: a baseline and four others. The
 /// design system gives each compared run an ink, and has four; a sixth run
@@ -48,6 +48,11 @@ struct Compared {
 }
 
 /// `POST /compare`.
+///
+/// Every step that can refuse the request runs before anything is written:
+/// the request's pairing is checked early and kept last, once the response
+/// is built, so a refused request — an unreadable run, runs not comparable,
+/// a pairing that names nothing — changes nothing on disk.
 pub(crate) async fn compare(
     State(state): State<AppState>,
     body: Bytes,
@@ -67,13 +72,15 @@ pub(crate) async fn compare(
         detail: refusal.to_string(),
     })?;
 
-    // Kept only once the comparison is known to be answered: a refused one
-    // changes nothing on disk.
+    let index = lineage::pipelines_by_hash(state.backends.pipelines.as_ref()).await?;
+    let names: Vec<Option<String>> = runs
+        .iter()
+        .map(|run| lineage::pipeline_of(&index, run))
+        .collect();
     if let Some(pairing) = &request.pairing {
-        keep(&state, pairing).await?;
+        check_pairing(&state, pairing, &names).await?;
     }
 
-    let names = pipeline_names(&state, &runs).await?;
     let mut compared = Vec::with_capacity(runs.len());
     for (run, name) in runs.into_iter().zip(names) {
         let pipeline = handlers::lower(&run)?;
@@ -88,7 +95,7 @@ pub(crate) async fn compare(
         });
     }
 
-    let pairings = pairings(&state, &compared).await?;
+    let pairings = pairings(&state, &compared, request.pairing.as_ref()).await?;
     let figures = figures(&state, &compared).await?;
     let (ground_truth, figures, cache_errors) = figures;
 
@@ -115,7 +122,7 @@ pub(crate) async fn compare(
         .map(|row| stage_row(row, figures.as_deref()))
         .collect();
 
-    Ok(Json(Comparison {
+    let response = Comparison {
         baseline: compared[0].run.id.to_string(),
         runs: compared
             .iter()
@@ -136,7 +143,13 @@ pub(crate) async fn compare(
             .unwrap_or_default(),
         latency: compared.iter().map(latency).collect(),
         cache_errors,
-    }))
+    };
+
+    // Last: every refusal above has had its chance.
+    if let Some(pairing) = &request.pairing {
+        keep(&state, pairing).await?;
+    }
+    Ok(Json(response))
 }
 
 /// The run ids in the response's order — the baseline first, then the
@@ -181,11 +194,17 @@ fn order(request: &CompareRequest) -> Result<Vec<String>, ApiError> {
         .collect())
 }
 
-/// Keeps the request's pairing — or, with no pairs, removes the one kept —
-/// once every pair names a node of its pipeline at a stage a pair may move
-/// (`stages.rs`), and no node twice: what is kept is what a comparison can
-/// apply.
-async fn keep(state: &AppState, pairing: &Pairing) -> Result<(), ApiError> {
+/// Checks the request's pairing, writing nothing: two different pipelines,
+/// the baseline's and another compared run's (`names`, in the response's
+/// order) — the pairing this comparison applies, so one kept through it is
+/// one it shows — both in the workspace, and, unless it is a reset, every
+/// pair naming a node of its pipeline at a stage a pair may move
+/// (`stages.rs`), no node twice.
+async fn check_pairing(
+    state: &AppState,
+    pairing: &Pairing,
+    names: &[Option<String>],
+) -> Result<(), ApiError> {
     if pairing.pipeline == pairing.other {
         return Err(ApiError::RequestInvalid {
             detail: format!(
@@ -194,16 +213,25 @@ async fn keep(state: &AppState, pairing: &Pairing) -> Result<(), ApiError> {
             ),
         });
     }
-    let pipelines = &state.backends.pipelines;
+    let baseline = names[0].as_deref();
+    let other_compared = |name: &str| names[1..].iter().any(|each| each.as_deref() == Some(name));
+    let side_by_side = (baseline == Some(&pairing.pipeline) && other_compared(&pairing.other))
+        || (baseline == Some(&pairing.other) && other_compared(&pairing.pipeline));
+    if !side_by_side {
+        return Err(ApiError::RequestInvalid {
+            detail: format!(
+                "a pairing of {} with {} is kept through a comparison that sets them side by \
+                 side: one must be the baseline's pipeline ({}) and the other a compared run's",
+                pairing.pipeline,
+                pairing.other,
+                baseline.unwrap_or("none in this workspace")
+            ),
+        });
+    }
     let mut stages = Vec::with_capacity(2);
     for name in [&pairing.pipeline, &pairing.other] {
-        let file = pipelines.read(name).await?;
+        let file = state.backends.pipelines.read(name).await?;
         stages.push(Stages::of(&validation::lower(&file.document)?));
-    }
-    if pairing.pairs.is_empty() {
-        return pipelines
-            .delete_pairing(&pairing.pipeline, &pairing.other)
-            .await;
     }
     for (side, (name, stages)) in [&pairing.pipeline, &pairing.other]
         .into_iter()
@@ -230,51 +258,80 @@ async fn keep(state: &AppState, pairing: &Pairing) -> Result<(), ApiError> {
             }
         }
     }
-    pipelines.write_pairing(pairing).await
+    Ok(())
 }
 
-/// Each run's workspace pipeline: the one document whose canonical hash is
-/// the run's, `None` when no document or several have it. A run names no
-/// pipeline of its own, so its document is found by content (INV-8: the
-/// canonical form's hash, never the text).
-async fn pipeline_names(state: &AppState, runs: &[Run]) -> Result<Vec<Option<String>>, ApiError> {
-    let mut by_hash: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    for file in state.backends.pipelines.list().await? {
-        if let Ok(hash) = validation::check(&file.document) {
-            by_hash.entry(hash).or_default().push(file.name);
-        }
+/// Keeps a pairing [`check_pairing`] accepted — or, with no pairs, removes
+/// the one kept, in either direction.
+async fn keep(state: &AppState, pairing: &Pairing) -> Result<(), ApiError> {
+    let pipelines = &state.backends.pipelines;
+    if pairing.pairs.is_empty() {
+        pipelines
+            .delete_pairing(&pairing.pipeline, &pairing.other)
+            .await
+    } else {
+        pipelines.write_pairing(pairing).await
     }
-    Ok(runs
-        .iter()
-        .map(|run| match by_hash.get(&run.inputs.pipeline.to_string()) {
-            Some(names) if names.len() == 1 => Some(names[0].clone()),
-            _ => None,
-        })
-        .collect())
 }
 
-/// The pairings kept between the baseline's pipeline and each other run's,
-/// oriented from the baseline's, one per pipeline.
-async fn pairings(state: &AppState, runs: &[Compared]) -> Result<Vec<Pairing>, ApiError> {
+/// The pairings between the baseline's pipeline and each other run's,
+/// oriented from the baseline's, one per pipeline: the request's own for
+/// the pair it names — it is kept once the response is built, and a reset
+/// is none — and the one kept on disk for every other.
+async fn pairings(
+    state: &AppState,
+    runs: &[Compared],
+    requested: Option<&Pairing>,
+) -> Result<Vec<Pairing>, ApiError> {
     let Some(baseline) = &runs[0].name else {
         return Ok(Vec::new());
     };
     let mut pairings: Vec<Pairing> = Vec::new();
+    let mut seen = BTreeSet::new();
     for run in &runs[1..] {
         let Some(other) = &run.name else { continue };
-        if other == baseline || pairings.iter().any(|pairing| &pairing.other == other) {
+        if other == baseline || !seen.insert(other) {
             continue;
         }
-        if let Some(pairing) = state
-            .backends
-            .pipelines
-            .read_pairing(baseline, other)
-            .await?
-        {
-            pairings.push(pairing);
-        }
+        let pairing = match requested {
+            Some(requested)
+                if (&requested.pipeline, &requested.other) == (baseline, other)
+                    || (&requested.pipeline, &requested.other) == (other, baseline) =>
+            {
+                (!requested.pairs.is_empty()).then(|| oriented(requested, baseline))
+            }
+            _ => {
+                state
+                    .backends
+                    .pipelines
+                    .read_pairing(baseline, other)
+                    .await?
+            }
+        };
+        pairings.extend(pairing);
     }
     Ok(pairings)
+}
+
+/// `pairing`, oriented from the pipeline `from`: each pair turned around
+/// when it was given from the other one.
+fn oriented(pairing: &Pairing, from: &str) -> Pairing {
+    if pairing.pipeline == from {
+        return pairing.clone();
+    }
+    Pairing {
+        pipeline: pairing.other.clone(),
+        other: pairing.pipeline.clone(),
+        pairs: pairing
+            .pairs
+            .iter()
+            .map(|pair| NodePair {
+                node: pair.other.clone(),
+                other: pair.node.clone(),
+                label: pair.label.clone(),
+            })
+            .collect(),
+    }
 }
 
 /// Whether the benchmark on disk is the runs' — they share one
@@ -387,8 +444,13 @@ fn stage_cell(
     let mut best: BTreeMap<String, StageValue> = BTreeMap::new();
     for node in &nodes {
         for (metric, value) in node.metrics.iter().flatten() {
-            // Every per-node metric is a ranking metric: higher is better.
-            let better = best.get(metric).is_none_or(|held| *value > held.value);
+            // One rule for which way a metric improves: the metric table's.
+            let better = best
+                .get(metric)
+                .is_none_or(|held| match Direction::of(metric) {
+                    Direction::HigherIsBetter => *value > held.value,
+                    Direction::LowerIsBetter => *value < held.value,
+                });
             if better {
                 best.insert(
                     metric.clone(),
@@ -471,6 +533,8 @@ fn latency(run: &Compared) -> RunLatency {
                         trace
                             .nodes
                             .iter()
+                            // A node that ran more than once in a query
+                            // counts its first run: no node does today.
                             .find(|entry| &entry.node == node.id())
                             .map(|entry| entry.duration_nanos)
                     })

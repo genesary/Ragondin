@@ -73,6 +73,7 @@ mod derived;
 mod endpoints;
 mod handlers;
 mod layers;
+mod lineage;
 mod stages;
 mod validation;
 
