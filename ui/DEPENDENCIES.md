@@ -15,6 +15,8 @@ The `[workspace.dependencies]` rule, transposed to the npm tree (ADR-C36 § 5; `
 |---|---|---|
 | `react` | The component model and rendering. | Decided by ADR-C36 § 5, and what React Flow, the canvas library that ADR names, is built on. |
 | `react-dom` | Renders React into the browser's DOM. | React's own renderer for the web; `react` alone renders nothing. |
+| `@xyflow/react` | The canvas library: the graph surface the pipeline canvas draws on — the viewport with pan and zoom, node placement, ports as handles, edges between them, the dot grid, focusable nodes. Only `src/canvas/` imports it (`ARCHITECTURE.md` § The canvas). | Decided by ADR-C36 § 5 (React Flow), for the one canvas ADR-016 makes Replay and the editor share. MIT; its tree is MIT, ISC (the `d3-*` modules) and BSD-3-Clause (`d3-ease`). It brings `zustand` as its internal store, which no code here imports — the lint refuses it everywhere (`ARCHITECTURE.md` § The canvas): the UI holds no state store of its own. |
+| `@dagrejs/dagre` | The automatic layout: places a graph left to right, in ranks, when no stored layout names a node. | The layout library the front-end design names for the canvas (§ 6, "automatic layout (dagre)"); the maintained line of `dagre`, ESM with its own types, MIT, one dependency (`@dagrejs/graphlib`, MIT). The other candidate, `elkjs`, is licensed `EPL-2.0 OR GPL-3.0-or-later`, both off the allow list. |
 
 ## Development dependencies
 

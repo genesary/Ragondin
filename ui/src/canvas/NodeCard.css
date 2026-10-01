@@ -1,0 +1,67 @@
+/* The node card (NodeCard.tsx): the design system's card, every state drawn
+   from a data attribute. Family is never a border or a header band — only
+   the tile carries the pigment. */
+.rg-node {
+  position: relative;
+  width: var(--size-node);
+  background: var(--surface);
+  color: var(--ink);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-m);
+  box-shadow: var(--shadow-contact);
+  font: var(--type-dense);
+  cursor: default;
+  /* Only selection and focus move; under reduced motion the duration tokens collapse. */
+  transition: box-shadow var(--duration-micro) var(--ease-standard), outline-offset var(--duration-micro) var(--ease-standard);
+}
+.rg-node:hover,
+.rg-node[data-preview-state="hover"] { border-color: var(--line-control); }
+
+.rg-node__head { display: flex; align-items: center; gap: 10px; padding: 10px 12px 8px; }
+.rg-node__title { display: grid; min-width: 0; flex: 1; }
+.rg-node__title b { font: 600 13px/18px var(--font-sans); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rg-node__title span { font: 400 11.5px/16px var(--font-mono); color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rg-node__state { font: 500 11px/14px var(--font-sans); color: var(--ink-3); display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.rg-node__state .rg-glyph { width: 14px; height: 14px; }
+.rg-node__tag { font: 600 10.5px/14px var(--font-sans); color: var(--on-accent); background: var(--accent); padding: 1px 6px; border-radius: var(--radius-full); white-space: nowrap; }
+
+.rg-node__param { display: flex; justify-content: space-between; gap: var(--space-2); margin: 0 12px; padding: 6px 0 8px; border-top: 1px solid var(--line); font-size: 12px; }
+.rg-node__param span:first-child { color: var(--ink-3); }
+.rg-node__param span:last-child { font-family: var(--font-mono); color: var(--ink); }
+
+.rg-node__progress { margin: 0 12px 10px; }
+.rg-node__progress .rg-progress__track { height: 3px; }
+.rg-node__msg { margin: 0 6px 6px; padding: 6px 8px; border-radius: 6px; background: var(--critical-wash); color: var(--ink); font-size: 12px; line-height: 16px; display: flex; gap: 6px; }
+.rg-node__msg .rg-glyph { width: 14px; height: 14px; color: var(--critical); flex: none; margin-top: 1px; }
+
+/* States. */
+.rg-node[data-selected="true"] { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), 0 0 0 5px var(--accent-wash), var(--shadow-contact); }
+/* The canvas focuses the node's wrapper; the ring is drawn on the card. */
+.react-flow__node:focus-visible > .rg-node,
+.rg-node[data-preview-state="focus"] { outline: 2px solid var(--focus-ring); outline-offset: 4px; }
+.rg-node[data-status="invalid"],
+.rg-node[data-status="failed"] { border-color: var(--critical); box-shadow: 0 0 0 1px var(--critical), var(--shadow-contact); }
+.rg-node[data-status="invalid"] .rg-node__state,
+.rg-node[data-status="failed"] .rg-node__state { color: var(--critical); }
+.rg-node[data-status="running"] .rg-node__state { color: var(--ink); }
+.rg-node[data-dragging="true"] { box-shadow: var(--shadow-lift); cursor: grabbing; }
+.rg-node[data-variant="ghost"] { background: var(--accent-wash); border: 1.5px dashed var(--accent); box-shadow: none; pointer-events: none; }
+.rg-node[data-variant="ghost"] > * { opacity: 0.7; }
+.rg-node[data-variant="unavailable"] { border-style: dashed; box-shadow: none; background: transparent; }
+.rg-node[data-variant="unavailable"] > * { opacity: 0.55; }
+.rg-node[data-only-here="true"] { border: 1.5px dashed var(--accent); }
+
+/* Replay: read-only. Ports go solid and smaller, keeping their shape. */
+.rg-node[data-replay="true"] .rg-port { width: 8px; height: 8px; background: var(--ink-3); border: 0; }
+.rg-node[data-replay="true"] .rg-port[data-kind="opaque"] { background: var(--surface); border: 1.5px solid var(--ink-3); }
+.rg-node[data-replay="true"] .rg-port__dot { width: 2px; height: 2px; }
+.rg-node[data-replay="true"] .rg-port[data-side="in"] { left: -5px; }
+.rg-node[data-replay="true"] .rg-port[data-side="out"] { right: -5px; }
+.rg-node__replay { margin: 0 12px; padding: 8px 0 10px; border-top: 1px solid var(--line); display: grid; gap: 8px; }
+.rg-node__metric { display: flex; justify-content: space-between; align-items: center; gap: var(--space-2); }
+.rg-node__metric span:first-child { font: 500 11px/14px var(--font-sans); color: var(--ink-3); }
+.rg-node__metric b { font: 700 13px/18px var(--font-sans); }
+.rg-node__note { font: 400 11px/14px var(--font-sans); color: var(--ink-3); }
+.rg-node__dur { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: var(--space-2); font: 400 11px/14px var(--font-mono); color: var(--ink-2); }
+.rg-node__dur i { display: block; height: 4px; border-radius: 2px; background: var(--surface-3); position: relative; overflow: hidden; }
+.rg-node__dur i b { position: absolute; inset: 0 auto 0 0; background: var(--ink-3); border-radius: 2px; }
