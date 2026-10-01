@@ -747,6 +747,11 @@ async fn validate_refuses_every_branch_with_the_problem_body_it_always_has() {
             unlocated.clone(),
         ),
         (
+            "pipeline: [\n".to_owned(),
+            "could not parse configuration: pipeline: invalid type: sequence, expected struct RawGraph at line 1 column 11",
+            unlocated.clone(),
+        ),
+        (
             "pipeline:\n  inputs: [q]\n".to_owned(),
             "could not parse configuration: pipeline: missing field `nodes` at line 2 column 3",
             unlocated.clone(),

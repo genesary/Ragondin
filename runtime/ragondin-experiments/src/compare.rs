@@ -16,9 +16,10 @@
 //! forms hash equal is carried beside the list, so a difference there is
 //! still reported. Both documents are lowered to [`LogicalPipeline`] first,
 //! through `ragondin-config`'s [`parse_document`] — into `ragondin-pipeline`'s
-//! wire schema, then through its validation pass — so the difference is one between canonical logical forms and never between
-//! texts (the spirit of INV-8): a document respelled — keys reordered, flow
-//! style for block style — differs in nothing.
+//! wire schema, then through its validation pass — so the difference is one
+//! between canonical logical forms and never between texts (the spirit of
+//! INV-8): a document respelled — keys reordered, flow style for block style —
+//! differs in nothing.
 
 use std::collections::{BTreeMap, BTreeSet};
 

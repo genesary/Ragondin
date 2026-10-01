@@ -82,7 +82,8 @@ hand-built here over its generated stubs would call a service without
 Its workspace dependencies today are `ragondin-config` — `parse_document`,
 the one definition of a pipeline document's load, and `incompatible_wiring`,
 the CLI's report for an edge of the wrong kind (§ The pipelines); its closure
-is `ragondin-pipeline` and the YAML parser — `ragondin-experiments` — the `RunStore`
+is `ragondin-pipeline`, the YAML parser and two macro crates, no RPC or HTTP
+stack — `ragondin-experiments` — the `RunStore`
 trait, the `Run` record, the typed `Trace`, `lower_configuration`, the
 walk to a run's ranking node, and `compare_runs` — `ragondin-pipeline`, for the `LogicalPipeline`
 that lowering yields,
@@ -1067,5 +1068,6 @@ in `Cargo.lock` — § *`reqwest`, the transport* says why it is here and not in
 `ragondin-benchmarks`. `sha2` is a normal dependency, for a pipeline
 document's etag, and the tests use it for the digests of what a local server
 serves. `serde_yaml` is not a dependency: a pipeline document is parsed by
-`ragondin-config`. None is a new `[workspace.dependencies]` entry, and none has a feature appended. No
+`ragondin-config`. None is a new `[workspace.dependencies]` entry, and none
+has a feature appended. No
 TOML crate is a dependency (§ `workspace.toml`, and why it is read by hand).

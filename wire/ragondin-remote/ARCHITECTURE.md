@@ -161,9 +161,10 @@ services raise theirs to match.
 `tonic` and everything it pulls — so a feature gating its contents would leave
 an empty crate behind it. ADR-C14 names `remote` as the feature, and it is the
 consumer's: `ragondin-engine` and the `ragondin` binary each depend on this
-crate optionally, behind a `remote` feature of their own. `ragondin-proto`, and with it `tonic`, is already
-in the default build through `ragondin-config`; this crate adds the adapters,
-not the transport.
+crate optionally, behind a `remote` feature of their own. `ragondin-proto`,
+and `tonic` with it, enter a build only through this crate, behind that
+consumer's `remote` feature: no other normal dependency of the engine or the
+binary reaches either, so the default build compiles no RPC stack.
 
 ## Tests
 

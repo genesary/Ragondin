@@ -51,6 +51,9 @@ pub(crate) fn lower(document: &str) -> Result<LogicalPipeline, ApiError> {
 /// The refusal's heading and its cause, on one line: what `ragondin validate`
 /// prints as `error:` and `caused by:`, without the file.
 fn headed(error: &DocumentError) -> String {
+    // Exhaustive on purpose, though the arms are alike: each variant carries a
+    // differently typed cause, and a variant `ragondin-config` adds later must
+    // be worded here rather than fall into a catch-all.
     match error {
         DocumentError::UnsupportedSchemaVersion(cause) => format!("{error}: {cause}"),
         DocumentError::Malformed(cause) => format!("{error}: {cause}"),

@@ -22,7 +22,8 @@ rust-version.workspace = true
 # for the ids those scores are computed over. Its closure holds no engine and
 # no component. `ragondin-config`, which INV-12 allows, for the one definition
 # of a pipeline document's load and of its incompatible-wiring report
-# (`src/validation.rs`); its closure is `ragondin-pipeline` and the YAML parser.
+# (`src/validation.rs`); its closure is `ragondin-pipeline`, the YAML parser
+# and two macro crates — no RPC or HTTP stack.
 [dependencies]
 ragondin-benchmarks = { workspace = true }
 ragondin-config = { workspace = true }

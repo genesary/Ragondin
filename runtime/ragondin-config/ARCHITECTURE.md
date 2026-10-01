@@ -13,12 +13,12 @@ YAML run locally **is** the Kubernetes custom resource, modulo the wire format.
 
 | Piece | Role |
 |---|---|
-| `parse_document` | The one definition of a pipeline document's load, over text |
-| `DocumentError` | Its three refusals, with no path: version, parse, validation |
-| `incompatible_wiring` | The report for an edge of the wrong kind, naming a given subject |
+| `parse_document` | A document's load, defined once, over text |
+| `DocumentError` | Its three refusals, with no path |
+| `incompatible_wiring` | The report for an edge of the wrong kind |
 | `ConfigSource` | The trait a binary holds, as `Box<dyn ConfigSource>` |
-| `LocalFile` | The one implementation: a YAML file on disk (standalone, P2), read and handed to `parse_document` |
-| `ConfigError` | Four typed diagnoses, one per thing the reader must do, each naming the file |
+| `LocalFile` | A YAML file on disk (P2), read and handed to `parse_document` |
+| `ConfigError` | Four typed diagnoses, one per thing to do, naming the file |
 
 `Stream` — a configuration pushed from the controller over the
 configuration-delivery service — is **M7 and deliberately absent**.

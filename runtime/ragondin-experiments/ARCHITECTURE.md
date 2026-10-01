@@ -302,7 +302,8 @@ Why here and not elsewhere:
   caller may name; `parse_document` takes the text and is synchronous. The
   edge from this crate to `ragondin-config` is drawn in
   `docs/code-architecture.md` § 4.3's graph, and that crate's closure is
-  `ragondin-pipeline` and the YAML parser.
+  `ragondin-pipeline`, the YAML parser and two macro crates — no RPC or HTTP
+  stack.
 - **Not in the binary.** The binary would lower the same text the same way,
   and the comparison is this crate's (§ What lives here): the binary's
   `compare` is a packaging of it (ADR-C15 makes the one binary a packaging

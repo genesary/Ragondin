@@ -72,14 +72,15 @@ release.
   `incompatible_wiring`, which renders a `ValidationError::KindMismatch` as a
   report — the edge, the kind the port expects, the kind that arrives — with
   the file as its subject; `POST /pipelines/validate` renders the same report
-  through the same function. Neither re-derives any of the check's reasoning. An `extension` node's ports are unknown to the
-  core, so an edge at one is not kind-checked — though an edge arriving at a
-  position where the consuming node declares no port at all is refused whatever
-  produced it, extension included. `validate --help` states both, rather than
-  implying full coverage. The report names the producer first and the error
-  type's own `Display` names the consumer first; the divergence is deliberate —
-  the report follows the direction the value travels — and is argued where the
-  renderer is defined, in `ragondin-config`.
+  through the same function. Neither re-derives any of the check's reasoning.
+  An `extension` node's ports are unknown to the core, so an edge at one is
+  not kind-checked — though an edge arriving at a position where the consuming
+  node declares no port at all is refused whatever produced it, extension
+  included. `validate --help` states both, rather than implying full coverage.
+  The report names the producer first and the error type's own `Display` names
+  the consumer first; the divergence is deliberate — the report follows the
+  direction the value travels — and is argued where the renderer is defined,
+  in `ragondin-config`.
 - **A bad configuration is a diagnosis, never a crash.** Every load-path failure
   reaches the user as an exit status and a message naming the file. There is no
   `unwrap` on the load path, and `tests/cli.rs` asserts the absence of a panic
