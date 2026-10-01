@@ -1,0 +1,56 @@
+# A generation pipeline whose ranking holds two chunks of one document, with
+# another document after the second one. `fused_bc` interleaves `leg_b` and
+# `leg_c` into `doc-b-0, doc-c-0`. `fused` interleaves `leg_a`, which returns
+# `doc-a-0, doc-a-1`, with `fused_bc`: rank 0 of each, then rank 1 of each,
+# giving `doc-a-0, doc-b-0, doc-a-1, doc-c-0`. Those are the documents
+# `doc-a, doc-b, doc-a, doc-c`, and the fold reduces them to
+# `doc-a, doc-b, doc-c`.
+#
+# The order is the point of the fixture. A fold that kept the second `doc-a`
+# would push `doc-c` from rank 3 to rank 4. The list is not a palindrome, so
+# reading it in reverse also changes the ranking. The generator and the context
+# builder are `stub-generation.yaml`'s, so the walk reaches `fused` through the
+# context builder's chunks port. The labels are document ids; nothing here
+# measures quality.
+pipeline:
+  inputs: [question]
+  nodes:
+    - id: answer
+      component: generator
+      impl: stub_generator
+      inputs: [question, context]
+      params: { served_model: stub-model, template: "{context}" }
+
+    - id: context
+      component: context_builder
+      impl: stub_context_builder
+      inputs: [question, fused]
+      params: { budget: 1 }
+
+    - id: fused
+      component: fusion
+      impl: stub_interleave
+      inputs: [leg_a, fused_bc]
+
+    - id: fused_bc
+      component: fusion
+      impl: stub_interleave
+      inputs: [leg_b, leg_c]
+
+    - id: leg_a
+      component: retriever
+      impl: stub_retriever
+      inputs: [question]
+      params: { top_k: 2, label: doc-a }
+
+    - id: leg_b
+      component: retriever
+      impl: stub_retriever
+      inputs: [question]
+      params: { top_k: 1, label: doc-b }
+
+    - id: leg_c
+      component: retriever
+      impl: stub_retriever
+      inputs: [question]
+      params: { top_k: 1, label: doc-c }

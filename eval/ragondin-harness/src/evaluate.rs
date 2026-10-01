@@ -464,6 +464,17 @@ mod tests {
     ]}"#;
 
     #[test]
+    fn an_empty_output_ranks_no_document() {
+        // An empty ranking is a ranking: scored as one that found nothing,
+        // never refused as `NoRankedChunks`.
+        let trace = ExecutionTrace {
+            nodes: vec![ranking("leg", Vec::new())],
+        };
+
+        assert_eq!(documents_at(&trace, &NodeId::new("leg")), Ok(Vec::new()));
+    }
+
+    #[test]
     fn a_node_with_no_ranking_in_the_trace_is_named() {
         // No entry, an entry of another kind, a failed node: each is a walk
         // that found no ranking, never an empty one.

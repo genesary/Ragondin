@@ -330,12 +330,21 @@ stubs (`tests/fixtures/stub-generation.yaml`, and `stub-context.yaml` without
 its generator). Its context builder keeps one chunk out of a two-document
 ranking, so a query judging the second document scores differently over the
 ranking and over the context — which is what pins the ranking ADR-C30 § 3 names
-as the one read. One of its tests recomputes the run's `ndcg@10` as
+as the one read. Two of its tests recompute the run's `ndcg@10` as
 `ragondin-api` does — from the stored traces, at the node the shared walk
-names, through the shared fold — and asserts it equals the recorded figure bit
-for bit, on both pipelines. With one definition of each rule, a change to it
-cannot reach one of the two crates and not the other; the test is the record
-that the writer's reading and the reader's agree.
+names, through the shared fold, summed in benchmark order — and assert it
+equals the recorded figure bit for bit. On `stub-generation.yaml` and
+`stub-context.yaml` that pins the walked node, the trace's rendering and the
+summation, and nothing more: their rankings hold one chunk per document, and
+their qrels leave the mean unchanged if `doc-a` and `doc-b` swap.
+`stub-generation-two-chunks.yaml` is the fixture for the fold and the order:
+its ranking holds two chunks of `doc-a` with `doc-c` after the second, and one
+query grades `doc-b` and `doc-c` differently. Its test also asserts the value
+derived by hand, which a fold that kept the repeat, a ranking read in reverse
+(before or after the fold) and a ranking cut short would each move. With one
+definition of each rule, a change to it cannot reach one of the two crates and
+not the other; these tests are the record that the writer's reading and the
+reader's agree.
 
 `tests/progress_and_cancellation.rs` drives `evaluate_observed` over the BEIR
 fixture, with a retriever that wraps the stub's and counts its calls — the

@@ -368,14 +368,55 @@ async fn reference_answers_move_the_dataset_version_and_so_the_run_id() {
     assert_ne!(with.id, without.id);
 }
 
+/// `ndcg@10` over `benchmark`, recomputed as `ragondin-api` recomputes it:
+/// from `run`'s stored traces, at the node the shared walk
+/// (`ragondin_experiments::ranking_node`) names, through the shared fold
+/// (`ragondin_metrics::documents_by_first_occurrence`), summed in benchmark
+/// order over the judged queries and divided once.
+fn recomputed_ndcg(
+    name: &str,
+    pipeline: &LogicalPipeline,
+    run: &Run,
+    benchmark: &Benchmark,
+) -> f64 {
+    let node = ragondin_experiments::ranking_node(pipeline)
+        .unwrap_or_else(|walk| panic!("{name}: the walk reaches a ranking: {walk}"));
+    assert_eq!(node, &NodeId::new("fused"), "{name}: the walked node");
+
+    let (mut sum, mut judged) = (0.0, 0usize);
+    for query in benchmark.queries() {
+        let Some(judgments) = benchmark
+            .qrels()
+            .for_query(&query.id)
+            .filter(|judgments| !judgments.is_empty())
+        else {
+            continue;
+        };
+        let trace = Trace::try_from(&run.traces[&query.id]).expect("the stored trace reads");
+        let entry = trace
+            .nodes
+            .iter()
+            .find(|entry| &entry.node == node)
+            .expect("the ranking node is traced");
+        let Some(TraceSummary::RankedChunks { chunks }) = &entry.output else {
+            panic!("{name}: `{}` holds no ranking", node.as_str());
+        };
+        let ranked = documents_by_first_occurrence(chunks.iter().map(|chunk| &chunk.document));
+        sum += ndcg_at_k(&ranked, judgments, 10);
+        judged += 1;
+    }
+    sum / judged as f64
+}
+
 #[tokio::test]
 async fn the_evaluation_scores_the_node_the_shared_walk_names_through_the_shared_fold() {
-    // The writer and the reader of a run's ranking metrics share one walk
-    // (`ragondin_experiments::ranking_node`) and one fold
-    // (`ragondin_metrics::documents_by_first_occurrence`). Recomputed here as
-    // `ragondin-api` recomputes it — from the stored traces, at the node the
-    // walk names, through the fold — the mean is the one the run recorded,
-    // bit for bit, on both generation fixtures.
+    // The writer and the reader of a run's ranking metrics share one walk and
+    // one fold. Recomputed as `ragondin-api` recomputes it, the mean is the
+    // one the run recorded, bit for bit, on both generation fixtures. What
+    // this pins is the walked node, the trace's rendering and the summation
+    // order: these fixtures rank one chunk per document, and their qrels make
+    // the mean blind to the order of `doc-a` and `doc-b`, so the fold and the
+    // order are pinned by the next test.
     let benchmark = benchmark(Pieces {
         qrels: true,
         references: false,
@@ -383,39 +424,58 @@ async fn the_evaluation_scores_the_node_the_shared_walk_names_through_the_shared
 
     for name in ["stub-generation.yaml", "stub-context.yaml"] {
         let (pipeline, _) = pipeline(name).await;
-        let node = ragondin_experiments::ranking_node(&pipeline)
-            .unwrap_or_else(|walk| panic!("{name}: the walk reaches a ranking: {walk}"));
-        assert_eq!(node, &NodeId::new("fused"), "{name}");
-
         let run = run(name, &benchmark).await.expect("scored");
-
-        let (mut sum, mut judged) = (0.0, 0usize);
-        for query in benchmark.queries() {
-            let Some(judgments) = benchmark
-                .qrels()
-                .for_query(&query.id)
-                .filter(|judgments| !judgments.is_empty())
-            else {
-                continue;
-            };
-            let trace = Trace::try_from(&run.traces[&query.id]).expect("the stored trace reads");
-            let entry = trace
-                .nodes
-                .iter()
-                .find(|entry| &entry.node == node)
-                .expect("the ranking node is traced");
-            let Some(TraceSummary::RankedChunks { chunks }) = &entry.output else {
-                panic!("{name}: `{}` holds no ranking", node.as_str());
-            };
-            let ranked = documents_by_first_occurrence(chunks.iter().map(|chunk| &chunk.document));
-            sum += ndcg_at_k(&ranked, judgments, 10);
-            judged += 1;
-        }
 
         assert_eq!(
             run.metrics.get("ndcg@10"),
-            Some(sum / judged as f64),
+            Some(recomputed_ndcg(name, &pipeline, &run, &benchmark)),
             "{name}: the figure read back at the walked node is the recorded one"
         );
     }
+}
+
+#[tokio::test]
+async fn a_ranking_with_two_chunks_of_one_document_is_folded_and_read_in_order() {
+    // `stub-generation-two-chunks.yaml` ranks `doc-a-0, doc-b-0, doc-a-1,
+    // doc-c-0` at `fused`. Those are the documents `doc-a, doc-b, doc-a,
+    // doc-c`, which the fold reduces to `doc-a, doc-b, doc-c`. The one judged
+    // query grades `doc-b` 1 and `doc-c` 2, so every position is visible.
+    // Against the ideal `2 + 1 / log2(3)`:
+    //
+    // - read correctly, `doc-a, doc-b, doc-c`: DCG `1 / log2(3) + 2 / log2(4)`;
+    // - unfolded, `doc-a, doc-b, doc-a, doc-c`: `doc-c` drops to rank 4
+    //   (`ndcg_at_k` credits a repeat once, but the repeat still takes up its
+    //   rank), DCG `1 / log2(3) + 2 / log2(5)`;
+    // - the chunks read in reverse, folded to `doc-a, doc-c, doc-b`: DCG
+    //   `2 / log2(3) + 1 / log2(4)`;
+    // - the folded list reversed, `doc-c, doc-b, doc-a`: DCG
+    //   `2 + 1 / log2(3)`, a perfect 1;
+    // - cut to the first document: 0.
+    //
+    // Only the first gives the asserted value. The recomputation from the
+    // stored traces, which shares the walk and the fold, is also bit for bit
+    // the recorded figure.
+    let name = "stub-generation-two-chunks.yaml";
+    let mut qrels = Qrels::new();
+    qrels.insert(QueryId::new("q-1"), DocId::new("doc-b"), 1);
+    qrels.insert(QueryId::new("q-1"), DocId::new("doc-c"), 2);
+    let benchmark = Benchmark::new(
+        vec![document("doc-a"), document("doc-b"), document("doc-c")],
+        vec![query("q-1", "alpha")],
+        qrels,
+    );
+
+    let (pipeline, _) = pipeline(name).await;
+    let run = run(name, &benchmark).await.expect("scored");
+
+    assert_metric(
+        &run,
+        "ndcg@10",
+        (1.0 / f64::log2(3.0) + 2.0 / f64::log2(4.0)) / (2.0 + 1.0 / f64::log2(3.0)),
+    );
+    assert_eq!(
+        run.metrics.get("ndcg@10"),
+        Some(recomputed_ndcg(name, &pipeline, &run, &benchmark)),
+        "the figure read back at the walked node is the recorded one"
+    );
 }

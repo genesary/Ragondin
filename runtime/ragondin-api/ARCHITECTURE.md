@@ -68,7 +68,8 @@ client type in this crate.
 
 Its workspace dependencies today are `ragondin-experiments` — the `RunStore`
 trait, the `Run` record, the typed `Trace`, `lower_configuration`, and the
-walk to a run's ranking node — `ragondin-pipeline`, for the `LogicalPipeline` that lowering yields,
+walk to a run's ranking node — `ragondin-pipeline`, for the `LogicalPipeline`
+that lowering yields,
 `ragondin-benchmarks`, for the manifest, the download, the verification and
 the import the `Registry` file backend is written over, and for the digests
 and the chunk derivation passage text is verified against,

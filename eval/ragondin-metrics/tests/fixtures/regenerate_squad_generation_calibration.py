@@ -31,8 +31,8 @@ node `reranked` — the ranking ADR-C30 § 3 finds by walking from the generator
 the committed configuration — and the answer text in the output entry of the
 terminal node `answer`. The chunks are
 collapsed to documents by first occurrence, the rule `ragondin-metrics`'
-`documents_by_first_occurrence` states (SQuAD has one chunk per paragraph, so
-nothing collapses; the script asserts that).
+`documents_by_first_occurrence` states and the harness applies (SQuAD has one
+chunk per paragraph, so nothing collapses; the script asserts that).
 
 The qrels, the reference answers and the question order come from the dataset
 the calibration ran over: the official `dev-v1.1.json`, SHA-256
