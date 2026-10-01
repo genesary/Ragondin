@@ -364,6 +364,11 @@ when it is not `<root>/runs` (the binary's `--store`).
 
 ### `workspace.toml`, and why it is read by hand
 
+**ADR-C38 decides this reader's replacement**: the file parsed and edited in
+place with `toml_edit`, its schema checked by meaning, and per-key writes that
+keep a person's comments. The code below still predates it, and this section
+describes the code as it is until the implementation lands.
+
 The settings are deployment data (ADR-C32 § 2): an address here stays out of
 every pipeline document and every run identity, which is what lets a
 workspace be shared or committed without carrying anyone's addresses into an
@@ -379,9 +384,8 @@ datasets = "/data/benchmarks"   # optional; relative to the workspace
 **A choice made here** (`AGENTS.md` § Rules of engagement): the file is read
 and written by `fs/settings_file.rs`, a reader of exactly that subset of TOML,
 because a TOML parser is not among the dependencies ADR-C36 § 6 admits, and
-that section makes any other entry a new decision — opened as #374, which
-weighs `toml_edit`, and the comments a person adds that a write here loses,
-against this reader. It reads blank lines and
+that section makes any other entry a new decision — opened as #374, and
+decided by ADR-C38 against this reader. It reads blank lines and
 `#` comments, `datasets` before any table, one `[services]` table of
 `"<family>/<name>" = <string>`, basic strings with TOML's escapes and literal
 strings, and a comment after a value; it refuses everything else — another
