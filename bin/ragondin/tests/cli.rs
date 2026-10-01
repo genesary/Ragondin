@@ -228,3 +228,16 @@ fn a_subcommand_that_is_not_declared_is_refused_by_the_parser() {
     assert!(!output.status.success());
     assert!(!stderr(&output).contains("panicked"));
 }
+
+#[test]
+fn the_help_for_ui_points_at_the_third_party_notices() {
+    // The binary is Apache-2.0, and `ui` serves a bundle of third-party code
+    // whose licences require their notices to travel with it: the help says
+    // where they are, in a build with the feature or without it.
+    let output = ragondin(&["ui", "--help"]);
+    let help = stdout(&output);
+
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert!(help.contains("Apache-2.0"), "{help}");
+    assert!(help.contains("/third-party-notices.txt"), "{help}");
+}

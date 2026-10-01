@@ -44,8 +44,8 @@ ui/
 │       ├── client.ts    # the one client: get, post, put, patch, del, problems, the build identity
 │       ├── events.ts    # the event stream wrapper: reconnection and the connection state
 │       └── testing.ts   # test doubles: request-level API mocks, a fake event stream; only tests import it
-├── scripts/             # the dependency audit (npm and fonts), the token generator, the API type generator, the build identity
-└── tests/               # tests of the governance itself: lint rule, audit, DEPENDENCIES.md, tokens, one origin, preview
+├── scripts/             # the dependency audit (npm and fonts), the third-party notices, the token generator, the API type generator, the build identity
+└── tests/               # tests of the governance itself: lint rule, audit, notices, DEPENDENCIES.md, tokens, one origin, preview
 ```
 
 A component's test sits beside it, in `src/` or `design/`; a test of a rule about `ui/` sits in `tests/`. `tests/setup.ts` unmounts what each test rendered: Vitest's globals are off, so Testing Library cannot register that cleanup itself.
@@ -60,7 +60,8 @@ A component's test sits beside it, in `src/` or `design/`; a test of a rule abou
 | `lint` | ESLint over everything, warnings are errors. |
 | `typecheck` | `tsc -b` over the application and the tooling, both strict. |
 | `test` | Vitest: component tests in a DOM, governance tests in Node. |
-| `build` | `vite build` into `dist/`. |
+| `build` | `vite build` into `dist/`, the third-party notices included (§ The third-party notices). |
+| `notices` | Re-reads `dist/third-party-notices.txt` and fails when a runtime package's or a font licence's notice is absent or stale. |
 | `audit` | The font licence audit, the npm licence audit, then the advisory audit (§ The dependency audit). |
 
 `just check-ui` runs `npm ci` first, so the gate always installs exactly the lockfile. **The Rust build does not need Node** (ADR-C36 § 5): no cargo command and no cargo-based `just` recipe runs anything under `ui/`. The one thing cargo reads there is `dist/`, the build's output: `bin/ragondin`'s build script embeds it under the `ui` feature when it exists, and a page saying the UI was not built when it does not (`bin/ragondin/ARCHITECTURE.md` § The ui subcommand). Only `just check`, which covers both worlds, runs Node.
@@ -108,6 +109,27 @@ A green lint is evidence, not proof. **The layer that holds is the content secur
 — the shape `deny.toml`'s `ignore` comment prescribes. An exception that no longer matches anything is reported, so it gets deleted. The list is empty today. The advisory audit reads the registry's advisory database, which changes daily: like `just check-deny`, it can go red on a branch whose diff caused nothing.
 
 Adding a dependency is governed by `DEPENDENCIES.md`, whose rule is `AGENTS.md` § Conventions'.
+
+## The third-party notices
+
+The binary embeds `dist/` and redistributes it, and MIT, ISC and BSD-3-Clause each require the copyright and permission notice to accompany a copy. So the build writes `dist/third-party-notices.txt`, which the binary serves at `/third-party-notices.txt` (§ How the assets reach the binary). The logic is `scripts/notices.mjs`, a Vite plugin registered in `vite.config.ts`, read from the installed tree as the licence audit is rather than by a generator package, for the reason the audit gives: it has to be read to be trusted.
+
+**What it lists.** One block per package — name, version, the licence field of its `package.json`, and the text of its own licence file: `LICENSE`, `LICENCE` or `COPYING`, any case, bare or with a `.` or `-` suffix (`LICENSE.md`, `LICENSE-MIT`, `LICENSE.APACHE2`) — then one per font licence text in `design/fonts/LICENSES.md`, with the font files it covers. The packages are:
+
+- **every runtime package of the lockfile**: each entry not marked `dev` or `devOptional`, which is the whole closure `dependencies` can bundle. It is a superset of what the bundle holds — the canvas library's tree is listed before a screen imports it, and `@types/*` packages carry no code — and a superset errs on the side the licences require;
+- **Vite**, a development package, because the build writes Vite's own code into the bundle: the modulepreload polyfill and the CommonJS helpers (from `@rollup/plugin-commonjs`, whose notice Vite's `LICENSE.md` carries). `VIRTUAL` in `scripts/notices.mjs` maps each such virtual module to its package.
+
+**What fails the build.** A listed package that is not installed or ships no licence file. And a module of the build's graph that comes from neither `ui/`'s own code nor a listed package — a development package imported by application code, a file outside `ui/`, or a virtual module `VIRTUAL` does not name — so a package that reaches the bundle as a module cannot ship without a notice. An optional package this machine did not install is skipped, since the build cannot have bundled it.
+
+**What the graph check does not see.** It reads the build's module graph, and two things reach the bundle without being modules of it: an asset reached through a CSS `url()` — a font or an image a stylesheet names, which is emitted as a file and never enters the graph — and the glue code Rollup and esbuild write around modules (chunk wrappers, interop and JSX-runtime shims of their own). Today every `url()` names a font under `design/fonts/`, whose licences the font blocks cover, and the glue is the tools' own output, not a package's code. A stylesheet that names an asset from a package needs that package listed by hand.
+
+**A package that ships no licence file.** The build refuses it, by design: a notice is the package's own text, never a guess. When a package that has to be bundled ships none, the remedy is an explicit, reviewed override: a map in `scripts/notices.mjs` from `package@version` to a text file committed under `ui/` holding the licence text, with the reason it is needed (where the text was taken from, and why the package ships none). An entry is keyed to one version, so an upgrade drops it and the build asks again; it is added only when a real package needs it, in the pull request that adds that package, and named there under its own heading. No such map exists today, because no package needs one.
+
+**Out of scope here.** The Rust crates linked into the binary carry notice obligations of their own; they are tracked as #387.
+
+**What re-checks it.** `npm run notices`, after the build, re-reads the written file and fails when the block of a runtime package or a font licence — name, version, licence and text, exactly as written — is absent, so a file edited or left stale fails. `tests/notices.test.ts` tests each rule over throwaway lockfiles, runs the real production build into a temporary directory and checks what it wrote, and fails if `npm run check` stops running the re-check after the build. In `bin/ragondin`, the release assertion fails a shipped binary that does not serve the file (`bin/ragondin/ARCHITECTURE.md` § The assets and the notice page).
+
+The font notices repeat what `design/fonts/` already ships beside the fonts, because the binary serves the font files and not that directory.
 
 ## The generated types
 
@@ -243,7 +265,7 @@ The choices ADR-C36 § 5 left to the implementation, and why each was made:
 
 ## How the assets reach the binary
 
-`npm run build` writes `dist/`, which is ignored by the repository: nothing here commits built assets. `bin/ragondin`, built with its `ui` feature, embeds `dist/` as it was at compile time, and `ragondin-api` serves it at `/`, answering every path whose last segment names no file with `index.html` so the UI routes itself (`runtime/ragondin-api/ARCHITECTURE.md` § The assets); when `dist/` is absent it embeds a page saying the UI was not built and how to build it, so `cargo build --all-features` never needs Node (ADR-C36 § 5). Build the UI before the binary, then, for a binary that carries it. CI's `ui` job does exactly that after `npm run check`, and its test step fails if the binary embedded the notice page (`bin/ragondin/ARCHITECTURE.md` § The ui subcommand says how).
+`npm run build` writes `dist/`, which is ignored by the repository: nothing here commits built assets. `bin/ragondin`, built with its `ui` feature, embeds `dist/` as it was at compile time, and `ragondin-api` serves it at `/`, answering every path whose last segment names no file with `index.html` so the UI routes itself (`runtime/ragondin-api/ARCHITECTURE.md` § The assets); when `dist/` is absent it embeds a page saying the UI was not built and how to build it, so `cargo build --all-features` never needs Node (ADR-C36 § 5). Build the UI before the binary, then, for a binary that carries it. The build writes the third-party notices into `dist/` with the rest (§ The third-party notices), so the binary serves them at `/third-party-notices.txt`. CI's `ui` job does exactly that after `npm run check`, and its test step fails if the binary embedded the notice page or serves no notices (`bin/ragondin/ARCHITECTURE.md` § The ui subcommand says how).
 
 Everything the binary serves, `index.html` included, is under the content security policy `default-src 'self'` (§ The one-address rule): an inline `<script>` or `<style>` in the built page would be refused by the browser. Vite's default output carries neither.
 

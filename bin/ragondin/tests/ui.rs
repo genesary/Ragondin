@@ -603,16 +603,48 @@ mod with_the_feature {
 
     /// The release assertion (ADR-C36 § 5): the job that ships a binary sets
     /// `RAGONDIN_REQUIRE_UI_ASSETS`, and then this fails if what the binary
-    /// serves at `/` is the notice page rather than a real build. Without the
-    /// variable it checks nothing, since a Rust-only build embeds the notice
-    /// by design.
+    /// serves at `/` is the notice page rather than a real build, or if it
+    /// does not serve the third-party notices of the bundle it embeds.
+    /// Without the variable it checks nothing, since a Rust-only build embeds
+    /// the notice page by design.
     #[test]
     fn under_the_release_assertion_the_binary_serves_real_assets() {
         let server = Server::start(&workspace("release_assertion"), &[]);
+        let required = std::env::var_os(http::REQUIRE_ASSETS).is_some();
         let page = http::get(server.authority(), "/");
+        let notices = http::get(server.authority(), http::NOTICES_PATH);
 
-        http::assert_shipped(std::env::var_os(http::REQUIRE_ASSETS).is_some(), &page.body)
-            .unwrap_or_else(|why| panic!("{why}"));
+        http::assert_shipped(required, &page.body).unwrap_or_else(|why| panic!("{why}"));
+        http::assert_notices_shipped(required, &notices).unwrap_or_else(|why| panic!("{why}"));
+    }
+
+    /// A real build serves the third-party notices `npm run build` writes
+    /// into `ui/dist/`, as plain text; the notice page, which bundles no
+    /// third-party code, has none to serve.
+    #[test]
+    fn a_built_ui_serves_its_third_party_notices() {
+        let server = Server::start(&workspace("notices"), &[]);
+        let notices = http::get(server.authority(), http::NOTICES_PATH);
+
+        if env!("RAGONDIN_UI_ASSETS_KIND") == "built" {
+            // `just check` runs `test` before `check-ui` rebuilds `ui/dist/`,
+            // so a `dist/` built before the notices existed lands here.
+            assert_eq!(
+                notices.status, 200,
+                "ui/dist predates the third-party notices; run `npm run build` in ui/ \
+                 and rebuild the binary: {notices:?}"
+            );
+            assert_eq!(
+                notices.header("content-type"),
+                Some("text/plain; charset=utf-8")
+            );
+            assert!(
+                notices.body.starts_with(http::NOTICES_HEADING),
+                "{notices:?}"
+            );
+        } else {
+            assert_eq!(notices.status, 404, "{notices:?}");
+        }
     }
 
     #[test]
@@ -624,5 +656,21 @@ mod with_the_feature {
         assert!(http::assert_shipped(true, notice).is_err());
         assert!(http::assert_shipped(true, real).is_ok());
         assert!(http::assert_shipped(false, notice).is_ok());
+    }
+
+    #[test]
+    fn the_release_assertion_fails_without_the_third_party_notices() {
+        let served = http::Response::new(
+            200,
+            "text/plain; charset=utf-8",
+            &format!("{}\n\nreact 19.3.0\n", http::NOTICES_HEADING),
+        );
+        let absent = http::Response::new(404, "application/problem+json", "{}");
+        let wrong = http::Response::new(200, "text/plain; charset=utf-8", "something else");
+
+        assert!(http::assert_notices_shipped(true, &served).is_ok());
+        assert!(http::assert_notices_shipped(true, &absent).is_err());
+        assert!(http::assert_notices_shipped(true, &wrong).is_err());
+        assert!(http::assert_notices_shipped(false, &absent).is_ok());
     }
 }

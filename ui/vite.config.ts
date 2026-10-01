@@ -1,6 +1,7 @@
 import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitest/config';
 import { buildIdentity } from './scripts/build-identity.mjs';
+import { thirdPartyNotices } from './scripts/notices.mjs';
 
 // No React plugin: esbuild compiles JSX with the automatic runtime on its own,
 // and the one thing the plugin adds, Fast Refresh in the dev server, does not
@@ -11,6 +12,9 @@ export default defineConfig({
   // first response, or the handshake would compare the server with itself.
   // ARCHITECTURE.md § The build identity handshake.
   define: { __RAGONDIN_BUILD__: JSON.stringify(buildIdentity(fileURLToPath(new URL('..', import.meta.url)))) },
+  // The binary redistributes the bundle, so the bundle carries the notices
+  // of what it holds. ARCHITECTURE.md § The third-party notices.
+  plugins: [thirdPartyNotices(fileURLToPath(new URL('.', import.meta.url)))],
   test: {
     // The governance tests read files and run ESLint, so the default
     // environment is Node; a component test opts into a DOM with a
