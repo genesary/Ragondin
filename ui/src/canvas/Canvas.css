@@ -55,6 +55,7 @@
    rule is given the surface through its variable rather than overridden
    here, so no rule in this file competes with Port.css's fills — connected,
    and the opaque ring that stays hollow. */
+/* The variable guards against a bundle that loads Port.css before the library's base.css: its handle rule would then win at equal specificity, and it must still paint the surface. */
 .react-flow__handle.rg-port { transform: none; min-width: 0; min-height: 0; --xy-handle-background-color: var(--surface); }
 .react-flow__handle.rg-port[data-kind="context"] { transform: rotate(45deg) scale(0.9); }
 

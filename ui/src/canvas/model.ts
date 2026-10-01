@@ -1,5 +1,5 @@
 import type { EdgeKind, Graph, ParameterValue } from '../api/types.ts';
-import type { Family } from '../../design/index.ts';
+import { familyOfComponent, type Family } from '../../design/index.ts';
 
 /** What a port carries: the API's edge kind, drawn by shape (Port.tsx). */
 export type PortKind = EdgeKind;
@@ -49,14 +49,6 @@ export type CanvasModel = {
   edges: CanvasEdge[];
 };
 
-const FAMILY: Record<string, Family> = {
-  retriever: 'retriever',
-  fusion: 'fusion',
-  reranker: 'reranker',
-  context_builder: 'context',
-  generator: 'generator',
-};
-
 // The parameter the design system shows on each family's card.
 const KEY_PARAMETER: Partial<Record<Family, string>> = {
   retriever: 'top_k',
@@ -95,7 +87,7 @@ export function toModel(graph: Graph): CanvasModel {
     output: outputOf(input.id) ?? input.kind,
   }));
   const nodes: CanvasNode[] = graph.nodes.map((node) => {
-    const family = FAMILY[node.family] ?? 'control';
+    const family = familyOfComponent(node.family) ?? 'control';
     const ports: PortKind[] = [];
     for (const e of edges) if (e.to === node.id) ports[e.port] = e.kind;
     const key = KEY_PARAMETER[family];

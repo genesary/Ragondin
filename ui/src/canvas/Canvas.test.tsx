@@ -380,6 +380,16 @@ describe('the node menu', () => {
     expect(document.activeElement).toBe(items[0]);
   });
 
+  it('leaves the selection alone when Escape closes the menu', () => {
+    const { container, el } = openOn('fused');
+    fireEvent.keyDown(el, { key: 'Enter' });
+    fireEvent.keyDown(el, { key: 'F10', shiftKey: true });
+    fireEvent.keyDown(screen.getAllByRole('menuitem')[0]!, { key: 'Escape' });
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(card(container, 'fused').getAttribute('data-selected')).toBe('true');
+    expect(document.activeElement).toBe(el);
+  });
+
   it('closes on Tab and gives focus back to the node', () => {
     const { el } = openOn('fused');
     fireEvent.keyDown(screen.getAllByRole('menuitem')[0]!, { key: 'Tab' });

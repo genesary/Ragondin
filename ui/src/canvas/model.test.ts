@@ -33,6 +33,11 @@ describe('toModel', () => {
       edges: [],
     };
     expect(byId(extension, 'x').family).toBe('control');
+    // A family named like an inherited object property is still unknown.
+    for (const family of ['constructor', 'toString', '__proto__']) {
+      const odd: Graph = { inputs: [], nodes: [{ id: 'x', family, implementation: 'y', parameters: {} }], edges: [] };
+      expect(byId(odd, 'x').family, family).toBe('control');
+    }
   });
 
   it('names the implementation as the configuration spells it', () => {
