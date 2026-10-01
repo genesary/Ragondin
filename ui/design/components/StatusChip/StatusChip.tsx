@@ -2,9 +2,9 @@ import type { ReactNode } from 'react';
 import { Glyph, type GlyphName } from '../../glyphs/Glyph.tsx';
 import './StatusChip.css';
 
-export type Status = 'queued' | 'running' | 'done' | 'warning' | 'failed';
+export type Status = 'queued' | 'running' | 'done' | 'warning' | 'failed' | 'cancelled';
 
-const GLYPH: Record<Exclude<Status, 'running'>, GlyphName> = { queued: 'clock', done: 'check', warning: 'alert', failed: 'cross' };
+const GLYPH: Record<Exclude<Status, 'running'>, GlyphName> = { queued: 'clock', done: 'check', warning: 'alert', failed: 'cross', cancelled: 'close' };
 
 type Running = { state: 'running'; /** The real fraction done, 0 to 1. */ fraction: number };
 type Other = { state: Exclude<Status, 'running'>; fraction?: never };

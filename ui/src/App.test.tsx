@@ -52,7 +52,7 @@ describe('the shell’s screens', () => {
     ['#compare/aaa+bbb?baseline=aaa', 'Compare', 'Nothing to show for 2 runs yet'],
     ['#compare/aaa', 'Compare', 'Nothing to show for 1 run yet'],
     ['#replay', 'Replay', 'No query chosen'],
-    ['#replay/aaa', 'Replay', 'No query chosen for run aaa'],
+    [`#replay/${'a1b2c3d4e5f6'.padEnd(64, '0')}`, 'Replay', 'No query chosen for run a1b2c3d4e5f6'],
     ['#replay/aaa/q/1395?with=bbb', 'Replay', 'Nothing to show for query 1395 yet'],
     ['#editor', 'Editor', 'No pipeline open'],
     ['#editor/hybrid-rrf', 'Editor', 'Nothing to show for hybrid-rrf yet'],
@@ -126,6 +126,44 @@ describe('the shell’s screens', () => {
     expect(document.activeElement).toBe(document.body);
     fireEvent.click(within(main()).getByRole('link', { name: 'Open Runs' }));
     await waitFor(() => expect(document.activeElement).toBe(within(main()).getByRole('heading', { level: 1 })));
+  });
+
+  describe('state within a screen', () => {
+    const id = (c: string) => c.repeat(64);
+    const run = (c: string, dataset = id('d')) => ({ id: id(c), pipeline: id('p'), dataset_version: dataset, index_version: id('i'), engine_version: '0.0.0', metrics: {} });
+    const runsRoutes = () =>
+      mockApi({ 'GET /workspace': { body: WORKSPACE }, 'GET /runs': { body: { runs: [run('1'), run('2'), run('3', id('e'))], unreadable: [] } } }, { build: BUILD });
+    const row = (c: string) => within(main()).getByRole('row', { name: new RegExp(`^Run ${id(c).slice(0, 12)} on `) });
+
+    it('keeps focus on a row when space selects it, though the selection is written to the address', async () => {
+      runsRoutes();
+      show('#runs');
+      await waitFor(() => row('1'));
+      row('1').focus();
+      fireEvent.keyDown(row('1'), { key: ' ' });
+      await waitFor(() => expect(window.location.hash).toBe(`#runs?sel=${id('1')}`));
+      await screen.findByText(WORKSPACE.path);
+      expect(document.activeElement).toBe(row('1'));
+    });
+
+    it('keeps focus on a checkbox when a click selects its run', async () => {
+      runsRoutes();
+      show('#runs');
+      await waitFor(() => row('2'));
+      const box = within(row('2')).getByRole('checkbox');
+      box.focus();
+      fireEvent.click(box);
+      await waitFor(() => expect(window.location.hash).toBe(`#runs?sel=${id('2')}`));
+      expect(document.activeElement).toBe(within(row('2')).getByRole('checkbox'));
+    });
+
+    it('moves nothing when a deep link’s selection is corrected in place', async () => {
+      runsRoutes();
+      show(`#runs?sel=${id('1')},${id('3')}`);
+      await waitFor(() => expect(window.location.hash).toBe(`#runs?sel=${id('1')}`));
+      await screen.findByText(WORKSPACE.path);
+      expect(document.activeElement).toBe(document.body);
+    });
   });
 
   it('says so, and offers Runs, for an address that names no screen', async () => {

@@ -149,6 +149,7 @@ function Column({ theme }: { theme: 'light' | 'dark' }) {
         <Checkbox label="dense-only" checked={false} onChange={() => {}} />
         <Checkbox label="All runs on beir/scifact" checked={false} indeterminate onChange={() => {}} />
         <Checkbox label="squad/dev" checked={false} onChange={() => {}} disabled disabledReason="another benchmark, can't join this comparison" />
+        <Checkbox label="beir/scifact" accessibleLabel="Select run 5b77e3a1c9f0 on beir/scifact" checked={false} onChange={() => {}} />
       </Block>
 
       <Block name="StatusChip">
@@ -160,6 +161,7 @@ function Column({ theme }: { theme: 'light' | 'dark' }) {
           <StatusChip state="failed">
             failed at <code>rerank</code>
           </StatusChip>
+          <StatusChip state="cancelled" />
         </div>
       </Block>
 
@@ -207,6 +209,31 @@ function Column({ theme }: { theme: 'light' | 'dark' }) {
             { id: 'recall', cells: ['Recall@100', '0.9120', '0.9050'], bestColumn: 1, selected: true },
             { kind: 'group', id: 'cost', label: 'Cost' },
             { id: 'p50', cells: ['p50 latency', '61 ms', <>412 ms<Delta meaning="worse" direction="up">+351 ms</Delta></>], bestColumn: 1 },
+          ]}
+        />
+        <Table
+          caption="Runs of two pipelines"
+          columns={[
+            { id: 'bench', label: 'Benchmark' },
+            { id: 'run', label: 'Run' },
+            { id: 'status', label: 'Status' },
+          ]}
+          onOpen={() => {}}
+          onToggle={() => {}}
+          rows={[
+            {
+              kind: 'group',
+              id: 'hybrid',
+              label: (
+                <>
+                  <a href="#pipeline-preview">hybrid-rerank</a> <FamilyTile family="retriever" labelled /> <FamilyTile family="fusion" labelled /> <FamilyTile family="reranker" labelled />
+                </>
+              ),
+            },
+            { id: 'r1', label: 'Run 9e2b7d41c0a3 on beir/scifact', cells: [<Checkbox key="c" label="beir/scifact" checked onChange={() => {}} tabIndex={-1} />, HASH.slice(0, 12), <StatusChip key="s" state="done" />] },
+            { id: 'q', passive: true, cells: ['', '', <StatusChip key="s" state="queued" />] },
+            { kind: 'group', id: 'dense', label: 'dense-only' },
+            { id: 'r2', label: 'Run 4a01c9e7d2b3 on beir/fiqa', cells: [<Checkbox key="c" label="beir/fiqa" checked={false} onChange={() => {}} tabIndex={-1} disabled disabledReason="Other benchmark" />, '4a01c9e7d2b3', <StatusChip key="s" state="cancelled" />] },
           ]}
         />
       </Block>

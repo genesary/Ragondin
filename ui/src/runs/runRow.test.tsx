@@ -1,13 +1,15 @@
 /** @vitest-environment happy-dom */
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
+import { Table } from '../../design/index.ts';
 import type { RunRow } from './model.ts';
-import { RunRowView, type RowColumns } from './RunRowView.tsx';
+import { runRow, type RowColumns } from './runRow.tsx';
+import type { Refusal } from './selection.ts';
 
 const ID = 'a1b2c3d4e5f6'.padEnd(64, '0');
 
 const done = (over: Partial<RunRow> = {}): RunRow => ({
-  id: ID,
+  source: { kind: 'run', id: ID },
   pipeline: 'p'.repeat(64),
   pipelineName: 'hybrid',
   benchmark: 'd'.repeat(64),
@@ -21,26 +23,55 @@ const done = (over: Partial<RunRow> = {}): RunRow => ({
 });
 
 const NO_EXTRA: RowColumns = { latency: false, started: false };
+const COLUMNS = [
+  { id: 'bench', label: 'Benchmark' },
+  { id: 'run', label: 'Run' },
+  { id: 'status', label: 'Status' },
+  { id: 'metrics', label: 'Metrics' },
+  { id: 'latency', label: 'Latency' },
+  { id: 'started', label: 'Started' },
+];
 
-function show(row: RunRow, props: { selected?: boolean; refusal?: string | null; columns?: RowColumns } = {}) {
+function show(row: RunRow, props: { selected?: boolean; refusal?: Refusal | null; columns?: RowColumns } = {}) {
   const onToggle = vi.fn();
   const onOpen = vi.fn();
+  const columns = props.columns ?? NO_EXTRA;
+  const drawn = COLUMNS.slice(0, 4 + (columns.latency ? 1 : 0) + (columns.started ? 1 : 0));
   render(
-    <table>
-      <tbody>
-        <RunRowView row={row} selected={props.selected ?? false} refusal={props.refusal ?? null} columns={props.columns ?? NO_EXTRA} onToggle={onToggle} onOpen={onOpen} />
-      </tbody>
-    </table>,
+    <Table
+      caption="runs"
+      columns={drawn}
+      rows={[runRow(row, { selected: props.selected ?? false, refusal: props.refusal ?? null, columns, onToggle })]}
+      onOpen={onOpen}
+      onToggle={() => {}}
+    />,
   );
-  return { onToggle, onOpen, tr: screen.getAllByRole('row')[0] as HTMLElement };
+  return { onToggle, onOpen, tr: screen.getAllByRole('row')[1] as HTMLElement };
 }
 
 describe('a done run', () => {
-  it('shows its checkbox labelled by its benchmark, its short hash as a link to Replay, and the done chip', () => {
+  it('is a row named by its run and its benchmark', () => {
+    const { tr } = show(done());
+    expect(tr.getAttribute('aria-label')).toBe('Run a1b2c3d4e5f6 on beir/scifact');
+  });
+
+  it('shows its checkbox, labelled by its benchmark and named by its run, and out of the tab order', () => {
     show(done());
-    expect(screen.getByRole('checkbox', { name: 'beir/scifact' })).toBeTruthy();
-    expect(screen.getByRole('link', { name: 'a1b2c3d4e5f6' }).getAttribute('href')).toBe(`#replay/${ID}`);
-    expect(screen.getByText('done').closest('.rg-status')?.getAttribute('data-state')).toBe('done');
+    const box = screen.getByRole('checkbox', { name: 'Select run a1b2c3d4e5f6 on beir/scifact' });
+    expect(box.closest('label')?.textContent).toBe('beir/scifact');
+    expect(box.getAttribute('tabindex')).toBe('-1');
+  });
+
+  it('shows its short hash as a link to Replay, out of the tab order: the row opens it', () => {
+    show(done());
+    const link = screen.getByRole('link', { name: 'a1b2c3d4e5f6' });
+    expect(link.getAttribute('href')).toBe(`#replay/${ID}`);
+    expect(link.getAttribute('tabindex')).toBe('-1');
+  });
+
+  it('shows the done chip', () => {
+    show(done());
+    expect(document.querySelector('.rg-status')?.getAttribute('data-state')).toBe('done');
   });
 
   it('shows ranking metrics only, under `ranking`, for a benchmark that carries qrels only', () => {
@@ -99,7 +130,7 @@ describe('a done run', () => {
   });
 });
 
-describe('a failed run', () => {
+describe('a failed row', () => {
   const failed = done({ status: { state: 'failed', node: 'rerank', error: 'the reranker service did not answer' } });
 
   it('renders its failed chip naming the node, and the error as a sentence', () => {
@@ -110,9 +141,9 @@ describe('a failed run', () => {
     expect(screen.getByText('rerank failed: the reranker service did not answer')).toBeTruthy();
   });
 
-  it('opens in Replay', () => {
-    show(failed);
-    expect(screen.getByRole('link', { name: 'a1b2c3d4e5f6' }).getAttribute('href')).toBe(`#replay/${ID}`);
+  it('is named with its failure', () => {
+    const { tr } = show(failed);
+    expect(tr.getAttribute('aria-label')).toBe('Run a1b2c3d4e5f6 on beir/scifact, failed at rerank');
   });
 
   it('says the run failed without a node when the failure names none', () => {
@@ -120,19 +151,31 @@ describe('a failed run', () => {
     expect(document.querySelector('.rg-status')?.textContent).toBe('failed');
     expect(screen.getByText('The run failed: interrupted')).toBeTruthy();
   });
+
+  it('shows a failed job’s id as text, not as a link to a run it is not', () => {
+    show(done({ source: { kind: 'job', id: 'f00dfeedbeef'.padEnd(64, '1'), runId: null }, status: { state: 'failed', node: 'rerank', error: 'boom' } }));
+    expect(screen.queryByRole('link')).toBeNull();
+    expect(screen.getByText('f00dfeedbeef')).toBeTruthy();
+  });
 });
 
-describe('a run that has not finished', () => {
+describe('a row that has not finished', () => {
   it.each([
     ['queued', { state: 'queued' } as const, 'queued'],
-    ['running', { state: 'running', fraction: 0.4 } as const, 'running 40%'],
-  ])('renders the placeholder row: the %s chip only', (_, status, word) => {
-    const { tr } = show(done({ status, metrics: [{ family: 'ranking', metrics: [{ name: 'mrr', value: 0.5 }] }] }));
+    ['running', { state: 'running', done: 412, total: 1000 } as const, 'running 412 / 1,000'],
+    ['cancelled', { state: 'cancelled' } as const, 'cancelled'],
+  ])('renders the placeholder row: the %s chip only, and no tab stop', (_, status, word) => {
+    const { tr } = show(done({ source: { kind: 'job', id: 'j', runId: null }, status, metrics: [{ family: 'ranking', metrics: [{ name: 'mrr', value: 0.5 }] }] }));
     expect(document.querySelector('.rg-status')?.textContent).toBe(word);
     expect(screen.queryByRole('checkbox')).toBeNull();
     expect(screen.queryByRole('link')).toBeNull();
     expect(screen.queryByText('mrr')).toBeNull();
-    expect(tr.getAttribute('tabindex')).toBeNull();
+    expect(tr.hasAttribute('tabindex')).toBe(false);
+  });
+
+  it('draws the running meter from the real count', () => {
+    show(done({ source: { kind: 'job', id: 'j', runId: null }, status: { state: 'running', done: 412, total: 1000 } }));
+    expect((document.querySelector('.rg-status__meter i') as HTMLElement).style.width).toBe('41%');
   });
 });
 
@@ -142,50 +185,17 @@ describe('the checkbox', () => {
     expect((screen.getByRole('checkbox') as HTMLInputElement).checked).toBe(true);
   });
 
-  it('is disabled with the reason describing it when the run is refused', () => {
-    show(done(), { refusal: 'The selected runs are on beir/fiqa. Compare takes runs on one benchmark.' });
+  it('is disabled with the short reason describing it when the run is refused', () => {
+    show(done(), { refusal: { short: 'Other benchmark', full: 'The selected runs are on beir/fiqa. Compare takes runs on one benchmark.' } });
     const box = screen.getByRole('checkbox') as HTMLInputElement;
     expect(box.disabled).toBe(true);
-    const describedBy = box.getAttribute('aria-describedby') ?? '';
-    expect(document.getElementById(describedBy)?.textContent).toBe('The selected runs are on beir/fiqa. Compare takes runs on one benchmark.');
+    expect(document.getElementById(box.getAttribute('aria-describedby') ?? '')?.textContent).toBe('Other benchmark');
+    expect(screen.queryByText(/Compare takes runs on one benchmark/)).toBeNull();
   });
 
   it('toggles the run when clicked', () => {
     const { onToggle } = show(done());
     fireEvent.click(screen.getByRole('checkbox'));
     expect(onToggle).toHaveBeenCalledTimes(1);
-  });
-});
-
-describe('the keyboard', () => {
-  it('reaches the row', () => {
-    const { tr } = show(done());
-    expect(tr.getAttribute('tabindex')).toBe('0');
-  });
-
-  it('toggles the run with space on the row', () => {
-    const { tr, onToggle } = show(done());
-    fireEvent.keyDown(tr, { key: ' ' });
-    expect(onToggle).toHaveBeenCalledTimes(1);
-  });
-
-  it('does not toggle a refused run with space', () => {
-    const { tr, onToggle } = show(done(), { refusal: 'no' });
-    fireEvent.keyDown(tr, { key: ' ' });
-    expect(onToggle).not.toHaveBeenCalled();
-  });
-
-  it('opens the run with enter on the row', () => {
-    const { tr, onOpen } = show(done());
-    fireEvent.keyDown(tr, { key: 'Enter' });
-    expect(onOpen).toHaveBeenCalledTimes(1);
-  });
-
-  it('leaves a key on a control inside the row to that control', () => {
-    const { onToggle, onOpen } = show(done());
-    fireEvent.keyDown(screen.getByRole('checkbox'), { key: ' ' });
-    fireEvent.keyDown(screen.getByRole('link'), { key: 'Enter' });
-    expect(onToggle).not.toHaveBeenCalled();
-    expect(onOpen).not.toHaveBeenCalled();
   });
 });

@@ -4,16 +4,16 @@
 // selection it hands to Compare lives in the address. ARCHITECTURE.md § The
 // Runs screen.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Button, ButtonLink, EmptyState, FilterChip, InlineMessage, Sheet } from '../../design/index.ts';
+import { Button, ButtonLink, EmptyState, FilterChip, InlineMessage, Sheet, Table, type TableRow } from '../../design/index.ts';
 import type { ApiClient } from '../api/client.ts';
 import type { RunListing } from '../api/types.ts';
 import { formatHash, navigate } from '../routes.ts';
 import { ErrorState, Loading, type RequestState } from '../shell/states.tsx';
-import { GroupHeader } from './GroupHeader.tsx';
-import { benchmarkLabel, groupRows, rowsFromListing, shapeOf, shortHash, type RunRow, type ShapeNode } from './model.ts';
-import { RunRowView } from './RunRowView.tsx';
+import { GroupLabel } from './GroupLabel.tsx';
+import { benchmarkLabel, groupRows, openRoute, rowKey, rowsFromListing, runId, shapeOf, shortHash, type RunRow, type ShapeNode } from './model.ts';
+import { runRow } from './runRow.tsx';
 import './Runs.css';
-import { compareRefusal, refusal, sanitize, toggle } from './selection.ts';
+import { compareRefusal, refusal, sanitize, toggle, unknownIds } from './selection.ts';
 
 export type RunsScreenProps = {
   client: ApiClient;
@@ -21,29 +21,39 @@ export type RunsScreenProps = {
   sel: readonly string[];
 };
 
-/** Writes a selection to the address in place: checking a box is not a move Back should undo. */
+/** Writes a selection to the address in place: checking a box is state within the view, not a move Back should undo. */
 const select = (sel: string[]) => navigate({ screen: 'runs', sel }, { replace: true });
 
 const runs = (n: number) => `${n.toLocaleString('en-US')} run${n === 1 ? '' : 's'}`;
 
-export function RunsScreen({ client, sel }: RunsScreenProps) {
-  const [listing, setListing] = useState<RequestState<RunListing>>({ status: 'loading' });
+/** A listing, with the selection the address carried when it was asked for: what it is authoritative about. */
+type Read = { listing: RequestState<RunListing>; askedWith: ReadonlySet<string> };
 
-  const read = useCallback(async () => {
+export function RunsScreen({ client, sel }: RunsScreenProps) {
+  const [read, setRead] = useState<Read>({ listing: { status: 'loading' }, askedWith: new Set() });
+  const latest = useRef(0);
+  const selNow = useRef(sel);
+  selNow.current = sel;
+
+  /** Reads the listing; only the answer to the last request asked lands, whatever order they arrive in. */
+  const fetchListing = useCallback(async () => {
+    const mine = ++latest.current;
+    const askedWith = new Set(selNow.current);
     const result = await client.get('/runs');
-    setListing(result.ok ? { status: 'loaded', value: result.value } : { status: 'error', problem: result.problem });
+    if (mine !== latest.current) return;
+    setRead({ listing: result.ok ? { status: 'loaded', value: result.value } : { status: 'error', problem: result.problem }, askedWith });
   }, [client]);
 
   useEffect(() => {
-    void read();
-  }, [read]);
+    void fetchListing();
+  }, [fetchListing]);
 
   const retry = () => {
-    setListing({ status: 'loading' });
-    void read();
+    setRead((r) => ({ ...r, listing: { status: 'loading' } }));
+    void fetchListing();
   };
 
-  switch (listing.status) {
+  switch (read.listing.status) {
     case 'loading':
       return (
         <Sheet>
@@ -51,20 +61,43 @@ export function RunsScreen({ client, sel }: RunsScreenProps) {
         </Sheet>
       );
     case 'error':
-      return <ErrorState problem={listing.problem} onRetry={retry} />;
+      return <ErrorState problem={read.listing.problem} onRetry={retry} />;
     case 'loaded':
-      return <Loaded client={client} listing={listing.value} sel={sel} />;
+      return <Loaded client={client} listing={read.listing.value} askedWith={read.askedWith} sel={sel} reread={() => void fetchListing()} />;
   }
 }
 
-function Loaded({ client, listing, sel }: { client: ApiClient; listing: RunListing; sel: readonly string[] }) {
+type LoadedProps = {
+  client: ApiClient;
+  listing: RunListing;
+  /** The selection the address carried when `listing` was asked for. */
+  askedWith: ReadonlySet<string>;
+  sel: readonly string[];
+  /** Reads the listing again, keeping this one on screen meanwhile. */
+  reread: () => void;
+};
+
+function Loaded({ client, listing, askedWith, sel, reread }: LoadedProps) {
   const rows = useMemo(() => rowsFromListing(listing), [listing]);
   const [filter, setFilter] = useState<readonly string[]>([]);
-  const selection = useMemo(() => sanitize(sel, rows), [sel, rows]);
   const shapes = useShapes(client, rows);
 
-  // An address can carry what no click could have selected — a run since
-  // removed, one on another benchmark: correct it in place.
+  // An id the listing lacks is either gone or newer than the listing. The
+  // listing settles it only if it was asked for while the address named the
+  // id; otherwise read again, and rewrite nothing meanwhile.
+  const unknown = unknownIds(sel, rows);
+  const goneKey = JSON.stringify(unknown.filter((id) => askedWith.has(id)));
+  const gone = useMemo(() => new Set<string>(JSON.parse(goneKey)), [goneKey]);
+  const pending = JSON.stringify(unknown.filter((id) => !askedWith.has(id)));
+  const rereadRef = useRef(reread);
+  rereadRef.current = reread;
+  useEffect(() => {
+    if (pending !== '[]') rereadRef.current();
+  }, [pending]);
+
+  const selection = useMemo(() => sanitize(sel, rows, gone), [sel, rows, gone]);
+  // An address can carry what no click could have selected — a run the store
+  // confirmed gone, one on another benchmark, a sixth: correct it in place.
   useEffect(() => {
     if (selection.join(',') !== sel.join(',')) select(selection);
   }, [selection, sel]);
@@ -74,11 +107,6 @@ function Loaded({ client, listing, sel }: { client: ApiClient; listing: RunListi
     for (const row of rows) seen.set(row.benchmark, { label: benchmarkLabel(row), count: (seen.get(row.benchmark)?.count ?? 0) + 1 });
     return [...seen];
   }, [rows]);
-
-  const shown = filter.length === 0 ? rows : rows.filter((r) => filter.includes(r.benchmark));
-  const groups = groupRows(shown);
-  const columns = { latency: rows.some((r) => r.latencyMs !== null), started: rows.some((r) => r.startedAt !== null) };
-  const refused = compareRefusal(selection);
 
   const unreadable =
     listing.unreadable.length === 0 ? null : (
@@ -114,8 +142,42 @@ function Loaded({ client, listing, sel }: { client: ApiClient; listing: RunListi
     );
   }
 
-  const onToggle = (row: RunRow) => select(toggle(selection, row.id));
-  const header = ['Benchmark', 'Run', 'Status', 'Metrics', ...(columns.latency ? ['Latency'] : []), ...(columns.started ? ['Started'] : [])];
+  const shown = filter.length === 0 ? rows : rows.filter((r) => filter.includes(r.benchmark));
+  const groups = groupRows(shown);
+  const columns = { latency: rows.some((r) => r.latencyMs !== null), started: rows.some((r) => r.startedAt !== null) };
+  const refusals = new Map(rows.map((r) => [rowKey(r), refusal(r, selection, rows)]));
+  // A failed run says why on its own row; the selection's rules are said once.
+  const rules = [...new Set([...refusals.values()].filter((r) => r !== null && (r.short === 'Other benchmark' || r.short === 'Five selected')).map((r) => r?.full as string))];
+  const refused = compareRefusal(selection);
+  const loadingShapes = groups.filter((g) => g.shapeFrom !== null && (shapes.state[g.key]?.status ?? 'loading') === 'loading').length;
+
+  const byKey = new Map(rows.map((r) => [rowKey(r), r]));
+  const onToggle = (key: string) => {
+    const row = byKey.get(key);
+    const id = row === undefined ? null : runId(row);
+    if (id !== null && refusals.get(key) === null) select(toggle(selection, id));
+  };
+  const onOpen = (key: string) => {
+    const row = byKey.get(key);
+    const to = row === undefined ? null : openRoute(row);
+    if (to !== null) navigate(to);
+  };
+
+  const header = [
+    { id: 'benchmark', label: 'Benchmark' },
+    { id: 'run', label: 'Run' },
+    { id: 'status', label: 'Status' },
+    { id: 'metrics', label: 'Metrics' },
+    ...(columns.latency ? [{ id: 'latency', label: 'Latency', numeric: true }] : []),
+    ...(columns.started ? [{ id: 'started', label: 'Started' }] : []),
+  ];
+  const tableRows: TableRow[] = groups.flatMap((group) => [
+    { kind: 'group' as const, id: `group:${group.key}`, label: <GroupLabel group={group} shape={group.shapeFrom === null ? null : (shapes.state[group.key] ?? { status: 'loading' })} onRetry={() => shapes.retry(group.key)} /> },
+    ...group.rows.map((row) => {
+      const id = runId(row);
+      return runRow(row, { selected: id !== null && selection.includes(id), refusal: refusals.get(rowKey(row)) ?? null, columns, onToggle: () => onToggle(rowKey(row)) });
+    }),
+  ]);
 
   return (
     <Sheet>
@@ -145,35 +207,19 @@ function Loaded({ client, listing, sel }: { client: ApiClient; listing: RunListi
         </div>
       </div>
       {unreadable}
-      <div className="rg-tablewrap">
-        <table className="rg-table rg-runs__table" aria-label="Runs, grouped by pipeline">
-          <thead>
-            <tr>
-              {header.map((h) => (
-                <th key={h} scope="col" className={h === 'Latency' ? 'num' : undefined}>
-                  {h}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          {groups.map((group) => (
-            <tbody key={group.key}>
-              <GroupHeader group={group} shape={shapes[group.key] ?? { status: 'loading' }} columns={header.length} />
-              {group.rows.map((row) => (
-                <RunRowView
-                  key={row.id}
-                  row={row}
-                  selected={selection.includes(row.id)}
-                  refusal={refusal(row, selection, rows)}
-                  columns={columns}
-                  onToggle={() => onToggle(row)}
-                  onOpen={() => navigate({ screen: 'replay', run: row.id })}
-                />
-              ))}
-            </tbody>
+      {rules.length === 0 ? null : (
+        <div className="rg-runs__rules">
+          {rules.map((rule) => (
+            <InlineMessage key={rule} tone="info" title={rule} />
           ))}
-        </table>
-      </div>
+        </div>
+      )}
+      {loadingShapes === 0 ? null : (
+        <div className="rg-runs__rules">
+          <Loading label={`Reading the shapes of ${loadingShapes} pipeline${loadingShapes === 1 ? '' : 's'}`} />
+        </div>
+      )}
+      <Table caption="Runs, grouped by pipeline" columns={header} rows={tableRows} onOpen={onOpen} onToggle={onToggle} />
     </Sheet>
   );
 }
@@ -181,23 +227,34 @@ function Loaded({ client, listing, sel }: { client: ApiClient; listing: RunListi
 /**
  * Each pipeline's shape, read once from one of its own runs — the run that
  * draws its group over the whole listing — and kept by the group's key, so a
- * filter that hides that run does not read the shape again.
+ * filter that hides that run does not read the shape again. `retry` reads a
+ * failed one again.
  */
-function useShapes(client: ApiClient, rows: readonly RunRow[]): Record<string, RequestState<ShapeNode[]>> {
-  const [shapes, setShapes] = useState<Record<string, RequestState<ShapeNode[]>>>({});
+function useShapes(client: ApiClient, rows: readonly RunRow[]) {
+  const [state, setState] = useState<Record<string, RequestState<ShapeNode[]>>>({});
   const asked = useRef(new Set<string>());
-  const wanted = useMemo(() => groupRows(rows).map((g) => [g.key, g.shapeFrom] as const), [rows]);
+  const wanted = useMemo(() => new Map(groupRows(rows).flatMap((g) => (g.shapeFrom === null ? [] : [[g.key, g.shapeFrom] as const]))), [rows]);
+
+  const load = useCallback(
+    (key: string, id: string) => {
+      asked.current.add(key);
+      setState((current) => ({ ...current, [key]: { status: 'loading' } }));
+      void client.get('/runs/{id}', { id }).then((result) => {
+        const shape: RequestState<ShapeNode[]> = result.ok ? { status: 'loaded', value: shapeOf(result.value.graph) } : { status: 'error', problem: result.problem };
+        setState((current) => ({ ...current, [key]: shape }));
+      });
+    },
+    [client],
+  );
 
   useEffect(() => {
-    for (const [key, id] of wanted) {
-      if (asked.current.has(key)) continue;
-      asked.current.add(key);
-      void client.get('/runs/{id}', { id }).then((result) => {
-        const state: RequestState<ShapeNode[]> = result.ok ? { status: 'loaded', value: shapeOf(result.value.graph) } : { status: 'error', problem: result.problem };
-        setShapes((current) => ({ ...current, [key]: state }));
-      });
-    }
-  }, [client, wanted]);
+    for (const [key, id] of wanted) if (!asked.current.has(key)) load(key, id);
+  }, [wanted, load]);
 
-  return shapes;
+  const retry = (key: string) => {
+    const id = wanted.get(key);
+    if (id !== undefined) load(key, id);
+  };
+
+  return { state, retry };
 }

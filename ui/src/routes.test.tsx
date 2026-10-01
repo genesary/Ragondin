@@ -1,7 +1,7 @@
 /** @vitest-environment happy-dom */
 import { act, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { formatHash, navigate, parseHash, useRoute, type Route } from './routes.ts';
+import { formatHash, navigate, parseHash, useRoute, viewOf, type Route } from './routes.ts';
 
 /** Renders what the router reads from the address, as a screen receives it. */
 function Probe() {
@@ -146,6 +146,14 @@ describe('#setup', () => {
   it('has no state, and restores from the hash on load', () => {
     expect(formatHash({ screen: 'setup' })).toBe('#setup');
     expect(load('#setup')).toEqual({ screen: 'setup' });
+  });
+});
+
+describe('viewOf', () => {
+  it('is the screen and its path, without the state its query carries', () => {
+    expect(viewOf({ screen: 'runs', sel: ['a', 'b'] })).toBe('#runs');
+    expect(viewOf({ screen: 'compare', ids: ['a', 'b'], baseline: 'a' })).toBe('#compare/a+b');
+    expect(viewOf({ screen: 'replay', run: 'aaa', query: '1395', with: 'bbb' })).toBe('#replay/aaa/q/1395');
   });
 });
 

@@ -3,7 +3,7 @@ import { ButtonLink, InlineMessage, TopBar } from '../design/index.ts';
 import type { ApiClient, ApiProblem } from './api/client.ts';
 import { openEvents, type ConnectionState } from './api/events.ts';
 import type { Workspace } from './api/types.ts';
-import { formatHash, useRoute } from './routes.ts';
+import { formatHash, useRoute, viewOf } from './routes.ts';
 import { judgeBuild } from './shell/build.ts';
 import { Screen, SCREENS, useFocusOnChange } from './shell/screens.tsx';
 import './shell/Shell.css';
@@ -48,7 +48,9 @@ export function App({ client, build, reload, eventsPath }: AppProps) {
   const [refused, setRefused] = useState<ApiProblem | null>(null);
   const [connection, setConnection] = useState<ConnectionState | null>(null);
   const heading = useRef<HTMLHeadingElement>(null);
-  useFocusOnChange(heading, route === null ? window.location.hash : formatHash(route));
+  // Keyed on the view, not the whole address: state within a view written to
+  // the address (a selection, a correction in place) moves no focus.
+  useFocusOnChange(heading, route === null ? window.location.hash : viewOf(route));
 
   // Kept in a ref: a new function from a re-rendering parent is not a reason
   // to read the workspace again or to reopen the stream.

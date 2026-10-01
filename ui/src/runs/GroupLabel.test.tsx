@@ -1,14 +1,15 @@
 /** @vitest-environment happy-dom */
-import { render, screen } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { fireEvent, render, screen } from '@testing-library/react';
+import { describe, expect, it, vi } from 'vitest';
+import { Table } from '../../design/index.ts';
 import type { RequestState } from '../shell/states.tsx';
-import { GroupHeader } from './GroupHeader.tsx';
+import { GroupLabel } from './GroupLabel.tsx';
 import type { RunGroup, RunRow, ShapeNode } from './model.ts';
 
 const HASH = '821bafbd3fa0'.padEnd(64, '7');
 
 const row = (id: string): RunRow => ({
-  id,
+  source: { kind: 'run', id },
   pipeline: HASH,
   pipelineName: null,
   benchmark: 'd',
@@ -30,24 +31,13 @@ const SHAPE: ShapeNode[] = [
   { node: 'x', family: null, word: 'extension' },
 ];
 
-function show(g: RunGroup, shape: RequestState<ShapeNode[]> = { status: 'loaded', value: SHAPE }) {
-  render(
-    <table>
-      <tbody>
-        <GroupHeader group={g} shape={shape} columns={6} />
-      </tbody>
-    </table>,
-  );
+function show(g: RunGroup, shape: RequestState<ShapeNode[]> | null = { status: 'loaded', value: SHAPE }) {
+  const onRetry = vi.fn();
+  render(<Table caption="runs" columns={[{ id: 'a', label: 'A' }]} rows={[{ kind: 'group', id: g.key, label: <GroupLabel group={g} shape={shape} onRetry={onRetry} /> }]} />);
+  return { onRetry };
 }
 
-describe('the group header', () => {
-  it('is a row-group header across every column', () => {
-    show(group());
-    const th = screen.getByRole('rowheader');
-    expect(th.getAttribute('scope')).toBe('rowgroup');
-    expect(th.getAttribute('colspan')).toBe('6');
-  });
-
+describe('the group heading', () => {
   it('names the pipeline as a link to its Pipeline screen', () => {
     show(group());
     expect(screen.getByRole('link', { name: 'hybrid' }).getAttribute('href')).toBe('#pipeline/hybrid');
@@ -71,7 +61,7 @@ describe('the group header', () => {
     expect(screen.getByText('extension')).toBeTruthy();
   });
 
-  it('counts its runs', () => {
+  it('counts its runs, one in the singular', () => {
     show(group());
     expect(screen.getByText('2 runs')).toBeTruthy();
   });
@@ -81,13 +71,22 @@ describe('the group header', () => {
     expect(screen.getByText('1 run')).toBeTruthy();
   });
 
-  it('says so while the shape is being read', () => {
+  it('holds no live region of its own while the shape is read: the screen announces every group’s at once', () => {
     show(group(), { status: 'loading' });
-    expect(screen.getByRole('status').textContent).toBe('Reading the shape');
+    expect(screen.queryByRole('status')).toBeNull();
+    expect(screen.queryByRole('list', { name: 'Shape' })).toBeNull();
   });
 
-  it('says what failed when the shape could not be read', () => {
-    show(group(), { status: 'error', problem: { code: 'run_unreadable', message: 'GET /api/v1/runs/1 answered 500.', hint: 'h', location: null, status: 500 } });
+  it('says what failed when the shape could not be read, with Retry', () => {
+    const { onRetry } = show(group(), { status: 'error', problem: { code: 'run_unreadable', message: 'GET /api/v1/runs/1 answered 500.', hint: 'h', location: null, status: 500 } });
     expect(screen.getByText('Shape not read: GET /api/v1/runs/1 answered 500.')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(onRetry).toHaveBeenCalledTimes(1);
+  });
+
+  it('draws no shape for a group with no run of its own to read it from', () => {
+    show(group({ shapeFrom: null }), null);
+    expect(screen.queryByRole('list', { name: 'Shape' })).toBeNull();
+    expect(screen.getByText('2 runs')).toBeTruthy();
   });
 });

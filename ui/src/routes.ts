@@ -59,6 +59,15 @@ export function formatHash(route: Route): string {
 }
 
 /**
+ * The view a route shows, apart from the state within it: its hash up to the
+ * query. A change of query alone — Runs' selection, Compare's baseline — is
+ * state within one view, and the shell moves no focus for it.
+ */
+export function viewOf(route: Route): string {
+  return formatHash(route).split('?')[0] as string;
+}
+
+/**
  * Whether a decoded value can name something: not empty, and not `.` or `..`,
  * which a screen would pass into an API path where they name another path.
  */

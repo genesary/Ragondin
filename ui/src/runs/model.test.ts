@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import type { Graph, RunListing } from '../api/types.ts';
-import { benchmarkLabel, formatMetric, groupRows, rowsFromListing, shapeOf, shortHash, type RunRow } from './model.ts';
+import { benchmarkLabel, formatMetric, groupRows, openRoute, rowKey, rowsFromListing, runningLabel, shapeOf, shortHash, type RunRow } from './model.ts';
 
 const hex = (c: string) => c.repeat(64);
 
-const row = (over: Partial<RunRow> & { id: string }): RunRow => ({
+const row = (id: string, over: Partial<RunRow> = {}): RunRow => ({
+  source: { kind: 'run', id },
   pipeline: hex('p'),
   pipelineName: null,
   benchmark: hex('b'),
@@ -17,8 +18,10 @@ const row = (over: Partial<RunRow> & { id: string }): RunRow => ({
   ...over,
 });
 
+const ids = (rows: RunRow[]) => rows.map((r) => r.source.id);
+
 describe('rowsFromListing', () => {
-  it('reads every summary as a done row keyed by its pipeline hash and its dataset version, in listing order', () => {
+  it('reads every summary as a done run row keyed by its pipeline hash and its dataset version, in listing order', () => {
     const listing: RunListing = {
       runs: [
         { id: hex('1'), pipeline: hex('a'), dataset_version: hex('d'), index_version: hex('i'), engine_version: '0.0.0', metrics: { 'ndcg@10': 0.5, mrr: 0.25 } },
@@ -27,9 +30,9 @@ describe('rowsFromListing', () => {
       unreadable: [],
     };
     const rows = rowsFromListing(listing);
-    expect(rows.map((r) => [r.id, r.pipeline, r.benchmark, r.status.state])).toEqual([
-      [hex('1'), hex('a'), hex('d'), 'done'],
-      [hex('2'), hex('c'), hex('e'), 'done'],
+    expect(rows.map((r) => [r.source, r.pipeline, r.benchmark, r.status.state])).toEqual([
+      [{ kind: 'run', id: hex('1') }, hex('a'), hex('d'), 'done'],
+      [{ kind: 'run', id: hex('2') }, hex('c'), hex('e'), 'done'],
     ]);
   });
 
@@ -56,45 +59,81 @@ describe('rowsFromListing', () => {
       runs: [{ id: hex('1'), pipeline: hex('a'), dataset_version: hex('d'), index_version: hex('i'), engine_version: '0', metrics: {} }],
       unreadable: [],
     };
-    const [only] = rowsFromListing(listing);
-    expect(only).toMatchObject({ pipelineName: null, benchmarkName: null, latencyMs: null, startedAt: null, prefix: null });
+    expect(rowsFromListing(listing)[0]).toMatchObject({ pipelineName: null, benchmarkName: null, latencyMs: null, startedAt: null, prefix: null });
+  });
+});
+
+describe('a row’s source', () => {
+  it('keys a run and a job apart even when their ids are equal', () => {
+    expect(rowKey(row('x'))).toBe('run:x');
+    expect(rowKey(row('x', { source: { kind: 'job', id: 'x', runId: null } }))).toBe('job:x');
+  });
+
+  it('opens a run in Replay, before a query is chosen', () => {
+    expect(openRoute(row('r1'))).toEqual({ screen: 'replay', run: 'r1' });
+  });
+
+  it('opens a job nowhere yet, whatever its status: the job view has no address in this build', () => {
+    const job = (status: RunRow['status']) => row('j1', { source: { kind: 'job', id: 'j1', runId: 'r9' }, status });
+    expect(openRoute(job({ state: 'failed', node: 'rerank', error: 'boom' }))).toBeNull();
+    expect(openRoute(job({ state: 'queued' }))).toBeNull();
+    expect(openRoute(job({ state: 'cancelled' }))).toBeNull();
+  });
+});
+
+describe('the running state', () => {
+  it('reads the queries done out of the total, never a percentage the client computed', () => {
+    expect(runningLabel({ state: 'running', done: 1234, total: 10570 })).toBe('running 1,234 / 10,570');
   });
 });
 
 describe('groupRows', () => {
   it('groups by pipeline name when there is one, keeping the order each group first appears in', () => {
     const groups = groupRows([
-      row({ id: '1', pipeline: hex('a'), pipelineName: 'hybrid' }),
-      row({ id: '2', pipeline: hex('c'), pipelineName: 'dense' }),
-      row({ id: '3', pipeline: hex('a'), pipelineName: 'hybrid' }),
+      row('1', { pipeline: hex('a'), pipelineName: 'hybrid' }),
+      row('2', { pipeline: hex('c'), pipelineName: 'dense' }),
+      row('3', { pipeline: hex('a'), pipelineName: 'hybrid' }),
     ]);
-    expect(groups.map((g) => [g.key, g.name, g.rows.map((r) => r.id)])).toEqual([
+    expect(groups.map((g) => [g.key, g.name, ids(g.rows)])).toEqual([
       ['hybrid', 'hybrid', ['1', '3']],
       ['dense', 'dense', ['2']],
     ]);
   });
 
   it('groups by canonical hash when the pipeline has no name', () => {
-    const groups = groupRows([row({ id: '1', pipeline: hex('a') }), row({ id: '2', pipeline: hex('a') }), row({ id: '3', pipeline: hex('c') })]);
+    const groups = groupRows([row('1', { pipeline: hex('a') }), row('2', { pipeline: hex('a') }), row('3', { pipeline: hex('c') })]);
     expect(groups.map((g) => [g.key, g.name, g.rows.length])).toEqual([
       [hex('a'), null, 2],
       [hex('c'), null, 1],
     ]);
   });
 
-  it('puts a prefix run inside its parent pipeline’s group, whatever its own hash', () => {
-    const groups = groupRows([
-      row({ id: '1', pipeline: hex('a'), pipelineName: 'hybrid' }),
-      row({ id: '2', pipeline: hex('f'), prefix: { parent: 'hybrid', upTo: 'rerank' } }),
-    ]);
+  it('puts a prefix run inside its parent pipeline’s group when the parent is named by its name', () => {
+    const groups = groupRows([row('1', { pipeline: hex('a'), pipelineName: 'hybrid' }), row('2', { pipeline: hex('f'), prefix: { parent: 'hybrid', upTo: 'rerank' } })]);
     expect(groups).toHaveLength(1);
-    expect(groups[0]?.rows.map((r) => r.id)).toEqual(['1', '2']);
+    expect(ids(groups[0]?.rows ?? [])).toEqual(['1', '2']);
   });
 
-  it('takes a group’s pipeline — for its shape and its link — from a run that is not a prefix', () => {
+  it('puts a prefix run inside its parent pipeline’s group when the parent is named by its hash, though the group is keyed by its name', () => {
+    const groups = groupRows([row('1', { pipeline: hex('a'), pipelineName: 'hybrid' }), row('2', { pipeline: hex('f'), prefix: { parent: hex('a'), upTo: 'rerank' } })]);
+    expect(groups.map((g) => [g.key, ids(g.rows)])).toEqual([['hybrid', ['1', '2']]]);
+  });
+
+  it('puts a prefix run inside the group of the run its parent is named by', () => {
+    const groups = groupRows([row('r1', { pipeline: hex('a') }), row('2', { pipeline: hex('f'), prefix: { parent: 'r1', upTo: null } })]);
+    expect(groups.map((g) => ids(g.rows))).toEqual([['r1', '2']]);
+  });
+
+  it('gives a prefix run whose parent has no run here a group of the parent’s own, so it is still shown', () => {
+    const groups = groupRows([row('2', { pipeline: hex('f'), prefix: { parent: 'hybrid', upTo: 'rerank' } })]);
+    expect(groups.map((g) => [g.key, g.name, ids(g.rows), g.shapeFrom])).toEqual([['hybrid', null, ['2'], null]]);
+  });
+
+  it('takes a group’s pipeline — for its shape and its link — from a run of its own, not a prefix and not a job', () => {
     const groups = groupRows([
-      row({ id: '2', pipeline: hex('f'), prefix: { parent: 'hybrid', upTo: 'rerank' } }),
-      row({ id: '1', pipeline: hex('a'), pipelineName: 'hybrid' }),
+      row('2', { pipeline: hex('f'), prefix: { parent: 'hybrid', upTo: 'rerank' } }),
+      row('j', { pipeline: hex('a'), pipelineName: 'hybrid', source: { kind: 'job', id: 'j', runId: null }, status: { state: 'queued' } }),
+      row('1', { pipeline: hex('a'), pipelineName: 'hybrid' }),
     ]);
     expect(groups[0]).toMatchObject({ key: 'hybrid', name: 'hybrid', pipeline: hex('a'), shapeFrom: '1' });
   });
@@ -106,8 +145,8 @@ describe('labels', () => {
   });
 
   it('names a benchmark by its name, or by its short dataset digest when it has none', () => {
-    expect(benchmarkLabel(row({ id: '1', benchmarkName: 'beir/scifact' }))).toBe('beir/scifact');
-    expect(benchmarkLabel(row({ id: '1', benchmark: hex('d') }))).toBe('dataset dddddddddddd');
+    expect(benchmarkLabel(row('1', { benchmarkName: 'beir/scifact' }))).toBe('beir/scifact');
+    expect(benchmarkLabel(row('1', { benchmark: hex('d') }))).toBe('dataset dddddddddddd');
   });
 
   it('formats a ranking metric to four decimals and an answer metric as a percentage to one', () => {

@@ -1,6 +1,6 @@
 /** @vitest-environment happy-dom */
-import { render, screen, within } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { fireEvent, render, screen, within } from '@testing-library/react';
+import { describe, expect, it, vi } from 'vitest';
 import { declared } from '../../testing/css.ts';
 import css from './Table.css?raw';
 import { Table, type TableColumn, type TableRow } from './Table.tsx';
@@ -54,6 +54,110 @@ describe('Table best per row', () => {
     expect(declared(css, '.rg-table td[data-best]', 'font-weight')).toBe('700');
     expect(container.querySelectorAll('td[data-best] .rg-visually-hidden')).toHaveLength(2);
     expect(css).not.toMatch(/\.is-[a-z]/);
+  });
+});
+
+describe('Table row groups', () => {
+  const grouped: TableRow[] = [
+    { id: 'loose', cells: ['Loose', '1', '2'] },
+    { kind: 'group', id: 'hybrid', label: <a href="#pipeline/hybrid">hybrid</a> },
+    { id: 'r1', cells: ['r1', '1', '2'] },
+    { kind: 'group', id: 'dense', label: 'dense' },
+    { id: 'r2', cells: ['r2', '1', '2'] },
+  ];
+
+  it('takes any content as a group’s heading, a link included', () => {
+    render(<Table caption="m" columns={columns} rows={grouped} />);
+    const header = screen.getByRole('rowheader', { name: 'hybrid' });
+    expect(within(header).getByRole('link', { name: 'hybrid' }).getAttribute('href')).toBe('#pipeline/hybrid');
+  });
+
+  it('gives each group its own tbody, headed by its row-group header, and rows before the first group a tbody of their own', () => {
+    const { container } = render(<Table caption="m" columns={columns} rows={grouped} />);
+    const bodies = [...container.querySelectorAll('tbody')];
+    expect(bodies.map((b) => [...b.querySelectorAll('tr')].length)).toEqual([1, 2, 2]);
+    expect(bodies[1]?.querySelector('tr:first-child th')?.getAttribute('scope')).toBe('rowgroup');
+    expect(bodies[2]?.querySelector('tr:first-child th')?.textContent).toBe('dense');
+  });
+});
+
+describe('Table rows that take the keyboard', () => {
+  const live: TableRow[] = [
+    { kind: 'group', id: 'g', label: 'hybrid' },
+    { id: 'r1', label: 'Run r1', cells: ['r1', <input key="c" type="checkbox" aria-label="pick r1" />, '2'] },
+    { id: 'wait', passive: true, cells: ['queued', '', ''] },
+    { id: 'r2', label: 'Run r2', cells: ['r2', '1', '2'] },
+    { id: 'r3', label: 'Run r3', cells: ['r3', '1', '2'] },
+  ];
+  const rowOf = (name: string) => screen.getByRole('row', { name });
+
+  function show() {
+    const onOpen = vi.fn();
+    const onToggle = vi.fn();
+    render(<Table caption="m" columns={columns} rows={live} onOpen={onOpen} onToggle={onToggle} />);
+    return { onOpen, onToggle };
+  }
+
+  it('names each row by its label', () => {
+    show();
+    expect(rowOf('Run r1').tagName).toBe('TR');
+  });
+
+  it('is one tab stop: the first row that takes the keyboard, the others reached by arrows', () => {
+    show();
+    expect(rowOf('Run r1').getAttribute('tabindex')).toBe('0');
+    expect(rowOf('Run r2').getAttribute('tabindex')).toBe('-1');
+    expect(screen.getByText('queued').closest('tr')?.hasAttribute('tabindex')).toBe(false);
+  });
+
+  it('moves focus and the tab stop with the up and down arrows, skipping a passive row, and to the ends with Home and End', () => {
+    show();
+    rowOf('Run r1').focus();
+    fireEvent.keyDown(rowOf('Run r1'), { key: 'ArrowDown' });
+    expect(document.activeElement).toBe(rowOf('Run r2'));
+    expect(rowOf('Run r2').getAttribute('tabindex')).toBe('0');
+    expect(rowOf('Run r1').getAttribute('tabindex')).toBe('-1');
+    fireEvent.keyDown(rowOf('Run r2'), { key: 'End' });
+    expect(document.activeElement).toBe(rowOf('Run r3'));
+    fireEvent.keyDown(rowOf('Run r3'), { key: 'ArrowUp' });
+    expect(document.activeElement).toBe(rowOf('Run r2'));
+    fireEvent.keyDown(rowOf('Run r2'), { key: 'Home' });
+    expect(document.activeElement).toBe(rowOf('Run r1'));
+  });
+
+  it('opens a row with Enter and toggles it with Space', () => {
+    const { onOpen, onToggle } = show();
+    fireEvent.keyDown(rowOf('Run r2'), { key: 'Enter' });
+    expect(onOpen).toHaveBeenCalledWith('r2');
+    const space = fireEvent.keyDown(rowOf('Run r2'), { key: ' ' });
+    expect(onToggle).toHaveBeenCalledWith('r2');
+    // The page does not scroll as well.
+    expect(space).toBe(false);
+  });
+
+  it('leaves a key pressed on a control inside a row to that control', () => {
+    const { onOpen, onToggle } = show();
+    fireEvent.keyDown(screen.getByRole('checkbox', { name: 'pick r1' }), { key: ' ' });
+    fireEvent.keyDown(screen.getByRole('checkbox', { name: 'pick r1' }), { key: 'Enter' });
+    expect(onToggle).not.toHaveBeenCalled();
+    expect(onOpen).not.toHaveBeenCalled();
+  });
+
+  it('makes a row the tab stop when focus enters it, by a click on a control inside included', () => {
+    show();
+    fireEvent.focus(screen.getByRole('checkbox', { name: 'pick r1' }));
+    fireEvent.focus(rowOf('Run r3'));
+    expect(rowOf('Run r3').getAttribute('tabindex')).toBe('0');
+    expect(rowOf('Run r1').getAttribute('tabindex')).toBe('-1');
+  });
+
+  it('takes no keyboard at all without an action', () => {
+    render(<Table caption="m" columns={columns} rows={live} />);
+    expect(screen.getByText('r1').closest('tr')?.hasAttribute('tabindex')).toBe(false);
+  });
+
+  it('draws the focus ring inside the row, so the table’s scroll box does not clip it', () => {
+    expect(declared(css, '.rg-table tbody tr:focus-visible', 'outline-offset')).toBe('-2px');
   });
 });
 

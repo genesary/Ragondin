@@ -42,7 +42,7 @@ function emptyOf(route: Exclude<Route, { screen: 'runs' }>): Empty {
           };
     case 'replay':
       if ('run' in route && route.query === undefined) {
-        return { heading: `No query chosen for run ${route.run}`, sentence: 'A query of this run, node by node through the pipeline, appears here.', action: openCompare };
+        return { heading: `No query chosen for run ${route.run.slice(0, 12)}`, sentence: 'A query of this run, node by node through the pipeline, appears here.', action: openCompare };
       }
       return 'run' in route
         ? { heading: `Nothing to show for query ${route.query} yet`, sentence: 'This query, node by node through the pipeline, appears here.', action: openCompare }
