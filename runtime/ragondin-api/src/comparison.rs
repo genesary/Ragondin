@@ -121,9 +121,10 @@ pub(crate) fn align(columns: &[Column<'_>]) -> Vec<Row> {
         .collect()
 }
 
-/// The seven bins, from the worst to the best, with their bounds: by the
-/// delta's sign, and its magnitude against 0.1 and 0.3, a bound belonging to
-/// the bin nearer zero.
+/// The seven bins, from the worst to the best, with their bounds. The edges
+/// are a choice made in this crate (`ARCHITECTURE.md` § Compare): the
+/// delta's sign, and its absolute magnitude against 0.1 and 0.3, alike for
+/// every ranking metric, a bound belonging to the bin nearer zero.
 pub(crate) const BINS: [(DeltaBinName, Option<f64>, Option<f64>); 7] = [
     (DeltaBinName::MuchWorse, None, Some(-0.3)),
     (DeltaBinName::Worse, Some(-0.3), Some(-0.1)),

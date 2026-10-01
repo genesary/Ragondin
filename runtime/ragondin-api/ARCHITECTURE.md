@@ -34,6 +34,7 @@ the response types, the typed errors, and the traits the service consumes.
 | `cache` | The workspace's `cache/`: those derived figures, reconstructible, never a truth |
 | `endpoints` | The handlers of the workspace's endpoints — pipelines, benchmarks, services — and of `POST /compare` |
 | `stages` | A pipeline's stages, derived from its nodes' kinds and positions, by which a comparison aligns runs |
+| `lineage` | Which workspace pipeline a run is a run of, by canonical hash — interim, pending the decision on run identity |
 | `comparison` | The runs aligned by stage with the pairs drawn by hand, the bins of the per-query deltas, a node's median latency |
 | `validation` | A pipeline document checked as `ragondin validate` checks a file |
 | `fs` | The workspace on disk and its file backends: `Workspace`, `FsSettings`, `FsPipelines`, `FsRegistry` |
@@ -816,25 +817,30 @@ answers `source: manual`, under the pair's label when it has one. Only the
 stages a kind decides take part — legs, after fusion, after rerank; the final
 ranking and the answer are the walk's, and a pair never moves them.
 
-- **A run is matched to its workspace pipeline by content.** A run names no
-  pipeline; its pipeline is the one document under `pipelines/` whose
-  canonical hash is the run's (INV-8: the canonical form, never the text),
-  reported as each run's `pipeline`. No document, or several, is `null`, and
-  such a run pairs automatically only. So a document edited since a run no
-  longer names that run, and its pairing reaches the runs of what the file
-  holds now.
+- **A run is matched to its workspace pipeline by content — interim
+  behaviour.** A run names no pipeline; until the decision on run → pipeline
+  identity, which is pending, settles it, its pipeline is the one document
+  under `pipelines/` whose canonical hash is the run's (INV-8: the
+  canonical form, never the text), reported as each run's `pipeline`. No
+  document, or several, is `null`, and such a run pairs automatically only.
+  So a document edited since a run no longer names that run, and its pairing
+  reaches the runs of what the file holds now. The index is `lineage.rs`,
+  `pub(crate)` for the pipeline matrix to read too.
 - **Pairings apply between the baseline's pipeline and each other run's**,
   read with `PipelineSource::read_pairing` and listed, oriented from the
   baseline's, in the response's `pairings`. A pairing between two runs
-  neither of which is the baseline is not applied: the rows are the
-  baseline's.
+  neither of which is the baseline is not applied — the rows are the
+  baseline's — and the body may not keep one (`request_invalid`): a pairing
+  kept through a comparison is one that comparison shows.
 - **The file**, a choice made here: `pipelines/<pipeline>.pairing/<other>.json`,
   `{"version": 1, "pipeline": "<pipeline>", "other": "<other>", "pairs":
-  [{"node": "<in pipeline>", "other": "<in other>", "label": "<optional>"}]}`.
-  Both names are inside, so a file renamed by hand is detected: names that
-  are not the two its path gives, or another version, are `backend_failed`,
-  naming the file — reported, never repaired. It is UI metadata like a
-  layout, never in a hash (INV-8).
+  [{"node": "<in pipeline>", "other": "<in other>", "label": "<optional>"}]}`,
+  written and read through types of its own, so a change to the API's
+  `Pairing` cannot change it unseen. Both names are inside, so a file renamed
+  by hand is detected: names that are not the two its path gives, another
+  version, or a file that is not this JSON are `backend_failed`, naming the
+  file — reported, never repaired; a reset removes it. It is UI metadata like
+  a layout, never in a hash (INV-8).
 - **Read in both directions, kept in one.** A read for (B, A) finds the
   file kept for (A, B) and turns each pair around. A write is whole — beside
   the file, renamed over it — and removes the file kept the other way round,
@@ -842,12 +848,13 @@ ranking and the answer are the walk's, and a pair never moves them.
 - **Kept through `POST /compare`**, as the design document § 5 gives the
   body a `pairing`: the body's pairing replaces the one kept for its two
   pipelines, and one with no pairs removes it — "Reset to automatic". It is
-  checked before anything is written: two different pipelines, both in the
-  workspace (`pipeline_not_found`), every node a retriever, fusion or
-  reranker of its pipeline's current document and none paired twice
-  (`request_invalid`). And it is written only once the comparison is known to
-  be answered — every run loaded and comparable — so a refused request
-  changes nothing on disk.
+  checked early, writing nothing — two different pipelines, the baseline's
+  and another compared run's, both in the workspace (`pipeline_not_found`),
+  every node a retriever, fusion or reranker of its pipeline's current
+  document and none paired twice (`request_invalid`) — and applied to the
+  comparison in place of what disk holds. It is written **last**, once the
+  response is built and every step that can refuse has run, so a refused
+  request — an unreadable run, runs not comparable — changes nothing on disk.
 
 ### The per-query deltas and their bins
 
@@ -855,17 +862,20 @@ For each run other than the baseline, and each ranking metric both recorded,
 a query's delta is its score in the run minus its score in the baseline —
 the per-query scores of `GET /runs/{id}/queries`, so a query judged on
 nothing, or without a ranking at either output, has none, and
-`judged_queries` counts those that do. The seven bins are the design's
-histogram: by the delta's sign, and its magnitude against 0.1 and 0.3 —
-`much_worse` below −0.3, `worse`, `slightly_worse`, `unchanged`,
-`slightly_better`, `better`, `much_better` above 0.3 — each with its bounds
-and its queries. They partition the queries with a delta.
+`judged_queries` counts those that do. Seven bins partition the queries
+with a delta — `much_worse`, `worse`, `slightly_worse`, `unchanged`,
+`slightly_better`, `better`, `much_better` — each with its bounds and its
+queries.
 
-Choices made here: **a bound belongs to the bin nearer zero** (−0.3 is
-`worse`, 0.1 `slightly_better`), so the bins are symmetric; and
-**`unchanged` is a delta of exactly zero.** A per-query score is a
-deterministic reading of a stored trace, so a ranking left as it was gives
-exactly the same score, and a tolerance would be a threshold nobody chose.
+**The bin edges are a choice made in this crate**, not the design's — no
+document of the repository fixes them: the delta's sign, and its absolute
+magnitude against 0.1 and 0.3, applied to every ranking metric alike; **a
+bound belongs to the bin nearer zero** (−0.3 is `worse`, 0.1
+`slightly_better`), so the bins are symmetric; and **`unchanged` is a
+delta of exactly zero.** A per-query score is a deterministic reading of a
+stored trace, so a ranking left as it was gives exactly the same score, and a
+tolerance would be a threshold nobody chose. Moving the edges is a change to
+`comparison::BINS` and `bin_of`.
 
 ### The latency
 

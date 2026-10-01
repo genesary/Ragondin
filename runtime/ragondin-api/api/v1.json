@@ -224,7 +224,7 @@
                 "nullable": true
               }
             ],
-            "description": "A manual pairing between two workspace pipelines, kept — replacing\nany — before the runs are compared; with no pairs, it is removed and\nthe two pipelines pair automatically again. Absent changes nothing."
+            "description": "A manual pairing between the baseline's workspace pipeline and\nanother compared run's: applied to this comparison, then kept —\nreplacing any — once the answer is built, so a refused request keeps\nnothing. With no pairs, it is removed and the two pipelines pair\nautomatically again. Absent changes nothing."
           },
           "run_ids": {
             "description": "The runs, by id: two to five, each once, the baseline among them. The\nanswer puts the baseline first and the others in this order.",
@@ -2757,7 +2757,7 @@
     },
     "/compare": {
       "post": {
-        "description": "Two to five runs, each once, the baseline among them. More than five, or runs whose dataset_version differs, is runs_not_comparable (409), naming the ceiling or both versions; there is no comparison across benchmarks. A body's `pairing` is kept for its two workspace pipelines before the runs are compared, under `pipelines/<pipeline>.pairing/<other>.json`, and read in both directions after; with no pairs it is removed (\"Reset to automatic\"). A pair naming a node that is not a retriever, fusion or reranker of its pipeline is request_invalid, and nothing is kept.",
+        "description": "Two to five runs, each once, the baseline among them. More than five, or runs whose dataset_version differs, is runs_not_comparable (409), naming the ceiling or both versions; there is no comparison across benchmarks. A body's `pairing` — between the baseline's pipeline and another compared run's — is checked first and applied to this comparison, and kept under `pipelines/<pipeline>.pairing/<other>.json` only once the response is built, so a refused request keeps nothing; it is read in both directions after. With no pairs it is removed (\"Reset to automatic\"). A pairing of other pipelines, or a pair naming a node that is not a retriever, fusion or reranker of its pipeline, is request_invalid.",
         "parameters": [],
         "requestBody": {
           "content": {

@@ -99,7 +99,7 @@ pub const OPERATIONS: &[Operation] = &[
         response: "Comparison",
         request: Some("CompareRequest"),
         description: Some(
-            "Two to five runs, each once, the baseline among them. More than five, or runs whose dataset_version differs, is runs_not_comparable (409), naming the ceiling or both versions; there is no comparison across benchmarks. A body's `pairing` is kept for its two workspace pipelines before the runs are compared, under `pipelines/<pipeline>.pairing/<other>.json`, and read in both directions after; with no pairs it is removed (\"Reset to automatic\"). A pair naming a node that is not a retriever, fusion or reranker of its pipeline is request_invalid, and nothing is kept.",
+            "Two to five runs, each once, the baseline among them. More than five, or runs whose dataset_version differs, is runs_not_comparable (409), naming the ceiling or both versions; there is no comparison across benchmarks. A body's `pairing` — between the baseline's pipeline and another compared run's — is checked first and applied to this comparison, and kept under `pipelines/<pipeline>.pairing/<other>.json` only once the response is built, so a refused request keeps nothing; it is read in both directions after. With no pairs it is removed (\"Reset to automatic\"). A pairing of other pipelines, or a pair naming a node that is not a retriever, fusion or reranker of its pipeline, is request_invalid.",
         ),
     },
     Operation {

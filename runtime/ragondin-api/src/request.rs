@@ -63,8 +63,10 @@ pub struct CompareRequest {
     pub run_ids: Vec<String>,
     /// The run the others are compared against.
     pub baseline: String,
-    /// A manual pairing between two workspace pipelines, kept — replacing
-    /// any — before the runs are compared; with no pairs, it is removed and
-    /// the two pipelines pair automatically again. Absent changes nothing.
+    /// A manual pairing between the baseline's workspace pipeline and
+    /// another compared run's: applied to this comparison, then kept —
+    /// replacing any — once the answer is built, so a refused request keeps
+    /// nothing. With no pairs, it is removed and the two pipelines pair
+    /// automatically again. Absent changes nothing.
     pub pairing: Option<crate::response::Pairing>,
 }

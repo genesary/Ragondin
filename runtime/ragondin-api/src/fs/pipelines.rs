@@ -347,7 +347,15 @@ impl PipelineSource for FsPipelines {
                 version: PAIRING_VERSION,
                 pipeline: pairing.pipeline.clone(),
                 other: pairing.other.clone(),
-                pairs: pairing.pairs.clone(),
+                pairs: pairing
+                    .pairs
+                    .iter()
+                    .map(|pair| FilePair {
+                        node: pair.node.clone(),
+                        other: pair.other.clone(),
+                        label: pair.label.clone(),
+                    })
+                    .collect(),
             };
             let mut text =
                 serde_json::to_string_pretty(&file).map_err(|error| ApiError::BackendFailed {
@@ -423,7 +431,15 @@ impl FsPipelines {
         Ok(Some(Pairing {
             pipeline: file.pipeline,
             other: file.other,
-            pairs: file.pairs,
+            pairs: file
+                .pairs
+                .into_iter()
+                .map(|pair| NodePair {
+                    node: pair.node,
+                    other: pair.other,
+                    label: pair.label,
+                })
+                .collect(),
         }))
     }
 
@@ -452,7 +468,18 @@ struct PairingFile {
     version: u32,
     pipeline: String,
     other: String,
-    pairs: Vec<NodePair>,
+    pairs: Vec<FilePair>,
+}
+
+/// One pair as the file holds it: its own type, not the API's `NodePair`,
+/// so that a change to the API cannot change the format on disk unseen.
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FilePair {
+    node: String,
+    other: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    label: Option<String>,
 }
 
 /// The SHA-256 of `bytes`, in lowercase hex.
