@@ -18,7 +18,10 @@
 //! rewrite then lands on a later tick. What remains unseen is a clock that
 //! lies — a file's timestamps set back by hand *and* a status change time the
 //! platform does not keep (not Unix), or a file server whose clock runs more
-//! than the margin behind this machine's.
+//! than the margin behind this machine's. And one walk can skip a directory:
+//! on overlayfs with several lower layers and no `xino`, two directories can
+//! report the same device and inode, and the second is taken for one already
+//! walked.
 
 use std::collections::HashSet;
 use std::fmt;
@@ -50,7 +53,7 @@ pub(super) const RACY_MARGIN: Duration = Duration::from_secs(2);
 /// then locks the slot alone while it compares and, if it must, loads: a
 /// second request for the same dataset waits for that load and is served by
 /// it — within the margin too, when it fingerprinted before the load
-/// finished — while a request for another dataset is not held up. Serving
+/// began — while a request for another dataset is not held up. Serving
 /// costs one walk of the directory per request — a `stat` per entry,
 /// O(entries), no file read.
 ///
@@ -79,9 +82,11 @@ struct Held {
     fingerprint: Fingerprint,
     dataset: Arc<LoadedDataset>,
     /// For a dataset whose stamps were within the margin: when its load
-    /// finished. It is served only to a request that fingerprinted before
-    /// then — one that was already waiting, and that the load answers as
-    /// truly as its own would have — and loaded again by any later one.
+    /// began. It is served only to a request that fingerprinted before then,
+    /// which gets the files as they were when the load began — a state that
+    /// existed during that request's lifetime — and loaded again by any
+    /// later one, which may have fingerprinted after a rewrite the load did
+    /// not see.
     racy_until: Option<Instant>,
 }
 
@@ -107,7 +112,8 @@ impl DatasetMemo {
     /// the dataset held for it while the directory's fingerprint is
     /// unchanged; otherwise `load(name)`'s, kept when it is `Verified` — for
     /// any later request when none of the directory's stamps is within the
-    /// margin, and otherwise only for the requests already waiting on it.
+    /// margin, and otherwise only for the requests that fingerprinted before
+    /// the load began.
     ///
     /// The fingerprint is taken *before* `load` reads the files — and before
     /// waiting for another request's load of the same dataset — so a file
@@ -122,11 +128,26 @@ impl DatasetMemo {
         name: String,
         load: impl FnOnce(String) -> RunDataset,
     ) -> RunDataset {
+        self.dataset_observed(version, dir, name, || {}, load)
+    }
+
+    /// [`dataset`](Self::dataset), calling `fingerprinted` once the
+    /// fingerprint is taken and before any lock: the seam a test orders
+    /// concurrent requests by.
+    fn dataset_observed(
+        &self,
+        version: &str,
+        dir: &Path,
+        name: String,
+        fingerprinted: impl FnOnce(),
+        load: impl FnOnce(String) -> RunDataset,
+    ) -> RunDataset {
         let key = Key {
             version: version.to_owned(),
             dir: dir.to_path_buf(),
         };
         let fingerprint = Fingerprint::of(dir);
+        fingerprinted();
         let slot = self.slot(&key);
         let mut held = lock(&slot);
         let Ok((fingerprint, taken_at, taken)) = fingerprint else {
@@ -146,6 +167,7 @@ impl DatasetMemo {
         // Dropped before the load, so the old dataset and the new one are
         // not both in memory beside the other slots.
         *held = None;
+        let started = Instant::now();
         let found = load(name);
         match &found {
             RunDataset::Verified { dataset, .. } => {
@@ -153,7 +175,7 @@ impl DatasetMemo {
                 *held = Some(Held {
                     fingerprint,
                     dataset: Arc::clone(dataset),
-                    racy_until: racy.then(Instant::now),
+                    racy_until: racy.then_some(started),
                 });
             }
             _ => self.forget(&key, &slot),
@@ -505,7 +527,7 @@ mod tests {
         assert_eq!(loader.calls(), 3, "kept once older than the margin");
     }
 
-    /// Within the margin, requests that fingerprinted before a load finished
+    /// Within the margin, requests that fingerprinted before a load began
     /// share it — the matrix fetching N runs right after a download — while a
     /// request after it loads again.
     #[test]
@@ -513,22 +535,27 @@ mod tests {
         let dir = dataset_dir("racy_concurrent", "mini");
         let memo = Arc::new(DatasetMemo::new(CAPACITY, Duration::from_secs(60)));
         let loader = Arc::new(Loader::new());
-        let start = Arc::new(Barrier::new(4));
+        let fingerprinted = Arc::new(Barrier::new(4));
 
         let handles: Vec<_> = (0..4)
             .map(|_| {
-                let (memo, loader, start, dir) = (
+                let (memo, loader, fingerprinted, dir) = (
                     Arc::clone(&memo),
                     Arc::clone(&loader),
-                    Arc::clone(&start),
+                    Arc::clone(&fingerprinted),
                     dir.clone(),
                 );
                 thread::spawn(move || {
-                    start.wait();
-                    memo.dataset(VERSION, &dir, "beir/mini".to_owned(), |name| {
-                        thread::sleep(Duration::from_millis(300));
-                        loader.verified(name)
-                    })
+                    // Every request fingerprints before any of them loads.
+                    memo.dataset_observed(
+                        VERSION,
+                        &dir,
+                        "beir/mini".to_owned(),
+                        || {
+                            fingerprinted.wait();
+                        },
+                        |name| loader.verified(name),
+                    )
                 })
             })
             .collect();
@@ -542,6 +569,48 @@ mod tests {
 
         get(&memo, &dir, &loader);
         assert_eq!(loader.calls(), 2, "a request after the load loads again");
+    }
+
+    /// Within the margin, a request that fingerprinted while a load ran may
+    /// have seen a rewrite the load did not: it loads again.
+    #[test]
+    fn a_request_fingerprinted_during_a_load_within_the_margin_loads_again() {
+        let dir = dataset_dir("racy_during", "mini");
+        let memo = Arc::new(DatasetMemo::new(CAPACITY, Duration::from_secs(60)));
+        let loader = Arc::new(Loader::new());
+        let (started, has_started) = std::sync::mpsc::channel();
+        let (release, released) = std::sync::mpsc::channel::<()>();
+        let (fingerprinted, has_fingerprinted) = std::sync::mpsc::channel();
+
+        let loading = {
+            let (memo, loader, dir) = (Arc::clone(&memo), Arc::clone(&loader), dir.clone());
+            thread::spawn(move || {
+                memo.dataset(VERSION, &dir, "beir/mini".to_owned(), |name| {
+                    started.send(()).unwrap();
+                    released.recv().unwrap();
+                    loader.verified(name)
+                })
+            })
+        };
+        has_started.recv().unwrap();
+        let during = {
+            let (memo, loader, dir) = (Arc::clone(&memo), Arc::clone(&loader), dir.clone());
+            thread::spawn(move || {
+                memo.dataset_observed(
+                    VERSION,
+                    &dir,
+                    "beir/mini".to_owned(),
+                    || fingerprinted.send(()).unwrap(),
+                    |name| loader.verified(name),
+                )
+            })
+        };
+        has_fingerprinted.recv().unwrap();
+        release.send(()).unwrap();
+        loading.join().unwrap();
+        during.join().unwrap();
+
+        assert_eq!(loader.calls(), 2, "not served the load it overlapped");
     }
 
     /// A stamp after the fingerprint — a clock ahead, a date set by hand — is

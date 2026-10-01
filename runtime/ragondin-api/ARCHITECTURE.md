@@ -268,14 +268,18 @@ changes, and nothing is written to disk.
   the previous write leaves the stamp equal. A dataset any of whose
   modification or status change times falls within two seconds of the moment
   the fingerprint was taken, or after it, is therefore served but not kept
-  for later requests: it is held only for the requests already waiting on
-  its load — those whose fingerprint, equal to the loader's, was taken
-  before the load finished, which that load answers as truly as their own
-  would — and the next request after it loads again. Once its files are
-  older, a rewrite lands on a later tick and is seen.
+  for later requests: it is held only for the requests whose fingerprint,
+  equal to the loader's, was taken before the load *began* — they get the
+  files as they were when it began, a state that existed while they were
+  in flight — and any request fingerprinted after that, during the load or
+  later, loads again, since it may have seen a rewrite the load did not.
+  Once its files are older, a rewrite lands on a later tick and is seen.
   **What remains unseen**: timestamps set back by hand on a platform that
-  keeps no status change time (not Unix), and a file server whose clock runs
-  more than the margin behind this machine's.
+  keeps no status change time (not Unix), a file server whose clock runs
+  more than the margin behind this machine's, and a directory on overlayfs
+  with several lower layers and no `xino`, where two directories can report
+  the same device and inode: the second is taken for one already walked and
+  skipped, so a change under it goes unseen.
 - **The bound is two datasets**, least recently used dropped first: the one
   on screen and the one just left, so moving between two benchmarks' runs
   loads neither again. It is a count, not a size, because nothing measures a
