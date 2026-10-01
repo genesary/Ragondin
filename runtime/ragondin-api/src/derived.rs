@@ -26,6 +26,12 @@
 //!   an unjudged query has no figure, and a mean is over the judged ones only.
 //!   Means are summed in the benchmark's query order and divided once, as the
 //!   harness does: floating-point addition is not associative.
+//!
+//! The fold and the walk are **a temporary second definition** of the
+//! harness's own, in `eval/ragondin-harness/src/evaluate.rs` — each function
+//! names its counterpart. Nothing checks that the two agree:
+//! `tests/per_node_metrics.rs` pins this crate to the fixtures, not to the
+//! harness. #369 moves both into one definition and deletes these.
 
 use std::collections::BTreeMap;
 
@@ -157,6 +163,13 @@ impl Outputs {
 }
 
 /// The one node no other node consumes, if there is exactly one.
+///
+/// **A temporary second definition** of `ragondin-harness`' `terminal`, in
+/// `eval/ragondin-harness/src/evaluate.rs`: this crate may not depend on the
+/// harness (INV-12), and nothing checks that the two agree beyond the
+/// fixtures `tests/per_node_metrics.rs` pins this one to. #369 moves both
+/// into one definition and deletes this one; until then a change to either
+/// is made to both.
 fn terminal(pipeline: &LogicalPipeline) -> Option<&LogicalNode> {
     let mut terminals = pipeline.nodes().iter().filter(|node| {
         !pipeline
@@ -176,6 +189,13 @@ const CONTEXT_PORT: usize = 1;
 const CHUNKS_PORT: usize = 1;
 
 /// ADR-C30 § 3's walk, by port position and never by name.
+///
+/// **A temporary second definition** of `ragondin-harness`' `ranking_node`, in
+/// `eval/ragondin-harness/src/evaluate.rs`: this crate may not depend on the
+/// harness (INV-12), and nothing checks that the two agree beyond the
+/// fixtures `tests/per_node_metrics.rs` pins this one to. #369 moves both
+/// into one definition and deletes this one; until then a change to either
+/// is made to both.
 fn ranking_node(pipeline: &LogicalPipeline, terminal: &LogicalNode) -> Option<NodeId> {
     let builder = match terminal {
         LogicalNode::Generator(_) => {
@@ -194,6 +214,13 @@ fn ranking_node(pipeline: &LogicalPipeline, terminal: &LogicalNode) -> Option<No
 /// What `node` produced in `trace`, when it produced a ranking: its documents,
 /// folded from its chunks by first occurrence. `None` for a node absent from
 /// the trace, one that failed, and one whose output is not a ranking.
+///
+/// **A temporary second definition** of `ragondin-harness`' `ranked_documents`, in
+/// `eval/ragondin-harness/src/evaluate.rs`: this crate may not depend on the
+/// harness (INV-12), and nothing checks that the two agree beyond the
+/// fixtures `tests/per_node_metrics.rs` pins this one to. #369 moves both
+/// into one definition and deletes this one; until then a change to either
+/// is made to both.
 pub(crate) fn ranked_documents(trace: &Trace, node: &NodeId) -> Option<Vec<DocId>> {
     let entry = trace.nodes.iter().find(|entry| &entry.node == node)?;
     let Some(TraceSummary::RankedChunks { chunks }) = &entry.output else {
@@ -208,6 +235,14 @@ pub(crate) fn ranked_documents(trace: &Trace, node: &NodeId) -> Option<Vec<DocId
     Some(documents)
 }
 
+/// What `node` produced in `trace`, when it produced an answer.
+///
+/// **A temporary second definition** of `ragondin-harness`' `answer`, in
+/// `eval/ragondin-harness/src/evaluate.rs`: this crate may not depend on the
+/// harness (INV-12), and nothing checks that the two agree beyond the
+/// fixtures `tests/per_node_metrics.rs` pins this one to. #369 moves both
+/// into one definition and deletes this one; until then a change to either
+/// is made to both.
 fn answer_text<'t>(trace: &'t Trace, node: &NodeId) -> Option<&'t str> {
     let entry = trace.nodes.iter().find(|entry| &entry.node == node)?;
     match &entry.output {

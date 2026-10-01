@@ -296,6 +296,35 @@ async fn a_malformed_filter_is_parameter_invalid() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_repeated_filter_is_parameter_invalid() {
+    let (status, body) = get_queries(
+        &stub_run(),
+        verified(),
+        "?missing_gold_at=1&missing_gold_at=2",
+        "queries_repeated_filter",
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body["code"], "parameter_invalid");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_percent_encoded_filter_is_read_as_its_decoded_form() {
+    for path in ["?missing%5Fgold%5Fat=1", "?missing_gold_at=%31"] {
+        let (status, body) =
+            get_queries(&stub_run(), verified(), path, "queries_encoded_filter").await;
+        assert_eq!(status, StatusCode::OK, "{path}: {body}");
+        let ids: Vec<&str> = body["queries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|entry| entry["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(ids, ["0042", "q-2"], "{path}");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn without_the_runs_dataset_the_queries_are_listed_unscored_and_flagged() {
     let run = stub_run();
     let (status, body) = get_queries(&run, Arc::new(FakeRegistry), "", "queries_absent").await;

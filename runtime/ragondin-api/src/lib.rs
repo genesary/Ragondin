@@ -90,6 +90,12 @@ pub struct ServerConfig {
     /// The build's identity — the crate version with a build hash, say — as
     /// `GET /workspace` and every response's `x-ragondin-build` header
     /// report it.
+    ///
+    /// **It must change with every change to the code** — the commit and a
+    /// dirty flag, say. The derived-data cache under the workspace's `cache/`
+    /// is keyed on it, since another build may score or derive differently:
+    /// a build string that stayed the same across a code change would serve
+    /// figures the new code would not compute.
     pub build: String,
     /// The workspace directory, as `GET /workspace` reports it.
     pub workspace: PathBuf,

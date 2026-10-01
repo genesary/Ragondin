@@ -14,6 +14,7 @@
 //!     obtainable: "beir/mini".to_owned(),
 //!     corrupt: "beir/corrupt".to_owned(),
 //!     importable: path_to_a_beir_directory_with_qrels_only(),
+//!     alter: Box::new(|registry, name, alteration| change_what_is_stored(registry, name, alteration)),
 //! })
 //! .await;
 //! ```
@@ -44,7 +45,9 @@
 //! 7. **A run's dataset.** [`Registry::dataset`] finds a downloaded
 //!    benchmark, and an imported one, by the `dataset_version` it is pinned
 //!    to, loaded and digesting to it; the same digest before anything is on
-//!    disk is `Absent`, and a digest nothing is pinned to is `Unknown`.
+//!    disk is `Absent`, and a digest nothing is pinned to is `Unknown`; a
+//!    downloaded benchmark whose content is then changed is `Differs`, with
+//!    the digest found, and one then broken is `Unreadable`.
 //!
 //! # Why a fixture
 //!
@@ -80,6 +83,25 @@ pub struct RegistryFixture<R> {
     pub corrupt: String,
     /// A BEIR directory with qrels and no `answers.jsonl`, to import.
     pub importable: PathBuf,
+    /// Changes what the registry stores for a downloaded benchmark, by name,
+    /// behind its back — as a person editing the datasets directory would.
+    /// The suite cannot do this through the trait, so the backend's test
+    /// does it.
+    pub alter: Alter<R>,
+}
+
+/// What [`RegistryFixture::alter`] is: given the registry, a benchmark's name
+/// and what to do, it does it.
+pub type Alter<R> = Box<dyn Fn(&R, &str, Alteration)>;
+
+/// What [`RegistryFixture::alter`] does to a stored benchmark.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Alteration {
+    /// Changes one document's text, so the dataset still loads and digests
+    /// to another value.
+    ChangeContent,
+    /// Breaks it, so the dataset no longer loads.
+    Break,
 }
 
 /// Runs every case against registries built by `fresh`; panics on the first
@@ -96,6 +118,8 @@ where
     unknown_names(fresh()).await;
     import(fresh()).await;
     run_dataset(fresh(), fresh()).await;
+    altered_dataset(fresh(), Alteration::ChangeContent).await;
+    altered_dataset(fresh(), Alteration::Break).await;
 }
 
 fn not_cancelled() -> Arc<AtomicBool> {
@@ -363,6 +387,37 @@ async fn run_dataset<R: Registry>(fixture: RegistryFixture<R>, untouched: Regist
         matches!(unknown, RunDataset::Unknown),
         "dataset: a digest nothing is pinned to is {unknown:?}, not unknown"
     );
+}
+
+async fn altered_dataset<R: Registry>(fixture: RegistryFixture<R>, alteration: Alteration) {
+    let name = fixture.obtainable.as_str();
+    let case = format!("dataset after {alteration:?}");
+    let downloaded = fixture
+        .registry
+        .download(name, Arc::new(|_| {}), not_cancelled())
+        .await
+        .unwrap_or_else(|error| panic!("{case}: {name} does not download: {error}"));
+    let BenchmarkState::Ready {
+        dataset_version: version,
+    } = &downloaded.state
+    else {
+        panic!("{case}: {name} is {:?}, not ready", downloaded.state);
+    };
+    (fixture.alter)(&fixture.registry, name, alteration);
+    let found = fixture
+        .registry
+        .dataset(version)
+        .await
+        .unwrap_or_else(|error| panic!("{case}: {error}"));
+    match (alteration, &found) {
+        (Alteration::ChangeContent, RunDataset::Differs { found, .. }) => {
+            assert_ne!(found, version, "{case}: the digest found is the pinned one");
+        }
+        (Alteration::Break, RunDataset::Unreadable { error, .. }) => {
+            assert!(!error.is_empty(), "{case}: no reason given");
+        }
+        _ => panic!("{case}: {found:?}"),
+    }
 }
 
 async fn assert_verified<R: Registry>(registry: &R, version: &str, case: &str) {

@@ -23,7 +23,7 @@
         "type": "object"
       },
       "DatasetCheck": {
-        "description": "Whether the dataset on disk is the one a run was evaluated on: the\nbenchmark pinned to the run's `dataset_version`, digesting to it, and its\nderived chunk set digesting to the run's `index_version`.",
+        "description": "Whether the dataset on disk is the one a run was evaluated on: the\nbenchmark pinned to the run's `dataset_version`, digesting to it — and,\nfor passage text, its derived chunk set digesting to the run's\n`index_version`.",
         "properties": {
           "benchmark": {
             "description": "The benchmark the run's `dataset_version` is pinned to, by its\nselector; `null` when the registry pins no benchmark to it.",
@@ -78,7 +78,7 @@
         "description": "Where the run's dataset stands.",
         "oneOf": [
           {
-            "description": "On disk, and both digests are the run's.",
+            "description": "On disk, and every digest compared is the run's: the dataset's for\nthe ground truth, the dataset's and the chunk set's for passage text.",
             "enum": [
               "verified"
             ],
@@ -92,9 +92,23 @@
             "type": "string"
           },
           {
-            "description": "On disk, and a digest is not the run's — or it does not load.",
+            "description": "On disk, and its digest is not the run's `dataset_version`.",
             "enum": [
               "dataset_differs"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "On disk, and it does not load: `detail` carries the adapter's error.",
+            "enum": [
+              "dataset_unreadable"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "Passage text only: the dataset is the run's, but the chunk set this\nbuild derives from it does not digest to the run's `index_version` —\nthe derivation moved. The scores are unaffected.",
+            "enum": [
+              "index_differs"
             ],
             "type": "string"
           }
@@ -212,7 +226,7 @@
             "type": "string"
           },
           "index_version": {
-            "description": "What its derived chunk set digests to; `null` when the dataset\nalready differs, which leaves the chunk set nothing to be compared\nwith.",
+            "description": "What its derived chunk set digests to; `null` when it was not\ncompared — the dataset already differs, or the check is the ground\ntruth's, which depends on the dataset alone.",
             "nullable": true,
             "type": "string"
           }
@@ -573,7 +587,7 @@
               "format": "double",
               "type": "number"
             },
-            "description": "The query's scores at the run's output, as `GET /runs/{id}/queries`\nreports them.",
+            "description": "The query's scores at the run's output, as `GET /runs/{id}/queries`\nreports them: present when the dataset on disk is the run's, whatever\nthe chunk set.",
             "type": "object"
           }
         },
@@ -713,13 +727,18 @@
             "nullable": true,
             "type": "string"
           },
+          "cache_error": {
+            "description": "Why the figures could not be cached under the workspace's `cache/`,\nwhen they could not; `null` otherwise. The response is complete\neither way: the cache is never a truth, so its failure fails nothing.",
+            "nullable": true,
+            "type": "string"
+          },
           "ground_truth": {
             "allOf": [
               {
                 "$ref": "#/components/schemas/DatasetCheck"
               }
             ],
-            "description": "Whether the ground truth the scores are read against is the run's\nown. Scores and per-node metrics are present only when it is\n`verified`."
+            "description": "Whether the ground truth the scores are read against is the run's\nown: the dataset on disk digests to the run's `dataset_version`. The\nchunk set is not compared — a score depends on the qrels and the\nreference answers, not on passage text. Scores and per-node metrics\nare present only when it is `verified`."
           },
           "metrics": {
             "description": "The metrics a query can be scored on: those the run recorded that are\nread per query, by name.",
@@ -754,6 +773,7 @@
         },
         "required": [
           "answer_node",
+          "cache_error",
           "ground_truth",
           "metrics",
           "nodes",
@@ -875,7 +895,7 @@
               "format": "double",
               "type": "number"
             },
-            "description": "The ranking metrics of what it produced for this query: present when\nit produced a ranking, the query is judged and the ground truth is\nverified; `null` otherwise.",
+            "description": "The ranking metrics of what it produced for this query: present when\nit produced a ranking, the query is judged and the dataset on disk is\nthe run's; `null` otherwise.",
             "nullable": true,
             "type": "object"
           },
@@ -1237,6 +1257,7 @@
     },
     "/runs/{id}/queries": {
       "get": {
+        "description": "Takes one optional query parameter, `missing_gold_at=<k>`, a positive integer: keep only the judged queries with no gold document (grade above 0) in the top k of the output ranking. It needs the run's own dataset, and answers dataset_absent or dataset_differs without it. Any other parameter, or this one twice, is parameter_invalid. Not declared under `parameters`: the UI's type generator refuses query parameters until the screen that first sends one extends it.",
         "parameters": [
           {
             "in": "path",
@@ -1244,16 +1265,6 @@
             "required": true,
             "schema": {
               "type": "string"
-            }
-          },
-          {
-            "description": "Keep only the judged queries with no gold document (grade above 0) in the top k of the output ranking. Needs the run's own dataset: dataset_absent or dataset_differs otherwise.",
-            "in": "query",
-            "name": "missing_gold_at",
-            "required": false,
-            "schema": {
-              "minimum": 1,
-              "type": "integer"
             }
           }
         ],

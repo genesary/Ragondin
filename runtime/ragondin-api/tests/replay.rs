@@ -104,6 +104,24 @@ async fn trace_of(
     (response.status(), json(response).await)
 }
 
+async fn queries_of(
+    workspace: &Path,
+    registry: FsRegistry,
+    run: &Run,
+    parameters: &str,
+) -> (StatusCode, Value) {
+    let response = send(
+        app_over(
+            FakeRunStore::holding([run.clone()]),
+            Arc::new(registry),
+            workspace,
+        ),
+        get(&format!("/api/v1/runs/{}/queries{parameters}", run.id)),
+    )
+    .await;
+    (response.status(), json(response).await)
+}
+
 fn node<'a>(body: &'a Value, id: &str) -> &'a Value {
     body["nodes"]
         .as_array()
@@ -230,26 +248,30 @@ async fn one_altered_byte_makes_the_dataset_differ_and_both_digests_are_reported
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_dataset_on_disk_that_does_not_load_differs_with_nothing_found() {
+async fn a_dataset_on_disk_that_does_not_load_is_unreadable_with_nothing_found() {
     let (workspace, registry) = workspace("replay_unreadable_dataset", true);
     fs::remove_file(workspace.join("datasets").join(DIR).join("corpus.jsonl")).unwrap();
 
-    let (status, body) = trace_of(&workspace, registry, &the_run(), "q-1").await;
+    let (status, body) = trace_of(&workspace, registry.clone(), &the_run(), "q-1").await;
 
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["passages"]["status"], "dataset_differs");
+    assert_eq!(body["passages"]["status"], "dataset_unreadable");
     assert!(body["passages"]["found"].is_null());
     assert!(body["passages"]["detail"]
         .as_str()
         .unwrap()
         .contains("does not load"));
+    let listing = queries_of(&workspace, registry, &the_run(), "").await.1;
+    assert_eq!(listing["ground_truth"]["status"], "dataset_unreadable");
 }
 
 /// The dataset is the run's, but the chunk set this build derives from it is
-/// not the one the run retrieved over — the derivation moved. No text, and
-/// the chunk set's two digests side by side.
+/// not the one the run retrieved over — the derivation moved. ADR-C36 § 4
+/// conditions the *text* on both digests, so the passages are `index_differs`
+/// with the chunk set's two digests side by side and no text; the scores
+/// depend on the dataset alone, so they are read as usual.
 #[tokio::test(flavor = "multi_thread")]
-async fn a_chunk_set_that_is_not_the_runs_differs_though_the_dataset_verifies() {
+async fn a_chunk_set_that_is_not_the_runs_hides_the_text_and_keeps_the_scores() {
     let (workspace, registry) = workspace("replay_index_differs", true);
     let mut run = the_run();
     run.inputs.index_version = "f".repeat(64);
@@ -258,7 +280,7 @@ async fn a_chunk_set_that_is_not_the_runs_differs_though_the_dataset_verifies() 
 
     assert_eq!(status, StatusCode::OK);
     let passages = &body["passages"];
-    assert_eq!(passages["status"], "dataset_differs");
+    assert_eq!(passages["status"], "index_differs");
     assert_eq!(
         passages["found"]["dataset_version"],
         run.inputs.dataset_version
@@ -272,34 +294,101 @@ async fn a_chunk_set_that_is_not_the_runs_differs_though_the_dataset_verifies() 
     for chunk in chunks(&body) {
         assert!(chunk["text"].is_null(), "{chunk}");
     }
+    assert!(body["scores"]["ndcg@10"].is_number(), "{}", body["scores"]);
+    assert!(node(&body, "reranked")["metrics"].is_object());
 
-    // The listing degrades the same way, twice — the second time from the
-    // cache — and a filter, which needs the ground truth, is refused.
-    let app = || {
+    // The listing reads its scores, twice — the second time from the cache —
+    // and the filter, which needs only the ground truth, answers.
+    for _ in 0..2 {
+        let (status, listing) = queries_of(&workspace, registry.clone(), &run, "").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(listing["ground_truth"]["status"], "verified");
+        assert!(listing["queries"][0]["scores"]["ndcg@10"].is_number());
+    }
+    let (status, _) = queries_of(&workspace, registry, &run, "?missing_gold_at=3").await;
+    assert_eq!(status, StatusCode::OK);
+}
+
+/// A run deleted and launched again keeps its id — the id digests the
+/// inputs — but a nondeterministic component may give it other traces. The
+/// cache must not serve the old run's figures for the new one.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_rerun_under_the_same_id_with_other_traces_is_recomputed_not_served_stale() {
+    let (workspace, registry) = workspace("replay_cache_rerun", true);
+    let first = the_run();
+    let (_, before) = queries_of(&workspace, registry.clone(), &first, "").await;
+    let q1 = |body: &Value| {
+        body["queries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["id"] == "q-1")
+            .unwrap()["scores"]
+            .clone()
+    };
+    // q-1 judges MED-10 (grade 2): first at rank 1, then at rank 3.
+    assert_eq!(q1(&before)["mrr"], 1.0);
+
+    let mut rerun = first.clone();
+    rerun.traces.insert(
+        ragondin_types::QueryId::new("q-1"),
+        ragondin_experiments::TraceDocument::from(generation_trace(
+            "q-1",
+            documents(&["4983", "MED-10"]),
+            documents(&["4983", "MED-12", "MED-10"]),
+            2,
+            "on the mat",
+        )),
+    );
+    let (_, after) = queries_of(&workspace, registry, &rerun, "").await;
+
+    assert_eq!(after["ground_truth"]["status"], "verified");
+    assert!(
+        (q1(&after)["mrr"].as_f64().unwrap() - 1.0 / 3.0).abs() < 1e-12,
+        "recomputed from the new traces: {}",
+        q1(&after)
+    );
+}
+
+/// The cache is never a truth: a workspace where it cannot be written still
+/// answers, with every figure, and says the cache failed.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_cache_that_cannot_be_written_does_not_fail_the_request() {
+    let (workspace, registry) = workspace("replay_cache_unwritable", true);
+    // A file where the cache directory would go: nothing can be created
+    // under it.
+    fs::write(workspace.join("cache"), "not a directory").unwrap();
+    let run = the_run();
+
+    let (status, body) = queries_of(&workspace, registry, &run, "").await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["ground_truth"]["status"], "verified");
+    assert!(body["queries"][0]["scores"]["ndcg@10"].is_number());
+    let cache = body["cache_error"]
+        .as_str()
+        .expect("the failure is reported");
+    assert!(cache.contains("cache"), "{cache}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_parameter_the_trace_does_not_take_is_parameter_invalid() {
+    let (workspace, registry) = workspace("replay_parameter", true);
+    let run = the_run();
+    let response = send(
         app_over(
             FakeRunStore::holding([run.clone()]),
-            Arc::new(registry.clone()),
+            Arc::new(registry),
             &workspace,
-        )
-    };
-    for _ in 0..2 {
-        let body = json(send(app(), get(&format!("/api/v1/runs/{}/queries", run.id))).await).await;
-        assert_eq!(body["ground_truth"]["status"], "dataset_differs");
-        assert_eq!(body["ground_truth"]["found"]["index_version"], found);
-        assert_eq!(body["queries"][0]["scores"], serde_json::json!({}));
-    }
-    let response = send(
-        app(),
+        ),
         get(&format!(
-            "/api/v1/runs/{}/queries?missing_gold_at=3",
+            "/api/v1/runs/{}/trace/q-1?missing_gold_at=1",
             run.id
         )),
     )
     .await;
-    assert_eq!(response.status(), StatusCode::CONFLICT);
-    let problem = json(response).await;
-    assert_eq!(problem["code"], "dataset_differs");
-    assert!(problem["detail"].as_str().unwrap().contains(found));
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(json(response).await["code"], "parameter_invalid");
 }
 
 #[tokio::test(flavor = "multi_thread")]

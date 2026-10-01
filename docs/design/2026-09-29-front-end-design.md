@@ -122,9 +122,9 @@ ui/ (TypeScript) ──HTTP /api/v1──▶ runtime/ragondin-api ──traits�
 | Resource | Does | CLI |
 |---|---|---|
 | `GET /workspace` | path, settings, version, **build capabilities** (family → local impls, whether `remote` is on) | — |
-| `GET /runs` · `GET /runs/{id}` | list; detail = inputs, metrics, config, bindings, the **lowered graph** (nodes, edges, kinds — computed by `ragondin-pipeline`, never by the browser), per-node metrics, prefix-of relation | `bench` (read side) |
+| `GET /runs` · `GET /runs/{id}` | list; detail = inputs, metrics, config, bindings, the **lowered graph** (nodes, edges, kinds — computed by `ragondin-pipeline`, never by the browser), prefix-of relation | `bench` (read side) |
 | `GET /pipelines/{name}/matrix` | the node × benchmark matrix over that pipeline's runs | — |
-| `GET /runs/{id}/queries` | the queries with their per-query scores, computed from traces and qrels | — |
+| `GET /runs/{id}/queries` | the queries with their per-query scores, computed from traces and qrels, and the **per-node metrics** — here rather than on the detail, which reads the store alone and would otherwise load and digest the dataset for every run shown. A node row carries ranking metrics only; the generator's EM and F1 are `metrics.json`'s, or the mean of the per-query scores | — |
 | `GET /runs/{id}/trace/{query}` | one query's trace, node by node, with **passage text resolved** from the dataset only when the dataset on disk digests to the run's `dataset_version` and the chunk set to its `index_version`; ids alone otherwise, flagged, saying whether the dataset is absent or different | — |
 | `POST /compare` | `{run_ids, baseline, pairing?}` → table, parameter matrix, per-query deltas, per-stage metrics with the pairing used | `compare` |
 | `GET/PUT /pipelines/{name}` · `GET/PUT …/layout` | the YAML and its layout | — |

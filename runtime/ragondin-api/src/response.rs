@@ -241,8 +241,10 @@ pub struct RunQueries {
     /// The run's id.
     pub run: String,
     /// Whether the ground truth the scores are read against is the run's
-    /// own. Scores and per-node metrics are present only when it is
-    /// `verified`.
+    /// own: the dataset on disk digests to the run's `dataset_version`. The
+    /// chunk set is not compared — a score depends on the qrels and the
+    /// reference answers, not on passage text. Scores and per-node metrics
+    /// are present only when it is `verified`.
     pub ground_truth: DatasetCheck,
     /// The metrics a query can be scored on: those the run recorded that are
     /// read per query, by name.
@@ -259,6 +261,10 @@ pub struct RunQueries {
     /// Every node of the pipeline, in the canonical order, with its ranking
     /// metrics averaged over the run's judged queries.
     pub nodes: Vec<NodeMetrics>,
+    /// Why the figures could not be cached under the workspace's `cache/`,
+    /// when they could not; `null` otherwise. The response is complete
+    /// either way: the cache is never a truth, so its failure fails nothing.
+    pub cache_error: Option<String>,
 }
 
 /// One query, as the run executed it.
@@ -308,7 +314,8 @@ pub struct QueryTrace {
     /// run was evaluated on, digests compared (ADR-C36 § 4).
     pub passages: DatasetCheck,
     /// The query's scores at the run's output, as `GET /runs/{id}/queries`
-    /// reports them.
+    /// reports them: present when the dataset on disk is the run's, whatever
+    /// the chunk set.
     pub scores: BTreeMap<String, f64>,
     /// The nodes, in execution order.
     pub nodes: Vec<TraceNodeView>,
@@ -329,8 +336,8 @@ pub struct TraceNodeView {
     /// The failure it reported; `null` when it succeeded.
     pub error: Option<String>,
     /// The ranking metrics of what it produced for this query: present when
-    /// it produced a ranking, the query is judged and the ground truth is
-    /// verified; `null` otherwise.
+    /// it produced a ranking, the query is judged and the dataset on disk is
+    /// the run's; `null` otherwise.
     pub metrics: Option<BTreeMap<String, f64>>,
 }
 
@@ -396,8 +403,9 @@ pub struct TracePassage {
 }
 
 /// Whether the dataset on disk is the one a run was evaluated on: the
-/// benchmark pinned to the run's `dataset_version`, digesting to it, and its
-/// derived chunk set digesting to the run's `index_version`.
+/// benchmark pinned to the run's `dataset_version`, digesting to it — and,
+/// for passage text, its derived chunk set digesting to the run's
+/// `index_version`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
 #[schemars(transform = every_property_required)]
 pub struct DatasetCheck {
@@ -419,12 +427,19 @@ pub struct DatasetCheck {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum DatasetStatus {
-    /// On disk, and both digests are the run's.
+    /// On disk, and every digest compared is the run's: the dataset's for
+    /// the ground truth, the dataset's and the chunk set's for passage text.
     Verified,
     /// Not on disk, or pinned by no benchmark the registry knows.
     DatasetAbsent,
-    /// On disk, and a digest is not the run's — or it does not load.
+    /// On disk, and its digest is not the run's `dataset_version`.
     DatasetDiffers,
+    /// On disk, and it does not load: `detail` carries the adapter's error.
+    DatasetUnreadable,
+    /// Passage text only: the dataset is the run's, but the chunk set this
+    /// build derives from it does not digest to the run's `index_version` —
+    /// the derivation moved. The scores are unaffected.
+    IndexDiffers,
 }
 
 /// The two dataset digests of a run's identity.
@@ -442,9 +457,9 @@ pub struct DatasetVersions {
 pub struct FoundVersions {
     /// What the dataset on disk digests to.
     pub dataset_version: String,
-    /// What its derived chunk set digests to; `null` when the dataset
-    /// already differs, which leaves the chunk set nothing to be compared
-    /// with.
+    /// What its derived chunk set digests to; `null` when it was not
+    /// compared — the dataset already differs, or the check is the ground
+    /// truth's, which depends on the dataset alone.
     pub index_version: Option<String>,
 }
 

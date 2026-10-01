@@ -341,8 +341,26 @@ pub(crate) fn causes(error: &dyn std::error::Error) -> String {
     text
 }
 
-/// The verdict for a run whose dataset and chunk set both verified.
-pub(crate) fn verified(name: &str, inputs: &StoredInputs) -> DatasetCheck {
+/// The ground truth's verdict for a run whose dataset verified: the scores
+/// depend on the dataset alone, so the chunk set is not compared.
+pub(crate) fn ground_verified(name: &str, inputs: &StoredInputs) -> DatasetCheck {
+    DatasetCheck {
+        status: DatasetStatus::Verified,
+        benchmark: Some(name.to_owned()),
+        expected: expected(inputs),
+        found: Some(FoundVersions {
+            dataset_version: inputs.dataset_version.clone(),
+            index_version: None,
+        }),
+        detail: format!(
+            "{name} on disk digests to the run's dataset_version; the scores depend on it alone, so the chunk set is not compared"
+        ),
+    }
+}
+
+/// The passages' verdict for a run whose dataset and chunk set both
+/// verified.
+pub(crate) fn passages_verified(name: &str, inputs: &StoredInputs) -> DatasetCheck {
     DatasetCheck {
         status: DatasetStatus::Verified,
         benchmark: Some(name.to_owned()),
@@ -357,11 +375,12 @@ pub(crate) fn verified(name: &str, inputs: &StoredInputs) -> DatasetCheck {
     }
 }
 
-/// The verdict for a run whose dataset verified and whose chunk set, derived
-/// from it by this build, digests to another value: the derivation moved.
+/// The passages' verdict for a run whose dataset verified and whose chunk
+/// set, derived from it by this build, digests to another value: the
+/// derivation moved.
 pub(crate) fn index_differs(name: &str, inputs: &StoredInputs, found: &str) -> DatasetCheck {
     DatasetCheck {
-        status: DatasetStatus::DatasetDiffers,
+        status: DatasetStatus::IndexDiffers,
         benchmark: Some(name.to_owned()),
         expected: expected(inputs),
         found: Some(FoundVersions {
@@ -375,7 +394,8 @@ pub(crate) fn index_differs(name: &str, inputs: &StoredInputs, found: &str) -> D
     }
 }
 
-/// The verdict for every answer of the registry but a verified dataset.
+/// The verdict for every answer of the registry but a verified dataset —
+/// the same for the ground truth and for the passages.
 pub(crate) fn unverified(dataset: &RunDataset, inputs: &StoredInputs) -> DatasetCheck {
     let (status, benchmark, found, detail) = match dataset {
         RunDataset::Unknown => (
@@ -406,13 +426,13 @@ pub(crate) fn unverified(dataset: &RunDataset, inputs: &StoredInputs) -> Dataset
             ),
         ),
         RunDataset::Unreadable { name, error } => (
-            DatasetStatus::DatasetDiffers,
+            DatasetStatus::DatasetUnreadable,
             Some(name.clone()),
             None,
             format!("{name} is on disk and does not load: {error}"),
         ),
         RunDataset::Verified { name, .. } => unreachable!(
-            "{name} verified: the caller checks its chunk set with `verified` or `index_differs`"
+            "{name} verified: the caller states its verdict with `ground_verified`, `passages_verified` or `index_differs`"
         ),
     };
     DatasetCheck {
@@ -431,36 +451,35 @@ fn expected(inputs: &StoredInputs) -> DatasetVersions {
     }
 }
 
-/// What an endpoint that cannot degrade answers when the dataset is not the
-/// run's: `dataset_absent` or `dataset_differs`, naming what was compared.
+/// What an endpoint that needs the ground truth and cannot degrade answers
+/// when the dataset is not the run's: `dataset_absent`, or
+/// `dataset_differs` naming the digests compared — for a dataset that does
+/// not load, that nothing loaded.
 pub(crate) fn dataset_error(check: &DatasetCheck) -> ApiError {
     let dataset = check
         .benchmark
         .clone()
         .unwrap_or_else(|| format!("with dataset_version {}", check.expected.dataset_version));
-    match (check.status, &check.found) {
-        (DatasetStatus::DatasetAbsent | DatasetStatus::Verified, _) => {
-            ApiError::DatasetAbsent { dataset }
-        }
-        (DatasetStatus::DatasetDiffers, Some(found)) => match &found.index_version {
-            Some(index) if found.dataset_version == check.expected.dataset_version => {
-                ApiError::DatasetDiffers {
-                    dataset,
-                    expected: format!("index_version {}", check.expected.index_version),
-                    found: format!("index_version {index}"),
-                }
-            }
-            _ => ApiError::DatasetDiffers {
-                dataset,
-                expected: check.expected.dataset_version.clone(),
-                found: found.dataset_version.clone(),
-            },
-        },
-        (DatasetStatus::DatasetDiffers, None) => ApiError::DatasetDiffers {
+    let expected = check.expected.dataset_version.clone();
+    match check.status {
+        DatasetStatus::DatasetDiffers => ApiError::DatasetDiffers {
             dataset,
-            expected: check.expected.dataset_version.clone(),
+            expected,
+            found: check
+                .found
+                .as_ref()
+                .map_or_else(String::new, |found| found.dataset_version.clone()),
+        },
+        DatasetStatus::DatasetUnreadable => ApiError::DatasetDiffers {
+            dataset,
+            expected,
             found: "nothing: it does not load".to_owned(),
         },
+        // The ground truth's check is never `index_differs` nor, here,
+        // `verified`: the caller asks only when the dataset did not verify.
+        DatasetStatus::DatasetAbsent | DatasetStatus::IndexDiffers | DatasetStatus::Verified => {
+            ApiError::DatasetAbsent { dataset }
+        }
     }
 }
 
