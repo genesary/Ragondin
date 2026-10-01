@@ -1,4 +1,4 @@
-//! Temporary empty backends: a stopgap, so that the three endpoints
+//! Temporary empty backends: a stopgap, so that the endpoints
 //! `ragondin-api` serves answer against a real run store before the file
 //! backends exist.
 //!
@@ -18,7 +18,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use ragondin_api::{
     ApiError, BenchmarkEntry, PipelineEntry, PipelineFile, PipelineSource, ProgressSink, Registry,
-    Revision, Settings, WorkspaceSettings,
+    Revision, RunDataset, Settings, WorkspaceSettings,
 };
 
 fn not_yet(what: &str, issue: &str) -> ApiError {
@@ -75,6 +75,12 @@ impl Registry for NoBenchmarks {
 
     async fn import(&self, _name: &str, _path: &Path) -> Result<BenchmarkEntry, ApiError> {
         Err(not_yet("importing a benchmark", "#342"))
+    }
+
+    /// A registry that knows no benchmark pins none to any digest: a run's
+    /// dataset is absent, and the derived-data endpoints say so.
+    async fn dataset(&self, _dataset_version: &str) -> Result<RunDataset, ApiError> {
+        Ok(RunDataset::Unknown)
     }
 }
 
@@ -139,6 +145,8 @@ mod tests {
             .await
             .expect_err("none");
         assert!(is_not_yet(&import, "#342"), "{import:?}");
+        let dataset = NoBenchmarks.dataset(&"0".repeat(64)).await;
+        assert!(matches!(dataset, Ok(RunDataset::Unknown)), "{dataset:?}");
     }
 
     #[tokio::test]
