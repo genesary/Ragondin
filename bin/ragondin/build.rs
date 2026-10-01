@@ -19,9 +19,9 @@
 //!
 //! `RAGONDIN_BUILD_COMMIT` is the commit the build is from, `git rev-parse
 //! --short=12 HEAD`, or `unknown` outside a git checkout, and
-//! `RAGONDIN_BUILD_DIRTY` is `true` when `git status --porcelain` printed
-//! anything — an uncommitted change or an untracked file the repository does
-//! not ignore; `src/ui/mod.rs` makes them the build identity. Both are read
+//! `RAGONDIN_BUILD_DIRTY` is `true` when `git --no-optional-locks status
+//! --porcelain` printed anything — an uncommitted change or an untracked file
+//! the repository does not ignore; `src/ui/mod.rs` makes them the build identity. Both are read
 //! when this script runs: it reruns when `HEAD`, the branch it names,
 //! `packed-refs` or the index changes, so a commit or a `git add` refreshes
 //! them, and an edit left unstaged after the last run does not.
@@ -113,7 +113,10 @@ fn commit(dir: &Path) -> (String, bool) {
         return ("unknown".to_owned(), false);
     };
     // `git` returns `None` for empty output, which is a clean tree.
-    let dirty = git(dir, &["status", "--porcelain"]).is_some();
+    // `--no-optional-locks`: a plain `status` may refresh and rewrite the
+    // index, which is watched below, and would rerun this script on the next
+    // build for a change it made itself.
+    let dirty = git(dir, &["--no-optional-locks", "status", "--porcelain"]).is_some();
     // `HEAD` moves on a checkout; the branch it points at moves on a commit,
     // in its loose ref or in `packed-refs`; the index moves on a `git add`.
     // Only existing paths are watched, for the reason given above.

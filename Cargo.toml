@@ -104,12 +104,12 @@ protox = "0.8"                                     # build-dependency of ragondi
 #
 #   - `json`: the extractor and response every endpoint uses;
 #   - `tokio` and `http1`: `axum::serve`, inside `ragondin_api::serve`, over
-#     the listener `ragondin ui` binds on the loopback. They are named now, in the pull request that creates the
-#     entry, because appending a feature to an existing entry later is a
-#     change to every crate naming it and escalates (AGENTS.md § Rules of
-#     engagement), while ADR-C36 § 6 leaves each entry's features to this
-#     pull request. HTTP/1.1 only: a loopback server for one browser gains
-#     nothing from `http2`.
+#     the listener `ragondin ui` binds on the loopback. They are named now,
+#     in the pull request that creates the entry, because appending a
+#     feature to an existing entry later is a change to every crate naming
+#     it and escalates (AGENTS.md § Rules of engagement), while ADR-C36 § 6
+#     leaves each entry's features to this pull request. HTTP/1.1 only: a
+#     loopback server for one browser gains nothing from `http2`.
 #
 # The defaults it drops are the form and query extractors no endpoint reads,
 # `matched-path` and `original-uri`, which no handler uses, and

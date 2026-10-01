@@ -449,7 +449,9 @@ browser.
   rather than a digest of the embedded assets, because the UI compares builds
   to know whether the API it talks to is the one it was built with, and a
   commit moves with either side; a version alone would not move at all
-  between releases. `-dirty` is `git status --porcelain` printing anything —
+  between releases. `-dirty` is `git --no-optional-locks status --porcelain`
+  printing anything (without the flag, `status` may rewrite the watched
+  index and rerun the script on the next build) —
   a modified, staged or untracked-and-not-ignored file — when `build.rs` ran:
   it marks the identity a commit cannot vouch for. `build.rs` reruns when
   `HEAD`, the branch it names, `packed-refs` or the index changes, so a commit
