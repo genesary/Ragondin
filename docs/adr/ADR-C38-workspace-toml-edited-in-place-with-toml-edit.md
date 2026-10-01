@@ -103,8 +103,7 @@ backend's lock to the document as it is on disk at that moment.**
   - any other key or table;
   - a sub-table, an array of tables, an inline table or a dotted key;
   - a value that is not a string;
-  - a service key without a `/`, or with an empty family or name, the key
-    split at its first `/` as ADR-C32 § 2 splits a binding.
+  - a key without a `/` or with an empty part.
 - **It refuses by meaning, never by string spelling.** The forms above are
   refused by name; otherwise a key or a value is read by what it means,
   however it is spelled. `toml_edit` itself writes `"""…"""` and `'…'`, so
@@ -131,9 +130,8 @@ backend's lock to the document as it is on disk at that moment.**
   - perform no write when the operation changes no setting, so the file stays
     byte-identical.
 
-Because each operation is applied to the document read under the lock, a hand
-edit made before it is kept. That closes today's race between a handler's read
-and its write.
+This also closes today's race, in which a hand edit made between the read
+and the write is reverted.
 
 ### 4. Governance
 
