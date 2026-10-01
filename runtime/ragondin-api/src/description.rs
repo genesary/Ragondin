@@ -87,7 +87,7 @@ impl Place {
 /// flattened map gives — is refused, since its handler would accept a
 /// parameter the description does not declare (ADR-C37 § 5); a header type
 /// is not closed, since a request carries headers no handler reads.
-fn parameters(
+fn declare_parameters(
     generator: &mut SchemaGenerator,
     place: Place,
     of: Parameters,
@@ -378,9 +378,11 @@ fn description() -> Value {
                 (Place::Header, operation.headers),
             ] {
                 if let Some(of) = of {
-                    declared.extend(parameters(&mut generator, place, of).unwrap_or_else(
-                        |refused| panic!("{} {}: {refused}", operation.method, operation.path),
-                    ));
+                    declared.extend(
+                        declare_parameters(&mut generator, place, of).unwrap_or_else(|refused| {
+                            panic!("{} {}: {refused}", operation.method, operation.path)
+                        }),
+                    );
                 }
             }
             declared
@@ -465,7 +467,7 @@ mod tests {
 
     fn declare<T: JsonSchema>(place: Place) -> Result<Vec<Value>, String> {
         let mut generator: SchemaGenerator = SchemaSettings::openapi3().into_generator();
-        parameters(&mut generator, place, schema_of::<T>)
+        declare_parameters(&mut generator, place, schema_of::<T>)
     }
 
     #[allow(dead_code)]
