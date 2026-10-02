@@ -13,6 +13,40 @@
 //! construct read before the benchmark is loaded — and one thing only a composition root can do: [`prepare`] embeds
 //! the corpus before any component exists, because a `ComponentCtor` is
 //! synchronous and the two calls that fill a vector store are not.
+//!
+//! # The launch record
+//!
+//! After the evaluation, `bench` stamps the run's launch record (ADR-C39 § 3)
+//! from its two paths alone — `launched_as` — and the choices it makes are
+//! this module's, recorded here:
+//!
+//! - **A name, only under the workspace convention.** The configuration is
+//!   `<W>/pipelines/<name>.yaml` and the store is `<W>/runs`, for one `W`
+//!   once the directories they sit in are canonicalized.
+//! - **Parents only, on both sides.** The config's parent is canonicalized,
+//!   never the file, and the store's parent, never the store, whose last
+//!   component as given must be literally `runs`. So a link to a directory
+//!   on either path, or a `..`, is followed. A config file that is itself a
+//!   link is named by where it sits, not by its target: a link inside
+//!   `pipelines/` records its own stem, as the workspace lists it, and a link
+//!   from outside `pipelines/` records nothing. A `<W>/runs` that is a link,
+//!   to a bigger disk say, is still `<W>`'s store, as `ragondin ui --store`
+//!   reads it (`ui/location.rs`).
+//! - **A fresh workspace still records it.** The store's parent is what is
+//!   canonicalized, so a `<W>/runs` that does not exist yet matches: the
+//!   first run into a new workspace is named.
+//! - **Only `.yaml`.** A workspace pipeline is `pipelines/<name>.yaml`, so a
+//!   `.yml` records no name. The stem is taken as the file has it; the
+//!   workspace's own rules on what a pipeline name may be are not applied
+//!   here, since a recorded name is a fact about a launch, not a claim the
+//!   workspace lists it.
+//! - **A name or no record.** Outside the convention, the run is saved with
+//!   no record and no `provenance.json` is written — never an empty `{}`, and
+//!   never a path, whatever the convention's answer. `bench` never sets
+//!   `prefix_of`: it runs whole pipelines.
+//!
+//! The record is outside the run's identity (INV-8), and the summary `bench`
+//! prints does not show it, so neither the run id nor the output changes.
 
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
@@ -22,7 +56,9 @@ use ragondin_benchmarks::{BeirAdapter, Benchmark, BenchmarkAdapter, SquadAdapter
 use ragondin_config::{ConfigSource, LocalFile};
 use ragondin_contracts::EmbeddedChunk;
 use ragondin_engine::EngineContext;
-use ragondin_experiments::{ConfigDocument, FileSystemRunStore, Run, RunTimes, UnixMillis};
+use ragondin_experiments::{
+    ConfigDocument, FileSystemRunStore, Run, RunProvenance, RunTimes, UnixMillis,
+};
 use ragondin_harness::{evaluate, CorpusIndex, Evaluation};
 use ragondin_pipeline::LogicalPipeline;
 
@@ -174,9 +210,12 @@ pub async fn run(request: &Request<'_>) -> Result<()> {
     // Recorded on the run, never in its identity: the harness named the run
     // before it saw them, and where a service listened — or when the run
     // happened — is not an input of the experiment (ADR-C32 § 2, INV-8).
+    // And how it was launched (ADR-C39 § 3): the workspace name, or no
+    // record at all — never an empty one, and never a path.
     let run = Run {
         bindings: bound.bindings().record(),
         times: RunTimes::from_readings(started, finished),
+        provenance: launched_as(request.config, request.store).map(RunProvenance::named),
         ..run
     };
 
@@ -184,6 +223,50 @@ pub async fn run(request: &Request<'_>) -> Result<()> {
     print!("{}", render(&run));
 
     Ok(())
+}
+
+/// The workspace pipeline name `bench` records for a run of `config` stored
+/// into `store`, under the workspace convention ADR-C39 § 3 gives it: `config`
+/// is `<W>/pipelines/<name>.yaml` and `store` is `<W>/runs`, for one `W` once
+/// the directories both sit in are canonicalized. `None` for anything else —
+/// and a directory that cannot be canonicalized is something else.
+///
+/// Only the parents are canonicalized, never the last components, on both
+/// sides: a link to a directory on either path is followed, while the config
+/// file and the store directory are each named by where they sit, not by
+/// what they link to. So a config file that is itself a link is named by its
+/// own stem when it sits in `pipelines/`, and names nothing when it sits
+/// elsewhere, whatever it points at; and a `<W>/runs` that is a link — to a
+/// bigger disk, say — is still `<W>`'s store, as `ragondin ui --store` reads
+/// it, whether or not it exists yet.
+fn launched_as(config: &Path, store: &Path) -> Option<String> {
+    let file = Path::new(config.file_name()?);
+    if file.extension()? != "yaml" {
+        return None;
+    }
+    let name = file.file_stem()?.to_str()?;
+
+    let pipelines = canonical_parent(config)?;
+    if pipelines.file_name()? != "pipelines" {
+        return None;
+    }
+
+    if store.file_name()? != "runs" {
+        return None;
+    }
+    let workspace = canonical_parent(store)?;
+
+    (pipelines.parent()? == workspace).then(|| name.to_owned())
+}
+
+/// The directory `path` sits in, canonicalized: every link and `..` on the
+/// way to it resolved, and `path`'s own last component left as it is.
+fn canonical_parent(path: &Path) -> Option<PathBuf> {
+    let parent = match path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent,
+        _ => Path::new("."),
+    };
+    std::fs::canonicalize(parent).ok()
 }
 
 /// Embeds the corpus, if the pipeline retrieves densely over it.
@@ -437,6 +520,7 @@ mod tests {
             traces: BTreeMap::new(),
             bindings: Vec::new(),
             times: None,
+            provenance: None,
         }
     }
 
@@ -493,5 +577,127 @@ mod tests {
         };
 
         assert_eq!(render(&with), render(&without));
+    }
+
+    #[test]
+    fn the_summary_is_the_same_whether_or_not_a_launch_record_is_kept() {
+        // The record is for the UI's grouping; `bench`'s printed output is
+        // byte for byte what it was before it existed.
+        let without = a_run(&[("ndcg@10", 0.5), ("recall@10", 0.75)]);
+        let with = Run {
+            provenance: Some(RunProvenance::named("hybrid")),
+            ..without.clone()
+        };
+
+        assert_eq!(render(&with), render(&without));
+    }
+
+    /// A workspace of this test's own under the system's temporary
+    /// directory, emptied first, holding the files named.
+    fn workspace(test_name: &str, files: &[&str]) -> PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "ragondin-bench-launched-as-{}-{test_name}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        for file in files {
+            let path = root.join(file);
+            std::fs::create_dir_all(path.parent().expect("a parent")).expect("a writable tmpdir");
+            std::fs::write(&path, "pipeline: {}\n").expect("a writable tmpdir");
+        }
+        root
+    }
+
+    #[test]
+    fn the_name_is_the_stem_of_a_yaml_file_under_the_store_s_workspace() {
+        let w = workspace("named", &["pipelines/hybrid.yaml"]);
+
+        // Fresh: `runs/` does not exist yet, and the name is still recorded.
+        assert_eq!(
+            launched_as(&w.join("pipelines/hybrid.yaml"), &w.join("runs")),
+            Some("hybrid".to_owned())
+        );
+        std::fs::create_dir_all(w.join("runs")).expect("a store");
+        assert_eq!(
+            launched_as(&w.join("pipelines/hybrid.yaml"), &w.join("runs")),
+            Some("hybrid".to_owned())
+        );
+    }
+
+    #[test]
+    fn no_name_outside_the_convention() {
+        let w = workspace(
+            "unnamed",
+            &[
+                "pipelines/hybrid.yml",
+                "pipelines/hybrid.yaml",
+                "drafts/hybrid.yaml",
+                "pipelines/nested/hybrid.yaml",
+                "elsewhere/pipelines/hybrid.yaml",
+            ],
+        );
+        let none = [
+            ("pipelines/hybrid.yml", "runs"),
+            ("drafts/hybrid.yaml", "runs"),
+            ("pipelines/nested/hybrid.yaml", "runs"),
+            ("pipelines/hybrid.yaml", "store"),
+            ("pipelines/hybrid.yaml", "elsewhere/runs"),
+            ("elsewhere/pipelines/hybrid.yaml", "runs"),
+            // A store whose parent does not exist.
+            ("pipelines/hybrid.yaml", "absent/runs"),
+        ];
+        for (config, store) in none {
+            assert_eq!(
+                launched_as(&w.join(config), &w.join(store)),
+                None,
+                "{config} into {store}"
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_runs_directory_that_is_a_link_is_still_the_workspace_s_store() {
+        // `<W>/runs` linked to a bigger disk: the workspace is read from the
+        // path as given, as `ragondin ui --store` reads it, never from where
+        // the link points.
+        let w = workspace("runs-link", &["pipelines/hybrid.yaml"]);
+        let disk = workspace("runs-link-disk", &[]);
+        std::fs::create_dir_all(&disk).expect("a writable tmpdir");
+        std::os::unix::fs::symlink(&disk, w.join("runs")).expect("a link is creatable");
+
+        assert_eq!(
+            launched_as(&w.join("pipelines/hybrid.yaml"), &w.join("runs")),
+            Some("hybrid".to_owned())
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_config_file_that_is_a_link_is_named_by_where_it_sits() {
+        let w = workspace(
+            "config-link",
+            &["pipelines/hybrid.yaml", "drafts/other.yaml"],
+        );
+
+        // A link inside `pipelines/` to a file elsewhere is that pipeline,
+        // under its own stem — as the workspace lists it.
+        std::os::unix::fs::symlink(w.join("drafts/other.yaml"), w.join("pipelines/alias.yaml"))
+            .expect("a link is creatable");
+        assert_eq!(
+            launched_as(&w.join("pipelines/alias.yaml"), &w.join("runs")),
+            Some("alias".to_owned())
+        );
+
+        // A link outside `pipelines/` to a workspace pipeline is not one.
+        std::os::unix::fs::symlink(
+            w.join("pipelines/hybrid.yaml"),
+            w.join("drafts/hybrid.yaml"),
+        )
+        .expect("a link is creatable");
+        assert_eq!(
+            launched_as(&w.join("drafts/hybrid.yaml"), &w.join("runs")),
+            None
+        );
     }
 }

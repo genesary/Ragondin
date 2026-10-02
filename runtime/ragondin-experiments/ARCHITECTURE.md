@@ -134,12 +134,56 @@ harness.
     assembles the run with no bindings, since it never sees the command line,
     and the binary sets the field before saving. `compare` does not show
     bindings.
-- **A run's launch record is decided by ADR-C39, and the code predates it.**
-  ADR-C39 decides that the pipeline name a run was launched as, and for a
-  prefix run its parent, is recorded on the run outside its identity, and it
-  fixes what that record means. This file fixes the record's type, file and
-  field names in the change that adds it to the store; nothing in this crate
-  writes or reads one yet.
+- **A run records how it was launched, outside its identity (ADR-C39).**
+  `Run::provenance` is an `Option<RunProvenance>`: `name`, the workspace
+  pipeline name the run was launched as, and `prefix_of`, a `PrefixOf` —
+  `up_to`, the node a prefix run stops at, and `parent_pipeline_hash`, the
+  canonical hash (`PipelineHash`, the type `RunInputs::pipeline` holds) of
+  the parent's version it was cut from. Both optional, both plain values.
+  These are the final names ADR-C39 left to this file: the type
+  `RunProvenance`, the file `provenance.json`, the keys `name`, `prefix_of`,
+  `up_to` and `parent_pipeline_hash`.
+  - *Outside identity.* Not a field of `RunInputs`, and the run id does not
+    digest it (INV-8): a run with a record and the same run without one are
+    one run. `tests/run_store.rs` saves both and lists one.
+  - *A file of its own, written once, with the run, only when recorded.*
+    `provenance.json` is staged with the rest of the run and renamed into
+    place with it, beside `bindings.json` and `times.json`. Like
+    `times.json`, it is absent when `provenance` is `None`, and an absent file
+    is what *no record* means: `load` reads it as `None`, and a file that does
+    not parse as `Malformed`. The completeness check still requires only the
+    four original files, so every run stored before the file existed is
+    complete. A key is written only for a field that is set.
+  - *`{}` is a valid empty record, and differs from no file.* `Some` of an
+    empty record is written as `{}` and reads back as `Some`; `None` writes
+    nothing. The CLI never writes an empty one (`bench` records a name or no
+    record), but the store does not refuse one, since it is a fact a caller
+    stated.
+  - *The first record wins*, as for every rerun under a stored id: a second
+    `save` with another record, or with none, leaves the first.
+  - *With `prefix_of`, `name` names the parent*: the run is a prefix of
+    `name` at `parent_pipeline_hash`, cut at `up_to`, and never an earlier
+    version of `name` (ADR-C39 § 2).
+  - *The constructors require a name whenever `prefix_of` is set, and the
+    reader stays tolerant.* The fields are private: `RunProvenance::named`
+    and `RunProvenance::prefix` both take the name, and `Default` is the empty
+    record, so no caller builds a prefix record without its parent's name.
+    A file holding `prefix_of` and no `name` still reads, because the
+    Pipeline matrix's cell rule (ADR-C39 § 6) reads only
+    `parent_pipeline_hash`, and refusing the record would lose that.
+  - *The reader tolerates unknown fields, and every backend owes it.* There
+    is no `deny_unknown_fields`, so a field a later build adds is read past
+    without a version bump; the concurrency degree
+    (`docs/design/2026-09-29-front-end-design.md` § 7) is a future field of
+    this record, not a third file. The conformance suite cannot put unknown
+    bytes into a backend through the trait, so each backend proves this in
+    its own tests: the file backend's is `an_unknown_provenance_field_is_ignored`.
+  - *Stamped by the composition root.* `ragondin-harness` assembles the run
+    with `provenance: None`, and `ragondin bench` sets it before saving — the
+    only stamper in the tree today; ADR-C39 § 3 names the UI's launcher as
+    the other one, and `ragondin-api` as never one. The conformance suite holds every
+    backend to the round trip with a name and with a prefix, to inventing no
+    record, to the first record winning, and to an older run reading none.
 - **A run records when it ran, outside its identity.** `Run::times` is
   an `Option<RunTimes>` — `started` and `finished`, each a `UnixMillis`, whole
   milliseconds since the epoch. It is not a field of `RunInputs` and the run id
@@ -227,11 +271,15 @@ promise, not part of it.
 - **The conformance suite is a module behind a feature**, not a crate: its
   subject is this crate's trait and its fixtures are this crate's types, and a
   crate of its own would be a split the frozen crate granularity does not
-  allow. `assert_run_store_conformance` takes two closures, a choice made here:
-  `fresh` builds an empty store for each case, so a backend with external
-  state makes one per case; `tear` damages a stored run, because the trait
-  offers no way to and every backend can reach a torn run, so the suite checks
-  that it is *reported* and leaves how it happens to the backend. It panics
+  allow. `assert_run_store_conformance` takes three closures, a choice made
+  here: `fresh` builds an empty store for each case, so a backend with
+  external state makes one per case; `tear` damages a stored run, because the
+  trait offers no way to and every backend can reach a torn run, so the suite
+  checks that it is *reported* and leaves how it happens to the backend;
+  `before` returns a store holding a run the backend kept before the launch
+  record existed, and its id — the file backend's is the committed fixture —
+  because only the backend knows how an older build of it laid a run out, and
+  a run saved today without a record is a different case. It panics
   on the first failure, naming the case. `FileSystemRunStore` runs it in
   `tests/run_store_conformance.rs`, built only under the feature
   (`required-features`), which `just test-features` turns on.

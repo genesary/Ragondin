@@ -28,6 +28,7 @@ fn a_run(byte: u8, config: &str) -> Run {
         traces: BTreeMap::new(),
         bindings: Vec::new(),
         times: None,
+        provenance: None,
     }
 }
 

@@ -61,6 +61,7 @@ fn a_run(id: RunId, metrics: &[(&str, f64)]) -> Run {
         traces: BTreeMap::new(),
         bindings: Vec::new(),
         times: None,
+        provenance: None,
     }
 }
 

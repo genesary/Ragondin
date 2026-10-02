@@ -98,6 +98,7 @@ pub fn run_over(
             .collect(),
         bindings: Vec::new(),
         times: None,
+        provenance: None,
     }
 }
 

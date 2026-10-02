@@ -14,8 +14,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use ragondin_experiments::{
-    compare, ConfigDocument, FileSystemRunStore, Metrics, Run, RunBinding, RunId, RunIdParseError,
-    RunInputs, RunStore, RunStoreError, RunTimes, TraceDocument, UnixMillis,
+    compare, ConfigDocument, FileSystemRunStore, Metrics, PrefixOf, Run, RunBinding, RunId,
+    RunIdParseError, RunInputs, RunProvenance, RunStore, RunStoreError, RunTimes, TraceDocument,
+    UnixMillis,
 };
 use ragondin_pipeline::PipelineHash;
 use ragondin_types::QueryId;
@@ -70,6 +71,7 @@ fn a_run(id: RunId, metrics: &[(&str, f64)]) -> Run {
         traces,
         bindings: Vec::new(),
         times: None,
+        provenance: None,
     }
 }
 
@@ -246,6 +248,192 @@ fn times_are_not_part_of_identity() {
     assert_eq!(
         store.load(&with.id).expect("the run reads back").times,
         with.times,
+        "the first record is the one kept"
+    );
+}
+
+fn provenance_file(store: &FileSystemRunStore, run: &Run) -> PathBuf {
+    store
+        .root()
+        .join(run.id.to_string())
+        .join("provenance.json")
+}
+
+fn a_parent_hash() -> PipelineHash {
+    PipelineHash::from_digest([0x5e; 32])
+}
+
+#[test]
+fn no_provenance_file_is_written_for_no_record() {
+    let store = store("provenance_none_no_file");
+    let run = a_run(run_id(0x1a), &[("ndcg@10", 0.42)]);
+    store.save(&run).expect("the run must be writable");
+
+    // Absent is how "no record" is spelled. `{}` is an empty record, a fact of
+    // its own, and `null` would give "no record" a second spelling.
+    assert!(!provenance_file(&store, &run).exists());
+}
+
+#[test]
+fn a_record_is_written_with_only_the_keys_of_the_fields_that_are_set() {
+    let store = store("provenance_keys");
+    let mut named = a_run(run_id(0x1b), &[("ndcg@10", 0.42)]);
+    named.provenance = Some(RunProvenance::named("hybrid"));
+    let mut prefix = a_run(run_id(0x1c), &[("ndcg@10", 0.42)]);
+    prefix.provenance = Some(RunProvenance::prefix(
+        "hybrid",
+        PrefixOf::new("fused", a_parent_hash()),
+    ));
+    store.save(&named).expect("the run must be writable");
+    store.save(&prefix).expect("the run must be writable");
+
+    let read = |run: &Run| -> serde_json::Value {
+        let text = fs::read_to_string(provenance_file(&store, run))
+            .expect("a record is kept in a file of its own");
+        serde_json::from_str(&text).expect("the file is JSON")
+    };
+    assert_eq!(read(&named), serde_json::json!({"name": "hybrid"}));
+    assert_eq!(
+        read(&prefix),
+        serde_json::json!({
+            "name": "hybrid",
+            "prefix_of": {
+                "up_to": "fused",
+                "parent_pipeline_hash": a_parent_hash().to_string(),
+            },
+        })
+    );
+}
+
+#[test]
+fn a_deleted_provenance_file_reads_none() {
+    let store = store("provenance_deleted");
+    let mut run = a_run(run_id(0x1d), &[("ndcg@10", 0.42)]);
+    run.provenance = Some(RunProvenance::named("hybrid"));
+    store.save(&run).expect("the run must be writable");
+    fs::remove_file(provenance_file(&store, &run)).expect("the record is there to remove");
+
+    let read = store
+        .load(&run.id)
+        .expect("a run without a record still reads");
+
+    assert_eq!(read.provenance, None);
+    store
+        .save(&run)
+        .expect("and it counts as stored, not as torn");
+}
+
+#[test]
+fn a_malformed_provenance_file_is_malformed() {
+    let store = store("provenance_malformed");
+    let mut run = a_run(run_id(0x1e), &[("ndcg@10", 0.42)]);
+    run.provenance = Some(RunProvenance::named("hybrid"));
+    store.save(&run).expect("the run must be writable");
+    let path = provenance_file(&store, &run);
+
+    // Not JSON, a known field of the wrong type, and a `prefix_of` missing
+    // half of itself: none of them is a record.
+    for text in [
+        "{ not json",
+        r#"{"name": 3}"#,
+        r#"{"name": "hybrid", "prefix_of": {"up_to": "fused"}}"#,
+    ] {
+        fs::write(&path, text).expect("the record is writable");
+        match store.load(&run.id) {
+            Err(RunStoreError::Malformed { path: reported, .. }) => assert_eq!(reported, path),
+            other => panic!("{text}: a record that does not parse is malformed, got {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn an_unknown_provenance_field_is_ignored() {
+    // Fields are additive (ADR-C39 § 1): a record written by a later build,
+    // with a field this one does not know, reads its known fields.
+    let store = store("provenance_unknown_field");
+    let mut run = a_run(run_id(0x1f), &[("ndcg@10", 0.42)]);
+    run.provenance = Some(RunProvenance::named("hybrid"));
+    store.save(&run).expect("the run must be writable");
+    fs::write(
+        provenance_file(&store, &run),
+        r#"{"name": "hybrid", "concurrency": 4}"#,
+    )
+    .expect("the record is writable");
+
+    let read = store.load(&run.id).expect("the record still reads");
+
+    assert_eq!(read.provenance, Some(RunProvenance::named("hybrid")));
+}
+
+#[test]
+fn an_empty_record_reads_back_as_an_empty_record_not_as_none() {
+    let store = store("provenance_empty");
+    let mut run = a_run(run_id(0x20), &[("ndcg@10", 0.42)]);
+    run.provenance = Some(RunProvenance::default());
+    store.save(&run).expect("the run must be writable");
+
+    let text = fs::read_to_string(provenance_file(&store, &run))
+        .expect("an empty record is still a record, kept in its file");
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&text).expect("the file is JSON"),
+        serde_json::json!({})
+    );
+    assert_eq!(
+        store.load(&run.id).expect("the run reads back").provenance,
+        Some(RunProvenance::default())
+    );
+}
+
+#[test]
+fn a_prefix_record_without_a_name_is_read_though_none_can_be_built() {
+    // The constructors require a name beside `prefix_of`; the reader stays
+    // tolerant, since the matrix's cell rule (ADR-C39 § 6) reads only the
+    // parent hash.
+    let store = store("provenance_prefix_no_name");
+    let mut run = a_run(run_id(0x21), &[("ndcg@10", 0.42)]);
+    run.provenance = Some(RunProvenance::named("hybrid"));
+    store.save(&run).expect("the run must be writable");
+    fs::write(
+        provenance_file(&store, &run),
+        serde_json::json!({"prefix_of": {
+            "up_to": "fused",
+            "parent_pipeline_hash": a_parent_hash().to_string(),
+        }})
+        .to_string(),
+    )
+    .expect("the record is writable");
+
+    let read = store
+        .load(&run.id)
+        .expect("the record reads")
+        .provenance
+        .expect("a record");
+
+    assert_eq!(read.name(), None);
+    let prefix = read.prefix_of().expect("its prefix is read");
+    assert_eq!(prefix.up_to(), "fused");
+    assert_eq!(prefix.parent_pipeline_hash(), &a_parent_hash());
+}
+
+#[test]
+fn provenance_is_not_part_of_identity() {
+    // The harness computes the id before any record exists, so one run saved
+    // with a record and the same run saved without one are one run (INV-8).
+    // The guard on the digest itself is `RECORDED_RUN_ID` in
+    // `ragondin-harness`'s `identity.rs`.
+    let store = store("provenance_not_identity");
+    let without = a_run(run_id(0x23), &[("ndcg@10", 0.42)]);
+    let mut with = without.clone();
+    with.provenance = Some(RunProvenance::named("hybrid"));
+    assert_eq!(with.id, without.id);
+
+    store.save(&with).expect("the run must be writable");
+    store.save(&without).expect("the same run saves again");
+
+    assert_eq!(store.ids().expect("the store lists"), vec![with.id]);
+    assert_eq!(
+        store.load(&with.id).expect("the run reads back").provenance,
+        with.provenance,
         "the first record is the one kept"
     );
 }
