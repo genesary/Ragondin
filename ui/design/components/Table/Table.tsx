@@ -15,8 +15,8 @@ export type TableRow =
       id: string;
       /** One cell per column, in column order; the first is the row's label. */
       cells: readonly ReactNode[];
-      /** The column holding this row's best value, set in bold. */
-      bestColumn?: number;
+      /** The column holding this row's best value, set in bold — or every column of a tie. */
+      bestColumn?: number | readonly number[];
       /** The row that drives a chart highlight; marked with aria-current, which a table row honours. */
       selected?: boolean;
       /** The row's accessible name, when it takes the keyboard. */
@@ -150,7 +150,7 @@ export function Table({ caption, columns, rows, onOpen, onToggle }: TableProps) 
                   onFocus={takesKeys ? () => setActive(row.id) : undefined}
                 >
                   {row.cells.map((cell, i) => {
-                    const best = i === row.bestColumn;
+                    const best = typeof row.bestColumn === 'number' ? i === row.bestColumn : (row.bestColumn?.includes(i) ?? false);
                     return (
                       <td key={columns[i]?.id ?? i} className={columns[i]?.numeric ? 'num' : undefined} data-best={best ? true : undefined}>
                         {cell}

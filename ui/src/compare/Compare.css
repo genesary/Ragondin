@@ -1,0 +1,75 @@
+/* The Compare screen's layout only: where design/'s parts sit. The charts,
+   tables, swatches and controls are drawn by their own stylesheets; every
+   value here is a token (ARCHITECTURE.md § The design system). */
+
+/* The run bar: the runs, then the baseline and the run to add, wrapping on a narrow screen. */
+.rg-compare__runs { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-4); margin: 0 0 var(--space-4); padding: 0; list-style: none; }
+.rg-compare__run { display: inline-flex; align-items: center; gap: var(--space-2); min-width: 0; }
+.rg-compare__id { font: var(--type-hash); letter-spacing: var(--type-hash-tracking); color: var(--ink-3); }
+.rg-compare__controls { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--space-3) var(--space-4); }
+.rg-compare__add { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--space-2); }
+/* The busy line is reserved whether it says anything or not, so the run bar never moves. */
+.rg-compare__busy { min-height: var(--space-4); margin: 0 0 var(--space-2); font: var(--type-caption); color: var(--ink-3); }
+.rg-compare__problem { margin-top: var(--space-3); }
+
+.rg-compare__note { margin: 0; font: var(--type-caption); color: var(--ink-3); }
+.rg-compare__note:empty { display: none; }
+.rg-compare__stack { display: grid; gap: var(--space-4); min-width: 0; }
+.rg-compare__pickers { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--space-3) var(--space-4); }
+.rg-compare__head-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+
+/* A cell for a stage a run does not have: words, muted, never a zero or a dash. */
+.rg-compare__absent { color: var(--ink-3); font-style: italic; }
+.rg-compare__nodes { color: var(--ink-2); }
+/* A parameter that departs from the baseline: a wash and weight, and words for assistive technology. */
+.rg-compare__departure { padding: 0 var(--space-1); border-radius: var(--radius-xs); background: var(--accent-wash); color: var(--ink); font-weight: 600; }
+.rg-compare__delta { display: block; }
+
+/* The open bin's queries. */
+.rg-compare__queries { display: grid; gap: var(--space-2); }
+.rg-compare__queries h3 { margin: 0; font: var(--type-label); color: var(--ink); }
+.rg-compare__queries ul { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-3); margin: 0; padding: 0; list-style: none; }
+.rg-compare__queries a { display: inline-flex; gap: var(--space-2); font: var(--type-mono); color: var(--ink); }
+.rg-compare__queries a span:last-child { color: var(--ink-3); font-variant-numeric: tabular-nums; }
+
+/* The verdict: the page's last words, then its one action. */
+.rg-compare__verdict { margin: 0 0 var(--space-4); max-width: 64ch; font: var(--type-verdict); letter-spacing: var(--type-verdict-tracking); color: var(--ink); }
+.rg-compare__action { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); }
+
+/* The pairing panel: two columns of nodes and the links between them. */
+.rg-pair { display: grid; gap: var(--space-3); margin-bottom: var(--space-4); padding: var(--space-4); border: 1px solid var(--line); border-radius: var(--radius-m); background: var(--surface-2); }
+.rg-pair__grid { display: grid; grid-template-columns: minmax(0, 1fr) 64px minmax(0, 1fr); column-gap: var(--space-2); row-gap: var(--space-2); }
+.rg-pair__head { font: var(--type-label); color: var(--ink-2); }
+.rg-pair__column { display: grid; grid-auto-rows: var(--size-control-l); margin: 0; padding: 0; list-style: none; }
+.rg-pair__node {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  height: var(--size-control-l);
+  padding: 0 var(--space-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-s);
+  background: var(--surface);
+  color: var(--ink);
+  font: var(--type-dense);
+  cursor: pointer;
+}
+.rg-pair__node[aria-pressed="true"] { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); background: var(--accent-wash); }
+.rg-pair__node:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.rg-pair__node .rg-tile { transform: scale(0.75); }
+.rg-pair__name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rg-pair__stage { margin-left: auto; font: var(--type-micro); color: var(--ink-3); white-space: nowrap; }
+.rg-pair__links { overflow: visible; }
+.rg-pair__link { stroke: var(--ink-2); stroke-width: 1.5; }
+.rg-pair__link[data-source="automatic"] { stroke: var(--line-control); stroke-dasharray: 4 3; }
+.rg-pair__link[data-source="manual"] { stroke: var(--accent); stroke-dasharray: none; stroke-width: 2; }
+.rg-pair__legend { display: flex; flex-wrap: wrap; gap: var(--space-4); font: var(--type-caption); color: var(--ink-2); }
+.rg-pair__legend span::before { content: ""; display: inline-block; width: 24px; margin-right: var(--space-1); vertical-align: middle; border-top: 2px solid var(--accent); }
+.rg-pair__legend span[data-source="automatic"]::before { border-top: 1.5px dashed var(--line-control); }
+.rg-pair__pairs { display: grid; gap: var(--space-1); min-height: var(--size-control-s); margin: 0; padding: 0; list-style: none; font: var(--type-dense); color: var(--ink); }
+.rg-pair__none { color: var(--ink-3); }
+.rg-pair__pairs li { display: flex; min-height: var(--size-control-s); align-items: center; justify-content: space-between; gap: var(--space-2); }
+.rg-pair__actions { display: flex; justify-content: flex-end; }
+/* The picked node's line: always there, empty or not, so picking moves nothing below it. */
+.rg-pair__status { min-height: var(--space-4); margin: 0; font: var(--type-caption); color: var(--ink-2); }

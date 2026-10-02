@@ -6,6 +6,7 @@ import { createApiClient } from './api/client.ts';
 import { FakeEventSource, installFakeEventSource, mockApi } from './api/testing.ts';
 import type { Workspace } from './api/types.ts';
 import { App } from './App.tsx';
+import { COMPARISON, DENSE, HYBRID, RERANK } from './compare/fixtures.ts';
 
 const BUILD = '0.0.0+aaaaaaaaaaaa';
 
@@ -48,9 +49,8 @@ describe('the shell’s screens', () => {
     ['#runs', 'Runs', 'No runs yet'],
     ['#pipeline', 'Pipeline', 'No pipeline chosen'],
     ['#pipeline/hybrid-rrf', 'Pipeline', 'Nothing to show for hybrid-rrf yet'],
-    ['#compare', 'Compare', 'No runs chosen to compare'],
-    ['#compare/aaa+bbb?baseline=aaa', 'Compare', 'Nothing to show for 2 runs yet'],
-    ['#compare/aaa', 'Compare', 'Nothing to show for 1 run yet'],
+    ['#compare', 'Compare', 'Choose at least two runs'],
+    ['#compare/aaa', 'Compare', 'Choose at least two runs'],
     ['#replay', 'Replay', 'No query chosen'],
     [`#replay/${'a1b2c3d4e5f6'.padEnd(64, '0')}`, 'Replay', 'No query chosen for run a1b2c3d4e5f6'],
     ['#replay/aaa/q/1395?with=bbb', 'Replay', 'Nothing to show for query 1395 yet'],
@@ -65,6 +65,13 @@ describe('the shell’s screens', () => {
     const nav = within(screen.getByRole('navigation', { name: 'Screens' }));
     expect(nav.getByRole('link', { name: tab }).getAttribute('aria-current')).toBe('page');
     await screen.findByText(WORKSPACE.path);
+  });
+
+  it('hands Compare the runs and the baseline its address carries', async () => {
+    const api = mockApi({ 'GET /workspace': { body: WORKSPACE }, 'GET /runs': { body: { runs: [], unreadable: [] } }, 'POST /compare': { body: COMPARISON } }, { build: BUILD });
+    show(`#compare/${DENSE}+${HYBRID}+${RERANK}?baseline=${DENSE}`);
+    expect(await within(main()).findByRole('heading', { name: 'Verdict' })).toBeTruthy();
+    expect(api.bodies[api.requests.indexOf('POST /api/v1/compare')]).toEqual({ run_ids: [DENSE, HYBRID, RERANK], baseline: DENSE });
   });
 
   it('hands Runs the selection its address carries', async () => {

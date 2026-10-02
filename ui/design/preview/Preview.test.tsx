@@ -6,7 +6,7 @@ import { COMPONENTS, Preview } from './Preview.tsx';
 const LISTED = [
   'Glyph', 'Button', 'Input', 'Select', 'Checkbox', 'StatusChip', 'MetricChip', 'FilterChip', 'RunSwatch', 'Table',
   'Sheet', 'Inspector', 'Toast', 'InlineMessage', 'Progress', 'EmptyState', 'RankStrip', 'SegmentedControl', 'Tabs', 'TopBar',
-  'StatusDot', 'NodeCard', 'Canvas',
+  'StatusDot', 'NodeCard', 'Canvas', 'Charts',
 ];
 
 describe('Preview', () => {

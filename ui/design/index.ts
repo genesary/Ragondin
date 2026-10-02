@@ -22,3 +22,9 @@ export { Table, type TableColumn, type TableRow } from './components/Table/Table
 export { Tabs } from './components/Tabs/Tabs.tsx';
 export { Toast } from './components/Toast/Toast.tsx';
 export { TopBar } from './components/TopBar/TopBar.tsx';
+export { BarChart } from './charts/BarChart.tsx';
+export { ChartFrame, ChartTooltip, type LegendItem } from './charts/ChartFrame.tsx';
+export { Histogram, type HistogramBin } from './charts/Histogram.tsx';
+export { LineChart } from './charts/LineChart.tsx';
+export { type RunSeries } from './charts/scale.ts';
+export { StackedBarChart, type StackSegment } from './charts/StackedBarChart.tsx';

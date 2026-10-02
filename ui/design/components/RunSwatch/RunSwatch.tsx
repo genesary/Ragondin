@@ -13,6 +13,8 @@ export type RunSwatchProps = {
   small?: boolean;
   /** Called with the full hash when the hash label is clicked. */
   onCopyHash?: (hash: string) => void;
+  /** Which run the hash button copies, in words ("run A"), when several sit side by side; it names the button. */
+  copyLabel?: string;
 };
 
 /**
@@ -20,7 +22,7 @@ export type RunSwatchProps = {
  * neutral outline), its name and its hash. Letter, fill and position: never
  * colour alone. Run inks are a separate set from the family pigments.
  */
-export function RunSwatch({ slot, name, hash, small = false, onCopyHash }: RunSwatchProps) {
+export function RunSwatch({ slot, name, hash, small = false, onCopyHash, copyLabel }: RunSwatchProps) {
   const letter = slot === 'base' ? 'baseline' : slot.toUpperCase();
   const hidden = slot === 'base' || small;
   return (
@@ -30,7 +32,7 @@ export function RunSwatch({ slot, name, hash, small = false, onCopyHash }: RunSw
       </span>
       {name === undefined ? null : <span className="rg-runlabel__name">{name}</span>}
       {hash === undefined ? null : (
-        <button type="button" className="rg-hash" title={hash} aria-label={`Copy run hash ${hash}`} onClick={() => onCopyHash?.(hash)}>
+        <button type="button" className="rg-hash" title={hash} aria-label={copyLabel === undefined ? `Copy run hash ${hash}` : `Copy the hash of ${copyLabel}`} onClick={() => onCopyHash?.(hash)}>
           {hash.slice(0, 6)}
         </button>
       )}
