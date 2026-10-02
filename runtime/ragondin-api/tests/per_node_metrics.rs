@@ -23,6 +23,8 @@ use std::sync::Arc;
 
 use ragondin_benchmarks::identity::dataset_version;
 use ragondin_benchmarks::{Benchmark, Qrels, ReferenceAnswers};
+use ragondin_experiments::{Trace, TraceSummary};
+use ragondin_metrics::documents_by_first_occurrence;
 use ragondin_types::{DocId, Document, Query, QueryId};
 use serde_json::Value;
 use support::calibration::{beir_calibration, pytrec_eval_parity, squad_generation, FixtureRun};
@@ -253,4 +255,79 @@ async fn the_squad_fixture_per_query_exact_match_and_f1_average_to_its_metrics()
     for other in ["prompt", "answer"] {
         assert!(node(&body, other)["metrics"].is_null(), "{other}");
     }
+}
+
+/// Which passages are gold, as the trace serves them, is the qrels read at
+/// the ranks the metric computation sees: on the harness-recorded run, for
+/// every query and every node that produced a ranking, `gold_ranks` is the
+/// 1-based rank of every document graded above 0 in the ranking folded by
+/// `ragondin_metrics::documents_by_first_occurrence` — the fold the figures
+/// above are computed over — and each passage's `grade` is its document's
+/// grade, `0` when the qrels do not judge it. A query without qrels has no
+/// gold to show: both are `null`, as its ranking scores are absent.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_gold_ranks_of_every_ranking_node_are_the_ranks_the_metrics_see() {
+    let run = fixture_run();
+    let benchmark = generation_regime_benchmark();
+    let workspace = scratch("per_node_gold_ranks");
+    let registry = Arc::new(FixtureRegistry::holding([(
+        "fixture".to_owned(),
+        benchmark.clone(),
+    )]));
+    let (mut judged_rankings, mut unjudged_rankings) = (0, 0);
+    for (query, document) in &run.traces {
+        let trace = Trace::try_from(document).expect("the fixture's traces read");
+        let response = send(
+            app_over(
+                FakeRunStore::holding([run.clone()]),
+                registry.clone(),
+                &workspace,
+            ),
+            get(&format!("/api/v1/runs/{}/trace/{}", run.id, query.as_str())),
+        )
+        .await;
+        assert_eq!(response.status(), 200);
+        let body = json(response).await;
+        let judgments = benchmark
+            .qrels()
+            .for_query(query)
+            .filter(|judgments| !judgments.is_empty());
+        for entry in &trace.nodes {
+            let served = node(&body, entry.node.as_str());
+            let at = format!("query {}, node {}", query.as_str(), entry.node.as_str());
+            let Some(TraceSummary::RankedChunks { chunks }) = &entry.output else {
+                assert!(served["gold_ranks"].is_null(), "{at}");
+                continue;
+            };
+            let passages = served["output"]["chunks"].as_array().unwrap();
+            let Some(judgments) = judgments else {
+                assert!(served["gold_ranks"].is_null(), "{at}");
+                assert!(
+                    passages.iter().all(|passage| passage["grade"].is_null()),
+                    "{at}"
+                );
+                unjudged_rankings += 1;
+                continue;
+            };
+            let folded = documents_by_first_occurrence(chunks.iter().map(|chunk| &chunk.document));
+            let ranks: Vec<u64> = folded
+                .iter()
+                .enumerate()
+                .filter(|(_, document)| judgments.get(*document).is_some_and(|grade| *grade > 0))
+                .map(|(position, _)| position as u64 + 1)
+                .collect();
+            assert_eq!(served["gold_ranks"], serde_json::json!(ranks), "{at}");
+            assert_eq!(passages.len(), chunks.len(), "{at}");
+            for (chunk, passage) in chunks.iter().zip(passages) {
+                let grade = judgments.get(&chunk.document).copied().unwrap_or(0);
+                assert_eq!(passage["grade"], grade, "{at}");
+            }
+            judged_rankings += 1;
+        }
+    }
+    assert!(judged_rankings > 0, "a judged ranking was compared");
+    assert!(
+        unjudged_rankings > 0,
+        "an unjudged query's ranking was seen"
+    );
 }

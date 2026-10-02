@@ -321,9 +321,13 @@ pub struct RunQueries {
 
 /// One query, as the run executed it.
 #[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
+#[schemars(transform = every_property_required)]
 pub struct QueryScores {
     /// The query's id.
     pub id: String,
+    /// Its text, the dataset's: present when the ground truth is
+    /// `verified` and the dataset holds the query; `null` otherwise.
+    pub text: Option<String>,
     /// Its scores at the run's output, by metric name: the ranking metrics
     /// when its qrels are non-empty, the answer metrics when it has a
     /// reference. Empty when it is judged on neither, or when the ground
@@ -357,11 +361,16 @@ pub struct NodeMetrics {
 /// order the nodes ran, with each named chunk's passage text when the run's
 /// own dataset is on disk.
 #[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
+#[schemars(transform = every_property_required)]
 pub struct QueryTrace {
     /// The run's id.
     pub run: String,
     /// The query's id.
     pub query: String,
+    /// The query's text, the dataset's: present when the dataset on disk is
+    /// the run's, whatever the chunk set — the gate `scores` is under — and
+    /// it holds the query; `null` otherwise, and `passages` says why.
+    pub text: Option<String>,
     /// Whether passage text could be resolved: only against the dataset the
     /// run was evaluated on, digests compared (ADR-C36 § 4).
     pub passages: DatasetCheck,
@@ -391,6 +400,12 @@ pub struct TraceNodeView {
     /// it produced a ranking, the query is judged and the dataset on disk is
     /// the run's; `null` otherwise.
     pub metrics: Option<BTreeMap<String, f64>>,
+    /// The 1-based ranks of the gold documents — graded above 0 — in its
+    /// ranking, counted over documents folded from its chunks by first
+    /// occurrence, the ranking its `metrics` score: present when it produced
+    /// a ranking, the query is judged and the dataset on disk is the run's;
+    /// empty when it ranked no gold document; `null` otherwise.
+    pub gold_ranks: Option<Vec<u64>>,
 }
 
 /// A value along an edge, as the trace records it: sized on an input port,
@@ -452,6 +467,10 @@ pub struct TracePassage {
     /// Its text: present only when the passages are `verified` and the chunk
     /// set derived from the dataset holds this id; `null` otherwise.
     pub text: Option<String>,
+    /// Its document's grade in the query's qrels, `0` when they do not judge
+    /// it: present when the query is judged and the dataset on disk is the
+    /// run's, whatever the chunk set; `null` otherwise.
+    pub grade: Option<u8>,
 }
 
 /// Whether the dataset on disk is the one a run was evaluated on: the

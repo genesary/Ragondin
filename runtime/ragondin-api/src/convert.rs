@@ -16,6 +16,7 @@ use ragondin_experiments::{
 use ragondin_pipeline::{
     produced_kind, LogicalNode, LogicalPipeline, NodeId, ParamValue, ValueKind,
 };
+use ragondin_types::DocId;
 
 use crate::backends::RunDataset;
 use crate::derived::NodeFigures;
@@ -583,11 +584,15 @@ pub(crate) fn dataset_error(check: &DatasetCheck) -> ApiError {
 /// A query's trace as the API shows it. `texts` holds the passage text of
 /// each chunk id the run's verified chunk set resolves; `None` when the
 /// dataset is not verified, and then no chunk has text. `metrics` gives a
-/// node's ranking metrics for this query, when it has any.
+/// node's ranking metrics for this query and `gold_ranks` the ranks of its
+/// gold documents, when it has any; `grade` a document's grade for this
+/// query, when it has one.
 pub(crate) fn trace_view(
     trace: &Trace,
     texts: Option<&HashMap<String, String>>,
     metrics: impl Fn(&NodeId) -> Option<BTreeMap<String, f64>>,
+    gold_ranks: impl Fn(&NodeId) -> Option<Vec<u64>>,
+    grade: impl Fn(&DocId) -> Option<u8>,
 ) -> Vec<TraceNodeView> {
     let passages = |chunks: &[TraceChunk]| -> Vec<TracePassage> {
         chunks
@@ -597,6 +602,7 @@ pub(crate) fn trace_view(
                 document: chunk.document.as_str().to_owned(),
                 score: chunk.score,
                 text: texts.and_then(|texts| texts.get(chunk.chunk.as_str()).cloned()),
+                grade: grade(&chunk.document),
             })
             .collect()
     };
@@ -633,6 +639,7 @@ pub(crate) fn trace_view(
             duration_nanos: node.duration_nanos,
             error: node.error.clone(),
             metrics: metrics(&node.node),
+            gold_ranks: gold_ranks(&node.node),
         })
         .collect()
 }

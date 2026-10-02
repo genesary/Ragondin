@@ -528,3 +528,183 @@ async fn a_chunk_the_derived_chunk_set_does_not_hold_has_no_text() {
     );
     assert!(named[1]["text"].is_string());
 }
+
+/// Every passage's grade, in rankings and contexts, and the gold ranks of
+/// each node that produced a ranking — counted over documents, so two chunks
+/// of one document take one rank, as in every metric.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_verified_trace_grades_every_passage_and_ranks_the_gold_documents() {
+    let (workspace, registry) = workspace("replay_gold", true);
+    // q-1's qrels: MED-10 graded 2, MED-12 judged not relevant (0); 4983 is
+    // not judged for it.
+    let q1 = generation_trace(
+        "q-1",
+        vec![
+            chunk("4983", "4983", 0.9),
+            chunk("MED-10#1", "MED-10", 0.8),
+            chunk("MED-10", "MED-10", 0.7),
+            chunk("MED-12", "MED-12", 0.6),
+        ],
+        documents(&["MED-12", "MED-10", "4983"]),
+        2,
+        "on the mat",
+    );
+    let run = run_over(
+        0x43,
+        GENERATION,
+        &beir_mini(),
+        vec![("q-1", q1)],
+        &[("mrr", 0.5), ("ndcg@10", 0.5), ("recall@10", 1.0)],
+    );
+
+    let (status, body) = trace_of(&workspace, registry, &run, "q-1").await;
+
+    assert_eq!(status, StatusCode::OK);
+    let grades = |node_id: &str| -> Vec<Value> {
+        node(&body, node_id)["output"]["chunks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|passage| passage["grade"].clone())
+            .collect()
+    };
+    assert_eq!(grades("leg"), [0, 2, 2, 0]);
+    assert_eq!(grades("reranked"), [0, 2, 0]);
+    assert_eq!(grades("prompt"), [0, 2], "a context's passages are graded");
+    // leg's chunks fold to 4983, MED-10, MED-12: MED-10 is at rank 2, though
+    // its chunks sit at positions 2 and 3.
+    assert_eq!(node(&body, "leg")["gold_ranks"], serde_json::json!([2]));
+    assert_eq!(
+        node(&body, "reranked")["gold_ranks"],
+        serde_json::json!([2])
+    );
+    for other in ["prompt", "answer"] {
+        assert!(
+            node(&body, other)["gold_ranks"].is_null(),
+            "{other} produced no ranking"
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_ranking_with_its_gold_document_first_ranks_it_one_and_a_failed_node_has_no_ranks() {
+    let (workspace, registry) = workspace("replay_gold_failed", true);
+    let run = the_run();
+
+    let (_, body) = trace_of(&workspace, registry, &run, "q-2").await;
+
+    // q-2 judges 4983 relevant (1); leg ranked it first.
+    assert_eq!(node(&body, "leg")["gold_ranks"], serde_json::json!([1]));
+    assert!(node(&body, "reranked")["gold_ranks"].is_null(), "it failed");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_ranking_that_misses_every_gold_document_has_empty_gold_ranks() {
+    let (workspace, registry) = workspace("replay_gold_none", true);
+    let trace = Trace {
+        nodes: vec![support::runs::node(
+            "leg",
+            vec![query("q-1")],
+            ranked(documents(&["4983", "MED-12"])),
+            10,
+        )],
+    };
+    let run = run_over(
+        0x44,
+        "pipeline:\n  inputs: [question]\n  nodes:\n    - id: leg\n      component: retriever\n      impl: dense\n      inputs: [question]\n",
+        &beir_mini(),
+        vec![("q-1", trace)],
+        &[("mrr", 0.0)],
+    );
+
+    let (_, body) = trace_of(&workspace, registry, &run, "q-1").await;
+
+    assert_eq!(node(&body, "leg")["gold_ranks"], serde_json::json!([]));
+}
+
+/// Without the run's own ground truth, nothing about gold is guessed: every
+/// grade, every node's gold ranks and the query's text are `null`, and
+/// `passages` carries the reason, as it does for passage text.
+#[tokio::test(flavor = "multi_thread")]
+async fn without_the_runs_dataset_no_grade_gold_rank_or_query_text_is_served() {
+    for (test, on_disk, alter, status) in [
+        ("replay_gold_absent", false, false, "dataset_absent"),
+        ("replay_gold_differs", true, true, "dataset_differs"),
+    ] {
+        let (workspace, registry) = workspace(test, on_disk);
+        if alter {
+            let corpus = workspace.join("datasets").join(DIR).join("corpus.jsonl");
+            let original = fs::read_to_string(&corpus).unwrap();
+            fs::write(&corpus, original.replacen("The cat sat", "The bat sat", 1)).unwrap();
+        }
+
+        let (code, body) = trace_of(&workspace, registry.clone(), &the_run(), "q-1").await;
+
+        assert_eq!(code, StatusCode::OK, "{test}");
+        assert_eq!(body["passages"]["status"], status, "{test}");
+        assert!(body["text"].is_null(), "{test}: no query text");
+        for chunk in chunks(&body) {
+            assert!(chunk["grade"].is_null(), "{test}: {chunk}");
+        }
+        for entry in body["nodes"].as_array().unwrap() {
+            assert!(entry["gold_ranks"].is_null(), "{test}: {entry}");
+        }
+
+        let (_, listing) = queries_of(&workspace, registry, &the_run(), "").await;
+        assert_eq!(listing["ground_truth"]["status"], status, "{test}");
+        for entry in listing["queries"].as_array().unwrap() {
+            assert!(entry["text"].is_null(), "{test}: {entry}");
+        }
+    }
+}
+
+/// The grades, the gold ranks and the query's text are the dataset's, as the
+/// scores are: a chunk set that is not the run's hides the passage text and
+/// nothing else.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_chunk_set_that_is_not_the_runs_keeps_the_grades_and_the_query_text() {
+    let (workspace, registry) = workspace("replay_gold_index_differs", true);
+    let mut run = the_run();
+    run.inputs.index_version = "f".repeat(64);
+
+    let (_, body) = trace_of(&workspace, registry, &run, "q-1").await;
+
+    assert_eq!(body["passages"]["status"], "index_differs");
+    assert_eq!(body["text"], "where did the cat sit?");
+    assert_eq!(
+        node(&body, "reranked")["gold_ranks"],
+        serde_json::json!([1])
+    );
+    assert_eq!(node(&body, "reranked")["output"]["chunks"][0]["grade"], 2);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_verified_dataset_serves_each_querys_text_on_the_trace_and_the_listing() {
+    let (workspace, registry) = workspace("replay_query_text", true);
+    let run = the_run();
+
+    let (_, body) = trace_of(&workspace, registry.clone(), &run, "q-1").await;
+    assert_eq!(body["query"], "q-1");
+    assert_eq!(body["text"], "where did the cat sit?");
+
+    let (status, listing) = queries_of(&workspace, registry, &run, "").await;
+    assert_eq!(status, StatusCode::OK);
+    let texts: Vec<(&str, &str)> = listing["queries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| {
+            (
+                entry["id"].as_str().unwrap(),
+                entry["text"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        texts,
+        [
+            ("q-1", "where did the cat sit?"),
+            ("q-2", "which document has no title?"),
+        ]
+    );
+}
