@@ -915,7 +915,10 @@ restated (`derived.rs`):
   with no ranking. Read from the qrels by `derived::grade` and
   `derived::gold_ranks`, beside the gold filter, which shares their rule of
   what is gold. `tests/per_node_metrics.rs` compares `gold_ranks` with the
-  fold over every ranking node of the harness-recorded run.
+  fold, and each node's `mrr` with its first gold rank, over every ranking
+  node of the harness-recorded run; that run has one chunk per document, so
+  `tests/replay.rs` pins the fold itself, with a gold document after a
+  collapsed duplicate.
   **A query without qrels has no grade and no gold ranks**, `null`, a
   choice made here: it is unjudged, as its absent scores say, and a `0`
   would read as judged not relevant.

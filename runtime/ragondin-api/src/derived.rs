@@ -298,7 +298,10 @@ pub(crate) fn node_figures(
 }
 
 /// The grade the qrels give `document` for a judged query: `0` when they do
-/// not judge it, the closed world every metric reads them under.
+/// not judge it. That is `ragondin-metrics`' convention — a grade of `0`
+/// means not relevant, and an unjudged document counts as `0`, TREC's closed
+/// world — which its metrics apply inside and do not export, so this reads
+/// the qrels under the same rule rather than another.
 fn grade_in(judgments: &BTreeMap<DocId, u8>, document: &DocId) -> u8 {
     judgments.get(document).copied().unwrap_or(0)
 }
@@ -335,6 +338,15 @@ pub(crate) fn gold_ranks(
             .map(|(rank, _)| rank)
             .collect(),
     )
+}
+
+/// One query's text, the benchmark's, when it holds the query.
+pub(crate) fn query_text<'b>(benchmark: &'b Benchmark, query: &QueryId) -> Option<&'b str> {
+    benchmark
+        .queries()
+        .iter()
+        .find(|candidate| &candidate.id == query)
+        .map(|candidate| candidate.text.as_str())
 }
 
 /// Every query's text, by id: the benchmark's.

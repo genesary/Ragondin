@@ -627,15 +627,20 @@ async fn a_ranking_that_misses_every_gold_document_has_empty_gold_ranks() {
 /// `passages` carries the reason, as it does for passage text.
 #[tokio::test(flavor = "multi_thread")]
 async fn without_the_runs_dataset_no_grade_gold_rank_or_query_text_is_served() {
-    for (test, on_disk, alter, status) in [
-        ("replay_gold_absent", false, false, "dataset_absent"),
-        ("replay_gold_differs", true, true, "dataset_differs"),
+    for (test, status) in [
+        ("replay_gold_absent", "dataset_absent"),
+        ("replay_gold_differs", "dataset_differs"),
+        ("replay_gold_unreadable", "dataset_unreadable"),
     ] {
-        let (workspace, registry) = workspace(test, on_disk);
-        if alter {
-            let corpus = workspace.join("datasets").join(DIR).join("corpus.jsonl");
-            let original = fs::read_to_string(&corpus).unwrap();
-            fs::write(&corpus, original.replacen("The cat sat", "The bat sat", 1)).unwrap();
+        let (workspace, registry) = workspace(test, status != "dataset_absent");
+        let corpus = workspace.join("datasets").join(DIR).join("corpus.jsonl");
+        match status {
+            "dataset_differs" => {
+                let original = fs::read_to_string(&corpus).unwrap();
+                fs::write(&corpus, original.replacen("The cat sat", "The bat sat", 1)).unwrap();
+            }
+            "dataset_unreadable" => fs::remove_file(&corpus).unwrap(),
+            _ => {}
         }
 
         let (code, body) = trace_of(&workspace, registry.clone(), &the_run(), "q-1").await;
@@ -676,6 +681,15 @@ async fn a_chunk_set_that_is_not_the_runs_keeps_the_grades_and_the_query_text() 
         serde_json::json!([1])
     );
     assert_eq!(node(&body, "reranked")["output"]["chunks"][0]["grade"], 2);
+    let named = chunks(&body);
+    assert!(!named.is_empty());
+    for chunk in named {
+        assert!(chunk["grade"].is_number(), "graded: {chunk}");
+        assert!(
+            chunk["text"].is_null(),
+            "no text from another chunk set: {chunk}"
+        );
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -355,11 +355,9 @@ pub(crate) async fn trace(
         },
         |document| benchmark.and_then(|benchmark| derived::grade(benchmark, &query_id, document)),
     );
-    let text = benchmark.and_then(|benchmark| {
-        derived::query_texts(benchmark)
-            .get(&query_id)
-            .map(|text| (*text).to_owned())
-    });
+    let text = benchmark
+        .and_then(|benchmark| derived::query_text(benchmark, &query_id))
+        .map(str::to_owned);
     Ok(Json(QueryTrace {
         run: run.id.to_string(),
         query,

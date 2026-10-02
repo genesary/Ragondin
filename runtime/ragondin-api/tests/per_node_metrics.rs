@@ -265,6 +265,15 @@ async fn the_squad_fixture_per_query_exact_match_and_f1_average_to_its_metrics()
 /// above are computed over — and each passage's `grade` is its document's
 /// grade, `0` when the qrels do not judge it. A query without qrels has no
 /// gold to show: both are `null`, as its ranking scores are absent.
+///
+/// "Gold" is tied to what the metric counts: each judged ranking node's
+/// `mrr` is the reciprocal of its first gold rank, or 0 when it ranked none.
+///
+/// The harness recorded this run with one chunk per document, so no ranking
+/// here holds two chunks of one document and the fold collapses nothing:
+/// this test cannot tell document ranks from chunk positions. `replay.rs`'s
+/// `a_verified_trace_grades_every_passage_and_ranks_the_gold_documents`
+/// pins the fold, with a gold document after a collapsed duplicate.
 #[tokio::test(flavor = "multi_thread")]
 async fn the_gold_ranks_of_every_ranking_node_are_the_ranks_the_metrics_see() {
     let run = fixture_run();
@@ -317,6 +326,8 @@ async fn the_gold_ranks_of_every_ranking_node_are_the_ranks_the_metrics_see() {
                 .map(|(position, _)| position as u64 + 1)
                 .collect();
             assert_eq!(served["gold_ranks"], serde_json::json!(ranks), "{at}");
+            let reciprocal = ranks.first().map_or(0.0, |rank| 1.0 / *rank as f64);
+            assert_eq!(served["metrics"]["mrr"].as_f64(), Some(reciprocal), "{at}");
             assert_eq!(passages.len(), chunks.len(), "{at}");
             for (chunk, passage) in chunks.iter().zip(passages) {
                 let grade = judgments.get(&chunk.document).copied().unwrap_or(0);
