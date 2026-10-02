@@ -22,7 +22,7 @@ use axum::routing::{MethodFilter, MethodRouter};
 use axum::Router;
 
 use crate::description::Parameters;
-use crate::endpoints::{benchmarks, compare, pipelines, services};
+use crate::endpoints::{benchmarks, compare, matrix, pipelines, services};
 use crate::extract::ApiInputs;
 use crate::handlers::{self, AppState};
 
@@ -85,6 +85,7 @@ pub(crate) fn api(routes: &mut impl Routes) {
     routes.route(Put, "/pipelines/{name}", pipelines::write);
     routes.route(Get, "/pipelines/{name}/layout", pipelines::read_layout);
     routes.route(Put, "/pipelines/{name}/layout", pipelines::write_layout);
+    routes.route(Get, "/pipelines/{name}/matrix", matrix::matrix);
     routes.route(Get, "/benchmarks", benchmarks::list);
     routes.route(Post, "/benchmarks/import", benchmarks::import);
     routes.route(Get, "/services", services::list);

@@ -278,6 +278,34 @@ export type FamilyCapabilities = {
   local: string[];
 };
 
+/** A run that counts for the matrix's pipeline. */
+export type FeedingRun = {
+  /** Every benchmark the registry pins to that digest, sorted. */
+  benchmark_names: string[];
+  /** The digest of the dataset it ran on. */
+  dataset_version: string;
+  /**
+   * Whether it is the run its column shows: the most recent on its
+   * benchmark.
+   */
+  fills_column: boolean;
+  /**
+   * Every workspace document whose canonical hash is the run's, sorted —
+   * ADR-C39 § 4's content fact.
+   */
+  pipeline_names: string[];
+  /**
+   * For a prefix of the matrix's pipeline, by the structural test: the
+   * pipeline and the node it stops at; `null` for a run of the current
+   * canonical form.
+   */
+  prefix_of: PrefixOf | null;
+  /** The run's id. */
+  run: string;
+  /** When it started, from its own record; `null` when unknown. */
+  started_at_ms: number | null;
+};
+
 /** The digests of the dataset on disk. */
 export type FoundVersions = {
   /** What the dataset on disk digests to. */
@@ -378,6 +406,87 @@ export type Location = {
   node: string | null;
 };
 
+/** One node on one benchmark: its figure, or why it has none. */
+export type MatrixCell = {
+  /**
+   * Per metric, the value minus the best value of the previous ranking
+   * stage — the gain, which is what says where a node helps; `null`
+   * where there is no previous stage (a retrieval leg) and for the
+   * generator.
+   */
+  gain: Record<string, number> | null;
+  /**
+   * How many judged queries a ranking node's means are over; `null`
+   * for the generator, whose figures are the run's.
+   */
+  judged_queries: number | null;
+  kind: "measured";
+  /** The figures, by metric name. */
+  metrics: Record<string, number>;
+} | {
+  kind: "no_qrels";
+} | {
+  kind: "no_reference_answers";
+} | {
+  /** The benchmark to launch. */
+  benchmark: string;
+  kind: "not_run_yet";
+} | {
+  kind: "prefix_stops";
+  /** The node the prefix run stops at. */
+  up_to: string;
+} | {
+  kind: "not_scored";
+} | {
+  kind: "unverified";
+} | {
+  kind: "no_figure";
+};
+
+/** One benchmark of the matrix, and the run that fills it. */
+export type MatrixColumn = {
+  /**
+   * Every benchmark the registry pins to that digest, sorted; empty when
+   * it pins none.
+   */
+  benchmark_names: string[];
+  /** One cell per row, in the rows' order. */
+  cells: MatrixCell[];
+  /**
+   * Whether the dataset on disk is the run's own, which the ranking
+   * figures are read against; `null` when no run fills the column.
+   */
+  dataset_check: DatasetCheck | null;
+  /** The digest of the benchmark's dataset, as runs over it record it. */
+  dataset_version: string;
+  /**
+   * The ground truth it carries: read off the dataset when it verified,
+   * otherwise off the metrics the run recorded; `null` for a benchmark no
+   * run measured.
+   */
+  ground_truth: GroundTruth | null;
+  /**
+   * The run that fills the column — the most recent counted run on this
+   * benchmark; `null` when none ran on it.
+   */
+  run: string | null;
+  /** For a prefix run, the node it stops at; `null` otherwise. */
+  up_to: string | null;
+};
+
+/** One node of the matrix's pipeline. */
+export type MatrixRow = {
+  /** Its component family, as a configuration's `component:` spells it. */
+  family: string;
+  /** The node's id. */
+  node: string;
+  /**
+   * The kind of value it produces: `chunks` for a ranking node, `answer`
+   * for a generator.
+   */
+  produces: EdgeKind;
+};
+
 /** One metric's per-query deltas, and their histogram. */
 export type MetricDeltas = {
   /**
@@ -426,6 +535,22 @@ export type MetricRow = {
   name: string;
   /** Each run's value; `null` where the run did not record it. */
   values: (number | null)[];
+};
+
+/**
+ * The nodes of one column no run measured, which a run of the whole
+ * pipeline on its benchmark would.
+ */
+export type MissingCells = {
+  /**
+   * The benchmark to launch on: the first name pinned to the digest;
+   * `null` when the registry pins none, and nothing can be launched.
+   */
+  benchmark: string | null;
+  /** The digest of its dataset. */
+  dataset_version: string;
+  /** The nodes, in the rows' order. */
+  nodes: string[];
 };
 
 /** One node's latency over a run's queries. */
@@ -578,6 +703,56 @@ export type PipelineListing = {
   pipelines: PipelineSummary[];
 };
 
+/**
+ * `GET /pipelines/{name}/matrix`: one workspace pipeline's node × benchmark
+ * matrix, over the runs of its current canonical form and of its prefixes
+ * (ADR-C39 § 6). Derived from the stored runs on every request: it is no
+ * object of its own.
+ */
+export type PipelineMatrix = {
+  /**
+   * Why derived figures could not be cached under the workspace's
+   * `cache/`, one entry per failure; empty otherwise. The response is
+   * complete either way.
+   */
+  cache_errors: string[];
+  /**
+   * One column per benchmark a counted run ran on — and, with
+   * `include_available`, per benchmark the registry knows that none did —
+   * ordered by benchmark name.
+   */
+  columns: MatrixColumn[];
+  /**
+   * Every run that counts for this pipeline — of its current canonical
+   * form, or a prefix of it — the most recent first, each saying whether
+   * it fills its column.
+   */
+  feeding_runs: FeedingRun[];
+  /**
+   * Per column, the nodes no run measured that a run of the whole
+   * pipeline on that benchmark would: what a launch would fill.
+   */
+  missing: MissingCells[];
+  /** The pipeline's name: its document under `pipelines/`. */
+  pipeline: string;
+  /**
+   * The canonical hash of the document as it is now: the runs whose
+   * pipeline hash is this one fill cells, under whatever name they ran.
+   */
+  pipeline_hash: string;
+  /**
+   * The pipeline's nodes in topological order, ties by id, so the matrix
+   * reads like the pipeline. A judge row is reserved, and absent until the
+   * judge exists.
+   */
+  rows: MatrixRow[];
+  /**
+   * The runs the store lists and cannot load, with its reason: neither
+   * counted nor silently dropped, as `GET /runs` lists them.
+   */
+  unreadable: UnreadableRun[];
+};
+
 /** A pipeline, as the listing shows it. */
 export type PipelineSummary = {
   /** Why it does not validate, when it does not. */
@@ -621,6 +796,14 @@ export type Position = {
   x: number;
   /** Vertical, in canvas units. */
   y: number;
+};
+
+/** A prefix run's place in its parent pipeline. */
+export type PrefixOf = {
+  /** The parent pipeline's name. */
+  pipeline: string;
+  /** The node the prefix stops at: its output. */
+  up_to: string;
 };
 
 /**
@@ -1291,6 +1474,22 @@ export type Paths = {
       };
       body: Layout;
       response: PipelineLayout;
+    };
+  };
+  "/pipelines/{name}/matrix": {
+    /** A pipeline's node × benchmark matrix over its runs: per benchmark the most recent run of its current form or of a prefix of it, each node's figure with its gain over the previous stage, or why the cell is empty. */
+    get: {
+      params: {
+        name: string;
+      };
+      query: {
+        /**
+         * Also give a column to every benchmark the registry knows that no
+         * counted run ran on, each of its cells not_run_yet. Absent is false.
+         */
+        include_available?: boolean;
+      };
+      response: PipelineMatrix;
     };
   };
   "/runs": {

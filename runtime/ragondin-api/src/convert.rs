@@ -208,6 +208,11 @@ pub(crate) fn family(of: &LogicalNode) -> String {
     node(of).family
 }
 
+/// The kind of value a node produces, as an edge leaving it carries it.
+pub(crate) fn produces(node: &LogicalNode) -> EdgeKind {
+    kind(produced_kind(node))
+}
+
 /// The metric table of a comparison, each row's best runs named by id.
 pub(crate) fn metric_rows(comparison: &ragondin_experiments::Comparison) -> Vec<MetricRow> {
     comparison
@@ -393,7 +398,7 @@ pub(crate) fn imported(imported: &Imported) -> BenchmarkEntry {
     }
 }
 
-fn ground_truth(carries: CarriedPieces) -> GroundTruth {
+pub(crate) fn ground_truth(carries: CarriedPieces) -> GroundTruth {
     match carries {
         CarriedPieces::Neither => GroundTruth::None,
         CarriedPieces::QrelsOnly => GroundTruth::Qrels,

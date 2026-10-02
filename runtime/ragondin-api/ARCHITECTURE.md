@@ -34,10 +34,11 @@ the response types, the typed errors, and the traits the service consumes.
 | `description` | The API description, assembled from the declared operations and the `schemars` schemas |
 | `derived` | The data derived from a stored run and its benchmark: per-query scores, per-node ranking metrics, each passage's grade and each node's gold ranks, the gold filter, each query's text |
 | `cache` | The workspace's `cache/`: those derived figures, reconstructible, never a truth |
-| `endpoints` | The handlers of the workspace's endpoints — pipelines, benchmarks, services — and of `POST /compare` |
+| `endpoints` | The handlers of the workspace's endpoints — pipelines, benchmarks, services — and of `POST /compare` and `GET /pipelines/{name}/matrix` |
 | `stages` | A pipeline's stages, derived from its nodes' kinds and positions, by which a comparison aligns runs |
-| `lineage` | Which workspace pipeline a run is a run of, by canonical hash — interim: ADR-C39 decides run → pipeline identity; the code does not follow it yet (#392) |
-| `comparison` | The runs aligned by stage with the pairs drawn by hand, and the bins of the per-query deltas |
+| `lineage` | Which workspace pipeline a run is a run of, by canonical hash — interim: ADR-C39 decides run → pipeline identity; the code does not follow it yet (#392) — and the structural prefix test, `is_prefix` |
+| `comparison` | The runs aligned by stage with the pairs drawn by hand, the best node of a stage per metric, a node's gain over the previous stage, and the bins of the per-query deltas |
+| `matrix` | The most-recent-run rule and the topological order of the pipeline matrix's rows |
 | `validation` | A pipeline document checked as `ragondin validate` checks a file |
 | `fs` | The workspace on disk and its file backends: `Workspace`, `FsSettings`, `FsPipelines`, `FsRegistry` |
 | `conformance` | The suite every `Registry` backend passes, behind the `conformance` feature |
@@ -45,7 +46,8 @@ the response types, the typed errors, and the traits the service consumes.
 Served today, under `/api/v1`: `GET /workspace`; `GET /runs`,
 `GET /runs/{id}`, `GET /runs/{id}/queries` and `GET /runs/{id}/trace/{query}`
 — the last two described in § *Derived data*; `POST /compare`, described
-in § *Compare*; `GET /pipelines`,
+in § *Compare*; `GET /pipelines/{name}/matrix`, described in § *The
+pipeline matrix*; `GET /pipelines`,
 `POST /pipelines/validate`, `GET`/`PUT /pipelines/{name}`,
 `GET`/`PUT /pipelines/{name}/layout`; `GET /benchmarks`,
 `POST /benchmarks/import`; `GET /services`,
@@ -637,8 +639,10 @@ reason is `RunListing::cache_error`, and every latency is computed anyway.
 when it can be null: `RunDetail::prefix_of`, the two times of `RunDetail`
 and `RunSummary`, `RunSummary::median_query_latency_nanos`,
 `QueryScores::text` and `QueryScores::duration_nanos`,
-`MetricRow::direction`, `PipelineSummary::modified_ms`, `Location::node` and
-`Location::edge` carry a `transform` that lists every property as required,
+`MetricRow::direction`, `PipelineSummary::modified_ms`, `Location::node`,
+`Location::edge`, and the pipeline matrix's `MatrixColumn`, `FeedingRun`,
+`MissingCells` and `MatrixCell`'s `measured` variant carry a `transform`
+that lists every property as required,
 since `schemars` would otherwise leave an `Option` out and a generated client
 would type it as possibly absent. `Problem::location`, `Problem::etag` and
 `Problem::name`, each omitted when there is none, stay optional, as do
@@ -671,9 +675,12 @@ header a handler reads are declared in the description from their schemas
 reviewer looks for.
 
 **Every handler takes an `ApiQuery`**: `ApiQuery<NoParameters>` when it
-takes no parameter — an empty braced struct that refuses any — and
+takes no parameter — an empty braced struct that refuses any —
 `ApiQuery<RunQueriesParameters>` for `GET /runs/{id}/queries`, whose one
-value, `missing_gold_at`, is the newtype `MissingGoldAt`. The parameter and
+value, `missing_gold_at`, is the newtype `MissingGoldAt`, and
+`ApiQuery<PipelineMatrixParameters>` for `GET /pipelines/{name}/matrix`,
+whose one value, `include_available`, is the newtype `IncludeAvailable`,
+`true` or `false`. The parameter and
 header types are in `src/request.rs`. **The description reads them off the
 routes**: every route is listed once, in `routes::api`, and read twice — by
 `routes::Builder`, which makes the axum router, and by `routes::Declared`,
@@ -1149,7 +1156,7 @@ ranking and the answer are the walk's, and a pair never moves them.
   document, or several, is `null`, and such a run pairs automatically only.
   So a document edited since a run no longer names that run, and its pairing
   reaches the runs of what the file holds now. The index is `lineage.rs`,
-  `pub(crate)` for the pipeline matrix to read too.
+  which the pipeline matrix reads too, for its feeding runs' names.
 - **Pairings apply between the baseline's pipeline and each other run's**,
   read with `PipelineSource::read_pairing` and listed, oriented from the
   baseline's, in the response's `pairings`. A pairing between two runs
@@ -1211,6 +1218,124 @@ the one median of durations `GET /runs`' median query latency is also taken
 by — and how many queries that is. This is one node's duration, not a
 query's latency. A latency percentile a run's `metrics.json` holds is in the
 table as stored, with no direction, and is not recomputed.
+
+## The pipeline matrix
+
+`GET /pipelines/{name}/matrix` gives one workspace pipeline a matrix of node
+× benchmark over the stored runs (the design document § 3): for each ranking
+node, its metrics at its output on every benchmark it was measured on, and the
+gain over the previous stage; for the generator, EM and F1 where the benchmark
+carries reference answers. It is derived from the runs on every request and
+introduces no object. The figures are cached as § *Derived data* says, and
+each dataset is loaded through `Registry::dataset`, which the file backend
+answers from the datasets it keeps loaded (§ *The loaded datasets*).
+
+**Which runs count — ADR-C39 § 6.** For the pipeline *N*, whose document now
+lowers to the canonical hash *H* (`validation::lower`; a document that does not
+validate is `pipeline_invalid`), a cell is filled only from:
+
+- **runs of the current canonical form**: the run's pipeline hash is *H*,
+  whatever name it was launched under, or none — a fork launched first under
+  another name fills its cell here;
+- **prefixes of the current form**, by the structural test below, asked of
+  **every** run (ADR-C39 § 5).
+
+Every other run counts nowhere. Every counted run is listed in
+`feeding_runs`, the most recent first, with `pipeline_names` — every current
+document whose canonical hash is the run's, from `lineage::pipelines_by_hash`,
+ADR-C39 § 4's content fact — `prefix_of` (the pipeline and the node it stops
+at) for a prefix, and `fills_column`.
+
+**The prefix rule** (`lineage::is_prefix`). Run *B*'s lowered graph is a
+prefix of *N*'s current one when *B* declares the same inputs, every node of
+*B* is a node of *N* equal in its canonical logical form — family, `impl:`,
+parameters, and its inputs in port order, so its edges too — and *B* has fewer
+nodes. *B* validated, so every node it reads is kept, and its output — its
+terminal node, `ragondin_experiments::terminal`, reported as `up_to` — is a
+node of *N*. It compares canonical forms, never text (INV-8), through
+`ragondin-pipeline`'s public surface as it stands (INV-1). A subset with one
+changed parameter, or with an edge *N* lacks, is not a prefix; the whole
+pipeline is not its own prefix, which is hash equality.
+
+**The most-recent-run rule** (`matrix::most_recent_first`). A column is the
+most recent counted run on its benchmark: the greatest `started_at_ms` first,
+read from the run's own record (`Run::times`); a run whose time is unknown
+after every run with one, so it is never chosen over one; ties, unknown
+included, broken by run id, lowest first. No time is ever read from the
+store's backend — no directory time, no `LastModified` — not even for a run
+without one. It is the rule the Runs screen sorts by (`byMostRecent` in
+`ui/src/runs/model.ts`), and the one definition of it on the server; its test
+runs the UI's own case. History stays in Compare: the other runs are feeding
+runs that fill nothing.
+
+**Rows, columns, cells.**
+
+- **Rows** are *N*'s nodes in topological order, ties by id
+  (`matrix::topological`), each with its family and the kind of value it
+  produces. The judge's row is reserved, and absent until the judge exists.
+- **Columns** are keyed by `dataset_version`, the digest a run records, with
+  every benchmark the registry pins to it (`Registry::pinned`, which loads
+  nothing), and sorted by benchmark name. `ground_truth` is read off the
+  dataset when it verifies, and otherwise off the metrics the run recorded:
+  the harness records a family's metrics only when the benchmark carries its
+  piece. `dataset_check` is the run's `DatasetCheck`, as
+  `GET /runs/{id}/queries` gives it.
+- **A ranking node's cell** is the per-node figure `GET /runs/{id}/queries`
+  serves — `handlers::figures`, the same function and the same cache entry —
+  with its gain, **by stage, never by node**: its value minus the best value
+  of the nearest stage before its own (`comparison::gain`, over `stages.rs`'s
+  derivation, the one `POST /compare` aligns runs by, and `comparison::best`,
+  the rule `POST /compare`'s stage cells take their best from): the fusion
+  over the best retrieval leg, the reranker over the fusion, or over the best
+  leg with no fusion before it. A retrieval leg has no previous stage, so its
+  gain is `null` and the value stands alone.
+- **The generator's cell** is the answer metrics the run recorded, its
+  `metrics.json`'s, never a node figure (§ *What a figure is*), with no gain.
+- **An empty cell says why**: `no_qrels` (a ranking node on a benchmark
+  without qrels) and `no_reference_answers` (the generator on one without
+  reference answers), never measurable there; `not_run_yet`, with the
+  benchmark to launch, measurable and not measured; `prefix_stops`, with the
+  node the column's prefix run stops at — "not run: the prefix run stops at"
+  that node.
+
+`missing` lists, per column, the nodes reading `not_run_yet` or
+`prefix_stops`: what a run of the whole pipeline on that benchmark would fill,
+named by the benchmark to launch it on. Nothing here launches.
+
+**Waiting on the launch record** (ADR-C39 § 1, which `ragondin-experiments`
+does not implement yet). This endpoint reads no record: the feeding runs are
+named by content alone, and two things wait on the record — a run whose
+record names *N* while its content has since changed, listed as "launched as
+*N*; content since changed" with its parameter difference against the current
+document (`compare`'s configuration matrix), and a benchmark whose only run is
+such a run reading "not run on this version"; and the record's
+`prefix_of.parent_pipeline_hash`, which makes a run a prefix of *N* when it
+equals *H*, before the structural test is asked. The seam is `counted` in
+`endpoints/matrix.rs`, where a run that counts for neither reason is dropped
+today.
+
+Choices made here (`AGENTS.md` § Rules of engagement):
+
+- **A column is one run, the most recent**, prefix or not, as the design
+  document § 3 gives it: a prefix run newer than a run of the whole pipeline
+  fills the column, and the nodes it stops before read `prefix_stops` and are
+  listed in `missing`, rather than one column mixing two runs' figures.
+- **Three more reasons than `no qrels`, `no reference answers` and `not run
+  yet`**, because three more states exist: `not_scored` — a node whose output
+  no metric reads, a context builder, an extension's value, a generator that
+  is not the output; `unverified` — a ranking node whose run's dataset is not
+  the one on disk, `dataset_check` saying why; `no_figure` — measurable and
+  run, and still no figure: the node ranked no judged query, having failed,
+  or the run recorded no answer metric.
+- **A benchmark never run reads `not_run_yet` in every row**, its
+  `ground_truth` `null`: saying `no_qrels` there would mean loading a dataset
+  no run used, for every benchmark the registry knows — the cost the loaded
+  datasets' bound exists to keep down.
+- **A run the store cannot load** is listed in `unreadable`, with the store's
+  reason, as `GET /runs` lists it, rather than counted or dropped.
+
+`tests/pipeline_matrix.rs` holds each rule over the in-memory store, registry
+and workspace.
 
 ## The assets
 

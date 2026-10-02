@@ -724,6 +724,68 @@
         ],
         "type": "object"
       },
+      "FeedingRun": {
+        "description": "A run that counts for the matrix's pipeline.",
+        "properties": {
+          "benchmark_names": {
+            "description": "Every benchmark the registry pins to that digest, sorted.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "dataset_version": {
+            "description": "The digest of the dataset it ran on.",
+            "type": "string"
+          },
+          "fills_column": {
+            "description": "Whether it is the run its column shows: the most recent on its\nbenchmark.",
+            "type": "boolean"
+          },
+          "pipeline_names": {
+            "description": "Every workspace document whose canonical hash is the run's, sorted —\nADR-C39 § 4's content fact.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "prefix_of": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PrefixOf"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "For a prefix of the matrix's pipeline, by the structural test: the\npipeline and the node it stops at; `null` for a run of the current\ncanonical form."
+          },
+          "run": {
+            "description": "The run's id.",
+            "type": "string"
+          },
+          "started_at_ms": {
+            "description": "When it started, from its own record; `null` when unknown.",
+            "format": "uint64",
+            "minimum": 0,
+            "nullable": true,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "benchmark_names",
+          "dataset_version",
+          "fills_column",
+          "pipeline_names",
+          "prefix_of",
+          "run",
+          "started_at_ms"
+        ],
+        "type": "object"
+      },
       "FoundVersions": {
         "description": "The digests of the dataset on disk.",
         "properties": {
@@ -967,6 +1029,266 @@
         ],
         "type": "object"
       },
+      "MatrixCell": {
+        "description": "One node on one benchmark: its figure, or why it has none.",
+        "oneOf": [
+          {
+            "description": "Measured: a ranking node's metrics at its output, as\n`GET /runs/{id}/queries` reports them, or the generator's\nanswer metrics, as the run recorded them.",
+            "properties": {
+              "gain": {
+                "additionalProperties": {
+                  "format": "double",
+                  "type": "number"
+                },
+                "description": "Per metric, the value minus the best value of the previous ranking\nstage — the gain, which is what says where a node helps; `null`\nwhere there is no previous stage (a retrieval leg) and for the\ngenerator.",
+                "nullable": true,
+                "type": "object"
+              },
+              "judged_queries": {
+                "description": "How many judged queries a ranking node's means are over; `null`\nfor the generator, whose figures are the run's.",
+                "format": "uint64",
+                "minimum": 0,
+                "nullable": true,
+                "type": "integer"
+              },
+              "kind": {
+                "enum": [
+                  "measured"
+                ],
+                "type": "string"
+              },
+              "metrics": {
+                "additionalProperties": {
+                  "format": "double",
+                  "type": "number"
+                },
+                "description": "The figures, by metric name.",
+                "type": "object"
+              }
+            },
+            "required": [
+              "gain",
+              "judged_queries",
+              "kind",
+              "metrics"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "A ranking node, on a benchmark that carries no qrels: never\nmeasurable there.",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "no_qrels"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "The generator, on a benchmark that carries no reference answers:\nnever measurable there.",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "no_reference_answers"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "No counted run on this benchmark: measurable, not measured.",
+            "properties": {
+              "benchmark": {
+                "description": "The benchmark to launch.",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "not_run_yet"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "benchmark"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "The column's run is a prefix that stops before this node: \"not run:\nthe prefix run stops at `up_to`\".",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "prefix_stops"
+                ],
+                "type": "string"
+              },
+              "up_to": {
+                "description": "The node the prefix run stops at.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "up_to"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "A node whose output no metric reads — a context builder, an\nextension's value, a generator that is not the output.",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "not_scored"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "A ranking node, read against a dataset that is not the run's own on\ndisk: the column's `dataset_check` says why.",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "unverified"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "Measurable and run, and no figure: the node ranked no judged query —\nit failed — or the run recorded no answer metric.",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "no_figure"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "MatrixColumn": {
+        "description": "One benchmark of the matrix, and the run that fills it.",
+        "properties": {
+          "benchmark_names": {
+            "description": "Every benchmark the registry pins to that digest, sorted; empty when\nit pins none.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "cells": {
+            "description": "One cell per row, in the rows' order.",
+            "items": {
+              "$ref": "#/components/schemas/MatrixCell"
+            },
+            "type": "array"
+          },
+          "dataset_check": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DatasetCheck"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "Whether the dataset on disk is the run's own, which the ranking\nfigures are read against; `null` when no run fills the column."
+          },
+          "dataset_version": {
+            "description": "The digest of the benchmark's dataset, as runs over it record it.",
+            "type": "string"
+          },
+          "ground_truth": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GroundTruth"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "The ground truth it carries: read off the dataset when it verified,\notherwise off the metrics the run recorded; `null` for a benchmark no\nrun measured."
+          },
+          "run": {
+            "description": "The run that fills the column — the most recent counted run on this\nbenchmark; `null` when none ran on it.",
+            "nullable": true,
+            "type": "string"
+          },
+          "up_to": {
+            "description": "For a prefix run, the node it stops at; `null` otherwise.",
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "benchmark_names",
+          "cells",
+          "dataset_check",
+          "dataset_version",
+          "ground_truth",
+          "run",
+          "up_to"
+        ],
+        "type": "object"
+      },
+      "MatrixRow": {
+        "description": "One node of the matrix's pipeline.",
+        "properties": {
+          "family": {
+            "description": "Its component family, as a configuration's `component:` spells it.",
+            "type": "string"
+          },
+          "node": {
+            "description": "The node's id.",
+            "type": "string"
+          },
+          "produces": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/EdgeKind"
+              }
+            ],
+            "description": "The kind of value it produces: `chunks` for a ranking node, `answer`\nfor a generator."
+          }
+        },
+        "required": [
+          "node",
+          "family",
+          "produces"
+        ],
+        "type": "object"
+      },
       "MetricDeltas": {
         "description": "One metric's per-query deltas, and their histogram.",
         "properties": {
@@ -1101,6 +1423,33 @@
           "direction",
           "name",
           "values"
+        ],
+        "type": "object"
+      },
+      "MissingCells": {
+        "description": "The nodes of one column no run measured, which a run of the whole\npipeline on its benchmark would.",
+        "properties": {
+          "benchmark": {
+            "description": "The benchmark to launch on: the first name pinned to the digest;\n`null` when the registry pins none, and nothing can be launched.",
+            "nullable": true,
+            "type": "string"
+          },
+          "dataset_version": {
+            "description": "The digest of its dataset.",
+            "type": "string"
+          },
+          "nodes": {
+            "description": "The nodes, in the rows' order.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "benchmark",
+          "dataset_version",
+          "nodes"
         ],
         "type": "object"
       },
@@ -1485,6 +1834,72 @@
         ],
         "type": "object"
       },
+      "PipelineMatrix": {
+        "description": "`GET /pipelines/{name}/matrix`: one workspace pipeline's node × benchmark\nmatrix, over the runs of its current canonical form and of its prefixes\n(ADR-C39 § 6). Derived from the stored runs on every request: it is no\nobject of its own.",
+        "properties": {
+          "cache_errors": {
+            "description": "Why derived figures could not be cached under the workspace's\n`cache/`, one entry per failure; empty otherwise. The response is\ncomplete either way.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "columns": {
+            "description": "One column per benchmark a counted run ran on — and, with\n`include_available`, per benchmark the registry knows that none did —\nordered by benchmark name.",
+            "items": {
+              "$ref": "#/components/schemas/MatrixColumn"
+            },
+            "type": "array"
+          },
+          "feeding_runs": {
+            "description": "Every run that counts for this pipeline — of its current canonical\nform, or a prefix of it — the most recent first, each saying whether\nit fills its column.",
+            "items": {
+              "$ref": "#/components/schemas/FeedingRun"
+            },
+            "type": "array"
+          },
+          "missing": {
+            "description": "Per column, the nodes no run measured that a run of the whole\npipeline on that benchmark would: what a launch would fill.",
+            "items": {
+              "$ref": "#/components/schemas/MissingCells"
+            },
+            "type": "array"
+          },
+          "pipeline": {
+            "description": "The pipeline's name: its document under `pipelines/`.",
+            "type": "string"
+          },
+          "pipeline_hash": {
+            "description": "The canonical hash of the document as it is now: the runs whose\npipeline hash is this one fill cells, under whatever name they ran.",
+            "type": "string"
+          },
+          "rows": {
+            "description": "The pipeline's nodes in topological order, ties by id, so the matrix\nreads like the pipeline. A judge row is reserved, and absent until the\njudge exists.",
+            "items": {
+              "$ref": "#/components/schemas/MatrixRow"
+            },
+            "type": "array"
+          },
+          "unreadable": {
+            "description": "The runs the store lists and cannot load, with its reason: neither\ncounted nor silently dropped, as `GET /runs` lists them.",
+            "items": {
+              "$ref": "#/components/schemas/UnreadableRun"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "pipeline",
+          "pipeline_hash",
+          "rows",
+          "columns",
+          "feeding_runs",
+          "missing",
+          "unreadable",
+          "cache_errors"
+        ],
+        "type": "object"
+      },
       "PipelineSummary": {
         "description": "A pipeline, as the listing shows it.",
         "properties": {
@@ -1586,6 +2001,24 @@
         "required": [
           "x",
           "y"
+        ],
+        "type": "object"
+      },
+      "PrefixOf": {
+        "description": "A prefix run's place in its parent pipeline.",
+        "properties": {
+          "pipeline": {
+            "description": "The parent pipeline's name.",
+            "type": "string"
+          },
+          "up_to": {
+            "description": "The node the prefix stops at: its output.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "pipeline",
+          "up_to"
         ],
         "type": "object"
       },
@@ -3190,6 +3623,53 @@
           }
         },
         "summary": "Replaces the layout beside a pipeline document; never changes its etag or hash."
+      }
+    },
+    "/pipelines/{name}/matrix": {
+      "get": {
+        "description": "A run fills a cell when its pipeline hash is the document's current one, under any name, or when its pipeline is a prefix of the current document by the structural test; any other run counts nowhere. Each column is the most recent such run on its benchmark — the greatest started_at_ms, a run with no time after every run with one, ties by run id — and every counted run is listed in feeding_runs. An empty cell says why: no_qrels, no_reference_answers, not_run_yet (with the benchmark), prefix_stops (with the node the prefix stops at), not_scored, unverified, no_figure. `include_available=true` adds a column for every benchmark the registry knows that no counted run ran on.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Also give a column to every benchmark the registry knows that no\ncounted run ran on, each of its cells not_run_yet. Absent is false.",
+            "in": "query",
+            "name": "include_available",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PipelineMatrix"
+                }
+              }
+            },
+            "description": "A pipeline's node × benchmark matrix over its runs: per benchmark the most recent run of its current form or of a prefix of it, each node's figure with its gain over the previous stage, or why the cell is empty."
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "An error, as application/problem+json."
+          }
+        },
+        "summary": "A pipeline's node × benchmark matrix over its runs: per benchmark the most recent run of its current form or of a prefix of it, each node's figure with its gain over the previous stage, or why the cell is empty."
       }
     },
     "/runs": {

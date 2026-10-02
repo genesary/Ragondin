@@ -6,6 +6,7 @@
 
 use std::collections::BTreeMap;
 
+use ragondin_experiments::Direction;
 use ragondin_pipeline::NodeId;
 
 use crate::response::{DeltaBinName, NodePair};
@@ -120,6 +121,86 @@ pub(crate) fn align(columns: &[Column<'_>]) -> Vec<Row> {
             })
         })
         .collect()
+}
+
+/// Per metric, the best value among `nodes` and the node it is from, by the
+/// metric catalogue's one rule for which way a metric improves
+/// (`Direction::of`, `ragondin-metrics`); the first node wins a tie. A name
+/// the catalogue gives no direction has no best: nothing says which way it
+/// improves. A stage cell's `best` in `POST /compare`, and the value a matrix
+/// cell's gain is taken over.
+pub(crate) fn best<'a>(
+    nodes: impl IntoIterator<Item = (&'a str, &'a BTreeMap<String, f64>)>,
+) -> BTreeMap<String, (&'a str, f64)> {
+    let mut best: BTreeMap<String, (&'a str, f64)> = BTreeMap::new();
+    for (node, metrics) in nodes {
+        for (metric, value) in metrics {
+            let Some(direction) = Direction::of(metric) else {
+                continue;
+            };
+            let better = best.get(metric).is_none_or(|(_, held)| match direction {
+                Direction::HigherIsBetter => value > held,
+                Direction::LowerIsBetter => value < held,
+            });
+            if better {
+                best.insert(metric.clone(), (node, *value));
+            }
+        }
+    }
+    best
+}
+
+/// The gain of `node` over the previous ranking stage of its pipeline, per
+/// metric: its value minus the best value of the nearest stage before its
+/// own that the pipeline has — for the fusion, the best retrieval leg; for
+/// the reranker, the fusion, or the best leg when no fusion comes before it.
+/// By stage, never by node: the stages are `stages`, the derivation
+/// `POST /compare` aligns runs by, so the two screens cannot disagree on what
+/// came before what.
+///
+/// `None` when there is no stage before the node's own — a retrieval leg, the
+/// one node of a single-retriever pipeline — and for a node at no ranking
+/// stage (the answer, a context builder). A metric missing on either side has
+/// no gain.
+pub(crate) fn gain<'a>(
+    stages: &Stages,
+    node: &NodeId,
+    metrics_of: impl Fn(&NodeId) -> Option<&'a BTreeMap<String, f64>>,
+) -> Option<BTreeMap<String, f64>> {
+    const RANKING: [Stage; 4] = [
+        Stage::RetrievalLegs,
+        Stage::AfterFusion,
+        Stage::AfterRerank,
+        Stage::FinalRanking,
+    ];
+    let own = RANKING.iter().position(|stage| {
+        stages
+            .nodes
+            .get(stage)
+            .is_some_and(|nodes| nodes.contains(node))
+    })?;
+    // The final ranking is the walk's node, at a kind stage already unless
+    // the pipeline ends on another ranking node: the stages before it are the
+    // kind stages.
+    let previous = RANKING[..own]
+        .iter()
+        .rev()
+        .find_map(|stage| stages.nodes.get(stage))?;
+    let value = metrics_of(node)?;
+    let best = best(
+        previous
+            .iter()
+            .filter_map(|id| metrics_of(id).map(|metrics| (id.as_str(), metrics))),
+    );
+    Some(
+        value
+            .iter()
+            .filter_map(|(metric, value)| {
+                best.get(metric)
+                    .map(|(_, held)| (metric.clone(), value - held))
+            })
+            .collect(),
+    )
 }
 
 /// The seven bins, from the worst to the best, with their bounds. The edges
@@ -338,5 +419,94 @@ mod tests {
         let total: usize = binned.iter().map(|(_, queries)| queries.len()).sum();
         assert_eq!(total, cases.len(), "the bins partition the queries");
         assert_eq!(binned[3].1, ["q6", "q7"]);
+    }
+
+    fn figures(rows: &[(&str, f64, f64)]) -> BTreeMap<NodeId, BTreeMap<String, f64>> {
+        rows.iter()
+            .map(|(node, ndcg, mrr)| {
+                (
+                    NodeId::new(*node),
+                    BTreeMap::from([("ndcg@10".to_owned(), *ndcg), ("mrr".to_owned(), *mrr)]),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_best_of_several_nodes_is_taken_metric_by_metric() {
+        let figures = figures(&[("bm25", 0.3, 0.5), ("dense", 0.4, 0.2)]);
+        let best = best(
+            figures
+                .iter()
+                .map(|(node, metrics)| (node.as_str(), metrics)),
+        );
+        assert_eq!(best["ndcg@10"], ("dense", 0.4));
+        assert_eq!(best["mrr"], ("bm25", 0.5));
+    }
+
+    #[test]
+    fn a_name_the_catalogue_does_not_know_has_no_best() {
+        let metrics = BTreeMap::from([
+            ("ndcg@10".to_owned(), 0.4),
+            ("latency_p50_ms".to_owned(), 12.0),
+        ]);
+        let best = best([("dense", &metrics)]);
+        assert_eq!(best.keys().collect::<Vec<_>>(), ["ndcg@10"]);
+    }
+
+    #[test]
+    fn a_stage_s_gain_is_over_the_best_node_of_the_stage_before_it() {
+        let stages = Stages::of(&lowered(HYBRID_RERANK));
+        let figures = figures(&[
+            ("bm25", 0.3, 0.5),
+            ("dense", 0.4, 0.2),
+            ("rrf", 0.5, 0.6),
+            ("rerank", 0.7, 0.55),
+        ]);
+        let gain_of = |node: &str| gain(&stages, &NodeId::new(node), |id| figures.get(id));
+
+        // A leg has no stage before it: the value stands alone.
+        assert_eq!(gain_of("bm25"), None);
+        assert_eq!(gain_of("dense"), None);
+        // The fusion over the best leg, metric by metric.
+        let rrf = gain_of("rrf").unwrap();
+        assert_eq!(rrf["ndcg@10"], 0.5 - 0.4);
+        assert_eq!(rrf["mrr"], 0.6 - 0.5);
+        // The reranker over the fusion.
+        let rerank = gain_of("rerank").unwrap();
+        assert_eq!(rerank["ndcg@10"], 0.7 - 0.5);
+        assert_eq!(rerank["mrr"], 0.55 - 0.6);
+    }
+
+    #[test]
+    fn a_reranker_with_no_fusion_before_it_gains_over_the_legs() {
+        let stages = Stages::of(&lowered(
+            "\
+pipeline:
+  inputs: [question]
+  nodes:
+    - id: colbert
+      component: retriever
+      impl: colbert
+      inputs: [question]
+    - id: rerank
+      component: reranker
+      impl: cross_encoder
+      inputs: [question, colbert]
+",
+        ));
+        let figures = figures(&[("colbert", 0.4, 0.5), ("rerank", 0.6, 0.7)]);
+        let rerank = gain(&stages, &NodeId::new("rerank"), |id| figures.get(id)).unwrap();
+        assert_eq!(rerank["ndcg@10"], 0.6 - 0.4);
+    }
+
+    #[test]
+    fn a_dense_only_pipeline_s_one_node_has_no_gain() {
+        let stages = Stages::of(&lowered(DENSE_ONLY));
+        let figures = figures(&[("dense", 0.4, 0.5)]);
+        assert_eq!(
+            gain(&stages, &NodeId::new("dense"), |id| figures.get(id)),
+            None
+        );
     }
 }

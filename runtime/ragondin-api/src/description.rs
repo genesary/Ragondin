@@ -22,7 +22,7 @@ use crate::request::{
     CompareRequest, ImportRequest, PipelineDocument, ProbeRequest, ServiceAddress,
 };
 use crate::response::{
-    BenchmarkListing, Comparison, PipelineDetail, PipelineLayout, PipelineListing,
+    BenchmarkListing, Comparison, PipelineDetail, PipelineLayout, PipelineListing, PipelineMatrix,
     PipelineValidated, PipelineWritten, ProbeResult, Problem, QueryTrace, RunDetail, RunListing,
     RunQueries, ServiceListing, Workspace,
 };
@@ -246,6 +246,16 @@ pub const OPERATIONS: &[Operation] = &[
     },
     Operation {
         method: "get",
+        path: "/pipelines/{name}/matrix",
+        summary: "A pipeline's node × benchmark matrix over its runs: per benchmark the most recent run of its current form or of a prefix of it, each node's figure with its gain over the previous stage, or why the cell is empty.",
+        response: "PipelineMatrix",
+        request: None,
+        description: Some(
+            "A run fills a cell when its pipeline hash is the document's current one, under any name, or when its pipeline is a prefix of the current document by the structural test; any other run counts nowhere. Each column is the most recent such run on its benchmark — the greatest started_at_ms, a run with no time after every run with one, ties by run id — and every counted run is listed in feeding_runs. An empty cell says why: no_qrels, no_reference_answers, not_run_yet (with the benchmark), prefix_stops (with the node the prefix stops at), not_scored, unverified, no_figure. `include_available=true` adds a column for every benchmark the registry knows that no counted run ran on.",
+        ),
+    },
+    Operation {
+        method: "get",
         path: "/benchmarks",
         summary: "Every benchmark the registry knows, with its state and licence.",
         response: "BenchmarkListing",
@@ -317,6 +327,7 @@ fn description() -> Value {
     generator.subschema_for::<PipelineWritten>();
     generator.subschema_for::<PipelineValidated>();
     generator.subschema_for::<PipelineLayout>();
+    generator.subschema_for::<PipelineMatrix>();
     generator.subschema_for::<BenchmarkListing>();
     generator.subschema_for::<ServiceListing>();
     generator.subschema_for::<ProbeResult>();
