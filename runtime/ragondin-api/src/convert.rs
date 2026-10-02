@@ -13,6 +13,7 @@ use ragondin_experiments::{
     lower_configuration, Direction, ParameterKey, Run, RunBinding, RunInputs as StoredInputs,
     Trace, TraceChunk, TraceSummary,
 };
+use ragondin_metrics::{Family, Metric};
 use ragondin_pipeline::{
     produced_kind, LogicalNode, LogicalPipeline, NodeId, ParamValue, ValueKind,
 };
@@ -24,17 +25,20 @@ use crate::error::ApiError;
 use crate::response::{
     BenchmarkEntry, BenchmarkState, ConfigurationMatrix, DatasetCheck, DatasetStatus,
     DatasetVersions, EdgeKind, FoundVersions, Graph, GraphEdge, GraphInput, GraphNode, GroundTruth,
-    MetricDirection, MetricRow, NodeMetrics, ParameterName, ParameterRow, ParameterValue,
-    RunDetail, RunInputs, RunSummary, ServiceBinding, TraceNodeView, TracePassage, TraceValue,
+    MetricDirection, MetricFamily, MetricRow, NodeMetrics, ParameterName, ParameterRow,
+    ParameterValue, RunDetail, RunInputs, RunSummary, ServiceBinding, TraceNodeView, TracePassage,
+    TraceValue,
 };
 
 /// One run, as the listing shows it, with the names the request found for
-/// it: the workspace pipelines sharing its hash and the benchmarks pinned to
-/// its digest, each sorted here.
+/// it — the workspace pipelines sharing its hash and the benchmarks pinned
+/// to its digest, each sorted here — and its median query latency, derived
+/// by the handler.
 pub(crate) fn summary(
     run: &Run,
     mut pipeline_names: Vec<String>,
     mut benchmark_names: Vec<String>,
+    median_query_latency_nanos: Option<u64>,
 ) -> RunSummary {
     pipeline_names.sort();
     benchmark_names.sort();
@@ -50,6 +54,22 @@ pub(crate) fn summary(
         started_at_ms,
         finished_at_ms,
         metrics: metrics(run),
+        metric_families: run
+            .metrics
+            .iter()
+            .map(|(name, _)| (name.to_owned(), metric_family(name)))
+            .collect(),
+        median_query_latency_nanos,
+    }
+}
+
+/// The family `ragondin-metrics`' catalogue gives the metric stored under
+/// `name`; `unknown` for a name it does not know.
+fn metric_family(name: &str) -> MetricFamily {
+    match Metric::parse(name).map(Metric::family) {
+        Some(Family::Ranking) => MetricFamily::Ranking,
+        Some(Family::Answers) => MetricFamily::Answers,
+        None => MetricFamily::Unknown,
     }
 }
 
@@ -195,10 +215,10 @@ pub(crate) fn metric_rows(comparison: &ragondin_experiments::Comparison) -> Vec<
         .iter()
         .map(|row| MetricRow {
             name: row.name.clone(),
-            direction: match row.direction {
+            direction: row.direction.map(|direction| match direction {
                 Direction::HigherIsBetter => MetricDirection::Higher,
                 Direction::LowerIsBetter => MetricDirection::Lower,
-            },
+            }),
             values: row.values.clone(),
             deltas: row.deltas(),
             best: row

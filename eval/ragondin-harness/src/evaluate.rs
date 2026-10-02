@@ -46,6 +46,7 @@ use ragondin_experiments::{
 };
 use ragondin_metrics::{
     documents_by_first_occurrence, exact_match, ndcg_at_k, recall_at_k, reciprocal_rank, token_f1,
+    Metric,
 };
 use ragondin_pipeline::{LogicalPipeline, NodeId};
 use ragondin_types::{DocId, QueryId};
@@ -270,7 +271,7 @@ where
         .into_iter()
         .chain(generation_scores.means())
     {
-        metrics.insert(name, value);
+        metrics.insert(name.to_string(), value);
     }
 
     let inputs = RunInputs {
@@ -377,17 +378,18 @@ impl RetrievalScores {
         self.queries += 1;
     }
 
-    /// The means, or nothing when no query was scored — a family the
-    /// benchmark does not carry is absent from the run, not zero.
-    fn means(&self, cutoff: usize) -> Vec<(String, f64)> {
+    /// The means, each under its catalogue entry, or nothing when no query
+    /// was scored — a family the benchmark does not carry is absent from the
+    /// run, not zero.
+    fn means(&self, cutoff: usize) -> Vec<(Metric, f64)> {
         if self.queries == 0 {
             return Vec::new();
         }
         let queries = self.queries as f64;
         vec![
-            (format!("ndcg@{cutoff}"), self.ndcg / queries),
-            (format!("recall@{cutoff}"), self.recall / queries),
-            ("mrr".to_string(), self.reciprocal_rank / queries),
+            (Metric::Ndcg { k: cutoff }, self.ndcg / queries),
+            (Metric::Recall { k: cutoff }, self.recall / queries),
+            (Metric::Mrr, self.reciprocal_rank / queries),
         ]
     }
 }
@@ -411,16 +413,16 @@ impl GenerationScores {
         self.queries += 1;
     }
 
-    /// The means under the names ADR-C30 § 1 fixes, or nothing when no query
-    /// was scored.
-    fn means(&self) -> Vec<(String, f64)> {
+    /// The means, each under its catalogue entry — the names ADR-C30 § 1
+    /// fixes — or nothing when no query was scored.
+    fn means(&self) -> Vec<(Metric, f64)> {
         if self.queries == 0 {
             return Vec::new();
         }
         let queries = self.queries as f64;
         vec![
-            ("exact_match".to_string(), self.exact_match / queries),
-            ("token_f1".to_string(), self.token_f1 / queries),
+            (Metric::ExactMatch, self.exact_match / queries),
+            (Metric::TokenF1, self.token_f1 / queries),
         ]
     }
 }
@@ -468,6 +470,37 @@ mod tests {
         {"ContextBuilder":{"id":"context","implementation":"c","inputs":["question","leg"],"params":{}}},
         {"Retriever":{"id":"leg","implementation":"r","inputs":["question"],"params":{}}}
     ]}"#;
+
+    #[test]
+    fn the_metric_names_written_are_the_catalogue_s() {
+        let mut retrieval = RetrievalScores::default();
+        retrieval.add(
+            &[DocId::new("a")],
+            &BTreeMap::from([(DocId::new("a"), 1)]),
+            10,
+        );
+        let mut generation = GenerationScores::default();
+        generation.add("a", &["a".to_string()]);
+
+        let written: Vec<String> = retrieval
+            .means(10)
+            .into_iter()
+            .chain(generation.means())
+            .map(|(metric, _)| metric.to_string())
+            .collect();
+
+        let catalogue = [
+            Metric::Ndcg { k: 10 },
+            Metric::Recall { k: 10 },
+            Metric::Mrr,
+            Metric::ExactMatch,
+            Metric::TokenF1,
+        ];
+        assert_eq!(written, catalogue.map(|metric| metric.to_string()));
+        for (name, metric) in written.iter().zip(catalogue) {
+            assert_eq!(Metric::parse(name), Some(metric), "{name}");
+        }
+    }
 
     #[test]
     fn an_empty_output_ranks_no_document() {

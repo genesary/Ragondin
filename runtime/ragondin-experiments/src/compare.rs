@@ -24,6 +24,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use ragondin_config::{parse_document, DocumentError};
+pub use ragondin_metrics::Direction;
 use ragondin_pipeline::{LogicalNode, LogicalPipeline, NodeId, ParamValue};
 
 use crate::run::{ConfigDocument, Run, RunId};
@@ -414,8 +415,9 @@ pub struct Comparison {
 pub struct MetricRow {
     /// The metric's name.
     pub name: String,
-    /// Which way the metric improves, read off its name.
-    pub direction: Direction,
+    /// Which way the metric improves, from `ragondin-metrics`' catalogue;
+    /// `None` for a name the catalogue does not know, which has no best.
+    pub direction: Option<Direction>,
     /// Each run's value, `None` where that run did not record the metric —
     /// which is not zero, and is never shown as zero.
     pub values: Vec<Option<f64>>,
@@ -424,18 +426,21 @@ pub struct MetricRow {
 impl MetricRow {
     /// The columns holding the best value of the row, by its
     /// [`direction`](Self::direction): every one of them on a tie, none when
-    /// no run recorded the metric. A run that did not record it is never the
-    /// best.
+    /// no run recorded the metric or the metric has no direction. A run that
+    /// did not record it is never the best.
     pub fn best(&self) -> Vec<usize> {
-        let best =
-            self.values
-                .iter()
-                .flatten()
-                .copied()
-                .reduce(|best, value| match self.direction {
-                    Direction::HigherIsBetter => best.max(value),
-                    Direction::LowerIsBetter => best.min(value),
-                });
+        let Some(direction) = self.direction else {
+            return Vec::new();
+        };
+        let best = self
+            .values
+            .iter()
+            .flatten()
+            .copied()
+            .reduce(|best, value| match direction {
+                Direction::HigherIsBetter => best.max(value),
+                Direction::LowerIsBetter => best.min(value),
+            });
         self.values
             .iter()
             .enumerate()
@@ -456,32 +461,6 @@ impl MetricRow {
                 _ => None,
             })
             .collect()
-    }
-}
-
-/// Which way a metric improves.
-///
-/// A choice made in this crate, since a run's metrics are no fixed catalogue
-/// (`ARCHITECTURE.md` § Local invariants): a metric whose name holds
-/// `latency` is better lower, and every other is better higher — as the
-/// ranking and answer metrics the harness records, `ndcg@<k>`, `recall@<k>`,
-/// `mrr`, `exact_match` and `token_f1`, all are.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Direction {
-    /// A higher value is better: a quality metric.
-    HigherIsBetter,
-    /// A lower value is better: a latency.
-    LowerIsBetter,
-}
-
-impl Direction {
-    /// The direction the metric `name` improves in.
-    pub fn of(name: &str) -> Self {
-        if name.contains("latency") {
-            Self::LowerIsBetter
-        } else {
-            Self::HigherIsBetter
-        }
     }
 }
 

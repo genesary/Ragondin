@@ -51,6 +51,12 @@ describe('deltaOf', () => {
     expect(deltaOf('higher', 0)).toEqual({ text: '0.0000', meaning: 'same', direction: 'none' });
   });
 
+  it('signs the delta of a metric with no direction and calls it neither better nor worse', () => {
+    expect(deltaOf(null, 1.5)).toEqual({ text: '+1.5000', meaning: null, direction: 'up' });
+    expect(deltaOf(null, -0.25)).toEqual({ text: '−0.2500', meaning: null, direction: 'down' });
+    expect(deltaOf(null, 0)).toEqual({ text: '0.0000', meaning: 'same', direction: 'none' });
+  });
+
   it('reads a delta too small to print as unchanged, never as a coloured +0.0000', () => {
     expect(deltaOf('higher', 0.00004)).toEqual({ text: '0.0000', meaning: 'same', direction: 'none' });
     expect(deltaOf('higher', -0.00004)).toEqual({ text: '0.0000', meaning: 'same', direction: 'none' });

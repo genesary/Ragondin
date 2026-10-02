@@ -147,7 +147,7 @@ fn every_metric_any_run_recorded_is_a_row_with_one_value_per_run_in_name_order()
 }
 
 #[test]
-fn each_row_names_its_best_run_by_the_direction_its_name_implies() {
+fn each_row_names_its_best_run_by_the_direction_the_catalogue_gives() {
     let (dense, hybrid, rerank) = three_runs();
 
     let comparison = compare_runs(&dense, &[&hybrid, &rerank]).unwrap();
@@ -159,10 +159,8 @@ fn each_row_names_its_best_run_by_the_direction_its_name_implies() {
             .unwrap()
     };
 
-    assert_eq!(row("ndcg@10").direction, Direction::HigherIsBetter);
+    assert_eq!(row("ndcg@10").direction, Some(Direction::HigherIsBetter));
     assert_eq!(row("ndcg@10").best(), [2]);
-    assert_eq!(row("latency_p50_ms").direction, Direction::LowerIsBetter);
-    assert_eq!(row("latency_p50_ms").best(), [0]);
     // A run that did not record the metric is never the best of its row.
     assert_eq!(row("recall@100").best(), [1]);
     assert_eq!(row("mrr").best(), [2]);
@@ -412,4 +410,23 @@ fn two_runs_compare_as_the_pairwise_comparison_compares_them() {
             (many, pairwise) => panic!("the two disagree: {many:?} against {pairwise:?}"),
         }
     }
+}
+
+#[test]
+fn an_unknown_metric_has_no_direction() {
+    assert_eq!(Direction::of("ndcg@10"), Some(Direction::HigherIsBetter));
+    assert_eq!(Direction::of("latency_p50"), None);
+
+    // A name the catalogue does not know — a latency percentile among them —
+    // is kept in the table with its values and deltas, and has no best.
+    let (dense, hybrid, rerank) = three_runs();
+    let comparison = compare_runs(&dense, &[&hybrid, &rerank]).unwrap();
+    let row = comparison
+        .metrics
+        .iter()
+        .find(|row| row.name == "latency_p50_ms")
+        .unwrap();
+    assert_eq!(row.direction, None);
+    assert_eq!(row.best(), Vec::<usize>::new());
+    assert_eq!(row.deltas(), [Some(0.0), Some(2.0), Some(351.0)]);
 }

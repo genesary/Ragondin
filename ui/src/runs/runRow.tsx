@@ -7,7 +7,7 @@
 import type { ReactNode } from 'react';
 import { Checkbox, Glyph, MetricChip, StatusChip, type TableRow } from '../../design/index.ts';
 import { formatHash } from '../routes.ts';
-import { benchmarkLabel, formatMetric, openRoute, rowKey, runningLabel, shortHash, type RunRow } from './model.ts';
+import { benchmarkLabel, formatLatency, formatMetric, metricLabel, openRoute, rowKey, runningLabel, shortHash, type RunRow } from './model.ts';
 import type { Refusal } from './selection.ts';
 
 /** The optional columns, drawn only when some row of the table has their data. */
@@ -36,7 +36,7 @@ function metrics(row: RunRow): ReactNode {
         group.family === null ? (
           <span key="unsaid" className="rg-runs__family">
             {group.metrics.map((m) => (
-              <MetricChip key={m.name} name={m.name} value={formatMetric(null, m.value)} />
+              <MetricChip key={m.name} name={metricLabel(m.name)} value={formatMetric(null, m.value)} />
             ))}
           </span>
         ) : (
@@ -45,7 +45,7 @@ function metrics(row: RunRow): ReactNode {
               {group.family}
             </span>
             {group.metrics.map((m) => (
-              <MetricChip key={m.name} name={m.name} value={formatMetric(group.family, m.value)} />
+              <MetricChip key={m.name} name={group.family === 'unknown' ? m.name : metricLabel(m.name)} value={formatMetric(group.family, m.value)} />
             ))}
           </span>
         ),
@@ -58,7 +58,7 @@ function metrics(row: RunRow): ReactNode {
 export function runRow(row: RunRow, { selected, refusal, columns, onToggle }: RunRowOptions): TableRow {
   const { status } = row;
   const extra: ReactNode[] = [
-    ...(columns.latency ? [row.latencyMs === null ? null : `${Math.round(row.latencyMs).toLocaleString('en-US')} ms`] : []),
+    ...(columns.latency ? [row.latencyMs === null ? null : formatLatency(row.latencyMs)] : []),
     ...(columns.started ? [row.startedAt === null ? null : <time dateTime={row.startedAt}>{started(row.startedAt)}</time>] : []),
   ];
 

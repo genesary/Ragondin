@@ -179,7 +179,8 @@ function Loaded({ listing, askedWith, refresh, sel, reread }: LoadedProps) {
     { id: 'run', label: 'Run' },
     { id: 'status', label: 'Status' },
     { id: 'metrics', label: 'Metrics' },
-    ...(columns.latency ? [{ id: 'latency', label: 'Latency', numeric: true }] : []),
+    // The median of the queries' own latencies, not the run's wall time: the label says which.
+    ...(columns.latency ? [{ id: 'latency', label: 'Median query latency', numeric: true }] : []),
     ...(columns.started ? [{ id: 'started', label: 'Started' }] : []),
   ];
   const tableRows: TableRow[] = groups.flatMap((group) => [

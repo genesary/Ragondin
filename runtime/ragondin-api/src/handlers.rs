@@ -115,6 +115,11 @@ pub(crate) async fn workspace(
 /// pipeline source or a registry that fails fails the listing, by design:
 /// answering with every name list silently empty would read as "no
 /// pipeline, no benchmark" rather than as the fault it is.
+///
+/// Each run's median query latency is derived data, read from the
+/// workspace's `cache/` when the key holds and computed from the run's traces
+/// and written there otherwise ([`latency`]); a cache that fails is reported
+/// beside the listing, never as its failure.
 pub(crate) async fn runs(
     State(state): State<AppState>,
     _: ApiQuery<NoParameters>,
@@ -127,6 +132,7 @@ pub(crate) async fn runs(
             .or_default()
             .push(pinned.name);
     }
+    let (workspace, build) = (state.config.workspace.clone(), state.config.build.clone());
     let listing = blocking(state.backends.runs, move |store| {
         let ids = store.ids().map_err(|error| ApiError::BackendFailed {
             detail: format!("the run store cannot be listed: {error}"),
@@ -135,6 +141,7 @@ pub(crate) async fn runs(
             runs: Vec::with_capacity(ids.len()),
             unreadable: Vec::new(),
             shapes: BTreeMap::new(),
+            cache_error: None,
         };
         for id in ids {
             match store.load(&id) {
@@ -145,6 +152,8 @@ pub(crate) async fn runs(
                             listing.shapes.insert(hash.clone(), shape);
                         }
                     }
+                    let (latency, failure) = latency(&workspace, &build, &run);
+                    listing.cache_error = listing.cache_error.or(failure);
                     listing.runs.push(convert::summary(
                         &run,
                         pipelines.get(&hash).cloned().unwrap_or_default(),
@@ -152,6 +161,7 @@ pub(crate) async fn runs(
                             .get(&run.inputs.dataset_version)
                             .cloned()
                             .unwrap_or_default(),
+                        latency,
                     ));
                 }
                 Err(error) => listing.unreadable.push(UnreadableRun {
@@ -260,7 +270,7 @@ pub(crate) async fn queries(
                 .as_ref()
                 .and_then(|figures| figures.queries.get(query.as_str()).cloned())
                 .unwrap_or_default(),
-            duration_nanos: duration(trace),
+            duration_nanos: trace.latency_nanos(),
         })
         .collect();
     let nodes = match &ground {
@@ -405,6 +415,33 @@ pub(crate) fn figures(
     (figures, failure)
 }
 
+/// A run's median query latency (`derived::median_query_latency`): read
+/// from the workspace's `cache/` when the key holds, computed from the
+/// traces and written there otherwise. It needs no dataset, so nothing is
+/// verified for it. Synchronous — the cache is files. A cache that cannot be
+/// read or written fails nothing: the latency is computed anyway, and the
+/// reason comes back beside it (`cache.rs`).
+///
+/// What the cache saves, and what it does not: a hit saves parsing each of
+/// the run's traces into a `Trace` and summing it. It saves no load — the
+/// listing has already loaded every run, traces included — and it costs a
+/// digest of every trace on every request, hit or miss, since the key
+/// (`cache::Key::of`) serializes each trace document and hashes it. Whether
+/// that digest costs less than the parse it saves is not measured here.
+fn latency(workspace: &std::path::Path, build: &str, run: &Run) -> (Option<u64>, Option<String>) {
+    let key = cache::Key::of(build, run);
+    let (cached, read_failure) = match cache::read_latency(workspace, &key) {
+        Ok(cached) => (cached, None),
+        Err(failure) => (None, Some(failure)),
+    };
+    if let Some(latency) = cached {
+        return (latency, None);
+    }
+    let latency = derived::median_query_latency(run);
+    let failure = read_failure.or(cache::write_latency(workspace, &key, latency).err());
+    (latency, failure)
+}
+
 /// Loads a run by the id a path named: `run_not_found` for an id that is not
 /// one or names nothing, `run_unreadable` for a run that does not read.
 pub(crate) async fn load_run(state: &AppState, id: String) -> Result<Run, ApiError> {
@@ -465,14 +502,6 @@ fn named_chunks(trace: &Trace) -> HashSet<String> {
         }
     }
     named
-}
-
-/// A query's duration: the sum of its nodes' own.
-fn duration(trace: &Trace) -> u64 {
-    trace
-        .nodes
-        .iter()
-        .fold(0u64, |sum, node| sum.saturating_add(node.duration_nanos))
 }
 
 /// Runs derivation work — a dataset's chunk set, the cache files — on a

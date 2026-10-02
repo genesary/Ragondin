@@ -1,7 +1,8 @@
 //! What `POST /compare` adds to `ragondin-experiments`' metric table and
 //! configuration matrix: the runs aligned by stage, with the pairs a person
-//! drew by hand; the bins of the per-query deltas; a node's median latency.
-//! Pure functions over values the handler has already read.
+//! drew by hand; and the bins of the per-query deltas. Pure functions over
+//! values the handler has already read. A node's median latency is taken by
+//! `ragondin_experiments::lower_median`, the one median of durations.
 
 use std::collections::BTreeMap;
 
@@ -172,14 +173,6 @@ pub(crate) fn bins(deltas: &[(String, f64)]) -> Vec<(DeltaBinName, Vec<String>)>
         .collect()
 }
 
-/// The lower median of `durations`: of the two middle values over an even
-/// count, the lower, so it is a duration that occurred. `None` for none.
-pub(crate) fn median(mut durations: Vec<u64>) -> Option<u64> {
-    durations.sort_unstable();
-    let middle = durations.len().checked_sub(1)? / 2;
-    durations.get(middle).copied()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -345,13 +338,5 @@ mod tests {
         let total: usize = binned.iter().map(|(_, queries)| queries.len()).sum();
         assert_eq!(total, cases.len(), "the bins partition the queries");
         assert_eq!(binned[3].1, ["q6", "q7"]);
-    }
-
-    #[test]
-    fn the_median_is_the_lower_middle_value() {
-        assert_eq!(median(vec![]), None);
-        assert_eq!(median(vec![7]), Some(7));
-        assert_eq!(median(vec![30, 10, 20]), Some(20));
-        assert_eq!(median(vec![40, 10, 30, 20]), Some(20));
     }
 }

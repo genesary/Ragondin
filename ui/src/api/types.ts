@@ -402,9 +402,15 @@ export type MetricDeltas = {
 /** Which way a metric improves. */
 export type MetricDirection = "higher" | "lower";
 
+/** Which ground truth a metric reads, as the listing names it. */
+export type MetricFamily = "ranking" | "answers" | "unknown";
+
 /** One metric across the runs compared. */
 export type MetricRow = {
-  /** The runs holding the best value, by `direction`: every one on a tie. */
+  /**
+   * The runs holding the best value, by `direction`: every one on a tie;
+   * none when `direction` is `null`.
+   */
   best: string[];
   /**
    * Each run's value minus the baseline's; `null` where either did not
@@ -412,10 +418,10 @@ export type MetricRow = {
    */
   deltas: (number | null)[];
   /**
-   * Which way it improves, read off its name: `lower` for a latency,
-   * `higher` for every other.
+   * Which way it improves, from `ragondin-metrics`' catalogue; `null`
+   * for a name the catalogue does not know, which then has no best.
    */
-  direction: MetricDirection;
+  direction: MetricDirection | null;
   /** The metric's name. */
   name: string;
   /** Each run's value; `null` where the run did not record it. */
@@ -689,10 +695,11 @@ export type QueryDelta = {
 /** One query, as the run executed it. */
 export type QueryScores = {
   /**
-   * The sum of its nodes' durations, in nanoseconds: each component's own
-   * time, as the trace records it.
+   * Its latency, in nanoseconds: the sum of its nodes' durations — each
+   * component's own time, as the trace records it. `null` when that sum
+   * overflows, which only a malformed trace can make it do.
    */
-  duration_nanos: number;
+  duration_nanos: number | null;
   /** The query's id. */
   id: string;
   /**
@@ -812,6 +819,14 @@ export type RunLatency = {
  * read.
  */
 export type RunListing = {
+  /**
+   * Why a run's median query latency could not be read from or written
+   * to the workspace's `cache/`, the first such reason; absent when the
+   * cache served or took every run, so a listing whose cache works reads
+   * as it always has. The listing is complete either way: the cache is
+   * never a truth, so its failure fails nothing.
+   */
+  cache_error?: string | null;
   /** The readable runs, in the store's listing order. */
   runs: RunSummary[];
   /**
@@ -904,6 +919,22 @@ export type RunSummary = {
   id: string;
   /** The index's version. */
   index_version: string;
+  /**
+   * The lower median, over the run's queries, of each query's latency —
+   * the sum of its trace's node durations — in nanoseconds.
+   * Derived, never stored in the run: read from the traces alone, so a
+   * run whose dataset is not on disk has it too, and cached under the
+   * workspace's `cache/`. Not the run's wall time, which
+   * `finished_at_ms − started_at_ms` gives, preparation included. `null`
+   * when no trace of the run reads.
+   */
+  median_query_latency_nanos: number | null;
+  /**
+   * The family of each metric, keyed exactly like
+   * [`metrics`](Self::metrics): from `ragondin-metrics`' catalogue, and
+   * `unknown` for a name it does not know — kept, never dropped.
+   */
+  metric_families: Record<string, MetricFamily>;
   /** What the run scored, by metric name. */
   metrics: Record<string, number>;
   /** The content hash of the canonical logical pipeline it ran. */

@@ -1,6 +1,6 @@
 [package]
 name = "ragondin-metrics"
-description = "Deterministic evaluation metrics: nDCG@k, recall@k, precision@k, MRR@k, MAP@k, exact match and token-F1."
+description = "Deterministic evaluation metrics: nDCG@k, recall@k, precision@k, MRR@k, MAP@k, exact match and token-F1, and the catalogue of the metrics a run records."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

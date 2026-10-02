@@ -34,17 +34,27 @@ export function barMetrics(rows: readonly MetricRow[]): MetricRow[] {
 
 const MINUS = '−';
 
-/** A value as the table prints it: four decimals where higher is better, one where lower is (a latency). */
-export const formatValue = (direction: MetricDirection, value: number) => (direction === 'higher' ? value.toFixed(4) : value.toFixed(1));
+/**
+ * A value as the table prints it: four decimals where higher is better, one
+ * where lower is (a latency), and four for a metric the API gives no
+ * direction.
+ */
+export const formatValue = (direction: MetricDirection | null, value: number) => (direction === 'lower' ? value.toFixed(1) : value.toFixed(4));
 
-/** A delta against the baseline: its sign, what it means by the metric's direction, and the arrow. */
-export function deltaOf(direction: MetricDirection, delta: number): { text: string; meaning: 'better' | 'worse' | 'same'; direction: 'up' | 'down' | 'none' } {
+/**
+ * A delta against the baseline: its sign, what it means by the metric's
+ * direction, and the arrow. A metric with no direction moved, but neither
+ * better nor worse: its meaning is null.
+ */
+export function deltaOf(direction: MetricDirection | null, delta: number): { text: string; meaning: 'better' | 'worse' | 'same' | null; direction: 'up' | 'down' | 'none' } {
   const magnitude = formatValue(direction, Math.abs(delta));
   // A delta that prints as zero reads as unchanged: a coloured "+0.0000"
   // would claim a change the number on screen does not show.
   if (Number(magnitude) === 0) return { text: magnitude, meaning: 'same', direction: 'none' };
   const up = delta > 0;
-  return { text: `${up ? '+' : MINUS}${magnitude}`, meaning: up === (direction === 'higher') ? 'better' : 'worse', direction: up ? 'up' : 'down' };
+  const text = `${up ? '+' : MINUS}${magnitude}`;
+  if (direction === null) return { text, meaning: null, direction: up ? 'up' : 'down' };
+  return { text, meaning: up === (direction === 'higher') ? 'better' : 'worse', direction: up ? 'up' : 'down' };
 }
 
 /** A parameter's value as a configuration writes it; an unset one in words. */

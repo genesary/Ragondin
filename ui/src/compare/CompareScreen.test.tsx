@@ -16,7 +16,7 @@ const R5 = hex('6');
 const R6 = hex('7');
 const FIQA_RUN = hex('8');
 
-const summary = (id: string, dataset: string): RunSummary => ({ id, pipeline: hex('9'), dataset_version: dataset, index_version: hex('0'), engine_version: '0.0.0', metrics: {}, pipeline_names: [], benchmark_names: [], started_at_ms: null, finished_at_ms: null });
+const summary = (id: string, dataset: string): RunSummary => ({ id, pipeline: hex('9'), dataset_version: dataset, index_version: hex('0'), engine_version: '0.0.0', metrics: {}, pipeline_names: [], benchmark_names: [], started_at_ms: null, finished_at_ms: null, metric_families: {}, median_query_latency_nanos: null });
 const LISTING: RunListing = {
   runs: [summary(DENSE, SCIFACT), summary(HYBRID, SCIFACT), summary(RERANK, SCIFACT), summary(R4, SCIFACT), summary(R5, SCIFACT), summary(R6, SCIFACT), summary(FIQA_RUN, OTHER_BENCH)],
   unreadable: [],
@@ -271,6 +271,20 @@ describe('the tables', () => {
     const recall = within(table).getByText('recall@100').closest('tr') as HTMLElement;
     expect(recall.querySelectorAll('td[data-best]')).toHaveLength(2);
     expect((recall.querySelector('.rg-delta[data-meaning="better"]') as HTMLElement).textContent).toBe('+0.0290 better');
+  });
+
+  it('marks no best for a metric the API gives no direction, and signs its deltas without calling them better or worse', async () => {
+    const unknown = { name: 'foo_score', direction: null, values: [2, 3.5, 1], deltas: [0, 1.5, -1], best: [] };
+    show(THREE, routes((body) => {
+      const reply = answer(body);
+      return 'body' in reply ? { body: { ...reply.body, metrics: [...reply.body.metrics, unknown] } } : reply;
+    }));
+    await loaded();
+    const table = screen.getByRole('table', { name: 'Metrics of 3 runs against the baseline' });
+    const row = within(table).getByText('foo_score').closest('tr') as HTMLElement;
+    expect(row.querySelectorAll('td[data-best]')).toHaveLength(0);
+    expect(row.querySelectorAll('.rg-delta')).toHaveLength(0);
+    expect([...row.querySelectorAll('.rg-compare__delta')].map((d) => d.textContent)).toEqual(['+1.5000', '−1.0000']);
   });
 
   it('shows only the parameters that differ, departures from the baseline marked', async () => {

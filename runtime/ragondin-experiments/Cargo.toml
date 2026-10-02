@@ -15,7 +15,10 @@ rust-version.workspace = true
 # comparison lowers two stored configurations through, whose closure is
 # `ragondin-pipeline`, the YAML parser and two macro crates — no RPC or HTTP
 # stack; and on
-# `ragondin-types` for the `QueryId` a per-query trace is filed under. It does
+# `ragondin-types` for the `QueryId` a per-query trace is filed under; and on
+# `ragondin-metrics` for the metric catalogue a comparison reads each metric's
+# direction from — a plane crate like this one, whose own closure is
+# `ragondin-types`. It does
 # **not** depend on `ragondin-engine`: the harness is the driver that holds
 # both, and it renders the engine's `ExecutionTrace` into the document this
 # crate stores.
@@ -25,6 +28,7 @@ rust-version.workspace = true
 # separate, additive piece of the plane.
 [dependencies]
 ragondin-config = { workspace = true }
+ragondin-metrics = { workspace = true }
 ragondin-pipeline = { workspace = true }
 ragondin-types = { workspace = true }
 serde = { workspace = true }

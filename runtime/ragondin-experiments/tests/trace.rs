@@ -12,8 +12,8 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use ragondin_experiments::{
-    FileSystemRunStore, RunId, Trace, TraceChunk, TraceDocument, TraceError, TraceNode,
-    TraceProblem, TraceSummary,
+    lower_median, FileSystemRunStore, RunId, Trace, TraceChunk, TraceDocument, TraceError,
+    TraceNode, TraceProblem, TraceSummary,
 };
 use ragondin_pipeline::NodeId;
 use ragondin_types::{ChunkId, DocId, QueryId};
@@ -303,4 +303,35 @@ fn a_document_that_is_not_a_trace_at_all_is_reported_at_its_root() {
     assert_eq!(error.node(), None);
     assert_eq!(error.field(), "");
     assert!(matches!(error.problem(), TraceProblem::WrongType { .. }));
+}
+
+fn timed(durations: &[u64]) -> Trace {
+    Trace {
+        nodes: durations
+            .iter()
+            .enumerate()
+            .map(|(index, nanos)| TraceNode {
+                duration_nanos: *nanos,
+                ..node(&format!("n{index}"), Vec::new(), None)
+            })
+            .collect(),
+    }
+}
+
+#[test]
+fn a_query_s_latency_is_the_sum_of_its_node_durations() {
+    assert_eq!(timed(&[100, 250, 50]).latency_nanos(), Some(400));
+    assert_eq!(timed(&[]).latency_nanos(), Some(0));
+    // Durations past `u64` nanoseconds — some 584 years — are a malformed
+    // trace, not a slow query: no latency, never a saturated one.
+    assert_eq!(timed(&[u64::MAX, 1]).latency_nanos(), None);
+    assert_eq!(timed(&[u64::MAX]).latency_nanos(), Some(u64::MAX));
+}
+
+#[test]
+fn the_median_is_the_lower_middle_value() {
+    assert_eq!(lower_median(vec![]), None);
+    assert_eq!(lower_median(vec![7]), Some(7));
+    assert_eq!(lower_median(vec![30, 10, 20]), Some(20));
+    assert_eq!(lower_median(vec![40, 10, 30, 20]), Some(20));
 }

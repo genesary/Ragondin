@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use axum::extract::State;
 use axum::Json;
-use ragondin_experiments::{compare_runs, Direction, Run, Trace};
+use ragondin_experiments::{compare_runs, lower_median, Direction, Run, Trace};
 use ragondin_pipeline::LogicalPipeline;
 use ragondin_types::QueryId;
 
@@ -449,13 +449,15 @@ fn stage_cell(
     let mut best: BTreeMap<String, StageValue> = BTreeMap::new();
     for node in &nodes {
         for (metric, value) in node.metrics.iter().flatten() {
-            // One rule for which way a metric improves: the metric table's.
-            let better = best
-                .get(metric)
-                .is_none_or(|held| match Direction::of(metric) {
-                    Direction::HigherIsBetter => *value > held.value,
-                    Direction::LowerIsBetter => *value < held.value,
-                });
+            // One rule for which way a metric improves: the metric table's,
+            // the catalogue's. A metric it does not know has no best.
+            let Some(direction) = Direction::of(metric) else {
+                continue;
+            };
+            let better = best.get(metric).is_none_or(|held| match direction {
+                Direction::HigherIsBetter => *value > held.value,
+                Direction::LowerIsBetter => *value < held.value,
+            });
             if better {
                 best.insert(
                     metric.clone(),
@@ -522,7 +524,8 @@ fn query_deltas(runs: &[Compared], figures: &[cache::Figures]) -> Vec<RunDeltas>
 }
 
 /// A run's latency: each node of its pipeline that ran, in the canonical
-/// order, with the median of its durations over the queries.
+/// order, with the lower median (`lower_median`) of its durations over the
+/// queries — one node's duration, not a query's latency.
 fn latency(run: &Compared) -> RunLatency {
     RunLatency {
         run: run.run.id.to_string(),
@@ -545,7 +548,7 @@ fn latency(run: &Compared) -> RunLatency {
                     })
                     .collect();
                 let queries = durations.len() as u64;
-                comparison::median(durations).map(|median_nanos| NodeLatency {
+                lower_median(durations).map(|median_nanos| NodeLatency {
                     node: node.id().as_str().to_owned(),
                     family: convert::family(node),
                     median_nanos,

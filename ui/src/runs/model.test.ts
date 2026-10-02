@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Graph, RunListing, RunSummary } from '../api/types.ts';
-import { benchmarkLabel, formatMetric, groupRows, openRoute, rowKey, rowsFromListing, runningLabel, shapeOf, shortHash, type RunRow } from './model.ts';
+import { benchmarkLabel, formatLatency, formatMetric, groupRows, metricLabel, openRoute, rowKey, rowsFromListing, runningLabel, shapeOf, shortHash, type RunRow } from './model.ts';
 
 const hex = (c: string) => c.repeat(64);
 
@@ -31,6 +31,8 @@ const summary = (id: string, over: Partial<RunSummary> = {}): RunSummary => ({
   started_at_ms: null,
   finished_at_ms: null,
   metrics: {},
+  metric_families: {},
+  median_query_latency_nanos: null,
   ...over,
 });
 
@@ -46,11 +48,27 @@ describe('rowsFromListing', () => {
     ]);
   });
 
-  it('keeps the metrics as the run recorded them, in one group whose family the listing does not say', () => {
-    const listing = listingOf(summary(hex('1'), { metrics: { mrr: 0.25, 'ndcg@10': 0.5 } }));
+  it('groups the metrics by the family the listing sends, ranking, then answers, then unknown, each as the run recorded it', () => {
+    const listing = listingOf(
+      summary(hex('1'), {
+        metrics: { exact_match: 0.412, foo_score: 7, mrr: 0.25, 'ndcg@10': 0.5 },
+        metric_families: { exact_match: 'answers', foo_score: 'unknown', mrr: 'ranking', 'ndcg@10': 'ranking' },
+      }),
+    );
     expect(rowsFromListing(listing)[0]?.metrics).toEqual([
-      { family: null, metrics: [{ name: 'mrr', value: 0.25 }, { name: 'ndcg@10', value: 0.5 }] },
+      { family: 'ranking', metrics: [{ name: 'mrr', value: 0.25 }, { name: 'ndcg@10', value: 0.5 }] },
+      { family: 'answers', metrics: [{ name: 'exact_match', value: 0.412 }] },
+      { family: 'unknown', metrics: [{ name: 'foo_score', value: 7 }] },
     ]);
+  });
+
+  it('shows a metric the listing gives no family for as unknown, never drops it', () => {
+    const listing = listingOf(summary(hex('1'), { metrics: { mrr: 0.25 } }));
+    expect(rowsFromListing(listing)[0]?.metrics).toEqual([{ family: 'unknown', metrics: [{ name: 'mrr', value: 0.25 }] }]);
+  });
+
+  it('reads the median query latency, in milliseconds', () => {
+    expect(rowsFromListing(listingOf(summary(hex('1'), { median_query_latency_nanos: 17_249_000 })))[0]?.latencyMs).toBe(17.249);
   });
 
   it('gives a run that recorded no metric no group at all, so no empty cell is drawn', () => {
@@ -169,7 +187,24 @@ describe('labels', () => {
   it('formats a ranking metric to four decimals and an answer metric as a percentage to one', () => {
     expect(formatMetric('ranking', 0.54364)).toBe('0.5436');
     expect(formatMetric('answers', 0.33333)).toBe('33.3');
+    expect(formatMetric('answers', 0.412)).toBe('41.2');
     expect(formatMetric(null, 0.54364)).toBe('0.5436');
+    // A metric of no known family is printed as stored: nothing says how to round it.
+    expect(formatMetric('unknown', 0.123456789)).toBe('0.123456789');
+  });
+
+  it('names an answer metric as the design writes it, every other by its stored name', () => {
+    expect(metricLabel('exact_match')).toBe('EM');
+    expect(metricLabel('token_f1')).toBe('F1');
+    expect(metricLabel('ndcg@10')).toBe('ndcg@10');
+    expect(metricLabel('foo_score')).toBe('foo_score');
+  });
+
+  it('writes a latency in whole milliseconds, and to two figures under ten', () => {
+    expect(formatLatency(412.4)).toBe('412 ms');
+    expect(formatLatency(12.6)).toBe('13 ms');
+    expect(formatLatency(4.25)).toBe('4.3 ms');
+    expect(formatLatency(0.017249)).toBe('0.017 ms');
   });
 });
 

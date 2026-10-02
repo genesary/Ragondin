@@ -2051,6 +2051,7 @@ name = "ragondin-experiments"
 version = "0.0.0"
 dependencies = [
  "ragondin-config",
+ "ragondin-metrics",
  "ragondin-pipeline",
  "ragondin-types",
  "serde",
