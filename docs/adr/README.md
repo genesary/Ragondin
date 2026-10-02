@@ -53,7 +53,7 @@ index of citable decisions is worse than none — `just check` fails when it dri
 | [`ADR-013`](ADR-013-native-run-store-with-export-adapters.md) | Native run store with export adapters | — | accepted |
 | [`ADR-014`](ADR-014-single-front-end-graph-replay-load-bearing.md) | Single front end; graph replay is load-bearing, visual authoring is a later trajectory | — | superseded |
 | [`ADR-015`](ADR-015-traceability-and-statistical-reproducibility.md) | Traceability and statistical reproducibility, not strict determinism | — | accepted |
-| [`ADR-016`](ADR-016-visual-editing-with-the-front-end-yaml-stays-the-truth.md) | Single front end; graph replay is load-bearing and built first; visual editing is built with it, over pipeline files that stay the source of truth | INV-8, INV-9 | accepted |
+| [`ADR-016`](ADR-016-visual-editing-with-the-front-end-yaml-stays-the-truth.md) | Single front end; graph replay is load-bearing and built first; visual editing is built with it, over pipeline files that stay the source of truth | INV-8, INV-9 | amended |
 | [`ADR-C01`](ADR-C01-multi-crate-workspace-boundaries-are-crate-boundaries.md) | Multi-crate workspace; load-bearing boundaries are crate boundaries | — | accepted |
 | [`ADR-C02`](ADR-C02-three-level-pipeline-representation.md) | Three-level pipeline representation (Raw / Logical / Physical) | INV-8 | amended |
 | [`ADR-C03`](ADR-C03-closed-enum-plus-open-extension-variant.md) | Closed enum of primitive nodes plus an open Extension variant | — | accepted |
