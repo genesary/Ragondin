@@ -11,18 +11,17 @@
 
 use std::time::SystemTime;
 
-use axum::body::Bytes;
-use axum::extract::{Path, State};
-use axum::http::{header, HeaderMap, HeaderValue};
+use axum::extract::State;
+use axum::http::{header, HeaderValue};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use ragondin_experiments::UnixMillis;
 
-use super::json_body;
 use crate::backends::{PipelineFile, Precondition, Revision};
 use crate::error::ApiError;
+use crate::extract::{ApiHeaders, ApiJson, ApiPath, ApiQuery, NoParameters};
 use crate::handlers::AppState;
-use crate::request::PipelineDocument;
+use crate::request::{PipelineDocument, PreconditionHeaders};
 use crate::response::{
     Layout, PipelineDetail, PipelineError, PipelineLayout, PipelineListing, PipelineSummary,
     PipelineValidated, PipelineWritten,
@@ -30,7 +29,10 @@ use crate::response::{
 use crate::validation;
 
 /// `GET /pipelines`.
-pub(crate) async fn list(State(state): State<AppState>) -> Result<Json<PipelineListing>, ApiError> {
+pub(crate) async fn list(
+    State(state): State<AppState>,
+    _: ApiQuery<NoParameters>,
+) -> Result<Json<PipelineListing>, ApiError> {
     let files = state.backends.pipelines.list().await?;
     Ok(Json(PipelineListing {
         pipelines: files
@@ -60,7 +62,8 @@ fn modified_ms(modified: SystemTime) -> Option<u64> {
 /// `GET /pipelines/{name}`.
 pub(crate) async fn read(
     State(state): State<AppState>,
-    Path(name): Path<String>,
+    ApiPath(name): ApiPath<String>,
+    _: ApiQuery<NoParameters>,
 ) -> Result<Response, ApiError> {
     let file = state.backends.pipelines.read(&name).await?;
     let (hash, error) = verdict(&file.document);
@@ -81,12 +84,12 @@ pub(crate) async fn read(
 /// document.
 pub(crate) async fn write(
     State(state): State<AppState>,
-    Path(name): Path<String>,
-    headers: HeaderMap,
-    body: Bytes,
+    ApiPath(name): ApiPath<String>,
+    _: ApiQuery<NoParameters>,
+    ApiHeaders(headers): ApiHeaders<PreconditionHeaders>,
+    ApiJson(request): ApiJson<PipelineDocument>,
 ) -> Result<Response, ApiError> {
-    let precondition = precondition(&headers)?;
-    let request: PipelineDocument = json_body(&body)?;
+    let precondition = precondition(headers)?;
     // The composition root's key refusals, with the workspace's bindings
     // deciding which names are bound: what `bench` would refuse is not stored.
     let pipeline = validation::lower(&request.document)?;
@@ -117,8 +120,10 @@ pub(crate) async fn write(
 }
 
 /// `POST /pipelines/validate`: the hash, or `pipeline_invalid`.
-pub(crate) async fn validate(body: Bytes) -> Result<Json<PipelineValidated>, ApiError> {
-    let request: PipelineDocument = json_body(&body)?;
+pub(crate) async fn validate(
+    _: ApiQuery<NoParameters>,
+    ApiJson(request): ApiJson<PipelineDocument>,
+) -> Result<Json<PipelineValidated>, ApiError> {
     Ok(Json(PipelineValidated {
         hash: validation::check(&request.document)?,
     }))
@@ -127,7 +132,8 @@ pub(crate) async fn validate(body: Bytes) -> Result<Json<PipelineValidated>, Api
 /// `GET /pipelines/{name}/layout`.
 pub(crate) async fn read_layout(
     State(state): State<AppState>,
-    Path(name): Path<String>,
+    ApiPath(name): ApiPath<String>,
+    _: ApiQuery<NoParameters>,
 ) -> Result<Json<PipelineLayout>, ApiError> {
     Ok(Json(PipelineLayout {
         layout: state.backends.pipelines.read_layout(&name).await?,
@@ -137,10 +143,10 @@ pub(crate) async fn read_layout(
 /// `PUT /pipelines/{name}/layout`: replaces the layout, and answers it.
 pub(crate) async fn write_layout(
     State(state): State<AppState>,
-    Path(name): Path<String>,
-    body: Bytes,
+    ApiPath(name): ApiPath<String>,
+    _: ApiQuery<NoParameters>,
+    ApiJson(layout): ApiJson<Layout>,
 ) -> Result<Json<PipelineLayout>, ApiError> {
-    let layout: Layout = json_body(&body)?;
     state
         .backends
         .pipelines
@@ -174,21 +180,8 @@ fn verdict(document: &str) -> (Option<String>, Option<PipelineError>) {
 }
 
 /// What a write's headers expect of the stored document.
-fn precondition(headers: &HeaderMap) -> Result<Precondition, ApiError> {
-    let text = |name: header::HeaderName| -> Result<Option<String>, ApiError> {
-        headers
-            .get(&name)
-            .map(|value| {
-                value
-                    .to_str()
-                    .map(|value| value.trim().to_owned())
-                    .map_err(|_| ApiError::RequestInvalid {
-                        detail: format!("the `{name}` header is not text"),
-                    })
-            })
-            .transpose()
-    };
-    match (text(header::IF_MATCH)?, text(header::IF_NONE_MATCH)?) {
+fn precondition(headers: PreconditionHeaders) -> Result<Precondition, ApiError> {
+    match (headers.if_match, headers.if_none_match) {
         (Some(_), Some(_)) => Err(ApiError::RequestInvalid {
             detail: "a write states `If-Match` or `If-None-Match: *`, not both".to_owned(),
         }),

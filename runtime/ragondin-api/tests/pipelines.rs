@@ -451,6 +451,78 @@ async fn if_match_star_matches_any_stored_document_and_nothing_absent() {
     assert!(!workspace.pipelines().join("other.yaml").exists());
 }
 
+/// A header the write reads, sent twice, is refused naming it, as a
+/// repeated query parameter is: which of the two would hold is a guess.
+#[tokio::test]
+async fn if_match_sent_twice_is_parameter_invalid_naming_it() {
+    let workspace = scratch("if_match_twice");
+    let etag = create(&workspace, "hybrid", HYBRID).await;
+
+    let response = send(
+        server(&workspace),
+        write_request(
+            "PUT",
+            "/api/v1/pipelines/hybrid",
+            &document(HYBRID_REFORMATTED),
+            &[("if-match", &etag), ("if-match", "*")],
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let problem = body_json(response).await;
+    assert_eq!(problem["code"], "parameter_invalid");
+    assert_eq!(problem["name"], "If-Match");
+    assert_eq!(on_disk(&workspace, "hybrid"), HYBRID.as_bytes());
+}
+
+/// A precondition header whose value is not text is `request_invalid`, as a
+/// problem body, as it was before the headers were declared.
+#[tokio::test]
+async fn a_precondition_header_that_is_not_text_is_request_invalid() {
+    let workspace = scratch("if_match_not_text");
+    create(&workspace, "hybrid", HYBRID).await;
+
+    let mut request = write_request(
+        "PUT",
+        "/api/v1/pipelines/hybrid",
+        &document(HYBRID_REFORMATTED),
+        &[],
+    );
+    request.headers_mut().insert(
+        "if-match",
+        axum::http::HeaderValue::from_bytes(b"\"\xff\"").unwrap(),
+    );
+    let response = send(server(&workspace), request).await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        response.headers()["content-type"],
+        "application/problem+json"
+    );
+    assert_eq!(body_json(response).await["code"], "request_invalid");
+}
+
+/// A header the write does not read is ignored: a request carries many.
+#[tokio::test]
+async fn a_header_the_write_does_not_read_is_ignored() {
+    let workspace = scratch("unrelated_header");
+    let response = send(
+        server(&workspace),
+        write_request(
+            "PUT",
+            "/api/v1/pipelines/hybrid",
+            &document(HYBRID),
+            &[
+                ("if-none-match", "*"),
+                ("x-unrelated", "1"),
+                ("x-unrelated", "2"),
+            ],
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(on_disk(&workspace, "hybrid"), HYBRID.as_bytes());
+}
+
 /// Eight writes naming the same etag, at once: one stores its bytes, the
 /// seven others are refused with the etag the winner left.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

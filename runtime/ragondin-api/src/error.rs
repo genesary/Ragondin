@@ -80,11 +80,13 @@ pub enum ApiError {
         query: String,
     },
     /// A request parameter this endpoint does not take, or a value it cannot
-    /// read.
-    #[error("the parameter `{name}` is invalid: {reason}")]
+    /// read: in the query string, the path, or a header the endpoint reads.
+    #[error("{}", parameter_invalid(name.as_deref(), reason))]
     ParameterInvalid {
-        /// The parameter as the request spelled it.
-        name: String,
+        /// The parameter, path parameter or header, as the request spelled
+        /// it — or as the description declares it, for a header — when it
+        /// is known; `None` when the reason does not say which.
+        name: Option<String>,
         /// What is wrong with it.
         reason: String,
     },
@@ -227,6 +229,12 @@ pub enum ApiError {
         /// Why, naming both benchmark versions or the ceiling.
         detail: String,
     },
+    /// A request body longer than the server reads.
+    #[error("the request body is larger than this server reads: {detail}")]
+    BodyTooLarge {
+        /// What the body reader reported.
+        detail: String,
+    },
 }
 
 impl ApiError {
@@ -258,6 +266,7 @@ impl ApiError {
         "route_not_found",
         "method_not_allowed",
         "runs_not_comparable",
+        "body_too_large",
     ];
 
     /// The stable code a client matches on.
@@ -295,6 +304,7 @@ impl ApiError {
             Self::HostRefused { .. } => StatusCode::MISDIRECTED_REQUEST,
             Self::OriginRefused { .. } => StatusCode::FORBIDDEN,
             Self::MethodNotAllowed { .. } => StatusCode::METHOD_NOT_ALLOWED,
+            Self::BodyTooLarge { .. } => StatusCode::PAYLOAD_TOO_LARGE,
         }
     }
 
@@ -314,6 +324,10 @@ impl ApiError {
             },
             etag: match self {
                 Self::PreconditionFailed { current, .. } => current.clone(),
+                _ => None,
+            },
+            name: match self {
+                Self::ParameterInvalid { name, .. } => name.clone(),
                 _ => None,
             },
         }
@@ -347,6 +361,7 @@ impl ApiError {
             Self::RouteNotFound { .. } => 23,
             Self::MethodNotAllowed { .. } => 24,
             Self::RunsNotComparable { .. } => 25,
+            Self::BodyTooLarge { .. } => 26,
         }
     }
 
@@ -378,6 +393,7 @@ impl ApiError {
             Self::RouteNotFound { .. } => "No such endpoint",
             Self::MethodNotAllowed { .. } => "Method not allowed",
             Self::RunsNotComparable { .. } => "The runs cannot be compared",
+            Self::BodyTooLarge { .. } => "The request body is too large",
         }
     }
 
@@ -473,6 +489,9 @@ impl ApiError {
             Self::RunsNotComparable { .. } => {
                 "Compare runs of one benchmark, a baseline and at most four others.".to_owned()
             }
+            Self::BodyTooLarge { .. } => {
+                "Send a smaller body: no request this API reads needs one this large.".to_owned()
+            }
         }
     }
 }
@@ -485,6 +504,15 @@ fn impl_not_in_build(family: &str, implementation: &str, feature: Option<&str>) 
             "this build cannot construct the {family} `{implementation}` without the `{feature}` feature"
         ),
         None => format!("this build has no local {family} named `{implementation}`"),
+    }
+}
+
+/// `ParameterInvalid`'s detail: the parameter named when it is known, and
+/// never a guessed one.
+fn parameter_invalid(name: Option<&str>, reason: &str) -> String {
+    match name {
+        Some(name) => format!("the parameter `{name}` is invalid: {reason}"),
+        None => format!("a parameter is invalid: {reason}"),
     }
 }
 
@@ -555,7 +583,7 @@ mod tests {
                 query: String::new(),
             },
             ApiError::ParameterInvalid {
-                name: String::new(),
+                name: None,
                 reason: String::new(),
             },
             ApiError::DatasetAbsent {
@@ -613,6 +641,9 @@ mod tests {
                 path: String::new(),
             },
             ApiError::RunsNotComparable {
+                detail: String::new(),
+            },
+            ApiError::BodyTooLarge {
                 detail: String::new(),
             },
         ];

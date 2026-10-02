@@ -135,15 +135,16 @@ async fn every_described_operation_is_routed() {
     }
 }
 
-/// Every path parameter an operation reads is declared, and the one query
-/// parameter the API takes is stated in its operation's description — the
-/// UI's type generator refuses a declared query parameter.
+/// Every parameter an operation reads is declared — path, query and header —
+/// each `required` as its type says, in the committed golden file; and no
+/// operation's prose still stands in for one (ADR-C37 § 5).
 #[test]
-fn every_parameter_is_declared_or_described() {
+fn every_parameter_is_declared_in_the_golden_file() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("api/v1.json");
     let description: serde_json::Value =
-        serde_json::from_str(&ragondin_api::description::render()).unwrap();
-    let declared = |path: &str| -> Vec<(String, String)> {
-        description["paths"][path]["get"]["parameters"]
+        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    let declared = |path: &str, method: &str| -> Vec<(String, String, bool)> {
+        description["paths"][path][method]["parameters"]
             .as_array()
             .unwrap()
             .iter()
@@ -151,21 +152,60 @@ fn every_parameter_is_declared_or_described() {
                 (
                     parameter["name"].as_str().unwrap().to_owned(),
                     parameter["in"].as_str().unwrap().to_owned(),
+                    parameter["required"].as_bool().unwrap(),
                 )
             })
             .collect()
     };
-    let pair = |name: &str, place: &str| (name.to_owned(), place.to_owned());
+    let entry =
+        |name: &str, place: &str, required: bool| (name.to_owned(), place.to_owned(), required);
     assert_eq!(
-        declared("/runs/{id}/trace/{query}"),
-        [pair("id", "path"), pair("query", "path")]
+        declared("/runs/{id}/trace/{query}", "get"),
+        [entry("id", "path", true), entry("query", "path", true)]
     );
-    assert_eq!(declared("/runs/{id}/queries"), [pair("id", "path")]);
-    assert_eq!(declared("/runs"), Vec::<(String, String)>::new());
-    assert!(
-        description["paths"]["/runs/{id}/queries"]["get"]["description"]
-            .as_str()
-            .unwrap()
-            .contains("missing_gold_at")
+    assert_eq!(
+        declared("/runs/{id}/queries", "get"),
+        [
+            entry("id", "path", true),
+            entry("missing_gold_at", "query", false)
+        ]
     );
+    assert_eq!(
+        declared("/pipelines/{name}", "put"),
+        [
+            entry("name", "path", true),
+            entry("If-Match", "header", false),
+            entry("If-None-Match", "header", false)
+        ]
+    );
+    assert_eq!(declared("/runs", "get"), []);
+
+    let missing_gold_at = &description["paths"]["/runs/{id}/queries"]["get"]["parameters"][1];
+    assert_eq!(missing_gold_at["schema"]["type"], "integer");
+    assert_eq!(missing_gold_at["schema"]["minimum"], 1);
+
+    for (path, methods) in description["paths"].as_object().unwrap() {
+        for (method, operation) in methods.as_object().unwrap() {
+            let prose = operation["description"].as_str().unwrap_or_default();
+            for stated in ["missing_gold_at", "Not declared"] {
+                assert!(
+                    !prose.contains(stated),
+                    "{method} {path} states `{stated}` in prose"
+                );
+            }
+        }
+    }
+    let put = description["paths"]["/pipelines/{name}"]["put"]["description"]
+        .as_str()
+        .unwrap();
+    assert!(!put.contains("Requires the header"), "{put}");
+}
+
+/// The problem body names the parameter only when it is known, so its
+/// schema leaves `name` optional and a generated client types it so.
+#[test]
+fn the_problem_name_is_optional() {
+    let schemas = schemas();
+    assert_eq!(schemas["Problem"]["properties"]["name"]["type"], "string");
+    assert!(!required(&schemas["Problem"]).contains(&"name"));
 }

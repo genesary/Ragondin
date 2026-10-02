@@ -1613,7 +1613,8 @@
               "origin_refused",
               "route_not_found",
               "method_not_allowed",
-              "runs_not_comparable"
+              "runs_not_comparable",
+              "body_too_large"
             ],
             "type": "string"
           },
@@ -1643,6 +1644,11 @@
               }
             ],
             "description": "Where in a pipeline a validation failure is. Present only for\n`pipeline_invalid`."
+          },
+          "name": {
+            "description": "The parameter, path parameter or header a `parameter_invalid` is\nabout, when it is known. Absent otherwise — never guessed.",
+            "nullable": true,
+            "type": "string"
           },
           "status": {
             "description": "The HTTP status.",
@@ -2919,7 +2925,7 @@
     },
     "/pipelines/{name}": {
       "get": {
-        "description": "The etag is also the response's `ETag` header, quoted. Not declared as a header: the UI's type generator reads path parameters only.",
+        "description": "The etag is also the response's `ETag` header, quoted.",
         "parameters": [
           {
             "in": "path",
@@ -2955,12 +2961,30 @@
         "summary": "One pipeline document, verbatim, with its etag and its hash or why it does not validate."
       },
       "put": {
-        "description": "Requires the header `If-Match: \"<etag>\"` to replace the stored document (`If-Match: *` for whatever is stored), or `If-None-Match: *` to create one. A stale etag, `If-Match: *` with nothing stored, a creation over an existing document, or neither header is precondition_failed (412), with the current etag in the `ETag` header, the detail and the problem's `etag` member, and nothing written. A document the composition root refuses — a key no component reads — is pipeline_invalid, in `ragondin bench`'s words. The answer's etag is also its `ETag` header. Not declared as headers: the UI's type generator reads path parameters only.",
+        "description": "A write states one precondition: `If-Match` to replace the stored document, or `If-None-Match: *` to create one. A stale etag, `If-Match: *` with nothing stored, a creation over an existing document, or neither header is precondition_failed (412), with the current etag in the `ETag` header, the detail and the problem's `etag` member, and nothing written; both headers at once is request_invalid. A document the composition root refuses — a key no component reads — is pipeline_invalid, in `ragondin bench`'s words. The answer's etag is also its `ETag` header.",
         "parameters": [
           {
             "in": "path",
             "name": "name",
             "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "`\"<etag>\"` to replace the stored document with that etag — a weak\n`W/` tag reads as its strong form — or `*` to replace whatever is\nstored.",
+            "in": "header",
+            "name": "If-Match",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "`*`, to create the document: nothing may be stored under the name.",
+            "in": "header",
+            "name": "If-None-Match",
+            "required": false,
             "schema": {
               "type": "string"
             }
@@ -3150,7 +3174,6 @@
     },
     "/runs/{id}/queries": {
       "get": {
-        "description": "Takes one optional query parameter, `missing_gold_at=<k>`, a positive integer: keep only the judged queries with no gold document (grade above 0) in the top k of the output ranking. It needs the run's own dataset, and answers dataset_absent or dataset_differs without it. Any other parameter, or this one twice, is parameter_invalid. Not declared under `parameters`: the UI's type generator refuses query parameters until the screen that first sends one extends it.",
         "parameters": [
           {
             "in": "path",
@@ -3158,6 +3181,17 @@
             "required": true,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "description": "Keep only the judged queries with no gold document (grade above 0) in\nthe top k of the output ranking. It needs the run's own dataset, and\nanswers dataset_absent or dataset_differs without it.",
+            "in": "query",
+            "name": "missing_gold_at",
+            "required": false,
+            "schema": {
+              "format": "uint",
+              "minimum": 1,
+              "type": "integer"
             }
           }
         ],

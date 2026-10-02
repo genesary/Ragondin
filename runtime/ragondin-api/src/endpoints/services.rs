@@ -11,13 +11,12 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use axum::body::Bytes;
-use axum::extract::{Path, State};
+use axum::extract::State;
 use axum::Json;
 
-use super::json_body;
 use crate::backends::Settings;
 use crate::error::ApiError;
+use crate::extract::{ApiJson, ApiPath, ApiQuery, NoParameters};
 use crate::handlers::AppState;
 use crate::request::{ProbeRequest, ServiceAddress};
 use crate::response::{ProbeResult, ServiceBinding, ServiceListing, ServiceStatus};
@@ -74,7 +73,10 @@ pub(crate) fn listing(settings: &Settings, probes: &Probes) -> ServiceListing {
 }
 
 /// `GET /services`.
-pub(crate) async fn list(State(state): State<AppState>) -> Result<Json<ServiceListing>, ApiError> {
+pub(crate) async fn list(
+    State(state): State<AppState>,
+    _: ApiQuery<NoParameters>,
+) -> Result<Json<ServiceListing>, ApiError> {
     let settings = state.backends.settings.read().await?;
     Ok(Json(listing(&settings, &state.probes)))
 }
@@ -83,10 +85,10 @@ pub(crate) async fn list(State(state): State<AppState>) -> Result<Json<ServiceLi
 /// any address it had.
 pub(crate) async fn bind(
     State(state): State<AppState>,
-    Path((family, name)): Path<(String, String)>,
-    body: Bytes,
+    ApiPath((family, name)): ApiPath<(String, String)>,
+    _: ApiQuery<NoParameters>,
+    ApiJson(ServiceAddress { uri }): ApiJson<ServiceAddress>,
 ) -> Result<Json<ServiceListing>, ApiError> {
-    let ServiceAddress { uri } = json_body(&body)?;
     state
         .backends
         .launcher
@@ -108,7 +110,8 @@ pub(crate) async fn bind(
 /// `DELETE /services/{family}/{name}`.
 pub(crate) async fn unbind(
     State(state): State<AppState>,
-    Path((family, name)): Path<(String, String)>,
+    ApiPath((family, name)): ApiPath<(String, String)>,
+    _: ApiQuery<NoParameters>,
 ) -> Result<Json<ServiceListing>, ApiError> {
     let _writing = state.services_writing.lock().await;
     let mut settings = state.backends.settings.read().await?;
@@ -128,16 +131,13 @@ pub(crate) async fn unbind(
 /// launcher, at the address the workspace binds the name to.
 pub(crate) async fn probe(
     State(state): State<AppState>,
-    Path((family, name)): Path<(String, String)>,
-    body: Bytes,
-) -> Result<Json<ProbeResult>, ApiError> {
+    ApiPath((family, name)): ApiPath<(String, String)>,
+    _: ApiQuery<NoParameters>,
     // A context builder needs nothing but the binding, so no body at all is
     // the request with no served model.
-    let ProbeRequest { served_model } = if body.is_empty() {
-        ProbeRequest::default()
-    } else {
-        json_body(&body)?
-    };
+    ApiJson(request): ApiJson<Option<ProbeRequest>>,
+) -> Result<Json<ProbeResult>, ApiError> {
+    let ProbeRequest { served_model } = request.unwrap_or_default();
     let settings = state.backends.settings.read().await?;
     let uri = settings
         .services

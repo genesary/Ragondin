@@ -649,7 +649,7 @@ export type Problem = {
    * The stable code a client matches on: one of `ApiError::CODES`, which
    * the schema lists as an enum so a generated client can narrow on it.
    */
-  code: "pipeline_invalid" | "impl_not_in_build" | "service_unreachable" | "run_exists" | "run_unreadable" | "run_not_found" | "query_not_found" | "parameter_invalid" | "dataset_absent" | "dataset_differs" | "benchmark_not_found" | "benchmark_exists" | "download_failed" | "download_cancelled" | "import_refused" | "pipeline_not_found" | "precondition_failed" | "binding_refused" | "service_not_found" | "request_invalid" | "backend_failed" | "host_refused" | "origin_refused" | "route_not_found" | "method_not_allowed" | "runs_not_comparable";
+  code: "pipeline_invalid" | "impl_not_in_build" | "service_unreachable" | "run_exists" | "run_unreadable" | "run_not_found" | "query_not_found" | "parameter_invalid" | "dataset_absent" | "dataset_differs" | "benchmark_not_found" | "benchmark_exists" | "download_failed" | "download_cancelled" | "import_refused" | "pipeline_not_found" | "precondition_failed" | "binding_refused" | "service_not_found" | "request_invalid" | "backend_failed" | "host_refused" | "origin_refused" | "route_not_found" | "method_not_allowed" | "runs_not_comparable" | "body_too_large";
   /** What happened, in this occurrence's words. */
   detail: string;
   /**
@@ -665,6 +665,11 @@ export type Problem = {
    * `pipeline_invalid`.
    */
   location?: Location | null;
+  /**
+   * The parameter, path parameter or header a `parameter_invalid` is
+   * about, when it is known. Absent otherwise — never guessed.
+   */
+  name?: string | null;
   /** The HTTP status. */
   status: number;
   /** A short, fixed summary of the code. */
@@ -1201,6 +1206,16 @@ export type Paths = {
       params: {
         name: string;
       };
+      headers: {
+        /**
+         * `"<etag>"` to replace the stored document with that etag — a weak
+         * `W/` tag reads as its strong form — or `*` to replace whatever is
+         * stored.
+         */
+        "If-Match"?: string;
+        /** `*`, to create the document: nothing may be stored under the name. */
+        "If-None-Match"?: string;
+      };
       body: PipelineDocument;
       response: PipelineWritten;
     };
@@ -1243,6 +1258,14 @@ export type Paths = {
     get: {
       params: {
         id: string;
+      };
+      query: {
+        /**
+         * Keep only the judged queries with no gold document (grade above 0) in
+         * the top k of the output ranking. It needs the run's own dataset, and
+         * answers dataset_absent or dataset_differs without it.
+         */
+        missing_gold_at?: number;
       };
       response: RunQueries;
     };

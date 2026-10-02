@@ -25,7 +25,10 @@
 //!   reaches it: the single-page fallback, the content types.
 //! - [`response`] — every type the API serializes; this crate's own, never a
 //!   core type serialized directly.
-//! - [`request`] — every request body the API reads; this crate's own too.
+//! - [`request`] — every request body the API reads, and the types its
+//!   query parameters and request headers are read into; this crate's own
+//!   too. A handler reads every input through the crate's own extractors,
+//!   in one private module (ADR-C37), so every refusal is a problem body.
 //! - [`error`] — [`ApiError`] and its `application/problem+json` rendering.
 //! - [`description`] — the API description, kept as a golden file.
 //! - [`fs`] — the workspace on disk and its file backends:
@@ -52,7 +55,7 @@ use std::task::{Context, Poll};
 use axum::body::Body;
 use axum::extract::Request;
 use axum::response::Response;
-use axum::routing::{any, get, post, put, IntoMakeService};
+use axum::routing::{any, IntoMakeService};
 use axum::{Router, ServiceExt};
 use tower::Service;
 
@@ -71,13 +74,13 @@ mod comparison;
 mod convert;
 mod derived;
 mod endpoints;
+mod extract;
 mod handlers;
 mod layers;
 mod lineage;
+mod routes;
 mod stages;
 mod validation;
-
-use endpoints::{benchmarks, compare, pipelines, services};
 
 pub use assets::{content_type_for, Asset, Assets, NoAssets};
 pub use backends::{
@@ -128,80 +131,23 @@ pub struct ServerConfig {
 /// is a `route_not_found` problem, never an asset. A path that merely starts
 /// with the same letters, such as `/apix`, is not under `/api` and is the
 /// assets' to answer.
+// The one assembly site: the nest, the bare-prefix route, the naming
+// fallback, the assets' fallback and the envelope's layer, none of them an
+// /api handler reading input (ADR-C37 § 2's exceptions). `clippy.toml`
+// refuses the methods that add a route, a service, a fallback or a layer
+// everywhere but here and `routes::Builder::into_router`, so no handler
+// reaches the server around the guard.
+#[allow(clippy::disallowed_methods)]
 pub fn router(backends: Backends, config: ServerConfig, assets: Arc<dyn Assets>) -> Server {
-    let (served, build) = (config.served.clone(), config.build.clone());
-    // Each route answers a method it does not serve with a problem body;
-    // axum still sets `Allow`.
-    let api = Router::new()
-        .route(
-            "/v1/workspace",
-            get(handlers::workspace).fallback(handlers::method_not_allowed),
-        )
-        .route(
-            "/v1/runs",
-            get(handlers::runs).fallback(handlers::method_not_allowed),
-        )
-        // axum 0.7 spells a path parameter `:id`; the description's `{id}`.
-        .route(
-            "/v1/runs/:id",
-            get(handlers::run).fallback(handlers::method_not_allowed),
-        )
-        .route(
-            "/v1/runs/:id/queries",
-            get(handlers::queries).fallback(handlers::method_not_allowed),
-        )
-        .route(
-            "/v1/runs/:id/trace/:query",
-            get(handlers::trace).fallback(handlers::method_not_allowed),
-        )
-        .route(
-            "/v1/compare",
-            post(compare::compare).fallback(handlers::method_not_allowed),
-        )
-        .route(
-            "/v1/pipelines",
-            get(pipelines::list).fallback(handlers::method_not_allowed),
-        )
-        // A static segment outranks a parameter, so `validate` is never a
-        // pipeline's name: the file backend refuses it as one.
-        .route(
-            "/v1/pipelines/validate",
-            post(pipelines::validate).fallback(handlers::method_not_allowed),
-        )
-        .route(
-            "/v1/pipelines/:name",
-            get(pipelines::read)
-                .put(pipelines::write)
-                .fallback(handlers::method_not_allowed),
-        )
-        .route(
-            "/v1/pipelines/:name/layout",
-            get(pipelines::read_layout)
-                .put(pipelines::write_layout)
-                .fallback(handlers::method_not_allowed),
-        )
-        .route(
-            "/v1/benchmarks",
-            get(benchmarks::list).fallback(handlers::method_not_allowed),
-        )
-        .route(
-            "/v1/benchmarks/import",
-            post(benchmarks::import).fallback(handlers::method_not_allowed),
-        )
-        .route(
-            "/v1/services",
-            get(services::list).fallback(handlers::method_not_allowed),
-        )
-        .route(
-            "/v1/services/:family/:name",
-            put(services::bind)
-                .delete(services::unbind)
-                .fallback(handlers::method_not_allowed),
-        )
-        .route(
-            "/v1/services/:family/:name/probe",
-            post(services::probe).fallback(handlers::method_not_allowed),
-        )
+    // Every /api route is listed once, in `routes::api`, and registered only
+    // through `routes::Routes::route`, whose bound refuses a handler that
+    // takes anything but `State` and the crate's own extractors (ADR-C37
+    // § 2).
+    let envelope = layers::envelope(&config.served, &config.build);
+    let mut routes = routes::Builder::default();
+    routes::api(&mut routes);
+    let api = routes
+        .into_router()
         .fallback(handlers::route_not_found)
         .with_state(handlers::AppState::new(backends, config));
     let server = Router::new()
@@ -209,12 +155,11 @@ pub fn router(backends: Backends, config: ServerConfig, assets: Arc<dyn Assets>)
         // axum 0.7's `nest` leaves the prefix with a trailing slash to the
         // outer router, where the assets' fallback would answer it.
         .route("/api/", any(handlers::prefix_not_found))
-        .merge(assets::router(assets));
-    Server {
-        router: layers::wrap(server, &served, &build),
-    }
+        .fallback_service(assets::endpoint(assets))
+        // Last, so it wraps every route above and the fallback.
+        .layer(envelope);
+    Server { router: server }
 }
-
 /// Serves `server` on `listener` until the listener fails: the one place the
 /// server meets a socket, so the binary names no HTTP stack.
 ///
