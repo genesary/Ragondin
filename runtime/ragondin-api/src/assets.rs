@@ -54,8 +54,7 @@ const INDEX: &str = "index.html";
 
 /// What the assets are served by: [`serve`] over `assets`, answering every
 /// method, which `router` in `lib.rs` sets as the server's fallback for
-/// every path the API does not answer. A `MethodRouter`, as a handler
-/// fallback is, so a `HEAD` answer loses its body as it did.
+/// every path the API does not answer.
 pub(crate) fn endpoint(assets: Arc<dyn Assets>) -> MethodRouter {
     any(serve).with_state(assets)
 }

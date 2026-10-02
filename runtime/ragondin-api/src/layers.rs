@@ -21,7 +21,7 @@ use std::sync::Arc;
 use axum::body::Body;
 use axum::extract::{Request, State};
 use axum::http::{header, HeaderName, HeaderValue, Method};
-use axum::middleware::{from_fn_with_state, Next};
+use axum::middleware::{from_fn_with_state, FromFnLayer, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::Route;
 use tower::{Layer, Service, ServiceBuilder};
@@ -57,10 +57,6 @@ struct Envelope {
 /// visible marker rather than dropped: a response without the header would
 /// read to the UI as a build that cannot be compared, which is the case the
 /// header exists to prevent.
-// The envelope's middleware (ADR-C10): the one place `clippy.toml` lets a
-// middleware read the request, since anywhere else it would read it around
-// the ADR-C37 § 2 guard. Only `from_fn_with_state` is used here.
-#[allow(clippy::disallowed_methods)]
 pub(crate) fn envelope(
     served: &str,
     build: &str,
@@ -86,13 +82,20 @@ pub(crate) fn envelope(
             .unwrap_or_else(|_| HeaderValue::from_static("invalid-build-identity")),
     });
     ServiceBuilder::new()
-        .layer(from_fn_with_state(envelope.clone(), build_identity))
-        .layer(from_fn_with_state(
-            envelope.clone(),
-            content_security_policy,
-        ))
-        .layer(from_fn_with_state(envelope.clone(), check_host))
-        .layer(from_fn_with_state(envelope, check_origin))
+        .layer(middleware(envelope.clone(), build_identity))
+        .layer(middleware(envelope.clone(), content_security_policy))
+        .layer(middleware(envelope.clone(), check_host))
+        .layer(middleware(envelope, check_origin))
+}
+
+/// One of the envelope's middleware functions over its state, as a layer.
+// The envelope's middleware (ADR-C10) is the one place `clippy.toml` lets a
+// middleware read the request, since anywhere else it would read it around
+// the ADR-C37 § 2 guard. The allow covers this one call and nothing else, so
+// a route, a nested router or a service added in `envelope` is still refused.
+#[allow(clippy::disallowed_methods)]
+fn middleware<F, T>(envelope: Arc<Envelope>, function: F) -> FromFnLayer<F, Arc<Envelope>, T> {
+    from_fn_with_state(envelope, function)
 }
 
 async fn build_identity(

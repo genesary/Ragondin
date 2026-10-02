@@ -618,11 +618,12 @@ Two sites allow them, each saying why:
   envelope's layer stack (`layers::envelope`, ADR-C10), applied last with one
   `Router::layer`.
 
-`layers::envelope` allows them as well, for `from_fn_with_state` alone: it
-builds the envelope's middleware as a `tower` layer stack and touches no
-router, so nothing it could add reaches the server except through that one
-`Router::layer` in `router`. A route, a service or a fallback added anywhere
-else fails `just clippy`. Within the two sites, review holds the line. `clippy.toml` also refuses `axum::extract::Path`,
+One more allow covers `from_fn_with_state` alone: it sits on
+`layers::middleware`, a one-line wrapper that makes one of the envelope's
+middleware functions a layer. `layers::envelope`, which stacks them, carries
+no allow, so a route, a nested router or a service added there is refused
+like anywhere else. A route, a service or a fallback added outside the two
+sites fails `just clippy`. Within them, review holds the line. `clippy.toml` also refuses `axum::extract::Path`,
 `axum::extract::Query` and `axum::http::HeaderMap` under `disallowed-types`
 in the crate's other code, and `src/extract.rs` alone allows them, saying
 why. `axum::extract::Json` is not on that list, because

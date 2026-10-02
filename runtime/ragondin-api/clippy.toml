@@ -13,10 +13,11 @@
 # for the guarded method routers, and `MethodRouter::fallback` for
 # `method_not_allowed`) and `router` in `lib.rs`, the one assembly site (the
 # nest, the bare-prefix route, the naming fallback, the assets' fallback and
-# the envelope's layer). `layers::envelope` allows them too, for
-# `from_fn_with_state` alone: it builds the envelope's layer stack and
-# touches no router. `disallowed-types` keeps the raw types out of the
-# crate's other code.
+# the envelope's layer). One more allow covers `from_fn_with_state` alone:
+# it sits on `layers::middleware`, a one-line wrapper that makes one of the
+# envelope's middleware functions a layer, so a route, a router or a service
+# added in `layers::envelope` is still refused. `disallowed-types` keeps the
+# raw types out of the crate's other code.
 #
 # This file is the package's, not the workspace root's: Clippy reads the
 # package directory first, and a root file would ban these in every crate.
