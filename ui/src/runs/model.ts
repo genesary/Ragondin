@@ -6,7 +6,7 @@
 // and its column or label is not drawn: nothing here is invented to fill a
 // cell. ARCHITECTURE.md § The Runs screen.
 import { familyOfComponent, type Family } from '../../design/index.ts';
-import type { Graph, RunListing } from '../api/types.ts';
+import type { Graph, RunListing, RunSummary } from '../api/types.ts';
 import type { Route } from '../routes.ts';
 
 /** Which ground truth a metric reads: qrels score `ranking`, reference answers `answers` (ADR-008, ADR-C30 § 1). */
@@ -37,12 +37,16 @@ export type RunRow = {
   source: RowSource;
   /** The canonical hash of the pipeline it ran. */
   pipeline: string;
-  /** The pipeline's name, when the source knows it. */
-  pipelineName: string | null;
+  /**
+   * Every name the pipeline goes by — each workspace document whose canonical
+   * hash is `pipeline` — sorted; empty when the source knows none. A list,
+   * never a pick: several documents can be one pipeline.
+   */
+  pipelineNames: string[];
   /** The benchmark's identity: its dataset version, what "one benchmark" compares. */
   benchmark: string;
-  /** The benchmark's name, when the source knows it. */
-  benchmarkName: string | null;
+  /** Every registry entry pinned to `benchmark`, sorted; empty when the source knows none. */
+  benchmarkNames: string[];
   status: RowStatus;
   /** One group per family the run recorded, none when it recorded no metric. */
   metrics: MetricGroup[];
@@ -60,13 +64,14 @@ export type RunRow = {
 
 /** A pipeline's runs, under one heading. */
 export type RunGroup = {
-  /** The pipeline's name, else its canonical hash: what the group links to. */
+  /** The pipeline's canonical hash — or, for a prefix run's parent with no row of its own here, the name the prefix relation gives it. */
   key: string;
-  name: string | null;
+  /** Every name the group's own pipeline goes by, each linked; empty when it has none, and the group is then named by its hash. */
+  names: string[];
   /** The canonical hash of the group's own pipeline. */
   pipeline: string;
-  /** The run whose graph draws the group's shape: one of the pipeline's own runs, not a prefix or a job; null when it has none. */
-  shapeFrom: string | null;
+  /** The key of the listing's `shapes` that draws the group: its own pipeline's hash; null when it has no row of its own. */
+  shapeKey: string | null;
   rows: RunRow[];
 };
 
@@ -90,48 +95,61 @@ export const runningLabel = (status: Extract<RowStatus, { state: 'running' }>) =
   `running ${status.done.toLocaleString('en-US')} / ${status.total.toLocaleString('en-US')}`;
 
 /**
- * The listing's runs as rows, in its order. Every run the store holds is
- * finished, so each is `done`. The listing carries neither the benchmark's
- * nor the pipeline's name, nor a latency, a start time, the metric families
- * or the prefix relation (#376 asks for them), so those are null and the
- * metrics are one group of unsaid family.
+ * Most recent first by start time; a run whose start is unknown after every
+ * run whose start is known — never chosen over one — and ties, unknown
+ * included, broken by run id so the order is stable.
+ */
+export function byMostRecent(a: Pick<RunSummary, 'id' | 'started_at_ms'>, b: Pick<RunSummary, 'id' | 'started_at_ms'>): number {
+  if (a.started_at_ms !== b.started_at_ms) {
+    if (a.started_at_ms === null) return 1;
+    if (b.started_at_ms === null) return -1;
+    return b.started_at_ms - a.started_at_ms;
+  }
+  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+}
+
+/**
+ * The listing's runs as rows, most recent first (`byMostRecent`). Every run
+ * the store holds is finished, so each is `done`. The names are every one the
+ * listing gives; the start time is the run's own record, or null. The listing
+ * carries no latency, metric family or prefix relation (#383, #357), so those
+ * are null and the metrics are one group of unsaid family.
  */
 export function rowsFromListing(listing: RunListing): RunRow[] {
-  return listing.runs.map((run) => {
+  return [...listing.runs].sort(byMostRecent).map((run) => {
     const metrics = Object.entries(run.metrics).map(([name, value]) => ({ name, value }));
     return {
       source: { kind: 'run', id: run.id },
       pipeline: run.pipeline,
-      pipelineName: null,
+      pipelineNames: run.pipeline_names,
       benchmark: run.dataset_version,
-      benchmarkName: null,
+      benchmarkNames: run.benchmark_names,
       status: { state: 'done' },
       metrics: metrics.length === 0 ? [] : [{ family: null, metrics }],
       latencyMs: null,
-      startedAt: null,
+      startedAt: run.started_at_ms === null ? null : new Date(run.started_at_ms).toISOString(),
       prefix: null,
     };
   });
 }
 
-const ownKey = (row: RunRow) => row.pipelineName ?? row.pipeline;
-
 /**
- * Rows grouped by pipeline — by name when there is one, by canonical hash
- * otherwise — each group in the order its first row appears, each row in
- * listing order. A prefix run joins its parent's group, the parent named by
- * the group's key, its pipeline's hash or one of its runs' ids; a parent with
- * no run here gets a group of its own, so the prefix run is still shown.
+ * Rows grouped by pipeline — by canonical hash, the pipeline's identity
+ * whatever names it goes by — each group in the order its first row appears,
+ * each row in the order given. A prefix run joins its parent's group, the
+ * parent named by one of the group's names, its pipeline's hash or one of its
+ * runs' ids; a parent with no run here gets a group of its own, so the prefix
+ * run is still shown.
  */
 export function groupRows(rows: readonly RunRow[]): RunGroup[] {
   const groups = new Map<string, RunRow[]>();
-  for (const row of rows) if (row.prefix === null) groups.set(ownKey(row), [...(groups.get(ownKey(row)) ?? []), row]);
+  for (const row of rows) if (row.prefix === null) groups.set(row.pipeline, [...(groups.get(row.pipeline) ?? []), row]);
   const parentOf = (parent: string) =>
-    [...groups].find(([key, members]) => key === parent || members.some((m) => m.pipeline === parent || m.source.id === parent))?.[0] ?? parent;
+    [...groups].find(([key, members]) => key === parent || members.some((m) => m.pipelineNames.includes(parent) || m.source.id === parent))?.[0] ?? parent;
   // Keep the listing's order: place every row, prefix runs included, in turn.
   const ordered = new Map<string, RunRow[]>();
   for (const row of rows) {
-    const key = row.prefix === null ? ownKey(row) : parentOf(row.prefix.parent);
+    const key = row.prefix === null ? row.pipeline : parentOf(row.prefix.parent);
     ordered.set(key, [...(ordered.get(key) ?? []), row]);
   }
   return [...ordered].map(([key, members]) => {
@@ -139,9 +157,9 @@ export function groupRows(rows: readonly RunRow[]): RunGroup[] {
     const head = own[0] ?? (members[0] as RunRow);
     return {
       key,
-      name: own.length === 0 ? null : head.pipelineName,
+      names: own.length === 0 ? [] : head.pipelineNames,
       pipeline: head.pipeline,
-      shapeFrom: own.map(runId).find((id) => id !== null) ?? null,
+      shapeKey: own.length === 0 ? null : head.pipeline,
       rows: members,
     };
   });
@@ -150,8 +168,9 @@ export function groupRows(rows: readonly RunRow[]): RunGroup[] {
 /** A hash as the screen prints it: its first twelve digits. */
 export const shortHash = (hash: string) => hash.slice(0, 12);
 
-/** The benchmark in words: its name, else its short dataset digest. */
-export const benchmarkLabel = (row: Pick<RunRow, 'benchmark' | 'benchmarkName'>) => row.benchmarkName ?? `dataset ${shortHash(row.benchmark)}`;
+/** The benchmark in words: every name pinned to it, else its short dataset digest. */
+export const benchmarkLabel = (row: Pick<RunRow, 'benchmark' | 'benchmarkNames'>) =>
+  row.benchmarkNames.length === 0 ? `dataset ${shortHash(row.benchmark)}` : row.benchmarkNames.join(', ');
 
 /**
  * A metric's value as its chip prints it (design/'s MetricChip): four

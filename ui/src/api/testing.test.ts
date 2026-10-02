@@ -40,7 +40,7 @@ describe('mockApi, writing', () => {
   });
 
   it('records no body for a GET', async () => {
-    const api = mockApi({ 'GET /runs': { body: { runs: [], unreadable: [] } } });
+    const api = mockApi({ 'GET /runs': { body: { runs: [], unreadable: [], shapes: {} } } });
     await createApiClient().get('/runs');
     expect(api.bodies).toEqual([undefined]);
   });

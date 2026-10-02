@@ -580,8 +580,12 @@ export type PipelineSummary = {
   etag: string;
   /** The content hash of its canonical logical form, when it validates. */
   hash: string | null;
-  /** When its file was last modified, in milliseconds since the Unix epoch. */
-  modified_ms: number;
+  /**
+   * When its file was last modified, in milliseconds since the Unix
+   * epoch; `null` for a time before the epoch, which is unknown, never
+   * `0`.
+   */
+  modified_ms: number | null;
   /** Its name: the file stem. */
   name: string;
 };
@@ -738,6 +742,11 @@ export type RunDetail = {
   /** The configuration document that produced it, verbatim. */
   configuration: string;
   /**
+   * When its evaluation finished, in milliseconds since the Unix epoch,
+   * outside its identity; `null` when unknown.
+   */
+  finished_at_ms: number | null;
+  /**
    * The graph lowered from [`configuration`](Self::configuration) by the
    * pipeline grammar's one implementation — never by the browser.
    */
@@ -753,6 +762,11 @@ export type RunDetail = {
    * recorded as a prefix yet.
    */
   prefix_of: string | null;
+  /**
+   * When it started, in milliseconds since the Unix epoch, outside its
+   * identity; `null` when unknown.
+   */
+  started_at_ms: number | null;
 };
 
 /** The components of a run's identity tuple. */
@@ -784,6 +798,14 @@ export type RunLatency = {
 export type RunListing = {
   /** The readable runs, in the store's listing order. */
   runs: RunSummary[];
+  /**
+   * The shape of every pipeline a readable run ran, once per pipeline,
+   * keyed by its canonical hash ([`RunSummary::pipeline`]): the graph
+   * `GET /runs/{id}` serves for a run of it, by the same conversion. A
+   * pipeline whose every run's stored document no longer lowers has no
+   * entry, as `GET /runs/{id}` has no graph for it.
+   */
+  shapes: Record<string, Graph>;
   /**
    * The runs the store lists and cannot load — reported, never dropped
    * and never repaired.
@@ -845,10 +867,23 @@ export type RunQueries = {
 
 /** One run, as the listing shows it. */
 export type RunSummary = {
+  /**
+   * Every registry entry pinned to [`dataset_version`](Self::dataset_version)
+   * — a manifest entry or an import — sorted; empty when none is. The
+   * pinning `GET /runs/{id}/queries` locates the run's dataset by, never
+   * resolved by closeness (ADR-C36 § 4); naming a benchmark here loads and
+   * verifies nothing.
+   */
+  benchmark_names: string[];
   /** The benchmark dataset's version. */
   dataset_version: string;
   /** The engine's version. */
   engine_version: string;
+  /**
+   * When the run's evaluation finished, in milliseconds since the Unix
+   * epoch, as the process that ran it recorded; `null` when unknown.
+   */
+  finished_at_ms: number | null;
   /** The run's content address: 64 lowercase hex digits. */
   id: string;
   /** The index's version. */
@@ -857,6 +892,20 @@ export type RunSummary = {
   metrics: Record<string, number>;
   /** The content hash of the canonical logical pipeline it ran. */
   pipeline: string;
+  /**
+   * Every workspace pipeline document whose canonical hash is the run's,
+   * sorted; empty when none is. Found by content, so a document edited
+   * since the run no longer names it. Of the two facts ADR-C39 § 4 exposes
+   * about a run's pipeline, this is the content one; the launch record it
+   * sits beside is not served yet, and the two are never resolved into one
+   * name.
+   */
+  pipeline_names: string[];
+  /**
+   * When the run started, in milliseconds since the Unix epoch, as the
+   * process that ran it recorded; `null` when unknown.
+   */
+  started_at_ms: number | null;
 };
 
 /** `PUT /services/{family}/{name}`: the address to bind the name to. */

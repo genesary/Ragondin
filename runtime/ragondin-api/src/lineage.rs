@@ -5,8 +5,11 @@
 //! follows it, a run's pipeline is found by content — **interim behaviour**:
 //! the one document under `pipelines/` whose canonical hash is the run's
 //! (INV-8: the canonical form, never the text). No document, or several,
-//! names no pipeline; a document edited since a run no longer names it. `POST /compare` reads it to find the pairing of two runs' pipelines,
-//! and the pipeline matrix needs the same index.
+//! names no pipeline; a document edited since a run no longer names it.
+//! `POST /compare` reads it to find the pairing of two runs' pipelines, and
+//! the pipeline matrix needs the same index. `GET /runs` reads the index
+//! itself rather than [`pipeline_of`]: it names *every* document sharing a
+//! run's hash, as a list, where a pairing needs exactly one.
 
 use std::collections::BTreeMap;
 

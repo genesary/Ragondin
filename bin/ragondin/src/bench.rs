@@ -15,13 +15,14 @@
 //! synchronous and the two calls that fill a vector store are not.
 
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use anyhow::{bail, Context, Result};
 use ragondin_benchmarks::{BeirAdapter, Benchmark, BenchmarkAdapter, SquadAdapter};
 use ragondin_config::{ConfigSource, LocalFile};
 use ragondin_contracts::EmbeddedChunk;
 use ragondin_engine::EngineContext;
-use ragondin_experiments::{ConfigDocument, FileSystemRunStore, Run};
+use ragondin_experiments::{ConfigDocument, FileSystemRunStore, Run, RunTimes, UnixMillis};
 use ragondin_harness::{evaluate, CorpusIndex, Evaluation};
 use ragondin_pipeline::LogicalPipeline;
 
@@ -99,6 +100,16 @@ pub struct Request<'a> {
 /// identity cannot be read, a dataset that does not load, an `impl:` this build did not register,
 /// a query that fails, or a store that cannot be written.
 pub async fn run(request: &Request<'_>) -> Result<()> {
+    // The first statement, literally: the identity read, the benchmark load,
+    // the index build and the embedding all count toward the run's time, so
+    // `finished − started` is its wall time, preparation included. A clock
+    // before the epoch gives no reading, and the run is then saved with its
+    // times unknown rather than with a made-up one. This reading belongs at
+    // the head of whatever shared execution path is extracted from here for
+    // the UI's launcher (#353), so a run launched from the UI is timed by
+    // this one definition and never a second.
+    let started = UnixMillis::from_system_time(SystemTime::now());
+
     // Refused on their text alone: a malformed binding is found before the
     // configuration is even read (ADR-C32 § 2).
     let bindings = Bindings::parse(request.remote)?;
@@ -157,11 +168,15 @@ pub async fn run(request: &Request<'_>) -> Result<()> {
         &ctx,
     )
     .await?;
+    // Read once `evaluate` has returned `Ok`, and before the save: storing
+    // the run is not part of running it.
+    let finished = UnixMillis::from_system_time(SystemTime::now());
     // Recorded on the run, never in its identity: the harness named the run
-    // before it saw them, and where a service listened is not an input of the
-    // experiment (ADR-C32 § 2).
+    // before it saw them, and where a service listened — or when the run
+    // happened — is not an input of the experiment (ADR-C32 § 2, INV-8).
     let run = Run {
         bindings: bound.bindings().record(),
+        times: RunTimes::from_readings(started, finished),
         ..run
     };
 
@@ -421,6 +436,7 @@ mod tests {
             config: ConfigDocument::new("pipeline:\n  inputs: []\n  nodes: []\n"),
             traces: BTreeMap::new(),
             bindings: Vec::new(),
+            times: None,
         }
     }
 
@@ -461,5 +477,21 @@ mod tests {
 
         assert!(summary.contains("beir-mini@1"), "{summary}");
         assert!(summary.contains("corpus@1"), "{summary}");
+    }
+
+    #[test]
+    fn the_summary_is_the_same_whether_or_not_the_times_are_known() {
+        // The times are for the UI to display and order runs by; `bench`'s
+        // printed output is byte for byte what it was before they existed.
+        let without = a_run(&[("ndcg@10", 0.5), ("recall@10", 0.75)]);
+        let with = Run {
+            times: Some(RunTimes::new(
+                UnixMillis::new(1_700_000_000_000),
+                UnixMillis::new(1_700_000_004_250),
+            )),
+            ..without.clone()
+        };
+
+        assert_eq!(render(&with), render(&without));
     }
 }

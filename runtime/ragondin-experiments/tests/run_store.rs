@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 
 use ragondin_experiments::{
     compare, ConfigDocument, FileSystemRunStore, Metrics, Run, RunBinding, RunId, RunIdParseError,
-    RunInputs, RunStore, RunStoreError, TraceDocument,
+    RunInputs, RunStore, RunStoreError, RunTimes, TraceDocument, UnixMillis,
 };
 use ragondin_pipeline::PipelineHash;
 use ragondin_types::QueryId;
@@ -69,7 +69,12 @@ fn a_run(id: RunId, metrics: &[(&str, f64)]) -> Run {
         config: ConfigDocument::new("schema_version: 1\nnodes: []\n"),
         traces,
         bindings: Vec::new(),
+        times: None,
     }
+}
+
+fn times(started: u64, finished: u64) -> RunTimes {
+    RunTimes::new(UnixMillis::new(started), UnixMillis::new(finished))
 }
 
 fn a_binding(family: &str, name: &str, uri: &str) -> RunBinding {
@@ -137,6 +142,112 @@ fn a_run_stored_before_bindings_were_recorded_reads_back_as_bound_to_nothing() {
     store
         .save(&run)
         .expect("and it counts as stored, not as torn");
+}
+
+#[test]
+fn no_times_file_is_written_for_unknown_times() {
+    let store = store("times_unknown_no_file");
+    let run = a_run(run_id(0x14), &[("ndcg@10", 0.42)]);
+    store.save(&run).expect("the run must be writable");
+
+    // Absent is how "unknown" is spelled. A file holding `null` would give one
+    // fact two spellings.
+    let dir = store.root().join(run.id.to_string());
+    assert!(!dir.join("times.json").exists());
+}
+
+#[test]
+fn known_times_are_written_as_exactly_started_ms_and_finished_ms() {
+    let store = store("times_known_file");
+    let mut run = a_run(run_id(0x15), &[("ndcg@10", 0.42)]);
+    run.times = Some(times(1_700_000_000_000, 1_700_000_004_250));
+    store.save(&run).expect("the run must be writable");
+
+    let text = fs::read_to_string(store.root().join(run.id.to_string()).join("times.json"))
+        .expect("known times are kept in a file of their own");
+    let value: serde_json::Value = serde_json::from_str(&text).expect("the file is JSON");
+    assert_eq!(
+        value,
+        serde_json::json!({"started_ms": 1_700_000_000_000u64, "finished_ms": 1_700_000_004_250u64})
+    );
+}
+
+#[test]
+fn a_deleted_times_file_reads_as_unknown() {
+    let store = store("times_deleted");
+    let mut run = a_run(run_id(0x16), &[("ndcg@10", 0.42)]);
+    run.times = Some(times(1_000, 2_000));
+    store.save(&run).expect("the run must be writable");
+    let dir = store.root().join(run.id.to_string());
+    fs::remove_file(dir.join("times.json")).expect("the times file is there to remove");
+
+    let read = store
+        .load(&run.id)
+        .expect("a run without times still reads");
+
+    assert_eq!(
+        read.times, None,
+        "an absent file is unknown, never an estimate"
+    );
+    store
+        .save(&run)
+        .expect("and it counts as stored, not as torn");
+}
+
+#[test]
+fn the_fixture_without_times_reads_as_unknown() {
+    // A run directory the harness wrote before times were recorded.
+    let root =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/stored-before-typed-trace");
+    let id: RunId = "b41e0752792e728f5dd893043b42d2a2d71f0b0039157a177e0a267e0420ea6f"
+        .parse()
+        .expect("the fixture is named by a run id");
+    assert!(!root.join(id.to_string()).join("times.json").exists());
+
+    let run = FileSystemRunStore::new(&root)
+        .load(&id)
+        .expect("a run stored before times were recorded still loads");
+
+    assert_eq!(run.times, None);
+}
+
+#[test]
+fn a_malformed_times_file_is_malformed() {
+    let store = store("times_malformed");
+    let mut run = a_run(run_id(0x17), &[("ndcg@10", 0.42)]);
+    run.times = Some(times(1_000, 2_000));
+    store.save(&run).expect("the run must be writable");
+    let path = store.root().join(run.id.to_string()).join("times.json");
+    fs::write(&path, "{}").expect("the times file is writable");
+
+    match store.load(&run.id) {
+        Err(RunStoreError::Malformed { path: reported, .. }) => assert_eq!(reported, path),
+        other => panic!("a times file that does not parse is malformed, got {other:?}"),
+    }
+}
+
+#[test]
+fn times_are_not_part_of_identity() {
+    // The harness computes the id before any time exists, so one run saved
+    // with times and the same run saved without them are one run. This test
+    // holds the store to that; the guard on the digest itself is
+    // `RECORDED_RUN_ID` in `ragondin-harness`'s `identity.rs`, which fails if
+    // anything new reaches the identity tuple.
+    let store = store("times_not_identity");
+    let without = a_run(run_id(0x18), &[("ndcg@10", 0.42)]);
+    let mut with = without.clone();
+    with.times = Some(times(1_000, 2_000));
+    assert_eq!(with.id, without.id);
+
+    store.save(&with).expect("the run must be writable");
+    store.save(&without).expect("the same run saves again");
+
+    assert_eq!(store.ids().expect("the store lists"), vec![with.id]);
+    assert_eq!(
+        store.load(&with.id).expect("the run reads back").times,
+        with.times,
+        "the first record is the one kept"
+    );
 }
 
 #[test]

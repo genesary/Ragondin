@@ -193,7 +193,10 @@ supplies the HTTP transport, and converts what comes back in `convert.rs`.
   pinned to is `Unknown`, whatever the disk holds: nothing is resolved by
   closeness (ADR-C36 § 4). It loads through `Format::load` and digests with
   `ragondin_benchmarks::identity::dataset_version` rather than calling
-  `datasets::verify`, which discards what it loaded.
+  `datasets::verify`, which discards what it loaded. `pinned()` lists that
+  same pinning for every benchmark — `FsRegistry`'s one `pins` helper
+  answers both — from the manifest and the import records alone, loading
+  nothing; `GET /runs` names a run's benchmarks with it.
   `BenchmarkEntry`, which the trait exchanges, moved to
   `response.rs` as a response type — the way `Settings` already carries
   `ServiceBinding` — and `BenchmarkStatus` is gone, replaced by
@@ -209,7 +212,9 @@ supplies the HTTP transport, and converts what comes back in `convert.rs`.
   reported `ready` by the listing and by `verify`; a failed download that
   leaves the benchmark `available`, as before; a cancelled one; unknown
   names; an import, including a name holding NUL refused as
-  `import_refused`; and `dataset`, which finds a downloaded and an imported
+  `import_refused`; `pinned`, which names a manifest entry with its digest
+  before anything is downloaded and an import with the digest it recorded;
+  and `dataset`, which finds a downloaded and an imported
   benchmark by their digests, answers `Absent` before the download,
   `Unknown` for a digest nothing is pinned to, `Differs` once a downloaded
   benchmark's content is changed and `Unreadable` once it is broken — the
@@ -371,7 +376,9 @@ handler writes it.
   read as `Hybrid`. The listing skips a file whose stem is not a name —
   staging files and hidden ones included — and is sorted by name; each entry
   carries its etag, its modified time, and its hash or its validation error,
-  computed on the request.
+  computed on the request. The modified time goes through
+  `UnixMillis::from_system_time`, the rule every time in the API follows: a
+  time before the epoch is unknown, `null`, never `0`.
 - **The layout format** — a choice made here, the design leaving it open
   (ADR-C36 § 7): `pipelines/<name>.layout.json`, JSON,
   `{"version": 1, "nodes": {"<node id>": {"x": <number>, "y": <number>}}}`.
@@ -492,8 +499,36 @@ run is recorded as a prefix yet.
 `unreadable`, with the store's reason, rather than dropped or failing the whole
 listing — reported, never repaired.
 
+**What the listing says of each run, beyond its stored fields.**
+`RunSummary` carries:
+
+- `started_at_ms` and `finished_at_ms` — `RunDetail` carries them too — read
+  from `Run::times` and never computed: `null` when the run recorded none.
+  This crate stamps no run; a job's own times are the job's.
+- `pipeline_names`: every workspace document whose canonical hash is the
+  run's, from `lineage::pipelines_by_hash`, sorted. A list, never a pick:
+  several documents can be one canonical form. It is the content fact of
+  the two ADR-C39 § 4 exposes about a run's pipeline; the launch record it
+  sits beside is not served yet, and the two are never resolved into one
+  name.
+- `benchmark_names`: every registry entry pinned to the run's
+  `dataset_version`, a manifest entry or an import, sorted — the pinning
+  `Registry::dataset` locates by, read through `Registry::pinned`, which
+  loads nothing: naming a benchmark is not verifying it.
+
+`RunListing::shapes` carries each listed pipeline's graph once, keyed by its
+canonical hash, by the conversion `GET /runs/{id}` serves (`convert::shape`
+and `convert::detail` share `graph`), so a screen draws every group's shape
+from the listing. One canonical hash is one canonical form and so one graph;
+it is lowered from the first of its runs whose document lowers, and a
+pipeline none of whose documents lowers has no entry. The workspace's
+pipelines and the registry's pins are each read once per request, and a
+failure of either fails the listing, by design, rather than answering with
+every name list silently empty.
+
 **A field serialized on every response is required in its schema**, nullable
-when it can be null: `RunDetail::prefix_of`, `Location::node` and
+when it can be null: `RunDetail::prefix_of`, the two times of `RunDetail`
+and `RunSummary`, `PipelineSummary::modified_ms`, `Location::node` and
 `Location::edge` carry a `transform` that lists every property as required,
 since `schemars` would otherwise leave an `Option` out and a generated client
 would type it as possibly absent. `Problem::location` and `Problem::etag`,

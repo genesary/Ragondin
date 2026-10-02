@@ -28,12 +28,21 @@
 //!     config.yaml    the configuration document, verbatim
 //!     traces.json    the per-query execution traces, by query id
 //!     bindings.json  the `Remote` bindings the run used, outside its identity
+//!     times.json     when the run started and finished, outside its identity,
+//!                    present only when known
 //! ```
 //!
 //! `bindings.json` arrived after the other four, and a run directory without
 //! it is a run stored before then: it reads back bound to nothing, and it is
 //! not incomplete. So a run is *complete* when it holds the four original
 //! files, and `bindings.json` is written for every run but required of none.
+//!
+//! `times.json` arrived later still, and differs from `bindings.json` in one
+//! way: it is written **only when the run's times are known**. An absent file
+//! is how *unknown* is spelled — whether the run predates the file or was
+//! saved without times — so a run without one is neither incomplete nor given
+//! an estimate. It holds `{"started_ms", "finished_ms"}`, read and written as
+//! given.
 //!
 //! The directory name is the run id, so a run is found without an index, and
 //! the id is a digest, so no run id can name a directory outside the root.
@@ -50,7 +59,7 @@
 //!
 //! # A run directory appears whole or not at all
 //!
-//! [`FileSystemRunStore::save`] writes the five files into a staging directory
+//! [`FileSystemRunStore::save`] writes the run's files into a staging directory
 //! beside the destination and then renames it into place, which is atomic
 //! within one filesystem. That is not tidiness: a caller asks *is this run
 //! already stored* to decide whether to execute it at all, and a directory
@@ -69,8 +78,8 @@
 //! that is an ordinary thing to do — never meet in it. It is not unique for all
 //! time: a process the operating system gives a recycled pid starts its counter
 //! at zero again and may name a directory a crashed one left. That is harmless
-//! rather than merely unlikely — creating the directory is idempotent, all five
-//! files are written before the rename, and no other name is ever written there
+//! rather than merely unlikely — creating the directory is idempotent, every
+//! file is written before the rename, and no other name is ever written there
 //! — so what is left of an abandoned run is overwritten rather than mixed with.
 //! Nothing clears a staging directory on the way in: a name no live writer
 //! shares has nothing to clear, and a `save` that began by emptying a shared
@@ -108,10 +117,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use ragondin_types::QueryId;
 use serde::de::DeserializeOwned;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::compare::{compare, RunComparison};
-use crate::run::{ConfigDocument, Metrics, Run, RunBinding, RunId, RunInputs, TraceDocument};
+use crate::run::{
+    ConfigDocument, Metrics, Run, RunBinding, RunId, RunInputs, RunTimes, TraceDocument, UnixMillis,
+};
 
 /// Where runs are kept: written whole, read by id, and listed.
 ///
@@ -133,6 +144,10 @@ use crate::run::{ConfigDocument, Metrics, Run, RunBinding, RunId, RunInputs, Tra
 ///   back as it was, whether or not it is a valid
 ///   [`Trace`](crate::Trace) (ADR-C28): only a reader that asks for the typed
 ///   shape parses one.
+/// - **Times are kept, never invented.** A run's [`RunTimes`] read back as
+///   written, a reversed pair included, and a run saved with none reads back
+///   with none: no backend fills one in from its own clock or a file's
+///   timestamps.
 ///
 /// Synchronous, as the file backend is; a backend that needs `async` is an
 /// escalation of its own, not a variation on this trait. `Send + Sync`,
@@ -169,6 +184,17 @@ const CONFIG_FILE: &str = "config.yaml";
 const TRACES_FILE: &str = "traces.json";
 /// Optional, unlike the four above: see the module's *The layout*.
 const BINDINGS_FILE: &str = "bindings.json";
+/// Optional, and written only when the times are known: see the module's
+/// *The layout*.
+const TIMES_FILE: &str = "times.json";
+
+/// `times.json`'s record: the run's [`RunTimes`], under names that say their
+/// unit to whoever reads the file with `cat`.
+#[derive(Serialize, Deserialize)]
+struct TimesRecord {
+    started_ms: UnixMillis,
+    finished_ms: UnixMillis,
+}
 
 /// A run store backed by a directory tree.
 #[derive(Clone, Debug)]
@@ -226,6 +252,15 @@ impl FileSystemRunStore {
         write_text(&dir.join(CONFIG_FILE), run.config.as_str())?;
         write_json(&dir.join(TRACES_FILE), &run.traces)?;
         write_json(&dir.join(BINDINGS_FILE), &run.bindings)?;
+        // Only when known: an absent file is what "unknown" means, so writing
+        // `null` would give one fact two spellings.
+        if let Some(times) = run.times {
+            let record = TimesRecord {
+                started_ms: times.started(),
+                finished_ms: times.finished(),
+            };
+            write_json(&dir.join(TIMES_FILE), &record)?;
+        }
 
         publish(staging, &destination)
     }
@@ -249,6 +284,17 @@ impl FileSystemRunStore {
         } else {
             Vec::new()
         };
+        // Absent when the times are unknown — a run stored before they were
+        // recorded, or saved without them. Never estimated from the file's
+        // own timestamps: those say when a file was written, not when the
+        // run ran, and no other backend has them to agree with.
+        let times_file = dir.join(TIMES_FILE);
+        let times = if times_file.is_file() {
+            let record: TimesRecord = read_json(&times_file)?;
+            Some(RunTimes::new(record.started_ms, record.finished_ms))
+        } else {
+            None
+        };
 
         Ok(Run {
             id: *id,
@@ -257,6 +303,7 @@ impl FileSystemRunStore {
             config,
             traces,
             bindings,
+            times,
         })
     }
 

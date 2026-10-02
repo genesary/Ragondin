@@ -20,7 +20,7 @@ use ragondin_benchmarks::identity::dataset_version;
 use ragondin_benchmarks::manifest::{Format, ManifestEntry};
 use tokio::runtime::Handle;
 
-use crate::backends::{DownloadProgress, ProgressSink, Registry, RunDataset};
+use crate::backends::{DownloadProgress, PinnedBenchmark, ProgressSink, Registry, RunDataset};
 use crate::convert;
 use crate::error::ApiError;
 use crate::response::BenchmarkEntry;
@@ -77,6 +77,38 @@ impl FsRegistry {
             .iter()
             .find(|entry| entry.name == name)
             .cloned()
+    }
+
+    /// Every benchmark and the digest it is pinned to — the manifest's
+    /// entries in manifest order, then the imports — read from the manifest
+    /// and the import records alone: nothing is loaded. The one definition
+    /// of the pinning both `dataset` and `pinned` answer by.
+    fn pins(&self) -> Result<Vec<Pin>, ApiError> {
+        let mut pins: Vec<Pin> = self
+            .manifest
+            .iter()
+            .map(|entry| Pin {
+                name: entry.name.clone(),
+                dir: self.datasets.join(entry.dir()),
+                format: entry.format,
+                dataset_version: entry.dataset_version.clone(),
+            })
+            .collect();
+        pins.extend(
+            local_entries(&self.datasets)
+                .map_err(backend_failed)?
+                .into_iter()
+                // An import whose record cannot be read names no digest, so
+                // it is pinned to none; the listing reports it as unreadable.
+                .flatten()
+                .map(|local| Pin {
+                    name: local.selector(),
+                    dir: self.datasets.join(&local.name),
+                    format: local.format,
+                    dataset_version: local.dataset_version,
+                }),
+        );
+        Ok(pins)
     }
 
     /// Every import, verified, and every one whose record cannot be read.
@@ -188,37 +220,15 @@ impl Registry for FsRegistry {
             // manifest order, then the imports — each the run's dataset
             // exactly. The first one on disk that verifies is the answer;
             // with none, the first one's state is.
-            let mut pinned: Vec<(String, PathBuf, Format)> = registry
-                .manifest
-                .iter()
-                .filter(|entry| entry.dataset_version == version)
-                .map(|entry| {
-                    (
-                        entry.name.clone(),
-                        registry.datasets.join(entry.dir()),
-                        entry.format,
-                    )
-                })
-                .collect();
-            pinned.extend(
-                local_entries(&registry.datasets)
-                    .map_err(backend_failed)?
-                    .into_iter()
-                    // An import whose record cannot be read names no digest,
-                    // so it cannot be pinned to this one; the listing reports
-                    // it as unreadable.
-                    .flatten()
-                    .filter(|local| local.dataset_version == version)
-                    .map(|local| {
-                        (
-                            local.selector(),
-                            registry.datasets.join(&local.name),
-                            local.format,
-                        )
-                    }),
-            );
+            let pinned = registry
+                .pins()?
+                .into_iter()
+                .filter(|pin| pin.dataset_version == version);
             let mut first = None;
-            for (name, dir, format) in pinned {
+            for Pin {
+                name, dir, format, ..
+            } in pinned
+            {
                 match load_pinned(name, &dir, format, &version) {
                     verified @ RunDataset::Verified { .. } => return Ok(verified),
                     other => {
@@ -230,6 +240,30 @@ impl Registry for FsRegistry {
         })
         .await
     }
+
+    async fn pinned(&self) -> Result<Vec<PinnedBenchmark>, ApiError> {
+        let registry = self.clone();
+        blocking(move || {
+            Ok(registry
+                .pins()?
+                .into_iter()
+                .map(|pin| PinnedBenchmark {
+                    name: pin.name,
+                    dataset_version: pin.dataset_version,
+                })
+                .collect())
+        })
+        .await
+    }
+}
+
+/// A benchmark, where it lives, how it is read, and the digest it is pinned
+/// to.
+struct Pin {
+    name: String,
+    dir: PathBuf,
+    format: Format,
+    dataset_version: String,
 }
 
 /// The dataset at `dir`, read as `format` and compared with the digest it is

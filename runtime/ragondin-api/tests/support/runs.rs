@@ -97,6 +97,7 @@ pub fn run_over(
             .map(|(query, trace)| (QueryId::new(query), TraceDocument::from(trace)))
             .collect(),
         bindings: Vec::new(),
+        times: None,
     }
 }
 

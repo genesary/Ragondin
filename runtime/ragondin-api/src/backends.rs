@@ -251,6 +251,28 @@ pub trait Registry: Send + Sync {
     /// `backend_failed` when the datasets directory cannot be read. A dataset
     /// that is absent, differs or does not load is an answer, not an error.
     async fn dataset(&self, dataset_version: &str) -> Result<RunDataset, ApiError>;
+
+    /// Every benchmark the registry knows, with the `dataset_version` it is
+    /// pinned to — the manifest's entries, then the imports — **loading
+    /// nothing**: naming the benchmarks a run's digest is pinned to is not
+    /// verifying them. The pinning is [`dataset`](Self::dataset)'s: a
+    /// manifest entry is pinned to its `dataset_version` whether or not it
+    /// is on disk, an import to the one it recorded, and an import whose
+    /// record cannot be read is pinned to nothing and is left out.
+    ///
+    /// # Errors
+    ///
+    /// `backend_failed` when the datasets directory cannot be read.
+    async fn pinned(&self) -> Result<Vec<PinnedBenchmark>, ApiError>;
+}
+
+/// A benchmark and the digest it is pinned to ([`Registry::pinned`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PinnedBenchmark {
+    /// The benchmark's selector, `<format>/<dir>`.
+    pub name: String,
+    /// The `dataset_version` it is pinned to.
+    pub dataset_version: String,
 }
 
 /// What the registry holds for the `dataset_version` a run recorded.

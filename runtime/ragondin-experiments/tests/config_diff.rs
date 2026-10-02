@@ -27,6 +27,7 @@ fn a_run(byte: u8, config: &str) -> Run {
         config: ConfigDocument::new(config),
         traces: BTreeMap::new(),
         bindings: Vec::new(),
+        times: None,
     }
 }
 

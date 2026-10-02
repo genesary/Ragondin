@@ -668,6 +668,45 @@ mod with_components {
         assert!(recorded.contains_key("context_builder"), "{recorded:?}");
     }
 
+    /// `bench` stamps the run's times itself: `started` before anything is
+    /// read, `finished` once the evaluation returns and before the run is
+    /// saved — so both fall between this test's own clock readings, taken
+    /// before the process is spawned and after it exits.
+    #[cfg(feature = "stub")]
+    #[test]
+    fn bench_stamps_started_before_preparation_and_finished_before_save() {
+        use ragondin_experiments::UnixMillis;
+        use std::time::SystemTime;
+
+        let store = store("times");
+        let now = || UnixMillis::from_system_time(SystemTime::now()).expect("after the epoch");
+
+        let before = now();
+        let output = ragondin(&[
+            "bench",
+            &fixture("stub-generation-bench.yaml"),
+            "--benchmark",
+            "beir-qa/qa-mini",
+            "--datasets",
+            path(&fixtures()),
+            "--store",
+            path(&store),
+        ]);
+        let after = now();
+
+        assert!(output.status.success(), "{}", stderr(&output));
+        let run = FileSystemRunStore::new(&store)
+            .load(&reported_run_id(&stdout(&output)))
+            .expect("the run bench reported is the run bench saved");
+        let times = run.times.expect("bench records when the run ran");
+        assert!(
+            before <= times.started()
+                && times.started() <= times.finished()
+                && times.finished() <= after,
+            "{before:?} <= {times:?} <= {after:?}"
+        );
+    }
+
     /// The same pipeline over a miniature SQuAD v1.1 dev file under
     /// `squad/`: the question's paragraph opens with its answer on a line of
     /// its own, so the stub answers it exactly when BM25 ranks it first. The

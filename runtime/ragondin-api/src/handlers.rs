@@ -25,7 +25,7 @@ use crate::response::{
     BenchmarkState, QueryScores, QueryTrace, RunDetail, RunListing, RunQueries, SettingsSummary,
     UnreadableRun, Workspace, WorkspaceCounts,
 };
-use crate::{cache, convert, ServerConfig};
+use crate::{cache, convert, lineage, ServerConfig};
 
 /// What every handler reads: the backends, the fixed configuration, and what
 /// this server remembers while it runs.
@@ -104,18 +104,49 @@ pub(crate) async fn workspace(State(state): State<AppState>) -> Result<Json<Work
 
 /// `GET /runs`: every id the store lists, loaded; a run that does not load is
 /// listed as unreadable, with the store's reason, rather than dropped.
+///
+/// The workspace's pipelines and the registry's pins are each read once for
+/// the whole listing, never once per run; and each pipeline's shape is
+/// lowered once, from the first of its runs whose document lowers. A
+/// pipeline source or a registry that fails fails the listing, by design:
+/// answering with every name list silently empty would read as "no
+/// pipeline, no benchmark" rather than as the fault it is.
 pub(crate) async fn runs(State(state): State<AppState>) -> Result<Json<RunListing>, ApiError> {
-    let listing = blocking(state.backends.runs, |store| {
+    let pipelines = lineage::pipelines_by_hash(state.backends.pipelines.as_ref()).await?;
+    let mut benchmarks: HashMap<String, Vec<String>> = HashMap::new();
+    for pinned in state.backends.registry.pinned().await? {
+        benchmarks
+            .entry(pinned.dataset_version)
+            .or_default()
+            .push(pinned.name);
+    }
+    let listing = blocking(state.backends.runs, move |store| {
         let ids = store.ids().map_err(|error| ApiError::BackendFailed {
             detail: format!("the run store cannot be listed: {error}"),
         })?;
         let mut listing = RunListing {
             runs: Vec::with_capacity(ids.len()),
             unreadable: Vec::new(),
+            shapes: BTreeMap::new(),
         };
         for id in ids {
             match store.load(&id) {
-                Ok(run) => listing.runs.push(convert::summary(&run)),
+                Ok(run) => {
+                    let hash = run.inputs.pipeline.to_string();
+                    if !listing.shapes.contains_key(&hash) {
+                        if let Some(shape) = convert::shape(&run) {
+                            listing.shapes.insert(hash.clone(), shape);
+                        }
+                    }
+                    listing.runs.push(convert::summary(
+                        &run,
+                        pipelines.get(&hash).cloned().unwrap_or_default(),
+                        benchmarks
+                            .get(&run.inputs.dataset_version)
+                            .cloned()
+                            .unwrap_or_default(),
+                    ));
+                }
                 Err(error) => listing.unreadable.push(UnreadableRun {
                     id: id.to_string(),
                     reason: error.to_string(),

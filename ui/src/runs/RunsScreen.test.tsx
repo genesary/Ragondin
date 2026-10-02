@@ -3,7 +3,7 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createApiClient, type ApiClient, type ApiResult } from '../api/client.ts';
 import { mockApi, type MockRoutes } from '../api/testing.ts';
-import type { Graph, Problem, RunDetail, RunListing, RunSummary } from '../api/types.ts';
+import type { Graph, Problem, RunListing, RunSummary } from '../api/types.ts';
 import { navigate, useRoute } from '../routes.ts';
 import { RunsScreen } from './RunsScreen.tsx';
 
@@ -13,13 +13,18 @@ const FIQA = hex('f');
 const HYBRID = hex('a');
 const DENSE = hex('c');
 
-const summary = (id: string, pipeline: string, dataset: string, metrics: Record<string, number> = {}): RunSummary => ({
+const summary = (id: string, pipeline: string, dataset: string, metrics: Record<string, number> = {}, over: Partial<RunSummary> = {}): RunSummary => ({
   id,
   pipeline,
+  pipeline_names: [],
   dataset_version: dataset,
+  benchmark_names: [],
   index_version: hex('0'),
   engine_version: '0.0.0',
+  started_at_ms: null,
+  finished_at_ms: null,
   metrics,
+  ...over,
 });
 
 const R1 = hex('1');
@@ -27,19 +32,6 @@ const R2 = hex('2');
 const R3 = hex('3');
 const R4 = hex('4');
 const R5 = hex('6');
-
-/** Two pipelines over two benchmarks, and one run the store cannot read. */
-const LISTING: RunListing = {
-  runs: [
-    summary(R1, HYBRID, SCIFACT, { 'ndcg@10': 0.6483, mrr: 0.5912 }),
-    summary(R2, HYBRID, FIQA, { 'ndcg@10': 0.3301 }),
-    summary(R3, DENSE, SCIFACT, { 'ndcg@10': 0.6012, exact_match: 0.412 }),
-    summary(R4, HYBRID, SCIFACT, { 'ndcg@10': 0.6611 }),
-  ],
-  unreadable: [{ id: hex('9'), reason: 'metrics.json is not valid JSON' }],
-};
-/** The same store after R5 was written to it. */
-const LATER: RunListing = { ...LISTING, runs: [...LISTING.runs, summary(R5, DENSE, SCIFACT)] };
 
 const node = (id: string, family: string) => ({ id, family, implementation: id, parameters: {} });
 
@@ -56,19 +48,28 @@ const HYBRID_GRAPH: Graph = {
   ],
 };
 
-const detail = (id: string, pipeline: string, graph: Graph): RunDetail => ({
-  id,
-  bindings: [],
-  configuration: '',
-  graph,
-  inputs: { pipeline, dataset_version: SCIFACT, index_version: hex('0'), engine_version: '0.0.0', model_hashes: {} },
-  metrics: {},
-  prefix_of: null,
-});
+const DENSE_GRAPH: Graph = {
+  inputs: [{ id: 'question', kind: 'query' }],
+  nodes: [node('dense', 'retriever')],
+  edges: [{ from: 'question', to: 'dense', port: 0, kind: 'query' }],
+};
 
-const routes = (listing: MockRoutes['GET /runs'] = { body: LISTING }, shape: MockRoutes['GET /runs/{id}'] = { body: detail(R1, HYBRID, HYBRID_GRAPH) }): MockRoutes => ({
+/** Two pipelines over two benchmarks, and one run the store cannot read. */
+const LISTING: RunListing = {
+  runs: [
+    summary(R1, HYBRID, SCIFACT, { 'ndcg@10': 0.6483, mrr: 0.5912 }),
+    summary(R2, HYBRID, FIQA, { 'ndcg@10': 0.3301 }),
+    summary(R3, DENSE, SCIFACT, { 'ndcg@10': 0.6012, exact_match: 0.412 }),
+    summary(R4, HYBRID, SCIFACT, { 'ndcg@10': 0.6611 }),
+  ],
+  unreadable: [{ id: hex('9'), reason: 'metrics.json is not valid JSON' }],
+  shapes: { [HYBRID]: HYBRID_GRAPH, [DENSE]: DENSE_GRAPH },
+};
+/** The same store after R5 was written to it. */
+const LATER: RunListing = { ...LISTING, runs: [...LISTING.runs, summary(R5, DENSE, SCIFACT)] };
+
+const routes = (listing: MockRoutes['GET /runs'] = { body: LISTING }): MockRoutes => ({
   'GET /runs': listing,
-  'GET /runs/{id}': shape,
 });
 
 /** What the shell does: hands the screen the selection the address carries. */
@@ -114,7 +115,7 @@ describe('the states', () => {
   });
 
   it('says there are no runs yet in one sentence, and leads to the Editor', async () => {
-    show('#runs', routes({ body: { runs: [], unreadable: [] } }));
+    show('#runs', routes({ body: { runs: [], unreadable: [], shapes: {} } }));
     expect((await screen.findByRole('heading', { name: 'No runs yet' })).tagName).toBe('H3');
     expect(screen.getByRole('link', { name: 'Open Editor' }).getAttribute('href')).toBe('#editor');
   });
@@ -128,41 +129,56 @@ describe('over a listing with two benchmarks', () => {
     expect(screen.getByRole('link', { name: `pipeline ${short(DENSE)}` })).toBeTruthy();
     expect(screen.getByText('3 runs')).toBeTruthy();
     expect(screen.getByText('1 run')).toBeTruthy();
-    await waitFor(() => expect(screen.getAllByRole('list', { name: 'Shape' })).toHaveLength(2));
+    expect(screen.getAllByRole('list', { name: 'Shape' })).toHaveLength(2);
     const tiles = [...(screen.getAllByRole('list', { name: 'Shape' })[0] as HTMLElement).querySelectorAll('.rg-tile')];
     expect(tiles.map((t) => t.getAttribute('data-family'))).toEqual(['retriever', 'retriever', 'fusion', 'reranker']);
   });
 
-  it('reads each group’s shape once, from one of its runs', async () => {
+  it('the shape comes from the listing', async () => {
     const api = show('#runs');
-    await waitFor(() => expect(screen.getAllByRole('list', { name: 'Shape' })).toHaveLength(2));
-    expect(api.requests.filter((r) => r.startsWith('GET /api/v1/runs/')).sort()).toEqual([`GET /api/v1/runs/${R1}`, `GET /api/v1/runs/${R3}`]);
-  });
-
-  it('announces the shapes being read in one live region, not one per group', async () => {
-    const shapes: ((r: ApiResult<RunDetail>) => void)[] = [];
-    const client = {
-      get: (path: string) =>
-        path === '/runs' ? Promise.resolve({ ok: true, value: LISTING, build: null }) : new Promise<ApiResult<RunDetail>>((resolve) => shapes.push(resolve)),
-    } as unknown as ApiClient;
-    window.history.replaceState(null, '', '/#runs');
-    render(<Shell client={client} />);
     await loaded();
-    const busy = () => screen.queryAllByRole('status').filter((s) => s.getAttribute('aria-busy') === 'true');
-    await waitFor(() => expect(shapes).toHaveLength(2));
-    expect(busy().map((s) => s.textContent)).toEqual(['Reading the shapes of 2 pipelines']);
-    await act(async () => shapes[0]?.({ ok: true, value: detail(R1, HYBRID, HYBRID_GRAPH), build: null }));
-    expect(busy().map((s) => s.textContent)).toEqual(['Reading the shapes of 1 pipeline']);
-    await act(async () => shapes[1]?.({ ok: true, value: detail(R3, DENSE, HYBRID_GRAPH), build: null }));
-    expect(busy()).toEqual([]);
+    expect(screen.getAllByRole('list', { name: 'Shape' })).toHaveLength(2);
+    expect(api.requests.filter((r) => r.startsWith('GET /api/v1/runs/'))).toEqual([]);
+    // Nothing is left to read, so nothing announces a read in progress.
+    expect(screen.queryAllByRole('status').filter((s) => s.getAttribute('aria-busy') === 'true')).toEqual([]);
   });
 
-  it('offers Retry on a shape that could not be read, and reads it again', async () => {
-    const problem: Problem = { type: 'urn:ragondin:problem:run_unreadable', title: 'Run unreadable', status: 500, detail: 'traces.json is cut short', code: 'run_unreadable', hint: 'h' };
-    show('#runs', routes({ body: LISTING }, [{ problem }, { problem }, { body: detail(R1, HYBRID, HYBRID_GRAPH) }]));
-    await waitFor(() => expect(screen.getAllByRole('button', { name: 'Retry' })).toHaveLength(2));
-    fireEvent.click(screen.getAllByRole('button', { name: 'Retry' })[0] as HTMLElement);
-    await screen.findByRole('list', { name: 'Shape' });
+  it('draws no shape for a pipeline the listing carries none for, and still lists its runs', async () => {
+    show('#runs', routes({ body: { ...LISTING, shapes: { [HYBRID]: HYBRID_GRAPH } } }));
+    await loaded();
+    expect(screen.getAllByRole('list', { name: 'Shape' })).toHaveLength(1);
+    expect(rowOf(R3)).toBeTruthy();
+  });
+
+  it('every benchmark and pipeline name is shown', async () => {
+    const named: RunListing = {
+      ...LISTING,
+      runs: [summary(R1, HYBRID, SCIFACT, { 'ndcg@10': 0.6483 }, { pipeline_names: ['hybrid', 'hybrid-copy'], benchmark_names: ['beir/scifact', 'scifact-local'] })],
+    };
+    show('#runs', routes({ body: named }));
+    const hybrid = await screen.findByRole('link', { name: 'hybrid' });
+    expect(hybrid.getAttribute('href')).toBe('#pipeline/hybrid');
+    expect(screen.getByRole('link', { name: 'hybrid-copy' }).getAttribute('href')).toBe('#pipeline/hybrid-copy');
+    expect(rowOf(R1).getAttribute('aria-label')).toBe(`Run ${short(R1)} on beir/scifact, scifact-local`);
+    expect(screen.getByRole('button', { name: /^beir\/scifact, scifact-local/ })).toBeTruthy();
+  });
+
+  it('lists the most recent run first, a run of unknown time last, and shows when each started', async () => {
+    const timed: RunListing = {
+      ...LISTING,
+      runs: [
+        summary(R1, HYBRID, SCIFACT, {}, { started_at_ms: null }),
+        summary(R3, DENSE, SCIFACT, {}, { started_at_ms: Date.UTC(2026, 8, 30, 14, 3) }),
+        summary(R4, HYBRID, SCIFACT, {}, { started_at_ms: Date.UTC(2026, 8, 29, 9, 0) }),
+      ],
+    };
+    show('#runs', routes({ body: timed }));
+    await loaded();
+    const order = screen.getAllByRole('row').map((r) => r.getAttribute('aria-label')).filter((l) => l?.startsWith('Run '));
+    expect(order).toEqual([R3, R4, R1].map((id) => `Run ${short(id)} on dataset 555555555555`));
+    expect(screen.getByRole('columnheader', { name: 'Started' })).toBeTruthy();
+    expect(within(rowOf(R3)).getByText((_, el) => el?.tagName === 'TIME').getAttribute('datetime')).toBe('2026-09-30T14:03:00.000Z');
+    expect(within(rowOf(R1)).queryByText((_, el) => el?.tagName === 'TIME')).toBeNull();
   });
 
   it('keeps the runs in design/’s table, one semantic table, a row group per pipeline', async () => {
@@ -275,7 +291,7 @@ describe('the selection', () => {
 
   it('refuses a sixth run once five are selected, saying why', async () => {
     const six = [R1, R3, R4, R5, hex('7'), hex('8')];
-    show(`#runs?sel=${six.slice(0, 5).join(',')}`, routes({ body: { runs: six.map((id) => summary(id, DENSE, SCIFACT)), unreadable: [] } }));
+    show(`#runs?sel=${six.slice(0, 5).join(',')}`, routes({ body: { runs: six.map((id) => summary(id, DENSE, SCIFACT)), unreadable: [], shapes: {} } }));
     await loaded();
     expect(box(hex('8')).disabled).toBe(true);
     expect(reasonOf(box(hex('8')))).toBe('Five selected');
@@ -341,7 +357,7 @@ describe('the selection', () => {
       get: (path: string) =>
         path === '/runs'
           ? new Promise<ApiResult<RunListing>>((resolve) => answers.push(resolve))
-          : Promise.resolve({ ok: true, value: detail(R1, HYBRID, HYBRID_GRAPH), build: null }),
+          : Promise.reject(new Error(`the screen reads /runs alone, not ${path}`)),
     } as unknown as ApiClient;
     window.history.replaceState(null, '', '/#runs');
     render(<Shell client={client} />);
@@ -360,7 +376,7 @@ describe('the selection', () => {
       get: (path: string) =>
         path === '/runs'
           ? new Promise<ApiResult<RunListing>>((resolve) => answers.push(resolve))
-          : Promise.resolve({ ok: true, value: detail(R1, HYBRID, HYBRID_GRAPH), build: null }),
+          : Promise.reject(new Error(`the screen reads /runs alone, not ${path}`)),
     } as unknown as ApiClient;
     window.history.replaceState(null, '', '/#runs');
     render(<Shell client={client} />);

@@ -1,8 +1,8 @@
 // The Runs screen: what the store holds, grouped by pipeline, one row per run
-// (the front-end design, § 3). It reads `GET /runs`, and `GET /runs/{id}` once
-// per group for the pipeline's shape; it owns the benchmark filter; the
-// selection it hands to Compare lives in the address. ARCHITECTURE.md § The
-// Runs screen.
+// (the front-end design, § 3), most recent first. It reads `GET /runs` alone —
+// each pipeline's shape comes with the listing; it owns the benchmark filter;
+// the selection it hands to Compare lives in the address. ARCHITECTURE.md
+// § The Runs screen.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button, ButtonLink, EmptyState, FilterChip, InlineMessage, Sheet, Table, type TableRow } from '../../design/index.ts';
 import type { ApiClient, ApiProblem } from '../api/client.ts';
@@ -10,7 +10,7 @@ import type { RunListing } from '../api/types.ts';
 import { formatHash, navigate } from '../routes.ts';
 import { ErrorState, Loading, type RequestState } from '../shell/states.tsx';
 import { GroupLabel } from './GroupLabel.tsx';
-import { benchmarkLabel, groupRows, openRoute, rowKey, rowsFromListing, runId, shapeOf, shortHash, type RunRow, type ShapeNode } from './model.ts';
+import { benchmarkLabel, groupRows, openRoute, rowKey, rowsFromListing, runId, shapeOf, shortHash } from './model.ts';
 import { runRow } from './runRow.tsx';
 import './Runs.css';
 import { compareRefusal, refusal, sanitize, toggle, unknownIds } from './selection.ts';
@@ -72,12 +72,11 @@ export function RunsScreen({ client, sel }: RunsScreenProps) {
     case 'error':
       return <ErrorState problem={read.listing.problem} onRetry={retry} />;
     case 'loaded':
-      return <Loaded client={client} listing={read.listing.value} askedWith={read.askedWith} refresh={read.refresh} sel={sel} reread={() => void fetchListing()} />;
+      return <Loaded listing={read.listing.value} askedWith={read.askedWith} refresh={read.refresh} sel={sel} reread={() => void fetchListing()} />;
   }
 }
 
 type LoadedProps = {
-  client: ApiClient;
   listing: RunListing;
   /** The selection the address carried when `listing` was asked for. */
   askedWith: ReadonlySet<string>;
@@ -88,10 +87,10 @@ type LoadedProps = {
   reread: () => void;
 };
 
-function Loaded({ client, listing, askedWith, refresh, sel, reread }: LoadedProps) {
+function Loaded({ listing, askedWith, refresh, sel, reread }: LoadedProps) {
   const rows = useMemo(() => rowsFromListing(listing), [listing]);
   const [filter, setFilter] = useState<readonly string[]>([]);
-  const shapes = useShapes(client, rows);
+  const shapes = useMemo(() => new Map(Object.entries(listing.shapes).map(([hash, graph]) => [hash, shapeOf(graph)])), [listing]);
 
   // An id the listing lacks is either gone or newer than the listing. The
   // listing settles it only if it was asked for while the address named the
@@ -162,7 +161,6 @@ function Loaded({ client, listing, askedWith, refresh, sel, reread }: LoadedProp
   // An id still being read for is kept in the address but is not yet a run Compare can open.
   const comparable = selection.filter((id) => rows.some((r) => runId(r) === id));
   const refused = compareRefusal(comparable);
-  const loadingShapes = groups.filter((g) => g.shapeFrom !== null && (shapes.state[g.key]?.status ?? 'loading') === 'loading').length;
 
   const byKey = new Map(rows.map((r) => [rowKey(r), r]));
   const onToggle = (key: string) => {
@@ -185,7 +183,7 @@ function Loaded({ client, listing, askedWith, refresh, sel, reread }: LoadedProp
     ...(columns.started ? [{ id: 'started', label: 'Started' }] : []),
   ];
   const tableRows: TableRow[] = groups.flatMap((group) => [
-    { kind: 'group' as const, id: `group:${group.key}`, label: <GroupLabel group={group} shape={group.shapeFrom === null ? null : (shapes.state[group.key] ?? { status: 'loading' })} onRetry={() => shapes.retry(group.key)} /> },
+    { kind: 'group' as const, id: `group:${group.key}`, label: <GroupLabel group={group} shape={group.shapeKey === null ? null : (shapes.get(group.shapeKey) ?? null)} /> },
     ...group.rows.map((row) => {
       const id = runId(row);
       return runRow(row, { selected: id !== null && selection.includes(id), refusal: refusals.get(rowKey(row)) ?? null, columns, onToggle: () => onToggle(rowKey(row)) });
@@ -222,50 +220,14 @@ function Loaded({ client, listing, askedWith, refresh, sel, reread }: LoadedProp
       {unreadable}
       <Table caption="Runs, grouped by pipeline" columns={header} rows={tableRows} onOpen={onOpen} onToggle={onToggle} />
       {/* Below the table: what comes and goes as boxes are checked must not move the rows under the pointer. */}
-      {refresh === null && rules.length === 0 && loadingShapes === 0 ? null : (
+      {refresh === null && rules.length === 0 ? null : (
         <div className="rg-runs__rules">
           {refresh === null ? null : <ErrorState problem={refresh} onRetry={reread} />}
           {rules.map((rule) => (
             <InlineMessage key={rule} tone="info" title={rule} />
           ))}
-          {loadingShapes === 0 ? null : <Loading label={`Reading the shapes of ${loadingShapes} pipeline${loadingShapes === 1 ? '' : 's'}`} />}
         </div>
       )}
     </Sheet>
   );
-}
-
-/**
- * Each pipeline's shape, read once from one of its own runs — the run that
- * draws its group over the whole listing — and kept by the group's key, so a
- * filter that hides that run does not read the shape again. `retry` reads a
- * failed one again.
- */
-function useShapes(client: ApiClient, rows: readonly RunRow[]) {
-  const [state, setState] = useState<Record<string, RequestState<ShapeNode[]>>>({});
-  const asked = useRef(new Set<string>());
-  const wanted = useMemo(() => new Map(groupRows(rows).flatMap((g) => (g.shapeFrom === null ? [] : [[g.key, g.shapeFrom] as const]))), [rows]);
-
-  const load = useCallback(
-    (key: string, id: string) => {
-      asked.current.add(key);
-      setState((current) => ({ ...current, [key]: { status: 'loading' } }));
-      void client.get('/runs/{id}', { id }).then((result) => {
-        const shape: RequestState<ShapeNode[]> = result.ok ? { status: 'loaded', value: shapeOf(result.value.graph) } : { status: 'error', problem: result.problem };
-        setState((current) => ({ ...current, [key]: shape }));
-      });
-    },
-    [client],
-  );
-
-  useEffect(() => {
-    for (const [key, id] of wanted) if (!asked.current.has(key)) load(key, id);
-  }, [wanted, load]);
-
-  const retry = (key: string) => {
-    const id = wanted.get(key);
-    if (id !== undefined) load(key, id);
-  };
-
-  return { state, retry };
 }

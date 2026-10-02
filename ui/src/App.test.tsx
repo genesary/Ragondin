@@ -58,7 +58,7 @@ describe('the shell’s screens', () => {
     ['#editor/hybrid-rrf', 'Editor', 'Nothing to show for hybrid-rrf yet'],
     ['#setup', 'Setup', 'No benchmarks or services shown yet'],
   ])('%s renders the %s screen, restored from the hash, in its empty state', async (hash, tab, heading) => {
-    mockApi({ 'GET /workspace': { body: WORKSPACE }, 'GET /runs': { body: { runs: [], unreadable: [] } } }, { build: BUILD });
+    mockApi({ 'GET /workspace': { body: WORKSPACE }, 'GET /runs': { body: { runs: [], unreadable: [], shapes: {} } } }, { build: BUILD });
     show(hash);
     expect(within(main()).getByRole('heading', { level: 1 }).textContent).toBe(tab);
     expect((await within(main()).findByRole('heading', { level: 3 })).textContent).toBe(heading);
@@ -68,7 +68,7 @@ describe('the shell’s screens', () => {
   });
 
   it('hands Compare the runs and the baseline its address carries', async () => {
-    const api = mockApi({ 'GET /workspace': { body: WORKSPACE }, 'GET /runs': { body: { runs: [], unreadable: [] } }, 'POST /compare': { body: COMPARISON } }, { build: BUILD });
+    const api = mockApi({ 'GET /workspace': { body: WORKSPACE }, 'GET /runs': { body: { runs: [], unreadable: [], shapes: {} } }, 'POST /compare': { body: COMPARISON } }, { build: BUILD });
     show(`#compare/${DENSE}+${HYBRID}+${RERANK}?baseline=${DENSE}`);
     expect(await within(main()).findByRole('heading', { name: 'Verdict' })).toBeTruthy();
     expect(api.bodies[api.requests.indexOf('POST /api/v1/compare')]).toEqual({ run_ids: [DENSE, HYBRID, RERANK], baseline: DENSE });
@@ -76,8 +76,8 @@ describe('the shell’s screens', () => {
 
   it('hands Runs the selection its address carries', async () => {
     const id = (c: string) => c.repeat(64);
-    const run = (c: string) => ({ id: id(c), pipeline: id('p'), dataset_version: id('d'), index_version: id('i'), engine_version: '0.0.0', metrics: {} });
-    mockApi({ 'GET /workspace': { body: WORKSPACE }, 'GET /runs': { body: { runs: [run('1'), run('2'), run('3')], unreadable: [] } } }, { build: BUILD });
+    const run = (c: string) => ({ id: id(c), pipeline: id('p'), dataset_version: id('d'), index_version: id('i'), engine_version: '0.0.0', metrics: {}, pipeline_names: [], benchmark_names: [], started_at_ms: null, finished_at_ms: null });
+    mockApi({ 'GET /workspace': { body: WORKSPACE }, 'GET /runs': { body: { runs: [run('1'), run('2'), run('3')], unreadable: [], shapes: {} } } }, { build: BUILD });
     show(`#runs?sel=${id('2')},${id('1')}`);
     await within(main()).findAllByRole('checkbox');
     expect(within(main()).getAllByRole('checkbox').map((b) => (b as HTMLInputElement).checked)).toEqual([true, true, false]);
@@ -137,9 +137,9 @@ describe('the shell’s screens', () => {
 
   describe('state within a screen', () => {
     const id = (c: string) => c.repeat(64);
-    const run = (c: string, dataset = id('d')) => ({ id: id(c), pipeline: id('p'), dataset_version: dataset, index_version: id('i'), engine_version: '0.0.0', metrics: {} });
+    const run = (c: string, dataset = id('d')) => ({ id: id(c), pipeline: id('p'), dataset_version: dataset, index_version: id('i'), engine_version: '0.0.0', metrics: {}, pipeline_names: [], benchmark_names: [], started_at_ms: null, finished_at_ms: null });
     const runsRoutes = () =>
-      mockApi({ 'GET /workspace': { body: WORKSPACE }, 'GET /runs': { body: { runs: [run('1'), run('2'), run('3', id('e'))], unreadable: [] } } }, { build: BUILD });
+      mockApi({ 'GET /workspace': { body: WORKSPACE }, 'GET /runs': { body: { runs: [run('1'), run('2'), run('3', id('e'))], unreadable: [], shapes: {} } } }, { build: BUILD });
     const row = (c: string) => within(main()).getByRole('row', { name: new RegExp(`^Run ${id(c).slice(0, 12)} on `) });
 
     it('keeps focus on a row when space selects it, though the selection is written to the address', async () => {
@@ -210,7 +210,7 @@ describe('the workspace indicator', () => {
   });
 
   it('opens Setup when clicked', async () => {
-    mockApi({ 'GET /workspace': { body: WORKSPACE }, 'GET /runs': { body: { runs: [], unreadable: [] } } }, { build: BUILD });
+    mockApi({ 'GET /workspace': { body: WORKSPACE }, 'GET /runs': { body: { runs: [], unreadable: [], shapes: {} } } }, { build: BUILD });
     show('#runs');
     await screen.findByText(WORKSPACE.path);
     const link = indicator();

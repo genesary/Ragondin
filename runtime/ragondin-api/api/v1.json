@@ -1480,9 +1480,10 @@
             "type": "string"
           },
           "modified_ms": {
-            "description": "When its file was last modified, in milliseconds since the Unix epoch.",
+            "description": "When its file was last modified, in milliseconds since the Unix\nepoch; `null` for a time before the epoch, which is unknown, never\n`0`.",
             "format": "uint64",
             "minimum": 0,
+            "nullable": true,
             "type": "integer"
           },
           "name": {
@@ -1796,6 +1797,13 @@
             "description": "The configuration document that produced it, verbatim.",
             "type": "string"
           },
+          "finished_at_ms": {
+            "description": "When its evaluation finished, in milliseconds since the Unix epoch,\noutside its identity; `null` when unknown.",
+            "format": "uint64",
+            "minimum": 0,
+            "nullable": true,
+            "type": "integer"
+          },
           "graph": {
             "allOf": [
               {
@@ -1828,16 +1836,25 @@
             "description": "The run this one is a prefix of. Always absent today: no run is\nrecorded as a prefix yet.",
             "nullable": true,
             "type": "string"
+          },
+          "started_at_ms": {
+            "description": "When it started, in milliseconds since the Unix epoch, outside its\nidentity; `null` when unknown.",
+            "format": "uint64",
+            "minimum": 0,
+            "nullable": true,
+            "type": "integer"
           }
         },
         "required": [
           "bindings",
           "configuration",
+          "finished_at_ms",
           "graph",
           "id",
           "inputs",
           "metrics",
-          "prefix_of"
+          "prefix_of",
+          "started_at_ms"
         ],
         "type": "object"
       },
@@ -1908,6 +1925,13 @@
             },
             "type": "array"
           },
+          "shapes": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/Graph"
+            },
+            "description": "The shape of every pipeline a readable run ran, once per pipeline,\nkeyed by its canonical hash ([`RunSummary::pipeline`]): the graph\n`GET /runs/{id}` serves for a run of it, by the same conversion. A\npipeline whose every run's stored document no longer lowers has no\nentry, as `GET /runs/{id}` has no graph for it.",
+            "type": "object"
+          },
           "unreadable": {
             "description": "The runs the store lists and cannot load — reported, never dropped\nand never repaired.",
             "items": {
@@ -1918,7 +1942,8 @@
         },
         "required": [
           "runs",
-          "unreadable"
+          "unreadable",
+          "shapes"
         ],
         "type": "object"
       },
@@ -1989,6 +2014,13 @@
       "RunSummary": {
         "description": "One run, as the listing shows it.",
         "properties": {
+          "benchmark_names": {
+            "description": "Every registry entry pinned to [`dataset_version`](Self::dataset_version)\n— a manifest entry or an import — sorted; empty when none is. The\npinning `GET /runs/{id}/queries` locates the run's dataset by, never\nresolved by closeness (ADR-C36 § 4); naming a benchmark here loads and\nverifies nothing.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "dataset_version": {
             "description": "The benchmark dataset's version.",
             "type": "string"
@@ -1996,6 +2028,13 @@
           "engine_version": {
             "description": "The engine's version.",
             "type": "string"
+          },
+          "finished_at_ms": {
+            "description": "When the run's evaluation finished, in milliseconds since the Unix\nepoch, as the process that ran it recorded; `null` when unknown.",
+            "format": "uint64",
+            "minimum": 0,
+            "nullable": true,
+            "type": "integer"
           },
           "id": {
             "description": "The run's content address: 64 lowercase hex digits.",
@@ -2016,15 +2055,33 @@
           "pipeline": {
             "description": "The content hash of the canonical logical pipeline it ran.",
             "type": "string"
+          },
+          "pipeline_names": {
+            "description": "Every workspace pipeline document whose canonical hash is the run's,\nsorted; empty when none is. Found by content, so a document edited\nsince the run no longer names it. Of the two facts ADR-C39 § 4 exposes\nabout a run's pipeline, this is the content one; the launch record it\nsits beside is not served yet, and the two are never resolved into one\nname.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "started_at_ms": {
+            "description": "When the run started, in milliseconds since the Unix epoch, as the\nprocess that ran it recorded; `null` when unknown.",
+            "format": "uint64",
+            "minimum": 0,
+            "nullable": true,
+            "type": "integer"
           }
         },
         "required": [
-          "id",
-          "pipeline",
+          "benchmark_names",
           "dataset_version",
-          "index_version",
           "engine_version",
-          "metrics"
+          "finished_at_ms",
+          "id",
+          "index_version",
+          "metrics",
+          "pipeline",
+          "pipeline_names",
+          "started_at_ms"
         ],
         "type": "object"
       },

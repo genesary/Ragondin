@@ -156,7 +156,7 @@ mod with_the_feature {
         let runs = http::get(server.authority(), "/api/v1/runs");
         assert_eq!(runs.status, 200, "{runs:?}");
         assert_eq!(runs.header("content-type"), Some("application/json"));
-        assert_eq!(runs.body, r#"{"runs":[],"unreadable":[]}"#);
+        assert_eq!(runs.body, r#"{"runs":[],"unreadable":[],"shapes":{}}"#);
     }
 
     /// The envelope `ragondin-api` applies reaches the page this binary

@@ -12,7 +12,8 @@
 //! The modules:
 //!
 //! - [`run`] — [`RunId`] and the [`Run`] record: the identity tuple's
-//!   components, the metrics, the configuration and the per-query traces.
+//!   components, the metrics, the configuration and the per-query traces, and,
+//!   outside identity, the bindings and the [`RunTimes`] it ran at.
 //! - [`store`] — the [`RunStore`] trait, and [`FileSystemRunStore`], its
 //!   first implementation, a directory per run. Native by decision (ADR-13),
 //!   and filesystem-backed by a choice that module argues.
@@ -52,7 +53,8 @@ pub use compare::{
     ParameterDifference, ParameterKey, ParameterRow, RunComparison, Side,
 };
 pub use run::{
-    ConfigDocument, Metrics, Run, RunBinding, RunId, RunIdParseError, RunInputs, TraceDocument,
+    ConfigDocument, Metrics, Run, RunBinding, RunId, RunIdParseError, RunInputs, RunTimes,
+    TraceDocument, UnixMillis,
 };
 pub use store::{FileSystemRunStore, RunStore, RunStoreError};
 pub use trace::{Trace, TraceChunk, TraceError, TraceNode, TraceProblem, TraceSummary};

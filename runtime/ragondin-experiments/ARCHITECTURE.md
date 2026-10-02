@@ -82,8 +82,8 @@ harness.
   saves are ordinary. It is unique among *live* writers rather than for all
   time — a recycled pid restarts the counter at zero and may name what a crashed
   process left — which is harmless, because creating the directory is
-  idempotent, all five files are written before the rename, and no other name is
-  ever written there. Nothing clears a staging directory on the way in, and
+  idempotent, every file of the run is written before the rename, and no other
+  name is ever written there. Nothing clears a staging directory on the way in, and
   nothing may: a name no live writer shares has nothing to clear, and clearing a
   shared one reaches into a directory another live writer owns. Whoever renames
   first wins, and the others find the run already there and report success.
@@ -140,6 +140,34 @@ harness.
   fixes what that record means. This file fixes the record's type, file and
   field names in the change that adds it to the store; nothing in this crate
   writes or reads one yet.
+- **A run records when it ran, outside its identity.** `Run::times` is
+  an `Option<RunTimes>` — `started` and `finished`, each a `UnixMillis`, whole
+  milliseconds since the epoch. It is not a field of `RunInputs` and the run id
+  does not digest it (INV-8): a run with times and the same run without them
+  are one run. A leaf choice of this crate, recorded here:
+  - *A file of its own, `times.json`*, holding `{"started_ms", "finished_ms"}`,
+    staged with the rest of the run and renamed into place with it.
+  - *Written only when known.* Unlike `bindings.json`, which is written for
+    every run, `times.json` is absent when `times` is `None`: an absent file
+    is what *unknown* means, and writing `null` would give one fact two
+    spellings. `load` reads an absent file as `None` — never an estimate — and
+    a file that does not parse as `Malformed`. The completeness check still
+    requires only the four original files, so a run stored before the file
+    existed is complete.
+  - *Never the backend's clock.* No modification time, birth time or
+    object-store `LastModified` is read for it, not even as a fallback: such a
+    time says when a file was written rather than when the run ran, and it is
+    not portable across `RunStore` backends. A time before the epoch is
+    unknown too — `UnixMillis::from_system_time` answers `None`, never `0`.
+  - *The first record wins, times included*, as for every rerun under a stored
+    id; a rerun saved without times does not erase the stored ones.
+  - *For display and ordering only.* A `finished` earlier than `started` is
+    stored and read back as written; nothing validates or reorders it.
+  - *Stamped by the composition root.* `ragondin-harness` assembles the run
+    with `times: None`; the binary's execution path reads the clock before
+    preparation and again when evaluation returns, and sets the field before
+    saving. The conformance suite holds every backend to the round trip, to
+    inventing no time, to the first record winning and to the reversed pair.
 - **The configuration is kept verbatim, and the traces are opaque to the
   store.** The store writes the configuration document as it was handed in —
   the text whose canonical logical form hashes to the `pipeline` digest beside
