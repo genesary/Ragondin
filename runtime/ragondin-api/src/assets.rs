@@ -17,7 +17,7 @@ use axum::extract::State;
 use axum::http::header::{ALLOW, CONTENT_TYPE};
 use axum::http::{Method, StatusCode, Uri};
 use axum::response::Response;
-use axum::Router;
+use axum::routing::{any, MethodRouter};
 
 /// One file of the UI: its bytes and the content type it is served with.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -52,13 +52,12 @@ impl Assets for NoAssets {
 /// The page every client-side route is answered with.
 const INDEX: &str = "index.html";
 
-/// The router the assets are served by: one fallback, answering every path
-/// the API does not.
-// The assets' fallback is outside the /api router, and so outside ADR-C37
-// § 2's rule: `clippy.toml` refuses `Router::fallback` elsewhere.
-#[allow(clippy::disallowed_methods)]
-pub(crate) fn router(assets: Arc<dyn Assets>) -> Router {
-    Router::new().fallback(serve).with_state(assets)
+/// What the assets are served by: [`serve`] over `assets`, answering every
+/// method, which `router` in `lib.rs` sets as the server's fallback for
+/// every path the API does not answer. A `MethodRouter`, as a handler
+/// fallback is, so a `HEAD` answer loses its body as it did.
+pub(crate) fn endpoint(assets: Arc<dyn Assets>) -> MethodRouter {
+    any(serve).with_state(assets)
 }
 
 /// The answer to a request for `uri` from `assets`.

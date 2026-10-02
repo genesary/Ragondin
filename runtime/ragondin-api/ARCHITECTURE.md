@@ -593,24 +593,36 @@ or in a `Result` — `Bytes`, `RawQuery`, the `Uri`, the `Request` or a
 **`Routes::route` is the only way in, by `clippy.toml`.** The guard binds
 only what is registered through it, so `clippy.toml` — in this package, not
 at the workspace root, where it would reach every crate — refuses, under
-`disallowed-methods`, every `axum::Router` method that adds a route, a
-service, a fallback or a layer (`route`, `route_service`, `nest`,
-`nest_service`, `merge`, `layer`, `route_layer`, `fallback`,
-`fallback_service`) and `axum::middleware::from_fn` and `from_fn_with_state`.
-Four sites allow them, each saying why:
+`disallowed-methods`, every method that adds a route, a service, a fallback
+or a layer:
+
+- on `axum::Router`: `route`, `route_service`, `nest`, `nest_service`,
+  `merge`, `layer`, `route_layer`, `fallback`, `fallback_service` and
+  `method_not_allowed_fallback`;
+- on `axum::routing::MethodRouter`: `on_service`, `fallback`,
+  `fallback_service`, `layer` and `route_layer`;
+- the free functions `axum::routing::on_service`, `any_service` and each
+  method's `*_service`;
+- `axum::middleware::from_fn` and `from_fn_with_state`.
+
+Two sites allow them, each saying why:
 
 - `routes::Builder::into_router` — the one `Router::route` an /api handler
-  meets, every method router built through the guard;
+  meets, every method router built through the guard, and the
+  `MethodRouter::fallback` that answers a method it does not serve with
+  `method_not_allowed`;
 - `router` in `lib.rs` — the one assembly site: the nest under `/api`, the
   bare-prefix route and the naming fallback (ADR-C37 § 2's exception: they
-  take the `Uri` and the `Method` only to name the request), and the assets
-  merged beside;
-- `layers::wrap` — the envelope's layers (ADR-C10), applied once by
-  `router`, the one place a middleware reads the request;
-- `assets::router` — the assets' fallback, outside the `/api` router.
+  take the `Uri` and the `Method` only to name the request), the assets'
+  fallback service (`assets::endpoint`, outside the `/api` router), and the
+  envelope's layer stack (`layers::envelope`, ADR-C10), applied last with one
+  `Router::layer`.
 
-A route added anywhere else fails `just clippy`. Within those four sites,
-review holds the line. `clippy.toml` also refuses `axum::extract::Path`,
+`layers::envelope` allows them as well, for `from_fn_with_state` alone: it
+builds the envelope's middleware as a `tower` layer stack and touches no
+router, so nothing it could add reaches the server except through that one
+`Router::layer` in `router`. A route, a service or a fallback added anywhere
+else fails `just clippy`. Within the two sites, review holds the line. `clippy.toml` also refuses `axum::extract::Path`,
 `axum::extract::Query` and `axum::http::HeaderMap` under `disallowed-types`
 in the crate's other code, and `src/extract.rs` alone allows them, saying
 why. `axum::extract::Json` is not on that list, because

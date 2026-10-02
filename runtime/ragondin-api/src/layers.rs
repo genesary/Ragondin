@@ -15,6 +15,7 @@
 //! The listener and the loopback-only rule are the binary's; these layers
 //! assume nothing about where the router is bound.
 
+use std::convert::Infallible;
 use std::sync::Arc;
 
 use axum::body::Body;
@@ -22,7 +23,8 @@ use axum::extract::{Request, State};
 use axum::http::{header, HeaderName, HeaderValue, Method};
 use axum::middleware::{from_fn_with_state, Next};
 use axum::response::{IntoResponse, Response};
-use axum::Router;
+use axum::routing::Route;
+use tower::{Layer, Service, ServiceBuilder};
 
 use crate::error::ApiError;
 
@@ -47,32 +49,50 @@ struct Envelope {
     build: HeaderValue,
 }
 
-/// Wraps `router` in the four layers.
+/// The four layers, as one stack, outermost first: what `router` in `lib.rs`
+/// applies to the whole server with one `Router::layer`. This function adds
+/// nothing to a router itself, so it needs no `Router` method.
 ///
 /// A build identity that is not a valid header value is replaced by a
 /// visible marker rather than dropped: a response without the header would
 /// read to the UI as a build that cannot be compared, which is the case the
 /// header exists to prevent.
-// The envelope's layers (ADR-C10), applied once, over the whole server, by
-// `router` in lib.rs: the one place `clippy.toml` lets a layer or a
+// The envelope's middleware (ADR-C10): the one place `clippy.toml` lets a
 // middleware read the request, since anywhere else it would read it around
-// the ADR-C37 § 2 guard.
+// the ADR-C37 § 2 guard. Only `from_fn_with_state` is used here.
 #[allow(clippy::disallowed_methods)]
-pub(crate) fn wrap(router: Router, served: &str, build: &str) -> Router {
+pub(crate) fn envelope(
+    served: &str,
+    build: &str,
+) -> impl Layer<
+    Route,
+    Service = impl Service<
+        Request,
+        Response = Response,
+        Error = Infallible,
+        Future = impl Send + 'static,
+    > + Clone
+                  + Send
+                  + Sync
+                  + 'static,
+> + Clone
+       + Send
+       + Sync
+       + 'static {
     let envelope = Arc::new(Envelope {
         served: served.to_owned(),
         origin: format!("http://{served}"),
         build: HeaderValue::from_str(build)
             .unwrap_or_else(|_| HeaderValue::from_static("invalid-build-identity")),
     });
-    router
-        .layer(from_fn_with_state(envelope.clone(), check_origin))
-        .layer(from_fn_with_state(envelope.clone(), check_host))
+    ServiceBuilder::new()
+        .layer(from_fn_with_state(envelope.clone(), build_identity))
         .layer(from_fn_with_state(
             envelope.clone(),
             content_security_policy,
         ))
-        .layer(from_fn_with_state(envelope, build_identity))
+        .layer(from_fn_with_state(envelope.clone(), check_host))
+        .layer(from_fn_with_state(envelope, check_origin))
 }
 
 async fn build_identity(

@@ -10,8 +10,9 @@
 //! `Json` (bare, in an `Option` or a `Result`), `Bytes`, `RawQuery`, the
 //! `Uri`, the `Request` or a `HeaderMap` does not compile, whatever it is
 //! imported as. `clippy.toml` makes it the only way in: it refuses the
-//! `Router` methods that add a route, a service, a fallback or a layer
-//! outside [`Builder::into_router`] and the sites that assemble the server
+//! `Router` and `MethodRouter` methods, and the `axum::routing::*_service`
+//! functions, that add a route, a service, a fallback or a layer, outside
+//! [`Builder::into_router`] and `router` in `lib.rs`, the one assembly site
 //! (`ARCHITECTURE.md` § Request input goes through one extractor module).
 
 use std::collections::BTreeMap;
@@ -111,9 +112,10 @@ impl Routes for Builder {
 }
 
 impl Builder {
-    // The one place an /api route meets `Router::route`: every method router
-    // here was built by `Routes::route`, through the guard. `clippy.toml`
-    // refuses `Router::route` elsewhere.
+    // The one place an /api route meets `Router::route`, and its method
+    // router `MethodRouter::fallback` for `method_not_allowed`: every method
+    // router here was built by `Routes::route`, through the guard.
+    // `clippy.toml` refuses both everywhere but here and `router` in lib.rs.
     #[allow(clippy::disallowed_methods)]
     pub(crate) fn into_router(self) -> Router<AppState> {
         self.paths
