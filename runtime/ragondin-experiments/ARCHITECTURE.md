@@ -134,6 +134,12 @@ harness.
     assembles the run with no bindings, since it never sees the command line,
     and the binary sets the field before saving. `compare` does not show
     bindings.
+- **A run's launch record is decided by ADR-C39, and the code predates it.**
+  ADR-C39 decides that the pipeline name a run was launched as, and for a
+  prefix run its parent, is recorded on the run outside its identity, and it
+  fixes what that record means. This file fixes the record's type, file and
+  field names in the change that adds it to the store; nothing in this crate
+  writes or reads one yet.
 - **The configuration is kept verbatim, and the traces are opaque to the
   store.** The store writes the configuration document as it was handed in —
   the text whose canonical logical form hashes to the `pipeline` digest beside

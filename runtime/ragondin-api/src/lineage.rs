@@ -1,12 +1,11 @@
 //! Which workspace pipeline a stored run is a run of.
 //!
 //! A run records no pipeline name: its identity is the canonical hash of
-//! what it ran. Until the decision on run → pipeline identity, which is
-//! pending, settles it, a run's pipeline is found by content — **interim
-//! behaviour**: the one document under `pipelines/` whose canonical hash is
-//! the run's (INV-8: the canonical form, never the text). No document, or
-//! several, names no pipeline; a document edited since a run no longer names
-//! it. `POST /compare` reads it to find the pairing of two runs' pipelines,
+//! what it ran. ADR-C39 decides run → pipeline identity; until the code
+//! follows it, a run's pipeline is found by content — **interim behaviour**:
+//! the one document under `pipelines/` whose canonical hash is the run's
+//! (INV-8: the canonical form, never the text). No document, or several,
+//! names no pipeline; a document edited since a run no longer names it. `POST /compare` reads it to find the pairing of two runs' pipelines,
 //! and the pipeline matrix needs the same index.
 
 use std::collections::BTreeMap;

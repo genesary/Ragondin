@@ -34,7 +34,7 @@ the response types, the typed errors, and the traits the service consumes.
 | `cache` | The workspace's `cache/`: those derived figures, reconstructible, never a truth |
 | `endpoints` | The handlers of the workspace's endpoints — pipelines, benchmarks, services — and of `POST /compare` |
 | `stages` | A pipeline's stages, derived from its nodes' kinds and positions, by which a comparison aligns runs |
-| `lineage` | Which workspace pipeline a run is a run of, by canonical hash — interim, pending the decision on run identity |
+| `lineage` | Which workspace pipeline a run is a run of, by canonical hash — interim: ADR-C39 decides run → pipeline identity; the code does not follow it yet (#392) |
 | `comparison` | The runs aligned by stage with the pairs drawn by hand, the bins of the per-query deltas, a node's median latency |
 | `validation` | A pipeline document checked as `ragondin validate` checks a file |
 | `fs` | The workspace on disk and its file backends: `Workspace`, `FsSettings`, `FsPipelines`, `FsRegistry` |
@@ -851,8 +851,8 @@ stages a kind decides take part — legs, after fusion, after rerank; the final
 ranking and the answer are the walk's, and a pair never moves them.
 
 - **A run is matched to its workspace pipeline by content — interim
-  behaviour.** A run names no pipeline; until the decision on run → pipeline
-  identity, which is pending, settles it, its pipeline is the one document
+  behaviour.** A run names no pipeline. ADR-C39 decides run → pipeline
+  identity; until the code follows it, a run's pipeline is the one document
   under `pipelines/` whose canonical hash is the run's (INV-8: the
   canonical form, never the text), reported as each run's `pipeline`. No
   document, or several, is `null`, and such a run pairs automatically only.
