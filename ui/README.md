@@ -45,4 +45,4 @@ just gen-ui-types   # regenerates src/api/types.ts; `npm run check` fails until 
 npm run check   # API types, lint, typecheck, test, build, notices, audit — what CI runs
 ```
 
-Or one at a time: `npm run types:check`, `npm run lint`, `npm run typecheck`, `npm run test`, `npm run build`, `npm run notices` (after a build), `npm run audit`. From the repository root, `just check-ui` runs `npm ci` and then `npm run check`, and `just check` includes it. The audit queries the npm registry, so it needs the network.
+Or one at a time: `npm run types:check`, `npm run lint`, `npm run typecheck`, `npm run test`, `npm run build`, `npm run notices` (after a build), `npm run audit`. From the repository root, `just build-ui` runs `npm ci` and `npm run build`, and `just check-ui` runs it and then every other step of `npm run check`; `just check` runs `build-ui` before the Rust tests that embed `dist/`, and `check-ui` at the end, so it builds once. The audit queries the npm registry, so it needs the network.
