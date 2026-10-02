@@ -46,8 +46,9 @@
 //!    benchmark, and an imported one, by the `dataset_version` it is pinned
 //!    to, loaded and digesting to it; the same digest before anything is on
 //!    disk is `Absent`, and a digest nothing is pinned to is `Unknown`; a
-//!    downloaded benchmark whose content is then changed is `Differs`, with
-//!    the digest found, and one then broken is `Unreadable`.
+//!    downloaded benchmark that verified and whose content is then changed
+//!    is `Differs`, with the digest found, and one then broken is
+//!    `Unreadable` — so a backend that keeps what it verified must notice.
 //! 8. **Pins.** [`Registry::pinned`] names `obtainable` with its
 //!    `dataset_version` before anything is downloaded, as after, and an
 //!    import with the digest it recorded, no name twice.
@@ -467,6 +468,9 @@ async fn altered_dataset<R: Registry>(fixture: RegistryFixture<R>, alteration: A
     else {
         panic!("{case}: {name} is {:?}, not ready", downloaded.state);
     };
+    // Verified first, so a backend that keeps what it verified must notice
+    // the change rather than answer from what it kept.
+    assert_verified(&fixture.registry, version, &case).await;
     (fixture.alter)(&fixture.registry, name, alteration);
     let found = fixture
         .registry
@@ -486,8 +490,8 @@ async fn altered_dataset<R: Registry>(fixture: RegistryFixture<R>, alteration: A
 
 async fn assert_verified<R: Registry>(registry: &R, version: &str, case: &str) {
     match registry.dataset(version).await {
-        Ok(RunDataset::Verified { benchmark, .. }) => assert_eq!(
-            dataset_version(&benchmark),
+        Ok(RunDataset::Verified { dataset, .. }) => assert_eq!(
+            dataset_version(dataset.benchmark()),
             version,
             "{case}: the dataset handed back digests to another value"
         ),

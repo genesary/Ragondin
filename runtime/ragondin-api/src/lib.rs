@@ -81,9 +81,9 @@ use endpoints::{benchmarks, compare, pipelines, services};
 
 pub use assets::{content_type_for, Asset, Assets, NoAssets};
 pub use backends::{
-    Backends, DownloadProgress, Job, JobState, Launcher, PinnedBenchmark, PipelineFile,
-    PipelineSource, Precondition, ProgressSink, Registry, Revision, RunDataset, ServiceIdentity,
-    Settings, Submission, WorkspaceSettings,
+    Backends, DownloadProgress, Job, JobState, Launcher, LoadedDataset, PinnedBenchmark,
+    PipelineFile, PipelineSource, Precondition, ProgressSink, Registry, Revision, RunDataset,
+    ServiceIdentity, Settings, Submission, WorkspaceSettings,
 };
 pub use error::ApiError;
 pub use layers::BUILD_HEADER;

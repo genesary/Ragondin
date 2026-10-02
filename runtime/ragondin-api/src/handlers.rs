@@ -10,7 +10,6 @@ use std::sync::Arc;
 use axum::extract::{Path, State};
 use axum::http::{Method, Uri};
 use axum::Json;
-use ragondin_benchmarks::identity::CorpusIndex;
 use ragondin_experiments::{
     lower_configuration, Run, RunId, RunStore, RunStoreError, Trace, TraceDocument, TraceSummary,
 };
@@ -209,7 +208,7 @@ pub(crate) async fn queries(
 
     let mut cache_error = None;
     let (check, ground) = match dataset {
-        RunDataset::Verified { name, benchmark } => {
+        RunDataset::Verified { name, dataset } => {
             let check = convert::ground_verified(&name, &run.inputs);
             let workspace = state.config.workspace.clone();
             let key = cache::Key::of(&state.config.build, &run);
@@ -219,20 +218,26 @@ pub(crate) async fn queries(
                 metrics.clone(),
                 outputs.clone(),
             );
-            let (benchmark, figures, failure) = work(move || {
+            let (dataset, figures, failure) = work(move || {
                 let (figures, failure) = figures(
-                    &workspace, &key, &pipeline, &traces, &metrics, &outputs, &benchmark,
+                    &workspace,
+                    &key,
+                    &pipeline,
+                    &traces,
+                    &metrics,
+                    &outputs,
+                    dataset.benchmark(),
                 );
-                Ok((benchmark, figures, failure))
+                Ok((dataset, figures, failure))
             })
             .await?;
             cache_error = failure;
-            (check, Some((benchmark, figures)))
+            (check, Some((dataset, figures)))
         }
         other => (convert::unverified(&other, &run.inputs), None),
     };
-    let (verified_benchmark, ground) = match ground {
-        Some((benchmark, figures)) => (Some(benchmark), Some(figures)),
+    let (verified, ground) = match ground {
+        Some((dataset, figures)) => (Some(dataset), Some(figures)),
         None => (None, None),
     };
     if filter.is_some() && ground.is_none() {
@@ -240,9 +245,9 @@ pub(crate) async fn queries(
     }
     let queries = traces
         .iter()
-        .filter(|(query, trace)| match (filter, &verified_benchmark) {
-            (Some(k), Some(benchmark)) => {
-                derived::gold_missing(&outputs, benchmark, query, trace, k) == Some(true)
+        .filter(|(query, trace)| match (filter, &verified) {
+            (Some(k), Some(dataset)) => {
+                derived::gold_missing(&outputs, dataset.benchmark(), query, trace, k) == Some(true)
             }
             _ => true,
         })
@@ -304,15 +309,15 @@ pub(crate) async fn trace(
         .dataset(&run.inputs.dataset_version)
         .await?;
 
-    let (passages, benchmark, texts) = match dataset {
-        RunDataset::Verified { name, benchmark } => {
+    let (passages, dataset, texts) = match dataset {
+        RunDataset::Verified { name, dataset } => {
             let inputs = run.inputs.clone();
             let named = named_chunks(&trace);
             work(move || {
-                let index = CorpusIndex::build(benchmark.corpus());
+                let index = dataset.index();
                 if index.version() != inputs.index_version {
                     let check = convert::index_differs(&name, &inputs, index.version());
-                    return Ok((check, Some(benchmark), None));
+                    return Ok((check, Some(dataset), None));
                 }
                 let texts: HashMap<String, String> = index
                     .chunks()
@@ -321,20 +326,22 @@ pub(crate) async fn trace(
                     .map(|chunk| (chunk.id.as_str().to_owned(), chunk.text.clone()))
                     .collect();
                 let check = convert::passages_verified(&name, &inputs);
-                Ok((check, Some(benchmark), Some(texts)))
+                Ok((check, Some(dataset), Some(texts)))
             })
             .await?
         }
         other => (convert::unverified(&other, &run.inputs), None, None),
     };
 
-    let scores = benchmark
+    let scores = dataset
         .as_ref()
-        .map(|benchmark| derived::query_scores(&metrics, &outputs, benchmark, &query_id, &trace))
+        .map(|dataset| {
+            derived::query_scores(&metrics, &outputs, dataset.benchmark(), &query_id, &trace)
+        })
         .unwrap_or_default();
     let nodes = convert::trace_view(&trace, texts.as_ref(), |node| {
-        benchmark.as_ref().and_then(|benchmark| {
-            derived::node_scores(&metrics, benchmark, &query_id, &trace, node)
+        dataset.as_ref().and_then(|dataset| {
+            derived::node_scores(&metrics, dataset.benchmark(), &query_id, &trace, node)
         })
     });
     Ok(Json(QueryTrace {
