@@ -293,6 +293,9 @@ where
         // The harness has no clock reading to give: the composition root that
         // executed the run stamps its times before saving it.
         times: None,
+        // Nor does it know how the run was launched: the composition root
+        // stamps the launch record (ADR-C39 § 3).
+        provenance: None,
     })
 }
 

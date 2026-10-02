@@ -13,6 +13,34 @@
 //! construct read before the benchmark is loaded — and one thing only a composition root can do: [`prepare`] embeds
 //! the corpus before any component exists, because a `ComponentCtor` is
 //! synchronous and the two calls that fill a vector store are not.
+//!
+//! # The launch record
+//!
+//! After the evaluation, `bench` stamps the run's launch record (ADR-C39 § 3)
+//! from its two paths alone — `launched_as` — and the choices it makes are
+//! this module's, recorded here:
+//!
+//! - **A name, only under the workspace convention.** The configuration is
+//!   `<W>/pipelines/<name>.yaml` and the store is `<W>/runs`, for one `W`
+//!   once both are canonicalized; the config's parent is canonicalized, not
+//!   the file, so the name is the file's under `pipelines/`, as the workspace
+//!   lists it, even through a link. A path through `..` or a link that
+//!   canonicalizes into the convention records the name.
+//! - **A fresh workspace still records it.** A `<W>/runs` that does not exist
+//!   yet cannot be canonicalized, so its parent is, and its last component
+//!   must be literally `runs`: the first run into a new workspace is named.
+//! - **Only `.yaml`.** A workspace pipeline is `pipelines/<name>.yaml`, so a
+//!   `.yml` records no name. The stem is taken as the file has it; the
+//!   workspace's own rules on what a pipeline name may be are not applied
+//!   here, since a recorded name is a fact about a launch, not a claim the
+//!   workspace lists it.
+//! - **A name or no record.** Outside the convention, the run is saved with
+//!   no record and no `provenance.json` is written — never an empty `{}`, and
+//!   never a path, whatever the convention's answer. `bench` never sets
+//!   `prefix_of`: it runs whole pipelines.
+//!
+//! The record is outside the run's identity (INV-8), and the summary `bench`
+//! prints does not show it, so neither the run id nor the output changes.
 
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
@@ -22,7 +50,9 @@ use ragondin_benchmarks::{BeirAdapter, Benchmark, BenchmarkAdapter, SquadAdapter
 use ragondin_config::{ConfigSource, LocalFile};
 use ragondin_contracts::EmbeddedChunk;
 use ragondin_engine::EngineContext;
-use ragondin_experiments::{ConfigDocument, FileSystemRunStore, Run, RunTimes, UnixMillis};
+use ragondin_experiments::{
+    ConfigDocument, FileSystemRunStore, Run, RunProvenance, RunTimes, UnixMillis,
+};
 use ragondin_harness::{evaluate, CorpusIndex, Evaluation};
 use ragondin_pipeline::LogicalPipeline;
 
@@ -174,9 +204,12 @@ pub async fn run(request: &Request<'_>) -> Result<()> {
     // Recorded on the run, never in its identity: the harness named the run
     // before it saw them, and where a service listened — or when the run
     // happened — is not an input of the experiment (ADR-C32 § 2, INV-8).
+    // And how it was launched (ADR-C39 § 3): the workspace name, or no
+    // record at all — never an empty one, and never a path.
     let run = Run {
         bindings: bound.bindings().record(),
         times: RunTimes::from_readings(started, finished),
+        provenance: launched_as(request.config, request.store).map(RunProvenance::named),
         ..run
     };
 
@@ -184,6 +217,52 @@ pub async fn run(request: &Request<'_>) -> Result<()> {
     print!("{}", render(&run));
 
     Ok(())
+}
+
+/// The workspace pipeline name `bench` records for a run of `config` stored
+/// into `store`, under the workspace convention ADR-C39 § 3 gives it: `config`
+/// is `<W>/pipelines/<name>.yaml` and `store` is `<W>/runs`, for one `W` once
+/// both are canonicalized. `None` for anything else — and anything that
+/// cannot be canonicalized is something else.
+///
+/// The config's parent is canonicalized, not the file, so the name is the
+/// one the file has under `pipelines/`, as the workspace lists it, even when
+/// that file is a link. The store is canonicalized when it exists; a store
+/// not yet created — the first run into a fresh workspace — is matched by
+/// canonicalizing its parent and requiring its last component to be
+/// literally `runs`.
+fn launched_as(config: &Path, store: &Path) -> Option<String> {
+    let file = Path::new(config.file_name()?);
+    if file.extension()? != "yaml" {
+        return None;
+    }
+    let name = file.file_stem()?.to_str()?;
+
+    let parent = match config.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent,
+        _ => Path::new("."),
+    };
+    let pipelines = std::fs::canonicalize(parent).ok()?;
+    if pipelines.file_name()? != "pipelines" {
+        return None;
+    }
+
+    let runs = match std::fs::canonicalize(store) {
+        Ok(runs) => runs,
+        Err(_) => {
+            let last = store.file_name()?;
+            let parent = match store.parent() {
+                Some(parent) if !parent.as_os_str().is_empty() => parent,
+                _ => Path::new("."),
+            };
+            std::fs::canonicalize(parent).ok()?.join(last)
+        }
+    };
+    if runs.file_name()? != "runs" {
+        return None;
+    }
+
+    (pipelines.parent()? == runs.parent()?).then(|| name.to_owned())
 }
 
 /// Embeds the corpus, if the pipeline retrieves densely over it.
@@ -437,6 +516,7 @@ mod tests {
             traces: BTreeMap::new(),
             bindings: Vec::new(),
             times: None,
+            provenance: None,
         }
     }
 
@@ -493,5 +573,81 @@ mod tests {
         };
 
         assert_eq!(render(&with), render(&without));
+    }
+
+    #[test]
+    fn the_summary_is_the_same_whether_or_not_a_launch_record_is_kept() {
+        // The record is for the UI's grouping; `bench`'s printed output is
+        // byte for byte what it was before it existed.
+        let without = a_run(&[("ndcg@10", 0.5), ("recall@10", 0.75)]);
+        let with = Run {
+            provenance: Some(RunProvenance::named("hybrid")),
+            ..without.clone()
+        };
+
+        assert_eq!(render(&with), render(&without));
+    }
+
+    /// A workspace of this test's own under the system's temporary
+    /// directory, emptied first, holding the files named.
+    fn workspace(test_name: &str, files: &[&str]) -> PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "ragondin-bench-launched-as-{}-{test_name}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        for file in files {
+            let path = root.join(file);
+            std::fs::create_dir_all(path.parent().expect("a parent")).expect("a writable tmpdir");
+            std::fs::write(&path, "pipeline: {}\n").expect("a writable tmpdir");
+        }
+        root
+    }
+
+    #[test]
+    fn the_name_is_the_stem_of_a_yaml_file_under_the_store_s_workspace() {
+        let w = workspace("named", &["pipelines/hybrid.yaml"]);
+
+        // Fresh: `runs/` does not exist yet, and the name is still recorded.
+        assert_eq!(
+            launched_as(&w.join("pipelines/hybrid.yaml"), &w.join("runs")),
+            Some("hybrid".to_owned())
+        );
+        std::fs::create_dir_all(w.join("runs")).expect("a store");
+        assert_eq!(
+            launched_as(&w.join("pipelines/hybrid.yaml"), &w.join("runs")),
+            Some("hybrid".to_owned())
+        );
+    }
+
+    #[test]
+    fn no_name_outside_the_convention() {
+        let w = workspace(
+            "unnamed",
+            &[
+                "pipelines/hybrid.yml",
+                "pipelines/hybrid.yaml",
+                "drafts/hybrid.yaml",
+                "pipelines/nested/hybrid.yaml",
+                "elsewhere/pipelines/hybrid.yaml",
+            ],
+        );
+        let none = [
+            ("pipelines/hybrid.yml", "runs"),
+            ("drafts/hybrid.yaml", "runs"),
+            ("pipelines/nested/hybrid.yaml", "runs"),
+            ("pipelines/hybrid.yaml", "store"),
+            ("pipelines/hybrid.yaml", "elsewhere/runs"),
+            ("elsewhere/pipelines/hybrid.yaml", "runs"),
+            // A store whose parent does not exist.
+            ("pipelines/hybrid.yaml", "absent/runs"),
+        ];
+        for (config, store) in none {
+            assert_eq!(
+                launched_as(&w.join(config), &w.join(store)),
+                None,
+                "{config} into {store}"
+            );
+        }
     }
 }

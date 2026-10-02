@@ -13,6 +13,7 @@
 //! assert_run_store_conformance(
 //!     || MyStore::empty(),                     // a fresh, empty store per case
 //!     |store, id| store.corrupt_for_test(id),  // leave the run under `id` torn
+//!     || MyStore::holding_a_run_from_v0(),     // a store, and a run it kept before provenance
 //! );
 //! ```
 //!
@@ -44,8 +45,19 @@
 //!    under a stored id keeps the first record's times, as it keeps the rest
 //!    of the first record; and a `finished` earlier than `started` reads back
 //!    as written.
+//! 7. **Provenance.** A run's [`RunProvenance`] round-trips, with a name
+//!    alone and with a name and a [`PrefixOf`]; a run saved with none reads
+//!    back with none, so a backend never invents a record, not even an empty
+//!    one; a rerun under a stored id keeps the first record's; and a run the
+//!    backend stored before the record existed reads back with none.
 //!
-//! # Why two closures
+//! What the suite cannot check is that a backend ignores a field of the record
+//! it does not know: the trait gives no way to put such bytes into a store.
+//! That obligation is every backend's all the same, and each proves it in its
+//! own tests — the file backend in `tests/run_store.rs`,
+//! `an_unknown_provenance_field_is_ignored`.
+//!
+//! # Why three closures
 //!
 //! `fresh` builds an empty store. `tear` damages the stored run under an id
 //! so that it is no longer whole — for the file backend, deleting one of its
@@ -53,6 +65,14 @@
 //! is a state every backend can reach (a crash, a hand, a partial copy), so
 //! how to reach it is the backend's to supply: the suite checks that it is
 //! *reported*, which is the part the contract owns.
+//!
+//! `before` returns a store holding a run as the backend kept it before the
+//! launch record existed, and that run's id — for the file backend, the
+//! committed fixture directory, which has no `provenance.json`. Saving a run
+//! with no record through today's `save` is not the same thing: that is the
+//! "none round-trips" case, and it cannot show that a record written by an
+//! older build of the backend still reads. How an older build laid a run out
+//! is the backend's to know, so it supplies one.
 //!
 //! A failed check panics with the case it belongs to, as a test assertion
 //! does.
@@ -64,21 +84,26 @@ use ragondin_types::QueryId;
 use serde_json::json;
 
 use crate::run::{
-    ConfigDocument, Run, RunBinding, RunId, RunInputs, RunTimes, TraceDocument, UnixMillis,
+    ConfigDocument, PrefixOf, Run, RunBinding, RunId, RunInputs, RunProvenance, RunTimes,
+    TraceDocument, UnixMillis,
 };
 use crate::store::{RunStore, RunStoreError};
 
 /// Runs every case against stores built by `fresh`, damaging a stored run
-/// with `tear` where a case needs a torn one; panics on the first failure.
+/// with `tear` where a case needs a torn one, and reading the older run
+/// `before` gives; panics on the first failure.
 ///
 /// `fresh` must return a new, empty store on every call. `tear(store, id)` is
 /// called once, on a store holding a complete run under `id`, and must leave
-/// that run incomplete.
-pub fn assert_run_store_conformance<S, F, T>(mut fresh: F, mut tear: T)
+/// that run incomplete. `before()` is called once, and returns a store and
+/// the id of a complete run in it that the backend stored before the launch
+/// record existed.
+pub fn assert_run_store_conformance<S, F, T, B>(mut fresh: F, mut tear: T, mut before: B)
 where
     S: RunStore,
     F: FnMut() -> S,
     T: FnMut(&S, &RunId),
+    B: FnMut() -> (S, RunId),
 {
     round_trip(&fresh());
     unknown_id(&fresh());
@@ -89,6 +114,12 @@ where
     no_times_round_trip_as_none(&fresh());
     a_rerun_keeps_the_first_record_s_times(&fresh());
     finished_before_started_reads_back_as_written(&fresh());
+    provenance_round_trips(&fresh());
+    a_prefix_record_round_trips(&fresh());
+    no_provenance_round_trips_as_none(&fresh());
+    a_rerun_keeps_the_first_record_s_provenance(&fresh());
+    let (store, id) = before();
+    the_fixture_without_provenance_reads_none(&store, &id);
 }
 
 fn run_id(byte: u8) -> RunId {
@@ -135,6 +166,7 @@ fn a_run(id: RunId) -> Run {
             uri: "http://localhost:8000".to_owned(),
         }],
         times: None,
+        provenance: None,
     }
 }
 
@@ -201,6 +233,76 @@ fn finished_before_started_reads_back_as_written(store: &impl RunStore) {
         read.times, run.times,
         "finished before started: stored and read back as written, neither \
          refused nor reordered"
+    );
+}
+
+fn provenance_round_trips(store: &impl RunStore) {
+    let mut run = a_run(run_id(0x99));
+    run.provenance = Some(RunProvenance::named("hybrid"));
+    let read = save_and_load(store, &run, "provenance round trip");
+    assert_eq!(
+        read.provenance, run.provenance,
+        "provenance round trip: the record read back is the record written"
+    );
+    assert_eq!(
+        read, run,
+        "provenance round trip: and so is the rest of the run"
+    );
+}
+
+fn a_prefix_record_round_trips(store: &impl RunStore) {
+    let mut run = a_run(run_id(0xaa));
+    run.provenance = Some(RunProvenance::prefix(
+        "hybrid",
+        PrefixOf::new("fused", PipelineHash::from_digest([0x5e; 32])),
+    ));
+    let read = save_and_load(store, &run, "prefix record round trip");
+    assert_eq!(
+        read.provenance, run.provenance,
+        "prefix record round trip: the name, the cut and the parent's hash read back as written"
+    );
+}
+
+fn no_provenance_round_trips_as_none(store: &impl RunStore) {
+    let run = a_run(run_id(0xbb));
+    let read = save_and_load(store, &run, "no provenance round trip");
+    assert_eq!(
+        read.provenance, None,
+        "no provenance round trip: a run saved with no record reads back with none — \
+         a backend never invents one, not even an empty one"
+    );
+}
+
+fn a_rerun_keeps_the_first_record_s_provenance(store: &impl RunStore) {
+    let mut first = a_run(run_id(0xcc));
+    first.provenance = Some(RunProvenance::named("hybrid"));
+    save_and_load(store, &first, "rerun keeps the first provenance");
+
+    let mut rerun = a_run(first.id);
+    rerun.provenance = Some(RunProvenance::named("forked"));
+    let kept = save_and_load(store, &rerun, "rerun keeps the first provenance");
+    assert_eq!(
+        kept.provenance, first.provenance,
+        "rerun keeps the first provenance: the first record wins (ADR-C39 § 1)"
+    );
+
+    // Nor does a rerun with no record erase the one stored.
+    let mut unknown = a_run(first.id);
+    unknown.provenance = None;
+    let kept = save_and_load(store, &unknown, "rerun keeps the first provenance");
+    assert_eq!(
+        kept.provenance, first.provenance,
+        "rerun keeps the first provenance"
+    );
+}
+
+fn the_fixture_without_provenance_reads_none(store: &impl RunStore, id: &RunId) {
+    let run = store
+        .load(id)
+        .unwrap_or_else(|error| panic!("a run stored before provenance: `load` failed: {error}"));
+    assert_eq!(
+        run.provenance, None,
+        "a run stored before provenance: it reads back with none, and is complete"
     );
 }
 

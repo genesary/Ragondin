@@ -30,6 +30,8 @@
 //!     bindings.json  the `Remote` bindings the run used, outside its identity
 //!     times.json     when the run started and finished, outside its identity,
 //!                    present only when known
+//!     provenance.json  how the run was launched, outside its identity,
+//!                    present only when recorded
 //! ```
 //!
 //! `bindings.json` arrived after the other four, and a run directory without
@@ -43,6 +45,14 @@
 //! saved without times — so a run without one is neither incomplete nor given
 //! an estimate. It holds `{"started_ms", "finished_ms"}`, read and written as
 //! given.
+//!
+//! `provenance.json` follows `times.json`'s rule: written **only when a launch
+//! record is given**, absent otherwise, and an absent file reads as no record.
+//! It holds the [`RunProvenance`] with a key for each field that is set —
+//! `name`, `prefix_of` (`up_to`, `parent_pipeline_hash`) — so `{}` is an empty
+//! record, a fact distinct from no file. A key this build does not know is
+//! ignored on the way in. So the files every run has are still the original
+//! four; the other three are optional.
 //!
 //! The directory name is the run id, so a run is found without an index, and
 //! the id is a digest, so no run id can name a directory outside the root.
@@ -121,7 +131,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::compare::{compare, RunComparison};
 use crate::run::{
-    ConfigDocument, Metrics, Run, RunBinding, RunId, RunInputs, RunTimes, TraceDocument, UnixMillis,
+    ConfigDocument, Metrics, Run, RunBinding, RunId, RunInputs, RunProvenance, RunTimes,
+    TraceDocument, UnixMillis,
 };
 
 /// Where runs are kept: written whole, read by id, and listed.
@@ -148,6 +159,13 @@ use crate::run::{
 ///   written, a reversed pair included, and a run saved with none reads back
 ///   with none: no backend fills one in from its own clock or a file's
 ///   timestamps.
+/// - **A launch record is kept as written, never invented, and read
+///   tolerantly.** A run's [`RunProvenance`] reads back as written, a run
+///   saved with none reads back with none, and the first record under an id
+///   wins (ADR-C39 § 1). A field of the record a backend does not know is
+///   ignored, never refused, so a record a later build wrote still reads. The
+///   suite cannot put unknown bytes into a backend through this trait, so each
+///   backend proves that last part in its own tests.
 ///
 /// Synchronous, as the file backend is; a backend that needs `async` is an
 /// escalation of its own, not a variation on this trait. `Send + Sync`,
@@ -187,6 +205,9 @@ const BINDINGS_FILE: &str = "bindings.json";
 /// Optional, and written only when the times are known: see the module's
 /// *The layout*.
 const TIMES_FILE: &str = "times.json";
+/// Optional, and written only when a launch record is given: see the
+/// module's *The layout*.
+const PROVENANCE_FILE: &str = "provenance.json";
 
 /// `times.json`'s record: the run's [`RunTimes`], under names that say their
 /// unit to whoever reads the file with `cat`.
@@ -261,6 +282,11 @@ impl FileSystemRunStore {
             };
             write_json(&dir.join(TIMES_FILE), &record)?;
         }
+        // Only when recorded, for the same reason. `Some` of an empty record
+        // is written as `{}`: an empty record is a fact, and differs from none.
+        if let Some(provenance) = &run.provenance {
+            write_json(&dir.join(PROVENANCE_FILE), provenance)?;
+        }
 
         publish(staging, &destination)
     }
@@ -295,6 +321,14 @@ impl FileSystemRunStore {
         } else {
             None
         };
+        // Absent when nothing was recorded — a run stored before the launch
+        // record existed, or launched where no workspace name applied.
+        let provenance_file = dir.join(PROVENANCE_FILE);
+        let provenance: Option<RunProvenance> = if provenance_file.is_file() {
+            Some(read_json(&provenance_file)?)
+        } else {
+            None
+        };
 
         Ok(Run {
             id: *id,
@@ -304,6 +338,7 @@ impl FileSystemRunStore {
             traces,
             bindings,
             times,
+            provenance,
         })
     }
 
@@ -391,7 +426,7 @@ impl RunStore for FileSystemRunStore {
 
 /// A staging directory, removed when it is dropped without being published.
 ///
-/// The four writes below return early on failure, and each of those paths used
+/// Each of `save`'s writes returns early on failure, and each of those paths used
 /// to leave the directory behind for ever — nothing sweeps the store root. A
 /// guard puts the cleanup on the one path that cannot be forgotten.
 struct Staging {

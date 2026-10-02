@@ -741,6 +741,126 @@ mod with_components {
         assert!(run.metrics.get("ndcg@10").is_some(), "{:?}", run.metrics);
     }
 
+    /// A workspace of this test's own, `<W>/`, emptied first: the lexical
+    /// fixture copied to each of `documents` under it, and nothing else — no
+    /// `runs/`, so the first run into it creates the store.
+    fn workspace(test_name: &str, documents: &[&str]) -> PathBuf {
+        let root = store(&format!("workspace-{test_name}"));
+        for document in documents {
+            let path = root.join(document);
+            std::fs::create_dir_all(path.parent().expect("a parent")).expect("a writable tmpdir");
+            std::fs::copy(fixtures().join("lexical-pipeline.yaml"), &path)
+                .expect("the fixture copies");
+        }
+        root
+    }
+
+    /// Runs `bench` over the lexical fixture at `config` into `store`, and
+    /// returns the run directory it saved.
+    fn bench_into(config: &Path, store: &Path) -> PathBuf {
+        let output = ragondin(&[
+            "bench",
+            path(config),
+            "--benchmark",
+            "beir/beir-mini",
+            "--datasets",
+            path(&fixtures()),
+            "--store",
+            path(store),
+        ]);
+        assert!(output.status.success(), "{}", stderr(&output));
+        store.join(reported_run_id(&stdout(&output)).to_string())
+    }
+
+    fn launch_record(run_dir: &Path) -> Option<serde_json::Value> {
+        let file = run_dir.join("provenance.json");
+        file.exists().then(|| {
+            serde_json::from_str(&std::fs::read_to_string(file).expect("the record reads"))
+                .expect("the record is JSON")
+        })
+    }
+
+    #[test]
+    fn bench_records_the_name_when_config_and_store_share_a_workspace() {
+        // `<W>/runs` does not exist yet: the first run into a fresh workspace
+        // still records its name.
+        let w = workspace("share", &["pipelines/hybrid.yaml"]);
+        assert!(!w.join("runs").exists());
+
+        let run_dir = bench_into(&w.join("pipelines/hybrid.yaml"), &w.join("runs"));
+
+        // The name and nothing else: no `prefix_of`, and never a path.
+        assert_eq!(
+            launch_record(&run_dir),
+            Some(serde_json::json!({"name": "hybrid"}))
+        );
+        let id = run_dir
+            .file_name()
+            .and_then(|name| name.to_str())
+            .and_then(|name| name.parse().ok())
+            .expect("a run directory is named by its id");
+        let run = FileSystemRunStore::new(w.join("runs"))
+            .load(&id)
+            .expect("the run reads back");
+        assert_eq!(
+            run.provenance.as_ref().and_then(|record| record.name()),
+            Some("hybrid")
+        );
+    }
+
+    #[test]
+    fn bench_records_no_name_outside_the_workspace_convention() {
+        // Each case runs into a store of its own: one run id per store, and
+        // the first record wins, so a case reusing a store would read the
+        // record an earlier case left.
+        let cases = [
+            // The store is the `runs/` of another directory than the workspace.
+            ("elsewhere", "pipelines/hybrid.yaml", "elsewhere/runs"),
+            // The configuration is not under `pipelines/`.
+            ("drafts", "drafts/hybrid.yaml", "runs"),
+            // Only `.yaml` is a workspace pipeline.
+            ("yml", "pipelines/hybrid.yml", "runs"),
+            // The store's last component is not literally `runs`.
+            ("store", "pipelines/hybrid.yaml", "store"),
+        ];
+        for (case, config, runs) in cases {
+            let w = workspace(&format!("outside-{case}"), &[config]);
+            let run_dir = bench_into(&w.join(config), &w.join(runs));
+            assert_eq!(launch_record(&run_dir), None, "{case}: no record");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn bench_canonicalizes_before_matching_the_convention() {
+        let named = Some(serde_json::json!({"name": "hybrid"}));
+
+        // Through `..`, into a store that already exists. A workspace per
+        // case: one run id per store, and the first record wins, so a case
+        // sharing a store with another would read that one's record.
+        let w = workspace("canonical-dots", &["pipelines/hybrid.yaml"]);
+        std::fs::create_dir_all(w.join("runs")).expect("an existing store");
+        let run_dir = bench_into(
+            &w.join("pipelines/../pipelines/hybrid.yaml"),
+            &w.join("runs"),
+        );
+        assert_eq!(launch_record(&run_dir), named, "a config through `..`");
+
+        // The config through a link to the workspace.
+        let w = workspace("canonical-config-link", &["pipelines/hybrid.yaml"]);
+        let link = store("workspace-canonical-config-link-to");
+        std::os::unix::fs::symlink(&w, &link).expect("a link is creatable");
+        let run_dir = bench_into(&link.join("pipelines/hybrid.yaml"), &w.join("runs"));
+        assert_eq!(launch_record(&run_dir), named, "a config through a link");
+
+        // The store through a link to the workspace, before it exists.
+        let w = workspace("canonical-store-link", &["pipelines/hybrid.yaml"]);
+        let link = store("workspace-canonical-store-link-to");
+        std::os::unix::fs::symlink(&w, &link).expect("a link is creatable");
+        let run_dir = bench_into(&w.join("pipelines/hybrid.yaml"), &link.join("runs"));
+        assert_eq!(launch_record(&run_dir), named, "a store through a link");
+    }
+
     /// The same fixture under `beir/`, which ignores `answers.jsonl`: the
     /// benchmark then carries no reference answers, and the run is scored by
     /// retrieval alone — `beir/` keeps its M2 meaning exactly (ADR-C30 § 2).
