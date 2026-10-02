@@ -72,7 +72,9 @@
 //! with no record through today's `save` is not the same thing: that is the
 //! "none round-trips" case, and it cannot show that a record written by an
 //! older build of the backend still reads. How an older build laid a run out
-//! is the backend's to know, so it supplies one.
+//! is the backend's to know, so it supplies one. A backend with no older
+//! layout supplies a run in its oldest supported layout or, if it has only
+//! one, a run saved with no record.
 //!
 //! A failed check panics with the case it belongs to, as a test assertion
 //! does.

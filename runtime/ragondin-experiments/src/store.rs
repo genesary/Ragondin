@@ -23,15 +23,15 @@
 //!
 //! ```text
 //! <root>/<run id in hex>/
-//!     inputs.json    the identity tuple's components
-//!     metrics.json   what the run scored
-//!     config.yaml    the configuration document, verbatim
-//!     traces.json    the per-query execution traces, by query id
-//!     bindings.json  the `Remote` bindings the run used, outside its identity
-//!     times.json     when the run started and finished, outside its identity,
-//!                    present only when known
+//!     inputs.json      the identity tuple's components
+//!     metrics.json     what the run scored
+//!     config.yaml      the configuration document, verbatim
+//!     traces.json      the per-query execution traces, by query id
+//!     bindings.json    the `Remote` bindings the run used, outside its identity
+//!     times.json       when the run started and finished, outside its
+//!                      identity, present only when known
 //!     provenance.json  how the run was launched, outside its identity,
-//!                    present only when recorded
+//!                      present only when recorded
 //! ```
 //!
 //! `bindings.json` arrived after the other four, and a run directory without
@@ -51,8 +51,8 @@
 //! It holds the [`RunProvenance`] with a key for each field that is set —
 //! `name`, `prefix_of` (`up_to`, `parent_pipeline_hash`) — so `{}` is an empty
 //! record, a fact distinct from no file. A key this build does not know is
-//! ignored on the way in. So the files every run has are still the original
-//! four; the other three are optional.
+//! ignored on the way in. So the files every run is required to have are the
+//! original four; the other three are optional.
 //!
 //! The directory name is the run id, so a run is found without an index, and
 //! the id is a digest, so no run id can name a directory outside the root.

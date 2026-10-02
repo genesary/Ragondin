@@ -345,12 +345,15 @@ release.
 - **`bench` stamps the workspace name it was launched as, and nothing else
   (ADR-C39 § 3).** `bench::launched_as` reads the two paths alone: when the
   configuration is `<W>/pipelines/<name>.yaml` and the store `<W>/runs`, for
-  one `W` once both are canonicalized, the run is saved with a launch record
-  holding `name` and nothing else; otherwise with no record, and no
-  `provenance.json` is written. A store not created yet is matched through
-  its canonicalized parent and a last component of literally `runs`, so the
-  first run into a fresh workspace is named; only `.yaml` counts; no path is
-  ever recorded, and `bench` never sets `prefix_of`. `bench`'s module doc
+  one `W` once the directories they sit in are canonicalized, the run is
+  saved with a launch record holding `name` and nothing else; otherwise with
+  no record, and no `provenance.json` is written. Only the parents are
+  canonicalized, on both sides, and the store's last component as given must
+  be literally `runs`: a link to a directory on either path is followed, a
+  config file that is itself a link is named by where it sits rather than by
+  its target, and a `<W>/runs` that is a link, or that does not exist yet, is
+  still `<W>`'s store, as `ui/location.rs` reads it. Only `.yaml` counts; no
+  path is ever recorded, and `bench` never sets `prefix_of`. `bench`'s module doc
   records these choices. The harness assembles the run with no record. The
   record is outside identity (INV-8), and the printed summary does not show
   it.
