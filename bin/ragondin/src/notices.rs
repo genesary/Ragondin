@@ -6,8 +6,9 @@
 //! current by `just check-rust-notices`. It lists every crate in the
 //! `--all-features` graph on every platform, so the one text serves every
 //! build. `ragondin --notices` prints it, and under `ui` it is served at
-//! [`PATH`] beside the UI's own notices (`ARCHITECTURE.md` § The licence
-//! notices of the Rust crates).
+//! `/third-party-notices-rust.txt`, beside the UI's own notices.
+//!
+//! `ARCHITECTURE.md` § The licence notices of the Rust crates gives the rules.
 
 /// The notices, as generated.
 pub const RUST_CRATES: &str = include_str!("../third-party-notices-rust.txt");
