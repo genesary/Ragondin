@@ -384,6 +384,87 @@ describe('the download, when things go wrong around it', () => {
     expect(row('beir/fiqa').textContent).not.toContain('last known');
   });
 
+  it('says nothing of the stream before its first connection, which is not a drop', async () => {
+    mockApi(routes({ 'POST /benchmarks/{name}/download': { body: { job_id: '7-0' } } }));
+    render(<Harness />);
+    await within(await screen.findByRole('region', { name: 'Benchmarks' })).findByText('beir/fiqa');
+    fireEvent.click(within(row('beir/fiqa')).getByRole('button', { name: 'Download' }));
+    await waitFor(() => expect(row('beir/fiqa').textContent).toContain('Queued'));
+    expect(FakeEventSource.latest().readyState).toBe(FakeEventSource.CONNECTING);
+    expect(status().textContent).toBe('');
+    expect(row('beir/fiqa').textContent).not.toContain('last known');
+  });
+
+  it('says only that the stream is down when no download is under way, and the progress part only when one is', async () => {
+    mockApi(routes());
+    render(<Harness />);
+    await within(await screen.findByRole('region', { name: 'Benchmarks' })).findByText('beir/fiqa');
+    act(() => FakeEventSource.latest().open());
+    act(() => FakeEventSource.latest().fail());
+    expect(status().textContent).toBe('Job stream disconnected, retrying.');
+    act(() => FakeEventSource.latest().open());
+    send({ event: 'resync', data: { jobs: [download('5-0', running(1_000_000, 17_100_000))], faults: [] } });
+    act(() => FakeEventSource.latest().fail());
+    expect(status().textContent).toContain('Job stream disconnected, retrying');
+    expect(status().textContent).toContain('last known');
+  });
+
+  it('reserves two lines for the stream line at a phone’s width, where its longer sentence wraps', async () => {
+    const css = (await import('./Setup.css?raw')).default;
+    const narrow = parseRules(css).find((r) => r.atRule === '@media (max-width: 640px)' && r.selector === '.rg-setup__stream');
+    expect(narrow?.declarations.get('min-height')).toBe('calc(2 * var(--space-4))');
+  });
+
+  it('moves focus to the section when the inline Retry succeeds and takes its button with it', async () => {
+    mockApi(
+      routes({
+        'GET /benchmarks': [{ body: { benchmarks: EVERY_STATE } }, { network: 'Failed to fetch' }, { body: { benchmarks: AFTER_DOWNLOAD } }],
+        'POST /benchmarks/{name}/download': { body: { job_id: '7-0' } },
+      }),
+    );
+    render(<Harness />);
+    await within(await screen.findByRole('region', { name: 'Benchmarks' })).findByText('beir/fiqa');
+    fireEvent.click(within(row('beir/fiqa')).getByRole('button', { name: 'Download' }));
+    await waitFor(() => expect(row('beir/fiqa').textContent).toContain('Queued'));
+    send({ event: 'done', data: download('7-0', DONE) });
+    const alert = await within(region('Benchmarks')).findByRole('alert');
+    const retry = within(alert).getByRole('button', { name: 'Retry' });
+    retry.focus();
+    fireEvent.click(retry);
+    await waitFor(() => expect(within(row('beir/fiqa')).getByText('ready')).toBeTruthy());
+    await waitFor(() => expect(document.activeElement).toBe(region('Benchmarks')));
+  });
+
+  it('a re-read overtaken by a later one that fails is no success: the row still says it is reading its digest', async () => {
+    const other = entry('beir/arguana', { kind: 'available', size_bytes: 9_000_000 });
+    let overtaken: (reply: { body: { benchmarks: BenchmarkEntry[] } }) => void = () => {};
+    let reads = 0;
+    mockApi(
+      routes({
+        'GET /benchmarks': () => {
+          reads += 1;
+          if (reads === 1) return { body: { benchmarks: [AVAILABLE, other] } };
+          if (reads === 2) return new Promise((resolve) => (overtaken = resolve));
+          return { network: 'Failed to fetch' };
+        },
+        'POST /benchmarks/{name}/download': [{ body: { job_id: '7-0' } }, { body: { job_id: '8-0' } }],
+      }),
+    );
+    render(<Harness />);
+    await within(await screen.findByRole('region', { name: 'Benchmarks' })).findByText('beir/fiqa');
+    fireEvent.click(within(row('beir/fiqa')).getByRole('button', { name: 'Download' }));
+    await waitFor(() => expect(row('beir/fiqa').textContent).toContain('Queued'));
+    fireEvent.click(within(row('beir/arguana')).getByRole('button', { name: 'Download' }));
+    await waitFor(() => expect(row('beir/arguana').textContent).toContain('Queued'));
+    send({ event: 'done', data: download('7-0', DONE) });
+    await waitFor(() => expect(reads).toBe(2));
+    send({ event: 'done', data: download('8-0', DONE, 'beir/arguana') });
+    await within(region('Benchmarks')).findByRole('alert');
+    await act(async () => overtaken({ body: { benchmarks: [FIQA_READY, other] } }));
+    expect(row('beir/fiqa').textContent).toContain('reading its digest');
+    expect(row('beir/arguana').textContent).toContain('reading its digest');
+  });
+
   it('says so on the first launch too, on the line beside its Download', async () => {
     const small = entry('beir/scifact', { kind: 'available', size_bytes: 5_200_000 });
     mockApi(routes({ 'GET /benchmarks': { body: { benchmarks: [small] } }, 'GET /services': { body: { services: [] } }, 'POST /benchmarks/{name}/download': { body: { job_id: '7-0' } } }));

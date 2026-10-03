@@ -20,7 +20,9 @@ export type Downloads = {
 };
 
 /** What the screen says while the job stream is down (the front-end design, § 8: the state never pretends to be current). */
-export const STREAM_DOWN = 'Job stream disconnected, retrying: download progress shown is the last known.';
+export const STREAM_DOWN = 'Job stream disconnected, retrying.';
+/** The same, while a download is under way, whose progress on screen is then the last known. */
+export const STREAM_DOWN_LIVE = 'Job stream disconnected, retrying: progress shown is the last known.';
 
 /** Whether a download's state comes from a job still under way, which only the stream keeps current. */
 export const isLive = (view: DownloadView) => view.kind === 'queued' || view.kind === 'running' || view.kind === 'verifying';
@@ -253,9 +255,9 @@ export function Benchmarks({ state, stale, onRetry, onRefresh, onImport, downloa
           )
         }
       </Resource>
-      {/* Always present, one line high, so saying the stream is down moves nothing. */}
+      {/* Always present, as high as its longer sentence, so saying the stream is down moves nothing. */}
       <p className="rg-setup__said rg-setup__stream" role="status">
-        {downloads.streamDown ? STREAM_DOWN : null}
+        {!downloads.streamDown ? null : state.status === 'loaded' && state.value.some((b) => b.state.kind === 'available' && isLive(downloads.view(b.name))) ? STREAM_DOWN_LIVE : STREAM_DOWN}
       </p>
       <h3 className="rg-setup__subheading">Import a local corpus</h3>
       <ImportForm onImport={onImport} />

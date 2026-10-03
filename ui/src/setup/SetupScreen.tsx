@@ -40,6 +40,12 @@ type Mode = 'first' | 'sections';
 export const UNDO_WINDOW_MS = 10_000;
 
 /**
+ * What one read of a listing came to: whether its answer landed and was a
+ * success; `replaced` when a write's answer overtook it and no read came after.
+ */
+type ReadOutcome = boolean | 'replaced';
+
+/**
  * Reads a listing, keeping only the answer to the last read asked for; lets
  * a write replace it in place, and a change elsewhere read it again in place.
  */
@@ -47,53 +53,67 @@ function useListing<T>(read: () => Promise<{ ok: true; value: T } | { ok: false;
   const [state, setState] = useState<RequestState<T>>({ status: 'loading' });
   // A read in place that failed: the listing it would have replaced stays on screen, and this says why it is not newer.
   const [stale, setStale] = useState<ApiProblem | null>(null);
+  // Every read and every write's answer takes the next number; only the latest lands.
   const latest = useRef(0);
-  // The read number a write's answer last overtook.
-  const replacedAt = useRef(0);
-  const load = useCallback(async () => {
-    const mine = ++latest.current;
-    const result = await read();
-    if (mine !== latest.current) return;
-    setStale(null);
-    setState(result.ok ? { status: 'loaded', value: result.value } : { status: 'error', problem: result.problem });
-  }, [read]);
+  // The last read issued, by number, and what it came to.
+  const lastRead = useRef<{ n: number; outcome: Promise<ReadOutcome> } | null>(null);
   /**
-   * Reads again, keeping the listing on screen: a failure is said beside it
-   * (`stale`), never in its place. A write's answer that overtakes this read
-   * sends it again, since it began before the write and its purpose — a
-   * change made elsewhere — is not in the write's answer. Resolves whether
-   * the listing now holds an answer read after the call.
+   * Issues one read. Overtaken by a later read, it comes to that read's
+   * outcome, since the later one decides what the listing holds — never to a
+   * success it did not have; overtaken by a write's answer with no read after
+   * it, to `replaced`. In place, a failure is said beside the listing
+   * (`stale`) and never replaces one that loaded.
+   */
+  const issue = useCallback(
+    (inPlace: boolean): Promise<ReadOutcome> => {
+      const n = ++latest.current;
+      const outcome = (async (): Promise<ReadOutcome> => {
+        const result = await read();
+        if (n !== latest.current) {
+          const later = lastRead.current;
+          return later !== null && later.n > n ? later.outcome : 'replaced';
+        }
+        if (result.ok) {
+          setStale(null);
+          setState({ status: 'loaded', value: result.value });
+        } else if (inPlace) {
+          setStale(result.problem);
+          setState((prev) => (prev.status === 'loaded' ? prev : { status: 'error', problem: result.problem }));
+        } else {
+          setStale(null);
+          setState({ status: 'error', problem: result.problem });
+        }
+        return result.ok;
+      })();
+      lastRead.current = { n, outcome };
+      return outcome;
+    },
+    [read],
+  );
+  const load = useCallback(() => void issue(false), [issue]);
+  /**
+   * Reads again, keeping the listing on screen. A write's answer that
+   * overtakes the read sends it again, since it began before the write and
+   * its purpose — a change made elsewhere — is not in the write's answer.
+   * Resolves whether the listing now holds a successful answer read after the
+   * call.
    */
   const reload = useCallback(async (): Promise<boolean> => {
     for (;;) {
-      const mine = ++latest.current;
-      const result = await read();
-      if (mine !== latest.current) {
-        if (replacedAt.current > mine) continue;
-        // A later read decides, and it began after this one.
-        return true;
-      }
-      if (!result.ok) {
-        setStale(result.problem);
-        setState((prev) => (prev.status === 'loaded' ? prev : { status: 'error', problem: result.problem }));
-        return false;
-      }
-      setStale(null);
-      setState({ status: 'loaded', value: result.value });
-      return true;
+      const outcome = await issue(true);
+      if (outcome !== 'replaced') return outcome;
     }
-  }, [read]);
+  }, [issue]);
   useEffect(() => {
     void load();
   }, [load]);
   const retry = () => {
     setState({ status: 'loading' });
-    void load();
+    load();
   };
   /** A write's answer replaces the listing, and overtakes any read still in flight. */
   const replace = useCallback((value: T | ((prev: T) => T)) => {
     latest.current += 1;
-    replacedAt.current = latest.current;
     setState((prev) => {
       if (typeof value !== 'function') return { status: 'loaded', value };
       return prev.status === 'loaded' ? { status: 'loaded', value: (value as (prev: T) => T)(prev.value) } : prev;
@@ -159,15 +179,17 @@ export function SetupScreen({ client, workspace, refreshWorkspace, retryWorkspac
   // a row after its probe or its Undo, Undo after the row it replaces is gone,
   // or the Benchmarks section after an import ends the first launch and takes
   // the form that had focus with it.
-  // `ifLost` is a benchmark whose Download went with its row: focus moves
-  // only if it is still on the page's body or that row's empty slot, so a
-  // person who moved on meanwhile keeps their place.
-  const [pendingFocus, setPendingFocus] = useState<{ row: string } | { undo: true } | { benchmarks: true; ifLost?: string } | null>(null);
+  // `ifLost` is a control that went with a render: a benchmark whose Download
+  // went with its row, or `null` for one with no slot (the inline Retry).
+  // Focus moves only if it is still on the page's body, or on that row's
+  // empty slot, so a person who moved on meanwhile keeps their place.
+  const [pendingFocus, setPendingFocus] = useState<{ row: string } | { undo: true } | { benchmarks: true; ifLost?: string | null } | null>(null);
   useEffect(() => {
     if (pendingFocus === null) return;
     if ('ifLost' in pendingFocus && pendingFocus.ifLost !== undefined) {
       const active = document.activeElement;
-      const lost = active === null || active === document.body || active.closest('.rg-setup__action')?.getAttribute('data-benchmark') === pendingFocus.ifLost;
+      const slot = pendingFocus.ifLost;
+      const lost = active === null || active === document.body || (slot !== null && active.closest('.rg-setup__action')?.getAttribute('data-benchmark') === slot);
       if (!lost) {
         setPendingFocus(null);
         return;
@@ -444,7 +466,12 @@ export function SetupScreen({ client, workspace, refreshWorkspace, retryWorkspac
             state={benchmarks.state}
             stale={benchmarks.stale}
             onRetry={benchmarks.retry}
-            onRefresh={() => void refreshBenchmarks()}
+            onRefresh={() =>
+              void refreshBenchmarks().then((ok) => {
+                // Its button goes with the inline error it sat in.
+                if (ok) setPendingFocus({ benchmarks: true, ifLost: null });
+              })
+            }
             onImport={onImport}
             downloads={downloads}
             anchor={benchmarksAnchor}

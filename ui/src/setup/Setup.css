@@ -112,4 +112,6 @@
   .rg-setup__facts { grid-template-columns: minmax(0, 1fr); gap: var(--space-1); }
   .rg-setup__facts dd + dt { margin-top: var(--space-2); }
   .rg-setup__service-actions { grid-template-columns: minmax(0, 1fr) auto auto; }
+  /* The stream line's longer sentence wraps to two lines here: both are held, empty or not. */
+  .rg-setup__stream { min-height: calc(2 * var(--space-4)); }
 }
