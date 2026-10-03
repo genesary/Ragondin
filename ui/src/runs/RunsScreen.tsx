@@ -1,6 +1,7 @@
 // The Runs screen: what the store holds, grouped by pipeline, one row per run
-// (the front-end design, § 3), most recent first. It reads `GET /runs` alone —
-// each pipeline's shape comes with the listing; it owns the benchmark filter;
+// (the front-end design, § 3), most recent first. It reads `GET /runs` — each
+// pipeline's shape comes with the listing — and, beside it, `GET /pipelines`,
+// to tell a recorded name the workspace no longer holds; it owns the benchmark filter;
 // the selection it hands to Compare lives in the address. ARCHITECTURE.md
 // § The Runs screen.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -28,13 +29,14 @@ const runs = (n: number) => `${n.toLocaleString('en-US')} run${n === 1 ? '' : 's
 
 /**
  * A listing, with the selection the address carried when it was asked for —
- * what it is authoritative about — and the failure of a later re-read, which
- * keeps the listing on screen rather than replacing it.
+ * what it is authoritative about — the workspace's pipeline documents read
+ * with it (null when they could not be listed), and the failure of a later
+ * re-read, which keeps the listing on screen rather than replacing it.
  */
-type Read = { listing: RequestState<RunListing>; askedWith: ReadonlySet<string>; refresh: ApiProblem | null };
+type Read = { listing: RequestState<RunListing>; documents: ReadonlySet<string> | null; askedWith: ReadonlySet<string>; refresh: ApiProblem | null };
 
 export function RunsScreen({ client, sel }: RunsScreenProps) {
-  const [read, setRead] = useState<Read>({ listing: { status: 'loading' }, askedWith: new Set(), refresh: null });
+  const [read, setRead] = useState<Read>({ listing: { status: 'loading' }, documents: null, askedWith: new Set(), refresh: null });
   const latest = useRef(0);
   // The listing read in flight, cancelled once a newer read overtakes it.
   const reading = useRef<AbortController | null>(null);
@@ -54,13 +56,18 @@ export function RunsScreen({ client, sel }: RunsScreenProps) {
     const controller = new AbortController();
     reading.current = controller;
     const askedWith = new Set(selNow.current);
-    const result = await client.get('/runs', { signal: controller.signal });
+    // Read together, through one signal, so a heading is whole when it is
+    // first drawn and an overtaking read cancels both. The documents only
+    // decide whether a recorded name still links: when they cannot be listed,
+    // every name links, and the runs are shown regardless.
+    const [result, pipelines] = await Promise.all([client.get('/runs', { signal: controller.signal }), client.get('/pipelines', { signal: controller.signal })]);
     if (mine !== latest.current || controller.signal.aborted) return;
+    const documents = pipelines.ok ? new Set(pipelines.value.pipelines.map((p) => p.name)) : null;
     setRead((prev) => {
-      if (result.ok) return { listing: { status: 'loaded', value: result.value }, askedWith, refresh: null };
+      if (result.ok) return { listing: { status: 'loaded', value: result.value }, documents, askedWith, refresh: null };
       // A re-read that fails leaves the listing already shown in place.
       if (prev.listing.status === 'loaded') return { ...prev, refresh: result.problem };
-      return { listing: { status: 'error', problem: result.problem }, askedWith, refresh: null };
+      return { listing: { status: 'error', problem: result.problem }, documents: null, askedWith, refresh: null };
     });
   }, [client]);
 
@@ -85,12 +92,14 @@ export function RunsScreen({ client, sel }: RunsScreenProps) {
     case 'error':
       return <ErrorState problem={read.listing.problem} onRetry={retry} />;
     case 'loaded':
-      return <Loaded listing={read.listing.value} askedWith={read.askedWith} refresh={read.refresh} sel={sel} reread={() => void fetchListing()} />;
+      return <Loaded listing={read.listing.value} documents={read.documents} askedWith={read.askedWith} refresh={read.refresh} sel={sel} reread={() => void fetchListing()} />;
   }
 }
 
 type LoadedProps = {
   listing: RunListing;
+  /** The workspace's pipeline documents, by name; null when they could not be listed. */
+  documents: ReadonlySet<string> | null;
   /** The selection the address carried when `listing` was asked for. */
   askedWith: ReadonlySet<string>;
   /** Why the last re-read failed, if it did. */
@@ -100,7 +109,7 @@ type LoadedProps = {
   reread: () => void;
 };
 
-function Loaded({ listing, askedWith, refresh, sel, reread }: LoadedProps) {
+function Loaded({ listing, documents, askedWith, refresh, sel, reread }: LoadedProps) {
   const rows = useMemo(() => rowsFromListing(listing), [listing]);
   const [filter, setFilter] = useState<readonly string[]>([]);
   const shapes = useMemo(() => new Map(Object.entries(listing.shapes).map(([hash, graph]) => [hash, shapeOf(graph)])), [listing]);
@@ -197,7 +206,7 @@ function Loaded({ listing, askedWith, refresh, sel, reread }: LoadedProps) {
     ...(columns.started ? [{ id: 'started', label: 'Started' }] : []),
   ];
   const tableRows: TableRow[] = groups.flatMap((group) => [
-    { kind: 'group' as const, id: `group:${group.key}`, label: <GroupLabel group={group} shape={group.shapeKey === null ? null : (shapes.get(group.shapeKey) ?? null)} /> },
+    { kind: 'group' as const, id: `group:${group.key}`, label: <GroupLabel group={group} shape={group.shapeKey === null ? null : (shapes.get(group.shapeKey) ?? null)} documents={documents} /> },
     ...group.rows.map((row) => {
       const id = runId(row);
       return runRow(row, { selected: id !== null && selection.includes(id), refusal: refusals.get(rowKey(row)) ?? null, columns, onToggle: () => onToggle(rowKey(row)) });

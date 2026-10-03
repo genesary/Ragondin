@@ -3,7 +3,7 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createApiClient, type ApiClient, type ApiResult } from '../api/client.ts';
 import { mockApi, type MockReply, type MockRoutes } from '../api/testing.ts';
-import type { Graph, Problem, RunListing, RunSummary } from '../api/types.ts';
+import type { Graph, PipelineListing, Problem, RunListing, RunSummary } from '../api/types.ts';
 import { navigate, useRoute } from '../routes.ts';
 import { RunsScreen } from './RunsScreen.tsx';
 
@@ -74,8 +74,14 @@ const LISTING: RunListing = {
 /** The same store after R5 was written to it. */
 const LATER: RunListing = { ...LISTING, runs: [...LISTING.runs, summary(R5, DENSE, SCIFACT)] };
 
-const routes = (listing: MockRoutes['GET /runs'] = { body: LISTING }): MockRoutes => ({
+/** The workspace's pipeline documents, as `GET /pipelines` lists them, by name. */
+const documents = (...names: string[]): PipelineListing => ({
+  pipelines: names.map((name) => ({ name, error: null, etag: name, hash: null, modified_ms: null })),
+});
+
+const routes = (listing: MockRoutes['GET /runs'] = { body: LISTING }, pipelines: MockRoutes['GET /pipelines'] = { body: documents('hybrid', 'hybrid-copy') }): MockRoutes => ({
   'GET /runs': listing,
+  'GET /pipelines': pipelines,
 });
 
 /** What the shell does: hands the screen the selection the address carries. */
@@ -167,6 +173,27 @@ describe('over a listing with two benchmarks', () => {
     expect(screen.getByRole('link', { name: 'hybrid-copy' }).getAttribute('href')).toBe('#pipeline/hybrid-copy');
     expect(rowOf(R1).getAttribute('aria-label')).toBe(`Run ${short(R1)} on beir/scifact, scifact-local`);
     expect(screen.getByRole('button', { name: /^beir\/scifact, scifact-local/ })).toBeTruthy();
+  });
+
+  it('heads a group by a recorded name the workspace no longer holds without a link, saying why', async () => {
+    const gone: RunListing = {
+      ...LISTING,
+      runs: [summary(R1, HYBRID, SCIFACT, {}, { launched_as: { name: 'hybrid-old', prefix_of: null } }), summary(R3, DENSE, SCIFACT, {}, { launched_as: { name: 'hybrid', prefix_of: null } })],
+    };
+    show('#runs', routes({ body: gone }, { body: documents('hybrid') }));
+    await loaded();
+    const heading = screen.getByText('hybrid-old').closest('th') as HTMLElement;
+    expect(within(heading).queryByRole('link')).toBeNull();
+    expect(heading.textContent).toContain('no longer a document in this workspace');
+    // A recorded name the workspace still holds is the way to its Pipeline screen.
+    expect(screen.getByRole('link', { name: 'hybrid' }).getAttribute('href')).toBe('#pipeline/hybrid');
+  });
+
+  it('links every recorded name when the workspace\'s documents cannot be listed, and still shows the runs', async () => {
+    const recorded: RunListing = { ...LISTING, runs: [summary(R1, HYBRID, SCIFACT, {}, { launched_as: { name: 'hybrid-old', prefix_of: null } })] };
+    show('#runs', routes({ body: recorded }, { problem: { type: 'urn:ragondin:problem:backend_failed', title: 'Backend failed', status: 502, code: 'backend_failed', detail: 'pipelines/ cannot be read', hint: 'Check the workspace.' } }));
+    await loaded();
+    expect(screen.getByRole('link', { name: 'hybrid-old' }).getAttribute('href')).toBe('#pipeline/hybrid-old');
   });
 
   it('lists the most recent run first, a run of unknown time last, and shows when each started', async () => {
@@ -374,7 +401,9 @@ describe('the selection', () => {
       get: (path: string) =>
         path === '/runs'
           ? new Promise<ApiResult<RunListing>>((resolve) => answers.push(resolve))
-          : Promise.reject(new Error(`the screen reads /runs alone, not ${path}`)),
+          : path === '/pipelines'
+            ? Promise.resolve({ ok: true, value: documents('hybrid'), build: null })
+            : Promise.reject(new Error(`the screen reads /runs and /pipelines alone, not ${path}`)),
     } as unknown as ApiClient;
     window.history.replaceState(null, '', '/#runs');
     render(<Shell client={client} />);
@@ -415,7 +444,9 @@ describe('the selection', () => {
       get: (path: string) =>
         path === '/runs'
           ? new Promise<ApiResult<RunListing>>((resolve) => answers.push(resolve))
-          : Promise.reject(new Error(`the screen reads /runs alone, not ${path}`)),
+          : path === '/pipelines'
+            ? Promise.resolve({ ok: true, value: documents('hybrid'), build: null })
+            : Promise.reject(new Error(`the screen reads /runs and /pipelines alone, not ${path}`)),
     } as unknown as ApiClient;
     window.history.replaceState(null, '', '/#runs');
     render(<Shell client={client} />);

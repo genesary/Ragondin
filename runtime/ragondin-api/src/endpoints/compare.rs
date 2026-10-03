@@ -71,8 +71,11 @@ pub(crate) async fn compare(
         detail: refusal.to_string(),
     })?;
 
-    let index = lineage::pipelines_by_hash(state.backends.pipelines.as_ref()).await?;
-    let names: Vec<Option<String>> = runs.iter().map(|run| pairing_name(&index, run)).collect();
+    let index = lineage::index(state.backends.pipelines.as_ref()).await?;
+    let names: Vec<Option<String>> = runs
+        .iter()
+        .map(|run| pairing_name(&index.by_hash, run))
+        .collect();
     if let Some(pairing) = &request.pairing {
         check_pairing(&state, pairing, &names).await?;
     }
@@ -91,7 +94,7 @@ pub(crate) async fn compare(
         });
     }
 
-    let pairings = pairings(&state, &compared, request.pairing.as_ref()).await?;
+    let pairings = pairings(&state, &index.names, &compared, request.pairing.as_ref()).await?;
     let figures = figures(&state, &compared).await?;
     let (ground_truth, figures, cache_errors) = figures;
 
@@ -298,6 +301,7 @@ async fn keep(state: &AppState, pairing: &Pairing) -> Result<(), ApiError> {
 /// is none — and the one kept on disk for every other.
 async fn pairings(
     state: &AppState,
+    stored: &BTreeSet<String>,
     runs: &[Compared],
     requested: Option<&Pairing>,
 ) -> Result<Vec<Pairing>, ApiError> {
@@ -307,15 +311,8 @@ async fn pairings(
     // A recorded name may be a pipeline the workspace no longer holds, or
     // holds only under another case (ADR-C39 § 10): it has no pairing, and
     // the comparison goes on without one. A pairing is read only for two
-    // names stored exactly as given, so neither refusal can reach here.
-    let stored: BTreeSet<String> = state
-        .backends
-        .pipelines
-        .list()
-        .await?
-        .into_iter()
-        .map(|file| file.name)
-        .collect();
+    // names `stored` holds exactly as given — the names of the one listing
+    // the runs' pipelines were found in — so neither refusal can reach here.
     let mut pairings: Vec<Pairing> = Vec::new();
     let mut seen = BTreeSet::new();
     for run in &runs[1..] {

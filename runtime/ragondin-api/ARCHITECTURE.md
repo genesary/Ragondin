@@ -1236,7 +1236,11 @@ ranking and the answer are the walk's, and a pair never moves them.
   holds only under another case, has no pairing, and the comparison goes on
   without one: a pairing is read only for two names `PipelineSource::list`
   holds exactly as given, so neither `pipeline_not_found` nor the case
-  alias's `request_invalid` can refuse the comparison.
+  alias's `request_invalid` can refuse the comparison. The comparison lists
+  the pipelines once (`lineage::index`): the names it looks a pairing up
+  among are those of the listing it found each run's pipeline in, so a
+  document deleted in between cannot name a run's pipeline and then be
+  missing when its pairing is read.
 - **A run of earlier content gets the pairs whose nodes it still has.** A
   pairing is kept against the two pipelines' current documents. Applied to
   a run launched as *N* whose content has since changed, *N*'s pairs apply

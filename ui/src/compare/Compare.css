@@ -76,6 +76,8 @@
 
 /* The pairs drawn by hand a run could not place, listed under the message that counts them. */
 .rg-compare__unplaced { display: grid; gap: var(--space-2); }
+/* Empty, the live region stays in the page to be heard later, but takes back the stack's gap it would add. */
+.rg-compare__stack > .rg-compare__unplaced:empty { margin-top: calc(-1 * var(--space-4)); }
 .rg-compare__unplaced ul {
   margin: 0;
   padding-left: var(--space-5);

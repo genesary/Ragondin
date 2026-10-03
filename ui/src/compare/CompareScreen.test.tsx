@@ -205,6 +205,24 @@ describe('the charts', () => {
     expect(screen.queryByRole('list', { name: 'Pairs not placed' })).toBeNull();
   });
 
+  it('announces the unplaced pairs through a live region that is there before they are, so a re-compare that brings them is heard', async () => {
+    const earlier = (body: CompareRequest): MockReply<Comparison> => {
+      const reply = answer(body);
+      if (!('body' in reply) || body.baseline !== HYBRID) return reply;
+      return { body: { ...reply.body, unplaced_pairs: [{ run: RERANK, pair: { node: 'dense', other: 'splade' }, absent_from: 'run' }] } };
+    };
+    show(THREE, routes(earlier));
+    await loaded();
+    const region = screen.getByRole('status', { name: 'Pairs drawn by hand not placed' });
+    expect(region.textContent).toBe('');
+    fireEvent.change(screen.getByLabelText('Baseline'), { target: { value: HYBRID } });
+    const list = await within(region).findByRole('list', { name: 'Pairs not placed' });
+    // The same node, now holding the count message and the list.
+    expect(screen.getByRole('status', { name: 'Pairs drawn by hand not placed' })).toBe(region);
+    expect(region.textContent).toContain('1 pair drawn by hand not placed');
+    expect(list.closest('[role="status"]')).toBe(region);
+  });
+
   it('draws the stage line: the legs, after fusion, after rerank; the dense-only line breaks where it has no stage', async () => {
     show(THREE);
     await loaded();
