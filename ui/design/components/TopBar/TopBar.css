@@ -1,25 +1,51 @@
 .rg-topbar {
   position: relative;
   display: flex;
+  /* Too narrow for one line, the parts wrap onto further lines rather than
+     widening the page; wide enough, the one line is unchanged. */
+  flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-4);
-  height: var(--size-topbar);
+  column-gap: var(--space-4);
+  row-gap: 0;
+  min-height: var(--size-topbar);
   padding: 0 var(--space-4);
   border-bottom: 1px solid var(--line);
   background: var(--surface);
 }
-.rg-wordmark { font: 650 16px/1 var(--font-display); letter-spacing: -0.025em; color: var(--ink); white-space: nowrap; }
+.rg-wordmark {
+  display: inline-flex;
+  align-items: center;
+  /* A control high, so the line it heads when the bar wraps does not touch the bar's edge. */
+  min-height: var(--size-control);
+  font: 650 16px/1 var(--font-display);
+  letter-spacing: -0.025em;
+  color: var(--ink);
+  white-space: nowrap;
+}
 .rg-crumb {
   display: inline-flex;
   align-items: center;
-  height: var(--size-control-s);
+  min-width: 0;
+  min-height: var(--size-control);
   padding: 0 var(--space-2);
   border-radius: var(--radius-s);
   color: var(--ink-3);
   font: var(--type-hash);
-  white-space: nowrap;
+  /* A path longer than its line breaks inside itself; it never widens the page. */
+  overflow-wrap: anywhere;
 }
-.rg-nav { display: flex; align-self: stretch; align-items: center; gap: 2px; }
+.rg-nav {
+  display: flex;
+  flex-wrap: wrap;
+  align-self: stretch;
+  align-items: center;
+  column-gap: 2px;
+  /* The current mark hangs 8px under its link: a wrapped row clears it. */
+  row-gap: var(--space-4);
+  /* Bar-high (less its border) on any line, so the mark sits on the bar's
+     edge whether the nav shares the one line or has its own. */
+  min-height: calc(var(--size-topbar) - 1px);
+}
 .rg-nav a {
   position: relative;
   display: inline-flex;
@@ -43,7 +69,14 @@
   border-radius: 1px;
   background: var(--accent);
 }
-.rg-topbar__end { display: flex; align-items: center; gap: var(--space-2); margin-left: auto; }
+.rg-topbar__end {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-left: auto;
+  /* Bar-high: when the bar wraps it closes the last line, and keeps the bar's room below. */
+  min-height: calc(var(--size-topbar) - 1px);
+}
 .rg-service {
   display: inline-flex;
   align-items: center;
@@ -55,3 +88,9 @@
   font: var(--type-label);
 }
 /* The dot is StatusDot's: filled, or a hollow ring beside the word "unreachable". */
+/* At phone width the screens tighten so the six share one row where the type allows. */
+@media (max-width: 640px) {
+  .rg-nav { column-gap: 0; }
+  .rg-nav a { padding: 0 var(--space-2); }
+  .rg-nav a[aria-current="page"]::after { left: var(--space-2); right: var(--space-2); }
+}
