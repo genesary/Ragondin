@@ -1,5 +1,6 @@
 /** @vitest-environment happy-dom */
 import { render, screen } from '@testing-library/react';
+import { createRef } from 'react';
 import { describe, expect, it } from 'vitest';
 import { declared } from '../../testing/css.ts';
 import css from './Sheet.css?raw';
@@ -38,5 +39,23 @@ describe('Sheet', () => {
       </Sheet>,
     );
     expect(screen.getByRole('heading', { level: 3, name: 'Services' })).toBeTruthy();
+  });
+
+  it('can be the place an address moves to: given an anchor, it takes focus by script and never by Tab', () => {
+    const anchor = createRef<HTMLElement>();
+    render(
+      <Sheet>
+        <Section heading="Benchmarks">a</Section>
+        <Section heading="Services" anchor={anchor}>
+          b
+        </Section>
+      </Sheet>,
+    );
+    const services = screen.getByRole('region', { name: 'Services' });
+    expect(anchor.current).toBe(services);
+    expect(services.getAttribute('tabindex')).toBe('-1');
+    anchor.current?.focus();
+    expect(document.activeElement).toBe(services);
+    expect(screen.getByRole('region', { name: 'Benchmarks' }).hasAttribute('tabindex')).toBe(false);
   });
 });

@@ -1,18 +1,20 @@
 // The six screens, widest to narrowest (the front-end design, § 3). Runs,
-// Pipeline, Compare and Replay are built (src/runs/, src/pipeline/,
-// src/compare/, src/replay/) — Replay loaded as its own chunk, since it
-// carries the canvas; each other screen is its empty state here: one sentence
+// Pipeline, Compare, Replay and Setup are built (src/runs/, src/pipeline/,
+// src/compare/, src/replay/, src/setup/) — Replay loaded as its own chunk,
+// since it carries the canvas; each other screen is its empty state here: one sentence
 // on the default path and the action that leads on. A screen's own issue
 // replaces its empty state with its content and keeps the route shape
 // src/routes.ts gives it.
 import { lazy, Suspense, useEffect, useRef, type RefObject } from 'react';
 import { ButtonLink, EmptyState, Sheet } from '../../design/index.ts';
 import type { ApiClient } from '../api/client.ts';
+import type { Workspace } from '../api/types.ts';
 import { CompareScreen } from '../compare/CompareScreen.tsx';
 import { PipelineScreen } from '../pipeline/PipelineScreen.tsx';
 import { formatHash, type Route, type ScreenName } from '../routes.ts';
 import { RunsScreen } from '../runs/RunsScreen.tsx';
-import { Loading } from './states.tsx';
+import { SetupScreen } from '../setup/SetupScreen.tsx';
+import { Loading, type RequestState } from './states.tsx';
 
 // The canvas and its two libraries come with Replay, in a chunk of their own,
 // so the shell and the other screens do not pay for them.
@@ -34,7 +36,7 @@ const openRuns: Action = { label: 'Open Runs', to: { screen: 'runs' } };
 const openCompare: Action = { label: 'Open Compare', to: { screen: 'compare', ids: [] } };
 
 /** What a screen shows before it has data, given the state its route carries. */
-function emptyOf(route: Exclude<Route, { screen: 'runs' | 'pipeline' | 'compare' }>): Empty {
+function emptyOf(route: Exclude<Route, { screen: 'runs' | 'pipeline' | 'compare' | 'setup' }>): Empty {
   switch (route.screen) {
     case 'replay':
       return { heading: 'No query chosen', sentence: 'Open a run from Runs, or a query from Compare, to follow it through the pipeline, node by node.', action: openCompare };
@@ -42,8 +44,6 @@ function emptyOf(route: Exclude<Route, { screen: 'runs' | 'pipeline' | 'compare'
       return route.name === undefined
         ? { heading: 'No pipeline open', sentence: 'Open a pipeline from Runs to edit it on the canvas.', action: openRuns }
         : { heading: `Nothing to show for ${route.name} yet`, sentence: `The nodes and edges of ${route.name} appear here, on the canvas.`, action: openRuns };
-    case 'setup':
-      return { heading: 'No benchmarks or services shown yet', sentence: 'The benchmarks this workspace holds and the services it binds are set up here.' };
   }
 }
 
@@ -64,8 +64,21 @@ export function useFocusOnChange(heading: RefObject<HTMLElement | null>, address
   }, [heading, address]);
 }
 
+/** What the shell hands a screen besides its route: the client, and the workspace it read. */
+export type ScreenProps = {
+  route: Route;
+  heading: RefObject<HTMLHeadingElement | null>;
+  client: ApiClient;
+  /** The shell's read of `GET /workspace`, the one the build identity handshake judged. */
+  workspace: RequestState<Workspace>;
+  /** Reads the workspace again, keeping the current read on screen. */
+  refreshWorkspace: () => void;
+  /** Reads the workspace again after a failure. */
+  retryWorkspace: () => void;
+};
+
 /** The screen a route shows: its name as the page's heading, then its state. */
-export function Screen({ route, heading, client }: { route: Route; heading: RefObject<HTMLHeadingElement | null>; client: ApiClient }) {
+export function Screen({ route, heading, client, workspace, refreshWorkspace, retryWorkspace }: ScreenProps) {
   const label = SCREENS.find((s) => s.screen === route.screen)?.label ?? route.screen;
   const title = (
     <h1 ref={heading} tabIndex={-1} className="rg-visually-hidden">
@@ -103,6 +116,14 @@ export function Screen({ route, heading, client }: { route: Route; heading: RefO
         <Suspense fallback={<Loading label="Opening Replay" />}>
           <ReplayScreen client={client} run={route.run} query={route.query} with={'with' in route ? route.with : undefined} />
         </Suspense>
+      </>
+    );
+  }
+  if (route.screen === 'setup') {
+    return (
+      <>
+        {title}
+        <SetupScreen client={client} workspace={workspace} refreshWorkspace={refreshWorkspace} retryWorkspace={retryWorkspace} section={route.section} />
       </>
     );
   }

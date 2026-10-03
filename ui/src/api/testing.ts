@@ -75,14 +75,18 @@ export type MockReply<T> = { body: T; build?: string } | { problem: Problem; bui
  * template: a key the description does not have, or a body that is not its
  * path's generated type, does not compile. A list is answered in order, its
  * last reply repeating. A GET may answer from the query string and the path
- * it was sent — one template, two ids — and a POST from the body it was sent, typed as its path's request body —
- * and later, through a promise the test resolves, so two answers can be made
- * to arrive out of order.
+ * it was sent — one template, two ids — and a POST or a PUT from the body it
+ * was sent, typed as its path's request body — and later, through a promise
+ * the test resolves, so two answers can be made to arrive out of order.
  */
 export type MockRoutes = {
   [P in PathWith<'get'> as `GET ${P}`]?: MockReply<Answer<P, 'get'>> | MockReply<Answer<P, 'get'>>[] | ((query: URLSearchParams, path: string) => MockReply<Answer<P, 'get'>> | Promise<MockReply<Answer<P, 'get'>>>);
 } & {
   [P in PathWith<'post'> as `POST ${P}`]?: MockReply<Answer<P, 'post'>> | MockReply<Answer<P, 'post'>>[] | ((body: Body<P, 'post'>) => MockReply<Answer<P, 'post'>> | Promise<MockReply<Answer<P, 'post'>>>);
+} & {
+  [P in PathWith<'put'> as `PUT ${P}`]?: MockReply<Answer<P, 'put'>> | MockReply<Answer<P, 'put'>>[] | ((body: Body<P, 'put'>) => MockReply<Answer<P, 'put'>> | Promise<MockReply<Answer<P, 'put'>>>);
+} & {
+  [P in PathWith<'delete'> as `DELETE ${P}`]?: MockReply<Answer<P, 'delete'>> | MockReply<Answer<P, 'delete'>>[];
 };
 
 // A path template as a pattern over the whole path, which a query string may

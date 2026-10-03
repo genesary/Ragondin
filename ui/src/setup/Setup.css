@@ -1,0 +1,108 @@
+/* The Setup screen's layout only: where design/'s parts sit. The sections,
+   the table, the chips, the fields and the messages are drawn by their own
+   stylesheets; every value here is a token (ARCHITECTURE.md § The design
+   system). */
+.rg-setup__intro {
+  margin: 0;
+  padding: var(--space-4) var(--space-6) 0;
+  font: var(--type-body);
+  color: var(--ink-2);
+}
+.rg-setup__pending { padding: var(--space-5) var(--space-6); }
+.rg-setup__subheading {
+  margin: var(--space-5) 0 var(--space-3);
+  font: var(--type-heading);
+  color: var(--ink);
+}
+.rg-setup__note,
+.rg-setup__lead {
+  max-width: 72ch;
+  margin: var(--space-3) 0 0;
+  font: var(--type-caption);
+  color: var(--ink-3);
+}
+.rg-setup__lead { font: var(--type-dense); color: var(--ink-2); }
+.rg-setup__lead + .rg-setup__form,
+.rg-setup__lead + .rg-setup__submit { margin-top: var(--space-2); }
+.rg-setup__note code,
+.rg-setup__lead code,
+.rg-setup__digest,
+.rg-setup__address,
+.rg-setup__identity code,
+.rg-setup__facts code { font: var(--type-hash); letter-spacing: var(--type-hash-tracking); overflow-wrap: anywhere; }
+.rg-setup__name { font-weight: 600; color: var(--ink); }
+.rg-setup__absent { color: var(--ink-3); }
+
+/* A fact per line: its label beside its value, stacked on a phone. */
+.rg-setup__facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--space-2) var(--space-4);
+  margin: 0;
+  font: var(--type-dense);
+}
+.rg-setup__facts dt { color: var(--ink-3); font: var(--type-label); align-self: baseline; }
+.rg-setup__facts dd { margin: 0; color: var(--ink); }
+
+/* The details cell wraps: an adapter's error is a sentence, not a figure. */
+.rg-setup__detail { display: inline-block; min-width: 24ch; max-width: 56ch; white-space: normal; }
+
+.rg-setup__form { display: grid; gap: var(--space-3); max-width: 960px; }
+.rg-setup__fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: var(--space-3) var(--space-4);
+  align-items: start;
+}
+.rg-setup__submit {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+/* The line that says what happened: always one line high, so filling it moves nothing. */
+.rg-setup__said {
+  min-height: var(--space-4);
+  font: var(--type-caption);
+  color: var(--ink-3);
+}
+
+.rg-setup__services { display: grid; margin: 0; padding: 0; list-style: none; }
+.rg-setup__service {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--line);
+}
+.rg-setup__service:first-child { border-top: 1px solid var(--line); }
+.rg-setup__service:focus-visible { outline-offset: -2px; }
+.rg-setup__service-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+}
+.rg-setup__identity { margin: 0; font: var(--type-dense); color: var(--ink-2); }
+.rg-setup__service-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 280px) auto auto;
+  align-items: end;
+  justify-content: start;
+  gap: var(--space-2);
+}
+
+.rg-setup__steps {
+  display: grid;
+  gap: var(--space-6);
+  margin: 0;
+  padding-left: var(--space-5);
+}
+.rg-setup__step::marker { font: var(--type-heading); color: var(--ink-3); }
+.rg-setup__step > .rg-setup__subheading:first-child { margin-top: 0; }
+
+@media (max-width: 640px) {
+  .rg-setup__intro { padding: var(--space-4) var(--space-4) 0; }
+  .rg-setup__facts { grid-template-columns: minmax(0, 1fr); gap: var(--space-1); }
+  .rg-setup__facts dd + dt { margin-top: var(--space-2); }
+  .rg-setup__service-actions { grid-template-columns: minmax(0, 1fr) auto auto; }
+}

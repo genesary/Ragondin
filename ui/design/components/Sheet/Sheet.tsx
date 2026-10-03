@@ -1,4 +1,4 @@
-import { useId, type ReactNode } from 'react';
+import { useId, type ReactNode, type Ref } from 'react';
 import './Sheet.css';
 
 /**
@@ -25,14 +25,19 @@ export type SectionProps = {
   caption?: string;
   /** The heading level the page needs; 2 by default. */
   level?: 2 | 3 | 4;
+  /**
+   * Makes the section a place an address can move to: it takes focus by
+   * script (`tabIndex` -1, so never by Tab), and is announced as its region.
+   */
+  anchor?: Ref<HTMLElement>;
   children: ReactNode;
 };
 
-export function Section({ heading, caption, level = 2, children }: SectionProps) {
+export function Section({ heading, caption, level = 2, anchor, children }: SectionProps) {
   const id = useId();
   const Heading = `h${level}` as const;
   return (
-    <section className="rg-section" aria-labelledby={id}>
+    <section className="rg-section" aria-labelledby={id} ref={anchor} tabIndex={anchor === undefined ? undefined : -1}>
       <header className="rg-section__head">
         <Heading id={id} className="rg-section__heading">
           {heading}
