@@ -176,6 +176,14 @@ function Column({ theme }: { theme: 'light' | 'dark' }) {
             </span>
           ))}
         </div>
+        {/* A node's name on its pigment, as the latency stack writes it: the family's own on-ink, 4.5:1+. */}
+        <div className="rg-preview__row">
+          {FAMILIES.map((f) => (
+            <span key={f} className="rg-preview__on-family" data-family={f}>
+              {FAMILY_LABEL[f]}
+            </span>
+          ))}
+        </div>
       </Block>
 
       <Block name="Button">

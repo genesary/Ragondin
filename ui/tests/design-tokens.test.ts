@@ -67,7 +67,7 @@ describe('the palettes are the design system’s values, in both themes', () => 
   };
 
   it.each([
-    ['family-retriever', '#47a9df', '#247dad'],
+    ['family-retriever', '#47a9df', '#2479a9'],
     ['family-fusion', '#dfa635', '#ad7c1d'],
     ['family-reranker', '#cd5ea2', '#9d3772'],
     ['family-context', '#5aca94', '#29996d'],
@@ -75,6 +75,17 @@ describe('the palettes are the design system’s values, in both themes', () => 
     ['family-judge', '#bcba4e', '#8b8c27'],
     ['family-query', '#7c8088', '#82868e'],
   ])('node family pigment %s', expectPair);
+
+  // Dark ink on every light pigment; in dark, the light ink only where the pigment is deep enough for it.
+  it.each([
+    ['on-family-retriever', '#0f1216', '#f7f8fa'],
+    ['on-family-fusion', '#0f1216', '#0f1216'],
+    ['on-family-reranker', '#0f1216', '#f7f8fa'],
+    ['on-family-context', '#0f1216', '#0f1216'],
+    ['on-family-generator', '#0f1216', '#f7f8fa'],
+    ['on-family-judge', '#0f1216', '#0f1216'],
+    ['on-family-query', '#0f1216', '#0f1216'],
+  ])('ink on a family pigment %s', expectPair);
 
   it.each([
     ['run-base', '#7c8088', '#82868e'],
@@ -100,6 +111,43 @@ describe('the palettes are the design system’s values, in both themes', () => 
   it('draws the focus ring in the accent of the surface it sits on, in every theme block', () => {
     expectPair('focus-ring', 'var(--accent)', 'var(--accent)');
   });
+});
+
+// WCAG 2.x relative luminance and contrast ratio, over the sRGB hex the tokens are written in.
+const luminance = (hex: string) => {
+  const [r, g, b] = [1, 3, 5].map((i) => Number.parseInt(hex.slice(i, i + 2), 16) / 255).map((c) => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4));
+  return 0.2126 * r! + 0.7152 * g! + 0.0722 * b!;
+};
+const contrast = (a: string, b: string) => {
+  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+  return (hi! + 0.05) / (lo! + 0.05);
+};
+
+describe('the ink drawn on a family pigment', () => {
+  // A node's name is written on its pigment at 11 px (the latency stack), so
+  // each family's on-ink must reach WCAG 1.4.3's 4.5:1 there, in every theme block.
+  const PIGMENTS = ['retriever', 'fusion', 'reranker', 'context', 'generator', 'judge', 'query'];
+  const BLOCKS = [
+    ['light', lightBlock],
+    ['dark (system)', mediaDark],
+    ['dark (data-theme)', attrDark],
+  ] as const;
+
+  it('computes contrast as WCAG does', () => {
+    expect(contrast('#ffffff', '#000000')).toBeCloseTo(21, 5);
+    expect(contrast('#777777', '#ffffff')).toBeCloseTo(4.48, 2);
+  });
+
+  it.each(BLOCKS.flatMap(([theme, block]) => PIGMENTS.map((family) => [family, theme, block] as const)))(
+    '%s reaches 4.5:1 with its on-ink in the %s theme',
+    (family, _theme, block) => {
+      const pigment = block()?.declarations.get(`--family-${family}`);
+      const ink = block()?.declarations.get(`--on-family-${family}`);
+      expect(pigment).toMatch(/^#[0-9a-f]{6}$/);
+      expect(ink).toMatch(/^#[0-9a-f]{6}$/);
+      expect(contrast(ink!, pigment!)).toBeGreaterThanOrEqual(4.5);
+    },
+  );
 });
 
 describe('the scales', () => {

@@ -97,10 +97,15 @@ describe.each(THEMES)('StackedBarChart, %s theme', (theme) => {
     expect(glyph?.innerHTML).toBe(fusion?.innerHTML);
   });
 
-  it('writes labels in the ink made for a pigment, never in a pigment or a run ink, a token this theme defines', () => {
-    expect(declared(css, '.rg-chart__seg-name', 'fill')).toBe('var(--on-family)');
-    expect(declared(css, '.rg-chart__seg-label', 'color')).toBe('var(--on-family)');
-    expect(tokenIn(theme, '--on-family')).toMatch(/^#/);
+  it('writes labels in the ink made for their own family\'s pigment, never in a pigment or a run ink, a token this theme defines', () => {
+    expect(declared(css, '.rg-chart__seg-name', 'fill')).toBe('currentColor');
+    for (const family of ['retriever', 'fusion', 'reranker', 'context', 'generator', 'judge']) {
+      expect(declared(css, `.rg-chart__seg-label[data-family="${family}"]`, 'color')).toBe(`var(--on-family-${family})`);
+      expect(tokenIn(theme, `--on-family-${family}`)).toMatch(/^#/);
+    }
+    // The families drawn in the neutral pigment take the neutral pigment's ink.
+    for (const family of ['query', 'control', 'none']) expect(declared(css, `.rg-chart__seg-label[data-family="${family}"]`, 'color')).toBe('var(--on-family-query)');
+    expect(tokenIn(theme, '--on-family-query')).toMatch(/^#/);
     for (const rule of parseRules(css).filter((r) => r.selector.includes('rg-chart__seg-'))) {
       expect([...rule.declarations.values()].join(';')).not.toMatch(/--family-|--run-/);
     }
