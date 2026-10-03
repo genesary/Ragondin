@@ -77,7 +77,7 @@ function gainLine(cell: Extract<MatrixCell, { kind: 'measured' }>, metric: strin
   }
 }
 
-function cellContent(m: PipelineMatrix, row: MatrixRow, cell: MatrixCell, metric: string, best: boolean, launch: Launch | undefined): ReactNode {
+function cellContent(m: PipelineMatrix, row: MatrixRow, cell: MatrixCell, metric: string, best: boolean, runHere: boolean, launch: Launch | undefined): ReactNode {
   switch (cell.kind) {
     case 'measured': {
       if (row.produces === 'answer') {
@@ -101,6 +101,9 @@ function cellContent(m: PipelineMatrix, row: MatrixRow, cell: MatrixCell, metric
     case 'no_reference_answers':
       return <Cell state={cell.kind} never first={said('no reference answers', ' — never measurable on this benchmark')} />;
     case 'not_run_yet': {
+      // One Run control per benchmark not run, in its first such cell: the
+      // others say it in words, so a dozen benchmarks are not dozens of tab stops.
+      if (!runHere) return <Cell state={cell.kind} first="not run yet" />;
       const name = `Run on ${cell.benchmark}`;
       return (
         <Cell
@@ -203,12 +206,15 @@ function unscored(row: MatrixRow): string {
 }
 
 export function Matrix({ matrix, metric, launch }: MatrixProps) {
+  const spanned = matrix.rows.map((_, r) => spansRow(matrix, r));
+  // Per column, the row whose cell carries the column's one Run control.
+  const runRow = matrix.columns.map((column) => column.cells.findIndex((cell, r) => cell.kind === 'not_run_yet' && !spanned[r]));
   const rows: TableRow[] = matrix.rows.map((row, r) => {
-    if (spansRow(matrix, r)) return { id: row.node, span: true, cells: [rowHeader(matrix, row, metric), unscored(row)] };
+    if (spanned[r]) return { id: row.node, span: true, cells: [rowHeader(matrix, row, metric), unscored(row)] };
     const best = row.produces === 'chunks' ? bestGainColumns(matrix, r, metric) : [];
     return {
       id: row.node,
-      cells: [rowHeader(matrix, row, metric), ...matrix.columns.map((column, c) => cellContent(matrix, row, column.cells[r] as MatrixCell, metric, best.includes(c), launch))],
+      cells: [rowHeader(matrix, row, metric), ...matrix.columns.map((column, c) => cellContent(matrix, row, column.cells[r] as MatrixCell, metric, best.includes(c), runRow[c] === r, launch))],
     };
   });
   return (

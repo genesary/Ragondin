@@ -69,7 +69,22 @@ describe('the rows and the columns in words', () => {
   it('spans a row whose every cell is not scored, the context builder', () => {
     expect(spansRow(MATRIX, 4)).toBe(true);
     expect(spansRow(MATRIX, 5)).toBe(false);
-    expect(spansRow(PREFIXED, 4)).toBe(false);
+  });
+
+  it('still spans it where a benchmark is not run yet, or a prefix run stops before it: not scored is structural', () => {
+    expect(spansRow(WITH_FIQA, 4)).toBe(true);
+    expect(spansRow(PREFIXED, 4)).toBe(true);
+    const older: PipelineMatrix = { ...MATRIX, columns: MATRIX.columns.map((c, i) => (i === 0 ? { ...c, cells: c.cells.map((cell, r) => (r === 4 ? { kind: 'not_run_on_this_version' as const, run: 'r' } : cell)) } : c)) };
+    expect(spansRow(older, 4)).toBe(true);
+  });
+
+  it('spans no row that holds no not-scored cell, or one beside a cell that says something else', () => {
+    // generate on fiqa is not run yet, and measured elsewhere.
+    expect(spansRow(WITH_FIQA, 5)).toBe(false);
+    const unrun: PipelineMatrix = { ...WITH_FIQA, columns: [WITH_FIQA.columns[0]!] };
+    expect(spansRow(unrun, 4)).toBe(false);
+    const figure: PipelineMatrix = { ...MATRIX, columns: MATRIX.columns.map((c, i) => (i === 0 ? { ...c, cells: c.cells.map((cell, r) => (r === 4 ? { kind: 'no_figure' as const } : cell)) } : c)) };
+    expect(spansRow(figure, 4)).toBe(false);
   });
 
   it('spans no row of a matrix with no columns', () => {

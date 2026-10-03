@@ -58,9 +58,19 @@ export function signedGain(gain: number): string {
   return `${gain > 0 ? '+' : MINUS}${magnitude}`;
 }
 
-/** Whether row `row` says one thing for every benchmark: every cell not scored — a context builder. */
+/** The reasons a cell holds no figure because nothing measured it there, which say nothing of the node itself. */
+const UNMEASURED: ReadonlySet<MatrixCell['kind']> = new Set(['not_run_yet', 'prefix_stops', 'not_run_on_this_version']);
+
+/**
+ * Whether row `row` says one thing for every benchmark: a node no metric
+ * reads — a context builder. Not scored is structural, so a row with one
+ * `not_scored` cell is not scored everywhere; a cell that only says the node
+ * was not measured there — not run yet, beyond a prefix run, run on earlier
+ * content — does not contradict it. Any other cell does.
+ */
 export function spansRow(m: PipelineMatrix, row: number): boolean {
-  return m.columns.length > 0 && m.columns.every((column) => column.cells[row]?.kind === 'not_scored');
+  const kinds = m.columns.map((column) => column.cells[row]?.kind);
+  return kinds.includes('not_scored') && kinds.every((kind) => kind === 'not_scored' || (kind !== undefined && UNMEASURED.has(kind)));
 }
 
 /** A column in words: every benchmark pinned to its digest, else its short digest. */

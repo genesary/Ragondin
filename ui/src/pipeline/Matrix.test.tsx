@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { MatrixCell, MatrixColumn, PipelineMatrix } from '../api/types.ts';
 import { declared } from '../../design/testing/css.ts';
 import css from './Pipeline.css?raw';
-import { MATRIX, NAME, PREFIXED, RUN_OLD, WITH_FIQA } from './fixtures.ts';
+import { MATRIX, NAME, PREFIXED, ROWS, RUN_OLD, WITH_FIQA } from './fixtures.ts';
 import { Matrix } from './Matrix.tsx';
 
 const show = (matrix: PipelineMatrix = MATRIX, metric = 'ndcg@10', launch?: (pair: { pipeline: string; benchmark: string }) => void) =>
@@ -60,6 +60,19 @@ describe('the rows', () => {
     expect(cells).toHaveLength(1);
     expect(cells[0]?.getAttribute('colspan')).toBe('3');
     expect(cells[0]?.textContent).toBe('Not scored on any benchmark: no metric reads a context builder’s output.');
+  });
+});
+
+describe('the context builder’s row beside a benchmark not run or a prefix column', () => {
+  it('is still one sentence: not scored is structural, whatever ran', () => {
+    for (const matrix of [WITH_FIQA, PREFIXED]) {
+      const view = show(matrix);
+      const row = screen.getByRole('rowheader', { name: /concat/ }).closest('tr') as HTMLElement;
+      const cells = within(row).getAllByRole('cell');
+      expect(cells).toHaveLength(1);
+      expect(cells[0]?.getAttribute('colspan')).toBe(String(matrix.columns.length));
+      view.unmount();
+    }
   });
 });
 
@@ -170,9 +183,26 @@ describe('an empty cell explains itself', () => {
     expect(cell.querySelector('[data-never]')).toBeTruthy();
   });
 
-  it('not run yet: a Run button, refused with its reason until the launcher exists', () => {
+  it('not run yet: one Run button per benchmark not run, in its first cell, the others in words', () => {
     show(WITH_FIQA);
-    const cell = cellAt('rerank', 'beir/fiqa');
+    expect(screen.getAllByRole('button', { name: /^Run on/ })).toHaveLength(1);
+    expect(within(cellAt('bm25', 'beir/fiqa')).getByRole('button', { name: 'Run on beir/fiqa' })).toBeTruthy();
+    for (const node of ['dense', 'rrf', 'rerank', 'generate']) {
+      expect(cellAt(node, 'beir/fiqa').textContent).toBe('not run yet');
+      expect(within(cellAt(node, 'beir/fiqa')).queryByRole('button')).toBeNull();
+    }
+  });
+
+  it('puts one tab stop per benchmark not run between the matrix and what follows it', () => {
+    const second: MatrixColumn = { ...(WITH_FIQA.columns[0] as MatrixColumn), dataset_version: '9'.repeat(64), benchmark_names: ['beir/trec-covid'], cells: ROWS.map(() => ({ kind: 'not_run_yet', benchmark: 'beir/trec-covid' })) };
+    show({ ...WITH_FIQA, columns: [...WITH_FIQA.columns, second] });
+    const stops = [...screen.getByRole('table').querySelectorAll('button, a[href], [tabindex="0"]')].map((e) => e.getAttribute('aria-label') ?? e.textContent);
+    expect(stops).toEqual(['Run on beir/fiqa', 'Run on beir/trec-covid']);
+  });
+
+  it('not run yet: the Run button is refused with its reason until the launcher exists', () => {
+    show(WITH_FIQA);
+    const cell = cellAt('bm25', 'beir/fiqa');
     expect(cell.textContent).toContain('not run yet');
     const run = within(cell).getByRole('button', { name: 'Run on beir/fiqa' });
     expect(run.getAttribute('aria-disabled')).toBe('true');
@@ -184,7 +214,7 @@ describe('an empty cell explains itself', () => {
   it('not run yet: with the launcher, the Run button hands it the pipeline and the benchmark', () => {
     const launch = vi.fn();
     show(WITH_FIQA, 'ndcg@10', launch);
-    const run = within(cellAt('rerank', 'beir/fiqa')).getByRole('button', { name: 'Run on beir/fiqa' });
+    const run = within(cellAt('bm25', 'beir/fiqa')).getByRole('button', { name: 'Run on beir/fiqa' });
     expect(run.hasAttribute('aria-disabled')).toBe(false);
     fireEvent.click(run);
     expect(launch).toHaveBeenCalledWith({ pipeline: NAME, benchmark: 'beir/fiqa' });
