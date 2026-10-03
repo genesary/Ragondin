@@ -27,6 +27,8 @@ export class FakeEventSource {
   onopen: ((event: Event) => void) | null = null;
   onmessage: ((event: MessageEvent<string>) => void) | null = null;
   onerror: ((event: Event) => void) | null = null;
+  /** The listeners of named events, as `addEventListener` registered them. */
+  readonly listeners = new Map<string, ((event: MessageEvent<string>) => void)[]>();
 
   constructor(url: string) {
     this.url = url;
@@ -39,8 +41,16 @@ export class FakeEventSource {
     this.onopen?.(new Event('open'));
   }
 
-  emit(data: string) {
-    this.onmessage?.(new MessageEvent('message', { data }));
+  addEventListener(type: string, listener: (event: MessageEvent<string>) => void) {
+    this.listeners.set(type, [...(this.listeners.get(type) ?? []), listener]);
+  }
+
+  /** An event arrives: unnamed, to `onmessage`, or named, to its listeners — as the browser dispatches one. */
+  emit(data: string, name?: string) {
+    if (this.closed) return;
+    const event = new MessageEvent(name ?? 'message', { data });
+    if (name === undefined) this.onmessage?.(event);
+    else for (const listener of this.listeners.get(name) ?? []) listener(event);
   }
 
   /** The connection drops and the browser will retry it by itself. */

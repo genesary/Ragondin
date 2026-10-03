@@ -6,12 +6,14 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { Sheet } from '../../design/index.ts';
 import type { ApiClient, ApiProblem } from '../api/client.ts';
+import type { ConnectionState } from '../api/events.ts';
+import { applyJobEvent, openJobStream, type Jobs } from '../api/jobs.ts';
 import type { BenchmarkEntry, ServiceBinding, ServiceStatus, Workspace } from '../api/types.ts';
 import type { SetupSection } from '../routes.ts';
 import { Loading, type RequestState } from '../shell/states.tsx';
-import { Benchmarks } from './Benchmarks.tsx';
+import { Benchmarks, type Downloads } from './Benchmarks.tsx';
 import { FirstLaunch } from './FirstLaunch.tsx';
-import { isFirstLaunch, serviceKey } from './model.ts';
+import { downloadView, finishedDownloads, isFirstLaunch, serviceKey, type Submission } from './model.ts';
 import { displayed, Services, type RemovedSlot, type SessionProbe } from './Services.tsx';
 import './Setup.css';
 import { BuildSection, WorkspaceSection } from './Workspace.tsx';
@@ -38,24 +40,76 @@ type Mode = 'first' | 'sections';
 export const UNDO_WINDOW_MS = 10_000;
 
 /**
- * Reads a listing, keeping only the answer to the last read asked for, and
- * lets a write replace it in place.
+ * What one read of a listing came to: whether its answer landed and was a
+ * success; `replaced` when a write's answer overtook it and no read came after.
+ */
+type ReadOutcome = boolean | 'replaced';
+
+/**
+ * Reads a listing, keeping only the answer to the last read asked for; lets
+ * a write replace it in place, and a change elsewhere read it again in place.
  */
 function useListing<T>(read: () => Promise<{ ok: true; value: T } | { ok: false; problem: ApiProblem }>) {
   const [state, setState] = useState<RequestState<T>>({ status: 'loading' });
+  // A read in place that failed: the listing it would have replaced stays on screen, and this says why it is not newer.
+  const [stale, setStale] = useState<ApiProblem | null>(null);
+  // Every read and every write's answer takes the next number; only the latest lands.
   const latest = useRef(0);
-  const load = useCallback(async () => {
-    const mine = ++latest.current;
-    const result = await read();
-    if (mine !== latest.current) return;
-    setState(result.ok ? { status: 'loaded', value: result.value } : { status: 'error', problem: result.problem });
-  }, [read]);
+  // The last read issued, by number, and what it came to.
+  const lastRead = useRef<{ n: number; outcome: Promise<ReadOutcome> } | null>(null);
+  /**
+   * Issues one read. Overtaken by a later read, it comes to that read's
+   * outcome, since the later one decides what the listing holds — never to a
+   * success it did not have; overtaken by a write's answer with no read after
+   * it, to `replaced`. In place, a failure is said beside the listing
+   * (`stale`) and never replaces one that loaded.
+   */
+  const issue = useCallback(
+    (inPlace: boolean): Promise<ReadOutcome> => {
+      const n = ++latest.current;
+      const outcome = (async (): Promise<ReadOutcome> => {
+        const result = await read();
+        if (n !== latest.current) {
+          const later = lastRead.current;
+          return later !== null && later.n > n ? later.outcome : 'replaced';
+        }
+        if (result.ok) {
+          setStale(null);
+          setState({ status: 'loaded', value: result.value });
+        } else if (inPlace) {
+          setStale(result.problem);
+          setState((prev) => (prev.status === 'loaded' ? prev : { status: 'error', problem: result.problem }));
+        } else {
+          setStale(null);
+          setState({ status: 'error', problem: result.problem });
+        }
+        return result.ok;
+      })();
+      lastRead.current = { n, outcome };
+      return outcome;
+    },
+    [read],
+  );
+  const load = useCallback(() => void issue(false), [issue]);
+  /**
+   * Reads again, keeping the listing on screen. A write's answer that
+   * overtakes the read sends it again, since it began before the write and
+   * its purpose — a change made elsewhere — is not in the write's answer.
+   * Resolves whether the listing now holds a successful answer read after the
+   * call.
+   */
+  const reload = useCallback(async (): Promise<boolean> => {
+    for (;;) {
+      const outcome = await issue(true);
+      if (outcome !== 'replaced') return outcome;
+    }
+  }, [issue]);
   useEffect(() => {
     void load();
   }, [load]);
   const retry = () => {
     setState({ status: 'loading' });
-    void load();
+    load();
   };
   /** A write's answer replaces the listing, and overtakes any read still in flight. */
   const replace = useCallback((value: T | ((prev: T) => T)) => {
@@ -65,7 +119,7 @@ function useListing<T>(read: () => Promise<{ ok: true; value: T } | { ok: false;
       return prev.status === 'loaded' ? { status: 'loaded', value: (value as (prev: T) => T)(prev.value) } : prev;
     });
   }, []);
-  return { state, retry, replace };
+  return { state, stale, retry, replace, reload };
 }
 
 export function SetupScreen({ client, workspace, refreshWorkspace, retryWorkspace, section }: SetupScreenProps) {
@@ -125,9 +179,22 @@ export function SetupScreen({ client, workspace, refreshWorkspace, retryWorkspac
   // a row after its probe or its Undo, Undo after the row it replaces is gone,
   // or the Benchmarks section after an import ends the first launch and takes
   // the form that had focus with it.
-  const [pendingFocus, setPendingFocus] = useState<{ row: string } | { undo: true } | { benchmarks: true } | null>(null);
+  // `ifLost` is a control that went with a render: a benchmark whose Download
+  // went with its row, or `null` for one with no slot (the inline Retry).
+  // Focus moves only if it is still on the page's body, or on that row's
+  // empty slot, so a person who moved on meanwhile keeps their place.
+  const [pendingFocus, setPendingFocus] = useState<{ row: string } | { undo: true } | { benchmarks: true; ifLost?: string | null } | null>(null);
   useEffect(() => {
     if (pendingFocus === null) return;
+    if ('ifLost' in pendingFocus && pendingFocus.ifLost !== undefined) {
+      const active = document.activeElement;
+      const slot = pendingFocus.ifLost;
+      const lost = active === null || active === document.body || (slot !== null && active.closest('.rg-setup__action')?.getAttribute('data-benchmark') === slot);
+      if (!lost) {
+        setPendingFocus(null);
+        return;
+      }
+    }
     const target = 'row' in pendingFocus ? rows.current.get(pendingFocus.row) : 'undo' in pendingFocus ? document.getElementById(undoId) : benchmarksAnchor.current;
     if (target === null || target === undefined) return;
     target.focus();
@@ -288,6 +355,85 @@ export function SetupScreen({ client, workspace, refreshWorkspace, retryWorkspac
     return null;
   };
 
+  // The downloads: the job stream, followed while the screen is open — its
+  // first event is the whole queue, so a download already under way is shown
+  // — and this page's own submissions, by benchmark.
+  const [jobs, setJobs] = useState<Jobs>(new Map());
+  const jobsNow = useRef<Jobs>(jobs);
+  const [stream, setStream] = useState<ConnectionState>('connecting');
+  const [submissions, setSubmissions] = useState<ReadonlyMap<string, Submission>>(new Map());
+  const submitted = useRef(new Set<string>());
+  const reloadBenchmarks = benchmarks.reload;
+
+  /**
+   * Reads the listing again in place, which says a finished download ready
+   * with its digest; once it has, this page's submissions whose job is done
+   * are forgotten. A read that fails keeps them — the row still says the
+   * digest is being read — and the listing's Retry comes back here.
+   */
+  const refreshBenchmarks = useCallback(async () => {
+    const ok = await reloadBenchmarks();
+    if (!ok) return false;
+    setSubmissions((all) => new Map([...all].filter(([, s]) => s.kind !== 'accepted' || jobsNow.current.get(s.jobId)?.state.kind !== 'done')));
+    return true;
+  }, [reloadBenchmarks]);
+
+  /**
+   * Downloads that ended done: the listing is read again, and the
+   * workspace's counts with it. Focus on a Download that goes with its row's
+   * button moves to the section — judged again once the row is gone.
+   */
+  const finish = useCallback(
+    async (names: readonly string[]) => {
+      if (names.length === 0) return;
+      const focused = document.activeElement?.closest('.rg-setup__action')?.getAttribute('data-benchmark');
+      const ok = await refreshBenchmarks();
+      refresh.current();
+      if (ok && focused !== undefined && focused !== null && names.includes(focused)) setPendingFocus({ benchmarks: true, ifLost: focused });
+    },
+    [refreshBenchmarks],
+  );
+  const finishNow = useRef(finish);
+  useEffect(() => {
+    finishNow.current = finish;
+  });
+
+  useEffect(() => {
+    const stream = openJobStream({
+      onEvent: (event) => {
+        const before = jobsNow.current;
+        const after = applyJobEvent(before, event);
+        jobsNow.current = after;
+        setJobs(after);
+        void finishNow.current(finishedDownloads(before, after, submitted.current));
+      },
+      onState: setStream,
+      // The server may have been restarted as another build meanwhile.
+      onReconnect: () => refresh.current(),
+    });
+    return () => stream.close();
+  }, []);
+
+  const startDownload = async (name: string) => {
+    setSubmissions((all) => new Map(all).set(name, { kind: 'submitting' }));
+    const result = await client.post('/benchmarks/{name}/download', undefined, { name });
+    if (!result.ok) {
+      setSubmissions((all) => new Map(all).set(name, { kind: 'refused', problem: result.problem }));
+      return;
+    }
+    const jobId = result.value.job_id;
+    submitted.current.add(jobId);
+    setSubmissions((all) => new Map(all).set(name, { kind: 'accepted', jobId }));
+    // The stream may have carried the job to its end before this answer came.
+    if (jobsNow.current.get(jobId)?.state.kind === 'done') void finish([name]);
+  };
+
+  const downloads: Downloads = {
+    view: (name) => downloadView(name, submissions.get(name), jobs),
+    start: (name) => void startDownload(name),
+    streamDown: stream === 'disconnected',
+  };
+
   const onImport = async (path: string, name: string) => {
     const result = await client.post('/benchmarks/import', { path, name });
     if (!result.ok) return result.problem;
@@ -313,10 +459,23 @@ export function SetupScreen({ client, workspace, refreshWorkspace, retryWorkspac
           <Loading label="Reading benchmarks and services" />
         </div>
       ) : mode === 'first' && benchmarks.state.status === 'loaded' ? (
-        <FirstLaunch benchmarks={benchmarks.state.value} capabilities={loaded?.capabilities ?? null} onImport={onImport} connect={{ ...connect, initialFamily: 'generator' }} />
+        <FirstLaunch benchmarks={benchmarks.state.value} capabilities={loaded?.capabilities ?? null} onImport={onImport} downloads={downloads} connect={{ ...connect, initialFamily: 'generator' }} />
       ) : (
         <>
-          <Benchmarks state={benchmarks.state} onRetry={benchmarks.retry} onImport={onImport} anchor={benchmarksAnchor} />
+          <Benchmarks
+            state={benchmarks.state}
+            stale={benchmarks.stale}
+            onRetry={benchmarks.retry}
+            onRefresh={() =>
+              void refreshBenchmarks().then((ok) => {
+                // Its button goes with the inline error it sat in.
+                if (ok) setPendingFocus({ benchmarks: true, ifLost: null });
+              })
+            }
+            onImport={onImport}
+            downloads={downloads}
+            anchor={benchmarksAnchor}
+          />
           <Services
             state={services.state}
             onRetry={services.retry}

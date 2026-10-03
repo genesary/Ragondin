@@ -44,6 +44,13 @@
 .rg-setup__facts dt { color: var(--ink-3); font: var(--type-label); align-self: baseline; }
 .rg-setup__facts dd { margin: 0; color: var(--ink); }
 
+/* Every row's action cell is one small control high, a button in it or not:
+   Download appearing, turning into Retry or going once the benchmark is
+   ready moves no row. A block box: an empty inline one would sit on the
+   text's baseline, and the line's descent below it would make a row without
+   a button taller than a row with one. */
+.rg-setup__action { display: flex; align-items: center; min-height: var(--size-control-s); }
+
 /* The details cell wraps: an adapter's error is a sentence, not a figure. */
 .rg-setup__detail { display: inline-block; min-width: 24ch; max-width: 56ch; white-space: normal; }
 
@@ -105,4 +112,6 @@
   .rg-setup__facts { grid-template-columns: minmax(0, 1fr); gap: var(--space-1); }
   .rg-setup__facts dd + dt { margin-top: var(--space-2); }
   .rg-setup__service-actions { grid-template-columns: minmax(0, 1fr) auto auto; }
+  /* The stream line's longer sentence wraps to two lines here: both are held, empty or not. */
+  .rg-setup__stream { min-height: calc(2 * var(--space-4)); }
 }

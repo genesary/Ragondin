@@ -92,4 +92,32 @@ describe('openEvents', () => {
     expect(FakeEventSource.instances).toHaveLength(1);
     expect(FakeEventSource.latest().closed).toBe(true);
   });
+
+  it('hands each named event it listens for on, with its name, and no other', () => {
+    const named: [string, string][] = [];
+    openEvents('/jobs/events', { events: { names: ['queued', 'resync'], on: (name, data) => named.push([name, data]) } });
+    const source = FakeEventSource.latest();
+    source.open();
+    source.emit('{"id":"1"}', 'queued');
+    source.emit('{"jobs":[]}', 'resync');
+    source.emit('{"id":"1"}', 'done');
+    expect(named).toEqual([
+      ['queued', '{"id":"1"}'],
+      ['resync', '{"jobs":[]}'],
+    ]);
+  });
+
+  it('restarts on demand: a new stream, after the delay, which carries no Last-Event-ID and so begins afresh', () => {
+    const { stream, states, onReconnect } = open();
+    FakeEventSource.latest().open();
+    stream.restart();
+    expect(FakeEventSource.instances[0]?.closed).toBe(true);
+    expect(states.at(-1)).toBe('disconnected');
+    expect(FakeEventSource.instances).toHaveLength(1);
+    vi.advanceTimersByTime(1000);
+    expect(FakeEventSource.instances).toHaveLength(2);
+    FakeEventSource.latest().open();
+    expect(states.at(-1)).toBe('connected');
+    expect(onReconnect).toHaveBeenCalledTimes(1);
+  });
 });

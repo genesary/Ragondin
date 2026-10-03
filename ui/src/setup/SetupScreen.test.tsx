@@ -4,10 +4,11 @@ import { useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from '../App.tsx';
 import { createApiClient } from '../api/client.ts';
-import { mockApi, type MockRoutes } from '../api/testing.ts';
-import type { BenchmarkEntry, Problem, ServiceListing, ServiceStatus, Workspace } from '../api/types.ts';
+import { FakeEventSource, installFakeEventSource, mockApi, type MockRoutes } from '../api/testing.ts';
+import type { BenchmarkEntry, JobEvent, JobSummary, Problem, ServiceListing, ServiceStatus, Workspace } from '../api/types.ts';
 import type { SetupSection } from '../routes.ts';
 import type { RequestState } from '../shell/states.tsx';
+import { parseRules } from '../../design/testing/css.ts';
 import { SetupScreen, UNDO_WINDOW_MS } from './SetupScreen.tsx';
 
 const hex = (c: string) => c.repeat(64);
@@ -102,6 +103,7 @@ const row = (name: string) => {
 
 beforeEach(() => {
   window.history.replaceState(null, '', '/#setup');
+  installFakeEventSource();
 });
 
 afterEach(() => {
@@ -126,8 +128,7 @@ describe('the benchmarks', () => {
     expect(available.textContent).toContain('17.1 MB');
     expect(available.textContent).toContain('CC-BY-SA-4.0');
     const download = within(available).getByRole('button', { name: 'Download' });
-    expect(download.getAttribute('aria-disabled')).toBe('true');
-    expect(available.textContent).toContain('Downloads arrive with the job queue');
+    expect(download.getAttribute('aria-disabled')).toBeNull();
 
     const unreadable = row('squad/squad');
     expect(within(unreadable).getByText('unreadable').closest('.rg-status')?.getAttribute('data-state')).toBe('failed');
@@ -197,6 +198,406 @@ describe('the benchmarks', () => {
   });
 });
 
+/** A download job of `benchmark`, as the stream carries it. */
+const download = (id: string, state: JobSummary['state'], benchmark = 'beir/fiqa'): JobSummary => ({ id, created_at_ms: 1, position: 0, state, work: { kind: 'download', benchmark } });
+const running = (done: number, total: number | null): JobSummary['state'] => ({ kind: 'running', done, total, started_at_ms: 2, median_latency_nanos: null });
+/** The job stream sends one event; the stream is opened first if it is not yet. */
+const send = (event: JobEvent) =>
+  act(() => {
+    const source = FakeEventSource.latest();
+    if (source.readyState !== FakeEventSource.OPEN) source.open();
+    source.emit(JSON.stringify(event.data), event.event);
+  });
+const FIQA_READY = entry('beir/fiqa', { kind: 'ready', dataset_version: hex('f') }, { licence_url: 'https://example.org/fiqa-terms' });
+const AFTER_DOWNLOAD = [READY, FIQA_READY, DIFFERS, UNREADABLE, LOCAL];
+
+describe('the download', () => {
+  it('Download submits the job, and the row follows it: queued, downloading with its progress, then ready with its digest', async () => {
+    const api = mockApi(routes({ 'GET /benchmarks': [{ body: { benchmarks: EVERY_STATE } }, { body: { benchmarks: AFTER_DOWNLOAD } }], 'POST /benchmarks/{name}/download': { body: { job_id: '7-0' } } }));
+    const refresh = vi.fn();
+    render(<Harness refresh={refresh} />);
+    await within(await screen.findByRole('region', { name: 'Benchmarks' })).findByText('beir/fiqa');
+    send({ event: 'resync', data: { jobs: [], faults: [] } });
+
+    fireEvent.click(within(row('beir/fiqa')).getByRole('button', { name: 'Download' }));
+    await waitFor(() => expect(row('beir/fiqa').textContent).toContain('Queued'));
+    // The name is one path segment, percent-encoded.
+    expect(api.requests).toContain('POST /api/v1/benchmarks/beir%2Ffiqa/download');
+    expect(api.bodies[api.requests.indexOf('POST /api/v1/benchmarks/beir%2Ffiqa/download')]).toBeUndefined();
+
+    send({ event: 'queued', data: download('7-0', { kind: 'queued' }) });
+    send({ event: 'running', data: download('7-0', running(0, null)) });
+    // Before the first tick the snapshot's size is the manifest's.
+    expect(row('beir/fiqa').textContent).toContain('Downloading… 0 B of 17.1 MB');
+    send({ event: 'running', data: download('7-0', running(6_840_000, 17_100_000)) });
+    expect(row('beir/fiqa').textContent).toContain('Downloading… 6.8 MB of 17.1 MB');
+    expect(within(row('beir/fiqa')).getByText('downloading').closest('.rg-status')?.getAttribute('data-state')).toBe('running');
+
+    send({ event: 'done', data: download('7-0', { kind: 'done', run_id: null, id_mismatch: null, finished_at_ms: 3 }) });
+    await waitFor(() => expect(within(row('beir/fiqa')).getByText('ready')).toBeTruthy());
+    expect(within(row('beir/fiqa')).getByText(hex('f').slice(0, 12)).getAttribute('title')).toBe(hex('f'));
+    expect(within(row('beir/fiqa')).queryByRole('button')).toBeNull();
+    expect(api.requests.filter((r) => r === 'GET /api/v1/benchmarks')).toHaveLength(2);
+    expect(refresh).toHaveBeenCalled();
+  });
+
+  it('a failed download is announced in the API’s words, and Retry submits it again', async () => {
+    const api = mockApi(routes({ 'POST /benchmarks/{name}/download': [{ body: { job_id: '7-0' } }, { body: { job_id: '8-0' } }] }));
+    render(<Harness />);
+    await within(await screen.findByRole('region', { name: 'Benchmarks' })).findByText('beir/fiqa');
+    send({ event: 'resync', data: { jobs: [], faults: [] } });
+    fireEvent.click(within(row('beir/fiqa')).getByRole('button', { name: 'Download' }));
+    await waitFor(() => expect(row('beir/fiqa').textContent).toContain('Queued'));
+
+    send({ event: 'failed', data: download('7-0', { kind: 'failed', error: 'corpus.jsonl: digest differs from the manifest', at_node: null, finished_at_ms: 3 }) });
+    const alert = within(row('beir/fiqa')).getByRole('alert');
+    expect(alert.textContent).toContain('corpus.jsonl: digest differs from the manifest');
+    expect(within(row('beir/fiqa')).getByText('failed').closest('.rg-status')?.getAttribute('data-state')).toBe('failed');
+
+    fireEvent.click(within(row('beir/fiqa')).getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(api.requests.filter((r) => r === 'POST /api/v1/benchmarks/beir%2Ffiqa/download')).toHaveLength(2));
+    await waitFor(() => expect(row('beir/fiqa').textContent).toContain('Queued'));
+    expect(within(row('beir/fiqa')).queryByRole('alert')).toBeNull();
+  });
+
+  it('a refused submission is the API’s detail and hint, announced, with Retry', async () => {
+    mockApi(routes({ 'POST /benchmarks/{name}/download': problem('backend_failed', 500, 'jobs/7-0.json: disk full', 'Free some space, then retry.') }));
+    render(<Harness />);
+    await within(await screen.findByRole('region', { name: 'Benchmarks' })).findByText('beir/fiqa');
+    fireEvent.click(within(row('beir/fiqa')).getByRole('button', { name: 'Download' }));
+    const alert = await within(row('beir/fiqa')).findByRole('alert');
+    expect(alert.textContent).toContain('jobs/7-0.json: disk full');
+    expect(alert.textContent).toContain('Free some space, then retry.');
+    expect(within(row('beir/fiqa')).getByRole('button', { name: 'Retry' })).toBeTruthy();
+  });
+
+  it('keeps focus on the row’s button while its label changes, so the keyboard never loses its place', async () => {
+    mockApi(routes({ 'POST /benchmarks/{name}/download': { body: { job_id: '7-0' } } }));
+    render(<Harness />);
+    await within(await screen.findByRole('region', { name: 'Benchmarks' })).findByText('beir/fiqa');
+    const button = within(row('beir/fiqa')).getByRole('button', { name: 'Download' });
+    button.focus();
+    fireEvent.click(button);
+    await waitFor(() => expect(row('beir/fiqa').textContent).toContain('Queued'));
+    send({ event: 'running', data: download('7-0', running(1_000_000, 17_100_000)) });
+    expect(row('beir/fiqa').textContent).toContain('Downloading… 1 MB of 17.1 MB');
+    expect(document.activeElement).toBe(button);
+    expect(button.getAttribute('aria-disabled')).toBe('true');
+    send({ event: 'failed', data: download('7-0', { kind: 'failed', error: 'connection reset', at_node: null, finished_at_ms: 3 }) });
+    expect(document.activeElement).toBe(button);
+    expect(button.textContent).toBe('Retry');
+  });
+
+  it('moves focus to the section when the button that had it goes with the benchmark ready', async () => {
+    mockApi(routes({ 'GET /benchmarks': [{ body: { benchmarks: EVERY_STATE } }, { body: { benchmarks: AFTER_DOWNLOAD } }], 'POST /benchmarks/{name}/download': { body: { job_id: '7-0' } } }));
+    render(<Harness />);
+    await within(await screen.findByRole('region', { name: 'Benchmarks' })).findByText('beir/fiqa');
+    const button = within(row('beir/fiqa')).getByRole('button', { name: 'Download' });
+    button.focus();
+    fireEvent.click(button);
+    await waitFor(() => expect(row('beir/fiqa').textContent).toContain('Queued'));
+    send({ event: 'running', data: download('7-0', running(1, 17_100_000)) });
+    send({ event: 'done', data: download('7-0', { kind: 'done', run_id: null, id_mismatch: null, finished_at_ms: 3 }) });
+    await waitFor(() => expect(within(row('beir/fiqa')).getByText('ready')).toBeTruthy());
+    await waitFor(() => expect(document.activeElement).toBe(region('Benchmarks')));
+  });
+
+  it('shows a download already under way when the page opens, from the stream’s resync', async () => {
+    mockApi(routes());
+    render(<Harness />);
+    await within(await screen.findByRole('region', { name: 'Benchmarks' })).findByText('beir/fiqa');
+    send({ event: 'resync', data: { jobs: [download('5-0', running(3_420_000, 17_100_000))], faults: [] } });
+    expect(row('beir/fiqa').textContent).toContain('Downloading… 3.4 MB of 17.1 MB');
+    expect(FakeEventSource.latest().url).toBe('/api/v1/jobs/events');
+  });
+
+  it('every row holds an action slot of one height, so a button appearing or going moves nothing', async () => {
+    mockApi(routes());
+    render(<Harness />);
+    await within(await screen.findByRole('region', { name: 'Benchmarks' })).findByText('beir/fiqa');
+    for (const name of ['beir/scifact', 'beir/fiqa', 'beir/nfcorpus', 'squad/squad', 'mine']) expect(row(name).querySelector('.rg-setup__action'), name).not.toBeNull();
+    const css = (await import('./Setup.css?raw')).default;
+    const slot = parseRules(css).find((r) => r.selector === '.rg-setup__action');
+    expect(slot?.declarations.get('min-height')).toBe('var(--size-control-s)');
+    // A block box, not an inline one: an empty inline box sits on the text's baseline and the
+    // line's descent below it makes a row without a button taller than one with (measured in Chrome).
+    expect(slot?.declarations.get('display')).toBe('flex');
+  });
+
+  it('closes the stream when the screen goes', async () => {
+    mockApi(routes());
+    const { unmount } = render(<Harness />);
+    await within(await screen.findByRole('region', { name: 'Benchmarks' })).findByText('beir/fiqa');
+    unmount();
+    expect(FakeEventSource.instances.length).toBeGreaterThan(0);
+    expect(FakeEventSource.instances.every((s) => s.closed)).toBe(true);
+  });
+
+  it('the first launch’s Download follows its job too, and its end opens the sections', async () => {
+    const small = entry('beir/scifact', { kind: 'available', size_bytes: 5_200_000 });
+    const done = entry('beir/scifact', { kind: 'ready', dataset_version: hex('e') });
+    mockApi(
+      routes({
+        'GET /benchmarks': [{ body: { benchmarks: [small] } }, { body: { benchmarks: [done] } }],
+        'GET /services': { body: { services: [] } },
+        'POST /benchmarks/{name}/download': { body: { job_id: '7-0' } },
+      }),
+    );
+    render(<Harness />);
+    const start = await screen.findByRole('region', { name: 'Get started' });
+    fireEvent.click(within(start).getByRole('button', { name: 'Download' }));
+    await waitFor(() => expect(start.textContent).toContain('Queued'));
+    send({ event: 'running', data: download('7-0', running(2_600_000, 5_200_000), 'beir/scifact') });
+    expect(start.textContent).toContain('Downloading… 2.6 MB of 5.2 MB');
+    send({ event: 'done', data: download('7-0', { kind: 'done', run_id: null, id_mismatch: null, finished_at_ms: 3 }, 'beir/scifact') });
+    await screen.findByRole('region', { name: 'Benchmarks' });
+    expect(within(row('beir/scifact')).getByText('ready')).toBeTruthy();
+  });
+});
+
+describe('the download, when things go wrong around it', () => {
+  const DONE: JobSummary['state'] = { kind: 'done', run_id: null, id_mismatch: null, finished_at_ms: 3 };
+  const status = () => {
+    const line = region('Benchmarks').querySelector('.rg-setup__stream');
+    if (line === null) throw new Error('no job stream line');
+    return line;
+  };
+
+  it('says when the job stream is down, and marks live progress as last known until it is back', async () => {
+    mockApi(routes({ 'POST /benchmarks/{name}/download': { body: { job_id: '7-0' } } }));
+    render(<Harness />);
+    await within(await screen.findByRole('region', { name: 'Benchmarks' })).findByText('beir/fiqa');
+    fireEvent.click(within(row('beir/fiqa')).getByRole('button', { name: 'Download' }));
+    await waitFor(() => expect(row('beir/fiqa').textContent).toContain('Queued'));
+    send({ event: 'running', data: download('7-0', running(6_840_000, 17_100_000)) });
+    expect(status().textContent).toBe('');
+    expect(row('beir/fiqa').textContent).not.toContain('last known');
+
+    act(() => FakeEventSource.latest().fail());
+    expect(status().getAttribute('role')).toBe('status');
+    expect(status().textContent).toContain('disconnected, retrying');
+    expect(row('beir/fiqa').textContent).toContain('Downloading… 6.8 MB of 17.1 MB');
+    expect(row('beir/fiqa').textContent).toContain('last known');
+
+    act(() => FakeEventSource.latest().open());
+    expect(status().textContent).toBe('');
+    expect(row('beir/fiqa').textContent).not.toContain('last known');
+  });
+
+  it('says nothing of the stream before its first connection, which is not a drop', async () => {
+    mockApi(routes({ 'POST /benchmarks/{name}/download': { body: { job_id: '7-0' } } }));
+    render(<Harness />);
+    await within(await screen.findByRole('region', { name: 'Benchmarks' })).findByText('beir/fiqa');
+    fireEvent.click(within(row('beir/fiqa')).getByRole('button', { name: 'Download' }));
+    await waitFor(() => expect(row('beir/fiqa').textContent).toContain('Queued'));
+    expect(FakeEventSource.latest().readyState).toBe(FakeEventSource.CONNECTING);
+    expect(status().textContent).toBe('');
+    expect(row('beir/fiqa').textContent).not.toContain('last known');
+  });
+
+  it('says only that the stream is down when no download is under way, and the progress part only when one is', async () => {
+    mockApi(routes());
+    render(<Harness />);
+    await within(await screen.findByRole('region', { name: 'Benchmarks' })).findByText('beir/fiqa');
+    act(() => FakeEventSource.latest().open());
+    act(() => FakeEventSource.latest().fail());
+    expect(status().textContent).toBe('Job stream disconnected, retrying.');
+    act(() => FakeEventSource.latest().open());
+    send({ event: 'resync', data: { jobs: [download('5-0', running(1_000_000, 17_100_000))], faults: [] } });
+    act(() => FakeEventSource.latest().fail());
+    expect(status().textContent).toContain('Job stream disconnected, retrying');
+    expect(status().textContent).toContain('last known');
+  });
+
+  it('reserves two lines for the stream line at a phone’s width, where its longer sentence wraps', async () => {
+    const css = (await import('./Setup.css?raw')).default;
+    const narrow = parseRules(css).find((r) => r.atRule === '@media (max-width: 640px)' && r.selector === '.rg-setup__stream');
+    expect(narrow?.declarations.get('min-height')).toBe('calc(2 * var(--space-4))');
+  });
+
+  it('moves focus to the section when the inline Retry succeeds and takes its button with it', async () => {
+    mockApi(
+      routes({
+        'GET /benchmarks': [{ body: { benchmarks: EVERY_STATE } }, { network: 'Failed to fetch' }, { body: { benchmarks: AFTER_DOWNLOAD } }],
+        'POST /benchmarks/{name}/download': { body: { job_id: '7-0' } },
+      }),
+    );
+    render(<Harness />);
+    await within(await screen.findByRole('region', { name: 'Benchmarks' })).findByText('beir/fiqa');
+    fireEvent.click(within(row('beir/fiqa')).getByRole('button', { name: 'Download' }));
+    await waitFor(() => expect(row('beir/fiqa').textContent).toContain('Queued'));
+    send({ event: 'done', data: download('7-0', DONE) });
+    const alert = await within(region('Benchmarks')).findByRole('alert');
+    const retry = within(alert).getByRole('button', { name: 'Retry' });
+    retry.focus();
+    fireEvent.click(retry);
+    await waitFor(() => expect(within(row('beir/fiqa')).getByText('ready')).toBeTruthy());
+    await waitFor(() => expect(document.activeElement).toBe(region('Benchmarks')));
+  });
+
+  it('a re-read overtaken by a later one that fails is no success: the row still says it is reading its digest', async () => {
+    const other = entry('beir/arguana', { kind: 'available', size_bytes: 9_000_000 });
+    let overtaken: (reply: { body: { benchmarks: BenchmarkEntry[] } }) => void = () => {};
+    let reads = 0;
+    mockApi(
+      routes({
+        'GET /benchmarks': () => {
+          reads += 1;
+          if (reads === 1) return { body: { benchmarks: [AVAILABLE, other] } };
+          if (reads === 2) return new Promise((resolve) => (overtaken = resolve));
+          return { network: 'Failed to fetch' };
+        },
+        'POST /benchmarks/{name}/download': [{ body: { job_id: '7-0' } }, { body: { job_id: '8-0' } }],
+      }),
+    );
+    render(<Harness />);
+    await within(await screen.findByRole('region', { name: 'Benchmarks' })).findByText('beir/fiqa');
+    fireEvent.click(within(row('beir/fiqa')).getByRole('button', { name: 'Download' }));
+    await waitFor(() => expect(row('beir/fiqa').textContent).toContain('Queued'));
+    fireEvent.click(within(row('beir/arguana')).getByRole('button', { name: 'Download' }));
+    await waitFor(() => expect(row('beir/arguana').textContent).toContain('Queued'));
+    send({ event: 'done', data: download('7-0', DONE) });
+    await waitFor(() => expect(reads).toBe(2));
+    send({ event: 'done', data: download('8-0', DONE, 'beir/arguana') });
+    await within(region('Benchmarks')).findByRole('alert');
+    await act(async () => overtaken({ body: { benchmarks: [FIQA_READY, other] } }));
+    expect(row('beir/fiqa').textContent).toContain('reading its digest');
+    expect(row('beir/arguana').textContent).toContain('reading its digest');
+  });
+
+  it('says so on the first launch too, on the line beside its Download', async () => {
+    const small = entry('beir/scifact', { kind: 'available', size_bytes: 5_200_000 });
+    mockApi(routes({ 'GET /benchmarks': { body: { benchmarks: [small] } }, 'GET /services': { body: { services: [] } }, 'POST /benchmarks/{name}/download': { body: { job_id: '7-0' } } }));
+    render(<Harness />);
+    const start = await screen.findByRole('region', { name: 'Get started' });
+    fireEvent.click(within(start).getByRole('button', { name: 'Download' }));
+    send({ event: 'running', data: download('7-0', running(2_600_000, 5_200_000), 'beir/scifact') });
+    await waitFor(() => expect(start.textContent).toContain('Downloading… 2.6 MB of 5.2 MB'));
+    act(() => FakeEventSource.latest().fail());
+    expect(start.textContent).toContain('last known');
+    expect(start.textContent).toContain('disconnected, retrying');
+  });
+
+  it('re-checks the build identity whenever the job stream reconnects, as the shell’s stream does', async () => {
+    mockApi(routes());
+    const refresh = vi.fn();
+    render(<Harness refresh={refresh} />);
+    await within(await screen.findByRole('region', { name: 'Benchmarks' })).findByText('beir/fiqa');
+    act(() => FakeEventSource.latest().open());
+    expect(refresh).not.toHaveBeenCalled();
+    act(() => FakeEventSource.latest().fail());
+    act(() => FakeEventSource.latest().open());
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it('ends ready a download whose end the stream carried before the submission was answered', async () => {
+    let answer: (reply: { body: { job_id: string } }) => void = () => {};
+    mockApi(
+      routes({
+        'GET /benchmarks': [{ body: { benchmarks: EVERY_STATE } }, { body: { benchmarks: AFTER_DOWNLOAD } }],
+        'POST /benchmarks/{name}/download': () => new Promise((resolve) => (answer = resolve)),
+      }),
+    );
+    render(<Harness />);
+    await within(await screen.findByRole('region', { name: 'Benchmarks' })).findByText('beir/fiqa');
+    send({ event: 'resync', data: { jobs: [], faults: [] } });
+    fireEvent.click(within(row('beir/fiqa')).getByRole('button', { name: 'Download' }));
+    // First seen already done: no earlier event of this job reached the page.
+    send({ event: 'done', data: download('7-0', DONE) });
+    await act(async () => answer({ body: { job_id: '7-0' } }));
+    await waitFor(() => expect(within(row('beir/fiqa')).getByText('ready')).toBeTruthy());
+  });
+
+  it('leaves focus where the person moved it while the listing was read again', async () => {
+    let listed: (reply: { body: { benchmarks: BenchmarkEntry[] } }) => void = () => {};
+    let reads = 0;
+    mockApi(
+      routes({
+        'GET /benchmarks': () => (++reads === 1 ? { body: { benchmarks: EVERY_STATE } } : new Promise((resolve) => (listed = resolve))),
+        'POST /benchmarks/{name}/download': { body: { job_id: '7-0' } },
+      }),
+    );
+    render(<Harness />);
+    const benchmarks = within(await screen.findByRole('region', { name: 'Benchmarks' }));
+    await benchmarks.findByText('beir/fiqa');
+    const button = within(row('beir/fiqa')).getByRole('button', { name: 'Download' });
+    button.focus();
+    fireEvent.click(button);
+    await waitFor(() => expect(row('beir/fiqa').textContent).toContain('Queued'));
+    send({ event: 'running', data: download('7-0', running(1, 17_100_000)) });
+    send({ event: 'done', data: download('7-0', DONE) });
+    const field = benchmarks.getByLabelText('Corpus directory');
+    field.focus();
+    await act(async () => listed({ body: { benchmarks: AFTER_DOWNLOAD } }));
+    await waitFor(() => expect(within(row('beir/fiqa')).getByText('ready')).toBeTruthy());
+    expect(document.activeElement).toBe(field);
+  });
+
+  it('a failed re-read keeps the table, says so inline, and its Retry ends the download ready', async () => {
+    mockApi(
+      routes({
+        'GET /benchmarks': [{ body: { benchmarks: EVERY_STATE } }, { network: 'Failed to fetch' }, { body: { benchmarks: AFTER_DOWNLOAD } }],
+        'POST /benchmarks/{name}/download': { body: { job_id: '7-0' } },
+      }),
+    );
+    render(<Harness />);
+    await within(await screen.findByRole('region', { name: 'Benchmarks' })).findByText('beir/fiqa');
+    fireEvent.click(within(row('beir/fiqa')).getByRole('button', { name: 'Download' }));
+    await waitFor(() => expect(row('beir/fiqa').textContent).toContain('Queued'));
+    send({ event: 'done', data: download('7-0', DONE) });
+    const alert = await within(region('Benchmarks')).findByRole('alert');
+    expect(alert.textContent).toContain('network_failed');
+    // The table stays, and the row still says what it knows.
+    expect(row('beir/scifact')).toBeTruthy();
+    expect(row('beir/fiqa').textContent).toContain('reading its digest');
+    fireEvent.click(within(alert).getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(within(row('beir/fiqa')).getByText('ready')).toBeTruthy());
+    expect(within(region('Benchmarks')).queryByRole('alert')).toBeNull();
+  });
+
+  it('an import answered while the listing is read again for a download still ends the download ready', async () => {
+    const imported = entry('notes', { kind: 'local', dataset_version: hex('d') }, { licence: null, ground_truth: 'qrels' });
+    let stale: (reply: { body: { benchmarks: BenchmarkEntry[] } }) => void = () => {};
+    let reads = 0;
+    mockApi(
+      routes({
+        'GET /benchmarks': () => {
+          reads += 1;
+          if (reads === 1) return { body: { benchmarks: EVERY_STATE } };
+          if (reads === 2) return new Promise((resolve) => (stale = resolve));
+          return { body: { benchmarks: [...AFTER_DOWNLOAD, imported] } };
+        },
+        'POST /benchmarks/{name}/download': { body: { job_id: '7-0' } },
+        'POST /benchmarks/import': { body: imported },
+      }),
+    );
+    render(<Harness />);
+    const benchmarks = within(await screen.findByRole('region', { name: 'Benchmarks' }));
+    await benchmarks.findByText('beir/fiqa');
+    fireEvent.click(within(row('beir/fiqa')).getByRole('button', { name: 'Download' }));
+    await waitFor(() => expect(row('beir/fiqa').textContent).toContain('Queued'));
+    send({ event: 'done', data: download('7-0', DONE) });
+    await waitFor(() => expect(reads).toBe(2));
+    fireEvent.change(benchmarks.getByLabelText('Corpus directory'), { target: { value: '/data/notes' } });
+    fireEvent.change(benchmarks.getByLabelText('Import as'), { target: { value: 'notes' } });
+    fireEvent.click(benchmarks.getByRole('button', { name: 'Import' }));
+    await benchmarks.findByText('notes', { selector: 'td, td *' });
+    // The read begun before the import answered lands after it, without the import.
+    await act(async () => stale({ body: { benchmarks: AFTER_DOWNLOAD } }));
+    await waitFor(() => expect(within(row('beir/fiqa')).getByText('ready')).toBeTruthy());
+    expect(benchmarks.getByText('notes', { selector: 'td, td *' })).toBeTruthy();
+  });
+
+  it('draws an empty meter, never a broken one, when the job reports a total of zero', async () => {
+    mockApi(routes());
+    render(<Harness />);
+    await within(await screen.findByRole('region', { name: 'Benchmarks' })).findByText('beir/fiqa');
+    send({ event: 'resync', data: { jobs: [download('5-0', running(0, 0))], faults: [] } });
+    const meter = row('beir/fiqa').querySelector('.rg-status__meter i') as HTMLElement | null;
+    expect(meter?.style.width).toBe('0%');
+  });
+});
+
 describe('the first launch', () => {
   const empty = routes({ 'GET /benchmarks': { body: { benchmarks: [] } }, 'GET /services': { body: { services: [] } } });
 
@@ -225,7 +626,7 @@ describe('the first launch', () => {
     expect(first.textContent).toContain('5.2 MB');
     expect(first.textContent).toContain('the smallest, a good first run');
     expect(first.textContent).not.toContain('beir/trec-covid');
-    expect(within(first).getByRole('button', { name: 'Download' }).getAttribute('aria-disabled')).toBe('true');
+    expect(within(first).getByRole('button', { name: 'Download' }).getAttribute('aria-disabled')).toBeNull();
   });
 
   it('adding a benchmark leaves the first launch state', async () => {

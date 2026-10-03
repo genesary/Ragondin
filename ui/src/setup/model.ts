@@ -1,7 +1,10 @@
 // What the Setup screen reads off the API's answers, as pure functions:
 // sizes and digests in words, the first-launch rule, the build identity's
-// parts. ARCHITECTURE.md § The Setup screen.
-import type { BenchmarkEntry, GroundTruth, ServiceStatus } from '../api/types.ts';
+// parts, where a benchmark's download stands. ARCHITECTURE.md § The Setup
+// screen.
+import type { ApiProblem } from '../api/client.ts';
+import type { Jobs } from '../api/jobs.ts';
+import type { BenchmarkEntry, GroundTruth, JobSummary, ServiceStatus } from '../api/types.ts';
 
 const UNITS = ['B', 'kB', 'MB', 'GB', 'TB'] as const;
 
@@ -56,3 +59,69 @@ export function splitBuild(build: string): { version: string; commit: string | n
 
 /** A binding's key, `<family>/<name>`, as `--remote` and `workspace.toml` spell it. */
 export const serviceKey = (s: { family: string; name: string }) => `${s.family}/${s.name}`;
+
+/** This page's request for a benchmark's download: in flight, refused, or answered with its job. */
+export type Submission = { kind: 'submitting' } | { kind: 'refused'; problem: ApiProblem } | { kind: 'accepted'; jobId: string };
+
+/** Where a benchmark's download stands, as its row says it. */
+export type DownloadView =
+  | { kind: 'idle' }
+  | { kind: 'submitting' }
+  | { kind: 'refused'; problem: ApiProblem }
+  | { kind: 'queued' }
+  | { kind: 'running'; done: number; total: number | null }
+  | { kind: 'verifying' }
+  | { kind: 'failed'; error: string }
+  | { kind: 'cancelled' };
+
+const isDownloadOf = (name: string) => (j: JobSummary) => j.work.kind === 'download' && j.work.benchmark === name;
+
+function viewOf(job: JobSummary): DownloadView {
+  const state = job.state;
+  switch (state.kind) {
+    case 'queued':
+      return { kind: 'queued' };
+    case 'running':
+      return { kind: 'running', done: state.done, total: state.total };
+    case 'done':
+      return { kind: 'verifying' };
+    case 'failed':
+      return { kind: 'failed', error: state.error };
+    case 'cancelled':
+      return { kind: 'cancelled' };
+  }
+}
+
+/**
+ * Where a benchmark's download stands. This page's submission decides while
+ * it has one — its job once the stream has carried it, queued until then,
+ * never an older job of the same benchmark. Without one, the benchmark's last
+ * download job in the queue does, so a download started in another tab, or
+ * before the page was opened, is shown — but a done one, which the listing
+ * already says as `ready`.
+ */
+export function downloadView(name: string, submission: Submission | undefined, jobs: Jobs): DownloadView {
+  if (submission !== undefined) {
+    if (submission.kind !== 'accepted') return submission;
+    const job = jobs.get(submission.jobId);
+    return job === undefined ? { kind: 'queued' } : viewOf(job);
+  }
+  const last = [...jobs.values()].filter(isDownloadOf(name)).at(-1);
+  return last === undefined || last.state.kind === 'done' ? { kind: 'idle' } : viewOf(last);
+}
+
+/**
+ * The benchmarks whose download ended done between two readings of the
+ * queue, so the listing is read again for their digests: a job seen before
+ * and not done then, or one this page submitted (`submitted`), whose earlier
+ * events the stream may have carried before the submission was answered.
+ */
+export function finishedDownloads(before: Jobs, after: Jobs, submitted: ReadonlySet<string>): string[] {
+  const names: string[] = [];
+  for (const job of after.values()) {
+    if (job.work.kind !== 'download' || job.state.kind !== 'done') continue;
+    const was = before.get(job.id);
+    if (was === undefined ? submitted.has(job.id) : was.state.kind !== 'done') names.push(job.work.benchmark);
+  }
+  return names;
+}

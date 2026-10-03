@@ -142,6 +142,17 @@ describe('the API client, with query and header parameters', () => {
     await client.put('/pipelines/{name}', { document: '' }, { name: 'p' }, { headers: { 'X-Other': '1' } });
   });
 
+  it('posts to an operation that declares no request body with `undefined`, and sends no body', async () => {
+    const spy = stubFetch(async () => json({ job_id: '1-0' }, { status: 202 }));
+    const result = await createApiClient().post('/benchmarks/{name}/download', undefined, { name: 'beir/scifact' });
+    expect(spy.mock.calls[0]?.[0]).toBe('/api/v1/benchmarks/beir%2Fscifact/download');
+    expect(spy.mock.calls[0]?.[1]?.body).toBeUndefined();
+    expect(new Headers(spy.mock.calls[0]?.[1]?.headers).get('content-type')).toBeNull();
+    expect(result).toEqual({ ok: true, value: { job_id: '1-0' }, build: '0.0.0+0123456789ab' });
+    // @ts-expect-error the operation declares no request body.
+    await createApiClient().post('/benchmarks/{name}/download', { name: 'x' }, { name: 'x' });
+  });
+
   it('sends no header that was not given', async () => {
     const spy = stubFetch(async () => json({ name: 'p', etag: 'e2', hash: 'h' }));
     await createApiClient().put('/pipelines/{name}', { document: 'pipeline: {}' }, { name: 'p' }, { headers: { 'If-None-Match': '*' } });
