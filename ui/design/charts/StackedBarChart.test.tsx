@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { Glyph } from '../glyphs/Glyph.tsx';
 import { declared, parseRules } from '../testing/css.ts';
 import { THEMES, tokenIn } from '../testing/themes.ts';
+import tokens from '../tokens.css?raw';
 import css from './Charts.css?raw';
 import { linear, PLOT } from './scale.ts';
 import { StackedBarChart, type StackedBarChartProps } from './StackedBarChart.tsx';
@@ -64,22 +65,25 @@ describe.each(THEMES)('StackedBarChart, %s theme', (theme) => {
     expect(marks(container)).toEqual(['bm25', 'dense', 'glyph:fusion', null, 'rerank']);
   });
 
-  it('counts a wide letter as wide: of two names of one length in segments of one width, the narrow one is written and the wide one is a glyph', () => {
+  it('counts a wide letter as wide: in segments of one width, a seven-letter lowercase name is written, and a name no longer in wide capitals is a glyph', () => {
     const { container } = render(
       <div data-theme={theme}>
         <StackedBarChart
           {...LEGS}
           segments={[
             [
-              { id: 'n', label: 'bm25_ab', value: 8, family: 'retriever' },
+              { id: 'n', label: 'dense_2', value: 8, family: 'retriever' },
               { id: 'w', label: 'MWMWMWM', value: 8, family: 'retriever' },
-              { id: 'rest', label: 'rest', value: 84, family: 'generator' },
+              // Round capitals are nearly as wide as M in the UI face.
+              { id: 'q', label: 'QQQQQQ', value: 8, family: 'retriever' },
+              { id: 'o', label: 'OOOOOO', value: 8, family: 'retriever' },
+              { id: 'rest', label: 'rest', value: 68, family: 'generator' },
             ],
           ]}
         />
       </div>,
     );
-    expect(marks(container)).toEqual(['bm25_ab', 'glyph:retriever', 'rest']);
+    expect(marks(container)).toEqual(['dense_2', 'glyph:retriever', 'glyph:retriever', 'glyph:retriever', 'rest']);
   });
 
   it('draws the family glyph, in its own drawing, in a segment too narrow for its name', () => {
@@ -101,7 +105,6 @@ describe.each(THEMES)('StackedBarChart, %s theme', (theme) => {
       expect([...rule.declarations.values()].join(';')).not.toMatch(/--family-|--run-/);
     }
   });
-
 
   it('stacks each bar\'s segments end to end on one scale, from its start', () => {
     const { container } = render(
@@ -134,13 +137,17 @@ describe.each(THEMES)('StackedBarChart, %s theme', (theme) => {
 
 describe('StackedBarChart', () => {
   it('never lets two labels overlap: each is clipped to its own segment, and segments do not overlap', () => {
-    const { container } = render(<StackedBarChart {...LEGS} {...{ bars: [...LEGS.bars, { id: 'r2', label: 'B' }], segments: [...LEGS.segments, PROPS.segments[1] ?? []] }} />);
+    const props: StackedBarChartProps = { ...LEGS, bars: [...LEGS.bars, { id: 'r2', label: 'B' }], segments: [...LEGS.segments, PROPS.segments[1] ?? []] };
+    const { container } = render(<StackedBarChart {...props} />);
     const boxes = (el: Element) => ['x', 'y', 'width', 'height'].map((a) => Number(el.getAttribute(a)));
     for (const stack of container.querySelectorAll('g.rg-chart__stack')) {
       const labels = [...stack.querySelectorAll('svg.rg-chart__seg-label')];
       expect(labels.length).toBeGreaterThan(0);
       for (const label of labels) {
-        // A nested svg clips what it holds to its own box: the segment's.
+        // Browsers clip a nested svg's content to its own box by default
+        // (overflow: hidden for any svg that is not the root, and Charts.css
+        // makes only the root's visible), so a label confined to its
+        // segment's box cannot be drawn over its neighbour's.
         expect(label.previousElementSibling?.classList.contains('rg-chart__seg')).toBe(true);
         expect(boxes(label)).toEqual(boxes(label.previousElementSibling as Element));
       }
@@ -149,6 +156,11 @@ describe('StackedBarChart', () => {
     }
   });
 
+  it('estimates names in the type their labels are drawn in: --type-micro, 11px, the chart\'s LABEL_SIZE', () => {
+    expect(declared(css, '.rg-chart__seg-name', 'font')).toBe('var(--type-micro)');
+    const micro = parseRules(tokens).map((r) => r.declarations.get('--type-micro')).find((v) => v !== undefined);
+    expect(micro).toMatch(/\b11px\//);
+  });
 
   it('names each bar along its axis, and hovers the whole row to list its segments', () => {
     const { container } = render(<StackedBarChart {...PROPS} />);

@@ -22,19 +22,25 @@ export type StackedBarChartProps = {
   format: (value: number) => string;
 };
 
-/** The label's type size in SVG units: `--type-micro`, the size Charts.css draws it at. */
+/**
+ * The label's type size in SVG units: the 11px of `--type-micro`, the type
+ * Charts.css draws a segment's name in. A change to either is a change to
+ * both; the chart's test holds the token to 11px.
+ */
 const LABEL_SIZE = 11;
 /**
- * A generous width of `name` in that type, in SVG units: per character, wider
- * than the UI face draws it — m, w and their capitals a full em, another
- * capital three quarters, anything else 0.62 em — so a name judged to fit does.
- * It is an estimate rather than a measurement because a measurement needs the
- * text laid out first, and labelling after that would move the plot under the
- * reader once the font arrives.
+ * An upper bound on the width of `name` in that type, in SVG units: per
+ * character, at least the advance the shipped Wix Madefor Text Medium gives
+ * it — m, w, their capitals, @ and % 1.06 em, another capital 0.86 em,
+ * anything else 0.66 em — so a name judged to fit does, and is never clipped
+ * into what would read as another id. It is an estimate rather than a
+ * measurement because a measurement needs the text laid out first, and
+ * labelling after that would move the plot under the reader once the font
+ * arrives.
  */
 function nameWidth(name: string): number {
   let ems = 0;
-  for (const c of name) ems += /[mwMW@%]/.test(c) ? 1 : /[A-Z]/.test(c) ? 0.75 : 0.62;
+  for (const c of name) ems += /[mwMW@%]/.test(c) ? 1.06 : /[A-Z]/.test(c) ? 0.86 : 0.66;
   return ems * LABEL_SIZE;
 }
 /** Room left between a label and its segment's edges, in SVG units. */
