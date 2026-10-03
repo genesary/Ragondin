@@ -176,6 +176,14 @@ function Column({ theme }: { theme: 'light' | 'dark' }) {
             </span>
           ))}
         </div>
+        {/* A node's name on its pigment, as the latency stack writes it: the family's own on-ink, 4.5:1+. */}
+        <div className="rg-preview__row">
+          {FAMILIES.map((f) => (
+            <span key={f} className="rg-preview__on-family" data-family={f}>
+              {FAMILY_LABEL[f]}
+            </span>
+          ))}
+        </div>
       </Block>
 
       <Block name="Button">
@@ -492,7 +500,7 @@ function Column({ theme }: { theme: 'light' | 'dark' }) {
             bars={RUNS.map((r) => ({ id: r.id, label: r.label }))}
             segments={[
               [{ id: 'dense', label: 'dense', value: 11, family: 'retriever' }],
-              [{ id: 'bm25', label: 'bm25', value: 4, family: 'retriever' }, { id: 'dense', label: 'dense', value: 11, family: 'retriever' }, { id: 'rrf', label: 'rrf', value: 0.5, family: 'fusion' }],
+              [{ id: 'bm25', label: 'bm25', value: 4, family: 'retriever' }, { id: 'dense', label: 'dense', value: 11, family: 'retriever' }, { id: 'rrf', label: 'rrf', value: 8, family: 'fusion' }],
               [{ id: 'bm25', label: 'bm25', value: 4, family: 'retriever' }, { id: 'dense', label: 'dense', value: 11, family: 'retriever' }, { id: 'rerank', label: 'rerank', value: 120, family: 'reranker' }],
             ]}
             format={(v) => `${v} ms`}

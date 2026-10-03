@@ -94,9 +94,18 @@
 .rg-chart__seg[data-family="control"],
 .rg-chart__seg[data-family="none"] { fill: var(--family-query); }
 /* A segment's label, inside it and clipped to it: its node name, or its family
-   glyph when the name does not fit, in the ink made for a pigment. */
-.rg-chart__seg-label { color: var(--on-family); pointer-events: none; }
-.rg-chart__seg-name { fill: var(--on-family); font: var(--type-micro); }
+   glyph when the name does not fit, in the ink made for its family's pigment. */
+.rg-chart__seg-label { pointer-events: none; }
+.rg-chart__seg-label[data-family="retriever"] { color: var(--on-family-retriever); }
+.rg-chart__seg-label[data-family="fusion"] { color: var(--on-family-fusion); }
+.rg-chart__seg-label[data-family="reranker"] { color: var(--on-family-reranker); }
+.rg-chart__seg-label[data-family="context"] { color: var(--on-family-context); }
+.rg-chart__seg-label[data-family="generator"] { color: var(--on-family-generator); }
+.rg-chart__seg-label[data-family="judge"] { color: var(--on-family-judge); }
+.rg-chart__seg-label[data-family="query"],
+.rg-chart__seg-label[data-family="control"],
+.rg-chart__seg-label[data-family="none"] { color: var(--on-family-query); }
+.rg-chart__seg-name { fill: currentColor; font: var(--type-micro); }
 .rg-chart__total { fill: var(--ink-2); font: var(--type-micro); font-variant-numeric: tabular-nums; }
 
 /* The diverging histogram: HTML, so each bar is a real button. A column is

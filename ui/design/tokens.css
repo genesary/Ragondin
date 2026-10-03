@@ -132,8 +132,20 @@
   --family-judge: #bcba4e;
   /* Neutral family for the query input node and, later, control-flow nodes (branch, loop), which are told apart by shape, not hue. */
   --family-query: #7c8088;
-  /* Glyph ink on a family tile: 5:1+ on every light pigment, 3:1+ on every dark pigment. */
-  --on-family: #0f1216;
+  /* Ink on the retriever pigment: the glyph on its tile, the node name or glyph on its latency-stack segment. 4.5:1+ in both themes, so 11px text reads on it; dark in light, light in dark. */
+  --on-family-retriever: #0f1216;
+  /* Ink on the fusion pigment: the glyph on its tile, the node name or glyph on its latency-stack segment. 4.5:1+ in both themes, so 11px text reads on it; dark in both themes. */
+  --on-family-fusion: #0f1216;
+  /* Ink on the reranker pigment: the glyph on its tile, the node name or glyph on its latency-stack segment. 4.5:1+ in both themes, so 11px text reads on it; dark in light, light in dark. */
+  --on-family-reranker: #0f1216;
+  /* Ink on the context pigment: the glyph on its tile, the node name or glyph on its latency-stack segment. 4.5:1+ in both themes, so 11px text reads on it; dark in both themes. */
+  --on-family-context: #0f1216;
+  /* Ink on the generator pigment: the glyph on its tile, the node name or glyph on its latency-stack segment. 4.5:1+ in both themes, so 11px text reads on it; dark in light, light in dark. */
+  --on-family-generator: #0f1216;
+  /* Ink on the judge pigment: the glyph on its tile, the node name or glyph on its latency-stack segment. 4.5:1+ in both themes, so 11px text reads on it; dark in both themes. */
+  --on-family-judge: #0f1216;
+  /* Ink on the neutral pigment (query, control flow, unknown family): the glyph on its tile, the node name or glyph on its latency-stack segment. 4.5:1+ in both themes, so 11px text reads on it; dark in both themes. */
+  --on-family-query: #0f1216;
   /* The baseline run of a comparison, always neutral and always first. In charts it is the reference the others are read against. */
   --run-base: #7c8088;
   /* Candidate run A (comparison slot 2). Ink register: bars, 2px lines, swatches. Assigned by slot when runs are selected, kept for the session; always shown with its letter. */
@@ -204,14 +216,20 @@
     --on-accent: #14161b;
     --accent-wash: #d5dfef1a;
     --focus-ring: var(--accent);
-    --family-retriever: #247dad;
+    --family-retriever: #2377a6;
     --family-fusion: #ad7c1d;
     --family-reranker: #9d3772;
     --family-context: #29996d;
     --family-generator: #6e4da7;
     --family-judge: #8b8c27;
     --family-query: #82868e;
-    --on-family: #f7f8fa;
+    --on-family-retriever: #f7f8fa;
+    --on-family-fusion: #0f1216;
+    --on-family-reranker: #f7f8fa;
+    --on-family-context: #0f1216;
+    --on-family-generator: #f7f8fa;
+    --on-family-judge: #0f1216;
+    --on-family-query: #0f1216;
     --run-base: #82868e;
     --run-a: #5a94e0;
     --run-b: #af8f15;
@@ -261,14 +279,20 @@
   --on-accent: #14161b;
   --accent-wash: #d5dfef1a;
   --focus-ring: var(--accent);
-  --family-retriever: #247dad;
+  --family-retriever: #2377a6;
   --family-fusion: #ad7c1d;
   --family-reranker: #9d3772;
   --family-context: #29996d;
   --family-generator: #6e4da7;
   --family-judge: #8b8c27;
   --family-query: #82868e;
-  --on-family: #f7f8fa;
+  --on-family-retriever: #f7f8fa;
+  --on-family-fusion: #0f1216;
+  --on-family-reranker: #f7f8fa;
+  --on-family-context: #0f1216;
+  --on-family-generator: #f7f8fa;
+  --on-family-judge: #0f1216;
+  --on-family-query: #0f1216;
   --run-base: #82868e;
   --run-a: #5a94e0;
   --run-b: #af8f15;

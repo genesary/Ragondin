@@ -25,7 +25,8 @@ export type FamilyTileProps = {
 };
 
 /**
- * A family's 24px tile: its pigment, with its glyph in `on-family` ink. The
+ * A family's 24px tile: its pigment, with its glyph in that pigment's own
+ * ink, `--on-family-<family>` (control flow takes the query pigment's). The
  * pigment is quiet by design (under 3:1), so the glyph is the second carrier,
  * and a name always sits beside the tile.
  */

@@ -21,8 +21,14 @@ describe('FamilyTile', () => {
     expect(declared(css, '.rg-tile[data-family="control"]', 'transform')).toBe('rotate(45deg) scale(0.82)');
   });
 
-  it('draws the glyph in on-family ink', () => {
-    expect(declared(css, '.rg-tile', 'color')).toBe('var(--on-family)');
+  it('draws the glyph in the ink made for its own family\'s pigment', () => {
+    expect(declared(css, '.rg-tile', 'color')).toBe('var(--fam-ink)');
+    for (const family of FAMILIES.filter((f) => f !== 'control')) {
+      expect(declared(css, `.rg-tile[data-family="${family}"]`, '--fam-ink')).toBe(`var(--on-family-${family})`);
+    }
+    // Control flow takes the neutral pigment, and with it the neutral pigment's ink.
+    expect(declared(css, '.rg-tile', '--fam-ink')).toBe('var(--on-family-query)');
+    expect(declared(css, '.rg-tile[data-family="control"]', '--fam-ink')).toBe('var(--on-family-query)');
   });
 
   it('names the family for assistive technology when asked to', () => {
