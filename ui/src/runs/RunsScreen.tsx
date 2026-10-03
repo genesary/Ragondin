@@ -36,15 +36,26 @@ type Read = { listing: RequestState<RunListing>; askedWith: ReadonlySet<string>;
 export function RunsScreen({ client, sel }: RunsScreenProps) {
   const [read, setRead] = useState<Read>({ listing: { status: 'loading' }, askedWith: new Set(), refresh: null });
   const latest = useRef(0);
+  // The listing read in flight, cancelled once a newer read overtakes it.
+  const reading = useRef<AbortController | null>(null);
   const selNow = useRef(sel);
   selNow.current = sel;
 
-  /** Reads the listing; only the answer to the last request asked lands, whatever order they arrive in. */
+  /**
+   * Reads the listing; only the answer to the last request asked lands,
+   * whatever order they arrive in. The read it overtakes is cancelled, which
+   * saves the server's work. Two checks drop an overtaken answer: the count,
+   * which a newer read moves before it cancels, and the signal, which alone
+   * covers the screen going.
+   */
   const fetchListing = useCallback(async () => {
     const mine = ++latest.current;
+    reading.current?.abort();
+    const controller = new AbortController();
+    reading.current = controller;
     const askedWith = new Set(selNow.current);
-    const result = await client.get('/runs');
-    if (mine !== latest.current) return;
+    const result = await client.get('/runs', { signal: controller.signal });
+    if (mine !== latest.current || controller.signal.aborted) return;
     setRead((prev) => {
       if (result.ok) return { listing: { status: 'loaded', value: result.value }, askedWith, refresh: null };
       // A re-read that fails leaves the listing already shown in place.
@@ -55,6 +66,8 @@ export function RunsScreen({ client, sel }: RunsScreenProps) {
 
   useEffect(() => {
     void fetchListing();
+    // A new client, or the screen going, cancels the read left behind.
+    return () => reading.current?.abort();
   }, [fetchListing]);
 
   const retry = () => {

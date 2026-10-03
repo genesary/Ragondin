@@ -33,25 +33,44 @@ type Read<T> = { key: string | null; state: RequestState<T>; shown: T | null; re
 
 /**
  * One request, keyed: asked again whenever the key changes, and only the
- * answer to the last one asked lands. `shown` keeps the last value that
- * loaded while a newer one is read, so a view need not collapse and come
- * back. A null key asks nothing.
+ * answer to the last one asked lands. The request a newer one supersedes —
+ * by a new key, a retry, or the screen going — is cancelled through its
+ * signal, so thirty quick arrow presses leave one request running, not
+ * thirty. Two checks drop a superseded answer, either one sufficient: the
+ * count of the last one asked, which every cancellation here also moves, and
+ * the signal. `shown` keeps the last value that loaded
+ * while a newer one is read, so a view need not collapse and come back. A
+ * null key asks nothing.
  */
-function useRead<T>(key: string | null, read: () => Promise<ApiResult<T>>): Read<T> {
+function useRead<T>(key: string | null, read: (signal: AbortSignal) => Promise<ApiResult<T>>): Read<T> {
   const [value, setValue] = useState<Omit<Read<T>, 'retry'>>({ key: null, state: { status: 'loading' }, shown: null });
   const latest = useRef(0);
+  const inFlight = useRef<AbortController | null>(null);
   const reader = useRef(read);
   reader.current = read;
   const ask = useCallback(() => {
     const mine = ++latest.current;
+    inFlight.current?.abort();
+    inFlight.current = null;
     if (key === null) return;
+    const controller = new AbortController();
+    inFlight.current = controller;
     setValue((prev) => ({ key, state: { status: 'loading' }, shown: prev.state.status === 'loaded' ? prev.state.value : prev.shown }));
-    void reader.current().then((result) => {
-      if (mine !== latest.current) return;
+    void reader.current(controller.signal).then((result) => {
+      // A cancelled request was superseded: its outcome is never shown, an error least of all.
+      if (mine !== latest.current || controller.signal.aborted) return;
       setValue((prev) => ({ key, state: result.ok ? { status: 'loaded', value: result.value } : { status: 'error', problem: result.problem }, shown: result.ok ? result.value : prev.shown }));
     });
   }, [key]);
-  useEffect(ask, [ask]);
+  useEffect(() => {
+    ask();
+    return () => {
+      // The key changed or the screen went: whatever this asked is superseded.
+      ++latest.current;
+      inFlight.current?.abort();
+      inFlight.current = null;
+    };
+  }, [ask]);
   // Until the first answer for this key lands, the state is its loading.
   const current = value.key === key ? value.state : ({ status: 'loading' } as const);
   return { key, state: current, shown: value.shown, retry: ask };
@@ -71,21 +90,21 @@ const copy = (hash: string) => {
 type Selected = { node: string; from: 'A' | 'B' };
 
 export function ReplayScreen({ client, run, query, with: other }: ReplayScreenProps) {
-  const detail = useRead<RunDetail>(`detail ${run}`, () => client.get('/runs/{id}', { id: run }));
-  const queries = useRead<RunQueries>(`queries ${run}`, () => client.get('/runs/{id}/queries', { id: run }));
-  const listing = useRead<RunListing>('listing', () => client.get('/runs'));
+  const detail = useRead<RunDetail>(`detail ${run}`, (signal) => client.get('/runs/{id}', { id: run }, { signal }));
+  const queries = useRead<RunQueries>(`queries ${run}`, (signal) => client.get('/runs/{id}/queries', { id: run }, { signal }));
+  const listing = useRead<RunListing>('listing', (signal) => client.get('/runs', { signal }));
   const [missing, setMissing] = useState(false);
-  const missed = useRead<RunQueries>(missing ? `missing ${run}` : null, () => client.get('/runs/{id}/queries', { id: run }, { query: { missing_gold_at: MISS_AT } }));
-  const trace = useRead<QueryTrace>(query === undefined ? null : `trace ${run} ${query}`, () => client.get('/runs/{id}/trace/{query}', { id: run, query: query ?? '' }));
+  const missed = useRead<RunQueries>(missing ? `missing ${run}` : null, (signal) => client.get('/runs/{id}/queries', { id: run }, { query: { missing_gold_at: MISS_AT }, signal }));
+  const trace = useRead<QueryTrace>(query === undefined ? null : `trace ${run} ${query}`, (signal) => client.get('/runs/{id}/trace/{query}', { id: run, query: query ?? '' }, { signal }));
 
   const runs = loaded(listing);
   const offered = useMemo(() => (runs === null ? [] : candidates(runs, run)), [runs, run]);
   // A run beside that is not on this run's benchmark is refused, never drawn.
   const refused = other !== undefined && runs !== null && !offered.some((r) => r.id === other);
   const beside = other !== undefined && !refused ? other : null;
-  const otherDetail = useRead<RunDetail>(beside === null ? null : `detail ${beside}`, () => client.get('/runs/{id}', { id: beside ?? '' }));
-  const otherQueries = useRead<RunQueries>(beside === null ? null : `queries ${beside}`, () => client.get('/runs/{id}/queries', { id: beside ?? '' }));
-  const otherTrace = useRead<QueryTrace>(beside === null || query === undefined ? null : `trace ${beside} ${query}`, () => client.get('/runs/{id}/trace/{query}', { id: beside ?? '', query: query ?? '' }));
+  const otherDetail = useRead<RunDetail>(beside === null ? null : `detail ${beside}`, (signal) => client.get('/runs/{id}', { id: beside ?? '' }, { signal }));
+  const otherQueries = useRead<RunQueries>(beside === null ? null : `queries ${beside}`, (signal) => client.get('/runs/{id}/queries', { id: beside ?? '' }, { signal }));
+  const otherTrace = useRead<QueryTrace>(beside === null || query === undefined ? null : `trace ${beside} ${query}`, (signal) => client.get('/runs/{id}/trace/{query}', { id: beside ?? '', query: query ?? '' }, { signal }));
 
   const [chosenMetric, setMetric] = useState<string | null>(null);
   const [selected, setSelected] = useState<Selected | null>(null);

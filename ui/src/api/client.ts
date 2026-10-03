@@ -12,9 +12,11 @@ export const BUILD_HEADER = 'x-ragondin-build';
 /**
  * The codes the client itself reports, for failures that never reached the
  * API's own error handling: no answer at all, an answer it cannot read, a
- * different build answering, and a request it refused to send.
+ * different build answering, a request it refused to send, and a request its
+ * caller cancelled — which a caller drops rather than renders, since it asked
+ * for the cancellation.
  */
-export type ClientCode = 'network_failed' | 'response_unreadable' | 'build_mismatch' | 'request_invalid';
+export type ClientCode = 'network_failed' | 'response_unreadable' | 'build_mismatch' | 'request_invalid' | 'request_aborted';
 
 /** Every failure a screen renders, whether the API or the client reported it. */
 export type ApiProblem = {
@@ -56,14 +58,14 @@ type HeadersOf<O> = O extends { headers: infer H } ? H : never;
 type AllOptional<T> = Partial<T> extends T ? true : false;
 /** `{ key: T }`, optional when every member of `T` is; nothing when the operation declares no `T`. */
 type Field<K extends string, T> = [T] extends [never] ? unknown : AllOptional<T> extends true ? { [Key in K]?: T } : { [Key in K]: T };
-/** The query parameters and request headers an operation declares, as the description types them. */
-export type RequestOptions<P extends keyof Paths, M extends Method> = Field<'query', QueryOf<Operation<P, M>>> & Field<'headers', HeadersOf<Operation<P, M>>>;
-/** No argument for an operation with neither; the options otherwise, optional unless one of them is required. */
-type OptionsArg<P extends keyof Paths, M extends Method> = [QueryOf<Operation<P, M>> | HeadersOf<Operation<P, M>>] extends [never]
-  ? []
-  : AllOptional<RequestOptions<P, M>> extends true
-    ? [options?: RequestOptions<P, M>]
-    : [options: RequestOptions<P, M>];
+/**
+ * The query parameters and request headers an operation declares, as the
+ * description types them, and the signal that cancels the request — which any
+ * operation takes, since it is the caller's and never sent.
+ */
+export type RequestOptions<P extends keyof Paths, M extends Method> = Field<'query', QueryOf<Operation<P, M>>> & Field<'headers', HeadersOf<Operation<P, M>>> & { signal?: AbortSignal };
+/** The options, optional unless a declared query parameter or header is required. */
+type OptionsArg<P extends keyof Paths, M extends Method> = AllOptional<RequestOptions<P, M>> extends true ? [options?: RequestOptions<P, M>] : [options: RequestOptions<P, M>];
 /** The arguments after the path (and the body): its path parameters, then its query and headers. */
 type Args<P extends keyof Paths, M extends Method> = [...ParamsArg<P, M>, ...OptionsArg<P, M>];
 
@@ -76,7 +78,7 @@ export type ApiClient = {
 };
 
 /** What the request builder reads off the arguments after the path. */
-type Sent = { params: Record<string, string> | undefined; query: Record<string, unknown> | undefined; headers: Record<string, unknown> | undefined };
+type Sent = { params: Record<string, string> | undefined; query: Record<string, unknown> | undefined; headers: Record<string, unknown> | undefined; signal: AbortSignal | undefined };
 
 /**
  * The query string of `query`, serialized by `URLSearchParams` — every
@@ -144,7 +146,7 @@ const unreadable = (request: string, status: number, why: string): ApiProblem =>
  * `ApiProblem` the caller must render, never an exception it could forget.
  */
 export function createApiClient(): ApiClient {
-  async function request(method: Method, template: string, body: unknown, { params, query, headers }: Sent): Promise<ApiResult<never>> {
+  async function request(method: Method, template: string, body: unknown, { params, query, headers, signal }: Sent): Promise<ApiResult<never>> {
     const verb = method.toUpperCase();
     const path = fill(template, params);
     if (path === null) {
@@ -169,6 +171,7 @@ export function createApiClient(): ApiClient {
       if (value !== undefined && value !== null) sent[header] = String(value);
     }
     const init: RequestInit = { method: verb, headers: sent };
+    if (signal !== undefined) init.signal = signal;
     if (body !== undefined) {
       init.body = JSON.stringify(body);
       init.headers = { ...sent, 'content-type': 'application/json' };
@@ -185,10 +188,19 @@ export function createApiClient(): ApiClient {
       },
     });
 
+    // Cancelled by its caller, before its answer or while its body was read:
+    // told apart by the signal, never by the error's name, which varies.
+    const aborted = (status: number | null, build: string | null): ApiResult<never> => ({
+      ok: false,
+      build,
+      problem: { code: 'request_aborted', message: `${name} was cancelled by the view that asked for it.`, hint: 'Nothing to do: a newer request replaced it.', location: null, status },
+    });
+
     let response: Response;
     try {
       response = await fetch(url, init);
     } catch (e) {
+      if (signal?.aborted === true) return aborted(null, null);
       return networkFailed(e, null, 'failed before any answer');
     }
     const build = response.headers.get(BUILD_HEADER);
@@ -196,6 +208,7 @@ export function createApiClient(): ApiClient {
     try {
       text = await response.text();
     } catch (e) {
+      if (signal?.aborted === true) return aborted(response.status, build);
       // The answer began and its body broke off: the connection, not the API.
       return { ...networkFailed(e, response.status, `answered ${response.status}, and its body broke off`), build };
     }
@@ -227,12 +240,13 @@ export function createApiClient(): ApiClient {
     }
   }
 
-  // A path with a `{name}` takes its parameters first; the query and the
-  // headers, when the operation declares either, come after.
+  // A path with a `{name}` takes its parameters first; the options — the
+  // query and the headers, when the operation declares either, and the
+  // signal — come after.
   const sent = (template: string, rest: unknown[]): Sent => {
     const hasParams = template.includes('{');
-    const options = (rest[hasParams ? 1 : 0] ?? {}) as { query?: Record<string, unknown>; headers?: Record<string, unknown> };
-    return { params: hasParams ? (rest[0] as Record<string, string>) : undefined, query: options.query, headers: options.headers };
+    const options = (rest[hasParams ? 1 : 0] ?? {}) as { query?: Record<string, unknown>; headers?: Record<string, unknown>; signal?: AbortSignal };
+    return { params: hasParams ? (rest[0] as Record<string, string>) : undefined, query: options.query, headers: options.headers, signal: options.signal };
   };
   return {
     get: (path, ...rest) => request('get', path, undefined, sent(path, rest)),

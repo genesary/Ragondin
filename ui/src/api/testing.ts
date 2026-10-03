@@ -94,12 +94,15 @@ const pattern = (template: string) => new RegExp(`^${API_BASE}${template.replace
  * build identity `build` unless the reply names its own. A request no route
  * matches is answered as the server answers one: `route_not_found`. Returns
  * the requests made, as `GET /api/v1/…`, and beside each the JSON body it
- * sent, parsed — undefined for none. `vi.unstubAllGlobals()` restores
+ * sent, parsed — undefined for none — and the signal it was sent with. A
+ * request whose signal aborts before its answer is rejected with an
+ * `AbortError`, as `fetch` rejects one. `vi.unstubAllGlobals()` restores
  * `fetch`.
  */
 export function mockApi(routes: MockRoutes, { build = 'test-build' }: { build?: string } = {}) {
   const requests: string[] = [];
   const bodies: unknown[] = [];
+  const signals: (AbortSignal | undefined)[] = [];
   // A function is handed the request's query string and path for a GET, its parsed body otherwise.
   type Reply = (sent: unknown, path?: string) => MockReply<unknown> | Promise<MockReply<unknown>>;
   type Replies = MockReply<unknown>[] | Reply;
@@ -111,11 +114,27 @@ export function mockApi(routes: MockRoutes, { build = 'test-build' }: { build?: 
   const answer = (status: number, type: string, body: unknown, identity: string) =>
     new Response(JSON.stringify(body), { status, headers: { 'content-type': type, [BUILD_HEADER]: identity } });
 
-  vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+  const abortError = () => new DOMException('The operation was aborted.', 'AbortError');
+  // The answer, or the abort of its signal, whichever comes first.
+  const unlessAborted = <T,>(signal: AbortSignal | undefined, answer: Promise<T>): Promise<T> => {
+    if (signal === undefined) return answer;
+    if (signal.aborted) return Promise.reject(abortError());
+    return new Promise<T>((resolve, reject) => {
+      signal.addEventListener('abort', () => reject(abortError()), { once: true });
+      answer.then(resolve, reject);
+    });
+  };
+
+  vi.stubGlobal('fetch', (url: string, init?: RequestInit) => {
     const method = init?.method ?? 'GET';
     const sent: unknown = typeof init?.body === 'string' ? JSON.parse(init.body) : undefined;
     requests.push(`${method} ${url}`);
     bodies.push(sent);
+    signals.push(init?.signal ?? undefined);
+    return unlessAborted(init?.signal ?? undefined, respond(method, url, sent));
+  });
+
+  async function respond(method: string, url: string, sent: unknown): Promise<Response> {
     const route = table.find((r) => r.method === method && r.match.test(url));
     const replies = route?.replies;
     const [path = url, search = ''] = url.split(/\?(.*)/s);
@@ -134,6 +153,6 @@ export function mockApi(routes: MockRoutes, { build = 'test-build' }: { build?: 
     if ('network' in reply) throw new TypeError(reply.network);
     if ('problem' in reply) return answer(reply.problem.status, 'application/problem+json', reply.problem, reply.build ?? build);
     return answer(200, 'application/json', reply.body, reply.build ?? build);
-  });
-  return { requests, bodies };
+  }
+  return { requests, bodies, signals };
 }

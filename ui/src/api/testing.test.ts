@@ -77,3 +77,25 @@ describe('mockApi, a query string', () => {
     expect(!result.ok && result.problem.code).toBe('route_not_found');
   });
 });
+
+describe('mockApi, cancelled', () => {
+  it('records each request’s signal, and rejects a held answer as fetch does once its signal aborts', async () => {
+    const api = mockApi({ 'POST /compare': () => new Promise(() => {}), 'GET /runs': { body: { runs: [], unreadable: [], shapes: {} } } });
+    const client = createApiClient();
+    const controller = new AbortController();
+    const pending = client.post('/compare', { run_ids: ['a', 'b'], baseline: 'a' }, { signal: controller.signal });
+    await client.get('/runs');
+    expect(api.signals).toEqual([controller.signal, undefined]);
+    controller.abort();
+    const result = await pending;
+    expect(result.ok ? null : result.problem.code).toBe('request_aborted');
+  });
+
+  it('rejects a request whose signal had already aborted, without answering it', async () => {
+    mockApi({ 'GET /runs': { body: { runs: [], unreadable: [], shapes: {} } } });
+    const controller = new AbortController();
+    controller.abort();
+    const result = await createApiClient().get('/runs', { signal: controller.signal });
+    expect(result.ok ? null : result.problem.code).toBe('request_aborted');
+  });
+});
