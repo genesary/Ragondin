@@ -2,7 +2,7 @@
 // service. Each submits through a callback that answers with the API's
 // refusal or null, and shows a refusal under its field in the API's own
 // words — inline, where it is corrected (the front-end design, § 8).
-import { useEffect, useId, useState, type FormEvent } from 'react';
+import { useId, useLayoutEffect, useState, type FormEvent } from 'react';
 import { Button, InlineMessage, Input, Select } from '../../design/index.ts';
 import type { ApiProblem } from '../api/client.ts';
 
@@ -11,10 +11,14 @@ const words = (problem: ApiProblem) => `${problem.message} ${problem.hint}`;
 
 /**
  * Moves focus to the field a refusal is shown under, each time one arrives,
- * so a screen reader reads its description — the API's words.
+ * so a screen reader reads its description — the API's words. A layout
+ * effect, so focus moves in the same commit that shows the refusal: a passive
+ * effect runs later, and anything reading the page in between — a screen
+ * reader, or a test waiting on the field's `aria-invalid` — finds the words
+ * there and focus not yet on them.
  */
 function useFocusOnRefusal(refused: ApiProblem | null, field: string) {
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (refused !== null) document.getElementById(field)?.focus();
   }, [refused, field]);
 }
