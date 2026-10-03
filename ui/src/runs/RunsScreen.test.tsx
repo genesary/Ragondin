@@ -189,6 +189,21 @@ describe('over a listing with two benchmarks', () => {
     expect(screen.getByRole('link', { name: 'hybrid' }).getAttribute('href')).toBe('#pipeline/hybrid');
   });
 
+  it('keeps the documents it last listed when only a re-read\'s `/pipelines` fails, so a gone name does not turn back into a link', async () => {
+    const gone = summary(R1, HYBRID, SCIFACT, {}, { launched_as: { name: 'hybrid-old', prefix_of: null } });
+    const first: RunListing = { ...LISTING, runs: [gone] };
+    const later: RunListing = { ...LISTING, runs: [gone, summary(R5, DENSE, SCIFACT)] };
+    const failed: Problem = { type: 'urn:ragondin:problem:backend_failed', title: 'Backend failed', status: 502, code: 'backend_failed', detail: 'pipelines/ cannot be read', hint: 'Check the workspace.' };
+    const api = show('#runs', routes([{ body: first }, { body: later }], [{ body: documents('hybrid') }, { problem: failed }]));
+    await loaded();
+    expect(within(screen.getByText('hybrid-old').closest('th') as HTMLElement).queryByRole('link')).toBeNull();
+    // The address names a run the listing lacks: the screen reads again, and that read's `/pipelines` fails.
+    act(() => navigate({ screen: 'runs', sel: [R5] }, { replace: true }));
+    await waitFor(() => expect(box(R5).checked).toBe(true));
+    expect(api.requests.filter((r) => r.startsWith('GET /api/v1/pipelines'))).toHaveLength(2);
+    expect(within(screen.getByText('hybrid-old').closest('th') as HTMLElement).queryByRole('link')).toBeNull();
+  });
+
   it('links every recorded name when the workspace\'s documents cannot be listed, and still shows the runs', async () => {
     const recorded: RunListing = { ...LISTING, runs: [summary(R1, HYBRID, SCIFACT, {}, { launched_as: { name: 'hybrid-old', prefix_of: null } })] };
     show('#runs', routes({ body: recorded }, { problem: { type: 'urn:ragondin:problem:backend_failed', title: 'Backend failed', status: 502, code: 'backend_failed', detail: 'pipelines/ cannot be read', hint: 'Check the workspace.' } }));
@@ -422,13 +437,19 @@ describe('the selection', () => {
     const both: RunListing = { ...LATER, runs: [...LATER.runs, summary(hex('7'), DENSE, SCIFACT)] };
     // The first listing answers; the re-read for R5 is held; so is the one for R5 and the seventh run, until released.
     const api = show('#runs', routes(() => (++asked === 1 ? { body: LISTING } : asked === 2 ? new Promise(() => {}) : new Promise((r) => (release = r)))));
+    // Each read is a pair, `/runs` and `/pipelines`, sent with one signal: the signals each path was sent with, in order.
+    const signalsOf = (path: string) => api.signals.filter((_, i) => api.requests[i]?.startsWith(`GET /api/v1${path}`));
     await loaded();
     act(() => navigate({ screen: 'runs', sel: [R5] }, { replace: true }));
-    await waitFor(() => expect(api.signals).toHaveLength(2));
-    expect(api.signals[1]?.aborted).toBe(false);
+    await waitFor(() => expect(signalsOf('/runs')).toHaveLength(2));
+    expect(signalsOf('/runs')[1]?.aborted).toBe(false);
     act(() => navigate({ screen: 'runs', sel: [R5, hex('7')] }, { replace: true }));
-    await waitFor(() => expect(api.signals).toHaveLength(3));
-    expect(api.signals[1]?.aborted).toBe(true);
+    await waitFor(() => expect(signalsOf('/runs')).toHaveLength(3));
+    expect(signalsOf('/runs')[1]?.aborted).toBe(true);
+    // The overtaken read's `/pipelines` is cancelled with it; the newer pair's is not.
+    expect(signalsOf('/pipelines')).toHaveLength(3);
+    expect(signalsOf('/pipelines')[1]?.aborted).toBe(true);
+    expect(signalsOf('/pipelines')[2]?.aborted).toBe(false);
     // While the newer re-read is still held, the aborted one has settled: it must show nothing.
     await act(async () => new Promise((r) => setTimeout(r, 0)));
     expect(screen.queryByRole('alert')).toBeNull();

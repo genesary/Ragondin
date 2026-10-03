@@ -64,7 +64,8 @@ export function RunsScreen({ client, sel }: RunsScreenProps) {
     if (mine !== latest.current || controller.signal.aborted) return;
     const documents = pipelines.ok ? new Set(pipelines.value.pipelines.map((p) => p.name)) : null;
     setRead((prev) => {
-      if (result.ok) return { listing: { status: 'loaded', value: result.value }, documents, askedWith, refresh: null };
+      // A re-read whose `/pipelines` alone fails keeps the documents last listed, so no heading flips back to a link.
+      if (result.ok) return { listing: { status: 'loaded', value: result.value }, documents: documents ?? prev.documents, askedWith, refresh: null };
       // A re-read that fails leaves the listing already shown in place.
       if (prev.listing.status === 'loaded') return { ...prev, refresh: result.problem };
       return { listing: { status: 'error', problem: result.problem }, documents: null, askedWith, refresh: null };

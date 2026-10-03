@@ -1,11 +1,13 @@
 /** @vitest-environment happy-dom */
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { declared } from '../../design/testing/css.ts';
 import { createApiClient, type ApiClient } from '../api/client.ts';
 import { mockApi, type MockReply, type MockRoutes } from '../api/testing.ts';
 import type { CompareRequest, Comparison, Problem, RunListing, RunSummary } from '../api/types.ts';
 import { useRoute } from '../routes.ts';
 import { CompareScreen } from './CompareScreen.tsx';
+import css from './Compare.css?raw';
 import { COMPARISON, DENSE, HYBRID, RERANK, SCIFACT } from './fixtures.ts';
 
 const hex = (c: string) => c.repeat(64);
@@ -221,6 +223,13 @@ describe('the charts', () => {
     expect(screen.getByRole('status', { name: 'Pairs drawn by hand not placed' })).toBe(region);
     expect(region.textContent).toContain('1 pair drawn by hand not placed');
     expect(list.closest('[role="status"]')).toBe(region);
+  });
+
+  it('takes the empty live region out of flow, so it adds no gap to the stages and moves nothing', () => {
+    // A grid's row gap cannot be taken back by a margin: out of flow, the region makes no row at all.
+    // It stays in the accessibility tree, as `display: none` would not. Measured in a browser in the PR.
+    expect(declared(css, '.rg-compare__unplaced:empty', 'position')).toBe('absolute');
+    expect(declared(css, '.rg-compare__stack > .rg-compare__unplaced:empty', 'margin-top')).toBeUndefined();
   });
 
   it('draws the stage line: the legs, after fusion, after rerank; the dense-only line breaks where it has no stage', async () => {

@@ -46,9 +46,10 @@ pub(crate) struct Index {
 }
 
 /// The workspace's pipelines, listed once: by canonical hash, and every name.
-/// `POST /compare` reads both from the one listing, so a document deleted
-/// between two listings cannot name a run's pipeline in one and be missing
-/// from the other.
+/// `POST /compare` reads both from the one listing, which narrows the window
+/// in which a document deleted meanwhile names a run's pipeline and is then
+/// missing; it cannot close it, since the document can still go before its
+/// pairing is read.
 pub(crate) async fn index(source: &dyn PipelineSource) -> Result<Index, ApiError> {
     let mut index = Index {
         by_hash: BTreeMap::new(),
