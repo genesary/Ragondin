@@ -66,7 +66,7 @@
 //! `already stored; this execution was not kept`. It exits `0`: nothing
 //! failed, and a script that re-runs a benchmark keeps working. A run the
 //! store holds but cannot read is an error that names the run, and nothing is
-//! saved over it. When the store does not hold the id, `bench` saves the run
+//! saved over it; before this rule it exited `0` with the usual summary. When the store does not hold the id, `bench` saves the run
 //! and prints exactly what it always has.
 //!
 //! The whole evaluation still runs before the store is asked, because the run

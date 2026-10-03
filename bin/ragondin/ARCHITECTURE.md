@@ -366,7 +366,15 @@ release.
   <name>; this execution was not kept`, or `already stored; this execution
   was not kept` when the stored run has no name in its record, and exits
   `0`. A stored run that does not read is an error naming it, and nothing is
-  saved. The evaluation still runs first, because the id exists only once
+  saved: it used to exit `0` with the usual summary, and now exits non-zero.
+  Two smaller consequences follow from `save` not being called. An execution
+  whose metrics hold a non-finite value, over a run already stored, now exits
+  `0` with the report, since nothing is written and so `save`'s `NotFinite`
+  refusal is never reached. And the race between `load` and `save` remains:
+  another writer that files the same run between the two leaves this
+  execution's `save` a no-op, which still prints the summary as if filed,
+  until the refusal half moves the lookup before execution with #353. The
+  evaluation still runs first, because the id exists only once
   `evaluate` returns. Refusing before preparation, as the UI's
   `409 run_exists` does, needs a shared preparation that computes the
   identity before execution.
