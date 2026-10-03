@@ -5,7 +5,7 @@ binary links: `bin/ragondin/third-party-notices-rust.txt`.
 The binary statically links its dependency closure, and the MIT, BSD and
 Apache-2.0 terms most of those crates carry require their copyright and licence
 notices to accompany a redistributed binary. The binary embeds this file and
-prints it (`ragondin notices`), and `ragondin ui` serves it at
+prints it (`ragondin --notices`), and `ragondin ui` serves it at
 `/third-party-notices-rust.txt`, beside the UI's own notices
 (`bin/ragondin/ARCHITECTURE.md` § The licence notices of the Rust crates).
 
@@ -37,7 +37,8 @@ SHA-256, however many crates ship it.
 **A crate that ships no licence file.** It gets the standard text of every
 alternative of its licence expression that `deny.toml`'s `[licenses] allow`
 admits and `scripts/licence-texts/` holds, and its entry says that it ships
-none and names the authors its manifest gives as the copyright holders. An
+none and names the authors its manifest gives as the copyright holders,
+saying, under MIT, that they fill the standard text's placeholder. An
 alternative that is compound (`AND`, `WITH`) is not used. When no alternative
 qualifies, generation fails and names the crate: the remedy is a reviewed text
 under `scripts/licence-texts/`, never a guess.
@@ -224,6 +225,8 @@ def entry(package: dict, root: str, allow: set[str], texts: dict[str, str]) -> l
     authors = ", ".join(package.get("authors") or []) or "none named"
     lines.append("Ships no licence file; the standard text of its licence applies.")
     lines.append(f"Copyright holders, as its manifest names its authors: {authors}")
+    if any(name == "MIT" for name, _ in standard):
+        lines.append("MIT's <year> <copyright holders> placeholder is filled by the line above.")
     for name, text in standard:
         texts[label(text)] = text
         lines.append(f"{name} (standard text): text {label(text)}")

@@ -703,10 +703,13 @@ own notices point at it.
   `OR`; a compound `AND` or `WITH` alternative is not used), and it names the
   authors its manifest gives as the copyright holders. If no alternative
   qualifies, generation fails and names the crate. The fix is then a reviewed
-  text under `scripts/licence-texts/`, never a guess. Fourteen crates are in
-  this case today, eight of them crates of the `tantivy` project (its
+  text under `scripts/licence-texts/`, never a guess. The generated file's
+  `Ships no licence file` lines say which crates are in this case; when this
+  rule was written, most were crates of the `tantivy` project (its
   `tantivy-*` sub-crates and `ownedbytes`) published without their
-  repository's file. The UI does the opposite (`ui/ARCHITECTURE.md` § The
+  repository's file. In a no-file entry under MIT, the standard text's
+  `<year> <copyright holders>` placeholder is filled by the `Copyright
+  holders` line above it. The UI does the opposite (`ui/ARCHITECTURE.md` § The
   third-party notices): it refuses such a package unless an override names
   the package's version. That suits a bundle in which no package needs one.
   Here an override per version would turn every `tantivy` upgrade into a hand
@@ -722,10 +725,13 @@ own notices point at it.
   metadata written by hand. `tests/cli.rs` checks that `--notices` prints the
   committed file from a directory with no source tree, and `tests/ui.rs`
   checks that every `ui` build serves it.
-- **Not covered.** The prebuilt ONNX Runtime archive that the `onnx` feature
-  links (ADR-C27) is not a Rust crate, and Rust's standard library is not a
-  package in the graph. Neither has an entry. A binary distributed with
-  `onnx` owes ONNX Runtime's notice separately.
+- **Not covered; #444 takes it up.** The prebuilt ONNX Runtime archive that
+  the `onnx` feature links (ADR-C27) is not a Rust crate, and Rust's standard
+  library is not a package in the graph. Neither has an entry. A binary
+  distributed with `onnx` owes ONNX Runtime's notice separately. Licence
+  files outside a crate's root (a `licenses/` directory, say) are out of
+  scope too: only the files at the root, and the manifest's `license-file`,
+  are read.
 
 ## Dependency choices made here
 

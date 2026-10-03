@@ -232,7 +232,10 @@ async fn dispatch(cli: Cli) -> Result<()> {
             return Ok(());
         }
         (false, Some(command)) => command,
-        (false, None) => anyhow::bail!("no subcommand given; see `ragondin --help`"),
+        (false, None) => unreachable!(
+            "clap's arg_required_else_help answers a bare `ragondin` before dispatch, \
+             and `--notices` is the only argument accepted without a subcommand"
+        ),
     };
     match command {
         Command::Validate { config } => validate::run(&config).await,

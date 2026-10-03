@@ -319,6 +319,7 @@ def a_crate_with_no_licence_file_gets_the_standard_text_of_each_allowed_alternat
         result = f.run().exits(0)
         result.lists("The MIT text.").lists("The Apache text.")
         result.lists("ships no licence file").lists("Ada <ada@example.org>")
+        result.lists("MIT's <year> <copyright holders> placeholder is filled by the line above")
 
     with_fixture(body)
 
