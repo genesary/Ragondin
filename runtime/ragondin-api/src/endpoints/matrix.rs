@@ -18,9 +18,10 @@
 //! configuration matrix, and a benchmark whose only runs are such runs reads
 //! "not run on this version", linking the most recent.
 //!
-//! Each benchmark's column is the most recent run filling it
-//! (`matrix::most_recent_first`); the others are listed among the feeding
-//! runs, not used. A cell's figure is the per-node figure
+//! Each benchmark's column is the most recent run of the whole current
+//! form on it, or, with none, the most recent prefix
+//! (`matrix::most_recent_first`), so `missing` never names a launch that
+//! exists; the others are listed among the feeding runs, not used. A cell's figure is the per-node figure
 //! `GET /runs/{id}/queries` serves — the same function, the same cache — and
 //! its gain is taken over the previous stage by `comparison::gain`, over the
 //! stages `POST /compare` aligns runs by.
@@ -34,7 +35,7 @@ use ragondin_experiments::{compare_runs, terminal, ConfigDocument, Run};
 use ragondin_pipeline::{produced_kind, LogicalPipeline, NodeId, ValueKind};
 
 use crate::backends::RunDataset;
-use crate::comparison;
+use crate::comparison::{self, Gain};
 use crate::derived::{Metrics, NodeFigures, Outputs};
 use crate::error::ApiError;
 use crate::extract::{ApiPath, ApiQuery};
@@ -42,8 +43,8 @@ use crate::handlers::{self, AppState};
 use crate::matrix::{most_recent_first, topological, Recency};
 use crate::request::{IncludeAvailable, PipelineMatrixParameters};
 use crate::response::{
-    ConfigurationMatrix, FeedingRun, GroundTruth, MatrixCell, MatrixColumn, MatrixRow,
-    MissingCells, PipelineMatrix, PrefixOf,
+    ConfigurationMatrix, ContentSinceChanged, FeedingRun, GroundTruth, MatrixCell, MatrixColumn,
+    MatrixGain, MatrixRow, MissingCells, PipelineMatrix, PrefixOf, SinceChangedLaunch,
 };
 use crate::stages::Stages;
 use crate::{cache, convert, lineage, validation};
@@ -65,9 +66,10 @@ enum Standing {
         /// The node a prefix run stops at; `None` for the current form.
         up_to: Option<NodeId>,
     },
-    /// Launched as the pipeline, with content that has since changed: its
-    /// parameter difference against the current document. It fills nothing.
-    SinceChanged(ConfigurationMatrix),
+    /// Launched as the pipeline, with content that has since changed: how,
+    /// and its parameter difference against the current document. It fills
+    /// nothing.
+    SinceChanged(ContentSinceChanged),
 }
 
 impl Counted {
@@ -77,10 +79,6 @@ impl Counted {
             run,
             standing,
         }
-    }
-
-    fn fills(&self) -> bool {
-        matches!(self.standing, Standing::Fills { .. })
     }
 
     fn recency(&self) -> Recency<'_> {
@@ -121,19 +119,24 @@ pub(crate) async fn matrix(
         .filter_map(|run| self::counted(run, &name, &hash, &current, &file.document))
         .collect();
     counted.sort_by(|a, b| most_recent_first(a.recency(), b.recency()));
-    // Sorted most recent first, so the first run of each benchmark that
-    // fills cells fills its column; on a benchmark with none, the first run
-    // of earlier content is the one linked.
-    let mut filling: BTreeMap<String, usize> = BTreeMap::new();
+    // Sorted most recent first: on each benchmark the most recent run of the
+    // whole current form fills the column, or, with none, the most recent
+    // prefix; on a benchmark with neither, the most recent run of earlier
+    // content is the one linked.
+    let mut whole: BTreeMap<String, usize> = BTreeMap::new();
+    let mut prefixes: BTreeMap<String, usize> = BTreeMap::new();
     let mut since_changed: BTreeMap<String, usize> = BTreeMap::new();
     for (index, each) in counted.iter().enumerate() {
         let version = each.run.inputs.dataset_version.clone();
-        if each.fills() {
-            filling.entry(version).or_insert(index);
-        } else {
-            since_changed.entry(version).or_insert(index);
-        }
+        let slot = match &each.standing {
+            Standing::Fills { up_to: None, .. } => &mut whole,
+            Standing::Fills { up_to: Some(_), .. } => &mut prefixes,
+            Standing::SinceChanged { .. } => &mut since_changed,
+        };
+        slot.entry(version).or_insert(index);
     }
+    let mut filling = prefixes;
+    filling.extend(whole);
 
     let order = topological(&current);
     let rows: Vec<MatrixRow> = order
@@ -310,20 +313,32 @@ fn counted(
         // already place: a run's first record wins, so it may name another
         // parent than one it is also a prefix of.
         if recorded_prefix || lineage::is_prefix(&pipeline, current) {
-            if let Some(up_to) = terminal(&pipeline).map(|node| node.id().clone()) {
-                let standing = Standing::Fills {
-                    pipeline,
-                    up_to: Some(up_to),
-                };
-                return Some(Counted::new(run, standing));
-            }
+            // A part of the current form with no single output — two
+            // terminal nodes — is no prefix a cell can be cut at, and no
+            // earlier content either: it counts nowhere.
+            let up_to = terminal(&pipeline)?.id().clone();
+            let standing = Standing::Fills {
+                pipeline,
+                up_to: Some(up_to),
+            };
+            return Some(Counted::new(run, standing));
         }
     }
-    if record.and_then(|record| record.name()) != Some(name) {
+    let record = record?;
+    if record.name() != Some(name) {
         return None;
     }
-    let difference = difference(&run, document);
-    Some(Counted::new(run, Standing::SinceChanged(difference)))
+    let since = ContentSinceChanged {
+        // A record with `prefix_of` names the parent: the run is a prefix
+        // of an earlier version, never an earlier version (ADR-C39 § 2).
+        launched: if record.prefix_of().is_some() {
+            SinceChangedLaunch::AsPrefix
+        } else {
+            SinceChangedLaunch::AsPipeline
+        },
+        difference: difference(&run, document),
+    };
+    Some(Counted::new(run, Standing::SinceChanged(since)))
 }
 
 /// The parameter difference between the pipeline's current `document` and
@@ -452,7 +467,7 @@ async fn filled_column(
                 } else {
                     MatrixCell::Measured {
                         metrics: recorded,
-                        gain: None,
+                        gain: MatrixGain::Unstaged,
                         judged_queries: None,
                     }
                 };
@@ -460,11 +475,13 @@ async fn filled_column(
             if produced_kind(node) != ValueKind::Chunks {
                 return MatrixCell::NotScored;
             }
-            if !qrels {
-                return MatrixCell::NoQrels;
-            }
+            // Without the run's own dataset nothing says whether it carries
+            // qrels: what the run recorded is not inferred into `no_qrels`.
             if figures.is_none() {
                 return MatrixCell::Unverified;
+            }
+            if !qrels {
+                return MatrixCell::NoQrels;
             }
             match figure_of(id) {
                 Some(NodeFigures {
@@ -473,9 +490,14 @@ async fn filled_column(
                     ..
                 }) => MatrixCell::Measured {
                     metrics: values.clone(),
-                    gain: comparison::gain(&stages, id, |other| {
+                    gain: match comparison::gain(&stages, id, |other| {
                         figure_of(other).and_then(|figure| figure.metrics.as_ref())
-                    }),
+                    }) {
+                        Gain::Over(values) => MatrixGain::OverPreviousStage { values },
+                        Gain::FirstStage => MatrixGain::FirstStage,
+                        Gain::Ambiguous => MatrixGain::Ambiguous,
+                        Gain::Unstaged => MatrixGain::Unstaged,
+                    },
                     judged_queries: Some(*judged_queries),
                 },
                 _ => MatrixCell::NoFigure,

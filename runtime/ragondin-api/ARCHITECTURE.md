@@ -36,7 +36,7 @@ the response types, the typed errors, and the traits the service consumes.
 | `cache` | The workspace's `cache/`: those derived figures, reconstructible, never a truth |
 | `endpoints` | The handlers of the workspace's endpoints — pipelines, benchmarks, services — and of `POST /compare` and `GET /pipelines/{name}/matrix` |
 | `stages` | A pipeline's stages, derived from its nodes' kinds and positions, by which a comparison aligns runs |
-| `lineage` | Which workspace pipeline a run is a run of, by canonical hash — interim: ADR-C39 decides run → pipeline identity; the code does not follow it yet (#392) — and the structural prefix test, `is_prefix` |
+| `lineage` | The current workspace documents whose canonical hash is a run's — ADR-C39 § 4's content fact, beside the run's launch record, which the pipeline matrix reads; `GET /runs` does not serve the record yet (#392) — and the structural prefix test, `is_prefix` |
 | `comparison` | The runs aligned by stage with the pairs drawn by hand, the best node of a stage per metric, a node's gain over the previous stage, and the bins of the per-query deltas |
 | `matrix` | The most-recent-run rule and the topological order of the pipeline matrix's rows |
 | `validation` | A pipeline document checked as `ragondin validate` checks a file |
@@ -1241,7 +1241,13 @@ validate is `pipeline_invalid`), a cell is filled only from:
   `prefix_of.parent_pipeline_hash` is *H*, or, failing that, the structural
   test below says so — asked of **every** run, whatever its record names
   (ADR-C39 § 5): a run's first record wins, so a prefix recorded under
-  another parent is still a prefix here.
+  another parent is still a prefix here. A prefix placed by its record
+  alone — one the structural test does not confirm — is matched to the rows
+  by node id: its node `rerank` fills the row `rerank`.
+
+A run with no single output — a part of the current form with two terminal
+nodes, which the harness would not score — is no prefix a column can be cut
+at, nor earlier content, and counts nowhere, whatever its record says.
 
 **A run whose record names *N* and that is neither** — its content has
 changed since it was launched — fills no cell (ADR-C39 § 6, § 7). It is a
@@ -1250,7 +1256,12 @@ feeding run, "launched as *N*; content since changed", carrying in
 document: `compare_runs`' configuration matrix, the one `POST /compare` serves,
 over the current document set beside it in a run of its own that carries the
 run's inputs, the current document's column first — the existing diff, not a
-second one. A benchmark whose only runs are such runs gets a column whose
+second one. `content_since_changed.launched` says how its record launched it:
+`as_pipeline`, "launched as *N*; content since changed", or `as_prefix` for a
+record carrying `prefix_of`, "a prefix of an earlier version of *N*" — such a
+run is never an earlier version of *N* itself (ADR-C39 § 2), and its
+difference shows the nodes it stops before as well as the parameters that
+changed. A benchmark whose only runs are such runs gets a column whose
 every cell reads `not_run_on_this_version`, linking the most recent of them;
 a run filling cells on that benchmark, older or not, takes the column. No
 heuristic says whether it "is" an earlier version.
@@ -1275,8 +1286,16 @@ node of *N*. It compares canonical forms, never text (INV-8), through
 changed parameter, or with an edge *N* lacks, is not a prefix; the whole
 pipeline is not its own prefix, which is hash equality.
 
-**The most-recent-run rule** (`matrix::most_recent_first`). A column is the
-most recent counted run on its benchmark: the greatest `started_at_ms` first,
+**Which run fills a column.** On each benchmark, the most recent run of the
+whole current form; with none, the most recent prefix of it; with neither,
+the column links the most recent run of earlier content. A prefix newer than
+a run of the whole form is a feeding run that fills nothing: the column shows
+the run that measured every row, and **`missing` never proposes a launch that
+already exists** — a run of the whole current form on a benchmark is that
+launch, and would be refused `run_exists`.
+
+**The most-recent-run rule** (`matrix::most_recent_first`). "Most recent" is
+the greatest `started_at_ms` first,
 read from the run's own record (`Run::times`); a run whose time is unknown
 after every run with one, so it is never chosen over one; ties, unknown
 included, broken by run id, lowest first. No time is ever read from the
@@ -1294,9 +1313,11 @@ runs that fill nothing.
 - **Columns** are keyed by `dataset_version`, the digest a run records, with
   every benchmark the registry pins to it (`Registry::pinned`, which loads
   nothing), and sorted by benchmark name. `ground_truth` is read off the
-  dataset when it verifies, and otherwise off the metrics the run recorded:
-  the harness records a family's metrics only when the benchmark carries its
-  piece. `dataset_check` is the run's `DatasetCheck`, as
+  dataset when it verifies, and otherwise inferred from the metrics the run
+  recorded — the harness records a family's metrics only when the benchmark
+  carries its piece — and that inference decides only the generator's row:
+  without the run's own dataset every ranking row reads `unverified`, never
+  `no_qrels`. `dataset_check` is the run's `DatasetCheck`, as
   `GET /runs/{id}/queries` gives it.
 - **A ranking node's cell** is the per-node figure `GET /runs/{id}/queries`
   serves — `handlers::figures`, the same function and the same cache entry —
@@ -1305,10 +1326,17 @@ runs that fill nothing.
   derivation, the one `POST /compare` aligns runs by, and `comparison::best`,
   the rule `POST /compare`'s stage cells take their best from): the fusion
   over the best retrieval leg, the reranker over the fusion, or over the best
-  leg with no fusion before it. A retrieval leg has no previous stage, so its
-  gain is `null` and the value stands alone.
+  leg with no fusion before it. The gain is a tagged value, so that four
+  different "no gain"s are never one `null`: `over_previous_stage` with its
+  values; `first_stage` for a retrieval leg, whose value stands alone;
+  `ambiguous` where the stage derivation guessed (`Stages::guessed`: two
+  fusions, two rerankers, or a reranker upstream of the fusion), so which
+  stage came before is a guess too and no gain is served as fact — Compare
+  answers `confidence: low` over the same derivation; and `unstaged` for the
+  generator.
 - **The generator's cell** is the answer metrics the run recorded, its
-  `metrics.json`'s, never a node figure (§ *What a figure is*), with no gain.
+  `metrics.json`'s, never a node figure (§ *What a figure is*), with its gain
+  `unstaged`.
 - **An empty cell says why**: `no_qrels` (a ranking node on a benchmark
   without qrels) and `no_reference_answers` (the generator on one without
   reference answers), never measurable there; `not_run_yet`, with the
@@ -1320,18 +1348,18 @@ runs that fill nothing.
 
 `missing` lists, per column, the nodes reading `not_run_yet`,
 `prefix_stops` or `not_run_on_this_version`: what a run of the whole pipeline
-on that benchmark would fill, named by the benchmark to launch it on. Nothing
-here launches.
+on that benchmark would fill, named by the benchmark to launch it on. Each
+appears only on a benchmark with no run of the whole current form, by the
+column rule above. Nothing here launches.
 
 **The record is read, never stamped.** `Run::provenance` is the binary's to
 write (ADR-C39 § 3); this endpoint reads it in `counted`, `endpoints/matrix.rs`.
 
 Choices made here (`AGENTS.md` § Rules of engagement):
 
-- **A column is one run, the most recent**, prefix or not, as the design
-  document § 3 gives it: a prefix run newer than a run of the whole pipeline
-  fills the column, and the nodes it stops before read `prefix_stops` and are
-  listed in `missing`, rather than one column mixing two runs' figures.
+- **A column is one run**, never two runs' figures mixed: the most recent
+  run of the whole current form, or the most recent prefix where there is
+  none — so that `missing` never names a launch that exists.
 - **Three more reasons than `no qrels`, `no reference answers` and `not run
   yet`**, because three more states exist: `not_scored` — a node whose output
   no metric reads, a context builder, an extension's value, a generator that

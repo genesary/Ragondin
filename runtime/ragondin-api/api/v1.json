@@ -428,6 +428,32 @@
           }
         ]
       },
+      "ContentSinceChanged": {
+        "description": "A run launched as the matrix's pipeline whose content has since changed:\nstated as a fact, never guessed to be an earlier version (ADR-C39 § 7).",
+        "properties": {
+          "difference": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ConfigurationMatrix"
+              }
+            ],
+            "description": "Its parameter difference against the pipeline's current document, by\n`POST /compare`'s configuration matrix, the current document's column\nfirst."
+          },
+          "launched": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/SinceChangedLaunch"
+              }
+            ],
+            "description": "How its record says it was launched."
+          }
+        },
+        "required": [
+          "launched",
+          "difference"
+        ],
+        "type": "object"
+      },
       "DatasetCheck": {
         "description": "Whether the dataset on disk is the one a run was evaluated on: the\nbenchmark pinned to the run's `dataset_version`, digesting to it — and,\nfor passage text, its derived chunk set digesting to the run's\n`index_version`.",
         "properties": {
@@ -737,7 +763,7 @@
           "content_since_changed": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/ConfigurationMatrix"
+                "$ref": "#/components/schemas/ContentSinceChanged"
               },
               {
                 "enum": [
@@ -746,14 +772,14 @@
                 "nullable": true
               }
             ],
-            "description": "For a run launched as this pipeline whose content has since changed —\n\"launched as N; content since changed\", N this pipeline (ADR-C39 § 7) — its\nparameter difference against the pipeline's current document, by\n`POST /compare`'s configuration matrix, the current document's column\nfirst; `null` for a run that fills a cell."
+            "description": "For a run launched as this pipeline whose content has since changed\n(ADR-C39 § 7): how it was launched, and its parameter difference\nagainst the pipeline's current document; `null` for a run that fills\na cell."
           },
           "dataset_version": {
             "description": "The digest of the dataset it ran on.",
             "type": "string"
           },
           "fills_column": {
-            "description": "Whether it is the run its column shows: the most recent on its\nbenchmark.",
+            "description": "Whether it is the run its column shows.",
             "type": "boolean"
           },
           "launched_as": {
@@ -789,7 +815,7 @@
                 "nullable": true
               }
             ],
-            "description": "For a prefix of the matrix's pipeline, by the structural test: the\npipeline and the node it stops at; `null` for a run of the current\ncanonical form."
+            "description": "For a prefix of the matrix's pipeline's current form — by its launch\nrecord's parent hash, or by the structural test — the pipeline and the\nnode it stops at; `null` otherwise."
           },
           "run": {
             "description": "The run's id.",
@@ -1113,13 +1139,12 @@
             "description": "Measured: a ranking node's metrics at its output, as\n`GET /runs/{id}/queries` reports them, or the generator's\nanswer metrics, as the run recorded them.",
             "properties": {
               "gain": {
-                "additionalProperties": {
-                  "format": "double",
-                  "type": "number"
-                },
-                "description": "Per metric, the value minus the best value of the previous ranking\nstage — the gain, which is what says where a node helps; `null`\nwhere there is no previous stage (a retrieval leg) and for the\ngenerator.",
-                "nullable": true,
-                "type": "object"
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/MatrixGain"
+                  }
+                ],
+                "description": "The gain over the previous ranking stage, which is what says\nwhere a node helps, or why there is none."
               },
               "judged_queries": {
                 "description": "How many judged queries a ranking node's means are over; `null`\nfor the generator, whose figures are the run's.",
@@ -1338,7 +1363,7 @@
             "description": "The ground truth it carries: read off the dataset when it verified,\notherwise off the metrics the run recorded; `null` for a benchmark no\nrun measured."
           },
           "run": {
-            "description": "The run that fills the column — the most recent counted run on this\nbenchmark; `null` when none ran on it.",
+            "description": "The run that fills the column — the most recent run of the whole\ncurrent form on this benchmark, or, with none, the most recent prefix\nof it; `null` when neither ran on it.",
             "nullable": true,
             "type": "string"
           },
@@ -1358,6 +1383,80 @@
           "up_to"
         ],
         "type": "object"
+      },
+      "MatrixGain": {
+        "description": "A matrix cell's gain over the previous ranking stage, or why it has none.",
+        "oneOf": [
+          {
+            "description": "Per metric, the node's value minus the best value of the nearest\nstage before its own.",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "over_previous_stage"
+                ],
+                "type": "string"
+              },
+              "values": {
+                "additionalProperties": {
+                  "format": "double",
+                  "type": "number"
+                },
+                "description": "The gains, by metric name.",
+                "type": "object"
+              }
+            },
+            "required": [
+              "kind",
+              "values"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "The node is at the first ranking stage — a retrieval leg: nothing\ncomes before it, and the value stands alone.",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "first_stage"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "The pipeline's stages are a guess — two fusions, two rerankers, or a\nreranker upstream of the fusion — so which stage came before this one\nis too, and no gain is served as fact. Compare's stages say\n`confidence: low` over the same derivation.",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "ambiguous"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "The node is at no ranking stage: the generator.",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "unstaged"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          }
+        ]
       },
       "MatrixRow": {
         "description": "One node of the matrix's pipeline.",
@@ -1956,7 +2055,7 @@
             "type": "array"
           },
           "missing": {
-            "description": "Per column, the nodes no run measured that a run of the whole\npipeline on that benchmark would: what a launch would fill.",
+            "description": "Per column, the nodes no run measured that a run of the whole\npipeline on that benchmark would: what a launch would fill. Never on a\nbenchmark where such a run exists.",
             "items": {
               "$ref": "#/components/schemas/MissingCells"
             },
@@ -2793,6 +2892,25 @@
           "services"
         ],
         "type": "object"
+      },
+      "SinceChangedLaunch": {
+        "description": "How a run of since-changed content was launched.",
+        "oneOf": [
+          {
+            "description": "As the pipeline: \"launched as N; content since changed\".",
+            "enum": [
+              "as_pipeline"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "As a prefix of the pipeline, cut from a version that is not the\ncurrent one: \"a prefix of an earlier version of N\". Never an earlier\nversion of N itself (ADR-C39 § 2).",
+            "enum": [
+              "as_prefix"
+            ],
+            "type": "string"
+          }
+        ]
       },
       "StageCell": {
         "description": "One run at one stage.",
@@ -3724,7 +3842,7 @@
     },
     "/pipelines/{name}/matrix": {
       "get": {
-        "description": "A run fills a cell when its pipeline hash is the document's current one, under any name, or when it is a prefix of the current document — its launch record's parent_pipeline_hash is the current hash, or else the structural test says so, for every run. A run whose launch record names the pipeline and that is neither fills no cell: it is a feeding run with content_since_changed, its parameter difference against the current document, and a benchmark whose only runs are such runs reads not_run_on_this_version, linking one. Any other run counts nowhere. Each column is the most recent run filling it — the greatest started_at_ms, a run with no time after every run with one, ties by run id. A feeding run carries its launch record (launched_as) and the documents sharing its hash (pipeline_names) side by side. An empty cell says why: no_qrels, no_reference_answers, not_run_yet (with the benchmark), prefix_stops (with the node the prefix stops at), not_run_on_this_version (with the run), not_scored, unverified, no_figure. `include_available=true` adds a column for every benchmark the registry knows that no counted run ran on.",
+        "description": "A run fills a cell when its pipeline hash is the document's current one, under any name, or when it is a prefix of the current document — its launch record's parent_pipeline_hash is the current hash, or else the structural test says so, for every run. A run whose launch record names the pipeline and that is neither fills no cell: it is a feeding run with content_since_changed, its parameter difference against the current document, and a benchmark whose only runs are such runs reads not_run_on_this_version, linking one. Any other run counts nowhere. Each column is the most recent run of the whole current form on its benchmark, or, with none, the most recent prefix — the greatest started_at_ms, a run with no time after every run with one, ties by run id — so `missing` never names a launch that exists. A ranking cell's gain is over_previous_stage, first_stage (a leg), ambiguous (the stage derivation guessed) or unstaged. A feeding run carries its launch record (launched_as) and the documents sharing its hash (pipeline_names) side by side. An empty cell says why: no_qrels, no_reference_answers, not_run_yet (with the benchmark), prefix_stops (with the node the prefix stops at), not_run_on_this_version (with the run), not_scored, unverified, no_figure. `include_available=true` adds a column for every benchmark the registry knows that no counted run ran on.",
         "parameters": [
           {
             "in": "path",

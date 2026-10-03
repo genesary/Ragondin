@@ -150,49 +150,74 @@ pub(crate) fn best<'a>(
     best
 }
 
-/// The gain of `node` over the previous ranking stage of its pipeline, per
-/// metric: its value minus the best value of the nearest stage before its
-/// own that the pipeline has — for the fusion, the best retrieval leg; for
-/// the reranker, the fusion, or the best leg when no fusion comes before it.
-/// By stage, never by node: the stages are `stages`, the derivation
+/// What a node's gain over the previous ranking stage is, or why it has
+/// none — four different things a bare "no gain" would run together.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum Gain {
+    /// Per metric, the node's value minus the best value of the nearest
+    /// stage before its own. A metric missing on either side has none.
+    Over(BTreeMap<String, f64>),
+    /// The node is at the first ranking stage its pipeline has — a retrieval
+    /// leg: nothing comes before it, and its value stands alone.
+    FirstStage,
+    /// The pipeline's stages are a guess (`Stages::guessed`: two fusions, two
+    /// rerankers, or a reranker upstream of the fusion), so which stage came
+    /// before this one is too; no gain is served as fact.
+    Ambiguous,
+    /// The node is at no ranking stage: the answer, or a node the derivation
+    /// places nowhere.
+    Unstaged,
+}
+
+/// The gain of `node` over the previous ranking stage of its pipeline: its
+/// value minus the best value (`best`) of the nearest stage before its own
+/// that the pipeline has — for the fusion, the best retrieval leg; for the
+/// reranker, the fusion, or the best leg when no fusion comes before it. By
+/// stage, never by node: the stages are `stages`, the derivation
 /// `POST /compare` aligns runs by, so the two screens cannot disagree on what
-/// came before what.
-///
-/// `None` when there is no stage before the node's own — a retrieval leg, the
-/// one node of a single-retriever pipeline — and for a node at no ranking
-/// stage (the answer, a context builder). A metric missing on either side has
-/// no gain.
+/// came before what — and where that derivation guessed, Compare says
+/// `confidence: low` and this says [`Gain::Ambiguous`].
 pub(crate) fn gain<'a>(
     stages: &Stages,
     node: &NodeId,
     metrics_of: impl Fn(&NodeId) -> Option<&'a BTreeMap<String, f64>>,
-) -> Option<BTreeMap<String, f64>> {
+) -> Gain {
     const RANKING: [Stage; 4] = [
         Stage::RetrievalLegs,
         Stage::AfterFusion,
         Stage::AfterRerank,
         Stage::FinalRanking,
     ];
-    let own = RANKING.iter().position(|stage| {
+    let Some(own) = RANKING.iter().position(|stage| {
         stages
             .nodes
             .get(stage)
             .is_some_and(|nodes| nodes.contains(node))
-    })?;
+    }) else {
+        return Gain::Unstaged;
+    };
     // The final ranking is the walk's node, at a kind stage already unless
     // the pipeline ends on another ranking node: the stages before it are the
     // kind stages.
-    let previous = RANKING[..own]
+    let Some(previous) = RANKING[..own]
         .iter()
         .rev()
-        .find_map(|stage| stages.nodes.get(stage))?;
-    let value = metrics_of(node)?;
+        .find_map(|stage| stages.nodes.get(stage))
+    else {
+        return Gain::FirstStage;
+    };
+    if stages.guessed {
+        return Gain::Ambiguous;
+    }
+    let Some(value) = metrics_of(node) else {
+        return Gain::Over(BTreeMap::new());
+    };
     let best = best(
         previous
             .iter()
             .filter_map(|id| metrics_of(id).map(|metrics| (id.as_str(), metrics))),
     );
-    Some(
+    Gain::Over(
         value
             .iter()
             .filter_map(|(metric, value)| {
@@ -466,14 +491,18 @@ mod tests {
         let gain_of = |node: &str| gain(&stages, &NodeId::new(node), |id| figures.get(id));
 
         // A leg has no stage before it: the value stands alone.
-        assert_eq!(gain_of("bm25"), None);
-        assert_eq!(gain_of("dense"), None);
+        assert_eq!(gain_of("bm25"), Gain::FirstStage);
+        assert_eq!(gain_of("dense"), Gain::FirstStage);
         // The fusion over the best leg, metric by metric.
-        let rrf = gain_of("rrf").unwrap();
+        let Gain::Over(rrf) = gain_of("rrf") else {
+            panic!("the fusion gains over the legs");
+        };
         assert_eq!(rrf["ndcg@10"], 0.5 - 0.4);
         assert_eq!(rrf["mrr"], 0.6 - 0.5);
         // The reranker over the fusion.
-        let rerank = gain_of("rerank").unwrap();
+        let Gain::Over(rerank) = gain_of("rerank") else {
+            panic!("the reranker gains over the fusion");
+        };
         assert_eq!(rerank["ndcg@10"], 0.7 - 0.5);
         assert_eq!(rerank["mrr"], 0.55 - 0.6);
     }
@@ -496,7 +525,9 @@ pipeline:
 ",
         ));
         let figures = figures(&[("colbert", 0.4, 0.5), ("rerank", 0.6, 0.7)]);
-        let rerank = gain(&stages, &NodeId::new("rerank"), |id| figures.get(id)).unwrap();
+        let Gain::Over(rerank) = gain(&stages, &NodeId::new("rerank"), |id| figures.get(id)) else {
+            panic!("the reranker gains over the leg");
+        };
         assert_eq!(rerank["ndcg@10"], 0.6 - 0.4);
     }
 
@@ -506,7 +537,55 @@ pipeline:
         let figures = figures(&[("dense", 0.4, 0.5)]);
         assert_eq!(
             gain(&stages, &NodeId::new("dense"), |id| figures.get(id)),
-            None
+            Gain::FirstStage
+        );
+    }
+
+    #[test]
+    fn over_a_guessed_derivation_no_gain_is_computed_past_the_legs() {
+        let stages = Stages::of(&lowered(
+            "\
+pipeline:
+  inputs: [question]
+  nodes:
+    - id: a
+      component: retriever
+      impl: bm25
+      inputs: [question]
+    - id: b
+      component: retriever
+      impl: dense
+      inputs: [question]
+    - id: rerank
+      component: reranker
+      impl: cross_encoder
+      inputs: [question, a]
+    - id: rrf
+      component: fusion
+      impl: rrf
+      inputs: [rerank, b]
+",
+        ));
+        assert!(stages.guessed);
+        let figures = figures(&[
+            ("a", 0.3, 0.3),
+            ("b", 0.4, 0.4),
+            ("rerank", 0.5, 0.5),
+            ("rrf", 0.6, 0.6),
+        ]);
+        let gain_of = |node: &str| gain(&stages, &NodeId::new(node), |id| figures.get(id));
+        assert_eq!(gain_of("a"), Gain::FirstStage);
+        assert_eq!(gain_of("rerank"), Gain::Ambiguous);
+        assert_eq!(gain_of("rrf"), Gain::Ambiguous);
+    }
+
+    #[test]
+    fn a_node_at_no_ranking_stage_is_unstaged() {
+        let stages = Stages::of(&lowered(HYBRID_RERANK));
+        let figures = figures(&[]);
+        assert_eq!(
+            gain(&stages, &NodeId::new("nowhere"), |id| figures.get(id)),
+            Gain::Unstaged
         );
     }
 }

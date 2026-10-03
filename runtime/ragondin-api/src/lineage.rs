@@ -1,12 +1,15 @@
-//! Which workspace pipeline a stored run is a run of.
+//! Which workspace documents a stored run's content belongs to.
 //!
-//! A run records no pipeline name: its identity is the canonical hash of
-//! what it ran. ADR-C39 decides run → pipeline identity; until the code
-//! follows it, a run's pipeline is found by content — **interim behaviour**:
-//! the one document under `pipelines/` whose canonical hash is the run's
-//! (INV-8: the canonical form, never the text). No document, or several,
-//! names no pipeline; a document edited since a run no longer names it.
-//! `POST /compare` reads it to find the pairing of two runs' pipelines.
+//! A run's identity is the canonical hash of what it ran. Its launch record
+//! (`Run::provenance`, ADR-C39 § 1) says what it was launched as; this
+//! module holds the other fact ADR-C39 § 4 keeps beside it, the content one:
+//! the documents under `pipelines/` whose canonical hash is the run's (INV-8:
+//! the canonical form, never the text). The two are never resolved into one
+//! name. The pipeline matrix reads both; `GET /runs` serves only this one
+//! until it serves the record too (#392). [`pipeline_of`] names the one
+//! document a run's hash maps to — none, or several, names none, and a
+//! document edited since a run no longer names it — and `POST /compare`
+//! reads it to find the pairing of two runs' pipelines.
 //! `GET /runs` and the pipeline matrix's feeding runs read the index itself
 //! rather than [`pipeline_of`]: they name *every* document sharing a run's
 //! hash, as a list, where a pairing needs exactly one.

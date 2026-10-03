@@ -1218,7 +1218,8 @@ pub struct PipelineMatrix {
     /// column.
     pub feeding_runs: Vec<FeedingRun>,
     /// Per column, the nodes no run measured that a run of the whole
-    /// pipeline on that benchmark would: what a launch would fill.
+    /// pipeline on that benchmark would: what a launch would fill. Never on a
+    /// benchmark where such a run exists.
     pub missing: Vec<MissingCells>,
     /// The runs the store lists and cannot load, with its reason: neither
     /// counted nor silently dropped, as `GET /runs` lists them.
@@ -1254,8 +1255,9 @@ pub struct MatrixColumn {
     /// otherwise off the metrics the run recorded; `null` for a benchmark no
     /// run measured.
     pub ground_truth: Option<GroundTruth>,
-    /// The run that fills the column — the most recent counted run on this
-    /// benchmark; `null` when none ran on it.
+    /// The run that fills the column — the most recent run of the whole
+    /// current form on this benchmark, or, with none, the most recent prefix
+    /// of it; `null` when neither ran on it.
     pub run: Option<String>,
     /// For a prefix run, the node it stops at; `null` otherwise.
     pub up_to: Option<String>,
@@ -1277,11 +1279,9 @@ pub enum MatrixCell {
     Measured {
         /// The figures, by metric name.
         metrics: BTreeMap<String, f64>,
-        /// Per metric, the value minus the best value of the previous ranking
-        /// stage — the gain, which is what says where a node helps; `null`
-        /// where there is no previous stage (a retrieval leg) and for the
-        /// generator.
-        gain: Option<BTreeMap<String, f64>>,
+        /// The gain over the previous ranking stage, which is what says
+        /// where a node helps, or why there is none.
+        gain: MatrixGain,
         /// How many judged queries a ranking node's means are over; `null`
         /// for the generator, whose figures are the run's.
         judged_queries: Option<u64>,
@@ -1341,19 +1341,63 @@ pub struct FeedingRun {
     /// Every workspace document whose canonical hash is the run's, sorted —
     /// ADR-C39 § 4's content fact.
     pub pipeline_names: Vec<String>,
-    /// For a prefix of the matrix's pipeline, by the structural test: the
-    /// pipeline and the node it stops at; `null` for a run of the current
-    /// canonical form.
+    /// For a prefix of the matrix's pipeline's current form — by its launch
+    /// record's parent hash, or by the structural test — the pipeline and the
+    /// node it stops at; `null` otherwise.
     pub prefix_of: Option<PrefixOf>,
-    /// Whether it is the run its column shows: the most recent on its
-    /// benchmark.
+    /// Whether it is the run its column shows.
     pub fills_column: bool,
-    /// For a run launched as this pipeline whose content has since changed —
-    /// "launched as N; content since changed", N this pipeline (ADR-C39 § 7) — its
-    /// parameter difference against the pipeline's current document, by
+    /// For a run launched as this pipeline whose content has since changed
+    /// (ADR-C39 § 7): how it was launched, and its parameter difference
+    /// against the pipeline's current document; `null` for a run that fills
+    /// a cell.
+    pub content_since_changed: Option<ContentSinceChanged>,
+}
+
+/// A run launched as the matrix's pipeline whose content has since changed:
+/// stated as a fact, never guessed to be an earlier version (ADR-C39 § 7).
+#[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
+pub struct ContentSinceChanged {
+    /// How its record says it was launched.
+    pub launched: SinceChangedLaunch,
+    /// Its parameter difference against the pipeline's current document, by
     /// `POST /compare`'s configuration matrix, the current document's column
-    /// first; `null` for a run that fills a cell.
-    pub content_since_changed: Option<ConfigurationMatrix>,
+    /// first.
+    pub difference: ConfigurationMatrix,
+}
+
+/// How a run of since-changed content was launched.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SinceChangedLaunch {
+    /// As the pipeline: "launched as N; content since changed".
+    AsPipeline,
+    /// As a prefix of the pipeline, cut from a version that is not the
+    /// current one: "a prefix of an earlier version of N". Never an earlier
+    /// version of N itself (ADR-C39 § 2).
+    AsPrefix,
+}
+
+/// A matrix cell's gain over the previous ranking stage, or why it has none.
+#[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum MatrixGain {
+    /// Per metric, the node's value minus the best value of the nearest
+    /// stage before its own.
+    OverPreviousStage {
+        /// The gains, by metric name.
+        values: BTreeMap<String, f64>,
+    },
+    /// The node is at the first ranking stage — a retrieval leg: nothing
+    /// comes before it, and the value stands alone.
+    FirstStage,
+    /// The pipeline's stages are a guess — two fusions, two rerankers, or a
+    /// reranker upstream of the fusion — so which stage came before this one
+    /// is too, and no gain is served as fact. Compare's stages say
+    /// `confidence: low` over the same derivation.
+    Ambiguous,
+    /// The node is at no ranking stage: the generator.
+    Unstaged,
 }
 
 /// A run's launch record (ADR-C39 § 1).

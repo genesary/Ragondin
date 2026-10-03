@@ -195,6 +195,21 @@ export type ConfigurationMatrix = {
 };
 
 /**
+ * A run launched as the matrix's pipeline whose content has since changed:
+ * stated as a fact, never guessed to be an earlier version (ADR-C39 § 7).
+ */
+export type ContentSinceChanged = {
+  /**
+   * Its parameter difference against the pipeline's current document, by
+   * `POST /compare`'s configuration matrix, the current document's column
+   * first.
+   */
+  difference: ConfigurationMatrix;
+  /** How its record says it was launched. */
+  launched: SinceChangedLaunch;
+};
+
+/**
  * Whether the dataset on disk is the one a run was evaluated on: the
  * benchmark pinned to the run's `dataset_version`, digesting to it — and,
  * for passage text, its derived chunk set digesting to the run's
@@ -286,19 +301,15 @@ export type FeedingRun = {
   /** Every benchmark the registry pins to that digest, sorted. */
   benchmark_names: string[];
   /**
-   * For a run launched as this pipeline whose content has since changed —
-   * "launched as N; content since changed", N this pipeline (ADR-C39 § 7) — its
-   * parameter difference against the pipeline's current document, by
-   * `POST /compare`'s configuration matrix, the current document's column
-   * first; `null` for a run that fills a cell.
+   * For a run launched as this pipeline whose content has since changed
+   * (ADR-C39 § 7): how it was launched, and its parameter difference
+   * against the pipeline's current document; `null` for a run that fills
+   * a cell.
    */
-  content_since_changed: ConfigurationMatrix | null;
+  content_since_changed: ContentSinceChanged | null;
   /** The digest of the dataset it ran on. */
   dataset_version: string;
-  /**
-   * Whether it is the run its column shows: the most recent on its
-   * benchmark.
-   */
+  /** Whether it is the run its column shows. */
   fills_column: boolean;
   /**
    * The run's launch record, as it was written once with the run; `null`
@@ -312,9 +323,9 @@ export type FeedingRun = {
    */
   pipeline_names: string[];
   /**
-   * For a prefix of the matrix's pipeline, by the structural test: the
-   * pipeline and the node it stops at; `null` for a run of the current
-   * canonical form.
+   * For a prefix of the matrix's pipeline's current form — by its launch
+   * record's parent hash, or by the structural test — the pipeline and the
+   * node it stops at; `null` otherwise.
    */
   prefix_of: PrefixOf | null;
   /** The run's id. */
@@ -445,12 +456,10 @@ export type Location = {
 /** One node on one benchmark: its figure, or why it has none. */
 export type MatrixCell = {
   /**
-   * Per metric, the value minus the best value of the previous ranking
-   * stage — the gain, which is what says where a node helps; `null`
-   * where there is no previous stage (a retrieval leg) and for the
-   * generator.
+   * The gain over the previous ranking stage, which is what says
+   * where a node helps, or why there is none.
    */
-  gain: Record<string, number> | null;
+  gain: MatrixGain;
   /**
    * How many judged queries a ranking node's means are over; `null`
    * for the generator, whose figures are the run's.
@@ -506,12 +515,26 @@ export type MatrixColumn = {
    */
   ground_truth: GroundTruth | null;
   /**
-   * The run that fills the column — the most recent counted run on this
-   * benchmark; `null` when none ran on it.
+   * The run that fills the column — the most recent run of the whole
+   * current form on this benchmark, or, with none, the most recent prefix
+   * of it; `null` when neither ran on it.
    */
   run: string | null;
   /** For a prefix run, the node it stops at; `null` otherwise. */
   up_to: string | null;
+};
+
+/** A matrix cell's gain over the previous ranking stage, or why it has none. */
+export type MatrixGain = {
+  kind: "over_previous_stage";
+  /** The gains, by metric name. */
+  values: Record<string, number>;
+} | {
+  kind: "first_stage";
+} | {
+  kind: "ambiguous";
+} | {
+  kind: "unstaged";
 };
 
 /** One node of the matrix's pipeline. */
@@ -771,7 +794,8 @@ export type PipelineMatrix = {
   feeding_runs: FeedingRun[];
   /**
    * Per column, the nodes no run measured that a run of the whole
-   * pipeline on that benchmark would: what a launch would fill.
+   * pipeline on that benchmark would: what a launch would fill. Never on a
+   * benchmark where such a run exists.
    */
   missing: MissingCells[];
   /** The pipeline's name: its document under `pipelines/`. */
@@ -1234,6 +1258,9 @@ export type SettingsSummary = {
   /** The `Remote` bindings the workspace names. */
   services: ServiceBinding[];
 };
+
+/** How a run of since-changed content was launched. */
+export type SinceChangedLaunch = "as_pipeline" | "as_prefix";
 
 /** One run at one stage. */
 export type StageCell = {

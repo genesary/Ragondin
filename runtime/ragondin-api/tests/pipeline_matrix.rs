@@ -158,8 +158,15 @@ const RANKS: [(&str, usize); 4] = [("bm25", 3), ("dense", 2), ("rrf", 2), ("rera
 /// One query's trace through the nodes `generating` says: the four ranking
 /// nodes, then the context and the answer when it is set.
 fn trace(tag: &str, n: usize, generating: bool) -> Trace {
+    trace_through(tag, n, &RANKS, generating)
+}
+
+/// One query's trace through the ranking nodes `ranks` names, each putting
+/// the gold document at its rank, then the context and the answer when
+/// `generating` is set.
+fn trace_through(tag: &str, n: usize, ranks: &[(&str, usize)], generating: bool) -> Trace {
     let q = format!("{tag}{n}");
-    let mut nodes: Vec<_> = RANKS
+    let mut nodes: Vec<_> = ranks
         .iter()
         .map(|(id, rank)| node(id, vec![query(&q)], ranked(ranking(tag, n, *rank)), 10))
         .collect();
@@ -328,7 +335,7 @@ async fn one_column_per_benchmark_with_the_metric_each_node_s_ground_truth_allow
     assert_eq!(generate["kind"], "measured");
     assert_eq!(generate["metrics"]["exact_match"], 0.5);
     assert_eq!(generate["metrics"]["token_f1"], 0.75);
-    assert_eq!(generate["gain"], Value::Null);
+    assert_eq!(generate["gain"], serde_json::json!({"kind": "unstaged"}));
     assert_eq!(
         cell(&body, scifact, "generate")["kind"],
         "no_reference_answers"
@@ -366,19 +373,19 @@ async fn the_gain_is_over_the_previous_ranking_stage_as_the_run_s_own_figures_gi
         assert_eq!(leg_cell["metrics"]["ndcg@10"].as_f64().unwrap(), value(leg));
         assert_eq!(
             leg_cell["gain"],
-            Value::Null,
+            serde_json::json!({"kind": "first_stage"}),
             "a leg has no stage before it"
         );
     }
     let best_leg = value("bm25").max(value("dense"));
     assert_eq!(
-        cell(&body, scifact, "rrf")["gain"]["ndcg@10"]
+        cell(&body, scifact, "rrf")["gain"]["values"]["ndcg@10"]
             .as_f64()
             .unwrap(),
         value("rrf") - best_leg
     );
     assert_eq!(
-        cell(&body, scifact, "rerank")["gain"]["ndcg@10"]
+        cell(&body, scifact, "rerank")["gain"]["values"]["ndcg@10"]
             .as_f64()
             .unwrap(),
         value("rerank") - value("rrf")
@@ -629,7 +636,9 @@ async fn a_run_launched_as_the_pipeline_whose_content_has_since_changed_fills_no
     assert_eq!(since_changed["prefix_of"], Value::Null);
     // The parameter difference against the current document, the current
     // document first: `compare`'s configuration matrix.
-    let difference = &since_changed["content_since_changed"];
+    let since = &since_changed["content_since_changed"];
+    assert_eq!(since["launched"], "as_pipeline");
+    let difference = &since["difference"];
     assert_eq!(difference["kind"], "compared");
     assert_eq!(
         difference["parameters"],
@@ -753,4 +762,197 @@ async fn without_the_run_s_dataset_a_ranking_cell_is_unverified_and_the_answer_i
     assert_eq!(cell(&body, column, "rerank")["kind"], "unverified");
     assert_eq!(cell(&body, column, "generate")["metrics"]["token_f1"], 0.75);
     assert_eq!(body["missing"], serde_json::json!([]));
+}
+
+/// Two retrievers, a reranker over one of them, and the fusion of the
+/// reranked leg with the other: a reranker upstream of the fusion, a layout
+/// the stage derivation reads by position and marks as a guess.
+const RERANK_INTO_FUSION: &str = "\
+pipeline:
+  inputs: [question]
+  nodes:
+    - id: bm25
+      component: retriever
+      impl: bm25
+      inputs: [question]
+    - id: dense
+      component: retriever
+      impl: dense
+      inputs: [question]
+    - id: rerank
+      component: reranker
+      impl: cross_encoder
+      inputs: [question, bm25]
+    - id: rrf
+      component: fusion
+      impl: rrf
+      inputs: [rerank, dense]
+";
+
+#[tokio::test]
+async fn where_the_stages_are_a_guess_the_gain_says_so_rather_than_compute_one() {
+    let name = "rerank-into-fusion";
+    let traces: Vec<(String, Trace)> = (1..=2)
+        .map(|n| (format!("sci{n}"), trace_through("sci", n, &RANKS, false)))
+        .collect();
+    let mut guessed = run_over(
+        1,
+        RERANK_INTO_FUSION,
+        &scifact(),
+        traces
+            .iter()
+            .map(|(q, t)| (q.as_str(), t.clone()))
+            .collect(),
+        &[("ndcg@10", 0.9)],
+    );
+    guessed.times = Some(RunTimes::new(UnixMillis::new(1), UnixMillis::new(2)));
+    let body = matrix(
+        app(
+            "matrix-guessed",
+            &[(name, RERANK_INTO_FUSION)],
+            vec![guessed],
+        ),
+        &format!("/api/v1/pipelines/{name}/matrix"),
+    )
+    .await;
+
+    let scifact = column(&body, "beir/scifact");
+    assert_eq!(
+        cell(&body, scifact, "bm25")["gain"],
+        serde_json::json!({"kind": "first_stage"})
+    );
+    for node in ["rerank", "rrf"] {
+        let staged = cell(&body, scifact, node);
+        assert_eq!(staged["kind"], "measured", "{node}");
+        assert_eq!(
+            staged["gain"],
+            serde_json::json!({"kind": "ambiguous"}),
+            "{node}: no gain is served as fact over a guessed stage"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_full_run_fills_the_column_over_a_newer_prefix_and_nothing_existing_is_missing() {
+    let body = matrix_of(app(
+        "matrix-full-over-prefix",
+        &[(NAME, HYBRID_RERANK_GEN)],
+        vec![
+            run(1, HYBRID_RERANK_GEN, &scifact(), "sci", Some(1_000)),
+            run(2, UP_TO_RERANK, &scifact(), "sci", Some(2_000)),
+        ],
+    ))
+    .await;
+
+    let scifact = column(&body, "beir/scifact");
+    assert_eq!(scifact["run"], id(1));
+    assert_eq!(scifact["up_to"], Value::Null);
+    let prefix = feeding(&body, &id(2)).expect("the prefix run feeds the matrix");
+    assert_eq!(prefix["fills_column"], false);
+    assert_eq!(prefix["prefix_of"]["up_to"], "rerank");
+    // A run of the whole pipeline on scifact exists: launching it again would
+    // be refused as `run_exists`, so nothing is proposed.
+    assert_eq!(body["missing"], serde_json::json!([]));
+}
+
+#[tokio::test]
+async fn without_the_run_s_dataset_a_ranking_row_is_unverified_whatever_the_run_recorded() {
+    // The run recorded answer metrics only, so nothing it holds says whether
+    // its benchmark carries qrels: the ranking rows are unverified, not
+    // `no_qrels`.
+    let mut answers_only = run(1, HYBRID_RERANK_GEN, &squad(), "sq", Some(1_000));
+    let mut recorded = ragondin_experiments::Metrics::default();
+    recorded.insert("exact_match", 0.5);
+    answers_only.metrics = recorded;
+    let mut backends = fakes(FakeRunStore::holding([answers_only]));
+    backends.pipelines = Arc::new(HeldPipelines {
+        files: vec![(NAME.to_owned(), HYBRID_RERANK_GEN.to_owned())],
+    });
+    backends.registry = Arc::new(FixtureRegistry::holding([("beir/nq".to_owned(), nq())]));
+
+    let body = matrix_of(router_over(backends, &scratch("matrix-unverified-answers"))).await;
+
+    let column = &body["columns"][0];
+    for node in ["bm25", "dense", "rrf", "rerank"] {
+        assert_eq!(cell(&body, column, node)["kind"], "unverified", "{node}");
+    }
+    assert_eq!(
+        cell(&body, column, "generate")["metrics"]["exact_match"],
+        0.5
+    );
+}
+
+#[tokio::test]
+async fn a_prefix_of_an_earlier_version_is_said_to_be_one() {
+    let earlier = HYBRID_RERANK_GEN.replace("top_k: 50", "top_k: 10");
+    let earlier_prefix = UP_TO_RERANK.replace("top_k: 50", "top_k: 10");
+    let body = matrix_of(app(
+        "matrix-earlier-prefix",
+        &[(NAME, HYBRID_RERANK_GEN)],
+        vec![launched(
+            run(1, &earlier_prefix, &scifact(), "sci", Some(1_000)),
+            RunProvenance::prefix(NAME, PrefixOf::new("rerank", hash_of(&earlier))),
+        )],
+    ))
+    .await;
+
+    assert_eq!(
+        cell(&body, column(&body, "beir/scifact"), "rerank"),
+        &serde_json::json!({"kind": "not_run_on_this_version", "run": id(1)})
+    );
+    let since = &feeding(&body, &id(1)).unwrap()["content_since_changed"];
+    // Never "an earlier version of" the pipeline (ADR-C39 § 2): a prefix of
+    // one, cut where its record says.
+    assert_eq!(since["launched"], "as_prefix");
+    assert_eq!(since["difference"]["kind"], "compared");
+}
+
+#[tokio::test]
+async fn a_run_with_no_single_output_counts_nowhere_whatever_its_record_says() {
+    // Both legs of the current pipeline and nothing after them: a subset of
+    // its nodes, with two terminal nodes, so no output the harness scores.
+    let legs = "\
+pipeline:
+  inputs: [question]
+  nodes:
+    - id: bm25
+      component: retriever
+      impl: bm25
+      inputs: [question]
+    - id: dense
+      component: retriever
+      impl: dense
+      inputs: [question]
+      params: { top_k: 50 }
+";
+    let traces: Vec<(String, Trace)> = (1..=2)
+        .map(|n| {
+            (
+                format!("sci{n}"),
+                trace_through("sci", n, &RANKS[..2], false),
+            )
+        })
+        .collect();
+    let two_outputs = launched(
+        run_over(
+            1,
+            legs,
+            &scifact(),
+            traces
+                .iter()
+                .map(|(q, t)| (q.as_str(), t.clone()))
+                .collect(),
+            &[("ndcg@10", 0.9)],
+        ),
+        RunProvenance::named(NAME),
+    );
+    let body = matrix_of(app(
+        "matrix-two-outputs",
+        &[(NAME, HYBRID_RERANK_GEN)],
+        vec![two_outputs],
+    ))
+    .await;
+
+    assert_eq!(body["columns"], serde_json::json!([]));
+    assert_eq!(body["feeding_runs"], serde_json::json!([]));
 }
