@@ -59,6 +59,35 @@ describe('openJobStream', () => {
     expect(FakeEventSource.instances).toHaveLength(2);
   });
 
+  it.each([
+    ['a state kind the description does not give', { ...QUEUED, state: { kind: 'paused' } }],
+    ['a work kind the description does not give', { ...QUEUED, work: { kind: 'upload', benchmark: 'beir/scifact' } }],
+    ['a running count that is not a number', { ...RUNNING, state: { ...RUNNING.state, done: '400' } }],
+    ['a running total that is neither a number nor null', { ...RUNNING, state: { ...RUNNING.state, total: '1000' } }],
+    ['a failure without its error', { ...QUEUED, state: { kind: 'failed', at_node: null, finished_at_ms: 3 } }],
+    ['a download without its benchmark', { ...QUEUED, work: { kind: 'download' } }],
+  ])('treats %s as unreadable: never handed on, and the stream starts again', (_, data) => {
+    const { events } = open();
+    FakeEventSource.latest().open();
+    FakeEventSource.latest().emit(JSON.stringify(data), 'running');
+    FakeEventSource.latest().emit(JSON.stringify({ jobs: [data], faults: [] }), 'resync');
+    expect(events).toEqual([]);
+    expect(FakeEventSource.instances[0]?.closed).toBe(true);
+  });
+
+  it('reports its connection state, and every reconnection after the first', () => {
+    const states: string[] = [];
+    const onReconnect = vi.fn();
+    openJobStream({ onEvent: () => {}, onState: (s) => states.push(s), onReconnect });
+    const source = FakeEventSource.latest();
+    source.open();
+    expect(onReconnect).not.toHaveBeenCalled();
+    source.fail();
+    source.open();
+    expect(states).toEqual(['connecting', 'connected', 'disconnected', 'connected']);
+    expect(onReconnect).toHaveBeenCalledTimes(1);
+  });
+
   it('closes the stream', () => {
     const { stream } = open();
     stream.close();

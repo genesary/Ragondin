@@ -2,7 +2,7 @@
 // `JobEvent` type, and the queue a screen holds from it. ARCHITECTURE.md
 // § The job stream.
 import { openEvents, type ConnectionState, type EventStream } from './events.ts';
-import type { JobEvent, JobSummary } from './types.ts';
+import type { JobEvent, JobStatus, JobSummary, JobWork } from './types.ts';
 
 /** The jobs a screen knows, by id, in the queue's order. */
 export type Jobs = ReadonlyMap<string, JobSummary>;
@@ -14,12 +14,31 @@ const NAMES: Record<JobEvent['event'], true> = { queued: true, running: true, do
 const isName = (name: string): name is JobEvent['event'] => Object.hasOwn(NAMES, name);
 
 const isObject = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
-const hasKind = (value: unknown) => isObject(value) && typeof value.kind === 'string';
-const isSummary = (value: unknown) => isObject(value) && typeof value.id === 'string' && hasKind(value.state) && hasKind(value.work);
+const isCount = (value: unknown) => typeof value === 'number' && Number.isFinite(value);
+
+// What a screen reads of each kind, one entry per kind of the generated
+// unions: a kind added to the description does not compile until it is
+// checked here, and a kind the description does not give is unreadable.
+const STATES: Record<JobStatus['kind'], (s: Record<string, unknown>) => boolean> = {
+  queued: () => true,
+  running: (s) => isCount(s.done) && (s.total === null || isCount(s.total)),
+  done: () => true,
+  failed: (s) => typeof s.error === 'string',
+  cancelled: () => true,
+};
+const WORKS: Record<JobWork['kind'], (w: Record<string, unknown>) => boolean> = {
+  run: (w) => typeof w.benchmark === 'string',
+  download: (w) => typeof w.benchmark === 'string',
+};
+const known = <K extends string>(checks: Record<K, (v: Record<string, unknown>) => boolean>, value: unknown) =>
+  isObject(value) && typeof value.kind === 'string' && Object.hasOwn(checks, value.kind) && checks[value.kind as K](value);
+const isSummary = (value: unknown) => isObject(value) && typeof value.id === 'string' && known(STATES, value.state) && known(WORKS, value.work);
 
 /**
  * One event as `JobEvent`, or null when its data is not JSON or lacks what
- * the screens read: a listing's jobs, a job's id, state and work.
+ * the screens read: a listing's jobs; a job's id, a state and a work of a
+ * kind the description gives, a running job's counts, a failure's error and
+ * a work's benchmark.
  */
 function readJobEvent(name: string, data: string): JobEvent | null {
   if (!isName(name)) return null;
@@ -35,7 +54,10 @@ function readJobEvent(name: string, data: string): JobEvent | null {
 
 export type JobStreamHandlers = {
   onEvent: (event: JobEvent) => void;
+  /** The connection: a screen that shows the queue says when it is not current (the front-end design, § 8). */
   onState?: (state: ConnectionState) => void;
+  /** Every connection after the first, so the screen re-checks the build identity, as the shell does for its stream. */
+  onReconnect?: () => void;
 };
 
 /**
@@ -45,9 +67,10 @@ export type JobStreamHandlers = {
  * on: the stream starts again, and a new connection begins with `resync`, so
  * no screen acts across the gap.
  */
-export function openJobStream({ onEvent, onState }: JobStreamHandlers): EventStream {
+export function openJobStream({ onEvent, onState, onReconnect }: JobStreamHandlers): EventStream {
   const stream: EventStream = openEvents('/jobs/events', {
     ...(onState === undefined ? {} : { onState }),
+    ...(onReconnect === undefined ? {} : { onReconnect }),
     events: {
       names: Object.keys(NAMES),
       on: (name, data) => {

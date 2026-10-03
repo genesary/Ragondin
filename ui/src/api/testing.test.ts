@@ -2,12 +2,25 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { vi } from 'vitest';
 import { createApiClient } from './client.ts';
-import { mockApi } from './testing.ts';
+import { FakeEventSource, mockApi } from './testing.ts';
 import type { Comparison, ServiceListing } from './types.ts';
 
 afterEach(() => vi.unstubAllGlobals());
 
 const ANSWER = { baseline: 'a' } as Comparison;
+
+describe('FakeEventSource', () => {
+  it('dispatches nothing once closed, as a closed EventSource does', () => {
+    const source = new FakeEventSource('/api/v1/jobs/events');
+    const seen: string[] = [];
+    source.onmessage = (e) => seen.push(e.data);
+    source.addEventListener('queued', (e) => seen.push(e.data));
+    source.close();
+    source.emit('a');
+    source.emit('b', 'queued');
+    expect(seen).toEqual([]);
+  });
+});
 
 describe('mockApi, writing', () => {
   it('answers a POST from its route, records the body sent, and lets the reply depend on it', async () => {

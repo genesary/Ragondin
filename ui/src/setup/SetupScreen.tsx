@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { Sheet } from '../../design/index.ts';
 import type { ApiClient, ApiProblem } from '../api/client.ts';
+import type { ConnectionState } from '../api/events.ts';
 import { applyJobEvent, openJobStream, type Jobs } from '../api/jobs.ts';
 import type { BenchmarkEntry, ServiceBinding, ServiceStatus, Workspace } from '../api/types.ts';
 import type { SetupSection } from '../routes.ts';
@@ -44,12 +45,43 @@ export const UNDO_WINDOW_MS = 10_000;
  */
 function useListing<T>(read: () => Promise<{ ok: true; value: T } | { ok: false; problem: ApiProblem }>) {
   const [state, setState] = useState<RequestState<T>>({ status: 'loading' });
+  // A read in place that failed: the listing it would have replaced stays on screen, and this says why it is not newer.
+  const [stale, setStale] = useState<ApiProblem | null>(null);
   const latest = useRef(0);
+  // The read number a write's answer last overtook.
+  const replacedAt = useRef(0);
   const load = useCallback(async () => {
     const mine = ++latest.current;
     const result = await read();
     if (mine !== latest.current) return;
+    setStale(null);
     setState(result.ok ? { status: 'loaded', value: result.value } : { status: 'error', problem: result.problem });
+  }, [read]);
+  /**
+   * Reads again, keeping the listing on screen: a failure is said beside it
+   * (`stale`), never in its place. A write's answer that overtakes this read
+   * sends it again, since it began before the write and its purpose — a
+   * change made elsewhere — is not in the write's answer. Resolves whether
+   * the listing now holds an answer read after the call.
+   */
+  const reload = useCallback(async (): Promise<boolean> => {
+    for (;;) {
+      const mine = ++latest.current;
+      const result = await read();
+      if (mine !== latest.current) {
+        if (replacedAt.current > mine) continue;
+        // A later read decides, and it began after this one.
+        return true;
+      }
+      if (!result.ok) {
+        setStale(result.problem);
+        setState((prev) => (prev.status === 'loaded' ? prev : { status: 'error', problem: result.problem }));
+        return false;
+      }
+      setStale(null);
+      setState({ status: 'loaded', value: result.value });
+      return true;
+    }
   }, [read]);
   useEffect(() => {
     void load();
@@ -61,12 +93,13 @@ function useListing<T>(read: () => Promise<{ ok: true; value: T } | { ok: false;
   /** A write's answer replaces the listing, and overtakes any read still in flight. */
   const replace = useCallback((value: T | ((prev: T) => T)) => {
     latest.current += 1;
+    replacedAt.current = latest.current;
     setState((prev) => {
       if (typeof value !== 'function') return { status: 'loaded', value };
       return prev.status === 'loaded' ? { status: 'loaded', value: (value as (prev: T) => T)(prev.value) } : prev;
     });
   }, []);
-  return { state, retry, replace, reload: load };
+  return { state, stale, retry, replace, reload };
 }
 
 export function SetupScreen({ client, workspace, refreshWorkspace, retryWorkspace, section }: SetupScreenProps) {
@@ -126,9 +159,20 @@ export function SetupScreen({ client, workspace, refreshWorkspace, retryWorkspac
   // a row after its probe or its Undo, Undo after the row it replaces is gone,
   // or the Benchmarks section after an import ends the first launch and takes
   // the form that had focus with it.
-  const [pendingFocus, setPendingFocus] = useState<{ row: string } | { undo: true } | { benchmarks: true } | null>(null);
+  // `ifLost` is a benchmark whose Download went with its row: focus moves
+  // only if it is still on the page's body or that row's empty slot, so a
+  // person who moved on meanwhile keeps their place.
+  const [pendingFocus, setPendingFocus] = useState<{ row: string } | { undo: true } | { benchmarks: true; ifLost?: string } | null>(null);
   useEffect(() => {
     if (pendingFocus === null) return;
+    if ('ifLost' in pendingFocus && pendingFocus.ifLost !== undefined) {
+      const active = document.activeElement;
+      const lost = active === null || active === document.body || active.closest('.rg-setup__action')?.getAttribute('data-benchmark') === pendingFocus.ifLost;
+      if (!lost) {
+        setPendingFocus(null);
+        return;
+      }
+    }
     const target = 'row' in pendingFocus ? rows.current.get(pendingFocus.row) : 'undo' in pendingFocus ? document.getElementById(undoId) : benchmarksAnchor.current;
     if (target === null || target === undefined) return;
     target.focus();
@@ -294,29 +338,38 @@ export function SetupScreen({ client, workspace, refreshWorkspace, retryWorkspac
   // — and this page's own submissions, by benchmark.
   const [jobs, setJobs] = useState<Jobs>(new Map());
   const jobsNow = useRef<Jobs>(jobs);
+  const [stream, setStream] = useState<ConnectionState>('connecting');
   const [submissions, setSubmissions] = useState<ReadonlyMap<string, Submission>>(new Map());
   const submitted = useRef(new Set<string>());
   const reloadBenchmarks = benchmarks.reload;
 
   /**
-   * Downloads that ended done: the listing is read again, which says them
-   * ready with their digests, and the workspace's counts with it. Focus on a
-   * Download that goes with its row's button moves to the section.
+   * Reads the listing again in place, which says a finished download ready
+   * with its digest; once it has, this page's submissions whose job is done
+   * are forgotten. A read that fails keeps them — the row still says the
+   * digest is being read — and the listing's Retry comes back here.
+   */
+  const refreshBenchmarks = useCallback(async () => {
+    const ok = await reloadBenchmarks();
+    if (!ok) return false;
+    setSubmissions((all) => new Map([...all].filter(([, s]) => s.kind !== 'accepted' || jobsNow.current.get(s.jobId)?.state.kind !== 'done')));
+    return true;
+  }, [reloadBenchmarks]);
+
+  /**
+   * Downloads that ended done: the listing is read again, and the
+   * workspace's counts with it. Focus on a Download that goes with its row's
+   * button moves to the section — judged again once the row is gone.
    */
   const finish = useCallback(
     async (names: readonly string[]) => {
       if (names.length === 0) return;
       const focused = document.activeElement?.closest('.rg-setup__action')?.getAttribute('data-benchmark');
-      await reloadBenchmarks();
+      const ok = await refreshBenchmarks();
       refresh.current();
-      setSubmissions((all) => {
-        const next = new Map(all);
-        for (const name of names) next.delete(name);
-        return next;
-      });
-      if (focused !== undefined && focused !== null && names.includes(focused)) setPendingFocus({ benchmarks: true });
+      if (ok && focused !== undefined && focused !== null && names.includes(focused)) setPendingFocus({ benchmarks: true, ifLost: focused });
     },
-    [reloadBenchmarks],
+    [refreshBenchmarks],
   );
   const finishNow = useRef(finish);
   useEffect(() => {
@@ -332,6 +385,9 @@ export function SetupScreen({ client, workspace, refreshWorkspace, retryWorkspac
         setJobs(after);
         void finishNow.current(finishedDownloads(before, after, submitted.current));
       },
+      onState: setStream,
+      // The server may have been restarted as another build meanwhile.
+      onReconnect: () => refresh.current(),
     });
     return () => stream.close();
   }, []);
@@ -353,6 +409,7 @@ export function SetupScreen({ client, workspace, refreshWorkspace, retryWorkspac
   const downloads: Downloads = {
     view: (name) => downloadView(name, submissions.get(name), jobs),
     start: (name) => void startDownload(name),
+    streamDown: stream === 'disconnected',
   };
 
   const onImport = async (path: string, name: string) => {
@@ -383,7 +440,15 @@ export function SetupScreen({ client, workspace, refreshWorkspace, retryWorkspac
         <FirstLaunch benchmarks={benchmarks.state.value} capabilities={loaded?.capabilities ?? null} onImport={onImport} downloads={downloads} connect={{ ...connect, initialFamily: 'generator' }} />
       ) : (
         <>
-          <Benchmarks state={benchmarks.state} onRetry={benchmarks.retry} onImport={onImport} downloads={downloads} anchor={benchmarksAnchor} />
+          <Benchmarks
+            state={benchmarks.state}
+            stale={benchmarks.stale}
+            onRetry={benchmarks.retry}
+            onRefresh={() => void refreshBenchmarks()}
+            onImport={onImport}
+            downloads={downloads}
+            anchor={benchmarksAnchor}
+          />
           <Services
             state={services.state}
             onRetry={services.retry}

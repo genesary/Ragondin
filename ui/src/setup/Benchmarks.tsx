@@ -15,7 +15,21 @@ import { formatSize, groundTruthLabel, shortDigest, type DownloadView } from './
 export type Downloads = {
   view: (name: string) => DownloadView;
   start: (name: string) => void;
+  /** The job stream is down and retrying: what a row says of a live job is the last known, not the current. */
+  streamDown: boolean;
 };
+
+/** What the screen says while the job stream is down (the front-end design, § 8: the state never pretends to be current). */
+export const STREAM_DOWN = 'Job stream disconnected, retrying: download progress shown is the last known.';
+
+/** Whether a download's state comes from a job still under way, which only the stream keeps current. */
+export const isLive = (view: DownloadView) => view.kind === 'queued' || view.kind === 'running' || view.kind === 'verifying';
+
+/** How full the meter is: the bytes over the job's total, or over the manifest's size before it gives one; empty when that is zero. */
+export function fraction(done: number, total: number | null, size: number): number {
+  const of = total ?? size;
+  return of > 0 ? done / of : 0;
+}
 
 const CHIP: Record<BenchmarkEntry['state']['kind'], Exclude<Status, 'running'>> = {
   ready: 'done',
@@ -39,7 +53,12 @@ export function Digest({ value }: { value: string }) {
  * in an alert, announced as it appears; progress is not a live region, so a
  * tick every hundredth of the snapshot is not read aloud.
  */
-export function downloadWords(view: DownloadView, size: number): ReactNode {
+export function downloadWords(view: DownloadView, size: number, streamDown = false): ReactNode {
+  const words = currentWords(view, size);
+  return streamDown && isLive(view) ? <>{words} · last known</> : words;
+}
+
+function currentWords(view: DownloadView, size: number): ReactNode {
   switch (view.kind) {
     case 'idle':
       return <>{formatSize(size)} to download</>;
@@ -79,7 +98,7 @@ function downloadChip(view: DownloadView, size: number): ReactNode {
       return <StatusChip state="queued">queued</StatusChip>;
     case 'running':
       return (
-        <StatusChip state="running" fraction={view.done / (view.total ?? size)}>
+        <StatusChip state="running" fraction={fraction(view.done, view.total, size)}>
           downloading
         </StatusChip>
       );
@@ -114,7 +133,7 @@ function detail(entry: BenchmarkEntry, downloads: Downloads): ReactNode {
         </>
       );
     case 'available':
-      return downloadWords(downloads.view(entry.name), state.size_bytes);
+      return downloadWords(downloads.view(entry.name), state.size_bytes, downloads.streamDown);
     case 'differs':
       return (
         <>
@@ -209,13 +228,17 @@ function rows(benchmarks: readonly BenchmarkEntry[], downloads: Downloads): Tabl
 
 export type BenchmarksProps = {
   state: RequestState<readonly BenchmarkEntry[]>;
+  /** A read of the listing in place that failed: the table stays, and this says why it is not newer. */
+  stale: ApiProblem | null;
   onRetry: () => void;
+  /** Reads the listing again in place, for `stale`'s Retry. */
+  onRefresh: () => void;
   onImport: (path: string, name: string) => Promise<ApiProblem | null>;
   downloads: Downloads;
   anchor: Ref<HTMLElement>;
 };
 
-export function Benchmarks({ state, onRetry, onImport, downloads, anchor }: BenchmarksProps) {
+export function Benchmarks({ state, stale, onRetry, onRefresh, onImport, downloads, anchor }: BenchmarksProps) {
   return (
     <Section heading="Benchmarks" caption="Pinned snapshots: a benchmark is ready when the dataset on disk digests to the version the manifest pins." anchor={anchor}>
       <Resource state={state} loading="Reading benchmarks" error={(problem) => <ErrorState problem={problem} onRetry={onRetry} />}>
@@ -223,10 +246,17 @@ export function Benchmarks({ state, onRetry, onImport, downloads, anchor }: Benc
           benchmarks.length === 0 ? (
             <p className="rg-setup__note">The registry lists no benchmark: this build’s manifest pins none, and nothing was imported.</p>
           ) : (
-            <Table caption="Benchmarks the registry knows" columns={COLUMNS} rows={rows(benchmarks, downloads)} />
+            <>
+              <Table caption="Benchmarks the registry knows" columns={COLUMNS} rows={rows(benchmarks, downloads)} />
+              {stale === null ? null : <ErrorState problem={stale} onRetry={onRefresh} />}
+            </>
           )
         }
       </Resource>
+      {/* Always present, one line high, so saying the stream is down moves nothing. */}
+      <p className="rg-setup__said rg-setup__stream" role="status">
+        {downloads.streamDown ? STREAM_DOWN : null}
+      </p>
       <h3 className="rg-setup__subheading">Import a local corpus</h3>
       <ImportForm onImport={onImport} />
       <p className="rg-setup__note">Custom benchmarks with generated questions arrive with M8.</p>

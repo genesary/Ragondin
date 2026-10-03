@@ -47,6 +47,7 @@ export class FakeEventSource {
 
   /** An event arrives: unnamed, to `onmessage`, or named, to its listeners — as the browser dispatches one. */
   emit(data: string, name?: string) {
+    if (this.closed) return;
     const event = new MessageEvent(name ?? 'message', { data });
     if (name === undefined) this.onmessage?.(event);
     else for (const listener of this.listeners.get(name) ?? []) listener(event);

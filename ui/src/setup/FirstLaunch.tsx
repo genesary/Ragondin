@@ -4,7 +4,7 @@
 import { Section } from '../../design/index.ts';
 import type { ApiProblem } from '../api/client.ts';
 import type { BenchmarkEntry, Capabilities } from '../api/types.ts';
-import { ActionSlot, DownloadButton, downloadWords, Licence, type Downloads } from './Benchmarks.tsx';
+import { ActionSlot, DownloadButton, downloadWords, isLive, Licence, STREAM_DOWN, type Downloads } from './Benchmarks.tsx';
 import { ConnectForm, ImportForm, type ConnectFormProps } from './forms.tsx';
 import { formatSize, smallestAvailable } from './model.ts';
 
@@ -53,7 +53,10 @@ export function FirstLaunch({ benchmarks, capabilities, onImport, downloads, con
                   <DownloadButton view={view} onStart={() => downloads.start(first.name)} />
                 </ActionSlot>
                 {/* The lead above already gives the size: an idle line says nothing. */}
-                <span className="rg-setup__said">{view.kind === 'idle' ? null : downloadWords(view, first.state.size_bytes)}</span>
+                <span className="rg-setup__said">
+                  {view.kind === 'idle' ? null : downloadWords(view, first.state.size_bytes, downloads.streamDown)}
+                  {downloads.streamDown && isLive(view) ? <> — {STREAM_DOWN}</> : null}
+                </span>
               </div>
               <p className="rg-setup__lead">Or import a corpus you hold:</p>
             </>
