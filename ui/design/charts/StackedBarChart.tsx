@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import type { Family } from '../glyphs/Glyph.tsx';
+import { Fragment, useState } from 'react';
+import { Glyph, type Family } from '../glyphs/Glyph.tsx';
 import { ChartTooltip } from './ChartFrame.tsx';
 import { linear, PLOT, ticks } from './scale.ts';
 import './Charts.css';
@@ -22,6 +22,42 @@ export type StackedBarChartProps = {
   format: (value: number) => string;
 };
 
+/**
+ * The label's type size in SVG units: the 11px of `--type-micro`, the type
+ * Charts.css draws a segment's name in. A change to either is a change to
+ * both; the chart's test holds the token to 11px.
+ */
+const LABEL_SIZE = 11;
+/**
+ * An upper bound on the width of `name` in that type, in SVG units: per
+ * character, at least the advance the shipped Wix Madefor Text Medium gives
+ * it — m, w, their capitals, @ and % 1.06 em, another capital 0.86 em,
+ * anything else 0.66 em — so a name judged to fit does, and is never clipped
+ * into what would read as another id. It is an estimate rather than a
+ * measurement because a measurement needs the text laid out first, and
+ * labelling after that would move the plot under the reader once the font
+ * arrives.
+ */
+function nameWidth(name: string): number {
+  let ems = 0;
+  for (const c of name) ems += /[mwMW@%]/.test(c) ? 1.06 : /[A-Z]/.test(c) ? 0.86 : 0.66;
+  return ems * LABEL_SIZE;
+}
+/** Room left between a label and its segment's edges, in SVG units. */
+const INSET = 4;
+
+/**
+ * What a segment `width` by `height` wide can hold: its node name when the
+ * name fits inside it, else its family glyph when that fits, else nothing —
+ * the hover box and the table still carry it.
+ */
+function markFor(s: StackSegment, width: number, height: number): { kind: 'name' } | { kind: 'glyph'; family: Family; size: number } | null {
+  if (height >= LABEL_SIZE + 2 && nameWidth(s.label) + 2 * INSET <= width) return { kind: 'name' };
+  const size = Math.min(16, height - INSET);
+  if (s.family !== null && size >= 10 && size + INSET <= width) return { kind: 'glyph', family: s.family, size };
+  return null;
+}
+
 /** A domain from zero to the first round tick at or past `max`. */
 function domainTo(max: number): [number, number] {
   if (max <= 0) return [0, 1];
@@ -34,7 +70,9 @@ function domainTo(max: number): [number, number] {
 /**
  * Horizontal stacked bars on one scale: per bar, its segments end to end,
  * each filled from its family's pigment — this chart's palette, never the run
- * inks — and its total written at its end. Hovering a bar's row lists its
+ * inks — and its total written at its end. A segment wide enough for its node
+ * name is labelled with it, a narrower one with its family glyph, so colour is
+ * never what alone tells two nodes apart. Hovering a bar's row lists its
  * segments.
  */
 export function StackedBarChart({ label, bars, segments, format }: StackedBarChartProps) {
@@ -72,7 +110,26 @@ export function StackedBarChart({ label, bars, segments, format }: StackedBarCha
                 {(segments[b] ?? []).map((s) => {
                   const from = at;
                   at += s.value;
-                  return <rect key={s.id} className="rg-chart__seg" data-family={s.family ?? 'none'} x={x(from)} y={barY(b)} width={x(at) - x(from)} height={thickness} />;
+                  const box = { x: x(from), y: barY(b), width: x(at) - x(from), height: thickness };
+                  const mark = markFor(s, box.width, box.height);
+                  return (
+                    <Fragment key={s.id}>
+                      <rect className="rg-chart__seg" data-family={s.family ?? 'none'} {...box} />
+                      {mark === null ? null : (
+                        // A nested svg clips its content to its own box, the
+                        // segment's, so no label can reach a neighbour's.
+                        <svg className="rg-chart__seg-label" data-family={s.family ?? 'none'} {...box}>
+                          {mark.kind === 'name' ? (
+                            <text className="rg-chart__seg-name" x={INSET} y={box.height / 2} dominantBaseline="central">
+                              {s.label}
+                            </text>
+                          ) : (
+                            <Glyph name={mark.family} x={(box.width - mark.size) / 2} y={(box.height - mark.size) / 2} width={mark.size} height={mark.size} />
+                          )}
+                        </svg>
+                      )}
+                    </Fragment>
+                  );
                 })}
               </g>
               <text className="rg-chart__total" x={x(totals[b] ?? 0) + 6} y={barY(b) + thickness / 2} dominantBaseline="middle">
