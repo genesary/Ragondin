@@ -964,6 +964,112 @@ fn stored_job(id: &str, position: u64, state: Value, history: &[&str]) -> Value 
     })
 }
 
+/// A crash between filing the run and writing the job's end: the run is
+/// stored under the announced id, which no other job could have filed
+/// (`run_exists` refuses a second), so the job is done, not interrupted.
+#[tokio::test]
+async fn restart_finds_a_running_job_whose_run_is_filed_done() {
+    let workspace = scratch("jobs-restart-run-filed");
+    let jobs = workspace.join("jobs");
+    std::fs::create_dir_all(&jobs).unwrap();
+    let running = stored_job(
+        "was-filing",
+        1,
+        json!({
+            "kind": "running",
+            "done": 1,
+            "total": 1,
+            "started_at": 1_700_000_000_500u64,
+            "median_latency_nanos": 100,
+        }),
+        &["queued", "running"],
+    );
+    std::fs::write(
+        jobs.join("was-filing.json"),
+        serde_json::to_vec(&running).unwrap(),
+    )
+    .unwrap();
+    let run_id = announced(&submission("was-filing"));
+    let mut run = fixture_run();
+    run.id = run_id;
+    FileSystemRunStore::new(workspace.join("runs"))
+        .save(&run)
+        .unwrap();
+
+    let app = server(&workspace, Arc::new(ScriptedLauncher::default()));
+
+    let job = json(send(app, get("/api/v1/jobs/was-filing")).await).await;
+    assert_eq!(kind(&job), "done", "{job}");
+    assert_eq!(job["state"]["run_id"], run_id.to_string());
+    let file = job_file(&workspace, "was-filing");
+    assert_eq!(file["state"]["kind"], "done");
+    let history: Vec<&str> = file["history"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|transition| transition["state"].as_str().unwrap())
+        .collect();
+    assert_eq!(history, ["queued", "running", "done"]);
+}
+
+/// A job whose `running` cannot be written is never executed by this
+/// process: failed, with the failure written when the disk allows it, and
+/// otherwise held in memory and reported — and then a restart finds it
+/// queued, and runs it.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_job_whose_running_cannot_be_written_is_not_executed_and_a_restart_resumes_it() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let workspace = scratch("jobs-running-unwritable");
+    let launcher = Arc::new(ScriptedLauncher::new(Script {
+        queries: vec![100],
+        gate_after: Some(1),
+        ..Script::default()
+    }));
+    let app = server(&workspace, Arc::clone(&launcher));
+    let first = accepted(&app, PIPELINE).await;
+    job_until(&app, &first, |job| kind(job) == "running").await;
+    let second = accepted(&app, OTHER_PIPELINE).await;
+
+    let jobs = workspace.join("jobs");
+    let set_mode =
+        |mode| std::fs::set_permissions(&jobs, std::fs::Permissions::from_mode(mode)).unwrap();
+    set_mode(0o555);
+    launcher.gate.add_permits(1);
+    let failed = job_until(&app, &second, finished).await;
+    set_mode(0o755);
+
+    assert_eq!(kind(&failed), "failed", "{failed}");
+    assert!(failed["state"]["error"]
+        .as_str()
+        .unwrap()
+        .contains("could not be started"));
+    assert_eq!(*launcher.executed.lock().unwrap(), [PIPELINE]);
+    let listing = json(send(app.clone(), get("/api/v1/jobs")).await).await;
+    let reported = listing["faults"].as_array().unwrap().iter().any(|fault| {
+        fault["path"]
+            .as_str()
+            .unwrap()
+            .ends_with(&format!("{second}.json"))
+            && fault["reason"]
+                .as_str()
+                .unwrap()
+                .contains("a restart finds it queued")
+    });
+    assert!(reported, "{listing}");
+    assert_eq!(job_file(&workspace, &second)["state"]["kind"], "queued");
+
+    let rerun = Arc::new(ScriptedLauncher::new(Script {
+        queries: vec![100],
+        ..Script::default()
+    }));
+    let restarted = server(&workspace, Arc::clone(&rerun));
+    let job = job_until(&restarted, &second, finished).await;
+    assert_eq!(kind(&job), "done", "{job}");
+    assert_eq!(*rerun.executed.lock().unwrap(), [OTHER_PIPELINE]);
+}
+
 #[tokio::test]
 async fn restart_marks_the_running_job_interrupted_and_resumes_the_queue() {
     let workspace = scratch("jobs-restart");

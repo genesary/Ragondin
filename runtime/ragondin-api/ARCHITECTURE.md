@@ -676,7 +676,12 @@ the job's times, never written onto the `Run`.
 ```
 
 A `running` job found on disk when the service starts is failed with
-`error: "interrupted"`; `queued` ones wait in their stored order. That runs
+`error: "interrupted"` — unless it is a run whose announced id the store
+holds: then the process stopped after filing the run and before writing the
+job's end, since no other job can have filed that id (`run_exists` refuses a
+second), and the job is `done`. A run filed under another id than it
+announced cannot be told from one never filed, and is interrupted. `queued`
+ones wait in their stored order. That runs
 in `AppState::new`, inside `router`, before the router answers anything, so no
 request sees a job running that this process did not start. The worker
 starts on the queued ones at once when `router` is called in a `tokio`
@@ -725,9 +730,12 @@ stream, not the file, since a restart fails a running job whatever its count.
 The ways a write can fail are reported among `GET /jobs`' `faults`, never
 dropped: a submission or a cancellation whose write fails is refused
 (`backend_failed`) and changes nothing; a job whose `running` cannot be
-written is never executed and is failed in memory; a terminal state whose
-write fails is applied in memory anyway — the job has ended — and the next
-start finds it interrupted. A job file that does not read is left out of the
+written is not executed by this process, and its failure is written in its
+place, best effort — when that write fails too, the failure is held in memory
+only, the disk still says `queued`, and a restart runs the job; the fault
+says which happened. A terminal state whose write fails is applied in memory
+anyway — the job has ended — and the next start finds it running, and fails
+it as interrupted unless its run is stored under the announced id. A job file that does not read is left out of the
 queue, left on disk, and listed as a fault: reported, never repaired.
 
 A run that fails or is cancelled leaves **the traces of the queries it
@@ -761,7 +769,10 @@ two queries and returns `LauncherError::Cancelled`, and only then is the job
 `{position}` moves a queued job among its lane's queued jobs, 0 first; the
 positions those jobs held are dealt out again in the new order, and every
 changed file is written before memory changes, so the order survives a
-restart. A job that is not queued is `job_not_queued`.
+restart. A write that fails part-way refuses the reorder and leaves the files
+already written with their new positions, so two jobs on disk can share a
+position until the next reorder; the fault says so. A job that is not queued
+is `job_not_queued`.
 
 ### The event stream
 
@@ -778,7 +789,29 @@ than the buffer, or a client that fell behind the broadcast channel — it gets
 `resync`, whose data is the whole queue as `GET /jobs` answers it, so a
 client never acts across a gap. Replay and subscription are taken under the
 lock every publication holds, and an event already sent is never sent again.
-An idle stream sends a comment every 15 s.
+An idle stream sends a comment every 15 s. The description declares the
+stream's success body as `text/event-stream` of schema `JobEvent`, an
+adjacently tagged union of `{event, data}` — `queued`, `running`, `done`,
+`failed`, `cancelled` and `reordered` to `JobSummary`, `resync` to
+`JobListing` — so the UI's map from an event's name to its data is generated.
+The stream builds each event's name and data from a `JobEvent` value, and a
+unit test checks the two against the type's serde tag, so the schema is the
+stream's.
+
+### Known limits
+
+- **One process per workspace.** Nothing locks `jobs/`: two `ragondin ui`
+  processes on one workspace would each fail the other's running job as
+  interrupted when they start, and both would take the queued ones.
+- **A crash between a run's filing and its job's end** leaves the job
+  `running` on disk; the next start finds its run stored under the announced
+  id and records it `done`, but a run filed under a decided id that differs
+  is recorded interrupted though it is stored.
+- **The live median re-sorts every latency so far on each tick** — `lower_median`
+  takes the values by value — which is O(n log n) per query, negligible
+  beside a query's execution at the benchmarks' sizes.
+- **Jobs are never pruned**: every ended job stays in `jobs/` and in memory,
+  and `GET /jobs` lists them all, until a later issue gives them a lifetime.
 
 ### Choices made here
 
@@ -1812,8 +1845,8 @@ a foreign `Host`.
 
 `src/description.rs` assembles one OpenAPI-shaped document from `OPERATIONS` —
 each operation's method, path, summary and one success response — `200` or
-`202` with its schema's name, or `200` with no JSON body for the event
-stream, whose description names the schemas its events carry — and the
+`202` with its schema's name, or `200` with `text/event-stream` of the
+schema its events take for the event stream — and the
 `schemars` schemas of the response types and `Problem`, generated with the
 OpenAPI 3 settings so references point under `#/components/schemas`. Minimal on
 purpose: it exists for the diff and for the UI's type generator, and no OpenAPI

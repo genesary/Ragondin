@@ -197,6 +197,22 @@ describe('renderApiTypes', () => {
     );
   });
 
+  // An event stream is read through `EventSource`, never through the client:
+  // its response is `never`, so no client call can claim to read it, and it
+  // is not an empty answer. Its events are typed by the schema it names,
+  // which is rendered as every schema is.
+  it('renders an event stream’s response as never, not as an empty answer', () => {
+    const out = renderApiTypes(
+      description(
+        { E: { type: 'string' } },
+        { '/jobs/events': { get: { parameters: [], responses: { 200: { content: { 'text/event-stream': { schema: { $ref: '#/components/schemas/E' } } } } } } } },
+      ),
+    );
+    expect(typeOf(out, 'Paths')).toBe('{ "/jobs/events": { get: { params: Record<string, never>; response: never; }; }; }');
+    expect(out).toContain('export const EMPTY_ANSWERS: readonly string[] = [];');
+    expect(typeOf(out, 'E')).toBe('string');
+  });
+
   it('renders query and header parameters beside the path’s, each optional unless required', () => {
     const R = { 200: { content: { 'application/json': { schema: { $ref: '#/components/schemas/R' } } } } };
     const string = { type: 'string' };

@@ -42,9 +42,12 @@ fn the_description_lists_every_operation_with_its_schema() {
                     "{name} is defined under components/schemas"
                 );
             }
-            // An event stream's body is no JSON document: it has no schema
-            // of its own, and its events' data are named in its description.
-            None => assert!(success.is_object() && success.get("content").is_none()),
+            // An event stream's body is no JSON document: its schema is its
+            // events', under `text/event-stream`.
+            None => assert_eq!(
+                success["content"]["text/event-stream"]["schema"]["$ref"],
+                "#/components/schemas/JobEvent"
+            ),
         }
         assert_eq!(
             entry["responses"]["default"]["content"]["application/problem+json"]["schema"]["$ref"],
@@ -117,11 +120,45 @@ fn the_queue_s_operations_declare_their_status_and_their_stream() {
     );
     assert_eq!(responses("/jobs/events", "get"), ["200", "default"]);
     let events = &description["paths"]["/jobs/events"]["get"];
-    assert!(events["responses"]["200"].get("content").is_none());
-    let prose = events["description"].as_str().unwrap();
-    assert!(
-        prose.contains("JobSummary") && prose.contains("JobListing"),
-        "{prose}"
+    assert_eq!(
+        events["responses"]["200"]["content"]["text/event-stream"]["schema"]["$ref"],
+        "#/components/schemas/JobEvent"
+    );
+    // Each event's name, and the schema its data takes, generated rather
+    // than typed by hand.
+    let mut map: Vec<(String, String)> = schemas()["JobEvent"]["oneOf"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|variant| {
+            (
+                variant["properties"]["event"]["enum"][0]
+                    .as_str()
+                    .unwrap()
+                    .to_owned(),
+                variant["properties"]["data"]["$ref"]
+                    .as_str()
+                    .unwrap()
+                    .to_owned(),
+            )
+        })
+        .collect();
+    map.sort();
+    let summary = "#/components/schemas/JobSummary".to_owned();
+    assert_eq!(
+        map,
+        [
+            ("cancelled".to_owned(), summary.clone()),
+            ("done".to_owned(), summary.clone()),
+            ("failed".to_owned(), summary.clone()),
+            ("queued".to_owned(), summary.clone()),
+            ("reordered".to_owned(), summary.clone()),
+            (
+                "resync".to_owned(),
+                "#/components/schemas/JobListing".to_owned()
+            ),
+            ("running".to_owned(), summary),
+        ]
     );
     assert_eq!(events["parameters"][0]["name"], "Last-Event-ID");
     assert_eq!(events["parameters"][0]["in"], "header");

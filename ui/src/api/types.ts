@@ -435,6 +435,34 @@ export type ImportRequest = {
   path: string;
 };
 
+/**
+ * One event of `GET /jobs/events`: its name, the SSE `event` field, and
+ * its data, the SSE `data` field. The stream sends the two as SSE fields,
+ * not as this object; the schema is the map from a name to its data's type.
+ */
+export type JobEvent = {
+  data: JobSummary;
+  event: "queued";
+} | {
+  data: JobSummary;
+  event: "running";
+} | {
+  data: JobSummary;
+  event: "done";
+} | {
+  data: JobSummary;
+  event: "failed";
+} | {
+  data: JobSummary;
+  event: "cancelled";
+} | {
+  data: JobSummary;
+  event: "reordered";
+} | {
+  data: JobListing;
+  event: "resync";
+};
+
 /** A job file the queue could not read, or a write of it that failed. */
 export type JobFault = {
   /** The file. */
@@ -454,8 +482,8 @@ export type JobListing = {
    */
   faults: JobFault[];
   /**
-   * The jobs, by position: those ended and the one running before those
-   * queued, each lane's queued jobs in the order its worker takes them.
+   * The jobs, by position: the order accepted and as reordered; each
+   * lane's queued jobs in the order its worker takes them.
    */
   jobs: JobSummary[];
 };
@@ -1733,7 +1761,7 @@ export type Paths = {
          */
         "Last-Event-ID"?: string;
       };
-      response: null;
+      response: never;
     };
   };
   "/jobs/{id}": {
@@ -1931,4 +1959,4 @@ export type Paths = {
 };
 
 /** The operations whose success response has no body: the client accepts an empty answer from these, and from a 204. */
-export const EMPTY_ANSWERS: readonly string[] = ["GET /jobs/events"];
+export const EMPTY_ANSWERS: readonly string[] = [];

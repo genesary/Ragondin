@@ -1519,12 +1519,35 @@ pub struct DownloadAccepted {
 /// record.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct JobListing {
-    /// The jobs, by position: those ended and the one running before those
-    /// queued, each lane's queued jobs in the order its worker takes them.
+    /// The jobs, by position: the order accepted and as reordered; each
+    /// lane's queued jobs in the order its worker takes them.
     pub jobs: Vec<JobSummary>,
     /// A job file that does not read, or a write of the queue's record that
     /// failed — reported, never repaired.
     pub faults: Vec<JobFault>,
+}
+
+/// One event of `GET /jobs/events`: its name, the SSE `event` field, and
+/// its data, the SSE `data` field. The stream sends the two as SSE fields,
+/// not as this object; the schema is the map from a name to its data's type.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(tag = "event", content = "data", rename_all = "snake_case")]
+pub enum JobEvent {
+    /// A job accepted into the queue.
+    Queued(JobSummary),
+    /// A job taken by its worker, or a progress tick.
+    Running(JobSummary),
+    /// A job finished.
+    Done(JobSummary),
+    /// A job failed.
+    Failed(JobSummary),
+    /// A job cancelled.
+    Cancelled(JobSummary),
+    /// A queued job moved by a reorder.
+    Reordered(JobSummary),
+    /// The whole queue, sent when the stream cannot replay what a client
+    /// missed.
+    Resync(JobListing),
 }
 
 /// A job file the queue could not read, or a write of it that failed.

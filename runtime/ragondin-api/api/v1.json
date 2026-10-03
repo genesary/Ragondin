@@ -1079,6 +1079,144 @@
         ],
         "type": "object"
       },
+      "JobEvent": {
+        "description": "One event of `GET /jobs/events`: its name, the SSE `event` field, and\nits data, the SSE `data` field. The stream sends the two as SSE fields,\nnot as this object; the schema is the map from a name to its data's type.",
+        "oneOf": [
+          {
+            "description": "A job accepted into the queue.",
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/JobSummary"
+              },
+              "event": {
+                "enum": [
+                  "queued"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "event",
+              "data"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "A job taken by its worker, or a progress tick.",
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/JobSummary"
+              },
+              "event": {
+                "enum": [
+                  "running"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "event",
+              "data"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "A job finished.",
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/JobSummary"
+              },
+              "event": {
+                "enum": [
+                  "done"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "event",
+              "data"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "A job failed.",
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/JobSummary"
+              },
+              "event": {
+                "enum": [
+                  "failed"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "event",
+              "data"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "A job cancelled.",
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/JobSummary"
+              },
+              "event": {
+                "enum": [
+                  "cancelled"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "event",
+              "data"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "A queued job moved by a reorder.",
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/JobSummary"
+              },
+              "event": {
+                "enum": [
+                  "reordered"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "event",
+              "data"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "The whole queue, sent when the stream cannot replay what a client\nmissed.",
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/JobListing"
+              },
+              "event": {
+                "enum": [
+                  "resync"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "event",
+              "data"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "JobFault": {
         "description": "A job file the queue could not read, or a write of it that failed.",
         "properties": {
@@ -1108,7 +1246,7 @@
             "type": "array"
           },
           "jobs": {
-            "description": "The jobs, by position: those ended and the one running before those\nqueued, each lane's queued jobs in the order its worker takes them.",
+            "description": "The jobs, by position: the order accepted and as reordered; each\nlane's queued jobs in the order its worker takes them.",
             "items": {
               "$ref": "#/components/schemas/JobSummary"
             },
@@ -4168,7 +4306,7 @@
     },
     "/jobs/events": {
       "get": {
-        "description": "Each event is named after the state entered — queued, running, done, failed, cancelled — or reordered, and its data is the job as a JobSummary; a run's running events tick once per query, a download's in bytes. Its id is `<process>:<number>`: reconnecting with Last-Event-ID replays every event missed, once, while this server still holds them. Otherwise the stream begins with resync, whose data is the whole queue as a JobListing.",
+        "description": "Each event is named after the state entered — queued, running, done, failed, cancelled — or reordered, and its data is the job as a JobSummary; a run's running events tick once per query, a download's in bytes. Its id is `<process>:<number>`: reconnecting with Last-Event-ID replays every event missed, once, while this server still holds them. Otherwise the stream begins with resync, whose data is the whole queue as a JobListing. JobEvent maps each name to its data's schema; the stream sends them as the SSE `event` and `data` fields.",
         "parameters": [
           {
             "description": "The id of the last event the client received, to resume after it.\nAbsent, or one this server no longer holds the events after, and the\nstream begins with `resync`.",
@@ -4182,6 +4320,13 @@
         ],
         "responses": {
           "200": {
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobEvent"
+                }
+              }
+            },
             "description": "Every job transition and progress tick, as server-sent events."
           },
           "default": {

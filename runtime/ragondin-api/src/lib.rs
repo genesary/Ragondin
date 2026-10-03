@@ -140,8 +140,9 @@ pub struct ServerConfig {
 /// assets' to answer.
 ///
 /// The job queue is read back from the workspace's `jobs/` here, before the
-/// server answers anything: a job found running is failed as interrupted,
-/// and the queued ones wait in their stored order. Called inside a `tokio`
+/// server answers anything: a job found running is failed as interrupted —
+/// or done, for a run whose announced id the store holds — and the queued
+/// ones wait in their stored order. Called inside a `tokio`
 /// runtime, as `serve` needs anyway, the workers start on them at once.
 // The one assembly site: the nest, the bare-prefix route, the naming
 // fallback, the assets' fallback and the envelope's layer, none of them an

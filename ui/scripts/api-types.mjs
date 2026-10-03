@@ -221,8 +221,13 @@ function renderer(names) {
   return typeOf;
 }
 
+/** What `successSchema` answers for an event stream: no body the client reads. */
+const EVENT_STREAM = Symbol('event stream');
+
 /**
- * The JSON schema of the one success response, or null for one with no body.
+ * The JSON schema of the one success response, null for one with no body, or
+ * `EVENT_STREAM` for a `text/event-stream` one, which `EventSource` reads and
+ * the client never does; its events' schema is rendered among the schemas.
  * @param {Record<string, Schema>} responses
  * @param {string} where
  */
@@ -232,6 +237,7 @@ function successSchema(responses, where) {
   if (codes.length > 1) refuse(where, `a second success response (${codes.join(', ')}), which one type cannot tell apart`);
   const content = responses[codes[0] ?? '']?.content;
   if (content === undefined) return null;
+  if (Object.keys(content).length === 1 && content['text/event-stream'] !== undefined) return EVENT_STREAM;
   const json = content['application/json'];
   if (json === undefined) return refuse(where, `a success response that is not application/json (${Object.keys(content).join(', ')})`);
   return json.schema;
@@ -292,7 +298,8 @@ function pathsType(paths, typeOf) {
       }
       const response = successSchema(op.responses ?? {}, where);
       if (response === null) empty.push(`${method.toUpperCase()} ${path}`);
-      lines.push(`      response: ${response === null ? 'null' : typeOf(response, `${where} response`, '      ')};`);
+      const rendered = response === null ? 'null' : response === EVENT_STREAM ? 'never' : typeOf(response, `${where} response`, '      ');
+      lines.push(`      response: ${rendered};`);
       return `${doc(op.summary, '    ')}    ${method}: {\n${lines.join('\n')}\n    };`;
     });
     return `  ${literal(path)}: {\n${operations.join('\n')}\n  };`;

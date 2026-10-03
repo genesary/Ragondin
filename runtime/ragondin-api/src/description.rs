@@ -23,7 +23,7 @@ use crate::request::{
     ServiceAddress,
 };
 use crate::response::{
-    BenchmarkListing, Comparison, DownloadAccepted, JobListing, JobSummary, PipelineDetail,
+    BenchmarkListing, Comparison, DownloadAccepted, JobEvent, JobListing, PipelineDetail,
     PipelineLayout, PipelineListing, PipelineMatrix, PipelineValidated, PipelineWritten,
     ProbeResult, Problem, QueryTrace, RunAccepted, RunDetail, RunListing, RunQueries,
     ServiceListing, Workspace,
@@ -58,16 +58,15 @@ pub enum Response {
     Json(&'static str),
     /// `202`, with a JSON body of the named schema: accepted into the queue.
     Accepted(&'static str),
-    /// `200`, `text/event-stream`: no JSON body, so no schema; the
-    /// operation's description names the schemas its events' data take.
-    EventStream,
+    /// `200`, `text/event-stream`, whose events the named schema describes.
+    EventStream(&'static str),
 }
 
 impl Response {
     /// The status, as the description's `responses` key spells it.
     pub fn status(self) -> &'static str {
         match self {
-            Self::Json(_) | Self::EventStream => "200",
+            Self::Json(_) | Self::EventStream(_) => "200",
             Self::Accepted(_) => "202",
         }
     }
@@ -76,7 +75,15 @@ impl Response {
     pub fn schema(self) -> Option<&'static str> {
         match self {
             Self::Json(schema) | Self::Accepted(schema) => Some(schema),
-            Self::EventStream => None,
+            Self::EventStream(_) => None,
+        }
+    }
+
+    /// The success body's media type, and its schema's name.
+    fn content(self) -> (&'static str, &'static str) {
+        match self {
+            Self::Json(schema) | Self::Accepted(schema) => ("application/json", schema),
+            Self::EventStream(events) => ("text/event-stream", events),
         }
     }
 }
@@ -247,10 +254,10 @@ pub const OPERATIONS: &[Operation] = &[
         method: "get",
         path: "/jobs/events",
         summary: "Every job transition and progress tick, as server-sent events.",
-        response: Response::EventStream,
+        response: Response::EventStream("JobEvent"),
         request: None,
         description: Some(
-            "Each event is named after the state entered — queued, running, done, failed, cancelled — or reordered, and its data is the job as a JobSummary; a run's running events tick once per query, a download's in bytes. Its id is `<process>:<number>`: reconnecting with Last-Event-ID replays every event missed, once, while this server still holds them. Otherwise the stream begins with resync, whose data is the whole queue as a JobListing.",
+            "Each event is named after the state entered — queued, running, done, failed, cancelled — or reordered, and its data is the job as a JobSummary; a run's running events tick once per query, a download's in bytes. Its id is `<process>:<number>`: reconnecting with Last-Event-ID replays every event missed, once, while this server still holds them. Otherwise the stream begins with resync, whose data is the whole queue as a JobListing. JobEvent maps each name to its data's schema; the stream sends them as the SSE `event` and `data` fields.",
         ),
     },
     Operation {
@@ -433,8 +440,8 @@ fn description() -> Value {
     generator.subschema_for::<RunAccepted>();
     generator.subschema_for::<DownloadAccepted>();
     generator.subschema_for::<JobListing>();
-    // The event stream's data, which no operation answers as JSON.
-    generator.subschema_for::<JobSummary>();
+    // The event stream's events, which no operation answers as JSON.
+    generator.subschema_for::<JobEvent>();
     generator.subschema_for::<Problem>();
     // The request bodies.
     generator.subschema_for::<PipelineDocument>();
@@ -504,12 +511,13 @@ fn description() -> Value {
             })
             .collect();
         parameters.extend(declared);
-        let mut success = json!({ "description": operation.summary });
-        if let Some(schema) = operation.response.schema() {
-            success["content"] = json!({ "application/json": { "schema": {
+        let (media, schema) = operation.response.content();
+        let success = json!({
+            "description": operation.summary,
+            "content": { media: { "schema": {
                 "$ref": format!("#/components/schemas/{schema}"),
-            } } });
-        }
+            } } },
+        });
         let mut entry = json!({
             "summary": operation.summary,
             "parameters": parameters,

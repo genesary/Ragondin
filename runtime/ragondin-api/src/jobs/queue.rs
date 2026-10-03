@@ -25,7 +25,7 @@ use crate::backends::{
     Registry, RunObserver, Submission,
 };
 use crate::error::ApiError;
-use crate::response::{JobFault, JobListing, JobSummary};
+use crate::response::{JobEvent, JobFault, JobListing, JobSummary};
 
 /// How many recent events the queue keeps for a client that reconnects,
 /// and how many a slow client may fall behind before it is resynchronised.
@@ -129,20 +129,53 @@ impl State {
 
 impl Queue {
     /// The queue over `dir`, read back from it: every job found `Running`
-    /// is failed as interrupted — no process runs it now — and the queued
+    /// is failed as interrupted — no process runs it now — unless it is a run
+    /// whose announced id the store holds, which is done; and the queued
     /// ones wait in their stored order. When called inside a `tokio`
     /// runtime, as the binary does, the workers start on them at once; a
     /// lane without a runtime starts at its next submission.
     pub(crate) fn open(dir: PathBuf, backends: &Backends) -> Arc<Self> {
         let (jobs, mut faults) = file::load(&dir);
         let mut entries = Vec::with_capacity(jobs.len());
+        // The store's ids, listed once and only when a run job was running.
+        let mut stored: Option<Vec<String>> = None;
         for mut job in jobs {
             if matches!(job.state, JobState::Running { .. }) {
                 let at = now();
-                job.state = JobState::Failed {
-                    error: INTERRUPTED.to_owned(),
-                    at_node: None,
-                    finished_at: at,
+                let filed = match &job.work {
+                    Work::Run { run_id, .. } => {
+                        let ids = stored.get_or_insert_with(|| match backends.runs.ids() {
+                            Ok(ids) => ids.iter().map(ToString::to_string).collect(),
+                            Err(error) => {
+                                faults.push(JobFault {
+                                    path: dir.display().to_string(),
+                                    reason: format!(
+                                        "the run store cannot be listed: {error}; the running \
+                                         jobs were failed as interrupted without looking for \
+                                         their runs"
+                                    ),
+                                });
+                                Vec::new()
+                            }
+                        });
+                        ids.contains(run_id).then(|| run_id.clone())
+                    }
+                    Work::Download { .. } => None,
+                };
+                // A run stored under the announced id is this job's: a second
+                // job of that id is refused with `run_exists`. The process
+                // stopped after filing it and before writing the end.
+                job.state = match filed {
+                    Some(run_id) => JobState::Done {
+                        run_id: Some(run_id),
+                        id_mismatch: None,
+                        finished_at: at,
+                    },
+                    None => JobState::Failed {
+                        error: INTERRUPTED.to_owned(),
+                        at_node: None,
+                        finished_at: at,
+                    },
                 };
                 job.history.push(Transition {
                     state: job.state.name().to_owned(),
@@ -297,7 +330,7 @@ impl Queue {
             cancel: Cancellation::new(),
         });
         state.sort();
-        self.publish(state, job.state.name(), &summary(&job));
+        self.publish(state, &transition(&job));
         self.kick(state, lane);
         Ok(id)
     }
@@ -323,7 +356,7 @@ impl Queue {
                     .map_err(|detail| ApiError::BackendFailed { detail })?;
                 let view = summary(&job);
                 state.jobs[index].job = job;
-                self.publish(&mut state, "cancelled", &view);
+                self.publish(&mut state, &JobEvent::Cancelled(view.clone()));
                 Ok(view)
             }
             JobState::Running { .. } => {
@@ -378,7 +411,7 @@ impl Queue {
         for (_, job) in &changed {
             if let Err(detail) = self.write(job).await {
                 state.faults.push(fault(&self.dir, &job.id, format!(
-                    "{detail}; the reorder was refused, and the files written before it keep their new positions"
+                    "{detail}; the reorder was refused, and the files written before it keep their new positions, so two jobs on disk may now share a position until the next reorder"
                 )));
                 return Err(ApiError::BackendFailed { detail });
             }
@@ -386,7 +419,7 @@ impl Queue {
         for (i, job) in changed {
             let view = summary(&job);
             state.jobs[i].job = job;
-            self.publish(&mut state, "reordered", &view);
+            self.publish(&mut state, &JobEvent::Reordered(view));
         }
         state.sort();
         Ok(state.listing())
@@ -431,10 +464,11 @@ impl Queue {
     }
 
     fn resync(&self, state: &State) -> Arc<Published> {
+        let (name, data) = parts(&JobEvent::Resync(state.listing()));
         Arc::new(Published {
             seq: state.seq,
-            name: "resync",
-            data: to_json(&state.listing()),
+            name,
+            data,
         })
     }
 
@@ -443,14 +477,15 @@ impl Queue {
         format!("{}:{}", self.boot, event.seq)
     }
 
-    /// Publishes `data` as the event `name`, numbered after the last, kept
-    /// among the recent ones. Called under the lock.
-    fn publish(&self, state: &mut State, name: &'static str, data: &impl serde::Serialize) {
+    /// Publishes `event`, numbered after the last, kept among the recent
+    /// ones. Called under the lock.
+    fn publish(&self, state: &mut State, event: &JobEvent) {
         state.seq += 1;
+        let (name, data) = parts(event);
         let event = Arc::new(Published {
             seq: state.seq,
             name,
-            data: to_json(data),
+            data,
         });
         if state.recent.len() == RECENT {
             state.recent.pop_front();
@@ -517,26 +552,37 @@ impl Queue {
                 Ok(()) => {
                     let cancel = state.jobs[index].cancel.clone();
                     state.jobs[index].job = job.clone();
-                    self.publish(&mut state, "running", &summary(&job));
+                    self.publish(&mut state, &transition(&job));
                     return Some((job, cancel));
                 }
-                // Never executed without its record: failed, in memory, and
-                // reported; the next start finds it queued and runs it.
+                // Never executed without its record. The failure is written in
+                // its place when the disk allows it; when it does not either,
+                // the disk still says `queued`, and a restart runs the job.
                 Err(reason) => {
+                    let mut failed = state.jobs[index].job.clone();
                     let at = now();
-                    job.state = JobState::Failed {
+                    failed.state = JobState::Failed {
                         error: format!("the job could not be started: {reason}"),
                         at_node: None,
                         finished_at: at,
                     };
-                    state.faults.push(fault(
-                        &self.dir,
-                        &job.id,
-                        format!("{reason}; the job was failed without running, in memory only"),
-                    ));
-                    let view = summary(&job);
-                    state.jobs[index].job = job;
-                    self.publish(&mut state, "failed", &view);
+                    failed.history.push(Transition {
+                        state: failed.state.name().to_owned(),
+                        at,
+                    });
+                    let outcome = match self.write(&failed).await {
+                        Ok(()) => "the job was failed without running".to_owned(),
+                        Err(again) => format!(
+                            "the job was failed without running, in memory only ({again}): \
+                             a restart finds it queued and runs it"
+                        ),
+                    };
+                    state
+                        .faults
+                        .push(fault(&self.dir, &failed.id, format!("{reason}; {outcome}")));
+                    let event = transition(&failed);
+                    state.jobs[index].job = failed;
+                    self.publish(&mut state, &event);
                 }
             }
         }
@@ -676,7 +722,7 @@ impl Queue {
             median_latency_nanos: median.or(median_latency_nanos),
         };
         let view = summary(&state.jobs[index].job);
-        self.publish(&mut state, "running", &view);
+        self.publish(&mut state, &JobEvent::Running(view));
     }
 
     /// Writes a stopped run's traces under `jobs/<id>/partial/`; a failed
@@ -801,14 +847,13 @@ impl Queue {
                 &self.dir,
                 &job.id,
                 format!(
-                "{reason}; its end is held in memory only, and a restart will find it interrupted"
+                "{reason}; its end is held in memory only: a restart finds it running, and fails it as interrupted unless its run is stored under the announced id"
             ),
             ));
         }
-        let name = job.state.name();
-        let view = summary(&job);
+        let event = transition(&job);
         state.jobs[index].job = job;
-        self.publish(&mut state, name, &view);
+        self.publish(&mut state, &event);
     }
 }
 
@@ -840,10 +885,78 @@ fn fault(dir: &std::path::Path, id: &str, reason: String) -> JobFault {
     }
 }
 
+/// The event a job's current state is the transition into.
+fn transition(job: &Job) -> JobEvent {
+    let view = summary(job);
+    match job.state {
+        JobState::Queued => JobEvent::Queued(view),
+        JobState::Running { .. } => JobEvent::Running(view),
+        JobState::Done { .. } => JobEvent::Done(view),
+        JobState::Failed { .. } => JobEvent::Failed(view),
+        JobState::Cancelled { .. } => JobEvent::Cancelled(view),
+    }
+}
+
+/// An event's name on the stream and its data, as `JobEvent`'s schema
+/// describes them: the tag, and the content serialized alone.
+fn parts(event: &JobEvent) -> (&'static str, String) {
+    match event {
+        JobEvent::Queued(job) => ("queued", to_json(job)),
+        JobEvent::Running(job) => ("running", to_json(job)),
+        JobEvent::Done(job) => ("done", to_json(job)),
+        JobEvent::Failed(job) => ("failed", to_json(job)),
+        JobEvent::Cancelled(job) => ("cancelled", to_json(job)),
+        JobEvent::Reordered(job) => ("reordered", to_json(job)),
+        JobEvent::Resync(listing) => ("resync", to_json(listing)),
+    }
+}
+
 fn to_json(value: &impl serde::Serialize) -> String {
     // The values serialized here are this crate's response types: strings,
     // numbers and options, which always serialize.
     serde_json::to_string(value).unwrap_or_else(|error| {
         serde_json::json!({ "serialization_failed": error.to_string() }).to_string()
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::response::{JobStatus, JobWork};
+
+    /// The stream's names are `JobEvent`'s tags, so the schema the UI types
+    /// its events from is the one the stream sends.
+    #[test]
+    fn each_event_s_name_is_its_schema_s_tag() {
+        let job = JobSummary {
+            id: "1-1".to_owned(),
+            position: 0,
+            created_at_ms: None,
+            work: JobWork::Download {
+                benchmark: "beir/mini".to_owned(),
+            },
+            state: JobStatus::Queued,
+        };
+        let listing = JobListing {
+            jobs: vec![job.clone()],
+            faults: Vec::new(),
+        };
+        for event in [
+            JobEvent::Queued(job.clone()),
+            JobEvent::Running(job.clone()),
+            JobEvent::Done(job.clone()),
+            JobEvent::Failed(job.clone()),
+            JobEvent::Cancelled(job.clone()),
+            JobEvent::Reordered(job),
+            JobEvent::Resync(listing),
+        ] {
+            let tagged = serde_json::to_value(&event).unwrap();
+            let (name, data) = parts(&event);
+            assert_eq!(tagged["event"], name);
+            assert_eq!(
+                tagged["data"],
+                serde_json::from_str::<serde_json::Value>(&data).unwrap()
+            );
+        }
+    }
 }
