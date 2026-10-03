@@ -3,6 +3,7 @@ import { ButtonLink, InlineMessage, TopBar } from '../design/index.ts';
 import type { ApiClient, ApiProblem } from './api/client.ts';
 import { openEvents, type ConnectionState } from './api/events.ts';
 import type { Workspace } from './api/types.ts';
+import { pipelineEntry } from './pipeline/last.ts';
 import { formatHash, useRoute, viewOf } from './routes.ts';
 import { judgeBuild } from './shell/build.ts';
 import { Screen, SCREENS, useFocusOnChange } from './shell/screens.tsx';
@@ -95,7 +96,7 @@ export function App({ client, build, reload, eventsPath }: AppProps) {
     <>
       <TopBar
         workspace={<WorkspaceIndicator state={workspace} />}
-        links={SCREENS.map((s) => ({ label: s.label, href: formatHash(s.bare), current: route?.screen === s.screen }))}
+        links={SCREENS.map((s) => ({ label: s.label, href: formatHash(s.screen === 'pipeline' ? pipelineEntry() : s.bare), current: route?.screen === s.screen }))}
         services={[]}
         {...(connection === null ? {} : { status: CONNECTION[connection] })}
         end={<ThemeControl />}

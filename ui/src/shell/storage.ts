@@ -1,5 +1,5 @@
-// The browser's storage, for per-viewer conveniences only (the theme) and the
-// build handshake's one-reload guard. Every access is guarded: storage can be
+// The browser's storage, for per-viewer conveniences only (the theme, the
+// last pipeline viewed) and the build handshake's one-reload guard. Every access is guarded: storage can be
 // missing, or refused, in a private window or with site data blocked, and
 // merely reading `window.localStorage` then throws. Each caller decides what
 // "unavailable" means for it; nothing here pretends a write happened.

@@ -8,6 +8,7 @@ import type { Workspace } from './api/types.ts';
 import { App } from './App.tsx';
 import { COMPARISON, DENSE, HYBRID, RERANK } from './compare/fixtures.ts';
 import * as replay from './replay/fixtures.ts';
+import { MATRIX, NAME as PIPELINE } from './pipeline/fixtures.ts';
 
 const BUILD = '0.0.0+aaaaaaaaaaaa';
 
@@ -49,7 +50,6 @@ describe('the shell’s screens', () => {
   it.each([
     ['#runs', 'Runs', 'No runs yet'],
     ['#pipeline', 'Pipeline', 'No pipeline chosen'],
-    ['#pipeline/hybrid-rrf', 'Pipeline', 'Nothing to show for hybrid-rrf yet'],
     ['#compare', 'Compare', 'Choose at least two runs'],
     ['#compare/aaa', 'Compare', 'Choose at least two runs'],
     ['#replay', 'Replay', 'No query chosen'],
@@ -104,6 +104,24 @@ describe('the shell’s screens', () => {
     expect(within(main()).getByRole('button', { name: /^Compare/ }).textContent).toBe('Compare 2 selected');
   });
 
+  it('hands Pipeline the name its address carries, and draws its matrix', async () => {
+    const api = mockApi({ 'GET /workspace': { body: WORKSPACE }, 'GET /pipelines': { body: { pipelines: [] } }, 'GET /pipelines/{name}/matrix': { body: MATRIX } }, { build: BUILD });
+    show(`#pipeline/${PIPELINE}`);
+    expect(await within(main()).findByRole('table', { name: `${PIPELINE}: each node on each benchmark` })).toBeTruthy();
+    expect(api.requests).toContain(`GET /api/v1/pipelines/${PIPELINE}/matrix?include_available=true`);
+  });
+
+  it('opens the last pipeline viewed from the top bar, and the bare screen before any', async () => {
+    mockApi({ 'GET /workspace': { body: WORKSPACE }, 'GET /pipelines': { body: { pipelines: [] } }, 'GET /pipelines/{name}/matrix': { body: MATRIX } }, { build: BUILD });
+    show('#setup');
+    const pipelineLink = () => within(screen.getByRole('navigation', { name: 'Screens' })).getByRole('link', { name: 'Pipeline' });
+    expect(pipelineLink().getAttribute('href')).toBe('#pipeline');
+    window.location.hash = `#pipeline/${PIPELINE}`;
+    await within(main()).findByRole('table', { name: `${PIPELINE}: each node on each benchmark` });
+    window.location.hash = '#runs';
+    await waitFor(() => expect(pipelineLink().getAttribute('href')).toBe(`#pipeline/${PIPELINE}`));
+  });
+
   it('lists the six screens, widest to narrowest, each a link to its screen', async () => {
     mockApi({ 'GET /workspace': { body: WORKSPACE } }, { build: BUILD });
     show('#setup');
@@ -121,7 +139,7 @@ describe('the shell’s screens', () => {
 
   it('gives an empty state the action that leads on, as a real link to its screen', async () => {
     mockApi({ 'GET /workspace': { body: WORKSPACE } }, { build: BUILD });
-    show('#pipeline');
+    show('#editor');
     const action = within(main()).getByRole('link', { name: 'Open Runs' });
     expect(action.getAttribute('href')).toBe('#runs');
     fireEvent.click(action);
@@ -130,7 +148,7 @@ describe('the shell’s screens', () => {
 
   it('moves focus to the new screen’s heading when the route changes, so the change is announced', async () => {
     mockApi({ 'GET /workspace': { body: WORKSPACE } }, { build: BUILD });
-    show('#pipeline');
+    show('#editor');
     await screen.findByText(WORKSPACE.path);
     // A deep link keeps the browser's own focus: nothing is moved on load.
     expect(document.activeElement).toBe(document.body);
@@ -143,7 +161,7 @@ describe('the shell’s screens', () => {
 
   it('moves no focus on load under StrictMode either, whose effects run twice on mount', async () => {
     mockApi({ 'GET /workspace': { body: WORKSPACE } }, { build: BUILD });
-    window.history.replaceState(null, '', '/#pipeline/hybrid-rrf');
+    window.history.replaceState(null, '', '/#editor/hybrid-rrf');
     render(
       <StrictMode>
         <App client={createApiClient()} build={BUILD} reload={vi.fn()} />

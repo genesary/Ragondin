@@ -23,6 +23,11 @@ export type TableRow =
       label?: string;
       /** A row that takes no focus and no key even when the table's rows do: a placeholder. */
       passive?: boolean;
+      /**
+       * A row that says one thing for every column: two cells, its label and
+       * one sentence spanning every column after it.
+       */
+      span?: boolean;
     }
   | {
       kind: 'group';
@@ -43,6 +48,17 @@ export type TableProps = {
   onOpen?: (id: string) => void;
   /** Space on a row; either this or `onOpen` makes the rows one tab stop. */
   onToggle?: (id: string) => void;
+  /**
+   * Each row's first cell is its header (`th scope="row"`), kept in view
+   * while the table scrolls sideways, so a cell is announced with its row as
+   * well as its column: a matrix rather than a list.
+   */
+  rowHeaders?: boolean;
+  /**
+   * The scroll box is a region named by the caption and a tab stop, so a
+   * keyboard can scroll a table wider than the screen.
+   */
+  region?: boolean;
 };
 
 type Row = Extract<TableRow, { cells: readonly ReactNode[] }>;
@@ -68,7 +84,7 @@ function bodies(rows: readonly TableRow[]): Group[] {
  * Space toggles it; a key pressed on a control inside a row stays that
  * control's.
  */
-export function Table({ caption, columns, rows, onOpen, onToggle }: TableProps) {
+export function Table({ caption, columns, rows, onOpen, onToggle, rowHeaders = false, region = false }: TableProps) {
   const live = onOpen !== undefined || onToggle !== undefined;
   const groups = bodies(rows);
   const keyed = groups.flatMap((g) => g.rows).filter((r) => live && !r.passive);
@@ -114,8 +130,8 @@ export function Table({ caption, columns, rows, onOpen, onToggle }: TableProps) 
   };
 
   return (
-    <div className="rg-tablewrap">
-      <table className="rg-table" aria-label={caption}>
+    <div className="rg-tablewrap" {...(region ? { role: 'region', 'aria-label': caption, tabIndex: 0 } : {})}>
+      <table className="rg-table" aria-label={caption} data-row-headers={rowHeaders ? true : undefined}>
         <thead>
           <tr>
             {columns.map((c) => (
@@ -150,9 +166,24 @@ export function Table({ caption, columns, rows, onOpen, onToggle }: TableProps) 
                   onFocus={takesKeys ? () => setActive(row.id) : undefined}
                 >
                   {row.cells.map((cell, i) => {
+                    const key = columns[i]?.id ?? i;
+                    if (i === 0 && rowHeaders) {
+                      return (
+                        <th key={key} scope="row">
+                          {cell}
+                        </th>
+                      );
+                    }
+                    if (i === 1 && row.span) {
+                      return (
+                        <td key={key} colSpan={columns.length - 1}>
+                          {cell}
+                        </td>
+                      );
+                    }
                     const best = typeof row.bestColumn === 'number' ? i === row.bestColumn : (row.bestColumn?.includes(i) ?? false);
                     return (
-                      <td key={columns[i]?.id ?? i} className={columns[i]?.numeric ? 'num' : undefined} data-best={best ? true : undefined}>
+                      <td key={key} className={columns[i]?.numeric ? 'num' : undefined} data-best={best ? true : undefined}>
                         {cell}
                         {best ? <span className="rg-visually-hidden"> (best)</span> : null}
                       </td>

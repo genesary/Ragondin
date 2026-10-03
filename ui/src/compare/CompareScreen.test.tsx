@@ -208,7 +208,7 @@ describe('the charts', () => {
   it('draws the stage line: the legs, after fusion, after rerank; the dense-only line breaks where it has no stage', async () => {
     show(THREE);
     await loaded();
-    const figure = screen.getByRole('figure', { name: 'mrr@10 at each stage' });
+    const figure = screen.getByRole('figure', { name: 'ndcg@10 at each stage' });
     expect([...figure.querySelectorAll('.rg-chart__group')].map((g) => g.textContent)).toEqual(['retrieval legs', 'after fusion', 'after rerank', 'final ranking']);
     // The baseline has a leg and a final ranking only: two points, no segment.
     expect(figure.querySelectorAll('path.rg-chart__line[data-ink="base"]')).toHaveLength(0);
@@ -263,7 +263,8 @@ describe('the charts', () => {
   it('names its two metric choices apart', async () => {
     show(THREE);
     await loaded();
-    expect((screen.getByLabelText('Stage metric') as HTMLSelectElement).value).toBe('mrr@10');
+    // The one rule every view opens on (src/metrics.ts): ndcg@10 when the stages carry it.
+    expect((screen.getByLabelText('Stage metric') as HTMLSelectElement).value).toBe('ndcg@10');
     expect((screen.getByLabelText('Per-query metric') as HTMLSelectElement).value).toBe('mrr@10');
   });
 
@@ -273,7 +274,7 @@ describe('the charts', () => {
     const toggles = screen.getAllByRole('button', { name: 'Show as a table' });
     expect(toggles).toHaveLength(4);
     fireEvent.click(toggles[1] as HTMLElement);
-    const table = screen.getByRole('table', { name: 'mrr@10 at each stage, as a table' });
+    const table = screen.getByRole('table', { name: 'ndcg@10 at each stage, as a table' });
     expect(within(table).getAllByText('no stage here')).toHaveLength(3);
   });
 });

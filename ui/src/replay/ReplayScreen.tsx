@@ -10,7 +10,8 @@ import type { QueryTrace, RunDetail, RunListing, RunQueries } from '../api/types
 import { Canvas } from '../canvas/index.ts';
 import { navigate } from '../routes.ts';
 import { ErrorState, Loading, type RequestState } from '../shell/states.tsx';
-import { candidates, defaultMetric, firstJudged, overlayOf, passagesBanner, runName } from './model.ts';
+import { defaultMetric } from '../metrics.ts';
+import { candidates, firstJudged, overlayOf, passagesBanner, runName } from './model.ts';
 import { NodeInspector, type Side } from './NodeInspector.tsx';
 import { QueryList } from './QueryList.tsx';
 import './Replay.css';

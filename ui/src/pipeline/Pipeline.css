@@ -1,0 +1,120 @@
+/* The Pipeline screen's layout only: where design/'s parts sit, and the
+   matrix's cells. The table, the chips, the tiles and the controls are drawn
+   by their own stylesheets; every value here is a token
+   (ARCHITECTURE.md § The design system). */
+.rg-pipeline__head {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-4);
+}
+.rg-pipeline__bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-4);
+}
+.rg-pipeline__shape {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.rg-pipeline__subtitle,
+.rg-pipeline__note { margin: 0; font: var(--type-caption); color: var(--ink-3); }
+.rg-pipeline__notes { padding: 0 var(--space-4) var(--space-4); }
+.rg-pipeline__notes ul,
+.rg-pipeline__runs {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font: var(--type-dense);
+}
+.rg-pipeline__runs { display: grid; gap: var(--space-3); padding: 0 var(--space-4) var(--space-4); }
+.rg-pipeline__run {
+  display: grid;
+  gap: var(--space-1);
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--line);
+}
+.rg-pipeline__run:last-child { border-bottom: 0; }
+.rg-pipeline__runhead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+.rg-pipeline__facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-4);
+  margin: 0;
+  color: var(--ink-2);
+}
+.rg-pipeline__label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font: var(--type-caption);
+  color: var(--ink-2);
+}
+.rg-pipeline__verdict {
+  display: grid;
+  gap: var(--space-3);
+  justify-items: start;
+  padding: var(--space-4);
+}
+.rg-pipeline__verdict p { margin: 0; font: var(--type-verdict); letter-spacing: var(--type-verdict-tracking); color: var(--ink); }
+.rg-pipeline code,
+.rg-matrix code { font: var(--type-hash); letter-spacing: var(--type-hash-tracking); }
+
+/* The matrix. A row header: the tile, the node, the metric the row reads. */
+.rg-matrix__node {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.rg-matrix__name { font-weight: 600; }
+.rg-matrix__metric,
+.rg-matrix__word,
+.rg-matrix__truth,
+.rg-matrix__note { font: var(--type-caption); color: var(--ink-3); }
+/* A column header: the benchmark, its status, its ground truth, one per line. */
+.rg-matrix__col {
+  display: grid;
+  gap: var(--space-1);
+  justify-items: start;
+}
+.rg-matrix__bench { color: var(--ink); }
+.rg-matrix__status { display: flex; flex-wrap: wrap; gap: var(--space-1); }
+
+/* A cell: two lines, always the same height, so no state moves the row. */
+.rg-matrix__cell {
+  display: grid;
+  align-content: start;
+  min-height: calc(2 * var(--space-5));
+}
+.rg-matrix__line {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+/* The gain is what is read first: the value is quiet and the gain is ink.
+   The best gain of a row is bold, never coloured. */
+.rg-matrix__value { color: var(--ink-3); }
+.rg-matrix__gain {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--ink);
+  font-weight: 500;
+}
+.rg-matrix__gain[data-best] { font-weight: 700; }
+/* Never measurable here: hatched, beside its words, so the hatch is never the only carrier.
+   Specific enough to win over the table's row hover, so a hovered row keeps its hatch. */
+.rg-matrix .rg-table tbody tr td:has(> [data-never]) {
+  background: repeating-linear-gradient(-45deg, var(--surface) 0 4px, var(--line) 4px 8px);
+}
+.rg-matrix td:has(> [data-never]) .rg-matrix__line { color: var(--ink-2); }
+.rg-matrix__run { color: var(--ink); }

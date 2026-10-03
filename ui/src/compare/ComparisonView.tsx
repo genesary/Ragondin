@@ -26,6 +26,7 @@ import type { ApiProblem } from '../api/client.ts';
 import type { Comparison, Pairing, RunListing } from '../api/types.ts';
 import { formatHash } from '../routes.ts';
 import type { RequestState } from '../shell/states.tsx';
+import { defaultMetric } from '../metrics.ts';
 import { barMetrics, binsOf, deltaOf, latencyBars, pairsByHandLabel, noVerdict, regressions, runSeries, stageLabel, stageLine, stageMetrics, unplacedLabel, verdict } from './model.ts';
 import { PairingPanel, type PairOutcome } from './PairingPanel.tsx';
 import { RunBar } from './RunBar.tsx';
@@ -75,7 +76,8 @@ export function ComparisonView({ comparison: c, ids, baseline, busy, listing, on
 
   // The stage line, for one metric the stages carry.
   const stageNames = stageMetrics(c);
-  const metricAtStages = stageMetric !== null && stageNames.includes(stageMetric) ? stageMetric : (stageNames[0] ?? null);
+  // Every stage figure is a ranking metric, so no family is passed: ndcg@10, else the first.
+  const metricAtStages = stageMetric !== null && stageNames.includes(stageMetric) ? stageMetric : defaultMetric(stageNames, {});
   const line = metricAtStages === null ? null : stageLine(c, metricAtStages);
   const lowConfidence = c.stages.filter((row) => row.confidence === 'low');
 

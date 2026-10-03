@@ -1,4 +1,8 @@
-.rg-tablewrap { overflow-x: auto; }
+.rg-tablewrap {
+  /* Positioned, so the absolutely positioned hidden text of a cell is clipped by this scroll box rather than widening the page. */
+  position: relative;
+  overflow-x: auto;
+}
 .rg-table {
   width: 100%;
   border-collapse: separate;
@@ -42,3 +46,19 @@
 .rg-table tbody:last-child tr:last-child td { border-bottom: 0; }
 /* A row that takes the keyboard: the ring sits inside it, so the wrapper's scroll box does not clip it. */
 .rg-table tbody tr:focus-visible { outline-offset: -2px; }
+/* Row headers: the first column stays in view while a matrix scrolls sideways, read as body text. */
+.rg-table th[scope="row"] {
+  position: sticky;
+  top: auto;
+  left: 0;
+  z-index: 1;
+  border-bottom: 1px solid var(--line);
+  border-right: 1px solid var(--line);
+  color: var(--ink);
+  font: var(--type-dense);
+}
+/* The corner sits above both sticky edges, the column headers and the row headers. */
+.rg-table[data-row-headers] thead th:first-child {
+  left: 0;
+  z-index: 2;
+}
