@@ -244,7 +244,7 @@ function Stage({ sides, held, trace, onRetry, metric, selected, onSelect }: Stag
   const has = (side: Side, id: string) => side.graph.nodes.some((n) => n.id === id) || side.graph.inputs.some((i) => i.id === id);
   return (
     <>
-      <h2 className="rg-replay__query">
+      <h2 className="rg-replay__query" title={a.trace.text ?? undefined}>
         <code>{a.trace.query}</code> <span>{a.trace.text ?? ''}</span>
       </h2>
       {trace === null ? null : <ErrorState problem={trace.problem} onRetry={onRetry} />}

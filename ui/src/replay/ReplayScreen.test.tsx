@@ -23,6 +23,8 @@ import {
   LISTING,
   withPassages,
 } from './fixtures.ts';
+import { declared } from '../../design/testing/css.ts';
+import css from './Replay.css?raw';
 import { ReplayScreen } from './ReplayScreen.tsx';
 
 const problem = (code: Problem['code'], status: number, detail: string): Problem => ({ type: `urn:ragondin:problem:${code}`, title: code, status, detail, code, hint: 'Pick another.' });
@@ -127,6 +129,16 @@ describe('Replay, one run', () => {
     api();
     show({ query: 'q1' });
     expect(await screen.findByRole('heading', { name: 'q1 What do tides depend on?' })).toBeTruthy();
+  });
+
+  it('gives the query’s text a fixed height of two lines, the whole text on hover and to assistive technology, so another query moves nothing below it', async () => {
+    api();
+    show({ query: 'q1' });
+    const heading = await screen.findByRole('heading', { name: 'q1 What do tides depend on?' });
+    expect(heading.getAttribute('title')).toBe('What do tides depend on?');
+    expect(declared(css, '.rg-replay__query', 'height')).toBe('40px');
+    expect(declared(css, '.rg-replay__query', '-webkit-line-clamp')).toBe('2');
+    expect(declared(css, '.rg-replay__query', 'overflow')).toBe('hidden');
   });
 });
 

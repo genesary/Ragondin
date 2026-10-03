@@ -84,8 +84,18 @@
 .rg-replay__panel { display: flex; min-width: 0; min-height: 240px; }
 .rg-replay__panel .rg-inspector { width: 100%; border: 1px solid var(--line); border-radius: var(--radius-m); }
 .rg-replay__placeholder { margin: 0; padding: var(--space-4); width: 100%; border: 1px dashed var(--line); border-radius: var(--radius-m); font: var(--type-caption); color: var(--ink-3); }
-.rg-replay__query { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2); margin: 0; font: var(--type-heading); color: var(--ink); }
-.rg-replay__query code { font: var(--type-hash); letter-spacing: var(--type-hash-tracking); color: var(--ink-3); }
+/* The query's text takes two lines whatever its length — clamped, the whole text in its title and its accessible name — so choosing another query moves nothing below it. */
+.rg-replay__query {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  height: 40px;
+  margin: 0;
+  font: var(--type-heading);
+  color: var(--ink);
+}
+.rg-replay__query code { margin-right: var(--space-2); font: var(--type-hash); letter-spacing: var(--type-hash-tracking); color: var(--ink-3); }
 .rg-replay__canvases { display: grid; gap: var(--space-3); }
 .rg-replay__canvas { display: grid; gap: var(--space-2); }
 .rg-replay__canvas .rg-canvas-frame { height: 520px; border: 1px solid var(--line); border-radius: var(--radius-m); overflow: hidden; }
