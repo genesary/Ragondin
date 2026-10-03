@@ -7,11 +7,17 @@ mod support;
 
 use std::fs;
 use std::path::Path;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+
+use async_trait::async_trait;
 
 use axum::http::StatusCode;
 use ragondin_api::fs::{FsPipelines, Workspace};
-use ragondin_api::{router, Backends, NoAssets, Server, ServerConfig};
+use ragondin_api::{
+    router, ApiError, Backends, Layout, NoAssets, Pairing, PipelineFile, PipelineSource,
+    Precondition, Server, ServerConfig,
+};
 use ragondin_benchmarks::{Benchmark, Qrels};
 use ragondin_experiments::{Run, RunProvenance, Trace, TraceChunk};
 use ragondin_types::{DocId, Document, Query, QueryId};
@@ -1394,4 +1400,134 @@ async fn a_recorded_name_the_workspace_no_longer_holds_gives_no_pairing_and_the_
     assert_eq!(body["runs"][0]["pipeline"], "hybrid-v0");
     assert_eq!(body["pairings"], json!([]));
     assert_eq!(body["unplaced_pairs"], json!([]));
+}
+
+/// A workspace's pipelines that counts how often they are listed, over the
+/// file backend: what `POST /compare` costs in listings of `pipelines/`.
+/// With `deleted_after_listing`, every pairing read answers
+/// `pipeline_not_found`, as it does for a document deleted between the
+/// listing and the read.
+struct CountedListings {
+    inner: FsPipelines,
+    listed: AtomicUsize,
+    deleted_after_listing: bool,
+}
+
+#[async_trait]
+impl PipelineSource for CountedListings {
+    async fn list(&self) -> Result<Vec<PipelineFile>, ApiError> {
+        self.listed.fetch_add(1, Ordering::SeqCst);
+        self.inner.list().await
+    }
+
+    async fn read(&self, name: &str) -> Result<PipelineFile, ApiError> {
+        self.inner.read(name).await
+    }
+
+    async fn write(
+        &self,
+        name: &str,
+        document: &str,
+        precondition: &Precondition,
+    ) -> Result<PipelineFile, ApiError> {
+        self.inner.write(name, document, precondition).await
+    }
+
+    async fn read_layout(&self, name: &str) -> Result<Option<Layout>, ApiError> {
+        self.inner.read_layout(name).await
+    }
+
+    async fn write_layout(&self, name: &str, layout: &Layout) -> Result<(), ApiError> {
+        self.inner.write_layout(name, layout).await
+    }
+
+    async fn read_pairing(&self, pipeline: &str, other: &str) -> Result<Option<Pairing>, ApiError> {
+        if self.deleted_after_listing {
+            return Err(ApiError::PipelineNotFound {
+                name: pipeline.to_owned(),
+            });
+        }
+        self.inner.read_pairing(pipeline, other).await
+    }
+
+    async fn write_pairing(&self, pairing: &Pairing) -> Result<(), ApiError> {
+        self.inner.write_pairing(pairing).await
+    }
+
+    async fn delete_pairing(&self, pipeline: &str, other: &str) -> Result<(), ApiError> {
+        self.inner.delete_pairing(pipeline, other).await
+    }
+}
+
+/// The router over the two paired runs' store and `pipelines`, in `root`.
+fn counted_app(runs: Vec<Run>, root: &Path, pipelines: Arc<CountedListings>) -> Server {
+    let mut backends: Backends = fakes(FakeRunStore::holding(runs));
+    backends.registry = Arc::new(FixtureRegistry::holding([(
+        "beir/fixture".to_owned(),
+        benchmark(),
+    )]));
+    backends.pipelines = pipelines;
+    router(
+        backends,
+        ServerConfig {
+            served: SERVED.to_owned(),
+            build: BUILD.to_owned(),
+            workspace: root.to_path_buf(),
+        },
+        Arc::new(NoAssets),
+    )
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_pipeline_deleted_between_the_listing_and_its_pairing_read_has_no_pairing() {
+    // Listed, so its runs are named after it; gone by the time its pairing is
+    // read. The listing narrows that window; it cannot close it, so the read's
+    // `pipeline_not_found` is the comparison going on without a pairing.
+    let (hybrid, colbert) = (hybrid_rerank_run(0x01), colbert_rerank_run(0x02));
+    let (root, workspace) = paired_workspace("compare_pairing_deleted_after_listing");
+    let pipelines = Arc::new(CountedListings {
+        inner: FsPipelines::new(&workspace),
+        listed: AtomicUsize::new(0),
+        deleted_after_listing: true,
+    });
+
+    let (status, body) = post_compare(
+        counted_app(vec![hybrid.clone(), colbert.clone()], &root, pipelines),
+        json!({ "run_ids": ids(&[&hybrid, &colbert]), "baseline": hybrid.id.to_string() }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["runs"][1]["pipeline"], "colbert-rerank");
+    assert_eq!(body["pairings"], json!([]));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_comparison_lists_the_workspace_s_pipelines_once() {
+    // Both runs are named by the one document holding their hash, so the
+    // comparison looks for a pairing between them: among the names it listed
+    // to find the runs' pipelines, not a second listing, which would widen the
+    // window in which a document deleted in between is listed once and not
+    // the other time.
+    let (hybrid, colbert) = (hybrid_rerank_run(0x01), colbert_rerank_run(0x02));
+    let (root, workspace) = paired_workspace("compare_lists_pipelines_once");
+    let pipelines = Arc::new(CountedListings {
+        inner: FsPipelines::new(&workspace),
+        listed: AtomicUsize::new(0),
+        deleted_after_listing: false,
+    });
+    let (status, body) = post_compare(
+        counted_app(
+            vec![hybrid.clone(), colbert.clone()],
+            &root,
+            pipelines.clone(),
+        ),
+        json!({ "run_ids": ids(&[&hybrid, &colbert]), "baseline": hybrid.id.to_string() }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["runs"][0]["pipeline"], "hybrid-rerank");
+    assert_eq!(body["runs"][1]["pipeline"], "colbert-rerank");
+    assert_eq!(pipelines.listed.load(Ordering::SeqCst), 1);
 }

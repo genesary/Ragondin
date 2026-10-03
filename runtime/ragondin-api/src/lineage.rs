@@ -18,7 +18,7 @@
 //! fact ADR-C39 § 5 asks of every run, by which the pipeline matrix counts a
 //! run cut from a pipeline among that pipeline's runs.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use ragondin_experiments::Run;
 use ragondin_pipeline::LogicalPipeline;
@@ -33,15 +33,41 @@ use crate::validation;
 pub(crate) async fn pipelines_by_hash(
     source: &dyn PipelineSource,
 ) -> Result<BTreeMap<String, Vec<String>>, ApiError> {
-    let mut by_hash: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    Ok(index(source).await?.by_hash)
+}
+
+/// One listing of the workspace's pipelines, read two ways.
+pub(crate) struct Index {
+    /// What [`pipelines_by_hash`] answers.
+    pub(crate) by_hash: BTreeMap<String, Vec<String>>,
+    /// Every name the listing held, a document that does not validate
+    /// included, stored exactly as given.
+    pub(crate) names: BTreeSet<String>,
+}
+
+/// The workspace's pipelines, listed once: by canonical hash, and every name.
+/// `POST /compare` reads both from the one listing, which narrows the window
+/// in which a document deleted meanwhile names a run's pipeline and is then
+/// missing; it cannot close it, since the document can still go before its
+/// pairing is read.
+pub(crate) async fn index(source: &dyn PipelineSource) -> Result<Index, ApiError> {
+    let mut index = Index {
+        by_hash: BTreeMap::new(),
+        names: BTreeSet::new(),
+    };
     for file in source.list().await? {
         // A document that does not validate has no canonical form, so no
         // run can be a run of it.
         if let Ok(hash) = validation::check(&file.document) {
-            by_hash.entry(hash).or_default().push(file.name);
+            index
+                .by_hash
+                .entry(hash)
+                .or_default()
+                .push(file.name.clone());
         }
+        index.names.insert(file.name);
     }
-    Ok(by_hash)
+    Ok(index)
 }
 
 /// The pipeline `run` is a run of, by `index`: the one name its hash maps
