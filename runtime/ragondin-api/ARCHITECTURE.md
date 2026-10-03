@@ -1101,8 +1101,9 @@ it, `cache/<run_id>/latency.json` holds the run's median query latency for
 the traces alone. Each is keyed on everything its figures were computed
 from — the file format, the build, the
 run id, the `dataset_version`, and a digest of the run's own content (every
-trace document and every metric, through `ragondin_benchmarks::identity`'s
-encoder under a domain of this crate's) — and is used only when the whole key
+trace document's JSON text, streamed into SHA-256 and closed by a byte no
+UTF-8 text holds, and every metric, under a domain of this crate's;
+`cache::content_digest`) — and is used only when the whole key
 still holds; anything else is a miss, recomputed and overwritten. **No clock
 is read**: a dataset changed on disk no longer verifies, so its cache is never
 consulted, and one restored verifies again and finds its file valid. The
@@ -1132,11 +1133,10 @@ binary's build identity (#365) provides; its doc comment says so.
   parse of each of a run's traces into a `Trace`, and its sum. It saves no
   load: every `GET /runs` still loads every run, traces included, from the
   store. And it costs a digest of every trace on every request, hit or miss:
-  `Key::of` serializes each trace document and hashes it to build the key
-  the file is checked against, so a hit may cost more than computing the
-  sums directly. That trade-off is not measured yet. For `derived.json`:
-  the cache saves every per-query
-  and per-node figure of the listing; it saves no load. The trace endpoint
+  `Key::of` streams each trace document's text into the hash to build the
+  key the file is checked against. For `derived.json`: the cache saves every
+  per-query and per-node figure of the listing; it saves no load, and no
+  typing of the traces, which `/queries` does hit or miss. The trace endpoint
   reads nothing from it: it reads the chunk set to resolve text, and one
   query's figures cost nothing. **The load is the registry's to save**: every
   request to either endpoint, and `POST /compare`, asks `Registry::dataset`
@@ -1144,6 +1144,49 @@ binary's build identity (#365) provides; its doc comment says so.
   passage text come from the dataset — and the file backend answers from the
   dataset it keeps loaded while the files are unchanged, chunk set included
   (§ *The loaded datasets*).
+- **What it costs, measured; the key kept a content digest.** The ignored
+  test in `src/cache/cost.rs` files twenty runs of a retriever and a
+  reranker (100 chunks ranked per query, 10 kept) in a `FileSystemRunStore`
+  and times each step per run, the fastest of seven; run it with the
+  command its module doc gives. On an Apple M4 Pro, per run of 300 queries
+  (5.4 MB of `traces.json`), then of 1000 (18.2 MB); the "before" key was
+  measured on `e5c8d0ec277f`, the tree this change was made from:
+
+  | Step | 300 queries | 1000 queries |
+  |---|---|---|
+  | load from the store | 7.3 ms | 24.3 ms |
+  | key, the trace text built as a string, then hashed (before) | 10.3 ms | 33.6 ms |
+  | key, the trace text streamed into the hash (now) | 7.6 ms | 25.1 ms |
+  | `GET /runs`: the latency computed | 15.0 ms | 49.0 ms |
+  | `GET /runs`: a hit | 0.01 ms | 0.01 ms |
+  | `/queries`: the traces typed, hit or miss | 14.6 ms | 47.7 ms |
+  | `/queries`: the figures computed | 4.7 ms | 16.0 ms |
+  | `/queries`: a hit | 0.15 ms | 0.5 ms |
+
+  So `GET /runs` costs, per run, load + key + hit = 14.8 ms (49.4 ms) with
+  the cache, against load + computed = 22.3 ms (73.3 ms) without it: **the
+  latency cache is kept**, because even keyed on every trace's content a hit
+  is the cheaper path. "Without the cache" means the typed path —
+  `median_query_latency` parsing each trace into a `Trace` and summing
+  `Trace::latency_nanos` — and not reading `duration_nanos` off the JSON
+  directly, which would be faster but a second copy of the one definition of
+  a query's latency. Streaming the text rather than building it took a
+  quarter off the key; the stream is closed by `0xFF` because its length is
+  not known before it is written. The key still reads every trace, so the
+  listing still grows with the traces' size — as its load does, which no key
+  removes. **A key that does not read the traces is not taken here**, since
+  each one on offer is a decision this crate does not own: the run's
+  recorded `times` change with every execution, but the decision record of
+  the run times makes them "for display and ordering only"; a digest or a
+  version the store keeps beside the run is a change to
+  `ragondin-experiments`' `RunStore`, which #443 takes up: a `RunStore`
+  listing that loads no traces, with a digest stored beside the run. And **on `/queries` the figures cost
+  less than their key** for runs like these — 29.5 ms (97.6 ms) per request
+  with the cache against 26.5 ms (88.0 ms) without — because the traces are
+  typed either way and three ranking metrics are cheap to score; the cache
+  is left as it is, and that measurement is the input to #442, which
+  keeps or drops `derived.json` on its measured cost — not a
+  decision taken here.
 
 **Per-node metrics are served by `GET /runs/{id}/queries`**, beside the
 per-query scores they are computed with, and not by `GET /runs/{id}` as the

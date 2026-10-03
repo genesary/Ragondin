@@ -140,9 +140,10 @@ fn render_value(value: &ParamValue) -> String {
 /// One metric's line: both runs' values, and which side scored higher.
 ///
 /// "Higher" is reported, never "better", so that this command's output stays
-/// byte for byte what it has always been. `ragondin-experiments` now reads a
-/// direction off a metric's name (`Direction::of`) for the comparison view,
-/// but rendering it here would change every line a script may parse; a
+/// byte for byte what it has always been. The comparison view gives each
+/// metric the direction `ragondin-metrics`' catalogue records for it
+/// (`Direction::of`, none for a name the catalogue does not know), but
+/// rendering it here would change every line a script may parse; a
 /// reader supplies the direction, as they would reading the store's own
 /// `metrics.json` beside it.
 fn render_metric(metric: &MetricComparison) -> String {
