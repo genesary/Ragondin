@@ -324,7 +324,12 @@ describe('the services', () => {
     fireEvent.click(form.getByRole('button', { name: 'Connect' }));
     // Drawn with the click, so the answer arriving later moves nothing.
     const pending = await services.findByRole('listitem', { name: 'reranker/bge' });
-    expect(within(pending).getByRole('status').textContent).toContain('Testing…');
+    // Pending, and saying so: not yet a stored binding.
+    expect(within(pending).getByText('connecting').closest('.rg-status')).toBeTruthy();
+    expect(within(pending).getByRole('status').textContent).toContain('Storing reranker/bge in workspace.toml…');
+    expect(pending.textContent).not.toContain('Not tested');
+    expect(pending.getAttribute('aria-busy')).toBe('true');
+    for (const name of ['Test reranker/bge', 'Remove reranker/bge']) expect(within(pending).getByRole('button', { name }).getAttribute('aria-disabled')).toBe('true');
     await act(async () => release({ body: { services: [QWEN, service('reranker', 'bge', 'http://127.0.0.1:9090')] } }));
     await waitFor(() => expect(within(services.getByRole('listitem', { name: 'reranker/bge' })).getByRole('status').textContent).toContain('Connected · bge@1'));
   });
@@ -353,7 +358,9 @@ describe('the services', () => {
     expect(services.getAllByRole('listitem').map((li) => li.getAttribute('aria-label'))).toEqual(['generator/qwen, removed', 'reranker/bge']);
     const undo = within(slot).getByRole('button', { name: 'Undo' });
     await waitFor(() => expect(document.activeElement).toBe(undo));
-    expect(document.getElementById(undo.getAttribute('aria-describedby') ?? '')?.textContent).toContain('Removed generator/qwen.');
+    const description = document.getElementById(undo.getAttribute('aria-describedby') ?? '')?.textContent ?? '';
+    expect(description).toContain('Removed generator/qwen.');
+    expect(description).not.toContain('Undo');
     fireEvent.click(undo);
     expect(services.getAllByRole('listitem').map((li) => li.getAttribute('aria-label'))).toEqual(['generator/qwen', 'reranker/bge']);
     expect(api.requests.filter((r) => !r.startsWith('GET'))).toEqual([]);
@@ -380,6 +387,69 @@ describe('the services', () => {
       const slot = services.getByRole('listitem', { name: 'generator/qwen, removed' });
       await waitFor(() => expect(within(slot).queryByRole('button', { name: 'Undo' })).toBeNull());
       expect(slot.textContent).toContain('Removed generator/qwen.');
+    });
+
+    it('moves focus from Undo to the removed binding’s place when the window closes', async () => {
+      mockApi(routes({ 'DELETE /services/{family}/{name}': { body: { services: [] } } }));
+      render(<Harness />);
+      const services = within(await screen.findByRole('region', { name: 'Services' }));
+      fireEvent.click(within(await services.findByRole('listitem', { name: 'generator/qwen' })).getByRole('button', { name: 'Remove generator/qwen' }));
+      const slot = services.getByRole('listitem', { name: 'generator/qwen, removed' });
+      await waitFor(() => expect(document.activeElement).toBe(within(slot).getByRole('button', { name: 'Undo' })));
+      await act(async () => {
+        vi.advanceTimersByTime(UNDO_WINDOW_MS);
+      });
+      await waitFor(() => expect(within(slot).queryByRole('button', { name: 'Undo' })).toBeNull());
+      expect(document.activeElement).toBe(slot);
+    });
+
+    it('does not delete a binding whose address changed meanwhile, and says why', async () => {
+      const moved = service('generator', 'qwen', 'http://127.0.0.1:8181');
+      const api = mockApi(routes({ 'GET /services': [{ body: { services: [QWEN] } }, { body: { services: [moved] } }], 'DELETE /services/{family}/{name}': { body: { services: [] } } }));
+      render(<Harness />);
+      const services = within(await screen.findByRole('region', { name: 'Services' }));
+      fireEvent.click(within(await services.findByRole('listitem', { name: 'generator/qwen' })).getByRole('button', { name: 'Remove generator/qwen' }));
+      await act(async () => {
+        vi.advanceTimersByTime(UNDO_WINDOW_MS);
+      });
+      const slot = await services.findByRole('listitem', { name: 'generator/qwen, not removed' });
+      expect(slot.textContent).toContain('http://127.0.0.1:8181');
+      expect(api.requests.filter((r) => r.startsWith('DELETE'))).toEqual([]);
+      expect(within(services.getByRole('listitem', { name: 'generator/qwen' })).getByText('http://127.0.0.1:8181', { selector: '.rg-setup__service-head code' })).toBeTruthy();
+    });
+
+    it('keeps the removal pending when binding the same name again is refused', async () => {
+      const api = mockApi(routes({ 'PUT /services/{family}/{name}': problem('binding_refused', 422, 'the uri is not http'), 'DELETE /services/{family}/{name}': { body: { services: [] } } }));
+      render(<Harness />);
+      const services = within(await screen.findByRole('region', { name: 'Services' }));
+      fireEvent.click(within(await services.findByRole('listitem', { name: 'generator/qwen' })).getByRole('button', { name: 'Remove generator/qwen' }));
+      const form = within(services.getByRole('form', { name: 'Connect a service' }));
+      fireEvent.change(form.getByLabelText('Family'), { target: { value: 'generator' } });
+      fireEvent.change(form.getByLabelText('Name'), { target: { value: 'qwen' } });
+      fireEvent.change(form.getByLabelText('Address'), { target: { value: 'ftp://h' } });
+      fireEvent.click(form.getByRole('button', { name: 'Connect' }));
+      await waitFor(() => expect(form.getByLabelText('Address').getAttribute('aria-invalid')).toBe('true'));
+      // The window is open again: its Undo still brings the row back.
+      fireEvent.click(within(services.getByRole('listitem', { name: 'generator/qwen, removed' })).getByRole('button', { name: 'Undo' }));
+      expect(services.getByRole('listitem', { name: 'generator/qwen' })).toBeTruthy();
+      expect(api.requests.filter((r) => r.startsWith('DELETE'))).toEqual([]);
+    });
+
+    it('writes the removal when the window closes after a refused re-bind', async () => {
+      const api = mockApi(routes({ 'PUT /services/{family}/{name}': problem('binding_refused', 422, 'the uri is not http'), 'DELETE /services/{family}/{name}': { body: { services: [] } } }));
+      render(<Harness />);
+      const services = within(await screen.findByRole('region', { name: 'Services' }));
+      fireEvent.click(within(await services.findByRole('listitem', { name: 'generator/qwen' })).getByRole('button', { name: 'Remove generator/qwen' }));
+      const form = within(services.getByRole('form', { name: 'Connect a service' }));
+      fireEvent.change(form.getByLabelText('Family'), { target: { value: 'generator' } });
+      fireEvent.change(form.getByLabelText('Name'), { target: { value: 'qwen' } });
+      fireEvent.change(form.getByLabelText('Address'), { target: { value: 'ftp://h' } });
+      fireEvent.click(form.getByRole('button', { name: 'Connect' }));
+      await waitFor(() => expect(form.getByLabelText('Address').getAttribute('aria-invalid')).toBe('true'));
+      await act(async () => {
+        vi.advanceTimersByTime(UNDO_WINDOW_MS);
+      });
+      await waitFor(() => expect(api.requests).toContain('DELETE /api/v1/services/generator/qwen'));
     });
 
     it('writes a pending removal at once when another binding is removed, each keeping its own place', async () => {
@@ -415,7 +485,9 @@ describe('the services', () => {
       const alert = await services.findByRole('alert');
       expect(alert.textContent).toContain('No service generator/qwen is bound.');
       expect(alert.textContent).toContain('Reload the list of services.');
-      expect(services.getByRole('listitem', { name: 'generator/qwen' })).toBeTruthy();
+      const back = services.getByRole('listitem', { name: 'generator/qwen' });
+      // Focus was on Undo, inside the slot: it follows the binding back to its row.
+      await waitFor(() => expect(document.activeElement).toBe(back));
     });
   });
 

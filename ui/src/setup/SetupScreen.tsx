@@ -152,7 +152,12 @@ export function SetupScreen({ client, workspace, refreshWorkspace, retryWorkspac
   };
 
   // The removal whose Undo window is open: nothing is written until it closes.
-  const open = useRef<{ binding: ServiceBinding; timer: ReturnType<typeof setTimeout> } | null>(null);
+  // Its timer is null while a write binding the same name again is in flight:
+  // the window is paused then, neither closed nor cancelled, until that write answers.
+  const open = useRef<{ binding: ServiceBinding; timer: ReturnType<typeof setTimeout> | null } | null>(null);
+  const slotEls = useRef(new Map<string, HTMLLIElement>());
+  /** Whether focus is inside the slot standing for `key`, Undo included. */
+  const focusIn = (key: string) => slotEls.current.get(key)?.contains(document.activeElement) ?? false;
 
   // The shell's refresh is a new function on each of its renders; a write that
   // lands after this screen re-rendered, or left, calls the latest.
@@ -165,13 +170,34 @@ export function SetupScreen({ client, workspace, refreshWorkspace, retryWorkspac
   const write = useCallback(
     async (binding: ServiceBinding) => {
       const key = serviceKey(binding);
-      const mark = (state: RemovedSlot['state']) => setSlots((all) => all.map((s) => (serviceKey(s.binding) === key ? { ...s, state } : s)));
+      const mark = (state: RemovedSlot['state'], now?: string) => setSlots((all) => all.map((s) => (serviceKey(s.binding) === key ? { ...s, state, ...(now === undefined ? {} : { now }) } : s)));
+      // Undo is about to go: focus on it moves to the slot itself, not to the page.
+      if (focusIn(key)) slotEls.current.get(key)?.focus();
       mark('writing');
+      /** The binding is still there: its row comes back, focus with it if it was in the slot, and the refusal says why. */
+      const restore = (problem: ApiProblem) => {
+        if (focusIn(key)) setPendingFocus({ row: key });
+        setSlots((all) => all.filter((s) => serviceKey(s.binding) !== key));
+        setRefusal(problem);
+      };
+      // A DELETE removes by name, and the window lasted seconds: another tab,
+      // the CLI or a hand edit may have bound the name again meanwhile. What is
+      // bound now is read first, and only the binding that was removed is deleted.
+      const now = await client.get('/services');
+      if (!now.ok) {
+        restore(now.problem);
+        return;
+      }
+      const current = now.value.services.find((s) => serviceKey(s) === key);
+      if (current === undefined || current.uri !== binding.uri) {
+        replaceServices(now.value.services);
+        mark(current === undefined ? 'removed' : 'kept', current?.uri);
+        refresh.current();
+        return;
+      }
       const result = await client.del('/services/{family}/{name}', { family: binding.family, name: binding.name });
       if (!result.ok) {
-        // The binding is still there: its row comes back, and the refusal says why.
-        setSlots((all) => all.filter((s) => serviceKey(s.binding) !== key));
-        setRefusal(result.problem);
+        restore(result.problem);
         return;
       }
       replaceServices(result.value.services);
@@ -181,10 +207,10 @@ export function SetupScreen({ client, workspace, refreshWorkspace, retryWorkspac
     [client, replaceServices],
   );
 
-  /** Closes the open Undo window, writing its removal now. */
+  /** Closes the open Undo window, writing its removal now; a paused window waits for the write that paused it. */
   const closeWindow = useCallback(() => {
     const pending = open.current;
-    if (pending === null) return;
+    if (pending === null || pending.timer === null) return;
     clearTimeout(pending.timer);
     open.current = null;
     void write(pending.binding);
@@ -221,7 +247,7 @@ export function SetupScreen({ client, workspace, refreshWorkspace, retryWorkspac
   const onUndo = (slot: RemovedSlot) => {
     const key = serviceKey(slot.binding);
     if (open.current === null || serviceKey(open.current.binding) !== key) return;
-    clearTimeout(open.current.timer);
+    if (open.current.timer !== null) clearTimeout(open.current.timer);
     open.current = null;
     setSlots((all) => all.filter((s) => serviceKey(s.binding) !== key));
     focusRow(key);
@@ -229,10 +255,12 @@ export function SetupScreen({ client, workspace, refreshWorkspace, retryWorkspac
 
   const onConnect = async ({ family, name, uri, servedModel }: { family: string; name: string; uri: string; servedModel: string }) => {
     const key = serviceKey({ family, name });
-    // Binding a name whose removal is pending cancels that removal: the write below replaces its address.
-    if (open.current !== null && serviceKey(open.current.binding) === key) {
-      clearTimeout(open.current.timer);
-      open.current = null;
+    // Binding a name whose removal is pending pauses that removal: a stored
+    // binding cancels it, a refused one opens the window again.
+    const paused = open.current !== null && serviceKey(open.current.binding) === key ? open.current : null;
+    if (paused !== null && paused.timer !== null) {
+      clearTimeout(paused.timer);
+      paused.timer = null;
     }
     // Drawn as its row from the click, so the answer moves nothing.
     setConnecting({ family, name, uri, connected: false, identity: null });
@@ -240,8 +268,10 @@ export function SetupScreen({ client, workspace, refreshWorkspace, retryWorkspac
     const put = await client.put('/services/{family}/{name}', { uri }, { family, name });
     if (!put.ok) {
       setConnecting(null);
+      if (paused !== null && open.current === paused) paused.timer = setTimeout(closeWindow, UNDO_WINDOW_MS);
       return put.problem;
     }
+    if (paused !== null && open.current === paused) open.current = null;
     services.replace(put.value.services);
     setSlots((all) => all.filter((s) => serviceKey(s.binding) !== key));
     setConnecting(null);
@@ -297,6 +327,10 @@ export function SetupScreen({ client, workspace, refreshWorkspace, retryWorkspac
             rowRef={(key) => (el) => {
               if (el === null) rows.current.delete(key);
               else rows.current.set(key, el);
+            }}
+            slotRef={(key) => (el) => {
+              if (el === null) slotEls.current.delete(key);
+              else slotEls.current.set(key, el);
             }}
             connect={connect}
             anchor={servicesAnchor}
