@@ -93,6 +93,10 @@
 .rg-chart__seg[data-family="query"],
 .rg-chart__seg[data-family="control"],
 .rg-chart__seg[data-family="none"] { fill: var(--family-query); }
+/* A segment's label, inside it and clipped to it: its node name, or its family
+   glyph when the name does not fit, in the ink made for a pigment. */
+.rg-chart__seg-label { color: var(--on-family); pointer-events: none; }
+.rg-chart__seg-name { fill: var(--on-family); font: var(--type-micro); }
 .rg-chart__total { fill: var(--ink-2); font: var(--type-micro); font-variant-numeric: tabular-nums; }
 
 /* The diverging histogram: HTML, so each bar is a real button. A column is
