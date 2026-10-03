@@ -702,6 +702,11 @@ export type QueryScores = {
    * truth is not verified.
    */
   scores: Record<string, number>;
+  /**
+   * Its text, the dataset's: present when the ground truth is
+   * `verified` and the dataset holds the query; `null` otherwise.
+   */
+  text: string | null;
 };
 
 /**
@@ -727,6 +732,12 @@ export type QueryTrace = {
    * the chunk set.
    */
   scores: Record<string, number>;
+  /**
+   * The query's text, the dataset's: present when the dataset on disk is
+   * the run's, whatever the chunk set — the gate `scores` is under — and
+   * it holds the query; `null` otherwise, and `passages` says why.
+   */
+  text: string | null;
 };
 
 /** One run's per-query deltas against the baseline. */
@@ -1039,6 +1050,14 @@ export type TraceNodeView = {
   duration_nanos: number;
   /** The failure it reported; `null` when it succeeded. */
   error: string | null;
+  /**
+   * The 1-based ranks of the gold documents — graded above 0 — in its
+   * ranking, counted over documents folded from its chunks by first
+   * occurrence, the ranking its `metrics` score: present when it produced
+   * a ranking, the query is judged and the dataset on disk is the run's;
+   * empty when it ranked no gold document; `null` otherwise.
+   */
+  gold_ranks: number[] | null;
   /** What it received, one summary per input port, in port order. */
   inputs: TraceValue[];
   /**
@@ -1059,6 +1078,12 @@ export type TracePassage = {
   chunk: string;
   /** The document it was derived from. */
   document: string;
+  /**
+   * Its document's grade in the query's qrels, `0` when they do not judge
+   * it: present when the query is judged and the dataset on disk is the
+   * run's, whatever the chunk set; `null` otherwise.
+   */
+  grade: number | null;
   /** The score the node gave it, on the node's own scale. */
   score: number;
   /**

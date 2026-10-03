@@ -239,6 +239,9 @@ pub(crate) async fn queries(
     if filter.is_some() && ground.is_none() {
         return Err(convert::dataset_error(&check));
     }
+    let texts = verified
+        .as_ref()
+        .map(|dataset| derived::query_texts(dataset.benchmark()));
     let queries = traces
         .iter()
         .filter(|(query, trace)| match (filter, &verified) {
@@ -249,6 +252,10 @@ pub(crate) async fn queries(
         })
         .map(|(query, trace)| QueryScores {
             id: query.as_str().to_owned(),
+            text: texts
+                .as_ref()
+                .and_then(|texts| texts.get(query))
+                .map(|text| (*text).to_owned()),
             scores: ground
                 .as_ref()
                 .and_then(|figures| figures.queries.get(query.as_str()).cloned())
@@ -334,14 +341,27 @@ pub(crate) async fn trace(
             derived::query_scores(&metrics, &outputs, dataset.benchmark(), &query_id, &trace)
         })
         .unwrap_or_default();
-    let nodes = convert::trace_view(&trace, texts.as_ref(), |node| {
-        dataset.as_ref().and_then(|dataset| {
-            derived::node_scores(&metrics, dataset.benchmark(), &query_id, &trace, node)
-        })
-    });
+    let benchmark = dataset.as_ref().map(|dataset| dataset.benchmark());
+    let nodes = convert::trace_view(
+        &trace,
+        texts.as_ref(),
+        |node| {
+            benchmark.and_then(|benchmark| {
+                derived::node_scores(&metrics, benchmark, &query_id, &trace, node)
+            })
+        },
+        |node| {
+            benchmark.and_then(|benchmark| derived::gold_ranks(benchmark, &query_id, &trace, node))
+        },
+        |document| benchmark.and_then(|benchmark| derived::grade(benchmark, &query_id, document)),
+    );
+    let text = benchmark
+        .and_then(|benchmark| derived::query_text(benchmark, &query_id))
+        .map(str::to_owned);
     Ok(Json(QueryTrace {
         run: run.id.to_string(),
         query,
+        text,
         passages,
         scores,
         nodes,

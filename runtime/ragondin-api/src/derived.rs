@@ -1,5 +1,7 @@
 //! The data derived from a stored run and its benchmark: per-query scores at
-//! the run's output, and per-node ranking metrics. Computed here, cached under
+//! the run's output, per-node ranking metrics, and which documents are gold —
+//! a passage's grade and a node's gold ranks, read over the same folded
+//! ranking the metrics score. Computed here, the figures cached under
 //! the workspace's `cache/` (`cache.rs`), and never written into the run —
 //! the store writes nothing derived.
 //!
@@ -31,7 +33,7 @@
 //! and the harness reach (INV-12 keeps the harness out of reach): a change to
 //! either reaches the figures written and the figures read back together.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use ragondin_benchmarks::Benchmark;
 use ragondin_experiments::{ranking_node, terminal, Trace, TraceSummary};
@@ -295,9 +297,70 @@ pub(crate) fn node_figures(
         .collect()
 }
 
-/// Whether `query`, judged, has no gold document — one graded above 0 — in
-/// the top `k` of the output ranking. `None` when the query is unjudged or
-/// its trace holds no output ranking.
+/// The grade the qrels give `document` for a judged query: `0` when they do
+/// not judge it. That is `ragondin-metrics`' convention — a grade of `0`
+/// means not relevant, and an unjudged document counts as `0`, TREC's closed
+/// world — which its metrics apply inside and do not export, so this reads
+/// the qrels under the same rule rather than another.
+fn grade_in(judgments: &BTreeMap<DocId, u8>, document: &DocId) -> u8 {
+    judgments.get(document).copied().unwrap_or(0)
+}
+
+/// Whether `document` is gold for a judged query: graded above 0.
+fn is_gold(judgments: &BTreeMap<DocId, u8>, document: &DocId) -> bool {
+    grade_in(judgments, document) > 0
+}
+
+/// The grade of `document` for `query`, `0` when the qrels do not judge it;
+/// `None` when the query is unjudged, so that no passage of it reads as
+/// judged not relevant.
+pub(crate) fn grade(benchmark: &Benchmark, query: &QueryId, document: &DocId) -> Option<u8> {
+    judgments(benchmark, query).map(|judgments| grade_in(judgments, document))
+}
+
+/// The 1-based ranks of the gold documents in what `node` produced for
+/// `query`, over its documents folded from its chunks — the ranking every
+/// metric of it scores, so a rank here is the rank a metric sees. `None`
+/// when the query is unjudged or the node produced no ranking; empty when
+/// it ranked no gold document.
+pub(crate) fn gold_ranks(
+    benchmark: &Benchmark,
+    query: &QueryId,
+    trace: &Trace,
+    node: &NodeId,
+) -> Option<Vec<u64>> {
+    let judgments = judgments(benchmark, query)?;
+    let ranked = documents_at(trace, node)?;
+    Some(
+        (1u64..)
+            .zip(&ranked)
+            .filter(|(_, document)| is_gold(judgments, document))
+            .map(|(rank, _)| rank)
+            .collect(),
+    )
+}
+
+/// One query's text, the benchmark's, when it holds the query.
+pub(crate) fn query_text<'b>(benchmark: &'b Benchmark, query: &QueryId) -> Option<&'b str> {
+    benchmark
+        .queries()
+        .iter()
+        .find(|candidate| &candidate.id == query)
+        .map(|candidate| candidate.text.as_str())
+}
+
+/// Every query's text, by id: the benchmark's.
+pub(crate) fn query_texts(benchmark: &Benchmark) -> HashMap<&QueryId, &str> {
+    benchmark
+        .queries()
+        .iter()
+        .map(|query| (&query.id, query.text.as_str()))
+        .collect()
+}
+
+/// Whether `query`, judged, has no gold document in the top `k` of the
+/// output ranking. `None` when the query is unjudged or its trace holds no
+/// output ranking.
 pub(crate) fn gold_missing(
     outputs: &Outputs,
     benchmark: &Benchmark,
@@ -311,7 +374,7 @@ pub(crate) fn gold_missing(
         !ranked
             .iter()
             .take(k)
-            .any(|document| judgments.get(document).is_some_and(|grade| *grade > 0)),
+            .any(|document| is_gold(judgments, document)),
     )
 }
 

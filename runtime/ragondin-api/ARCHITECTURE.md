@@ -32,7 +32,7 @@ the response types, the typed errors, and the traits the service consumes.
 | `error` | `ApiError`, its stable codes, its `application/problem+json` rendering |
 | `layers` | The server's defence of its origin, as Tower layers on the router |
 | `description` | The API description, assembled from the declared operations and the `schemars` schemas |
-| `derived` | The data derived from a stored run and its benchmark: per-query scores, per-node ranking metrics, the gold filter |
+| `derived` | The data derived from a stored run and its benchmark: per-query scores, per-node ranking metrics, each passage's grade and each node's gold ranks, the gold filter, each query's text |
 | `cache` | The workspace's `cache/`: those derived figures, reconstructible, never a truth |
 | `endpoints` | The handlers of the workspace's endpoints — pipelines, benchmarks, services — and of `POST /compare` |
 | `stages` | A pipeline's stages, derived from its nodes' kinds and positions, by which a comparison aligns runs |
@@ -861,8 +861,8 @@ document § 8 lists seven codes and leaves the rest to the implementation:
 ## Derived data
 
 `GET /runs/{id}/queries` and `GET /runs/{id}/trace/{query}` serve what the
-run record does not hold: per-query scores, per-node ranking metrics, and
-passage text. **All of it is derived data: computed here on read, cached
+run record does not hold: per-query scores, per-node ranking metrics, which
+passages are gold, each query's text, and passage text. **All of it is derived data: computed here on read, cached
 under the workspace's `cache/`, and never written into the run** — the store
 writes nothing derived (its rule), and `cache/` is reconstructible data that
 is never a truth (the design document § 6). Deleting `cache/` changes no
@@ -904,6 +904,26 @@ restated (`derived.rs`):
   lies. The test pins this crate's reading to those fixtures. That this crate
   and the harness apply the same rules needs no test of its own: both call the
   one fold and the one walk (§ *INV-12*), so a change to either reaches both.
+- **Which passages are gold**, on the trace: each passage — in a ranking or
+  a context — carries `grade`, its document's grade in the query's qrels,
+  `0` when they do not judge it (the closed world every metric reads them
+  under); and each node that produced a ranking carries `gold_ranks`, the
+  1-based ranks of the documents graded above 0 in its ranking, folded by
+  `documents_by_first_occurrence` — the ranking its metrics score, so the
+  ranks are the ones a metric sees, and two chunks of one document take
+  one rank. Empty when the node ranked no gold document; `null` for a node
+  with no ranking. Read from the qrels by `derived::grade` and
+  `derived::gold_ranks`, beside the gold filter, which shares their rule of
+  what is gold. `tests/per_node_metrics.rs` compares `gold_ranks` with the
+  fold, and each node's `mrr` with its first gold rank, over every ranking
+  node of the harness-recorded run; that run has one chunk per document, so
+  `tests/replay.rs` pins the fold itself, with a gold document after a
+  collapsed duplicate.
+  **A query without qrels has no grade and no gold ranks**, `null`, a
+  choice made here: it is unjudged, as its absent scores say, and a `0`
+  would read as judged not relevant.
+- **Each query's text** is the dataset's: `text` on each query of the
+  listing and on the trace's header, for Replay's query selector.
 - **Node rows carry ranking metrics only.** The generator's EM and token-F1
   are a run-level figure: `metrics.json`'s, or the mean of the per-query
   scores, never a node row.
@@ -938,13 +958,19 @@ verified chunk set does not hold has no text.
 both digests. A score needs only the qrels and the reference answers, which
 are the dataset's, so the scores and per-node metrics — the listing's
 `ground_truth`, the trace's `scores` and node `metrics` — are gated on
-`dataset_version` alone, and `ground_truth` compares no chunk set
+`dataset_version` alone, and so are the passages' `grade`, the nodes'
+`gold_ranks` and each query's `text`, which read the qrels and the queries
+and no chunk (a choice made here: ADR-C36 § 4 conditions a passage's
+*text* on the chunk set, and a grade or a query's text is not derived from
+it), and `ground_truth` compares no chunk set
 (`found.index_version` is `null`). The passages are gated on both: a dataset
 that verifies with a chunk set that does not is `index_differs`, no text,
 both chunk-set digests side by side, and the scores still read. A dataset
 that does not load is `dataset_unreadable`, with the adapter's error in
 `detail`. With anything but `verified`, the queries are listed with their
-durations and no scores, and the nodes with no metrics.
+durations and no scores or text, the nodes with no metrics and no gold
+ranks, and the passages with no grade — `null`, never guessed, the reason
+in `ground_truth` or `passages`.
 
 **The trigger ADR-C36 § 4 records.** This resolution holds while chunks are
 derived outside the pipeline, by `CorpusIndex`. **The day a chunker component

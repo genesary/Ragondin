@@ -1715,12 +1715,18 @@
             },
             "description": "Its scores at the run's output, by metric name: the ranking metrics\nwhen its qrels are non-empty, the answer metrics when it has a\nreference. Empty when it is judged on neither, or when the ground\ntruth is not verified.",
             "type": "object"
+          },
+          "text": {
+            "description": "Its text, the dataset's: present when the ground truth is\n`verified` and the dataset holds the query; `null` otherwise.",
+            "nullable": true,
+            "type": "string"
           }
         },
         "required": [
+          "duration_nanos",
           "id",
           "scores",
-          "duration_nanos"
+          "text"
         ],
         "type": "object"
       },
@@ -1757,14 +1763,20 @@
             },
             "description": "The query's scores at the run's output, as `GET /runs/{id}/queries`\nreports them: present when the dataset on disk is the run's, whatever\nthe chunk set.",
             "type": "object"
+          },
+          "text": {
+            "description": "The query's text, the dataset's: present when the dataset on disk is\nthe run's, whatever the chunk set — the gate `scores` is under — and\nit holds the query; `null` otherwise, and `passages` says why.",
+            "nullable": true,
+            "type": "string"
           }
         },
         "required": [
-          "run",
-          "query",
+          "nodes",
           "passages",
+          "query",
+          "run",
           "scores",
-          "nodes"
+          "text"
         ],
         "type": "object"
       },
@@ -2400,6 +2412,16 @@
             "nullable": true,
             "type": "string"
           },
+          "gold_ranks": {
+            "description": "The 1-based ranks of the gold documents — graded above 0 — in its\nranking, counted over documents folded from its chunks by first\noccurrence, the ranking its `metrics` score: present when it produced\na ranking, the query is judged and the dataset on disk is the run's;\nempty when it ranked no gold document; `null` otherwise.",
+            "items": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "nullable": true,
+            "type": "array"
+          },
           "inputs": {
             "description": "What it received, one summary per input port, in port order.",
             "items": {
@@ -2438,6 +2460,7 @@
         "required": [
           "duration_nanos",
           "error",
+          "gold_ranks",
           "inputs",
           "metrics",
           "node",
@@ -2456,6 +2479,14 @@
             "description": "The document it was derived from.",
             "type": "string"
           },
+          "grade": {
+            "description": "Its document's grade in the query's qrels, `0` when they do not judge\nit: present when the query is judged and the dataset on disk is the\nrun's, whatever the chunk set; `null` otherwise.",
+            "format": "uint8",
+            "maximum": 255,
+            "minimum": 0,
+            "nullable": true,
+            "type": "integer"
+          },
           "score": {
             "description": "The score the node gave it, on the node's own scale.",
             "format": "double",
@@ -2470,6 +2501,7 @@
         "required": [
           "chunk",
           "document",
+          "grade",
           "score",
           "text"
         ],
