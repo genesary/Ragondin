@@ -101,9 +101,15 @@ describe('the columns', () => {
     expect(fiqa.querySelector('.rg-status')).toBeNull();
   });
 
-  it('warns on a column whose dataset is not the run’s own', () => {
-    show(single({ kind: 'unverified' }, { dataset_check: { ...(MATRIX.columns[1]!.dataset_check as NonNullable<MatrixColumn['dataset_check']>), status: 'dataset_differs', detail: 'the dataset on disk digests to another version' } }));
-    expect(screen.getByRole('columnheader', { name: /beir\/scifact/ }).querySelector('.rg-status[data-state="warning"]')?.textContent).toContain('dataset differs');
+  it.each([
+    ['dataset_differs', 'dataset differs'],
+    ['dataset_absent', 'dataset absent'],
+    ['dataset_unreadable', 'dataset unreadable'],
+    ['index_differs', 'index differs'],
+  ] as const)('warns on a column whose dataset check reads %s, in its own words', (status, words) => {
+    show(single({ kind: 'unverified' }, { dataset_check: { ...(MATRIX.columns[1]!.dataset_check as NonNullable<MatrixColumn['dataset_check']>), status, detail: 'what the check found' } }));
+    const chip = screen.getByRole('columnheader', { name: /beir\/scifact/ }).querySelector('.rg-status[data-state="warning"]');
+    expect(chip?.textContent).toBe(words);
   });
 
   it('says a benchmark measured only by earlier content', () => {
@@ -171,7 +177,8 @@ describe('the generator’s cells', () => {
     const cell = cellAt('generate', 'beir/scifact');
     expect(cell.textContent).toBe('no reference answers — never measurable on this benchmark');
     expect(cell.querySelector('[data-never]')).toBeTruthy();
-    expect(declared(css, '.rg-matrix td:has(> [data-never])', 'background')).toMatch(/^repeating-linear-gradient\(-45deg, var\(--surface\) 0 4px, var\(--line\) 4px 8px\)/);
+    // Above the table's row hover, so a hovered row keeps its hatch.
+    expect(declared(css, '.rg-matrix .rg-table tbody tr td:has(> [data-never])', 'background')).toMatch(/^repeating-linear-gradient\(-45deg, var\(--surface\) 0 4px, var\(--line\) 4px 8px\)/);
   });
 });
 
@@ -234,7 +241,8 @@ describe('an empty cell explains itself', () => {
 
   it('unverified, not scored, no figure: each in its words', () => {
     show(single({ kind: 'unverified' }));
-    expect(cellAt('rerank', 'beir/scifact').textContent).toBe('unverified — the dataset on disk is not the run’s own');
+    // Whatever the check found — a dataset absent included — the cell claims only that it is not verified.
+    expect(cellAt('rerank', 'beir/scifact').textContent).toBe('unverified — the run’s dataset is not verified on disk');
   });
 
   it('not scored and no figure, side by side in a row that is not all unscored', () => {
@@ -261,7 +269,8 @@ describe('the table for assistive technology', () => {
     expect(screen.getByRole('region', { name: `${NAME}: each node on each benchmark` }).getAttribute('tabindex')).toBe('0');
   });
 
-  it('keeps every cell two lines tall, whatever its state, so nothing moves when a metric is chosen', () => {
+  it('keeps every cell two lines tall and as wide as a value with its gain, whatever its state, so nothing moves when a metric is chosen', () => {
     expect(declared(css, '.rg-matrix__cell', 'min-height')).toBe('calc(2 * var(--space-5))');
+    expect(declared(css, '.rg-matrix__cell', 'min-width')).toBe('calc(var(--space-16) + var(--space-8))');
   });
 });

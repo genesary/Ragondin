@@ -224,6 +224,12 @@ describe('Table row headers', () => {
     expect(screen.queryByRole('rowheader', { name: 'rrf' })).toBeNull();
   });
 
+  it('spans a row without row headers too, its label then a data cell', () => {
+    render(<Table caption="m" columns={columns} rows={matrix} />);
+    expect(screen.getByRole('cell', { name: 'concat' })).toBeTruthy();
+    expect(screen.getByRole('cell', { name: 'Not scored: no metric reads this node.' }).getAttribute('colspan')).toBe('2');
+  });
+
   it('spans a row’s one sentence across every column after its label', () => {
     render(<Table caption="m" columns={columns} rows={matrix} rowHeaders />);
     const sentence = screen.getByRole('cell', { name: 'Not scored: no metric reads this node.' });

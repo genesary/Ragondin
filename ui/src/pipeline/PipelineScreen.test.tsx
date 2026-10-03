@@ -231,7 +231,8 @@ describe('the verdict and the one primary action', () => {
     const both: PipelineMatrix = { ...WITH_FIQA, missing: [...WITH_FIQA.missing, ...PREFIXED.missing, { benchmark: null, dataset_version: '0', nodes: ['bm25'] }] };
     show(`#pipeline/${NAME}`, routes({ body: both }), launch);
     await loaded();
-    fireEvent.click(screen.getByRole('button', { name: 'Run the 9 missing cells' }));
+    // The column with no benchmark name cannot be launched, and is not counted in the action.
+    fireEvent.click(screen.getByRole('button', { name: 'Run the 8 missing cells' }));
     expect(launch.mock.calls).toEqual([[{ pipeline: NAME, benchmark: 'beir/fiqa' }], [{ pipeline: NAME, benchmark: 'beir/nfcorpus' }]]);
   });
 });

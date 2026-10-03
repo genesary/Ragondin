@@ -5,7 +5,7 @@
 // ARCHITECTURE.md § The Pipeline screen.
 import type { ReactNode } from 'react';
 import { Button, FAMILY_LABEL, FamilyTile, Glyph, StatusChip, Table, familyOfComponent, type TableRow } from '../../design/index.ts';
-import type { MatrixCell, MatrixColumn, MatrixRow, PipelineMatrix } from '../api/types.ts';
+import type { DatasetStatus, MatrixCell, MatrixColumn, MatrixRow, PipelineMatrix } from '../api/types.ts';
 import { formatHash } from '../routes.ts';
 import { formatMetric, metricLabel, shortHash } from '../runs/model.ts';
 import './Pipeline.css';
@@ -138,13 +138,21 @@ function cellContent(m: PipelineMatrix, row: MatrixRow, cell: MatrixCell, metric
         />
       );
     case 'unverified':
-      return <Cell state={cell.kind} first={said('unverified', ' — the dataset on disk is not the run’s own')} />;
+      return <Cell state={cell.kind} first={said('unverified', ' — the run’s dataset is not verified on disk')} />;
     case 'not_scored':
       return <Cell state={cell.kind} first={said('not scored', ' — no metric reads this node’s output')} />;
     case 'no_figure':
       return <Cell state={cell.kind} first={said('no figure', ' — run here, and no figure came out')} />;
   }
 }
+
+/** What a dataset check that did not verify found, in a chip's words. */
+const NOT_VERIFIED: Record<Exclude<DatasetStatus, 'verified'>, string> = {
+  dataset_absent: 'dataset absent',
+  dataset_differs: 'dataset differs',
+  dataset_unreadable: 'dataset unreadable',
+  index_differs: 'index differs',
+};
 
 /** A column's status in words: measured, how far a prefix run reached, or why nothing measured it. */
 function columnStatus(column: MatrixColumn): ReactNode {
@@ -154,18 +162,18 @@ function columnStatus(column: MatrixColumn): ReactNode {
 }
 
 function columnHeader(column: MatrixColumn) {
-  const unverified = column.dataset_check !== null && column.dataset_check.status !== 'verified';
+  const check = column.dataset_check?.status ?? 'verified';
   return (
     <span className="rg-matrix__col">
       <span className="rg-matrix__bench">{columnLabel(column)}</span>{' '}
       <span className="rg-matrix__status">
         {columnStatus(column)}
-        {unverified ? (
+        {check === 'verified' ? null : (
           <>
             {' '}
-            <StatusChip state="warning">dataset differs</StatusChip>
+            <StatusChip state="warning">{NOT_VERIFIED[check]}</StatusChip>
           </>
-        ) : null}
+        )}
       </span>{' '}
       <span className="rg-matrix__truth">{groundTruthLabel(column.ground_truth)}</span>
     </span>

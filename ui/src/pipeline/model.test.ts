@@ -8,6 +8,7 @@ import {
   contentFact,
   groundTruthLabel,
   launchFact,
+  launchableCount,
   missingCount,
   rankingMetrics,
   sinceChangedLabel,
@@ -111,6 +112,13 @@ describe('the missing cells', () => {
     expect(missingCount(MATRIX)).toBe(0);
     expect(missingCount(PREFIXED)).toBe(2);
     expect(missingCount(WITH_FIQA)).toBe(6);
+  });
+
+  it('counts apart the cells a launch can fill: a column no benchmark name is pinned to cannot be launched', () => {
+    const unnamed: PipelineMatrix = { ...WITH_FIQA, missing: [...WITH_FIQA.missing, { benchmark: null, dataset_version: '0', nodes: ['bm25', 'dense'] }] };
+    expect(missingCount(unnamed)).toBe(8);
+    expect(launchableCount(unnamed)).toBe(6);
+    expect(verdict(unnamed)).toBe('Measured on 3 of 4 benchmarks. 8 cells wait for a run of the whole pipeline, 2 of them on a dataset no benchmark name is pinned to, which cannot be launched.');
   });
 });
 

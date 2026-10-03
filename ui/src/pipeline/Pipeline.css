@@ -94,6 +94,8 @@
   display: grid;
   align-content: start;
   min-height: calc(2 * var(--space-5));
+  /* As wide as a value with its gain, so the bold best gain does not widen its column by a pixel or two. */
+  min-width: calc(var(--space-16) + var(--space-8));
 }
 .rg-matrix__line {
   display: flex;
@@ -111,8 +113,9 @@
   font-weight: 500;
 }
 .rg-matrix__gain[data-best] { font-weight: 700; }
-/* Never measurable here: hatched, beside its words, so the hatch is never the only carrier. */
-.rg-matrix td:has(> [data-never]) {
+/* Never measurable here: hatched, beside its words, so the hatch is never the only carrier.
+   Specific enough to win over the table's row hover, so a hovered row keeps its hatch. */
+.rg-matrix .rg-table tbody tr td:has(> [data-never]) {
   background: repeating-linear-gradient(-45deg, var(--surface) 0 4px, var(--line) 4px 8px);
 }
 .rg-matrix td:has(> [data-never]) .rg-matrix__line { color: var(--ink-2); }

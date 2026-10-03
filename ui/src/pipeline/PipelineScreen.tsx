@@ -14,7 +14,7 @@ import { ErrorState, Loading, type RequestState } from '../shell/states.tsx';
 import { FeedingRuns } from './FeedingRuns.tsx';
 import { rememberPipeline } from './last.ts';
 import { Matrix, NO_LAUNCHER, type Launch } from './Matrix.tsx';
-import { columnLabel, missingCount, rankingMetrics, verdict } from './model.ts';
+import { columnLabel, launchableCount, rankingMetrics, verdict } from './model.ts';
 import './Pipeline.css';
 
 export type PipelineScreenProps = {
@@ -122,7 +122,8 @@ function Loaded({ matrix, listing, launch }: { matrix: PipelineMatrix; listing: 
   // Every metric a ranking row reads is a ranking metric, so no family is passed: ndcg@10, else the first.
   const metric = chosen !== null && metrics.includes(chosen) ? chosen : (defaultMetric(metrics, {}) ?? '');
   const empty = matrix.feeding_runs.length === 0 && matrix.columns.every((c) => c.run === null);
-  const missing = missingCount(matrix);
+  // The action counts what it can launch; the verdict says what it cannot.
+  const missing = launchableCount(matrix);
   const unverified = matrix.columns.filter((c) => c.dataset_check !== null && c.dataset_check.status !== 'verified');
 
   const head = (

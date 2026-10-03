@@ -35,11 +35,17 @@ export function gainOn(cell: MatrixCell | undefined, metric: string): number | n
  * The columns holding the greatest gain over the previous stage on `metric`
  * in row `row` — every one of a tie — set in bold; never the greatest value,
  * because benchmarks differ in difficulty and the best value would almost
- * always sit in the same column. The API serves a gain only for a metric
- * its catalogue gives a direction, and serves no direction with it: the
- * greatest is read as the best, as `gain` is defined as a node's value minus
- * the best value before it. None when fewer than two cells have a gain:
+ * always sit in the same column. None when fewer than two cells have a gain:
  * one gain is not best against anything.
+ *
+ * **This assumes a higher gain is better.** The matrix serves no direction
+ * with a gain, and the browser keeps no copy of the catalogue. It holds
+ * because the API serves a gain only for a metric its catalogue gives a
+ * direction, and every entry of that catalogue improves upward — which
+ * `eval/ragondin-metrics/src/catalogue.rs`'s test
+ * `answers_and_ranking_metrics_carry_their_family_and_direction` asserts, so
+ * a lower-is-better metric fails it first. Adding one means serving the
+ * direction here too, as `POST /compare` does, and reading it.
  */
 export function bestGainColumns(m: PipelineMatrix, row: number, metric: string): number[] {
   const gains = m.columns.map((column) => gainOn(column.cells[row], metric));
@@ -84,6 +90,9 @@ export const groundTruthLabel = (gt: GroundTruth | null) => (gt === null ? 'grou
 /** How many cells a run of the whole pipeline would fill, by the API's `missing`. */
 export const missingCount = (m: PipelineMatrix) => m.missing.reduce((sum, column) => sum + column.nodes.length, 0);
 
+/** Of those, how many a launch can fill: a column no benchmark name is pinned to has nothing to launch on. */
+export const launchableCount = (m: PipelineMatrix) => m.missing.reduce((sum, column) => sum + (column.benchmark === null ? 0 : column.nodes.length), 0);
+
 const count = (n: number, one: string, many: string) => `${n.toLocaleString('en-US')} ${n === 1 ? one : many}`;
 
 /**
@@ -97,7 +106,9 @@ export function verdict(m: PipelineMatrix): string {
   const stops = new Set(prefixes.map((c) => c.up_to));
   const prefixClause = prefixes.length === 0 ? '' : stops.size === 1 ? `, ${prefixes.length} of them only up to ${[...stops][0]}` : `, ${prefixes.length} of them by a prefix run`;
   const missing = missingCount(m);
-  const missingClause = missing === 0 ? 'No cell waits for a run.' : `${count(missing, 'cell waits', 'cells wait')} for a run of the whole pipeline.`;
+  const stuck = missing - launchableCount(m);
+  const stuckClause = stuck === 0 ? '' : `, ${stuck} of them on a dataset no benchmark name is pinned to, which cannot be launched`;
+  const missingClause = missing === 0 ? 'No cell waits for a run.' : `${count(missing, 'cell waits', 'cells wait')} for a run of the whole pipeline${stuckClause}.`;
   return `Measured on ${measured.length} of ${count(m.columns.length, 'benchmark', 'benchmarks')}${prefixClause}. ${missingClause}`;
 }
 
