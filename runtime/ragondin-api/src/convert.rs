@@ -22,6 +22,7 @@ use ragondin_types::DocId;
 use crate::backends::RunDataset;
 use crate::derived::NodeFigures;
 use crate::error::ApiError;
+use crate::lineage;
 use crate::response::{
     BenchmarkEntry, BenchmarkState, ConfigurationMatrix, DatasetCheck, DatasetStatus,
     DatasetVersions, EdgeKind, FoundVersions, Graph, GraphEdge, GraphInput, GraphNode, GroundTruth,
@@ -36,6 +37,7 @@ use crate::response::{
 /// by the handler.
 pub(crate) fn summary(
     run: &Run,
+    index: &lineage::Index,
     mut pipeline_names: Vec<String>,
     mut benchmark_names: Vec<String>,
     median_query_latency_nanos: Option<u64>,
@@ -47,7 +49,10 @@ pub(crate) fn summary(
         id: run.id.to_string(),
         pipeline: run.inputs.pipeline.to_string(),
         pipeline_names,
-        launched_as: run.provenance.as_ref().map(launched_as),
+        launched_as: run
+            .provenance
+            .as_ref()
+            .map(|record| launched_as(record, index)),
         dataset_version: run.inputs.dataset_version.clone(),
         benchmark_names,
         index_version: run.inputs.index_version.clone(),
@@ -94,7 +99,7 @@ pub(crate) fn shape(run: &Run) -> Option<Graph> {
 /// One run, whole: its stored fields and the graph lowered from its stored
 /// configuration by `ragondin-experiments`' one lowering path. A document
 /// that no longer lowers is `run_unreadable`, never a guessed graph.
-pub(crate) fn detail(run: &Run) -> Result<RunDetail, ApiError> {
+pub(crate) fn detail(run: &Run, index: &lineage::Index) -> Result<RunDetail, ApiError> {
     let pipeline = lower_configuration(&run.config).map_err(|reason| ApiError::RunUnreadable {
         run_id: run.id.to_string(),
         reason,
@@ -109,7 +114,10 @@ pub(crate) fn detail(run: &Run) -> Result<RunDetail, ApiError> {
         started_at_ms,
         finished_at_ms,
         graph: graph(&pipeline),
-        launched_as: run.provenance.as_ref().map(launched_as),
+        launched_as: run
+            .provenance
+            .as_ref()
+            .map(|record| launched_as(record, index)),
     })
 }
 
@@ -210,9 +218,13 @@ pub(crate) fn family(of: &LogicalNode) -> String {
 }
 
 /// A run's launch record, as the API spells it.
-pub(crate) fn launched_as(record: &ragondin_experiments::RunProvenance) -> LaunchedAs {
+pub(crate) fn launched_as(
+    record: &ragondin_experiments::RunProvenance,
+    index: &lineage::Index,
+) -> LaunchedAs {
     LaunchedAs {
         name: record.name().map(str::to_owned),
+        held: record.name().map(|name| index.held(name)),
         prefix_of: record.prefix_of().map(|prefix| LaunchedPrefix {
             up_to: prefix.up_to().to_owned(),
             parent_pipeline_hash: prefix.parent_pipeline_hash().to_string(),

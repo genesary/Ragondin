@@ -1069,6 +1069,20 @@
       "LaunchedAs": {
         "description": "A run's launch record (ADR-C39 § 1).",
         "properties": {
+          "held": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NameHeld"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "Whether the workspace holds [`name`](Self::name) now, read from the\nsame listing of `pipelines/` as the response's hash matches; `null`\nwhen the record names none. A fact about the name, not the content:\na document held under it may hold other content since."
+          },
           "name": {
             "description": "The workspace pipeline name it was launched as — for a prefix run,\nits parent's; `null` when the record names none.",
             "nullable": true,
@@ -1090,6 +1104,7 @@
           }
         },
         "required": [
+          "held",
           "name",
           "prefix_of"
         ],
@@ -1682,6 +1697,32 @@
           "nodes"
         ],
         "type": "object"
+      },
+      "NameHeld": {
+        "description": "Whether the workspace holds a recorded pipeline name now.",
+        "oneOf": [
+          {
+            "description": "A document is stored under the name exactly as recorded, whether or\nnot it validates.",
+            "enum": [
+              "exactly"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "No document is stored under the name as recorded, but one is under\nthe same name in another case (ASCII): on a filesystem that ignores\ncase the two are one file, and reading the name as recorded is\nrefused (`request_invalid`) rather than answered with the other.",
+            "enum": [
+              "other_case"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "No document is stored under the name in any case.",
+            "enum": [
+              "gone"
+            ],
+            "type": "string"
+          }
+        ]
       },
       "NodeLatency": {
         "description": "One node's latency over a run's queries.",

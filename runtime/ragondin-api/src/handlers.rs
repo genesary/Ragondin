@@ -120,7 +120,7 @@ pub(crate) async fn runs(
     State(state): State<AppState>,
     _: ApiQuery<NoParameters>,
 ) -> Result<Json<RunListing>, ApiError> {
-    let pipelines = lineage::pipelines_by_hash(state.backends.pipelines.as_ref()).await?;
+    let index = lineage::index(state.backends.pipelines.as_ref()).await?;
     let mut benchmarks: HashMap<String, Vec<String>> = HashMap::new();
     for pinned in state.backends.registry.pinned().await? {
         benchmarks
@@ -148,7 +148,8 @@ pub(crate) async fn runs(
             listing.cache_error = listing.cache_error.or(failure);
             listing.runs.push(convert::summary(
                 &run,
-                pipelines.get(&hash).cloned().unwrap_or_default(),
+                &index,
+                index.by_hash.get(&hash).cloned().unwrap_or_default(),
                 benchmarks
                     .get(&run.inputs.dataset_version)
                     .cloned()
@@ -188,14 +189,17 @@ pub(crate) async fn load_all(state: &AppState) -> Result<(Vec<Run>, Vec<Unreadab
 
 /// `GET /runs/{id}`. An id that is not a run id names no run, so it is
 /// `run_not_found` as an absent one is; a run that is there and does not
-/// read is `run_unreadable`.
+/// read is `run_unreadable`. The workspace's pipelines are listed once, for
+/// whether the run's recorded name is held (`launched_as.held`), and a
+/// pipeline source that fails fails the call, as it fails `GET /runs`.
 pub(crate) async fn run(
     State(state): State<AppState>,
     ApiPath(id): ApiPath<String>,
     _: ApiQuery<NoParameters>,
 ) -> Result<Json<RunDetail>, ApiError> {
     let run = load_run(&state, id).await?;
-    Ok(Json(convert::detail(&run)?))
+    let index = lineage::index(state.backends.pipelines.as_ref()).await?;
+    Ok(Json(convert::detail(&run, &index)?))
 }
 
 /// `GET /runs/{id}/queries`: every query the run executed with its scores,

@@ -1458,6 +1458,27 @@ pub struct LaunchedAs {
     pub name: Option<String>,
     /// For a prefix run, where it was cut from its parent; `null` otherwise.
     pub prefix_of: Option<LaunchedPrefix>,
+    /// Whether the workspace holds [`name`](Self::name) now, read from the
+    /// same listing of `pipelines/` as the response's hash matches; `null`
+    /// when the record names none. A fact about the name, not the content:
+    /// a document held under it may hold other content since.
+    pub held: Option<NameHeld>,
+}
+
+/// Whether the workspace holds a recorded pipeline name now.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum NameHeld {
+    /// A document is stored under the name exactly as recorded, whether or
+    /// not it validates.
+    Exactly,
+    /// No document is stored under the name as recorded, but one is under
+    /// the same name in another case (ASCII): on a filesystem that ignores
+    /// case the two are one file, and reading the name as recorded is
+    /// refused (`request_invalid`) rather than answered with the other.
+    OtherCase,
+    /// No document is stored under the name in any case.
+    Gone,
 }
 
 /// Where a launch record says a prefix run was cut from its parent.

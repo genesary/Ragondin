@@ -667,7 +667,7 @@ listing — reported, never repaired.
   from `Run::times` and never computed: `null` when the run recorded none.
   This crate stamps no run; a job's own times are the job's.
 - `pipeline_names`: every workspace document whose canonical hash is the
-  run's, from `lineage::pipelines_by_hash`, sorted. A list, never a pick:
+  run's, from `lineage::index`'s `by_hash`, sorted. A list, never a pick:
   several documents can be one canonical form. It is the content fact of
   the two ADR-C39 § 4 exposes about a run's pipeline: the current hash
   match.
@@ -680,6 +680,16 @@ listing — reported, never repaired.
   schema across the API. Recorded at launch, its name may be a pipeline
   whose content has changed since, or that no longer exists. Neither fact is
   a resolution of the other, and no field says which a name came from.
+  `held` says which of the last is true of the name now: `exactly` (a
+  document is stored under it, valid or not), `other_case` (only under the
+  same name in another ASCII case — the file backend's case-alias rule, so
+  reading it as recorded is refused) or `gone`; `null` when the record names
+  none. It is read from the same `lineage::index` listing as
+  `pipeline_names`, one listing of `pipelines/` per `GET /runs` — and per
+  `GET /runs/{id}` and per pipeline matrix — so the two facts never come
+  from two listings, and the UI needs no read of its own to know whether a
+  recorded name still leads anywhere. A fact about the name, never the
+  content.
 - `benchmark_names`: every registry entry pinned to the run's
   `dataset_version`, a manifest entry or an import, sorted — the pinning
   `Registry::dataset` locates by, read through `Registry::pinned`, which
@@ -1368,7 +1378,7 @@ Every other run counts nowhere. Every run that counts is listed in
 side and never resolved into one name — `launched_as`, the run's launch
 record (`name`, and `prefix_of` with `up_to` and `parent_pipeline_hash`),
 `null` without one, and `pipeline_names`, every current document whose
-canonical hash is the run's, from `lineage::pipelines_by_hash` — then
+canonical hash is the run's, from `lineage::index`'s `by_hash` — then
 `prefix_of` (this pipeline and the node the run stops at) for a prefix,
 `fills_column`, and `content_since_changed`.
 

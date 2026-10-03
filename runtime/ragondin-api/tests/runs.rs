@@ -13,7 +13,7 @@ use serde_json::json;
 use support::datasets::scratch;
 use support::{
     app, app_over, app_with_backends, fakes, fixture_run, get, json, send, FakeRegistry,
-    FakeRunStore, HeldPipelines, PinningRegistry, FIXTURE_RUN,
+    FakeRunStore, HeldPipelines, ListCounted, PinningRegistry, FIXTURE_RUN,
 };
 
 const OTHER_RUN: &str = "00000000000000000000000000000000000000000000000000000000000000aa";
@@ -233,9 +233,10 @@ async fn the_listing_carries_the_launch_record_or_null() {
             .cloned()
             .expect("the run is listed")
     };
+    // The fake workspace holds no pipeline: the recorded name is gone.
     assert_eq!(
         by_id(OTHER_RUN)["launched_as"],
-        json!({ "name": "hybrid", "prefix_of": null })
+        json!({ "name": "hybrid", "prefix_of": null, "held": "gone" })
     );
     assert_eq!(
         by_id("00000000000000000000000000000000000000000000000000000000000000bb")["launched_as"],
@@ -245,6 +246,7 @@ async fn the_listing_carries_the_launch_record_or_null() {
                 "up_to": "fused",
                 "parent_pipeline_hash": fixture_run().inputs.pipeline.to_string(),
             },
+            "held": "gone",
         })
     );
     // Stored without `provenance.json`: no record, never one inferred from
@@ -293,7 +295,7 @@ async fn a_recorded_name_and_the_hash_matches_are_reported_independently() {
 
     assert_eq!(
         body["runs"][0]["launched_as"],
-        json!({ "name": "hybrid", "prefix_of": null })
+        json!({ "name": "hybrid", "prefix_of": null, "held": "exactly" })
     );
     assert_eq!(body["runs"][0]["pipeline_names"], json!(["hybrid-fork"]));
 
@@ -312,7 +314,7 @@ async fn a_recorded_name_and_the_hash_matches_are_reported_independently() {
 
     assert_eq!(
         body["runs"][0]["launched_as"],
-        json!({ "name": "hybrid", "prefix_of": null })
+        json!({ "name": "hybrid", "prefix_of": null, "held": "exactly" })
     );
     assert_eq!(
         body["runs"][0]["pipeline_names"],
@@ -345,6 +347,7 @@ async fn the_detail_carries_the_launch_record() {
                 "up_to": "fused",
                 "parent_pipeline_hash": fixture_run().inputs.pipeline.to_string(),
             },
+            "held": "gone",
         })
     );
     // The old `prefix_of` string is gone: the record's `prefix_of` is the
@@ -643,4 +646,104 @@ async fn the_latency_is_served_from_the_cache_the_second_time() {
     // Removed, it is computed again: the cache is never a truth.
     std::fs::remove_dir_all(workspace.join("cache")).unwrap();
     assert_eq!(listing().await, first, "the same body, rebuilt");
+}
+
+/// The fixture run under `id`, launched as `name`.
+fn launched(id: &str, name: &str) -> Run {
+    let mut run = fixture_run();
+    run.id = id.parse().unwrap();
+    run.provenance = Some(RunProvenance::named(name));
+    run
+}
+
+const HELD: &str = "00000000000000000000000000000000000000000000000000000000000000c1";
+const CASED: &str = "00000000000000000000000000000000000000000000000000000000000000c2";
+const GONE: &str = "00000000000000000000000000000000000000000000000000000000000000c3";
+
+/// A workspace holding `hybrid` (and an invalid `broken`), over runs launched
+/// as `hybrid`, as `Hybrid` and as `dense-old`.
+fn held_backends() -> (ragondin_api::Backends, Arc<ListCounted<HeldPipelines>>) {
+    let pipelines = Arc::new(ListCounted::new(HeldPipelines {
+        files: vec![
+            (
+                "hybrid".to_owned(),
+                fixture_run().config.as_str().to_owned(),
+            ),
+            ("broken".to_owned(), "pipeline: [".to_owned()),
+        ],
+    }));
+    let mut backends = fakes(FakeRunStore::holding([
+        launched(HELD, "hybrid"),
+        launched(CASED, "Hybrid"),
+        launched(GONE, "dense-old"),
+        fixture_run(),
+    ]));
+    backends.pipelines = pipelines.clone();
+    (backends, pipelines)
+}
+
+#[tokio::test]
+async fn a_recorded_name_says_whether_the_workspace_holds_it_exactly_only_in_another_case_or_not_at_all(
+) {
+    let (backends, pipelines) = held_backends();
+
+    let body = json(send(app_with_backends(backends), get("/api/v1/runs")).await).await;
+
+    let held = |id: &str| {
+        body["runs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|run| run["id"] == id)
+            .expect("the run is listed")["launched_as"]["held"]
+            .clone()
+    };
+    assert_eq!(held(HELD), "exactly");
+    // On a filesystem that ignores case `Hybrid` is `hybrid`'s file; on one
+    // that does not it is no document. Either way it is not held as given.
+    assert_eq!(held(CASED), "other_case");
+    assert_eq!(held(GONE), "gone");
+    // No record, no name to hold.
+    assert_eq!(
+        body["runs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|run| run["id"] == FIXTURE_RUN)
+            .unwrap()["launched_as"],
+        serde_json::Value::Null
+    );
+    // The names and the hash matches come from one listing of `pipelines/`.
+    assert_eq!(pipelines.listed(), 1);
+}
+
+#[tokio::test]
+async fn a_recorded_name_held_by_a_document_that_does_not_validate_is_held() {
+    let mut run = launched(HELD, "broken");
+    run.metrics = Default::default();
+    let mut backends = fakes(FakeRunStore::holding([run]));
+    backends.pipelines = Arc::new(HeldPipelines {
+        files: vec![("broken".to_owned(), "pipeline: [".to_owned())],
+    });
+
+    let body = json(send(app_with_backends(backends), get("/api/v1/runs")).await).await;
+
+    // Its address opens the Pipeline screen, which says why it does not
+    // validate: a document that is there is held, valid or not.
+    assert_eq!(body["runs"][0]["launched_as"]["held"], "exactly");
+}
+
+#[tokio::test]
+async fn the_detail_says_whether_its_recorded_name_is_held() {
+    let (backends, _) = held_backends();
+    let app = app_with_backends(backends);
+
+    let cased = json(send(app.clone(), get(&format!("/api/v1/runs/{CASED}"))).await).await;
+    let gone = json(send(app, get(&format!("/api/v1/runs/{GONE}"))).await).await;
+
+    assert_eq!(
+        cased["launched_as"],
+        json!({ "name": "Hybrid", "prefix_of": null, "held": "other_case" })
+    );
+    assert_eq!(gone["launched_as"]["held"], "gone");
 }

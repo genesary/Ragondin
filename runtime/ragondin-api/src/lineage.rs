@@ -25,20 +25,14 @@ use ragondin_pipeline::LogicalPipeline;
 
 use crate::backends::PipelineSource;
 use crate::error::ApiError;
+use crate::response::NameHeld;
 use crate::validation;
-
-/// Every pipeline document that validates, by its canonical hash, as
-/// `validation::check` renders it: a hash maps to several names when several
-/// documents are one canonical form.
-pub(crate) async fn pipelines_by_hash(
-    source: &dyn PipelineSource,
-) -> Result<BTreeMap<String, Vec<String>>, ApiError> {
-    Ok(index(source).await?.by_hash)
-}
 
 /// One listing of the workspace's pipelines, read two ways.
 pub(crate) struct Index {
-    /// What [`pipelines_by_hash`] answers.
+    /// Every pipeline document that validates, by its canonical hash, as
+    /// `validation::check` renders it: a hash maps to several names when
+    /// several documents are one canonical form.
     pub(crate) by_hash: BTreeMap<String, Vec<String>>,
     /// Every name the listing held, a document that does not validate
     /// included, stored exactly as given.
@@ -46,7 +40,9 @@ pub(crate) struct Index {
 }
 
 /// The workspace's pipelines, listed once: by canonical hash, and every name.
-/// `POST /compare` reads both from the one listing, which narrows the window
+/// `GET /runs` reads both from the one listing, the hash matches and whether
+/// each recorded name is held ([`Index::held`]), so the two facts are never
+/// of two listings. `POST /compare` reads both from the one listing, which narrows the window
 /// in which a document deleted meanwhile names a run's pipeline and is then
 /// missing; it cannot close it, since the document can still go before its
 /// pairing is read.
@@ -68,6 +64,25 @@ pub(crate) async fn index(source: &dyn PipelineSource) -> Result<Index, ApiError
         index.names.insert(file.name);
     }
     Ok(index)
+}
+
+impl Index {
+    /// Whether the listing holds `name`: as given, only in another case, or
+    /// not at all — the same ASCII case rule the file backend refuses a case
+    /// alias by.
+    pub(crate) fn held(&self, name: &str) -> NameHeld {
+        if self.names.contains(name) {
+            NameHeld::Exactly
+        } else if self
+            .names
+            .iter()
+            .any(|stored| stored.eq_ignore_ascii_case(name))
+        {
+            NameHeld::OtherCase
+        } else {
+            NameHeld::Gone
+        }
+    }
 }
 
 /// The pipeline `run` is a run of, by `index`: the one name its hash maps

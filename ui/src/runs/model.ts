@@ -6,7 +6,7 @@
 // and its column or label is not drawn: nothing here is invented to fill a
 // cell. ARCHITECTURE.md § The Runs screen.
 import { familyOfComponent, type Family } from '../../design/index.ts';
-import type { Graph, MetricFamily, RunListing, RunSummary } from '../api/types.ts';
+import type { Graph, MetricFamily, NameHeld, RunListing, RunSummary } from '../api/types.ts';
 import type { Route } from '../routes.ts';
 
 /**
@@ -58,6 +58,12 @@ export type RunRow = {
    * with it into one name (ADR-C39 § 4).
    */
   launchedAs: string | null;
+  /**
+   * Whether the workspace holds `launchedAs` now, as the listing says it
+   * (`launched_as.held`, from the same listing of `pipelines/` as the hash
+   * matches): exactly, only under another case, or gone; null with no name.
+   */
+  launchedHeld: NameHeld | null;
   /** Whether the run has a launch record at all — one may name no pipeline. */
   launchRecorded: boolean;
   /** The benchmark's identity: its dataset version, what "one benchmark" compares. */
@@ -88,6 +94,12 @@ export type RunGroup = {
   key: string;
   /** The name or names the group is headed by, each linked: a recorded name, or every hash match; empty when the group is its canonical hash. */
   names: string[];
+  /**
+   * Whether the workspace holds the name the group is headed by: a recorded
+   * name as its runs' records say, and `exactly` for hash matches — current
+   * documents of the same listing — and for a group headed by its hash.
+   */
+  held: NameHeld;
   /** The canonical hash of the group's most recent run of its own — not a prefix — or, with none, of its first run. */
   pipeline: string;
   /** The key of the listing's `shapes` that draws the group: `pipeline`; null when it has no row of its own. */
@@ -157,6 +169,7 @@ export function rowsFromListing(listing: RunListing): RunRow[] {
       pipeline: run.pipeline,
       pipelineNames: run.pipeline_names,
       launchedAs: run.launched_as?.name ?? null,
+      launchedHeld: run.launched_as?.held ?? null,
       launchRecorded: run.launched_as !== null,
       benchmark: run.dataset_version,
       benchmarkNames: run.benchmark_names,
@@ -209,7 +222,9 @@ export function groupRows(rows: readonly RunRow[]): RunGroup[] {
   return [...ordered].map(([key, { names, rows: members }]) => {
     const own = members.filter((r) => r.prefix === null);
     const head = own[0] ?? (members[0] as RunRow);
-    return { key, names, pipeline: head.pipeline, shapeKey: own.length === 0 ? null : head.pipeline, rows: members };
+    // Every row's record comes from one listing, so the first that names the heading says it; a hash match is held.
+    const held = members.find((r) => r.launchedAs === names[0] && r.launchedHeld !== null)?.launchedHeld ?? 'exactly';
+    return { key, names, held, pipeline: head.pipeline, shapeKey: own.length === 0 ? null : head.pipeline, rows: members };
   });
 }
 

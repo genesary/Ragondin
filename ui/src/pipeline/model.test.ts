@@ -147,7 +147,7 @@ describe('a feeding run’s two facts', () => {
     expect(launchFact(base)).toBe(`Launched as ${NAME}`);
     expect(launchFact(PREFIXED.feeding_runs[2]!)).toBe(`Launched as a prefix of ${NAME}, up to rerank`);
     expect(launchFact({ ...base, launched_as: null })).toBe('No launch record');
-    expect(launchFact({ ...base, launched_as: { name: null, prefix_of: null } })).toBe('Launched under no name');
+    expect(launchFact({ ...base, launched_as: { name: null, prefix_of: null, held: null } })).toBe('Launched under no name');
   });
 
   it('says which current documents its content is, apart from the launch', () => {
