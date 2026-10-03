@@ -1,7 +1,7 @@
 /** @vitest-environment happy-dom */
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
-import { declared } from '../../testing/css.ts';
+import { declared, parseRules } from '../../testing/css.ts';
 import dotCss from '../StatusDot/StatusDot.css?raw';
 import css from './TopBar.css?raw';
 import { TopBar } from './TopBar.tsx';
@@ -18,7 +18,51 @@ describe('TopBar shell', () => {
     expect(screen.getByText('Ragondin').classList.contains('rg-wordmark')).toBe(true);
     expect(screen.getByText('~/ragondin-ws').classList.contains('rg-crumb')).toBe(true);
     expect(screen.getByRole('link', { name: 'Runs' }).getAttribute('href')).toBe('#runs');
-    expect(declared(css, '.rg-topbar', 'height')).toBe('var(--size-topbar)');
+  });
+});
+
+describe('TopBar at a narrow width', () => {
+  // happy-dom lays nothing out, so these assert the rules that keep the bar
+  // inside the viewport; the widths themselves are measured in a browser.
+  it('wraps its parts onto further lines rather than widening the page, one bar high at least', () => {
+    expect(declared(css, '.rg-topbar', 'flex-wrap')).toBe('wrap');
+    expect(declared(css, '.rg-topbar', 'min-height')).toBe('var(--size-topbar)');
+    expect(declared(css, '.rg-topbar', 'height')).toBeUndefined();
+  });
+
+  it('lets the workspace break inside itself when its line is narrower than it', () => {
+    expect(declared(css, '.rg-crumb', 'min-width')).toBe('0');
+    expect(declared(css, '.rg-crumb', 'overflow-wrap')).toBe('anywhere');
+    expect(declared(css, '.rg-crumb', 'white-space')).toBeUndefined();
+    expect(declared(css, '.rg-crumb', 'height')).toBeUndefined();
+  });
+
+  it('wraps the screens inside the nav, each line bar-high and spaced so the current mark lands where it does in one line', () => {
+    expect(declared(css, '.rg-nav', 'flex-wrap')).toBe('wrap');
+    expect(declared(css, '.rg-nav', 'min-height')).toBe('calc(var(--size-topbar) - 1px)');
+    // The mark hangs 8px under its link; a row gap of 16px keeps it off the next row.
+    expect(declared(css, '.rg-nav a[aria-current="page"]::after', 'bottom')).toBe('-8px');
+    expect(declared(css, '.rg-nav', 'row-gap')).toBe('var(--space-4)');
+  });
+
+  it('gives every line of a wrapped bar room, at any width: the name and the workspace a control high, the end bar-high', () => {
+    // Each is centred in the one line and no taller than it, so one line is unchanged.
+    expect(declared(css, '.rg-wordmark', 'min-height')).toBe('var(--size-control)');
+    expect(declared(css, '.rg-wordmark', 'align-items')).toBe('center');
+    expect(declared(css, '.rg-crumb', 'min-height')).toBe('var(--size-control)');
+    expect(declared(css, '.rg-topbar__end', 'min-height')).toBe('calc(var(--size-topbar) - 1px)');
+    // Room comes from the lines themselves, not from padding a single line would also take.
+    expect(declared(css, '.rg-topbar', 'padding')).toBe('0 var(--space-4)');
+    expect(parseRules(css).filter((r) => r.atRule !== null && r.selector === '.rg-topbar')).toEqual([]);
+  });
+
+  it('tightens the screens at phone width so the six share one row, the mark kept inside each link', () => {
+    const phone = parseRules(css).filter((r) => r.atRule === '@media (max-width: 640px)');
+    const link = phone.find((r) => r.selector === '.rg-nav a');
+    const mark = phone.find((r) => r.selector === '.rg-nav a[aria-current="page"]::after');
+    expect(link?.declarations.get('padding')).toBe('0 var(--space-2)');
+    expect(mark?.declarations.get('left')).toBe('var(--space-2)');
+    expect(mark?.declarations.get('right')).toBe('var(--space-2)');
   });
 });
 
