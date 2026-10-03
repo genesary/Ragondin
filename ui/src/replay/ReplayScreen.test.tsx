@@ -325,31 +325,53 @@ const rerender = (view: ReturnType<typeof show>, props: { query: string; with?: 
 const traceOf = (base: QueryTrace, q: string): MockReply<QueryTrace> => ({ body: { ...base, query: q } });
 
 describe('side by side, never two queries at once', () => {
-  it("holds B's place while B reads the new query, rather than drawing B's old query beside A's new one", async () => {
+  it("keeps B's last canvas while B reads the new query, muted and labelled stale, the same canvas, until B's answer lands", async () => {
     let releaseB: (reply: MockReply<QueryTrace>) => void = () => {};
     api({ trace: (run, q) => (run === DENSE && q === 'q2' ? new Promise((r) => (releaseB = r)) : traceOf(run === DENSE ? DENSE_TRACE : HYBRID_TRACE, q)) });
     const view = show({ query: 'q1', with: DENSE });
-    await screen.findByRole('application', { name: 'Run B, dense-only, query q1' });
+    const b = await screen.findByRole('application', { name: 'Run B, dense-only, query q1' });
     rerender(view, { query: 'q2', with: DENSE });
     expect(await screen.findByRole('application', { name: 'Run A, hybrid-rerank-gen, query q2' })).toBeTruthy();
-    expect(screen.queryByRole('application', { name: /^Run B/ })).toBeNull();
-    expect(screen.getByText('Reading dense-only')).toBeTruthy();
+    // Never B's old query passed off as A's: the kept canvas says which query it shows, and that it is stale.
+    expect(screen.getByRole('application', { name: 'Run B, dense-only, query q1, stale' })).toBe(b);
+    const slot = b.closest('.rg-replay__canvas') as HTMLElement;
+    expect(slot.getAttribute('data-stale')).toBe('true');
+    expect(within(slot).getByText('Stale: query q1, reading q2…')).toBeTruthy();
+    expect(screen.queryByText('Reading dense-only')).toBeNull();
     await act(async () => releaseB(traceOf(DENSE_TRACE, 'q2')));
-    expect(await screen.findByRole('application', { name: 'Run B, dense-only, query q2' })).toBeTruthy();
+    expect(await screen.findByRole('application', { name: 'Run B, dense-only, query q2' })).toBe(b);
+    expect(slot.getAttribute('data-stale')).toBeNull();
+    expect(within(slot).queryByText(/^Stale/)).toBeNull();
   });
 
-  it("holds B's place when B's answer for the new query lands while A still shows the old one", async () => {
+  it('mutes a stale canvas and lays its label over it, so neither moves anything', () => {
+    expect(declared(css, '.rg-replay__canvas[data-stale] .rg-canvas-frame', 'opacity')).toBeTruthy();
+    expect(declared(css, '.rg-replay__stale', 'position')).toBe('absolute');
+  });
+
+  it("keeps B's canvas, labelled stale, when B's answer for the new query lands while A still shows the old one", async () => {
     let releaseA: (reply: MockReply<QueryTrace>) => void = () => {};
     api({ trace: (run, q) => (run === HYBRID && q === 'q2' ? new Promise((r) => (releaseA = r)) : traceOf(run === DENSE ? DENSE_TRACE : HYBRID_TRACE, q)) });
     const view = show({ query: 'q1', with: DENSE });
-    await screen.findByRole('application', { name: 'Run B, dense-only, query q1' });
+    const b = await screen.findByRole('application', { name: 'Run B, dense-only, query q1' });
     rerender(view, { query: 'q2', with: DENSE });
-    expect(await screen.findByText('Reading dense-only')).toBeTruthy();
+    expect(await screen.findByRole('application', { name: 'Run B, dense-only, query q1, stale' })).toBe(b);
     expect(screen.getByRole('application', { name: 'Run A, hybrid-rerank-gen, query q1' })).toBeTruthy();
-    expect(screen.queryByRole('application', { name: /^Run B/ })).toBeNull();
     await act(async () => releaseA(traceOf(HYBRID_TRACE, 'q2')));
-    expect(await screen.findByRole('application', { name: 'Run B, dense-only, query q2' })).toBeTruthy();
+    expect(await screen.findByRole('application', { name: 'Run B, dense-only, query q2' })).toBe(b);
     expect(screen.getByRole('application', { name: 'Run A, hybrid-rerank-gen, query q2' })).toBeTruthy();
+  });
+
+  it("holds B's place, labelled, when B is switched to another run: another run's canvas is never kept", async () => {
+    let releaseB: (reply: MockReply<QueryTrace>) => void = () => {};
+    api({ trace: (run, q) => (run === FAILED ? new Promise((r) => (releaseB = r)) : traceOf(run === DENSE ? DENSE_TRACE : HYBRID_TRACE, q)) });
+    const view = show({ query: 'q1', with: DENSE });
+    await screen.findByRole('application', { name: 'Run B, dense-only, query q1' });
+    rerender(view, { query: 'q1', with: FAILED });
+    expect(await screen.findByText('Reading hybrid-broken')).toBeTruthy();
+    expect(screen.queryByRole('application', { name: /^Run B/ })).toBeNull();
+    await act(async () => releaseB(traceOf(FAILED_TRACE, 'q1')));
+    expect(await screen.findByRole('application', { name: 'Run B, hybrid-broken, query q1' })).toBeTruthy();
   });
 
   it("says in B's place, with Retry, that B's trace failed — and draws no B", async () => {
@@ -379,6 +401,62 @@ describe('side by side, never two queries at once', () => {
     await screen.findByRole('region', { name: 'B, dense-only' });
     expect(screen.queryByRole('heading', { name: 'Verdict' })).toBeNull();
     expect(screen.queryByText(/ranks none/)).toBeNull();
+  });
+});
+
+describe('side by side, while B is held', () => {
+  it("leaves the verdict out while B's trace is read, rather than giving A's one-run verdict", async () => {
+    api({ trace: (run, q) => (run === DENSE ? new Promise(() => {}) : traceOf(HYBRID_TRACE, q)) });
+    show({ query: 'q1', with: DENSE });
+    const a = await screen.findByRole('application', { name: /^Run A/ });
+    fireEvent.click(await drawn(a.parentElement!, 'answer'));
+    expect(await screen.findByRole('complementary', { name: 'answer' })).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: 'Verdict' })).toBeNull();
+    expect(screen.queryByText(/^ndcg@10 is/)).toBeNull();
+  });
+
+  it("leaves the verdict out while B's trace for a new query is read, and gives both runs' once it lands", async () => {
+    let releaseB: (reply: MockReply<QueryTrace>) => void = () => {};
+    api({ trace: (run, q) => (run === DENSE && q === 'q2' ? new Promise((r) => (releaseB = r)) : traceOf(run === DENSE ? DENSE_TRACE : HYBRID_TRACE, q)) });
+    const view = show({ query: 'q1', with: DENSE });
+    const a = await screen.findByRole('application', { name: /^Run A/ });
+    await screen.findByRole('application', { name: /^Run B/ });
+    fireEvent.click(await drawn(a.parentElement!, 'answer'));
+    expect(await screen.findByRole('heading', { name: 'Verdict' })).toBeTruthy();
+    rerender(view, { query: 'q2', with: DENSE });
+    await screen.findByRole('application', { name: 'Run A, hybrid-rerank-gen, query q2' });
+    expect(screen.queryByRole('heading', { name: 'Verdict' })).toBeNull();
+    await act(async () => releaseB(traceOf(DENSE_TRACE, 'q2')));
+    expect(await screen.findByRole('heading', { name: 'Verdict' })).toBeTruthy();
+  });
+
+  it("says a node only B has is not in A while B reads the new query, rather than calling it not run", async () => {
+    let releaseB: (reply: MockReply<QueryTrace>) => void = () => {};
+    api({ trace: (run, q) => (run === HYBRID && q === 'q2' ? new Promise((r) => (releaseB = r)) : traceOf(run === DENSE ? DENSE_TRACE : HYBRID_TRACE, q)) });
+    const view = render(<ReplayScreen client={createApiClient()} run={DENSE} query="q1" with={HYBRID} />);
+    const b = await screen.findByRole('application', { name: /^Run B, hybrid-rerank-gen/ });
+    fireEvent.click(await drawn(b.parentElement!, 'rerank'));
+    await screen.findByRole('region', { name: 'B, hybrid-rerank-gen' });
+    view.rerender(<ReplayScreen client={createApiClient()} run={DENSE} query="q2" with={HYBRID} />);
+    await screen.findByRole('application', { name: 'Run A, dense-only, query q2' });
+    expect(screen.getByText('No such node in A.')).toBeTruthy();
+    expect(screen.queryByText(/Not run/)).toBeNull();
+    await act(async () => releaseB(traceOf(HYBRID_TRACE, 'q2')));
+    expect(await screen.findByRole('region', { name: 'B, hybrid-rerank-gen' })).toBeTruthy();
+  });
+
+  it('clears a node selected in B when B is switched to a run that lacks it, rather than calling it not run in A', async () => {
+    // The third run on the benchmark, given the dense-only graph: it lacks the reranker.
+    api({ detail: (run) => (run === FAILED ? { body: { ...DENSE_DETAIL, id: FAILED } } : undefined), traces: { ...TRACES, [FAILED]: { ...DENSE_TRACE, run: FAILED } } });
+    const view = render(<ReplayScreen client={createApiClient()} run={DENSE} query="q1" with={HYBRID} />);
+    const b = await screen.findByRole('application', { name: /^Run B, hybrid-rerank-gen/ });
+    fireEvent.click(await drawn(b.parentElement!, 'rerank'));
+    await screen.findByRole('region', { name: 'B, hybrid-rerank-gen' });
+    view.rerender(<ReplayScreen client={createApiClient()} run={DENSE} query="q1" with={FAILED} />);
+    await screen.findByRole('application', { name: /^Run B, hybrid-broken/ });
+    expect(await screen.findByText('Select a node to see what it produced for this query.')).toBeTruthy();
+    expect(screen.queryByText(/Not run/)).toBeNull();
+    expect(screen.queryByText('No such node in A.')).toBeNull();
   });
 });
 

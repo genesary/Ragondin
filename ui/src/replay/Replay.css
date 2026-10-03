@@ -97,7 +97,10 @@
 }
 .rg-replay__query code { margin-right: var(--space-2); font: var(--type-hash); letter-spacing: var(--type-hash-tracking); color: var(--ink-3); }
 .rg-replay__canvases { display: grid; gap: var(--space-3); }
-.rg-replay__canvas { display: grid; gap: var(--space-2); }
+.rg-replay__canvas { position: relative; display: grid; gap: var(--space-2); }
+/* B's canvas kept from an earlier query while B reads this one: muted, and labelled over its frame so the label moves nothing. */
+.rg-replay__canvas[data-stale] .rg-canvas-frame { opacity: 0.55; }
+.rg-replay__stale { position: absolute; right: var(--space-3); top: calc(var(--space-6) + var(--space-3)); margin: 0; padding: var(--space-1) var(--space-2); border: 1px solid var(--line); border-radius: var(--radius-s); background: var(--surface); font: var(--type-caption); color: var(--ink-2); pointer-events: none; }
 .rg-replay__canvas .rg-canvas-frame { height: 520px; border: 1px solid var(--line); border-radius: var(--radius-m); overflow: hidden; }
 .rg-replay__canvases[data-columns="2"] .rg-canvas-frame,
 .rg-replay__waiting { height: 420px; }

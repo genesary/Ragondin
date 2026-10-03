@@ -180,11 +180,16 @@ export type NodeInspectorProps = {
   /** One run, or two side by side, A first. */
   sides: readonly Side[];
   metric: string | null;
+  /**
+   * The run beside is chosen but not drawn yet: `sides` holds A alone, and
+   * a verdict would read as A's one-run verdict, so it waits for B.
+   */
+  held?: boolean;
   onClose?: () => void;
 };
 
 /** The inspector for the selected node: one column, or two side by side with the counterpart resolved. */
-export function NodeInspector({ node, from, sides, metric, onClose }: NodeInspectorProps) {
+export function NodeInspector({ node, from, sides, metric, held = false, onClose }: NodeInspectorProps) {
   const home = sides.find((s) => s.letter === from) ?? sides[0]!;
   const columns = sides.map((side) => {
     if (side === home) return { side, node, final: false };
@@ -196,7 +201,7 @@ export function NodeInspector({ node, from, sides, metric, onClose }: NodeInspec
   // The verdict reads each run's ranking node from its query listing: until
   // every listing has loaded it is left out, never said with a run's gold missing.
   const said =
-    metric === null || !atEnd || sides.some((side) => side.queries === null)
+    metric === null || !atEnd || held || sides.some((side) => side.queries === null)
       ? null
       : verdict(sides.length === 2 ? { metric, a: readingOf(sides[0]!, metric), b: readingOf(sides[1]!, metric) } : { metric, a: readingOf(home, metric) });
   const twoUp = sides.length === 2;
