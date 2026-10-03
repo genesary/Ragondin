@@ -153,7 +153,13 @@ describe('viewOf', () => {
   it('is the screen and its path, without the state its query carries', () => {
     expect(viewOf({ screen: 'runs', sel: ['a', 'b'] })).toBe('#runs');
     expect(viewOf({ screen: 'compare', ids: ['a', 'b'], baseline: 'a' })).toBe('#compare/a+b');
-    expect(viewOf({ screen: 'replay', run: 'aaa', query: '1395', with: 'bbb' })).toBe('#replay/aaa/q/1395');
+  });
+
+  it("is Replay's run alone: the query and the run beside it are state within the view, so arrowing through queries keeps focus", () => {
+    expect(viewOf({ screen: 'replay', run: 'aaa', query: '1395', with: 'bbb' })).toBe('#replay/aaa');
+    expect(viewOf({ screen: 'replay', run: 'aaa', query: '7' })).toBe('#replay/aaa');
+    expect(viewOf({ screen: 'replay', run: 'aaa' })).toBe('#replay/aaa');
+    expect(viewOf({ screen: 'replay' })).toBe('#replay');
   });
 });
 

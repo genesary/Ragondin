@@ -61,9 +61,12 @@ export function formatHash(route: Route): string {
 /**
  * The view a route shows, apart from the state within it: its hash up to the
  * query. A change of query alone — Runs' selection, Compare's baseline — is
- * state within one view, and the shell moves no focus for it.
+ * state within one view, and the shell moves no focus for it. Replay's view
+ * is its run: the query shown and the run beside it are state within it, so
+ * the arrow keys move through the queries without focus leaving the list.
  */
 export function viewOf(route: Route): string {
+  if (route.screen === 'replay' && 'run' in route) return formatHash({ screen: 'replay', run: route.run });
   return formatHash(route).split('?')[0] as string;
 }
 
