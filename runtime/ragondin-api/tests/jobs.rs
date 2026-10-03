@@ -1032,13 +1032,29 @@ async fn a_job_whose_running_cannot_be_written_is_not_executed_and_a_restart_res
     job_until(&app, &first, |job| kind(job) == "running").await;
     let second = accepted(&app, OTHER_PIPELINE).await;
 
+    /// `jobs/` read-only while it lives, writable again when it drops —
+    /// a failing assertion included, so the scratch directory stays usable.
+    struct ReadOnly(PathBuf);
+    impl Drop for ReadOnly {
+        fn drop(&mut self) {
+            let _ = std::fs::set_permissions(&self.0, std::fs::Permissions::from_mode(0o755));
+        }
+    }
     let jobs = workspace.join("jobs");
-    let set_mode =
-        |mode| std::fs::set_permissions(&jobs, std::fs::Permissions::from_mode(mode)).unwrap();
-    set_mode(0o555);
+    std::fs::set_permissions(&jobs, std::fs::Permissions::from_mode(0o555)).unwrap();
+    let read_only = ReadOnly(jobs.clone());
+    // A user the permissions do not bind — root — can still write there, and
+    // nothing here can make the write fail: the test has nothing to check.
+    let probe = jobs.join("probe");
+    if std::fs::write(&probe, b"").is_ok() {
+        let _ = std::fs::remove_file(&probe);
+        launcher.gate.add_permits(1);
+        eprintln!("skipped: a read-only directory is writable for this user");
+        return;
+    }
     launcher.gate.add_permits(1);
     let failed = job_until(&app, &second, finished).await;
-    set_mode(0o755);
+    drop(read_only);
 
     assert_eq!(kind(&failed), "failed", "{failed}");
     assert!(failed["state"]["error"]

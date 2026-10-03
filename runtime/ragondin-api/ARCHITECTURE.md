@@ -679,7 +679,8 @@ A `running` job found on disk when the service starts is failed with
 `error: "interrupted"` — unless it is a run whose announced id the store
 holds: then the process stopped after filing the run and before writing the
 job's end, since no other job can have filed that id (`run_exists` refuses a
-second), and the job is `done`. A run filed under another id than it
+second), and the job is `done` — its `finished_at` the time of the
+recovery, not of the filing, which the job's record never held. A run filed under another id than it
 announced cannot be told from one never filed, and is interrupted. `queued`
 ones wait in their stored order. That runs
 in `AppState::new`, inside `router`, before the router answers anything, so no

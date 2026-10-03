@@ -337,6 +337,16 @@ describe('renderApiTypes', () => {
     ['a schema name that is not an identifier', description({ 'Run-Detail': { type: 'string' } }), /Run-Detail/],
     ['a schema named as the generator’s own output', description({ Paths: { type: 'string' } }), /Paths/],
     ['a reference to a schema that does not exist', description({ X: { $ref: '#/components/schemas/Gone' } }), /Gone/],
+    [
+      'an event stream with no schema',
+      description({}, { '/e': { get: { responses: { 200: { content: { 'text/event-stream': {} } } } } } }),
+      /GET \/e.*events.*schema/,
+    ],
+    [
+      'an event stream whose schema names one that does not exist',
+      description({}, { '/e': { get: { responses: { 200: { content: { 'text/event-stream': { schema: { $ref: '#/components/schemas/Gone' } } } } } } } }),
+      /Gone/,
+    ],
   ])('refuses %s rather than guessing', (_, input, message) => {
     expect(() => renderApiTypes(input)).toThrow(message);
   });
