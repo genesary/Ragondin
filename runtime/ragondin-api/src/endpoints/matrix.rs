@@ -101,7 +101,8 @@ pub(crate) async fn matrix(
     let file = state.backends.pipelines.read(&name).await?;
     let current = validation::lower(&file.document)?;
     let hash = current.content_hash().to_string();
-    let names_by_hash = lineage::pipelines_by_hash(state.backends.pipelines.as_ref()).await?;
+    let workspace_index = lineage::index(state.backends.pipelines.as_ref()).await?;
+    let names_by_hash = &workspace_index.by_hash;
     let mut pinned: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for benchmark in state.backends.registry.pinned().await? {
         pinned
@@ -253,7 +254,11 @@ pub(crate) async fn matrix(
                 dataset_version: each.run.inputs.dataset_version.clone(),
                 benchmark_names: names_of(&each.run.inputs.dataset_version),
                 started_at_ms: each.recency().started_at_ms,
-                launched_as: each.run.provenance.as_ref().map(convert::launched_as),
+                launched_as: each
+                    .run
+                    .provenance
+                    .as_ref()
+                    .map(|record| convert::launched_as(record, Some(&workspace_index))),
                 pipeline_names,
                 prefix_of: match &each.standing {
                     Standing::Fills {

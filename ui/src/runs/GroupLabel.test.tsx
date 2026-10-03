@@ -12,6 +12,7 @@ const row = (id: string): RunRow => ({
   pipeline: HASH,
   pipelineNames: [],
   launchedAs: null,
+  launchedHeld: null,
   launchRecorded: false,
   benchmark: 'd',
   benchmarkNames: [],
@@ -22,7 +23,7 @@ const row = (id: string): RunRow => ({
   prefix: null,
 });
 
-const group = (over: Partial<RunGroup> = {}): RunGroup => ({ key: 'name:hybrid', names: ['hybrid'], pipeline: HASH, shapeKey: HASH, rows: [row('1'), row('2')], ...over });
+const group = (over: Partial<RunGroup> = {}): RunGroup => ({ key: 'name:hybrid', names: ['hybrid'], held: 'exactly', pipeline: HASH, shapeKey: HASH, rows: [row('1'), row('2')], ...over });
 
 const SHAPE: ShapeNode[] = [
   { node: 'bm25', family: 'retriever' },
@@ -32,8 +33,8 @@ const SHAPE: ShapeNode[] = [
   { node: 'x', family: null, word: 'extension' },
 ];
 
-function show(g: RunGroup, shape: ShapeNode[] | null = SHAPE, documents: ReadonlySet<string> | null = null) {
-  render(<Table caption="runs" columns={[{ id: 'a', label: 'A' }]} rows={[{ kind: 'group', id: g.key, label: <GroupLabel group={g} shape={shape} documents={documents} /> }]} />);
+function show(g: RunGroup, shape: ShapeNode[] | null = SHAPE) {
+  render(<Table caption="runs" columns={[{ id: 'a', label: 'A' }]} rows={[{ kind: 'group', id: g.key, label: <GroupLabel group={g} shape={shape} /> }]} />);
 }
 
 describe('the group heading', () => {
@@ -58,22 +59,32 @@ describe('the group heading', () => {
   });
 
   it('does not link a recorded name the workspace no longer holds, and says why', () => {
-    show(group({ names: ['hybrid-old'] }), SHAPE, new Set(['hybrid']));
+    show(group({ names: ['hybrid-old'], held: 'gone' }));
     expect(screen.queryByRole('link')).toBeNull();
     const header = document.querySelector('th[scope="rowgroup"]') as HTMLElement;
     expect(header.textContent).toContain('hybrid-old');
     expect(header.textContent).toContain('no longer a document in this workspace');
   });
 
-  it('links a name the workspace still holds, beside one it does not', () => {
-    show(group({ names: ['hybrid'] }), SHAPE, new Set(['hybrid']));
-    expect(screen.getByRole('link', { name: 'hybrid' }).getAttribute('href')).toBe('#pipeline/hybrid');
-    expect(document.querySelector('th[scope="rowgroup"]')?.textContent).not.toContain('no longer');
+  it('does not link a recorded name held only under another case, and says so apart from a gone one', () => {
+    show(group({ names: ['Hybrid'], held: 'other_case' }));
+    expect(screen.queryByRole('link')).toBeNull();
+    const header = document.querySelector('th[scope="rowgroup"]') as HTMLElement;
+    expect(header.textContent).toContain('Hybrid');
+    expect(header.textContent).toContain('held only under another case');
+    expect(header.textContent).not.toContain('no longer');
   });
 
-  it('links every name when the workspace\'s documents could not be listed: it cannot say one is gone', () => {
-    show(group({ names: ['hybrid-old'] }), SHAPE, null);
-    expect(screen.getByRole('link', { name: 'hybrid-old' }).getAttribute('href')).toBe('#pipeline/hybrid-old');
+  it('does not link a recorded name nothing checked, and says so', () => {
+    show(group({ names: ['hybrid'], held: 'unchecked' }));
+    expect(screen.queryByRole('link')).toBeNull();
+    expect(document.querySelector('th[scope="rowgroup"]')?.textContent).toContain('not checked against the workspace');
+  });
+
+  it('links a recorded name the workspace holds exactly', () => {
+    show(group({ names: ['hybrid'], held: 'exactly' }));
+    expect(screen.getByRole('link', { name: 'hybrid' }).getAttribute('href')).toBe('#pipeline/hybrid');
+    expect(document.querySelector('th[scope="rowgroup"]')?.textContent).not.toMatch(/no longer|another case/);
   });
 
   it('names a pipeline without a name by its short hash, linking by the full one', () => {

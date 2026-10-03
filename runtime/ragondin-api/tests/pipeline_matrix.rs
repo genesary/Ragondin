@@ -632,6 +632,8 @@ async fn a_run_launched_as_the_pipeline_whose_content_has_since_changed_fills_no
     let since_changed = feeding(&body, &id(1)).expect("listed as a feeding run");
     assert_eq!(since_changed["fills_column"], false);
     assert_eq!(since_changed["launched_as"]["name"], NAME);
+    // The matrix is the pipeline's own, so its name is held, as `GET /runs` says it.
+    assert_eq!(since_changed["launched_as"]["held"], "exactly");
     assert_eq!(since_changed["pipeline_names"], serde_json::json!([]));
     assert_eq!(since_changed["prefix_of"], Value::Null);
     // The parameter difference against the current document, the current

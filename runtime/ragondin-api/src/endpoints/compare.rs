@@ -24,9 +24,9 @@ use crate::extract::{ApiJson, ApiQuery, NoParameters};
 use crate::handlers::{self, AppState};
 use crate::request::CompareRequest;
 use crate::response::{
-    ComparedRun, Comparison, Confidence, DeltaBin, MetricDeltas, NodeLatency, NodePair, Pairing,
-    PairingSource, QueryDelta, RunDeltas, RunLatency, StageCell, StageName, StageNode, StageRow,
-    StageValue, UnplacedPair,
+    ComparedRun, Comparison, Confidence, DeltaBin, MetricDeltas, NameHeld, NodeLatency, NodePair,
+    Pairing, PairingSource, QueryDelta, RunDeltas, RunLatency, StageCell, StageName, StageNode,
+    StageRow, StageValue, UnplacedPair,
 };
 use crate::stages::{Stage, Stages};
 use crate::{cache, convert, lineage, validation};
@@ -94,7 +94,7 @@ pub(crate) async fn compare(
         });
     }
 
-    let pairings = pairings(&state, &index.names, &compared, request.pairing.as_ref()).await?;
+    let pairings = pairings(&state, &index, &compared, request.pairing.as_ref()).await?;
     let figures = figures(&state, &compared).await?;
     let (ground_truth, figures, cache_errors) = figures;
 
@@ -301,19 +301,20 @@ async fn keep(state: &AppState, pairing: &Pairing) -> Result<(), ApiError> {
 /// is none — and the one kept on disk for every other.
 async fn pairings(
     state: &AppState,
-    stored: &BTreeSet<String>,
+    index: &lineage::Index,
     runs: &[Compared],
     requested: Option<&Pairing>,
 ) -> Result<Vec<Pairing>, ApiError> {
     let Some(baseline) = &runs[0].name else {
         return Ok(Vec::new());
     };
-    // A recorded name may be a pipeline the workspace no longer holds, or
-    // holds only under another case (ADR-C39 § 10): it has no pairing, and
-    // the comparison goes on without one. A pairing is read only for two
-    // names `stored` holds exactly as given — the names of the one listing
-    // the runs' pipelines were found in — so the case alias's refusal cannot
-    // reach here. A document deleted after that listing still can, which the
+    // A recorded name may be a pipeline the workspace no longer holds, or a
+    // case alias of a stored one, which the backend refuses to read
+    // (`backends::case_alias`, `ARCHITECTURE.md` § The pipelines): it has no
+    // pairing, and the comparison goes on without one. A pairing is read only
+    // for two names `index` holds exactly ([`lineage::Index::held`]) — the
+    // listing the runs' pipelines were found in — so the case alias's refusal
+    // cannot reach here. A document deleted after that listing still can, which the
     // one listing narrows but cannot close: its `pipeline_not_found` is read
     // as no pairing, the same as a name the listing did not hold.
     let mut pairings: Vec<Pairing> = Vec::new();
@@ -330,7 +331,11 @@ async fn pairings(
             {
                 (!requested.pairs.is_empty()).then(|| oriented(requested, baseline))
             }
-            _ if !(stored.contains(baseline) && stored.contains(other)) => None,
+            _ if index.held(baseline) != NameHeld::Exactly
+                || index.held(other) != NameHeld::Exactly =>
+            {
+                None
+            }
             _ => match state.backends.pipelines.read_pairing(baseline, other).await {
                 Err(ApiError::PipelineNotFound { .. }) => None,
                 read => read?,

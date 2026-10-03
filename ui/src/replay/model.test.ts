@@ -197,8 +197,8 @@ describe('passagesBanner', () => {
 describe('runName, a run as Replay names it', () => {
   const run = LISTING.runs[0]!;
   it('names a run by its recorded name first, then its first hash match, else nothing (ADR-C39 § 4)', () => {
-    expect(runName({ ...run, launched_as: { name: 'hybrid', prefix_of: null }, pipeline_names: ['hybrid-fork'] })).toBe('hybrid');
+    expect(runName({ ...run, launched_as: { name: 'hybrid', prefix_of: null, held: 'exactly' }, pipeline_names: ['hybrid-fork'] })).toBe('hybrid');
     expect(runName({ ...run, launched_as: null, pipeline_names: ['hybrid-fork'] })).toBe('hybrid-fork');
-    expect(runName({ ...run, launched_as: { name: null, prefix_of: null }, pipeline_names: [] })).toBeNull();
+    expect(runName({ ...run, launched_as: { name: null, prefix_of: null, held: null }, pipeline_names: [] })).toBeNull();
   });
 });

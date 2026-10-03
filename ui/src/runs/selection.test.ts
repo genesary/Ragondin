@@ -7,6 +7,7 @@ const row = (id: string, benchmark: string, over: Partial<RunRow> = {}): RunRow 
   pipeline: 'p',
   pipelineNames: [],
   launchedAs: null,
+  launchedHeld: null,
   launchRecorded: false,
   benchmark,
   benchmarkNames: benchmark === 'sci' ? ['beir/scifact'] : benchmark === 'fiqa' ? ['beir/fiqa'] : [],

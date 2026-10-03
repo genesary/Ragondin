@@ -2,10 +2,11 @@
 // label: the name or names it is grouped under, each the way to its Pipeline
 // screen — or its short hash, when no name reaches it — its
 // shape as design/'s family tiles in pipeline order, and how many runs it
-// holds. A recorded name the workspace no longer holds is said so, unlinked:
-// its address would land on a pipeline that is not found. The shape and the
-// workspace's documents come with the listing, so the heading is whole when it
-// is first drawn: nothing loads into it later, and nothing moves under it.
+// holds. A recorded name the workspace no longer holds, or holds only under
+// another case, is said so, unlinked: its address would land on a pipeline
+// that is not found, or be refused as a case alias. The shape and whether the
+// name is held come with the listing, so the heading is whole when it is first
+// drawn: nothing loads into it later, and nothing moves under it.
 import { Fragment } from 'react';
 import { FAMILY_LABEL, FamilyTile } from '../../design/index.ts';
 import { formatHash } from '../routes.ts';
@@ -15,13 +16,14 @@ export type GroupLabelProps = {
   group: RunGroup;
   /** The pipeline's shape, from the listing; null when the listing carries none for it. */
   shape: ShapeNode[] | null;
-  /** The workspace's pipeline documents, by name; null when they could not be listed, and then every name links. */
-  documents: ReadonlySet<string> | null;
 };
+
+/** Why a recorded name is not a link, in words, by what the listing says of it. */
+const NOT_HELD = { gone: 'no longer a document in this workspace', other_case: 'held only under another case', unchecked: 'not checked against the workspace' } as const;
 
 const runs = (n: number) => `${n.toLocaleString('en-US')} run${n === 1 ? '' : 's'}`;
 
-export function GroupLabel({ group, shape, documents }: GroupLabelProps) {
+export function GroupLabel({ group, shape }: GroupLabelProps) {
   return (
     <span className="rg-runs__group">
       {group.names.length === 0 ? (
@@ -35,14 +37,14 @@ export function GroupLabel({ group, shape, documents }: GroupLabelProps) {
             <Fragment key={name}>
               {/* Heard, not seen: the gap shows the names apart, and this keeps them apart for a screen reader. */}
               {i === 0 ? null : <span className="rg-visually-hidden">, </span>}
-              {documents === null || documents.has(name) ? (
+              {group.held === 'exactly' ? (
                 <a className="rg-runs__pipeline" href={formatHash({ screen: 'pipeline', name })}>
                   {name}
                 </a>
               ) : (
-                // Only a recorded name can be gone: a hash match is a current document by definition.
+                // Only a recorded name can be other than held: a hash match is a current document by definition.
                 <span className="rg-runs__gone">
-                  {name} <span className="rg-runs__gone-why">no longer a document in this workspace</span>
+                  {name} <span className="rg-runs__gone-why">{NOT_HELD[group.held]}</span>
                 </span>
               )}
             </Fragment>

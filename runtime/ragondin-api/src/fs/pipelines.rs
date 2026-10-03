@@ -9,7 +9,7 @@ use async_trait::async_trait;
 use sha2::{Digest, Sha256};
 
 use super::{blocking, write_atomically, Workspace};
-use crate::backends::{PipelineFile, PipelineSource, Precondition, Revision};
+use crate::backends::{case_alias, PipelineFile, PipelineSource, Precondition, Revision};
 use crate::error::ApiError;
 use crate::response::{Layout, NodePair, Pairing};
 use crate::validation;
@@ -104,7 +104,7 @@ impl FsPipelines {
                 .to_str()
                 .and_then(|file_name| file_name.strip_suffix(DOCUMENT))
             {
-                if stored != name && stored.eq_ignore_ascii_case(name) {
+                if case_alias(stored, name) {
                     return Ok(Some(stored.to_owned()));
                 }
             }

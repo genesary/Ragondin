@@ -120,7 +120,7 @@ pub(crate) async fn runs(
     State(state): State<AppState>,
     _: ApiQuery<NoParameters>,
 ) -> Result<Json<RunListing>, ApiError> {
-    let pipelines = lineage::pipelines_by_hash(state.backends.pipelines.as_ref()).await?;
+    let index = lineage::index(state.backends.pipelines.as_ref()).await?;
     let mut benchmarks: HashMap<String, Vec<String>> = HashMap::new();
     for pinned in state.backends.registry.pinned().await? {
         benchmarks
@@ -148,7 +148,8 @@ pub(crate) async fn runs(
             listing.cache_error = listing.cache_error.or(failure);
             listing.runs.push(convert::summary(
                 &run,
-                pipelines.get(&hash).cloned().unwrap_or_default(),
+                &index,
+                index.by_hash.get(&hash).cloned().unwrap_or_default(),
                 benchmarks
                     .get(&run.inputs.dataset_version)
                     .cloned()

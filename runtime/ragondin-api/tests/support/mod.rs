@@ -448,6 +448,115 @@ impl PipelineSource for HeldPipelines {
     }
 }
 
+/// A workspace whose `pipelines/` cannot be listed: every other call is
+/// [`FakePipelines`]'.
+#[derive(Default)]
+pub struct UnlistablePipelines;
+
+#[async_trait]
+impl PipelineSource for UnlistablePipelines {
+    async fn list(&self) -> Result<Vec<PipelineFile>, ApiError> {
+        Err(ApiError::BackendFailed {
+            detail: "pipelines/broken.yaml cannot be read".to_owned(),
+        })
+    }
+
+    async fn read(&self, name: &str) -> Result<PipelineFile, ApiError> {
+        FakePipelines.read(name).await
+    }
+
+    async fn write(
+        &self,
+        name: &str,
+        document: &str,
+        precondition: &Precondition,
+    ) -> Result<PipelineFile, ApiError> {
+        FakePipelines.write(name, document, precondition).await
+    }
+
+    async fn read_layout(&self, name: &str) -> Result<Option<Layout>, ApiError> {
+        FakePipelines.read_layout(name).await
+    }
+
+    async fn write_layout(&self, name: &str, layout: &Layout) -> Result<(), ApiError> {
+        FakePipelines.write_layout(name, layout).await
+    }
+
+    async fn read_pairing(&self, name: &str, other: &str) -> Result<Option<Pairing>, ApiError> {
+        FakePipelines.read_pairing(name, other).await
+    }
+
+    async fn write_pairing(&self, pairing: &Pairing) -> Result<(), ApiError> {
+        FakePipelines.write_pairing(pairing).await
+    }
+
+    async fn delete_pairing(&self, name: &str, other: &str) -> Result<(), ApiError> {
+        FakePipelines.delete_pairing(name, other).await
+    }
+}
+
+/// A workspace's pipelines, `inner`, that counts how often they are listed:
+/// what a request costs in listings of `pipelines/`.
+pub struct ListCounted<P> {
+    pub inner: P,
+    pub listed: std::sync::atomic::AtomicUsize,
+}
+
+impl<P> ListCounted<P> {
+    pub fn new(inner: P) -> Self {
+        Self {
+            inner,
+            listed: std::sync::atomic::AtomicUsize::new(0),
+        }
+    }
+
+    pub fn listed(&self) -> usize {
+        self.listed.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+#[async_trait]
+impl<P: PipelineSource> PipelineSource for ListCounted<P> {
+    async fn list(&self) -> Result<Vec<PipelineFile>, ApiError> {
+        self.listed
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.inner.list().await
+    }
+
+    async fn read(&self, name: &str) -> Result<PipelineFile, ApiError> {
+        self.inner.read(name).await
+    }
+
+    async fn write(
+        &self,
+        name: &str,
+        document: &str,
+        precondition: &Precondition,
+    ) -> Result<PipelineFile, ApiError> {
+        self.inner.write(name, document, precondition).await
+    }
+
+    async fn read_layout(&self, name: &str) -> Result<Option<Layout>, ApiError> {
+        self.inner.read_layout(name).await
+    }
+
+    async fn write_layout(&self, name: &str, layout: &Layout) -> Result<(), ApiError> {
+        self.inner.write_layout(name, layout).await
+    }
+
+    async fn read_pairing(&self, name: &str, other: &str) -> Result<Option<Pairing>, ApiError> {
+        self.inner.read_pairing(name, other).await
+    }
+
+    async fn write_pairing(&self, pairing: &Pairing) -> Result<(), ApiError> {
+        self.inner.write_pairing(pairing).await
+    }
+
+    async fn delete_pairing(&self, name: &str, other: &str) -> Result<(), ApiError> {
+        self.inner.delete_pairing(name, other).await
+    }
+}
+
 /// A registry whose entries are pinned to the given digests, as
 /// `(selector, dataset_version)`: what `pinned` answers. Loads, lists,
 /// downloads and imports nothing.

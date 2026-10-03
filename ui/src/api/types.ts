@@ -432,6 +432,16 @@ export type ImportRequest = {
 /** A run's launch record (ADR-C39 § 1). */
 export type LaunchedAs = {
   /**
+   * Whether the workspace holds [`name`](Self::name) now; `null` when the
+   * record names none, and only then. `GET /runs` and the pipeline matrix
+   * read it from the same listing of `pipelines/` as their hash matches;
+   * `GET /runs/{id}` lists no `pipelines/`, so it stays one run's read
+   * that a broken document cannot fail, and sends `unchecked`. A fact
+   * about the name, not the content: a document held under it may hold
+   * other content since.
+   */
+  held: NameHeld | null;
+  /**
    * The workspace pipeline name it was launched as — for a prefix run,
    * its parent's; `null` when the record names none.
    */
@@ -629,6 +639,9 @@ export type MissingCells = {
   /** The nodes, in the rows' order. */
   nodes: string[];
 };
+
+/** Whether the workspace holds a recorded pipeline name now. */
+export type NameHeld = "exactly" | "other_case" | "gone" | "unchecked";
 
 /** One node's latency over a run's queries. */
 export type NodeLatency = {

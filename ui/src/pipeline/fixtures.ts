@@ -66,7 +66,7 @@ const feeding = (run: string, dataset: string, names: string[], at: number): Fee
   benchmark_names: names,
   started_at_ms: at,
   fills_column: true,
-  launched_as: { name: NAME, prefix_of: null },
+  launched_as: { name: NAME, prefix_of: null, held: 'exactly' },
   pipeline_names: [NAME],
   prefix_of: null,
   content_since_changed: null,
@@ -94,7 +94,7 @@ export const PREFIXED: PipelineMatrix = {
   feeding_runs: [
     feeding(RUN_SQ, SQUAD, ['squad/dev'], 3_000),
     feeding(RUN_SCI, SCIFACT, ['beir/scifact'], 2_000),
-    { ...feeding(RUN_PREFIX, NFCORPUS, ['beir/nfcorpus'], 1_000), launched_as: { name: NAME, prefix_of: { parent_pipeline_hash: HASH, up_to: 'rerank' } }, pipeline_names: [], prefix_of: { pipeline: NAME, up_to: 'rerank' } },
+    { ...feeding(RUN_PREFIX, NFCORPUS, ['beir/nfcorpus'], 1_000), launched_as: { name: NAME, prefix_of: { parent_pipeline_hash: HASH, up_to: 'rerank' }, held: 'exactly' }, pipeline_names: [], prefix_of: { pipeline: NAME, up_to: 'rerank' } },
   ],
   missing: [{ benchmark: 'beir/nfcorpus', dataset_version: NFCORPUS, nodes: ['concat', 'generate'] }],
 };
@@ -116,7 +116,7 @@ export const SINCE_CHANGED: FeedingRun = {
   benchmark_names: ['beir/scifact'],
   started_at_ms: 500,
   fills_column: false,
-  launched_as: { name: NAME, prefix_of: null },
+  launched_as: { name: NAME, prefix_of: null, held: 'exactly' },
   pipeline_names: ['dense-50'],
   prefix_of: null,
   content_since_changed: {

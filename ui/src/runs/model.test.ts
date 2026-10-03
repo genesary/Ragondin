@@ -9,6 +9,7 @@ const row = (id: string, over: Partial<RunRow> = {}): RunRow => ({
   pipeline: hex('p'),
   pipelineNames: [],
   launchedAs: null,
+  launchedHeld: null,
   launchRecorded: false,
   benchmark: hex('b'),
   benchmarkNames: [],
@@ -83,12 +84,18 @@ describe('rowsFromListing', () => {
   });
 
   it('reads the launch record’s name beside the hash matches, never one in place of the other', () => {
-    const [read] = rowsFromListing(listingOf(summary(hex('1'), { launched_as: { name: 'hybrid', prefix_of: null }, pipeline_names: ['hybrid-fork'] })));
+    const [read] = rowsFromListing(listingOf(summary(hex('1'), { launched_as: { name: 'hybrid', prefix_of: null, held: 'exactly' }, pipeline_names: ['hybrid-fork'] })));
     expect(read).toMatchObject({ launchedAs: 'hybrid', pipelineNames: ['hybrid-fork'], prefix: null });
   });
 
+  it('reads whether the workspace still holds the recorded name, as the listing says it', () => {
+    const [held] = rowsFromListing(listingOf(summary(hex('1'), { launched_as: { name: 'hybrid', prefix_of: null, held: 'other_case' } })));
+    expect(held).toMatchObject({ launchedAs: 'hybrid', launchedHeld: 'other_case' });
+    expect(rowsFromListing(listingOf(summary(hex('1'))))[0]).toMatchObject({ launchedHeld: null });
+  });
+
   it('reads a recorded prefix as a prefix of the parent its record names, up to its node', () => {
-    const record = { name: 'hybrid', prefix_of: { up_to: 'rerank', parent_pipeline_hash: hex('a') } };
+    const record = { name: 'hybrid', prefix_of: { up_to: 'rerank', parent_pipeline_hash: hex('a') }, held: 'exactly' as const };
     const [read] = rowsFromListing(listingOf(summary(hex('1'), { launched_as: record })));
     expect(read).toMatchObject({ launchedAs: 'hybrid', prefix: { parent: 'hybrid', upTo: 'rerank' } });
   });
@@ -152,6 +159,35 @@ describe('groupRows', () => {
       [[], ['3']],
     ]);
     expect(groups[2]).toMatchObject({ pipeline: hex('e'), shapeKey: hex('e') });
+  });
+
+  it('says whether the group’s recorded name is held: as its rows’ records say, and held when a hash match names it', () => {
+    const groups = groupRows([
+      row('1', { pipeline: hex('a'), launchedAs: 'hybrid-old', launchedHeld: 'gone' }),
+      row('2', { pipeline: hex('c'), launchedAs: 'Hybrid', launchedHeld: 'other_case' }),
+      row('3', { pipeline: hex('e'), launchedAs: 'dense', launchedHeld: 'exactly' }),
+      row('4', { pipeline: hex('f'), pipelineNames: ['bm25', 'bm25-copy'] }),
+      row('5', { pipeline: hex('9') }),
+    ]);
+    expect(groups.map((g) => [g.names, g.held])).toEqual([
+      [['hybrid-old'], 'gone'],
+      [['Hybrid'], 'other_case'],
+      [['dense'], 'exactly'],
+      // Hash matches are current documents, from the same listing.
+      [['bm25', 'bm25-copy'], 'exactly'],
+      [[], 'exactly'],
+    ]);
+  });
+
+  it('fails closed: a recorded name the rows do not say is held is not taken as held', () => {
+    const groups = groupRows([
+      row('1', { pipeline: hex('a'), launchedAs: 'hybrid', launchedHeld: null }),
+      row('2', { pipeline: hex('c'), launchedAs: 'dense', launchedHeld: 'unchecked' }),
+    ]);
+    expect(groups.map((g) => [g.names, g.held])).toEqual([
+      [['hybrid'], 'unchecked'],
+      [['dense'], 'unchecked'],
+    ]);
   });
 
   it('puts a run without a record whose one hash match is a recorded name in that name’s group', () => {
@@ -228,7 +264,7 @@ describe('the other fact', () => {
   });
 
   it('reads whether the run has a launch record at all', () => {
-    const rows = rowsFromListing(listingOf(summary(hex('1'), { launched_as: { name: null, prefix_of: null } }), summary(hex('2'))));
+    const rows = rowsFromListing(listingOf(summary(hex('1'), { launched_as: { name: null, prefix_of: null, held: null } }), summary(hex('2'))));
     expect(rows.map((r) => [r.source.id, r.launchedAs, r.launchRecorded])).toEqual([
       [hex('1'), null, true],
       [hex('2'), null, false],
