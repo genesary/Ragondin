@@ -106,7 +106,8 @@ export function App({ client, build, reload, eventsPath }: AppProps) {
           <ErrorState problem={refused} />
         ) : (
           <>
-            {workspace.status === 'error' ? <ErrorState problem={workspace.problem} onRetry={retry} /> : null}
+            {/* Setup shows a failed workspace read in its own sections, where the workspace is. */}
+            {workspace.status === 'error' && route?.screen !== 'setup' ? <ErrorState problem={workspace.problem} onRetry={retry} /> : null}
             {route === null ? (
               <>
                 <h1 ref={heading} tabIndex={-1} className="rg-visually-hidden">
@@ -125,7 +126,7 @@ export function App({ client, build, reload, eventsPath }: AppProps) {
                 </InlineMessage>
               </>
             ) : (
-              <Screen route={route} heading={heading} client={client} />
+              <Screen route={route} heading={heading} client={client} workspace={workspace} refreshWorkspace={() => void readWorkspace()} retryWorkspace={retry} />
             )}
           </>
         )}

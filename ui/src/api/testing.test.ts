@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { vi } from 'vitest';
 import { createApiClient } from './client.ts';
 import { mockApi } from './testing.ts';
-import type { Comparison } from './types.ts';
+import type { Comparison, ServiceListing } from './types.ts';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -43,6 +43,21 @@ describe('mockApi, writing', () => {
     const api = mockApi({ 'GET /runs': { body: { runs: [], unreadable: [], shapes: {} } } });
     await createApiClient().get('/runs');
     expect(api.bodies).toEqual([undefined]);
+  });
+
+  it('answers a PUT from the body it was sent and a DELETE from its route, recording both', async () => {
+    const listing = (uri: string): ServiceListing => ({ services: [{ family: 'generator', name: 'qwen', uri, connected: false, identity: null }] });
+    const api = mockApi({
+      'PUT /services/{family}/{name}': (body) => ({ body: listing(body.uri) }),
+      'DELETE /services/{family}/{name}': { body: { services: [] } },
+    });
+    const client = createApiClient();
+    const put = await client.put('/services/{family}/{name}', { uri: 'http://127.0.0.1:8080' }, { family: 'generator', name: 'qwen' });
+    expect(put.ok && put.value).toEqual(listing('http://127.0.0.1:8080'));
+    const del = await client.del('/services/{family}/{name}', { family: 'generator', name: 'qwen' });
+    expect(del.ok && del.value).toEqual({ services: [] });
+    expect(api.requests).toEqual(['PUT /api/v1/services/generator/qwen', 'DELETE /api/v1/services/generator/qwen']);
+    expect(api.bodies).toEqual([{ uri: 'http://127.0.0.1:8080' }, undefined]);
   });
 });
 

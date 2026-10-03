@@ -147,6 +147,15 @@ describe('#setup', () => {
     expect(formatHash({ screen: 'setup' })).toBe('#setup');
     expect(load('#setup')).toEqual({ screen: 'setup' });
   });
+
+  it.each(['benchmarks', 'services'] as const)('carries the %s section, and restores it from the hash on load', (section) => {
+    expect(formatHash({ screen: 'setup', section })).toBe(`#setup/${section}`);
+    expect(load(`#setup/${section}`)).toEqual({ screen: 'setup', section });
+  });
+
+  it.each(['#setup/nowhere', '#setup/services/extra', '#setup/'])('names no section at %s, and so no route', (hash) => {
+    expect(parseHash(hash)).toBeNull();
+  });
 });
 
 describe('viewOf', () => {
@@ -160,6 +169,11 @@ describe('viewOf', () => {
     expect(viewOf({ screen: 'replay', run: 'aaa', query: '7' })).toBe('#replay/aaa');
     expect(viewOf({ screen: 'replay', run: 'aaa' })).toBe('#replay/aaa');
     expect(viewOf({ screen: 'replay' })).toBe('#replay');
+  });
+
+  it('is Setup alone, whichever section the address focuses: a section is a place on one page', () => {
+    expect(viewOf({ screen: 'setup', section: 'services' })).toBe('#setup');
+    expect(viewOf({ screen: 'setup' })).toBe('#setup');
   });
 });
 

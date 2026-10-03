@@ -27,8 +27,15 @@ export type Route =
   | { screen: 'replay'; run: string; query: string; with?: string }
   /** `#editor/<name>`: one pipeline, edited on the canvas; `#editor` before one is opened. */
   | { screen: 'editor'; name?: string }
-  /** `#setup`: benchmarks and services. */
-  | { screen: 'setup' };
+  /**
+   * `#setup/<section>`: the workspace, its benchmarks and services, and this
+   * build, scrolled to and focusing one section; `#setup` at the top.
+   */
+  | { screen: 'setup'; section?: SetupSection };
+
+/** The sections of Setup an address can focus. */
+export const SETUP_SECTIONS = ['benchmarks', 'services'] as const;
+export type SetupSection = (typeof SETUP_SECTIONS)[number];
 
 export type ScreenName = Route['screen'];
 
@@ -40,7 +47,7 @@ export function formatHash(route: Route): string {
     case 'runs':
       return route.sel === undefined || route.sel.length === 0 ? '#runs' : `#runs?sel=${route.sel.map(enc).join(',')}`;
     case 'setup':
-      return '#setup';
+      return route.section === undefined ? '#setup' : `#setup/${route.section}`;
     case 'pipeline':
     case 'editor':
       return route.name === undefined ? `#${route.screen}` : `#${route.screen}/${enc(route.name)}`;
@@ -67,6 +74,9 @@ export function formatHash(route: Route): string {
  */
 export function viewOf(route: Route): string {
   if (route.screen === 'replay' && 'run' in route) return formatHash({ screen: 'replay', run: route.run });
+  // Setup's section is a place on one page, not another view: moving to it
+  // focuses the section, and the shell must not take focus to the heading.
+  if (route.screen === 'setup') return '#setup';
   return formatHash(route).split('?')[0] as string;
 }
 
@@ -111,8 +121,11 @@ export function parseHash(hash: string): Route | null {
       }
       return sel.every(isValue) ? { screen, sel } : null;
     }
-    case 'setup':
-      return rest.length === 0 ? { screen } : null;
+    case 'setup': {
+      if (rest.length === 0) return { screen };
+      const section = SETUP_SECTIONS.find((s) => s === rest[0]);
+      return rest.length === 1 && section !== undefined ? { screen, section } : null;
+    }
     case 'pipeline':
     case 'editor':
       if (rest.length === 0) return { screen };
