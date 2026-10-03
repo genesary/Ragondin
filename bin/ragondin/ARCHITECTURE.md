@@ -681,8 +681,9 @@ API crate holds it as an `Arc<dyn Launcher>` and names no component.
   `backend_failed`. A build without `remote` answers `impl_not_in_build`,
   naming the feature.
 - **`identity` and `execute`** answer that running a pipeline from the UI is
-  not available in this build yet — `backend_failed`, and `JobState::Failed`
-  — until the launcher's issue (#353) replaces both with `bench`'s path.
+  not available in this build yet — `LauncherError::Execution`, which
+  `POST /runs` answers as `backend_failed` — until the launcher's issue
+  (#353) replaces both with `bench`'s path.
 
 ## The licence notices of the Rust crates
 

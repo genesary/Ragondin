@@ -88,6 +88,15 @@ anyhow = "1"                                       # error aggregation, binaries
 # three on in `Cargo.lock` — so the line only states what the API crate relies on.
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync", "time"] }
 tower = "0.5"                                      # serving envelope only (INV-11)
+# The one stream utility ADR-C36 § 6 admits for `ragondin-api`'s event stream
+# (`GET /jobs/events`): `stream::unfold` turns the queue's replay buffer and
+# its broadcast receiver into the `Stream` axum's `Sse` takes, and the tests
+# read a response body with `StreamExt`. Chosen over `tokio-stream` because it
+# was already in `Cargo.lock` at 0.3.32 through `axum` and `tonic`, and with
+# no feature it needs none of the `std` or `async-await` machinery — its
+# closure here is `futures-core`, `futures-task` and `pin-project-lite`, all
+# already resolved. `Cargo.lock` gains no package.
+futures-util = { version = "0.3", default-features = false }
 clap = { version = "4", features = ["derive"] }    # the CLI parser, in `bin/ragondin` and nowhere else
 assert_cmd = "2"                                   # dev-only: spawns the built binary in `bin/ragondin`'s CLI tests
 tonic = "0.12"                                     # gRPC transport for the wire layer

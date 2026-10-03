@@ -197,6 +197,22 @@ describe('renderApiTypes', () => {
     );
   });
 
+  // An event stream is read through `EventSource`, never through the client:
+  // its response is `never`, so no client call can claim to read it, and it
+  // is not an empty answer. Its events are typed by the schema it names,
+  // which is rendered as every schema is.
+  it('renders an event stream’s response as never, not as an empty answer', () => {
+    const out = renderApiTypes(
+      description(
+        { E: { type: 'string' } },
+        { '/jobs/events': { get: { parameters: [], responses: { 200: { content: { 'text/event-stream': { schema: { $ref: '#/components/schemas/E' } } } } } } } },
+      ),
+    );
+    expect(typeOf(out, 'Paths')).toBe('{ "/jobs/events": { get: { params: Record<string, never>; response: never; }; }; }');
+    expect(out).toContain('export const EMPTY_ANSWERS: readonly string[] = [];');
+    expect(typeOf(out, 'E')).toBe('string');
+  });
+
   it('renders query and header parameters beside the path’s, each optional unless required', () => {
     const R = { 200: { content: { 'application/json': { schema: { $ref: '#/components/schemas/R' } } } } };
     const string = { type: 'string' };
@@ -321,6 +337,16 @@ describe('renderApiTypes', () => {
     ['a schema name that is not an identifier', description({ 'Run-Detail': { type: 'string' } }), /Run-Detail/],
     ['a schema named as the generator’s own output', description({ Paths: { type: 'string' } }), /Paths/],
     ['a reference to a schema that does not exist', description({ X: { $ref: '#/components/schemas/Gone' } }), /Gone/],
+    [
+      'an event stream with no schema',
+      description({}, { '/e': { get: { responses: { 200: { content: { 'text/event-stream': {} } } } } } }),
+      /GET \/e.*events.*schema/,
+    ],
+    [
+      'an event stream whose schema names one that does not exist',
+      description({}, { '/e': { get: { responses: { 200: { content: { 'text/event-stream': { schema: { $ref: '#/components/schemas/Gone' } } } } } } } }),
+      /Gone/,
+    ],
   ])('refuses %s rather than guessing', (_, input, message) => {
     expect(() => renderApiTypes(input)).toThrow(message);
   });

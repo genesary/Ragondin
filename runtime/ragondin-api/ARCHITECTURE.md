@@ -41,6 +41,7 @@ the response types, the typed errors, and the traits the service consumes.
 | `matrix` | The most-recent-run rule and the topological order of the pipeline matrix's rows |
 | `validation` | A pipeline document checked as `ragondin validate` checks a file |
 | `fs` | The workspace on disk and its file backends: `Workspace`, `FsSettings`, `FsPipelines`, `FsRegistry` |
+| `jobs` | The job model — `Job`, its `Work` and its `JobState` — `jobs/<id>.json` and the partial traces, the queue with its two lanes, and the event stream (§ The job queue) |
 | `conformance` | The suite every `Registry` backend passes, behind the `conformance` feature |
 
 Served today, under `/api/v1`: `GET /workspace`; `GET /runs`,
@@ -50,7 +51,9 @@ in § *Compare*; `GET /pipelines/{name}/matrix`, described in § *The
 pipeline matrix*; `GET /pipelines`,
 `POST /pipelines/validate`, `GET`/`PUT /pipelines/{name}`,
 `GET`/`PUT /pipelines/{name}/layout`; `GET /benchmarks`,
-`POST /benchmarks/import`; `GET /services`,
+`POST /benchmarks/import`, `POST /benchmarks/{name}/download`;
+`POST /runs`, `GET /jobs`, `GET`/`PATCH`/`DELETE /jobs/{id}` and
+`GET /jobs/events` — those described in § *The job queue*; `GET /services`,
 `PUT`/`DELETE /services/{family}/{name}`,
 `POST /services/{family}/{name}/probe` — those described in § *The workspace
 on disk*. `/api`, `/api/` and every other path below them are
@@ -135,20 +138,33 @@ cluster: the binary picks each backend.
 - **`Launcher` carries the shapes the design document § 7 gives**: `probe`
   returns the identity a `Remote` service reports — for a served model, where
   the family reports one per served model (ADR-C32 § 4) — `identity` the run
-  id a `Submission` announces, and `execute` a `Job`'s terminal `JobState`.
+  id a `Submission` announces, and `execute` the `Run` the harness assembled
+  from what ran, its id the decided one (§ The job queue).
   `check_binding` says whether the composition root would accept a binding,
   in `--remote`'s words: only the binary knows the names it gives `Local`
   components, so a binding is checked there before it is stored.
   `check_document` likewise says whether it would accept a pipeline's keys,
   in `bench`'s words, before a document is stored: only the binary knows
   which keys each component reads.
-  **`execute` is provisional**, and its doc comment says so: the job model
-  and its queue (#349) settle its progress and cancellation. Nothing calls it
-  yet, and the crate is internal, so widening it owes no one a deprecation.
-  `Registry::download` is settled — § *The `Registry` file backend* says
-  how.
-- **The backends return `ApiError`.** They live in this crate or are written
-  for it, and an error that already carries its code needs no second mapping.
+  **The execution half's progress and cancellation are this crate's
+  types**: `execute` reports each query to a `RunObserver` — its position,
+  the total, its id, the time elapsed and its `TraceDocument`, a value
+  (INV-10) — and checks a `Cancellation`, a clonable flag the queue sets.
+  The harness has its own observer and token, and this crate may not depend
+  on it (INV-12): the binary adapts one to the other, in the only crate that
+  sees both. `Registry::download` is settled — § *The `Registry` file
+  backend* says how; its cancellation flag is `Cancellation::flag`.
+- **The backends return `ApiError`**, but for `Launcher::identity` and
+  `Launcher::execute`. The four traits live in this crate or are written for
+  it, and an error that already carries its code needs no second mapping.
+  The execution half returns `LauncherError` instead, because its errors are
+  not one request's answer: `execute`'s end in a job's terminal state, not a
+  response. Its variants are the ones the queue tells apart —
+  `ImplNotInBuild`, `ServiceUnreachable` and `PipelineInvalid` (answered at
+  submission as the codes of those names), `Execution` with the node that
+  failed, and `Cancelled` — and `POST /runs` maps an `identity` refusal to
+  its code, a `ServiceUnreachable` with the identity this server last read
+  at that address.
 
 ## The `Registry` file backend
 
@@ -229,7 +245,7 @@ supplies the HTTP transport, and converts what comes back in `convert.rs`.
   dependency-free local HTTP server — no test touches the network. The
   derived data's routes call `dataset`; `GET /benchmarks` lists the registry
   and `POST /benchmarks/import` imports through it; a download is a job on
-  the queue's IO lane, and its route arrives with the queue (#349).
+  the queue's download lane, through `download` (§ The job queue).
 
 ### The loaded datasets: a choice made here
 
@@ -350,9 +366,9 @@ and every path derived from it.
   pipelines/<name>.yaml         a pipeline document, the source of truth
   pipelines/<name>.layout.json  its layout, never in its hash
   pipelines/<name>.pairing/     its manual pairings, one file per other pipeline — never hashed (§ Compare)
-  layouts/                      layouts copied at launch — created here, written by the queue (#349)
+  layouts/                      layouts copied at launch — created here; nothing copies one yet
   runs/                         the run store, as `bench --store <root>/runs` writes it
-  jobs/                         the queue's state — created here, written by the queue (#349)
+  jobs/                         the queue's state: `<id>.json` per job, `<id>/partial/` — § The job queue
   cache/                        derived data — created here, written by #343
   datasets/                     benchmarks, when workspace.toml names no other directory
 ```
@@ -631,6 +647,202 @@ the runs the store lists, the benchmarks whose state is `ready` or `local` —
 the registry verifies every dataset to say so (§ The `Registry` file
 backend) — and the services connected.
 
+## The job queue
+
+`POST /runs` and `POST /benchmarks/{name}/download` queue a **job**
+(`jobs::Job`): what it does (`Work` — a run, with its announced run id and
+its submission, or a download of a benchmark), where it stands (`JobState`),
+its position, when it was accepted, and every transition it went through,
+each with its time. Every time a job records — `created_at`, `Running`'s
+`started_at`, a terminal state's `finished_at`, a transition's `at` — is a
+`ragondin_experiments::UnixMillis`, written as integer milliseconds since the
+epoch, and `None` when the clock read before the epoch, never `0`. These are
+the job's times, never written onto the `Run`.
+
+### The state machine
+
+```text
+            POST /runs, POST /benchmarks/{name}/download
+                              │
+                              ▼
+   DELETE ──────────────── queued ──── PATCH: its position among its lane's queued jobs
+     │                        │ the lane's worker takes the lowest position
+     ▼                        ▼
+ cancelled ◄── DELETE sets ─ running {done, total, started_at, median} ── one tick per query, or per 1 % of bytes
+               the signal;    │
+               honoured       ├──► done {run_id, id_mismatch?}
+               between        └──► failed {error, at_node?}
+               queries
+```
+
+A `running` job found on disk when the service starts is failed with
+`error: "interrupted"` — unless it is a run whose announced id the store
+holds: then the process stopped after filing the run and before writing the
+job's end, since no other job can have filed that id (`run_exists` refuses a
+second), and the job is `done` — its `finished_at` the time of the
+recovery, not of the filing, which the job's record never held. A run filed under another id than it
+announced cannot be told from one never filed, and is interrupted. `queued`
+ones wait in their stored order. That runs
+in `AppState::new`, inside `router`, before the router answers anything, so no
+request sees a job running that this process did not start. The worker
+starts on the queued ones at once when `router` is called in a `tokio`
+runtime, as the binary calls it.
+
+### The two lanes, one worker each
+
+**Runs** execute through `Launcher::execute`, one at a time: a run measures
+latency, and two runs sharing a CPU and an ONNX Runtime measure contention
+(the design document § 7). **Downloads** go through `Registry::download` on a
+lane of their own, alongside a run, since they are bound by the network, not
+the CPU. A lane's worker is a task spawned when the lane has a queued job and
+no worker, and it ends when the lane has none left. **The worker count is
+1**, a fixed parameter: the day it is N, the concurrency degree becomes a
+field of the run's provenance record (`provenance.json`, ADR-C39 § 1 and
+decision #390), and Compare warns when two runs differ on it. That field is
+designed and not written — no `Run` carries a concurrency degree, and this
+crate writes nothing onto a run.
+
+### The announced and the decided id
+
+`POST /runs` reads the pipeline's document from the workspace and validates
+it (`validation::lower`), reads the bindings in force from the settings, and
+asks `Launcher::identity` for the run id — the composition root constructs
+the components and reads the services' identities to compute it (ADR-C36
+§ 1). The id is refused with `run_exists` when a job not yet ended holds it
+or the store does; the check and the queueing are one step under the queue's
+lock, so two submissions of one id cannot both be accepted. Otherwise the
+answer is `202 {job_id, run_id}`. The job stores the announced id beside the
+pipeline snapshot, as it was announced — it never computes one (INV-8).
+
+When `execute` returns, the worker files the `Run` with `RunStore::save`, as
+one block, **under the id the run carries** — the one the harness computed
+from what ran. When it is not the announced one, the job's `done` state
+records both (`id_mismatch: {announced, decided}`), and no run is filed under
+the announced id (ADR-C36 § 1, P4).
+
+### Persistence: `jobs/` is the write-ahead record
+
+Each job is `jobs/<id>.json`, replaced whole (`fs::write_atomically`) at
+every transition **before** the queue's memory changes and the transition is
+published; all three happen under one `tokio` mutex, so the file never trails
+what a client was told and the events are in the order the states were
+entered. A progress tick is not a transition: it changes memory and the
+stream, not the file, since a restart fails a running job whatever its count.
+The ways a write can fail are reported among `GET /jobs`' `faults`, never
+dropped: a submission or a cancellation whose write fails is refused
+(`backend_failed`) and changes nothing; a job whose `running` cannot be
+written is not executed by this process, and its failure is written in its
+place, best effort — when that write fails too, the failure is held in memory
+only, the disk still says `queued`, and a restart runs the job; the fault
+says which happened. A terminal state whose write fails is applied in memory
+anyway — the job has ended — and the next start finds it running, and fails
+it as interrupted unless its run is stored under the announced id. A job file that does not read is left out of the
+queue, left on disk, and listed as a fault: reported, never repaired.
+
+A run that fails or is cancelled leaves **the traces of the queries it
+executed** in `jobs/<id>/partial/traces.json`, a map by query id — the shape
+the store gives a run's `traces.json`, so a reader reads the two alike — and
+nothing under `runs/`: the store holds a run complete or not at all. The
+traces are kept in memory as the observer delivers them and written when the
+run stops; a job interrupted by a crash has none.
+
+### Progress, and the live median
+
+The worker hands `execute` a `RunObserver` that forwards each query to its
+own task over a channel, so the launcher's thread never waits on the queue's
+lock. Each tick sets `done` and `total`, and `median_latency_nanos`: the
+lower median (`ragondin_experiments::lower_median`) of the latencies of the
+queries so far, each read from the tick's trace by `Trace::latency_nanos` —
+the definition `GET /runs` lists the filed run's median by, so the live and
+the final figures are one computation. Never from `elapsed`, which includes
+the observer's own overhead. A trace whose latency does not read adds
+nothing to the median, and the job's faults say how many did not. A
+download's progress is bytes, published each time it moved by a hundredth of
+the snapshot: the registry reports every chunk, and thousands of events
+would flood the clients and the buffer of recent ones.
+
+### Cancel and reorder
+
+`DELETE /jobs/{id}` cancels a queued job at once — it is never executed —
+and sets the running one's `Cancellation`; the launcher honours it between
+two queries and returns `LauncherError::Cancelled`, and only then is the job
+`cancelled`. A job that ended is `job_finished`. `PATCH /jobs/{id}` with
+`{position}` moves a queued job among its lane's queued jobs, 0 first; the
+positions those jobs held are dealt out again in the new order, and every
+changed file is written before memory changes, so the order survives a
+restart. A write that fails part-way refuses the reorder and leaves the files
+already written with their new positions, so two jobs on disk can share a
+position until the next reorder; the fault says so. A job that is not queued
+is `job_not_queued`.
+
+### The event stream
+
+`GET /jobs/events` is server-sent events over `axum`'s `Sse`: one event per
+transition, named after the state entered, one per progress tick, named
+`running`, and one `reordered` per job a reorder moved, each carrying the
+job as `GET /jobs/{id}` answers it. Every event is numbered under the queue's
+lock and kept in a buffer of the 1024 most recent; its id is
+`<process>:<number>`, the process named by the time it started. A client
+that reconnects with `Last-Event-ID` gets every event after it, once, when
+the id is this process's and the buffer still holds everything since. In
+every other case — no `Last-Event-ID`, an id from another process, one older
+than the buffer, or a client that fell behind the broadcast channel — it gets
+`resync`, whose data is the whole queue as `GET /jobs` answers it, so a
+client never acts across a gap. Replay and subscription are taken under the
+lock every publication holds, and an event already sent is never sent again.
+An idle stream sends a comment every 15 s. The description declares the
+stream's success body as `text/event-stream` of schema `JobEvent`, an
+adjacently tagged union of `{event, data}` — `queued`, `running`, `done`,
+`failed`, `cancelled` and `reordered` to `JobSummary`, `resync` to
+`JobListing` — so the UI's map from an event's name to its data is generated.
+The stream builds each event's name and data from a `JobEvent` value, and a
+unit test checks the two against the type's serde tag, so the schema is the
+stream's.
+
+### Known limits
+
+- **One process per workspace.** Nothing locks `jobs/`: two `ragondin ui`
+  processes on one workspace would each fail the other's running job as
+  interrupted when they start, and both would take the queued ones.
+- **A crash between a run's filing and its job's end** leaves the job
+  `running` on disk; the next start finds its run stored under the announced
+  id and records it `done`, but a run filed under a decided id that differs
+  is recorded interrupted though it is stored.
+- **The live median re-sorts every latency so far on each tick** — `lower_median`
+  takes the values by value — which is O(n log n) per query, negligible
+  beside a query's execution at the benchmarks' sizes.
+- **Jobs are never pruned**: every ended job stays in `jobs/` and in memory,
+  and `GET /jobs` lists them all, until a later issue gives them a lifetime.
+
+### Choices made here
+
+Recorded as `AGENTS.md` § Rules of engagement asks of a choice that does not
+escalate:
+
+- **The submission carries no bindings.** `POST /runs` takes the pipeline's
+  name, the benchmark and `up_to`; the bindings are the workspace's in force,
+  the ones `GET /services` lists, snapshotted into the job. The UI shows
+  them read-only (#354), so sending them back would be a second source of
+  the same fact. The document is snapshotted the same way: an edit after
+  submission changes nothing queued.
+- **The job record on disk and the job the API answers are two types**:
+  `jobs::Job`, with `UnixMillis` and the pipeline document, serialized to
+  `jobs/`; `response::JobSummary`, with `*_ms` integers and no document,
+  serialized to the client. The response module names no other crate of the
+  workspace, and the file must stay readable across changes to the API.
+- **A progress tick is not written**, and the partial traces are written once
+  the run stops: per-query writes would cost a file replacement per query to
+  record something a restart discards.
+- **A job's id is `<accepted-at millis>-<n>`**, unique in the process by its
+  counter and checked against the jobs held; a static path segment such as
+  `/jobs/events` can never be one.
+- **The stream begins with `resync` when it cannot replay**, rather than
+  starting silently from now: a client that opens it needs no separate
+  `GET /jobs` racing the first event.
+- **`DELETE` answers `200` in both cases**, with the job as it stands — still
+  `running` when the signal was set — since the description gives an
+  operation one success response; the `cancelled` event says when it ended.
+
 ## Response types are this crate's own
 
 Every type the API serializes is in `src/response.rs`, derives `serde` and
@@ -881,10 +1093,10 @@ code.
 
 | Code | Status | When | Raised today |
 |---|---|---|---|
-| `pipeline_invalid` | 422 | validation refused a document, or — on a write — the composition root refused its keys; `location` names the node and edge when they can be named | `POST /pipelines/validate`, `PUT /pipelines/{name}` |
-| `impl_not_in_build` | 422 | an `impl:` this binary lacks, or — with the feature named — a `Remote` component a build without `remote` cannot construct | the probe, in a build without `remote` |
-| `service_unreachable` | 502 | a probe or a submission reached no service; the detail carries the address, the network error and the identity last read under the name | the probe |
-| `run_exists` | 409 | a submission's run id is already stored or queued | no |
+| `pipeline_invalid` | 422 | validation refused a document, or — on a write or a submission — the composition root refused it; `location` names the node and edge when they can be named | `POST /pipelines/validate`, `PUT /pipelines/{name}`, `POST /runs` |
+| `impl_not_in_build` | 422 | an `impl:` this binary lacks, or — with the feature named — a `Remote` component a build without `remote` cannot construct | the probe, in a build without `remote`; `POST /runs` |
+| `service_unreachable` | 502 | a probe or a submission reached no service; the detail carries the address, the network error and the identity last read under the name, or at the address for a submission | the probe, `POST /runs` |
+| `run_exists` | 409 | a submission's run id is held by a job not yet ended or by the store; `link` is that job's or that run's path | `POST /runs` |
 | `run_unreadable` | 500 | a stored run this build cannot read: torn, malformed, or a configuration that no longer lowers | `GET /runs/{id}` |
 | `run_not_found` | 404 | no run under this id, or a string that is not a run id | `GET /runs/{id}` and below |
 | `query_not_found` | 404 | a query id the run's traces do not hold | `GET /runs/{id}/trace/{query}` |
@@ -908,6 +1120,9 @@ code.
 | `method_not_allowed` | 405 | an endpoint asked for with a method it does not serve; `Allow` lists the ones it does | each endpoint |
 | `runs_not_comparable` | 409 | runs evaluated on different benchmarks — the detail names both `dataset_version`s — or more than a baseline and four runs, naming the ceiling | `POST /compare` |
 | `body_too_large` | 413 | a body over axum's default body limit, which `ApiJson` reads under | every endpoint that reads a body |
+| `job_not_found` | 404 | no job under this id in the queue | `GET`/`PATCH`/`DELETE /jobs/{id}` |
+| `job_not_queued` | 409 | a reorder of a job that is running or ended; the detail names its state | `PATCH /jobs/{id}` |
+| `job_finished` | 409 | a cancellation of a job that already ended | `DELETE /jobs/{id}` |
 
 Choices made here (`AGENTS.md` § Rules of engagement), since the design
 document § 8 lists seven codes and leaves the rest to the implementation:
@@ -963,6 +1178,14 @@ document § 8 lists seven codes and leaves the rest to the implementation:
 - **An invalid path value is `parameter_invalid`**, naming the path
   parameter (ADR-C37 § 4) — never `run_not_found` or `pipeline_not_found`,
   which would tell the client a thing is absent when its request named none.
+- **Three codes for the queue**, each a different action for the client.
+  `job_not_found` is its own 404 for the reason `run_not_found` is.
+  `job_not_queued` and `job_finished` are 409s — the request is well-formed
+  and the job's state forbids it — and two codes rather than one because the
+  actions differ: a running job keeps its place, an ended one is resubmitted.
+  `run_exists` carries `link`, the path of the job or the run that holds the
+  id, which the design document § 8 asks of its hint: a client opens it
+  rather than parsing the prose.
 - **`runs_not_comparable` for `POST /compare`**, a 409 as the issue that
   added it asked: `pipeline_invalid` would tell the client a document is
   wrong, and `request_invalid` that the body is — here the request is
@@ -1638,7 +1861,9 @@ a foreign `Host`.
 ## The API description is a golden file
 
 `src/description.rs` assembles one OpenAPI-shaped document from `OPERATIONS` —
-each operation's method, path, summary and response schema name — and the
+each operation's method, path, summary and one success response — `200` or
+`202` with its schema's name, or `200` with `text/event-stream` of the
+schema its events take for the event stream — and the
 `schemars` schemas of the response types and `Problem`, generated with the
 OpenAPI 3 settings so references point under `#/components/schemas`. Minimal on
 purpose: it exists for the diff and for the UI's type generator, and no OpenAPI
@@ -1688,7 +1913,17 @@ serves. `serde_yaml` is not a dependency: a pipeline document is parsed by
 `ragondin-config`. None of these is a new `[workspace.dependencies]` entry, and none
 has a feature appended.
 
-`toml_edit` is the one entry added since ADR-C36 § 6, by ADR-C38, which adds
+`futures-util` is ADR-C36 § 6's "one stream utility for the event stream",
+chosen here over `tokio-stream`: `stream::unfold` builds the `Stream`
+axum's `Sse` takes from the queue's replay buffer and its broadcast receiver,
+and the tests read a streamed body with `StreamExt`. Its workspace entry is
+new, `default-features = false` with no feature: version 0.3.32 was already
+in `Cargo.lock` through `axum` and `tonic`, and without its `std` and
+`async-await` features its closure is `futures-core`, `futures-task` and
+`pin-project-lite`, all already resolved — `Cargo.lock` gains only the edge
+in this crate's dependency list, no package.
+
+`toml_edit` is the other entry added since ADR-C36 § 6, by ADR-C38, which adds
 to that list rather than superseding it: `default-features = false` with
 `parse` and `display`, no other feature and no `serde`, for
 `workspace.toml` (§ `workspace.toml`, read and edited in place). It brings

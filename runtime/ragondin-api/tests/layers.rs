@@ -106,10 +106,10 @@ async fn a_post_from_its_own_origin_passes_the_check() {
             .unwrap(),
     )
     .await;
-    // No `POST /runs` route exists yet, so the router answers that the
-    // method is not allowed: what matters is that the origin check let the
-    // request reach it.
-    assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
+    // The empty body is no submission, so the handler refuses it: what
+    // matters is that the origin check let the request reach it.
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(json(response).await["code"], "request_invalid");
 }
 
 #[tokio::test]

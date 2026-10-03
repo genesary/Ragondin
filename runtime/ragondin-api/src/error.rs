@@ -53,6 +53,9 @@ pub enum ApiError {
     RunExists {
         /// The run id announced for the submission.
         run_id: String,
+        /// Where what holds it is read: `/api/v1/jobs/<id>` for a job
+        /// queued or running under it, `/api/v1/runs/<id>` for a stored run.
+        link: String,
     },
     /// A run the store holds and this build cannot read: a configuration
     /// under a schema version it does not read, a trace that does not parse,
@@ -237,6 +240,28 @@ pub enum ApiError {
         /// What the body reader reported.
         detail: String,
     },
+    /// No job under this id in the queue.
+    #[error("no job {id} in this queue")]
+    JobNotFound {
+        /// The id as the request spelled it.
+        id: String,
+    },
+    /// A reorder of a job that is no longer waiting.
+    #[error("job {id} is {state}, and only a queued job is reordered")]
+    JobNotQueued {
+        /// The job's id.
+        id: String,
+        /// The state it is in.
+        state: String,
+    },
+    /// A cancellation of a job that already ended.
+    #[error("job {id} already ended: it is {state}")]
+    JobFinished {
+        /// The job's id.
+        id: String,
+        /// The terminal state it is in.
+        state: String,
+    },
 }
 
 impl ApiError {
@@ -269,6 +294,9 @@ impl ApiError {
         "method_not_allowed",
         "runs_not_comparable",
         "body_too_large",
+        "job_not_found",
+        "job_not_queued",
+        "job_finished",
     ];
 
     /// The stable code a client matches on.
@@ -292,7 +320,9 @@ impl ApiError {
             | Self::DatasetDiffers { .. }
             | Self::BenchmarkExists { .. }
             | Self::DownloadCancelled { .. }
-            | Self::RunsNotComparable { .. } => StatusCode::CONFLICT,
+            | Self::RunsNotComparable { .. }
+            | Self::JobNotQueued { .. }
+            | Self::JobFinished { .. } => StatusCode::CONFLICT,
             Self::RunUnreadable { .. } | Self::BackendFailed { .. } => {
                 StatusCode::INTERNAL_SERVER_ERROR
             }
@@ -302,7 +332,8 @@ impl ApiError {
             | Self::BenchmarkNotFound { .. }
             | Self::PipelineNotFound { .. }
             | Self::ServiceNotFound { .. }
-            | Self::RouteNotFound { .. } => StatusCode::NOT_FOUND,
+            | Self::RouteNotFound { .. }
+            | Self::JobNotFound { .. } => StatusCode::NOT_FOUND,
             Self::HostRefused { .. } => StatusCode::MISDIRECTED_REQUEST,
             Self::OriginRefused { .. } => StatusCode::FORBIDDEN,
             Self::MethodNotAllowed { .. } => StatusCode::METHOD_NOT_ALLOWED,
@@ -330,6 +361,10 @@ impl ApiError {
             },
             name: match self {
                 Self::ParameterInvalid { name, .. } => name.clone(),
+                _ => None,
+            },
+            link: match self {
+                Self::RunExists { link, .. } => Some(link.clone()),
                 _ => None,
             },
         }
@@ -364,6 +399,9 @@ impl ApiError {
             Self::MethodNotAllowed { .. } => 24,
             Self::RunsNotComparable { .. } => 25,
             Self::BodyTooLarge { .. } => 26,
+            Self::JobNotFound { .. } => 27,
+            Self::JobNotQueued { .. } => 28,
+            Self::JobFinished { .. } => 29,
         }
     }
 
@@ -396,6 +434,9 @@ impl ApiError {
             Self::MethodNotAllowed { .. } => "Method not allowed",
             Self::RunsNotComparable { .. } => "The runs cannot be compared",
             Self::BodyTooLarge { .. } => "The request body is too large",
+            Self::JobNotFound { .. } => "No such job",
+            Self::JobNotQueued { .. } => "The job is not queued",
+            Self::JobFinished { .. } => "The job already ended",
         }
     }
 
@@ -418,9 +459,9 @@ impl ApiError {
             Self::ServiceUnreachable { uri, .. } => {
                 format!("Start the service at {uri}, or bind this name to an address that answers.")
             }
-            Self::RunExists { run_id } => {
-                format!("Open run {run_id}: it was produced by the same inputs.")
-            }
+            Self::RunExists { run_id, link } => format!(
+                "Open {link}: run {run_id} has the same inputs, and is stored or already in the queue."
+            ),
             Self::RunUnreadable { .. } => {
                 "Read this run with the build that stored it; this build does not repair it."
                     .to_owned()
@@ -494,13 +535,24 @@ impl ApiError {
             Self::BodyTooLarge { .. } => {
                 "Send a smaller body: no request this API reads needs one this large.".to_owned()
             }
+            Self::JobNotFound { .. } => "Check the id against GET /jobs.".to_owned(),
+            Self::JobNotQueued { .. } => {
+                "Reorder only queued jobs; a running or ended job keeps its place.".to_owned()
+            }
+            Self::JobFinished { .. } => {
+                "Nothing to cancel: submit it again to run it again.".to_owned()
+            }
         }
     }
 }
 
 /// `ImplNotInBuild`'s detail: a local name this build lacks, or a component
 /// it cannot construct without a feature.
-fn impl_not_in_build(family: &str, implementation: &str, feature: Option<&str>) -> String {
+pub(crate) fn impl_not_in_build(
+    family: &str,
+    implementation: &str,
+    feature: Option<&str>,
+) -> String {
     match feature {
         Some(feature) => format!(
             "this build cannot construct the {family} `{implementation}` without the `{feature}` feature"
@@ -574,6 +626,7 @@ mod tests {
             },
             ApiError::RunExists {
                 run_id: String::new(),
+                link: String::new(),
             },
             ApiError::RunUnreadable {
                 run_id: String::new(),
@@ -647,6 +700,15 @@ mod tests {
             },
             ApiError::BodyTooLarge {
                 detail: String::new(),
+            },
+            ApiError::JobNotFound { id: String::new() },
+            ApiError::JobNotQueued {
+                id: String::new(),
+                state: String::new(),
+            },
+            ApiError::JobFinished {
+                id: String::new(),
+                state: String::new(),
             },
         ];
         assert_eq!(samples.len(), ApiError::CODES.len());

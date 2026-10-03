@@ -151,7 +151,7 @@ impl Workspace {
 
     /// `jobs/`: the queue's state.
     pub fn jobs(&self) -> PathBuf {
-        self.root.join(JOBS)
+        jobs_of(&self.root)
     }
 
     /// `cache/`: derived data.
@@ -164,4 +164,10 @@ impl Workspace {
     pub fn default_datasets(&self) -> PathBuf {
         self.root.join(DATASETS)
     }
+}
+
+/// The queue's directory in the workspace at `root`: where the router reads
+/// and writes its jobs, given the workspace's root alone.
+pub(crate) fn jobs_of(root: &Path) -> PathBuf {
+    root.join(JOBS)
 }

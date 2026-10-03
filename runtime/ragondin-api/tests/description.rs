@@ -27,19 +27,28 @@ fn the_description_lists_every_operation_with_its_schema() {
 
     for operation in ragondin_api::description::OPERATIONS {
         let entry = &description["paths"][operation.path][operation.method];
-        let schema = &entry["responses"]["200"]["content"]["application/json"]["schema"]["$ref"];
-        assert_eq!(
-            schema,
-            &format!("#/components/schemas/{}", operation.response),
-            "{} {}",
-            operation.method,
-            operation.path
-        );
-        assert!(
-            description["components"]["schemas"][operation.response].is_object(),
-            "{} is defined under components/schemas",
-            operation.response
-        );
+        let success = &entry["responses"][operation.response.status()];
+        match operation.response.schema() {
+            Some(name) => {
+                assert_eq!(
+                    success["content"]["application/json"]["schema"]["$ref"],
+                    format!("#/components/schemas/{name}"),
+                    "{} {}",
+                    operation.method,
+                    operation.path
+                );
+                assert!(
+                    description["components"]["schemas"][name].is_object(),
+                    "{name} is defined under components/schemas"
+                );
+            }
+            // An event stream's body is no JSON document: its schema is its
+            // events', under `text/event-stream`.
+            None => assert_eq!(
+                success["content"]["text/event-stream"]["schema"]["$ref"],
+                "#/components/schemas/JobEvent"
+            ),
+        }
         assert_eq!(
             entry["responses"]["default"]["content"]["application/problem+json"]["schema"]["$ref"],
             "#/components/schemas/Problem"
@@ -88,6 +97,90 @@ fn a_field_always_serialized_is_required_even_when_nullable() {
     assert!(!required(&schemas["Problem"]).contains(&"location"));
 }
 
+/// A submission and a download answer `202`, and the event stream `200`
+/// with no JSON body: one success response each, which is what the UI's
+/// type generator reads. The stream's events are typed by the schemas its
+/// description names, defined though no operation answers them as JSON.
+#[test]
+fn the_queue_s_operations_declare_their_status_and_their_stream() {
+    let description: serde_json::Value =
+        serde_json::from_str(&ragondin_api::description::render()).unwrap();
+    let responses = |path: &str, method: &str| {
+        description["paths"][path][method]["responses"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(responses("/runs", "post"), ["202", "default"]);
+    assert_eq!(
+        responses("/benchmarks/{name}/download", "post"),
+        ["202", "default"]
+    );
+    assert_eq!(responses("/jobs/events", "get"), ["200", "default"]);
+    let events = &description["paths"]["/jobs/events"]["get"];
+    assert_eq!(
+        events["responses"]["200"]["content"]["text/event-stream"]["schema"]["$ref"],
+        "#/components/schemas/JobEvent"
+    );
+    // Each event's name, and the schema its data takes, generated rather
+    // than typed by hand.
+    let mut map: Vec<(String, String)> = schemas()["JobEvent"]["oneOf"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|variant| {
+            (
+                variant["properties"]["event"]["enum"][0]
+                    .as_str()
+                    .unwrap()
+                    .to_owned(),
+                variant["properties"]["data"]["$ref"]
+                    .as_str()
+                    .unwrap()
+                    .to_owned(),
+            )
+        })
+        .collect();
+    map.sort();
+    let summary = "#/components/schemas/JobSummary".to_owned();
+    assert_eq!(
+        map,
+        [
+            ("cancelled".to_owned(), summary.clone()),
+            ("done".to_owned(), summary.clone()),
+            ("failed".to_owned(), summary.clone()),
+            ("queued".to_owned(), summary.clone()),
+            ("reordered".to_owned(), summary.clone()),
+            (
+                "resync".to_owned(),
+                "#/components/schemas/JobListing".to_owned()
+            ),
+            ("running".to_owned(), summary),
+        ]
+    );
+    assert_eq!(events["parameters"][0]["name"], "Last-Event-ID");
+    assert_eq!(events["parameters"][0]["in"], "header");
+    for schema in [
+        "JobSummary",
+        "JobListing",
+        "RunAccepted",
+        "DownloadAccepted",
+    ] {
+        assert!(schemas()[schema].is_object(), "{schema}");
+    }
+    // A state's every field is serialized, `null` included.
+    let running = schemas()["JobStatus"]["oneOf"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|variant| variant["properties"]["kind"]["enum"][0] == "running")
+        .cloned()
+        .unwrap();
+    assert!(required(&running).contains(&"median_latency_nanos"));
+}
+
 /// A client narrows on `code`, so the schema lists the codes.
 #[test]
 fn the_problem_code_is_an_enum_of_every_stable_code() {
@@ -132,6 +225,12 @@ async fn every_described_operation_is_routed() {
         )
         .await;
         let status = response.status();
+        // An event stream does not end: its head is the answer.
+        if operation.response.schema().is_none() {
+            assert_eq!(status, StatusCode::OK, "{path}");
+            assert_eq!(response.headers()["content-type"], "text/event-stream");
+            continue;
+        }
         let body = support::body(response).await;
         assert!(
             !body.contains("\"route_not_found\"") && !body.contains("\"method_not_allowed\""),
@@ -139,7 +238,7 @@ async fn every_described_operation_is_routed() {
             operation.method
         );
         // The reads that name nothing the fakes lack answer outright.
-        if operation.method == "get" && !path.contains("hybrid") {
+        if operation.method == "get" && !path.contains("hybrid") && !path.starts_with("/jobs/") {
             assert_eq!(status, StatusCode::OK, "{path}: {body}");
         }
     }

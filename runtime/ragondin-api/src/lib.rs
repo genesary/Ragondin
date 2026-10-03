@@ -34,12 +34,15 @@
 //! - [`fs`] — the workspace on disk and its file backends:
 //!   [`fs::Workspace`], [`fs::FsSettings`], [`fs::FsPipelines`],
 //!   [`fs::FsRegistry`].
+//! - [`jobs`] — the job model and the queue: `jobs/<id>.json`, the run and
+//!   download lanes with one worker each, the event stream.
 //! - `conformance` — behind the `conformance` feature, the suite every
 //!   [`Registry`] backend passes.
 //!
 //! Every path is under `/api/v1`, and [`description::OPERATIONS`] lists
 //! them: the workspace, the runs, the comparison of runs, the pipelines and
-//! their layouts, the benchmarks and the services. `GET /runs/{id}/queries` and
+//! their layouts, the benchmarks, the queue of jobs and the services.
+//! `GET /runs/{id}/queries` and
 //! `GET /runs/{id}/trace/{query}` serve derived data — per-query scores,
 //! per-node metrics, passage text — computed on read against the run's own
 //! dataset, cached under the workspace's `cache/`, and never written into the
@@ -66,6 +69,7 @@ pub mod conformance;
 pub mod description;
 pub mod error;
 pub mod fs;
+pub mod jobs;
 pub mod request;
 pub mod response;
 
@@ -85,9 +89,10 @@ mod validation;
 
 pub use assets::{content_type_for, Asset, Assets, NoAssets};
 pub use backends::{
-    Backends, DownloadProgress, Job, JobState, Launcher, LoadedDataset, PinnedBenchmark,
-    PipelineFile, PipelineSource, Precondition, ProgressSink, Registry, Revision, RunDataset,
-    ServiceIdentity, Settings, Submission, WorkspaceSettings,
+    Backends, Cancellation, DownloadProgress, Launcher, LauncherError, LoadedDataset,
+    PinnedBenchmark, PipelineFile, PipelineSource, Precondition, ProgressSink, QueryProgress,
+    Registry, Revision, RunDataset, RunObserver, ServiceIdentity, Settings, Submission,
+    WorkspaceSettings,
 };
 pub use error::ApiError;
 pub use layers::BUILD_HEADER;
@@ -113,7 +118,8 @@ pub struct ServerConfig {
     /// a build string that stayed the same across a code change would serve
     /// figures the new code would not compute.
     pub build: String,
-    /// The workspace directory, as `GET /workspace` reports it.
+    /// The workspace directory, as `GET /workspace` reports it; the queue
+    /// keeps its jobs in its `jobs/`.
     pub workspace: PathBuf,
 }
 
@@ -132,6 +138,12 @@ pub struct ServerConfig {
 /// is a `route_not_found` problem, never an asset. A path that merely starts
 /// with the same letters, such as `/apix`, is not under `/api` and is the
 /// assets' to answer.
+///
+/// The job queue is read back from the workspace's `jobs/` here, before the
+/// server answers anything: a job found running is failed as interrupted —
+/// or done, for a run whose announced id the store holds — and the queued
+/// ones wait in their stored order. Called inside a `tokio`
+/// runtime, as `serve` needs anyway, the workers start on them at once.
 // The one assembly site: the nest, the bare-prefix route, the naming
 // fallback, the assets' fallback and the envelope's layer, none of them an
 // /api handler reading input (ADR-C37 § 2's exceptions). `clippy.toml`

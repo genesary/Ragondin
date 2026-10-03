@@ -174,3 +174,13 @@ pub(crate) async fn probe(
         }
     }
 }
+
+/// The identity this server last read at `uri`, under any binding — what a
+/// submission whose service did not answer reports beside the failure.
+pub(crate) fn last_read_at(probes: &Probes, uri: &str) -> Option<String> {
+    memory(probes)
+        .values()
+        .filter_map(|probed| probed.identity.as_ref())
+        .find(|(_, at)| at == uri)
+        .map(|(identity, _)| identity.clone())
+}

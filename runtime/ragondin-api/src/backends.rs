@@ -17,14 +17,15 @@
 //! envelope, in `layers.rs`, and nothing else.
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 use async_trait::async_trait;
 use ragondin_benchmarks::identity::CorpusIndex;
 use ragondin_benchmarks::Benchmark;
-use ragondin_experiments::{RunId, RunStore};
+use ragondin_experiments::{Run, RunId, RunStore, TraceDocument};
+use ragondin_types::QueryId;
 
 use crate::error::ApiError;
 use ragondin_pipeline::LogicalPipeline;
@@ -494,17 +495,131 @@ pub trait Launcher: Send + Sync {
     /// The run id a submission announces, computed from constructed
     /// components and the services' identities, so that an existing run is
     /// refused and an unreachable service fails at submission.
-    async fn identity(&self, submission: &Submission) -> Result<RunId, ApiError>;
-
-    /// Runs a job to its end, and returns its terminal state: `Done` with the
-    /// id the harness computed from what ran, `Failed`, or `Cancelled`.
     ///
-    /// **Provisional shape.** It carries no progress observer and no
-    /// cancellation token, which the queue needs to report `Running` and to
-    /// cancel between queries. The job model and its queue (#349) settle the
-    /// signature, and the binary's implementation over the composition root
-    /// (#353) fills it. Nothing calls it yet.
-    async fn execute(&self, job: Job) -> JobState;
+    /// # Errors
+    ///
+    /// `ImplNotInBuild`, `ServiceUnreachable` or `PipelineInvalid` for a
+    /// submission the composition root cannot run; any other variant is
+    /// answered as `backend_failed`.
+    async fn identity(&self, submission: &Submission) -> Result<RunId, LauncherError>;
+
+    /// Runs a submission to its end, and returns the run as the harness
+    /// assembled it — its id the one computed from what ran, which the queue
+    /// compares with the announced one.
+    ///
+    /// Every query executed is reported to `observer` as it completes, with
+    /// its trace (INV-10: a value, never a log line); `cancel` is checked
+    /// between queries, and once it is set the call ends with
+    /// [`LauncherError::Cancelled`]. Nothing is written to the run store
+    /// here: the queue files the returned run, as one block.
+    ///
+    /// # Errors
+    ///
+    /// `Execution` naming the node that failed, when one did; `Cancelled`
+    /// once `cancel` was honoured; the preparation's refusals as
+    /// [`identity`](Self::identity) words them.
+    async fn execute(
+        &self,
+        submission: &Submission,
+        observer: Arc<dyn RunObserver>,
+        cancel: Cancellation,
+    ) -> Result<Run, LauncherError>;
+}
+
+/// Why a [`Launcher`] could not announce or execute a run.
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum LauncherError {
+    /// An `impl:` name this build registers no local implementation for, or
+    /// a component it cannot construct without `feature`.
+    #[error("{}", crate::error::impl_not_in_build(family, implementation, feature.as_deref()))]
+    ImplNotInBuild {
+        /// The family the node is in.
+        family: String,
+        /// The `impl:` name.
+        implementation: String,
+        /// The build feature that would carry it, when one is known.
+        feature: Option<String>,
+    },
+    /// A `Remote` service that did not answer.
+    #[error("the service at {uri} did not answer: {reason}")]
+    ServiceUnreachable {
+        /// The address it was reached at.
+        uri: String,
+        /// The network error, or what the identity read found.
+        reason: String,
+    },
+    /// A pipeline the composition root refuses, in its words.
+    #[error("the pipeline is refused: {detail}")]
+    PipelineInvalid {
+        /// The refusal.
+        detail: String,
+        /// The node at fault, when one is.
+        node: Option<String>,
+    },
+    /// Execution failed.
+    #[error("{error}")]
+    Execution {
+        /// What failed, in the words of whatever failed.
+        error: String,
+        /// The node that failed, when one did.
+        at_node: Option<String>,
+    },
+    /// The cancellation signal was honoured between two queries.
+    #[error("the run was cancelled")]
+    Cancelled,
+}
+
+/// What [`Launcher::execute`] reports each query to, as it completes.
+///
+/// Called from whatever thread executes the run — the binary's dedicated
+/// one — so it must not block: the queue's implementation hands the value
+/// to its own task and returns.
+pub trait RunObserver: Send + Sync {
+    /// One more query executed.
+    fn query_done(&self, progress: QueryProgress);
+}
+
+/// One query executed, as [`RunObserver::query_done`] receives it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct QueryProgress {
+    /// How many queries have executed, this one included: from 1.
+    pub position: u64,
+    /// How many the run executes.
+    pub total: u64,
+    /// The query.
+    pub query: QueryId,
+    /// The time since execution began, as the executor read it. Not a
+    /// latency: the queue reads a query's latency from its trace.
+    pub elapsed: Duration,
+    /// The query's trace, as the run will file it.
+    pub trace: TraceDocument,
+}
+
+/// The signal that cancels a job: set by the queue, checked by whoever
+/// executes. Clones share one flag.
+#[derive(Clone, Debug, Default)]
+pub struct Cancellation(Arc<AtomicBool>);
+
+impl Cancellation {
+    /// A signal not yet set.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Sets the signal; it stays set.
+    pub fn cancel(&self) {
+        self.0.store(true, Ordering::SeqCst);
+    }
+
+    /// Whether the signal is set.
+    pub fn is_cancelled(&self) -> bool {
+        self.0.load(Ordering::SeqCst)
+    }
+
+    /// The flag itself, as [`Registry::download`] takes it.
+    pub fn flag(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.0)
+    }
 }
 
 /// What a `Remote` service reported as the identity of the model it serves.
@@ -527,49 +642,6 @@ pub struct Submission {
     pub bindings: Vec<ServiceBinding>,
     /// The node to stop after, for a prefix run.
     pub up_to: Option<String>,
-}
-
-/// A submission accepted into the queue, with the run id it announced.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Job {
-    /// The job's id.
-    pub id: String,
-    /// The run id announced at submission.
-    pub run_id: RunId,
-    /// What was submitted.
-    pub submission: Submission,
-    /// When it was accepted.
-    pub created_at: SystemTime,
-}
-
-/// Where a job is.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum JobState {
-    /// Waiting for the worker.
-    Queued,
-    /// Running: `done` of `total` queries executed.
-    Running {
-        /// Queries executed.
-        done: u64,
-        /// Queries in the benchmark.
-        total: u64,
-        /// When execution started.
-        started_at: SystemTime,
-    },
-    /// Finished, and stored under `run_id`.
-    Done {
-        /// The id the store received: the one computed from what ran.
-        run_id: RunId,
-    },
-    /// Failed.
-    Failed {
-        /// What failed.
-        error: String,
-        /// The node that failed, when one did.
-        at_node: Option<String>,
-    },
-    /// Cancelled before it finished.
-    Cancelled,
 }
 
 #[cfg(test)]

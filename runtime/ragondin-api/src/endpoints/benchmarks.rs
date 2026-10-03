@@ -1,18 +1,19 @@
-//! `GET /benchmarks` and `POST /benchmarks/import`, over `Registry`.
-//!
-//! A download is not here: it is a job on the queue's IO lane, and its route
-//! arrives with the queue.
+//! `GET /benchmarks` and `POST /benchmarks/import`, over `Registry`, and
+//! `POST /benchmarks/{name}/download`, which queues a download job on the
+//! queue's download lane: the registry fetches and verifies it there, its
+//! progress in bytes on the job stream.
 
 use std::path::PathBuf;
 
 use axum::extract::State;
+use axum::http::StatusCode;
 use axum::Json;
 
 use crate::error::ApiError;
-use crate::extract::{ApiJson, ApiQuery, NoParameters};
+use crate::extract::{ApiJson, ApiPath, ApiQuery, NoParameters};
 use crate::handlers::AppState;
 use crate::request::ImportRequest;
-use crate::response::{BenchmarkEntry, BenchmarkListing};
+use crate::response::{BenchmarkEntry, BenchmarkListing, DownloadAccepted};
 
 /// `GET /benchmarks`. The registry verifies every dataset on disk on each
 /// call; nothing is cached here.
@@ -38,4 +39,17 @@ pub(crate) async fn import(
             .import(&name, &PathBuf::from(path))
             .await?,
     ))
+}
+
+/// `POST /benchmarks/{name}/download`: `202` with the download job. Whether
+/// the manifest names the benchmark, and whether it is already on disk, is
+/// the registry's to say when the job runs: its refusal is the job's
+/// `failed` state, in its words.
+pub(crate) async fn download(
+    State(state): State<AppState>,
+    ApiPath(name): ApiPath<String>,
+    _: ApiQuery<NoParameters>,
+) -> Result<(StatusCode, Json<DownloadAccepted>), ApiError> {
+    let job_id = state.jobs.submit_download(name).await?;
+    Ok((StatusCode::ACCEPTED, Json(DownloadAccepted { job_id })))
 }
