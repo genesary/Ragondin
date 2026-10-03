@@ -1149,7 +1149,8 @@ binary's build identity (#365) provides; its doc comment says so.
   reranker (100 chunks ranked per query, 10 kept) in a `FileSystemRunStore`
   and times each step per run, the fastest of seven; run it with the
   command its module doc gives. On an Apple M4 Pro, per run of 300 queries
-  (5.4 MB of `traces.json`), then of 1000 (18.2 MB):
+  (5.4 MB of `traces.json`), then of 1000 (18.2 MB); the "before" key was
+  measured on `e5c8d0ec277f`, the tree this change was made from:
 
   | Step | 300 queries | 1000 queries |
   |---|---|---|
@@ -1165,7 +1166,11 @@ binary's build identity (#365) provides; its doc comment says so.
   So `GET /runs` costs, per run, load + key + hit = 14.8 ms (49.4 ms) with
   the cache, against load + computed = 22.3 ms (73.3 ms) without it: **the
   latency cache is kept**, because even keyed on every trace's content a hit
-  is the cheaper path. Streaming the text rather than building it took a
+  is the cheaper path. "Without the cache" means the typed path —
+  `median_query_latency` parsing each trace into a `Trace` and summing
+  `Trace::latency_nanos` — and not reading `duration_nanos` off the JSON
+  directly, which would be faster but a second copy of the one definition of
+  a query's latency. Streaming the text rather than building it took a
   quarter off the key; the stream is closed by `0xFF` because its length is
   not known before it is written. The key still reads every trace, so the
   listing still grows with the traces' size — as its load does, which no key
@@ -1174,12 +1179,14 @@ binary's build identity (#365) provides; its doc comment says so.
   recorded `times` change with every execution, but the decision record of
   the run times makes them "for display and ordering only"; a digest or a
   version the store keeps beside the run is a change to
-  `ragondin-experiments`' `RunStore`. And **on `/queries` the figures cost
+  `ragondin-experiments`' `RunStore`, which #443 takes up: a `RunStore`
+  listing that loads no traces, with a digest stored beside the run. And **on `/queries` the figures cost
   less than their key** for runs like these — 29.5 ms (97.6 ms) per request
   with the cache against 26.5 ms (88.0 ms) without — because the traces are
   typed either way and three ranking metrics are cheap to score; the cache
-  is left as it is, and that measurement is the input to the decision on it,
-  not a decision taken here.
+  is left as it is, and that measurement is the input to #442, which
+  keeps or drops `derived.json` on its measured cost — not a
+  decision taken here.
 
 **Per-node metrics are served by `GET /runs/{id}/queries`**, beside the
 per-query scores they are computed with, and not by `GET /runs/{id}` as the
