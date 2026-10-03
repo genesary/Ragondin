@@ -861,6 +861,127 @@ mod with_components {
         assert_eq!(launch_record(&run_dir), named, "a store through a link");
     }
 
+    /// `bench` over the lexical fixture at `config` into `store`, as a process.
+    fn bench_output(config: &Path, store: &Path) -> Output {
+        ragondin(&[
+            "bench",
+            path(config),
+            "--benchmark",
+            "beir/beir-mini",
+            "--datasets",
+            path(&fixtures()),
+            "--store",
+            path(store),
+        ])
+    }
+
+    /// Every file of a run directory, by name, with its bytes.
+    fn files_of(run_dir: &Path) -> std::collections::BTreeMap<String, Vec<u8>> {
+        std::fs::read_dir(run_dir)
+            .expect("the run directory reads")
+            .map(|entry| {
+                let entry = entry.expect("an entry reads");
+                (
+                    entry.file_name().to_string_lossy().into_owned(),
+                    std::fs::read(entry.path()).expect("a run file reads"),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_first_bench_prints_as_before() {
+        // The golden of a first run: the summary `bench` has always printed,
+        // line for line, over the run it filed.
+        let w = workspace("first-golden", &["pipelines/hybrid.yaml"]);
+        let output = bench_output(&w.join("pipelines/hybrid.yaml"), &w.join("runs"));
+
+        assert!(output.status.success(), "{}", stderr(&output));
+        let id = reported_run_id(&stdout(&output));
+        let run = FileSystemRunStore::new(w.join("runs"))
+            .load(&id)
+            .expect("the run bench reported is the run bench saved");
+        let mut golden = format!(
+            "run {}\n  pipeline      {}\n  dataset       {}\n  index         {}\n",
+            run.id, run.inputs.pipeline, run.inputs.dataset_version, run.inputs.index_version
+        );
+        for (name, value) in run.metrics.iter() {
+            golden.push_str(&format!("{name}: {value:.4}\n"));
+        }
+        assert_eq!(stdout(&output), golden);
+    }
+
+    #[test]
+    fn a_second_bench_reports_the_stored_run_and_keeps_it() {
+        // The same pipeline under a second name: one run id, and the first
+        // launch's record is the one kept (ADR-C39 § 8).
+        let w = workspace(
+            "second-reported",
+            &["pipelines/hybrid.yaml", "pipelines/fork.yaml"],
+        );
+        let first = bench_output(&w.join("pipelines/hybrid.yaml"), &w.join("runs"));
+        assert!(first.status.success(), "{}", stderr(&first));
+        let id = reported_run_id(&stdout(&first));
+        let run_dir = w.join("runs").join(id.to_string());
+        let stored = files_of(&run_dir);
+
+        let second = bench_output(&w.join("pipelines/fork.yaml"), &w.join("runs"));
+
+        assert!(second.status.success(), "{}", stderr(&second));
+        assert_eq!(
+            stdout(&second),
+            format!(
+                "run {id}\n  already stored, launched as hybrid; this execution was not kept\n"
+            )
+        );
+        assert_eq!(files_of(&run_dir), stored, "the stored run is untouched");
+    }
+
+    #[test]
+    fn a_second_bench_over_a_run_without_a_record_reports_without_a_name() {
+        // Outside the workspace convention: the first run is filed with no
+        // record, and no `provenance.json`.
+        let w = workspace("second-unnamed", &["drafts/hybrid.yaml"]);
+        let first = bench_output(&w.join("drafts/hybrid.yaml"), &w.join("runs"));
+        assert!(first.status.success(), "{}", stderr(&first));
+        let id = reported_run_id(&stdout(&first));
+        let run_dir = w.join("runs").join(id.to_string());
+        assert_eq!(launch_record(&run_dir), None);
+        let stored = files_of(&run_dir);
+
+        let second = bench_output(&w.join("drafts/hybrid.yaml"), &w.join("runs"));
+
+        assert!(second.status.success(), "{}", stderr(&second));
+        assert_eq!(
+            stdout(&second),
+            format!("run {id}\n  already stored; this execution was not kept\n")
+        );
+        assert_eq!(files_of(&run_dir), stored, "the stored run is untouched");
+    }
+
+    #[test]
+    fn a_second_bench_over_a_stored_run_that_does_not_read_fails_naming_it() {
+        // A record that no longer parses: the run is in the store, so this
+        // execution is not kept, and what is wrong with it is reported rather
+        // than passed over as a run filed.
+        let w = workspace("second-unreadable", &["pipelines/hybrid.yaml"]);
+        let first = bench_output(&w.join("pipelines/hybrid.yaml"), &w.join("runs"));
+        assert!(first.status.success(), "{}", stderr(&first));
+        let id = reported_run_id(&stdout(&first));
+        let run_dir = w.join("runs").join(id.to_string());
+        std::fs::write(run_dir.join("times.json"), "{}").expect("the record is writable");
+        let stored = files_of(&run_dir);
+
+        let second = bench_output(&w.join("pipelines/hybrid.yaml"), &w.join("runs"));
+
+        assert!(!second.status.success(), "{}", stdout(&second));
+        let error = stderr(&second);
+        assert!(error.contains(&id.to_string()), "{error}");
+        assert!(error.contains("this execution was not kept"), "{error}");
+        assert_eq!(stdout(&second), "", "no summary of a run not filed");
+        assert_eq!(files_of(&run_dir), stored, "the stored run is untouched");
+    }
+
     /// The same fixture under `beir/`, which ignores `answers.jsonl`: the
     /// benchmark then carries no reference answers, and the run is scored by
     /// retrieval alone — `beir/` keeps its M2 meaning exactly (ADR-C30 § 2).
