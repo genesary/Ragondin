@@ -179,20 +179,23 @@ export function ComparisonView({ comparison: c, ids, baseline, busy, listing, on
                 A pipeline&apos;s graph is ambiguous there. If the stages below compare the wrong nodes, pair them by hand.
               </InlineMessage>
             )}
-            {/* Every pair a run could not place, in words (decided in #402): drawn with the answer, so it moves nothing later. */}
-            {c.unplaced_pairs.length === 0 ? null : (
-              <div className="rg-compare__unplaced">
-                <InlineMessage
-                  tone="info"
-                  title={`${c.unplaced_pairs.length} pair${c.unplaced_pairs.length === 1 ? '' : 's'} drawn by hand not placed: a run lacks the node`}
-                />
-                <ul aria-label="Pairs not placed">
-                  {c.unplaced_pairs.map((u) => (
-                    <li key={`${u.run}-${u.pair.node}-${u.pair.other}`}>{unplacedLabel(c, u)}</li>
-                  ))}
-                </ul>
-              </div>
-            )}
+            {/* Every pair a run could not place, in words (decided in #402): drawn with the answer, so it moves nothing later.
+                The live region is always present, empty or not, so a list a re-compare brings or changes is announced. */}
+            <div className="rg-compare__unplaced" role="status" aria-label="Pairs drawn by hand not placed">
+              {c.unplaced_pairs.length === 0 ? null : (
+                <>
+                  <InlineMessage
+                    tone="info"
+                    title={`${c.unplaced_pairs.length} pair${c.unplaced_pairs.length === 1 ? '' : 's'} drawn by hand not placed: a run lacks the node`}
+                  />
+                  <ul aria-label="Pairs not placed">
+                    {c.unplaced_pairs.map((u) => (
+                      <li key={`${u.run}-${u.pair.node}-${u.pair.other}`}>{unplacedLabel(c, u)}</li>
+                    ))}
+                  </ul>
+                </>
+              )}
+            </div>
             {pairing ? <PairingPanel id={pairingId} comparison={c} onPair={onPair} /> : null}
             {line === null || metricAtStages === null ? (
               <p className="rg-compare__note">No stage carries a figure: {c.ground_truth.detail}.</p>

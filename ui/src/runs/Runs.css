@@ -36,6 +36,9 @@
   gap: var(--space-3);
 }
 .rg-runs__pipeline { color: var(--ink); font: var(--type-heading); }
+/* A recorded name the workspace no longer holds: the name, unlinked, and why in words. */
+.rg-runs__gone { color: var(--ink-2); font: var(--type-heading); }
+.rg-runs__gone-why { font: var(--type-caption); color: var(--ink-3); }
 /* Every name the pipeline goes by, side by side, wrapping with the heading. */
 .rg-runs__names {
   display: flex;

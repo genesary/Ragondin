@@ -32,8 +32,8 @@ const SHAPE: ShapeNode[] = [
   { node: 'x', family: null, word: 'extension' },
 ];
 
-function show(g: RunGroup, shape: ShapeNode[] | null = SHAPE) {
-  render(<Table caption="runs" columns={[{ id: 'a', label: 'A' }]} rows={[{ kind: 'group', id: g.key, label: <GroupLabel group={g} shape={shape} /> }]} />);
+function show(g: RunGroup, shape: ShapeNode[] | null = SHAPE, documents: ReadonlySet<string> | null = null) {
+  render(<Table caption="runs" columns={[{ id: 'a', label: 'A' }]} rows={[{ kind: 'group', id: g.key, label: <GroupLabel group={g} shape={shape} documents={documents} /> }]} />);
 }
 
 describe('the group heading', () => {
@@ -55,6 +55,25 @@ describe('the group heading', () => {
     // Only between names: none before the first, none after the last.
     expect(header.textContent?.startsWith('hybrid')).toBe(true);
     expect(header.textContent).not.toContain('hybrid-old,');
+  });
+
+  it('does not link a recorded name the workspace no longer holds, and says why', () => {
+    show(group({ names: ['hybrid-old'] }), SHAPE, new Set(['hybrid']));
+    expect(screen.queryByRole('link')).toBeNull();
+    const header = document.querySelector('th[scope="rowgroup"]') as HTMLElement;
+    expect(header.textContent).toContain('hybrid-old');
+    expect(header.textContent).toContain('no longer a document in this workspace');
+  });
+
+  it('links a name the workspace still holds, beside one it does not', () => {
+    show(group({ names: ['hybrid'] }), SHAPE, new Set(['hybrid']));
+    expect(screen.getByRole('link', { name: 'hybrid' }).getAttribute('href')).toBe('#pipeline/hybrid');
+    expect(document.querySelector('th[scope="rowgroup"]')?.textContent).not.toContain('no longer');
+  });
+
+  it('links every name when the workspace\'s documents could not be listed: it cannot say one is gone', () => {
+    show(group({ names: ['hybrid-old'] }), SHAPE, null);
+    expect(screen.getByRole('link', { name: 'hybrid-old' }).getAttribute('href')).toBe('#pipeline/hybrid-old');
   });
 
   it('names a pipeline without a name by its short hash, linking by the full one', () => {

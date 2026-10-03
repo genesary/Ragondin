@@ -2,8 +2,10 @@
 // label: the name or names it is grouped under, each the way to its Pipeline
 // screen — or its short hash, when no name reaches it — its
 // shape as design/'s family tiles in pipeline order, and how many runs it
-// holds. The shape comes with the listing, so the heading is whole when it is
-// first drawn: nothing loads into it later, and nothing moves under it.
+// holds. A recorded name the workspace no longer holds is said so, unlinked:
+// its address would land on a pipeline that is not found. The shape and the
+// workspace's documents come with the listing, so the heading is whole when it
+// is first drawn: nothing loads into it later, and nothing moves under it.
 import { Fragment } from 'react';
 import { FAMILY_LABEL, FamilyTile } from '../../design/index.ts';
 import { formatHash } from '../routes.ts';
@@ -13,11 +15,13 @@ export type GroupLabelProps = {
   group: RunGroup;
   /** The pipeline's shape, from the listing; null when the listing carries none for it. */
   shape: ShapeNode[] | null;
+  /** The workspace's pipeline documents, by name; null when they could not be listed, and then every name links. */
+  documents: ReadonlySet<string> | null;
 };
 
 const runs = (n: number) => `${n.toLocaleString('en-US')} run${n === 1 ? '' : 's'}`;
 
-export function GroupLabel({ group, shape }: GroupLabelProps) {
+export function GroupLabel({ group, shape, documents }: GroupLabelProps) {
   return (
     <span className="rg-runs__group">
       {group.names.length === 0 ? (
@@ -31,9 +35,16 @@ export function GroupLabel({ group, shape }: GroupLabelProps) {
             <Fragment key={name}>
               {/* Heard, not seen: the gap shows the names apart, and this keeps them apart for a screen reader. */}
               {i === 0 ? null : <span className="rg-visually-hidden">, </span>}
-              <a className="rg-runs__pipeline" href={formatHash({ screen: 'pipeline', name })}>
-                {name}
-              </a>
+              {documents === null || documents.has(name) ? (
+                <a className="rg-runs__pipeline" href={formatHash({ screen: 'pipeline', name })}>
+                  {name}
+                </a>
+              ) : (
+                // Only a recorded name can be gone: a hash match is a current document by definition.
+                <span className="rg-runs__gone">
+                  {name} <span className="rg-runs__gone-why">no longer a document in this workspace</span>
+                </span>
+              )}
             </Fragment>
           ))}
         </span>
