@@ -1,4 +1,8 @@
-.rg-tablewrap { overflow-x: auto; }
+.rg-tablewrap {
+  /* Positioned, so the absolutely positioned hidden text of a cell is clipped by this scroll box rather than widening the page. */
+  position: relative;
+  overflow-x: auto;
+}
 .rg-table {
   width: 100%;
   border-collapse: separate;

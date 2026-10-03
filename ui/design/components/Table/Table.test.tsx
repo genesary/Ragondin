@@ -32,6 +32,13 @@ describe('Table dense', () => {
     expect(container.querySelector('.rg-tablewrap > table')).toBeTruthy();
     expect(declared(css, '.rg-tablewrap', 'overflow-x')).toBe('auto');
   });
+
+  it('holds its cells’ visually hidden text inside that wrapper, so text heard and not seen never widens the page', () => {
+    // .rg-visually-hidden is absolutely positioned: without a positioned
+    // wrapper its containing block lies outside the scroll box, and a hidden
+    // span in a far column stretches the page sideways.
+    expect(declared(css, '.rg-tablewrap', 'position')).toBe('relative');
+  });
 });
 
 describe('Table numeric alignment', () => {
