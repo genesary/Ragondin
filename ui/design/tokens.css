@@ -144,7 +144,7 @@
   --on-family-generator: #0f1216;
   /* Ink on the judge pigment: the glyph on its tile, the node name or glyph on its latency-stack segment. 4.5:1+ in both themes, so 11px text reads on it; dark in both themes. */
   --on-family-judge: #0f1216;
-  /* Ink on the query (and the neutral control-flow and unknown-family pigment) pigment: the glyph on its tile, the node name or glyph on its latency-stack segment. 4.5:1+ in both themes, so 11px text reads on it; dark in both themes. */
+  /* Ink on the neutral pigment (query, control flow, unknown family): the glyph on its tile, the node name or glyph on its latency-stack segment. 4.5:1+ in both themes, so 11px text reads on it; dark in both themes. */
   --on-family-query: #0f1216;
   /* The baseline run of a comparison, always neutral and always first. In charts it is the reference the others are read against. */
   --run-base: #7c8088;
@@ -216,7 +216,7 @@
     --on-accent: #14161b;
     --accent-wash: #d5dfef1a;
     --focus-ring: var(--accent);
-    --family-retriever: #2479a9;
+    --family-retriever: #2377a6;
     --family-fusion: #ad7c1d;
     --family-reranker: #9d3772;
     --family-context: #29996d;
@@ -279,7 +279,7 @@
   --on-accent: #14161b;
   --accent-wash: #d5dfef1a;
   --focus-ring: var(--accent);
-  --family-retriever: #2479a9;
+  --family-retriever: #2377a6;
   --family-fusion: #ad7c1d;
   --family-reranker: #9d3772;
   --family-context: #29996d;

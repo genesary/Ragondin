@@ -67,7 +67,7 @@ describe('the palettes are the design system’s values, in both themes', () => 
   };
 
   it.each([
-    ['family-retriever', '#47a9df', '#2479a9'],
+    ['family-retriever', '#47a9df', '#2377a6'],
     ['family-fusion', '#dfa635', '#ad7c1d'],
     ['family-reranker', '#cd5ea2', '#9d3772'],
     ['family-context', '#5aca94', '#29996d'],
