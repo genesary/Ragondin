@@ -338,6 +338,20 @@ describe('side by side, never two queries at once', () => {
     expect(await screen.findByRole('application', { name: 'Run B, dense-only, query q2' })).toBeTruthy();
   });
 
+  it("holds B's place when B's answer for the new query lands while A still shows the old one", async () => {
+    let releaseA: (reply: MockReply<QueryTrace>) => void = () => {};
+    api({ trace: (run, q) => (run === HYBRID && q === 'q2' ? new Promise((r) => (releaseA = r)) : traceOf(run === DENSE ? DENSE_TRACE : HYBRID_TRACE, q)) });
+    const view = show({ query: 'q1', with: DENSE });
+    await screen.findByRole('application', { name: 'Run B, dense-only, query q1' });
+    rerender(view, { query: 'q2', with: DENSE });
+    expect(await screen.findByText('Reading dense-only')).toBeTruthy();
+    expect(screen.getByRole('application', { name: 'Run A, hybrid-rerank-gen, query q1' })).toBeTruthy();
+    expect(screen.queryByRole('application', { name: /^Run B/ })).toBeNull();
+    await act(async () => releaseA(traceOf(HYBRID_TRACE, 'q2')));
+    expect(await screen.findByRole('application', { name: 'Run B, dense-only, query q2' })).toBeTruthy();
+    expect(screen.getByRole('application', { name: 'Run A, hybrid-rerank-gen, query q2' })).toBeTruthy();
+  });
+
   it("says in B's place, with Retry, that B's trace failed — and draws no B", async () => {
     api({ trace: (run, q) => (run === DENSE ? { problem: problem('query_not_found', 404, 'Run B holds no query q1.') } : traceOf(HYBRID_TRACE, q)) });
     show({ query: 'q1', with: DENSE });
