@@ -128,8 +128,22 @@ export const FAILED_TRACE: QueryTrace = {
   nodes: [...HYBRID_TRACE.nodes.slice(0, 3), node('rerank', 30_000, { error: 'The service at 127.0.0.1:7001 did not answer within 30 s.' })],
 };
 
-/** The trace with its passages checked as `status`: no text, and the digests found. */
-export function withPassages(trace: QueryTrace, status: 'dataset_absent' | 'dataset_differs'): QueryTrace {
+/**
+ * The trace with its passages checked as `status`: no text, and the digests
+ * found. Under `index_differs` the dataset is the run's, so the scores, the
+ * grades, the gold ranks and the query's text stay; only the text goes.
+ */
+export function withPassages(trace: QueryTrace, status: 'dataset_absent' | 'dataset_differs' | 'index_differs'): QueryTrace {
+  if (status === 'index_differs') {
+    const found = { dataset_version: SCIFACT, index_version: hex('8') };
+    return {
+      ...trace,
+      passages: { ...VERIFIED, status, found, detail: 'the dataset digests to the run’s, and its chunk set to another' },
+      nodes: trace.nodes.map((n) =>
+        n.output !== null && (n.output.kind === 'ranking' || n.output.kind === 'context') ? { ...n, output: { ...n.output, chunks: n.output.chunks.map((p) => ({ ...p, text: null })) } } : n,
+      ),
+    };
+  }
   const passages: DatasetCheck =
     status === 'dataset_absent'
       ? { ...VERIFIED, status, found: null, detail: 'no dataset on disk digests to the run’s dataset_version' }

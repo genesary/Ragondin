@@ -31,6 +31,12 @@ describe('a list item, per state', () => {
     expect(within(plain).queryByText('★')).toBeNull();
   });
 
+  it('ungraded: no star when the API gives no grade — an unjudged query, or a dataset not the run’s', () => {
+    const li = one({ item: item({ grade: null }) });
+    expect(li.getAttribute('data-gold')).toBeNull();
+    expect(within(li).queryByText('★')).toBeNull();
+  });
+
   it('moved up and moved down: an arrow and the former rank, in words', () => {
     const up = one({ item: item({ rank: 1, former: 2, move: 'up' }) });
     expect(up.getAttribute('data-move')).toBe('up');
@@ -106,6 +112,17 @@ describe('the inspector, one run', () => {
     const kept = screen.getByRole('list', { name: 'Ranked by rerank, 4 chunks' });
     expect(within(kept).getAllByRole('listitem').every((li) => li.getAttribute('data-text') === 'none')).toBe(true);
     expect(within(kept).queryByText('Passage 5 of the corpus.')).toBeNull();
+  });
+
+  it('keeps the stars with ids when only the chunk set differs: a grade needs the dataset, not the chunks', () => {
+    render(<NodeInspector node="rerank" from="A" sides={[{ ...A, trace: withPassages(HYBRID_TRACE, 'index_differs') }]} metric="ndcg@10" />);
+    const kept = screen.getByRole('list', { name: 'Ranked by rerank, 4 chunks' });
+    expect(within(kept).getAllByRole('listitem').map((li) => [li.getAttribute('data-gold'), li.getAttribute('data-text')])).toEqual([
+      ['true', 'none'],
+      ['true', 'none'],
+      [null, 'none'],
+      [null, 'none'],
+    ]);
   });
 
   it('says a failed node failed, with its error, and a node after it was not run', () => {
