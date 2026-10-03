@@ -24,6 +24,8 @@ describe('overlayOf, building the canvas overlay from a trace', () => {
   it('counts what a node discarded of what its upstream ranked, and nothing for a retriever', () => {
     expect(overlay['rerank']?.discarded).toBe(4);
     expect(overlay['rrf']?.discarded).toBe(0);
+    // One rule for every node fed chunks: the context builder's discards are counted too.
+    expect(overlay['context']?.discarded).toBe(1);
     expect(overlay['bm25']?.discarded).toBeUndefined();
   });
 
@@ -129,20 +131,20 @@ describe('terminalOf', () => {
 
 describe('verdict, the final node’s sentence', () => {
   it('says the query’s score and where the first gold passage landed, for one run', () => {
-    expect(verdict({ metric: 'ndcg@10', a: { score: 0.861, gold: [1, 2] } })).toBe('ndcg@10 is 0.8610 on this query, with 2 gold passages in the top 10, the first at rank 1.');
+    expect(verdict({ metric: 'ndcg@10', a: { score: 0.861, gold: [1, 2] } })).toBe('ndcg@10 is 0.8610 on this query, with 2 gold documents in the top 10, the first at document rank 1.');
   });
 
   it('says when the ranking holds no gold passage, and when the query is not judged', () => {
-    expect(verdict({ metric: 'ndcg@10', a: { score: 0, gold: [] } })).toBe('ndcg@10 is 0.0000 on this query, with no gold passage in the ranking.');
+    expect(verdict({ metric: 'ndcg@10', a: { score: 0, gold: [] } })).toBe('ndcg@10 is 0.0000 on this query, with no gold document in the ranking.');
     expect(verdict({ metric: 'ndcg@10', a: { score: undefined, gold: null } })).toBe('This query is not scored on ndcg@10, so there is no verdict.');
   });
 
   it('compares the two runs side by side: both scores, the difference, and both first gold ranks', () => {
     expect(verdict({ metric: 'ndcg@10', a: { score: 0.861, gold: [1, 2] }, b: { score: 0.6131, gold: [3] } })).toBe(
-      'ndcg@10 is 0.8610 in A and 0.6131 in B, 0.2479 higher in A; the first gold passage is at rank 1 in A and rank 3 in B.',
+      'ndcg@10 is 0.8610 in A and 0.6131 in B, 0.2479 higher in A; the first gold document is at document rank 1 in A and 3 in B.',
     );
     expect(verdict({ metric: 'ndcg@10', a: { score: 0.5, gold: [2] }, b: { score: 0.5, gold: [] } })).toBe(
-      'ndcg@10 is 0.5000 in A and 0.5000 in B, the same in both; the first gold passage is at rank 2 in A, and B ranks none.',
+      'ndcg@10 is 0.5000 in A and 0.5000 in B, the same in both; the first gold document is at document rank 2 in A, and B ranks none.',
     );
     expect(verdict({ metric: 'ndcg@10', a: { score: 0.2, gold: [9] }, b: { score: undefined, gold: null } })).toBe('ndcg@10 is 0.2000 in A; B is not scored on it for this query.');
   });

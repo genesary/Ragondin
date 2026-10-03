@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { FamilyTile, Glyph, Progress, RankStrip, type Family } from '../../design/index.ts';
-import type { NodeOverlay, PortKind } from './model.ts';
+import { percent, type NodeOverlay, type PortKind } from './model.ts';
 import { PortMark, portTop, type PortProps } from './Port.tsx';
 import './NodeCard.css';
 
@@ -37,7 +37,6 @@ export type NodeCardProps = {
   previewState?: 'hover' | 'focus';
 };
 
-const pct = (share: number) => `${Math.round(share * 100)}%`;
 
 /**
  * A pipeline node: the family tile with its glyph, the name, the
@@ -125,7 +124,7 @@ function Replay({ overlay }: { overlay: NodeOverlay }) {
   const { metric, ranks, discarded, durationMs, share } = overlay;
   const rows = [metric, ranks, discarded, durationMs, share].some((v) => v !== undefined);
   if (!rows) return null;
-  const title = durationMs !== undefined && share !== undefined ? `${durationMs} ms, ${pct(share)} of this query's time` : undefined;
+  const title = durationMs !== undefined && share !== undefined ? `${durationMs} ms, ${percent(share)} of this query's time` : undefined;
   return (
     <div className="rg-node__replay">
       {metric === undefined ? null : (

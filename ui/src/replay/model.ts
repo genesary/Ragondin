@@ -138,7 +138,8 @@ export function overlayOf({ graph, trace, metric, letter = 'A', other }: Overlay
       ...(total > 0 ? { share: ran.duration_nanos / total } : {}),
       ...(value === undefined || metric === null ? {} : { metric: { name: metric, value: formatScore(value) } }),
       ...(ran.gold_ranks === null ? {} : { ranks: ran.gold_ranks }),
-      ...(list !== null && hasUpstream && ran.output?.kind === 'ranking' ? { discarded: list.discarded.length } : {}),
+      // One rule for every node fed chunks, a context builder included: what it did not keep.
+      ...(list !== null && hasUpstream ? { discarded: list.discarded.length } : {}),
       ...(ran.error === null ? {} : { error: ran.error }),
       ...tag,
     };
@@ -169,15 +170,17 @@ const inTop = (gold: readonly number[]) => gold.filter((r) => r >= 1 && r <= 10)
 /**
  * The final node's sentence: composed from numbers the API returned — the
  * query's score at each run's output, and the gold ranks at its ranking — in
- * plain English, counts and ranks rather than adjectives.
+ * plain English, counts and ranks rather than adjectives. The API's gold
+ * ranks count documents, chunks folded by first occurrence, so the sentence
+ * says "document rank": the list's ranks count chunks.
  */
 export function verdict({ metric, a, b }: { metric: string; a: Reading; b?: Reading }): string {
   if (a.score === undefined) return `This query is not scored on ${metric}, so there is no verdict.`;
   if (b === undefined) {
     const first = firstGold(a.gold);
-    if (first === null) return `${metric} is ${formatScore(a.score)} on this query, with no gold passage in the ranking.`;
+    if (first === null) return `${metric} is ${formatScore(a.score)} on this query, with no gold document in the ranking.`;
     const n = inTop(a.gold ?? []);
-    return `${metric} is ${formatScore(a.score)} on this query, with ${n} gold passage${n === 1 ? '' : 's'} in the top 10, the first at rank ${first}.`;
+    return `${metric} is ${formatScore(a.score)} on this query, with ${n} gold document${n === 1 ? '' : 's'} in the top 10, the first at document rank ${first}.`;
   }
   if (b.score === undefined) return `${metric} is ${formatScore(a.score)} in A; B is not scored on it for this query.`;
   const diff = a.score - b.score;
@@ -185,12 +188,12 @@ export function verdict({ metric, a, b }: { metric: string; a: Reading; b?: Read
   const [fa, fb] = [firstGold(a.gold), firstGold(b.gold)];
   const gold =
     fa === null && fb === null
-      ? 'neither ranks a gold passage'
+      ? 'neither ranks a gold document'
       : fa === null
-        ? `the first gold passage is at rank ${fb} in B, and A ranks none`
+        ? `the first gold document is at document rank ${fb} in B, and A ranks none`
         : fb === null
-          ? `the first gold passage is at rank ${fa} in A, and B ranks none`
-          : `the first gold passage is at rank ${fa} in A and rank ${fb} in B`;
+          ? `the first gold document is at document rank ${fa} in A, and B ranks none`
+          : `the first gold document is at document rank ${fa} in A and ${fb} in B`;
   return `${metric} is ${formatScore(a.score)} in A and ${formatScore(b.score)} in B, ${compared}; ${gold}.`;
 }
 

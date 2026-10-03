@@ -43,7 +43,8 @@ export type NodeOverlay = {
   notRun?: true;
 };
 
-const percent = (share: number) => `${Math.round(share * 100)}%`;
+/** A share of the query's time, in words: a sliver is "under 1%", never "0%". */
+export const percent = (share: number) => (share > 0 && share < 0.005 ? 'under 1%' : `${Math.round(share * 100)}%`);
 
 /**
  * What a replayed card shows, in words: its accessible description. Inside

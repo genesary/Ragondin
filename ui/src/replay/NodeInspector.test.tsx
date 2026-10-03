@@ -98,10 +98,15 @@ describe('the inspector, one run', () => {
     expect(screen.getByText('What do tides depend on?')).toBeTruthy();
   });
 
+  it("says a sliver of the query's time as under 1%, never 0%", () => {
+    render(<NodeInspector node="rrf" from="A" sides={[A]} metric="ndcg@10" />);
+    expect(screen.getByText("1 ms, under 1% of this query's time")).toBeTruthy();
+  });
+
   it('fills the verdict slot for the final node only', () => {
     const { unmount } = render(<NodeInspector node="answer" from="A" sides={[A]} metric="ndcg@10" />);
     expect(screen.getByRole('heading', { name: 'Verdict' })).toBeTruthy();
-    expect(screen.getByText('ndcg@10 is 0.8610 on this query, with 2 gold passages in the top 10, the first at rank 1.')).toBeTruthy();
+    expect(screen.getByText('ndcg@10 is 0.8610 on this query, with 2 gold documents in the top 10, the first at document rank 1.')).toBeTruthy();
     unmount();
     render(<NodeInspector node="rerank" from="A" sides={[A]} metric="ndcg@10" />);
     expect(screen.queryByRole('heading', { name: 'Verdict' })).toBeNull();
@@ -159,8 +164,15 @@ describe('the inspector, side by side', () => {
     expect(screen.getAllByRole('region').map((c) => within(c).queryByText(/No such node/))).toEqual([null, null]);
   });
 
-  it("compares the two runs in the verdict when the final output is shown", () => {
+  it("compares the two runs in the verdict on the selected run's final node", () => {
+    render(<NodeInspector node="answer" from="A" sides={[A, B]} metric="ndcg@10" />);
+    expect(screen.getByText('ndcg@10 is 0.8610 in A and 0.6131 in B, 0.2479 higher in A; the first gold document is at document rank 1 in A and 3 in B.')).toBeTruthy();
+  });
+});
+
+describe('the verdict slot, side by side', () => {
+  it("stays empty on a node that is not its run's final node, even when the other column shows its run's final output", () => {
     render(<NodeInspector node="rerank" from="A" sides={[A, B]} metric="ndcg@10" />);
-    expect(screen.getByText('ndcg@10 is 0.8610 in A and 0.6131 in B, 0.2479 higher in A; the first gold passage is at rank 1 in A and rank 3 in B.')).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: 'Verdict' })).toBeNull();
   });
 });

@@ -5,6 +5,7 @@
 // node resolved by `counterpart`. ARCHITECTURE.md § The Replay screen.
 import { FamilyTile, Inspector, InlineMessage, RunSwatch, familyOfComponent, type Family } from '../../design/index.ts';
 import type { Graph, QueryTrace, RunQueries } from '../api/types.ts';
+import { percent } from '../canvas/index.ts';
 import { counterpart, formatMs, formatScore, listOf, terminalOf, verdict, type ListItem, type Reading } from './model.ts';
 
 /** One run as the inspector reads it. */
@@ -104,7 +105,7 @@ function NodeBody({ side, node, metric }: { side: Side; node: string; metric: st
   const ran = trace.nodes.find((n) => n.node === node);
   if (ran === undefined) return <p className="rg-replay__meta">Not run: an earlier node failed on this query.</p>;
   const total = trace.nodes.reduce((sum, n) => sum + n.duration_nanos, 0);
-  const share = total > 0 ? `, ${Math.round((ran.duration_nanos / total) * 100)}% of this query's time` : '';
+  const share = total > 0 ? `, ${percent(ran.duration_nanos / total)} of this query's time` : '';
   if (ran.error !== null) {
     return (
       <InlineMessage tone="critical" title={`Failed after ${formatMs(ran.duration_nanos)} ms`}>
@@ -190,7 +191,8 @@ export function NodeInspector({ node, from, sides, metric, onClose }: NodeInspec
     const other = counterpart(node, side);
     return { side, node: other?.node ?? null, final: other?.kind === 'final' };
   });
-  const atEnd = columns.some((c) => c.node !== null && c.node === terminalOf(c.side.graph));
+  // The verdict is the selected node's, when it is its own run's final node.
+  const atEnd = node === terminalOf(home.graph);
   // The verdict reads each run's ranking node from its query listing: until
   // every listing has loaded it is left out, never said with a run's gold missing.
   const said =

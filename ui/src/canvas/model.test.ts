@@ -96,6 +96,7 @@ describe('describeOverlay', () => {
   it('says each field on its own, and nothing for an empty overlay', () => {
     expect(describeOverlay({ durationMs: 4 })).toBe('4 ms.');
     expect(describeOverlay({ share: 0.5 })).toBe("50% of this query's time.");
+    expect(describeOverlay({ share: 0.004 })).toBe("under 1% of this query's time.");
     expect(describeOverlay({ ranks: [] })).toBe('0 gold passages in the top 10.');
     expect(describeOverlay({})).toBe('');
   });

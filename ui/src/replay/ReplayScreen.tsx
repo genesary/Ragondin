@@ -94,6 +94,11 @@ export function ReplayScreen({ client, run, query, with: other }: ReplayScreenPr
     [run],
   );
 
+  // A node selected in B goes with B: in A it would read as "not run".
+  useEffect(() => {
+    if (beside === null) setSelected((s) => (s?.from === 'B' ? null : s));
+  }, [beside]);
+
   // No query chosen: the first judged one, filled in as a correction.
   const first = listed === null ? null : firstJudged(listed.queries);
   useEffect(() => {
@@ -168,7 +173,12 @@ export function ReplayScreen({ client, run, query, with: other }: ReplayScreenPr
           onChange={(mode) => go(query, mode === 'side' ? (offered[0]?.id ?? null) : null)}
           options={[
             { value: 'single', label: 'One run' },
-            { value: 'side', label: 'Side by side', disabled: offered.length === 0, reason: 'No other run on this benchmark' },
+            {
+              value: 'side',
+              label: 'Side by side',
+              disabled: offered.length === 0,
+              reason: listing.state.status === 'error' ? `The runs could not be listed: ${listing.state.problem.message}` : 'No other run on this benchmark',
+            },
           ]}
         />
         {beside === null ? null : (
@@ -239,7 +249,12 @@ function Stage({ sides, held, trace, onRetry, metric, selected, onSelect }: Stag
     () => sides.map((side, i) => overlayOf({ graph: side.graph, trace: side.trace, metric, letter: side.letter, ...(sides.length === 2 ? { other: { graph: sides[1 - i]!.graph, letter: sides[1 - i]!.letter } } : {}) })),
     [sides, metric],
   );
-  const banner = passagesBanner(a.trace.passages);
+  // Each run's passages are checked on their own: B's dataset may differ where A's does not.
+  const banners = sides.flatMap((side) => {
+    const banner = passagesBanner(side.trace.passages);
+    if (banner === null) return [];
+    return [{ ...banner, letter: side.letter, title: sides.length === 2 ? `Run ${side.letter}: ${banner.title.charAt(0).toLowerCase()}${banner.title.slice(1)}` : banner.title }];
+  });
   const failed = a.trace.nodes.find((n) => n.error !== null);
   const has = (side: Side, id: string) => side.graph.nodes.some((n) => n.id === id) || side.graph.inputs.some((i) => i.id === id);
   return (
@@ -248,12 +263,12 @@ function Stage({ sides, held, trace, onRetry, metric, selected, onSelect }: Stag
         <code>{a.trace.query}</code> <span>{a.trace.text ?? ''}</span>
       </h2>
       {trace === null ? null : <ErrorState problem={trace.problem} onRetry={onRetry} />}
-      {banner === null ? null : (
-        <InlineMessage tone="warning" title={banner.title}>
+      {banners.map((banner) => (
+        <InlineMessage key={banner.letter} tone="warning" title={banner.title}>
           <span title={banner.digests}>{banner.detail}</span>
           <span className="rg-visually-hidden"> {banner.digests}</span>
         </InlineMessage>
-      )}
+      ))}
       {failed === undefined ? null : <InlineMessage tone="warning" title={`This query failed at ${failed.node}; the nodes after it did not run.`} />}
       <div className="rg-replay__canvases" data-columns={held === null ? sides.length : 2}>
         {sides.map((side, i) => {

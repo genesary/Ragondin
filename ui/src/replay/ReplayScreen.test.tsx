@@ -349,7 +349,7 @@ describe('side by side, never two queries at once', () => {
     show({ query: 'q1', with: DENSE });
     const a = await screen.findByRole('application', { name: /^Run A/ });
     await screen.findByRole('application', { name: /^Run B/ });
-    fireEvent.click(nodeOf(a.parentElement!, 'rerank'));
+    fireEvent.click(nodeOf(a.parentElement!, 'answer'));
     await screen.findByRole('region', { name: 'B, dense-only' });
     expect(screen.queryByRole('heading', { name: 'Verdict' })).toBeNull();
     expect(screen.queryByText(/ranks none/)).toBeNull();
@@ -380,5 +380,37 @@ describe('what is busy', () => {
     await screen.findByText('Reading query q2…');
     expect(document.querySelector('.rg-replay')?.getAttribute('aria-busy')).toBeNull();
     expect(document.querySelector('.rg-replay__stage')?.getAttribute('aria-busy')).toBe('true');
+  });
+});
+
+describe('side by side, the rest', () => {
+  it("gives B its own passages banner, named, when B's passages are not verified", async () => {
+    api({ traces: { ...TRACES, [DENSE]: withPassages(DENSE_TRACE, 'dataset_absent') } });
+    show({ query: 'q1', with: DENSE });
+    expect(await screen.findByText('Run B: passage text is hidden: the dataset of this run is not on disk.')).toBeTruthy();
+    expect(screen.queryByText(/^Run A: passage text is hidden/)).toBeNull();
+  });
+
+  it('clears a node selected in B when B is put away, rather than calling it not run in A', async () => {
+    api();
+    const view = render(<ReplayScreen client={createApiClient()} run={DENSE} query="q1" with={HYBRID} />);
+    const b = await screen.findByRole('application', { name: /^Run B, hybrid-rerank-gen/ });
+    fireEvent.click(nodeOf(b.parentElement!, 'rerank'));
+    await screen.findByRole('region', { name: 'B, hybrid-rerank-gen' });
+    view.rerender(<ReplayScreen client={createApiClient()} run={DENSE} query="q1" with={undefined} />);
+    expect(await screen.findByText('Select a node to see what it produced for this query.')).toBeTruthy();
+    expect(screen.queryByText(/Not run/)).toBeNull();
+  });
+
+  it('says side by side is unavailable because the runs could not be listed, not because none shares the benchmark', async () => {
+    mockApi({
+      'GET /runs': { problem: problem('backend_failed', 500, 'The store did not answer.') },
+      'GET /runs/{id}': { body: HYBRID_DETAIL },
+      'GET /runs/{id}/queries': { body: HYBRID_QUERIES },
+      'GET /runs/{id}/trace/{query}': { body: HYBRID_TRACE },
+    });
+    show({ query: 'q1' });
+    const side = await screen.findByRole('radio', { name: 'Side by side' });
+    await waitFor(() => expect(side.getAttribute('title')).toBe('The runs could not be listed: The store did not answer.'));
   });
 });
