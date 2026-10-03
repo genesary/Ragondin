@@ -227,4 +227,13 @@ describe('NodeCard with an overlay (replay)', () => {
     }
     expect(declared(css, '.rg-node[data-only-here="true"]', 'border')).toBe('1.5px dashed var(--accent)');
   });
+
+  it('the not-run state: the word, muted, and none of the result rows', () => {
+    for (const card of inThemes(<NodeCard {...BASE} overlay={{ notRun: true }} />)) {
+      expect(card.getAttribute('data-status')).toBe('not-run');
+      expect(within(card).getByText('not run')).toBeTruthy();
+      expect(card.querySelector('.rg-node__replay')).toBeNull();
+    }
+    expect(declared(css, '.rg-node[data-status="not-run"]', 'border-style')).toBe('dotted');
+  });
 });

@@ -11,7 +11,7 @@ export { Input } from './components/Input/Input.tsx';
 export { Inspector } from './components/Inspector/Inspector.tsx';
 export { Delta, MetricChip } from './components/MetricChip/MetricChip.tsx';
 export { Progress } from './components/Progress/Progress.tsx';
-export { RankStrip } from './components/RankStrip/RankStrip.tsx';
+export { RankStrip, rankSentence } from './components/RankStrip/RankStrip.tsx';
 export { RunSwatch, type RunSlot } from './components/RunSwatch/RunSwatch.tsx';
 export { SegmentedControl } from './components/SegmentedControl/SegmentedControl.tsx';
 export { Select } from './components/Select/Select.tsx';

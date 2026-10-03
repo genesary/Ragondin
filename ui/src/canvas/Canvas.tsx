@@ -20,7 +20,7 @@ import { Button, FAMILY_LABEL } from '../../design/index.ts';
 import { EdgeLine } from './Edge.tsx';
 import { NODE_WIDTH, nodeSize, resolveLayout, type Position, type StoredLayout } from './layout.ts';
 import { Legend } from './Legend.tsx';
-import { toModel, type CanvasNode, type NodeOverlay, type PortKind } from './model.ts';
+import { describeOverlay, toModel, type CanvasNode, type NodeOverlay, type PortKind } from './model.ts';
 import { NodeCard } from './NodeCard.tsx';
 import { NodeMenu } from './NodeMenu.tsx';
 import { PortDot, portTitle, portTop, type PortProps } from './Port.tsx';
@@ -70,6 +70,8 @@ type LineEdge = Edge<{ port: number; kind: PortKind }, 'line'>;
 // other. The library's default names Space, the arrow keys and Delete, which
 // read mode does not bind.
 const NODE_DESCRIPTION = 'Enter selects, Shift+F10 opens the menu, Escape clears.';
+// The id the library gives that description, suffixed with the flow's id.
+const KEYS_DESCRIPTION = 'react-flow__node-desc';
 const ARIA_LABELS = {
   'node.a11yDescription.default': NODE_DESCRIPTION,
   'node.a11yDescription.keyboardDisabled': NODE_DESCRIPTION,
@@ -91,6 +93,7 @@ function accessibleName(node: CanvasNode, selected: boolean, overlay: NodeOverla
     `${FAMILY_LABEL[node.family]} ${node.id}, ${node.impl}`,
     selected ? 'selected' : null,
     overlay?.error !== undefined ? 'failed' : null,
+    overlay?.notRun === true ? 'not run' : null,
     overlay?.onlyHere ?? null,
   ]
     .filter((part) => part !== null)
@@ -205,8 +208,19 @@ function Surface({ graph, label, mode = 'read', layout, overlay = NO_OVERLAY, se
     if (refocus) root.current?.querySelector<HTMLElement>(`.react-flow__node[data-id="${CSS.escape(id)}"]`)?.focus();
   }, []);
 
+  // Each replayed node's figures, said: the element its description points
+  // at before the keys' description, which the library renders and names.
+  const descriptions = useMemo(
+    () => model.nodes.flatMap((node, i) => {
+      const said = overlay[node.id] === undefined ? '' : describeOverlay(overlay[node.id]!);
+      return said === '' ? [] : [{ node: node.id, id: `${flowId}-node-${i}`, said }];
+    }),
+    [model, overlay, flowId],
+  );
+
   const nodes: CardNode[] = useMemo(() => {
     const downstream = new Set(model.edges.map((e) => e.from));
+    const described = new Map(descriptions.map((d) => [d.node, d.id]));
     const size = nodeSize();
     return model.nodes.map((node) => {
       const isSelected = node.id === selected;
@@ -220,6 +234,7 @@ function Surface({ graph, label, mode = 'read', layout, overlay = NO_OVERLAY, se
         draggable: editable,
         connectable: editable,
         ariaLabel: accessibleName(node, isSelected, overlay[node.id]),
+        ...(described.has(node.id) ? { domAttributes: { 'aria-describedby': `${described.get(node.id)!} ${KEYS_DESCRIPTION}-${flowId}` } } : {}),
         // The node whose menu is open is lifted above the others, so its menu is too.
         ...(menu === node.id ? { zIndex: 1 } : {}),
         data: {
@@ -237,7 +252,7 @@ function Surface({ graph, label, mode = 'read', layout, overlay = NO_OVERLAY, se
         },
       };
     });
-  }, [model, resolved, selected, overlay, menu, entries, editable, closeMenu]);
+  }, [model, resolved, selected, overlay, menu, entries, editable, closeMenu, descriptions, flowId]);
 
   const edges: LineEdge[] = useMemo(
     () =>
@@ -315,6 +330,13 @@ function Surface({ graph, label, mode = 'read', layout, overlay = NO_OVERLAY, se
           <Background id="major" className="rg-canvas__grid-major" variant={BackgroundVariant.Dots} gap={128} size={1.5} />
         </ReactFlow>
         <Legend model={model} autoPlaced={resolved.autoPlaced.length} />
+        <div hidden>
+          {descriptions.map((d) => (
+            <span key={d.id} id={d.id}>
+              {d.said}
+            </span>
+          ))}
+        </div>
       </div>
       {panel === null ? null : <div className="rg-canvas__inspector">{panel}</div>}
     </div>

@@ -50,6 +50,9 @@
 .rg-node[data-variant="unavailable"] { border-style: dashed; box-shadow: none; background: transparent; }
 .rg-node[data-variant="unavailable"] > * { opacity: 0.55; }
 .rg-node[data-only-here="true"] { border: 1.5px dashed var(--accent); }
+/* Not run: an earlier node failed. Dotted rather than dashed, so it never reads as absent; the word says it. */
+.rg-node[data-status="not-run"] { border-style: dotted; box-shadow: none; background: transparent; }
+.rg-node[data-status="not-run"] .rg-node__head { opacity: 0.7; }
 
 /* Replay: read-only. Ports go solid and smaller, keeping their shape. */
 .rg-node[data-replay="true"] .rg-port { width: 8px; height: 8px; background: var(--ink-3); border: 0; }

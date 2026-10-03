@@ -211,6 +211,40 @@ describe('Canvas overlay', () => {
     const { container } = renderCanvas({ overlay: { answer: { error: 'the service did not answer' } } });
     expect(nodeEl(container, 'answer').getAttribute('aria-label')).toContain(', failed');
   });
+
+  it('marks a node that was not run in its accessible name', () => {
+    const { container } = renderCanvas({ overlay: { answer: { notRun: true } } });
+    expect(nodeEl(container, 'answer').getAttribute('aria-label')).toBe('generator answer, generator/answerer, not run');
+  });
+
+  it('describes a replayed node by what its card shows, then by the keys, since inside the application a screen reader hears no card text', () => {
+    const { container } = renderCanvas({ overlay: { reranked: { metric: { name: 'ndcg@10', value: '0.8610' }, ranks: [1, 3], durationMs: 349, share: 0.85 } } });
+    const ids = nodeEl(container, 'reranked').getAttribute('aria-describedby')!.split(' ');
+    expect(ids.map((id) => document.getElementById(id)?.textContent)).toEqual([
+      "ndcg@10 0.8610. 2 gold passages in the top 10, at rank 1, 3. 349 ms, 85% of this query's time.",
+      'Enter selects, Shift+F10 opens the menu, Escape clears.',
+    ]);
+    const plain = nodeEl(container, 'fused').getAttribute('aria-describedby')!.split(' ');
+    expect(plain.map((id) => document.getElementById(id)?.textContent)).toEqual(['Enter selects, Shift+F10 opens the menu, Escape clears.']);
+  });
+
+  it('keeps the descriptions of two canvases apart', () => {
+    const { container } = render(
+      <>
+        <div data-side="a">
+          <Canvas graph={HYBRID_RERANK_GEN} label="A" overlay={{ fused: { durationMs: 1 } }} />
+        </div>
+        <div data-side="b">
+          <Canvas graph={HYBRID_RERANK_GEN} label="B" overlay={{ fused: { durationMs: 2 } }} />
+        </div>
+      </>,
+    );
+    const text = (side: string) => {
+      const id = nodeEl(container.querySelector(`[data-side="${side}"]`) as HTMLElement, 'fused').getAttribute('aria-describedby')!.split(' ')[0]!;
+      return document.getElementById(id)?.textContent;
+    };
+    expect([text('a'), text('b')]).toEqual(['1 ms.', '2 ms.']);
+  });
 });
 
 describe('Two canvases on one page', () => {

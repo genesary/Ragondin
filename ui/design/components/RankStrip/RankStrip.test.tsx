@@ -3,7 +3,7 @@ import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import { declared } from '../../testing/css.ts';
 import css from './RankStrip.css?raw';
-import { RankStrip } from './RankStrip.tsx';
+import { RankStrip, rankSentence } from './RankStrip.tsx';
 
 const cells = (el: HTMLElement) => [...el.querySelectorAll('.rg-rankstrip > i')];
 
@@ -51,5 +51,13 @@ describe('RankStrip', () => {
     const { container } = render(<RankStrip hits={[1]} large />);
     expect(container.querySelector('.rg-rankstrip--l')).toBeTruthy();
     expect(declared(css, '.rg-rankstrip--l > i', 'width')).toBe('12px');
+  });
+
+  it('says its sentence through one function, so a node described elsewhere reads the same words', () => {
+    expect(rankSentence([3, 1, 1, 12])).toBe('2 gold passages in the top 10, at rank 1, 3');
+    expect(rankSentence([2])).toBe('1 gold passage in the top 10, at rank 2');
+    expect(rankSentence([])).toBe('0 gold passages in the top 10');
+    render(<RankStrip hits={[3, 1]} />);
+    expect(screen.getByRole('img').getAttribute('aria-label')).toBe(rankSentence([3, 1]));
   });
 });

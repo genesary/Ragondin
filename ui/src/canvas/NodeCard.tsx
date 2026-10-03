@@ -9,7 +9,8 @@ export type NodeStatus =
   | { kind: 'invalid'; message: string }
   | { kind: 'failed'; message: string }
   | { kind: 'running'; value: number; total: number; label: string }
-  | { kind: 'queued' };
+  | { kind: 'queued' }
+  | { kind: 'not-run' };
 
 export type NodeCardProps = {
   family: Family;
@@ -60,7 +61,7 @@ export function NodeCard({
   renderPort = (p) => <PortMark key={`${p.side}-${p.index}`} {...p} />,
   previewState,
 }: NodeCardProps) {
-  const shown: NodeStatus | undefined = overlay?.error !== undefined ? { kind: 'failed', message: overlay.error } : status;
+  const shown: NodeStatus | undefined = overlay?.error !== undefined ? { kind: 'failed', message: overlay.error } : overlay?.notRun === true ? { kind: 'not-run' } : status;
   return (
     <div
       className="rg-node"
@@ -89,7 +90,7 @@ export function NodeCard({
             <span>{param.value}</span>
           </div>
         )
-      ) : (
+      ) : shown?.kind === 'not-run' ? null : (
         <Replay overlay={overlay} />
       )}
       {shown?.kind === 'running' ? (
@@ -111,11 +112,11 @@ export function NodeCard({
 
 function State({ status }: { status: NodeStatus | undefined }) {
   if (status === undefined) return null;
-  const glyph = status.kind === 'queued' ? 'clock' : status.kind === 'running' ? null : 'alert';
+  const glyph = status.kind === 'queued' ? 'clock' : status.kind === 'running' || status.kind === 'not-run' ? null : 'alert';
   return (
     <span className="rg-node__state">
       {glyph === null ? null : <Glyph name={glyph} />}
-      {status.kind}
+      {status.kind === 'not-run' ? 'not run' : status.kind}
     </span>
   );
 }
