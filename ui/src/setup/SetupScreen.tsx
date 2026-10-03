@@ -153,7 +153,9 @@ export function SetupScreen({ client, workspace, refreshWorkspace, retryWorkspac
 
   // The removal whose Undo window is open: nothing is written until it closes.
   // Its timer is null while a write binding the same name again is in flight:
-  // the window is paused then, neither closed nor cancelled, until that write answers.
+  // the window is paused then, and that write's answer cancels it (stored) or
+  // reopens it (refused) — unless something else closed it first, which
+  // writes it through the read before the DELETE.
   const open = useRef<{ binding: ServiceBinding; timer: ReturnType<typeof setTimeout> | null } | null>(null);
   const slotEls = useRef(new Map<string, HTMLLIElement>());
   /** Whether focus is inside the slot standing for `key`, Undo included. */
@@ -207,11 +209,16 @@ export function SetupScreen({ client, workspace, refreshWorkspace, retryWorkspac
     [client, replaceServices],
   );
 
-  /** Closes the open Undo window, writing its removal now; a paused window waits for the write that paused it. */
+  /**
+   * Closes the open Undo window, writing its removal now — a paused one too,
+   * whenever something else closes it (another removal, leaving the screen or
+   * the page). The read before the DELETE makes that safe: if the re-bind
+   * that paused it has stored the name at its new address, nothing is deleted.
+   */
   const closeWindow = useCallback(() => {
     const pending = open.current;
-    if (pending === null || pending.timer === null) return;
-    clearTimeout(pending.timer);
+    if (pending === null) return;
+    if (pending.timer !== null) clearTimeout(pending.timer);
     open.current = null;
     void write(pending.binding);
   }, [write]);

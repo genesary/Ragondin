@@ -452,6 +452,93 @@ describe('the services', () => {
       await waitFor(() => expect(api.requests).toContain('DELETE /api/v1/services/generator/qwen'));
     });
 
+    const rebind = async (services: ReturnType<typeof within>, uri: string) => {
+      const form = within(services.getByRole('form', { name: 'Connect a service' }));
+      fireEvent.change(form.getByLabelText('Family'), { target: { value: 'reranker' } });
+      fireEvent.change(form.getByLabelText('Name'), { target: { value: 'bge' } });
+      fireEvent.change(form.getByLabelText('Address'), { target: { value: uri } });
+      fireEvent.click(form.getByRole('button', { name: 'Connect' }));
+      return form;
+    };
+    const BGE = service('reranker', 'bge', 'http://127.0.0.1:9090');
+    const E5 = service('embedder', 'e5', 'http://127.0.0.1:9191');
+    const refused = problem('binding_refused', 422, 'the uri is not http');
+
+    it('writes a paused removal through its check when another binding is removed during the re-bind', async () => {
+      let refuse: (reply: typeof refused) => void = () => {};
+      const api = mockApi(
+        routes({
+          'GET /services': { body: { services: [BGE, E5] } },
+          'PUT /services/{family}/{name}': () => new Promise((resolve) => (refuse = resolve)),
+          'DELETE /services/{family}/{name}': { body: { services: [E5] } },
+        }),
+      );
+      render(<Harness />);
+      const services = within(await screen.findByRole('region', { name: 'Services' }));
+      fireEvent.click(within(await services.findByRole('listitem', { name: 'reranker/bge' })).getByRole('button', { name: 'Remove reranker/bge' }));
+      const form = await rebind(services, 'ftp://h');
+      await waitFor(() => expect(api.requests).toContain('PUT /api/v1/services/reranker/bge'));
+      fireEvent.click(within(services.getByRole('listitem', { name: 'embedder/e5' })).getByRole('button', { name: 'Remove embedder/e5' }));
+      // The paused removal is written now, through the check: still bound where it was removed, so it is deleted.
+      await waitFor(() => expect(api.requests).toContain('DELETE /api/v1/services/reranker/bge'));
+      await act(async () => refuse(refused));
+      await waitFor(() => expect(form.getByLabelText('Address').getAttribute('aria-invalid')).toBe('true'));
+      expect(api.requests.filter((r) => r.startsWith('DELETE'))).toEqual(['DELETE /api/v1/services/reranker/bge']);
+      const bge = services.getByRole('listitem', { name: 'reranker/bge, removed' });
+      expect(within(bge).queryByRole('button', { name: 'Undo' })).toBeNull();
+      expect(within(services.getByRole('listitem', { name: 'embedder/e5, removed' })).getByRole('button', { name: 'Undo' })).toBeTruthy();
+      expect(services.queryByRole('listitem', { name: 'reranker/bge' })).toBeNull();
+      // Nothing is left to fire for bge.
+      await act(async () => {
+        vi.advanceTimersByTime(UNDO_WINDOW_MS * 2);
+      });
+      expect(api.requests.filter((r) => r === 'DELETE /api/v1/services/reranker/bge')).toHaveLength(1);
+    });
+
+    it('writes a paused removal through its check when the page is left during the re-bind, and leaves no timer behind', async () => {
+      let refuse: (reply: typeof refused) => void = () => {};
+      const api = mockApi(
+        routes({
+          'GET /services': { body: { services: [BGE, E5] } },
+          'PUT /services/{family}/{name}': () => new Promise((resolve) => (refuse = resolve)),
+          'DELETE /services/{family}/{name}': { body: { services: [E5] } },
+        }),
+      );
+      const view = render(<Harness />);
+      const services = within(await screen.findByRole('region', { name: 'Services' }));
+      fireEvent.click(within(await services.findByRole('listitem', { name: 'reranker/bge' })).getByRole('button', { name: 'Remove reranker/bge' }));
+      await rebind(services, 'ftp://h');
+      await waitFor(() => expect(api.requests).toContain('PUT /api/v1/services/reranker/bge'));
+      view.unmount();
+      await waitFor(() => expect(api.requests).toContain('DELETE /api/v1/services/reranker/bge'));
+      await act(async () => refuse(refused));
+      await act(async () => {
+        vi.advanceTimersByTime(UNDO_WINDOW_MS * 2);
+      });
+      expect(api.requests.filter((r) => r.startsWith('DELETE'))).toEqual(['DELETE /api/v1/services/reranker/bge']);
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it('writes nothing when the listing read before the delete fails, brings the row back and says why', async () => {
+      const api = mockApi(
+        routes({
+          'GET /services': [{ body: { services: [QWEN] } }, problem('backend_failed', 500, 'workspace.toml could not be read: permission denied.', 'Check the file’s permissions, then retry.')],
+          'DELETE /services/{family}/{name}': { body: { services: [] } },
+        }),
+      );
+      render(<Harness />);
+      const services = within(await screen.findByRole('region', { name: 'Services' }));
+      fireEvent.click(within(await services.findByRole('listitem', { name: 'generator/qwen' })).getByRole('button', { name: 'Remove generator/qwen' }));
+      await act(async () => {
+        vi.advanceTimersByTime(UNDO_WINDOW_MS);
+      });
+      const alert = await services.findByRole('alert');
+      expect(alert.textContent).toContain('workspace.toml could not be read: permission denied.');
+      expect(alert.textContent).toContain('Check the file’s permissions, then retry.');
+      expect(services.getByRole('listitem', { name: 'generator/qwen' })).toBeTruthy();
+      expect(api.requests.filter((r) => r.startsWith('DELETE'))).toEqual([]);
+    });
+
     it('writes a pending removal at once when another binding is removed, each keeping its own place', async () => {
       const BGE = service('reranker', 'bge', 'http://127.0.0.1:9090');
       const api = mockApi(routes({ 'GET /services': { body: { services: [QWEN, BGE] } }, 'DELETE /services/{family}/{name}': { body: { services: [BGE] } } }));
