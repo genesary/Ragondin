@@ -86,7 +86,8 @@ export function ReplayScreen({ client, run, query, with: other }: ReplayScreenPr
   const [chosenMetric, setMetric] = useState<string | null>(null);
   const [selected, setSelected] = useState<Selected | null>(null);
   const listed = loaded(queries);
-  const metric = chosenMetric ?? (listed === null ? null : defaultMetric(listed.metrics));
+  const families = loaded(listing)?.runs.find((r) => r.id === run)?.metric_families ?? {};
+  const metric = chosenMetric ?? (listed === null ? null : defaultMetric(listed.metrics, families));
 
   const go = useCallback(
     (q: string, w: string | null) => navigate(w === null ? { screen: 'replay', run, query: q } : { screen: 'replay', run, query: q, with: w }, { replace: true }),

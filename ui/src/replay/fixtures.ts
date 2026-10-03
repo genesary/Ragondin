@@ -211,6 +211,8 @@ const summary = (id: string, name: string, dataset: string): RunSummary => ({
   benchmark_names: [dataset === SCIFACT ? 'beir/scifact' : 'beir/nfcorpus'],
   engine_version: '0.1.0',
   metrics: {},
+  metric_families: { mrr: 'ranking', 'ndcg@10': 'ranking', 'recall@10': 'ranking', token_f1: 'answers' },
+  median_query_latency_nanos: null,
   started_at_ms: null,
   finished_at_ms: null,
 });

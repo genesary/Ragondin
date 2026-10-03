@@ -153,11 +153,12 @@ describe('the toolbar’s choices', () => {
     expect(candidates(LISTING, HYBRID).map((r) => r.id)).toEqual([DENSE, 'f'.repeat(64)]);
   });
 
-  it('chooses ndcg@10 by default, else the first ranking metric, else the first', () => {
-    expect(defaultMetric(HYBRID_QUERIES.metrics)).toBe('ndcg@10');
-    expect(defaultMetric(['token_f1', 'recall@5', 'mrr'])).toBe('recall@5');
-    expect(defaultMetric(['token_f1'])).toBe('token_f1');
-    expect(defaultMetric([])).toBeNull();
+  it("chooses ndcg@10 by default, else the first metric the API's catalogue calls a ranking metric, else the first", () => {
+    expect(defaultMetric(HYBRID_QUERIES.metrics, {})).toBe('ndcg@10');
+    expect(defaultMetric(['exact_match', 'recall@5', 'mrr'], { exact_match: 'answers', 'recall@5': 'ranking', mrr: 'ranking' })).toBe('recall@5');
+    // A name the listing gives no family is never guessed at from its spelling.
+    expect(defaultMetric(['token_f1', 'recall@5'], {})).toBe('token_f1');
+    expect(defaultMetric([], {})).toBeNull();
   });
 
   it('opens on the first judged query', () => {

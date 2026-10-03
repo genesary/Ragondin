@@ -4,7 +4,7 @@
 // the screen's issue); what is computed is presentation: shares of time,
 // moves between a node and its upstream, the counterpart beside a node, and
 // the sentences. ARCHITECTURE.md § The Replay screen.
-import type { DatasetCheck, Graph, QueryScores, QueryTrace, RunListing, RunSummary, TracePassage, TraceNodeView } from '../api/types.ts';
+import type { DatasetCheck, Graph, MetricFamily, QueryScores, QueryTrace, RunListing, RunSummary, TracePassage, TraceNodeView } from '../api/types.ts';
 import type { NodeOverlay } from '../canvas/index.ts';
 
 /** A metric value as every screen prints a ranking metric: four decimals. */
@@ -200,12 +200,14 @@ export function candidates(listing: RunListing, run: string): RunSummary[] {
   return dataset === undefined ? [] : listing.runs.filter((r) => r.id !== run && r.dataset_version === dataset);
 }
 
-const RANKING = /^(ndcg|recall|precision|map)@\d+$|^mrr$/;
-
-/** The per-node metric shown first: ndcg@10, else the first ranking metric, else the first. */
-export function defaultMetric(metrics: readonly string[]): string | null {
+/**
+ * The per-node metric shown first: ndcg@10, else the first the run's listing
+ * calls a ranking metric (`metric_families`, from the API's catalogue — the
+ * browser keeps no copy to guess a family from a name), else the first.
+ */
+export function defaultMetric(metrics: readonly string[], families: Readonly<Record<string, MetricFamily>>): string | null {
   if (metrics.includes('ndcg@10')) return 'ndcg@10';
-  return metrics.find((m) => RANKING.test(m) && m !== 'mrr') ?? metrics.find((m) => RANKING.test(m)) ?? metrics[0] ?? null;
+  return metrics.find((m) => families[m] === 'ranking') ?? metrics[0] ?? null;
 }
 
 /** The query Replay opens on when none is chosen: the first judged one, else the first. */
