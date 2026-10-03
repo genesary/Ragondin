@@ -1,37 +1,36 @@
 //! `GET /pipelines/{name}/matrix`: one workspace pipeline's node × benchmark
 //! matrix over the stored runs (ADR-C39 § 6, the design document § 3).
 //!
-//! A run counts for the pipeline *N*, whose document now lowers to the
-//! canonical hash *H*, by its content alone:
+//! A run fills a cell of the pipeline *N*, whose document now lowers to the
+//! canonical hash *H*, only from the current content (ADR-C39 § 6):
 //!
-//! - **its pipeline hash is *H***, whatever name it was launched under or
+//! - **its pipeline hash is *H***, whatever name its launch record gives or
 //!   none — a run of the current canonical form;
-//! - **its lowered graph is a prefix of *N*'s current one**, by the
-//!   structural test (`lineage::is_prefix`), whatever its record says.
+//! - **it is a prefix of the current form**: its record's
+//!   `prefix_of.parent_pipeline_hash` is *H*, or, failing that, its lowered
+//!   graph is a prefix of *N*'s current one by the structural test
+//!   (`lineage::is_prefix`), asked of every run whatever its record says
+//!   (§ 5).
 //!
-//! Each benchmark's column is the most recent counted run on it
+//! A run whose record names *N* and that is neither feeds the matrix without
+//! filling a cell: "launched as *N*; content since changed" (§ 7), with its
+//! parameter difference against the current document by `compare_runs`'
+//! configuration matrix, and a benchmark whose only runs are such runs reads
+//! "not run on this version", linking the most recent.
+//!
+//! Each benchmark's column is the most recent run filling it
 //! (`matrix::most_recent_first`); the others are listed among the feeding
 //! runs, not used. A cell's figure is the per-node figure
 //! `GET /runs/{id}/queries` serves — the same function, the same cache — and
 //! its gain is taken over the previous stage by `comparison::gain`, over the
 //! stages `POST /compare` aligns runs by.
-//!
-//! **Waiting on the launch record** (ADR-C39 § 1, the issue that adds it to
-//! `ragondin-experiments`). This module reads no record, so the feeding runs
-//! name their pipeline by content alone (`lineage`), and [`counted`]'s `None`
-//! is the seam: there, a run whose record names *N* goes to the feeding runs
-//! as "launched as *N*; content since changed", with its parameter difference
-//! against the current document from `compare`'s configuration matrix, and a
-//! benchmark whose only run is such a run reads "not run on this version".
-//! And there the record's `prefix_of.parent_pipeline_hash`, when it equals
-//! *H*, makes a run a prefix before the structural test is asked.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use axum::extract::State;
 use axum::Json;
-use ragondin_experiments::{terminal, Run};
+use ragondin_experiments::{compare_runs, terminal, ConfigDocument, Run};
 use ragondin_pipeline::{produced_kind, LogicalPipeline, NodeId, ValueKind};
 
 use crate::backends::RunDataset;
@@ -43,31 +42,45 @@ use crate::handlers::{self, AppState};
 use crate::matrix::{most_recent_first, topological, Recency};
 use crate::request::{IncludeAvailable, PipelineMatrixParameters};
 use crate::response::{
-    FeedingRun, GroundTruth, MatrixCell, MatrixColumn, MatrixRow, MissingCells, PipelineMatrix,
-    PrefixOf,
+    ConfigurationMatrix, FeedingRun, GroundTruth, MatrixCell, MatrixColumn, MatrixRow,
+    MissingCells, PipelineMatrix, PrefixOf,
 };
 use crate::stages::Stages;
 use crate::{cache, convert, lineage, validation};
 
-/// A stored run that counts for the pipeline, and the pipeline it ran: the
-/// current one for a run of its canonical form, its own for a prefix.
+/// A stored run that counts for the pipeline, and how.
 struct Counted {
     run: Run,
     /// The run's id, as the most-recent-run rule reads it.
     id: String,
-    pipeline: LogicalPipeline,
-    /// The node a prefix run stops at; `None` for the current form.
-    up_to: Option<NodeId>,
+    standing: Standing,
+}
+
+/// How a run counts for the pipeline.
+enum Standing {
+    /// It fills cells, with the pipeline it ran: the current one for a run of
+    /// its canonical form, its own for a prefix.
+    Fills {
+        pipeline: LogicalPipeline,
+        /// The node a prefix run stops at; `None` for the current form.
+        up_to: Option<NodeId>,
+    },
+    /// Launched as the pipeline, with content that has since changed: its
+    /// parameter difference against the current document. It fills nothing.
+    SinceChanged(ConfigurationMatrix),
 }
 
 impl Counted {
-    fn new(run: Run, pipeline: LogicalPipeline, up_to: Option<NodeId>) -> Self {
+    fn new(run: Run, standing: Standing) -> Self {
         Self {
             id: run.id.to_string(),
             run,
-            pipeline,
-            up_to,
+            standing,
         }
+    }
+
+    fn fills(&self) -> bool {
+        matches!(self.standing, Standing::Fills { .. })
     }
 
     fn recency(&self) -> Recency<'_> {
@@ -105,15 +118,21 @@ pub(crate) async fn matrix(
     let (runs, unreadable) = handlers::load_all(&state).await?;
     let mut counted: Vec<Counted> = runs
         .into_iter()
-        .filter_map(|run| self::counted(run, &hash, &current))
+        .filter_map(|run| self::counted(run, &name, &hash, &current, &file.document))
         .collect();
     counted.sort_by(|a, b| most_recent_first(a.recency(), b.recency()));
-    // Sorted most recent first, so the first run of each benchmark fills it.
+    // Sorted most recent first, so the first run of each benchmark that
+    // fills cells fills its column; on a benchmark with none, the first run
+    // of earlier content is the one linked.
     let mut filling: BTreeMap<String, usize> = BTreeMap::new();
+    let mut since_changed: BTreeMap<String, usize> = BTreeMap::new();
     for (index, each) in counted.iter().enumerate() {
-        filling
-            .entry(each.run.inputs.dataset_version.clone())
-            .or_insert(index);
+        let version = each.run.inputs.dataset_version.clone();
+        if each.fills() {
+            filling.entry(version).or_insert(index);
+        } else {
+            since_changed.entry(version).or_insert(index);
+        }
     }
 
     let order = topological(&current);
@@ -140,9 +159,28 @@ pub(crate) async fn matrix(
         columns.push(column);
         cache_errors.extend(failure);
     }
+    for (version, index) in &since_changed {
+        if filling.contains_key(version) {
+            continue;
+        }
+        columns.push(MatrixColumn {
+            dataset_version: version.clone(),
+            benchmark_names: names_of(version),
+            ground_truth: None,
+            run: None,
+            up_to: None,
+            dataset_check: None,
+            cells: order
+                .iter()
+                .map(|_| MatrixCell::NotRunOnThisVersion {
+                    run: counted[*index].id.clone(),
+                })
+                .collect(),
+        });
+    }
     if include_available {
         for (version, names) in &pinned {
-            if filling.contains_key(version) {
+            if filling.contains_key(version) || since_changed.contains_key(version) {
                 continue;
             }
             let benchmark = names[0].clone();
@@ -183,7 +221,9 @@ pub(crate) async fn matrix(
                 .filter(|(cell, _)| {
                     matches!(
                         cell,
-                        MatrixCell::NotRunYet { .. } | MatrixCell::PrefixStops { .. }
+                        MatrixCell::NotRunYet { .. }
+                            | MatrixCell::PrefixStops { .. }
+                            | MatrixCell::NotRunOnThisVersion { .. }
                     )
                 })
                 .map(|(_, row)| row.node.clone())
@@ -210,12 +250,22 @@ pub(crate) async fn matrix(
                 dataset_version: each.run.inputs.dataset_version.clone(),
                 benchmark_names: names_of(&each.run.inputs.dataset_version),
                 started_at_ms: each.recency().started_at_ms,
+                launched_as: each.run.provenance.as_ref().map(convert::launched_as),
                 pipeline_names,
-                prefix_of: each.up_to.as_ref().map(|up_to| PrefixOf {
-                    pipeline: name.clone(),
-                    up_to: up_to.as_str().to_owned(),
-                }),
+                prefix_of: match &each.standing {
+                    Standing::Fills {
+                        up_to: Some(up_to), ..
+                    } => Some(PrefixOf {
+                        pipeline: name.clone(),
+                        up_to: up_to.as_str().to_owned(),
+                    }),
+                    _ => None,
+                },
                 fills_column: filling.get(&each.run.inputs.dataset_version) == Some(&index),
+                content_since_changed: match &each.standing {
+                    Standing::SinceChanged(difference) => Some(difference.clone()),
+                    Standing::Fills { .. } => None,
+                },
             }
         })
         .collect();
@@ -232,21 +282,74 @@ pub(crate) async fn matrix(
     }))
 }
 
-/// Whether `run` counts for the pipeline whose current form is `current`,
-/// hashing to `hash`, and as what: by its content alone (ADR-C39 § 5, § 6).
-fn counted(run: Run, hash: &str, current: &LogicalPipeline) -> Option<Counted> {
+/// Whether `run` counts for the pipeline `name`, whose current `document`
+/// lowers to `current` and hashes to `hash`, and as what (ADR-C39 § 5 to
+/// § 7): it fills cells by the current content alone, and otherwise feeds the
+/// matrix only when its launch record names the pipeline.
+fn counted(
+    run: Run,
+    name: &str,
+    hash: &str,
+    current: &LogicalPipeline,
+    document: &str,
+) -> Option<Counted> {
     if run.inputs.pipeline.to_string() == hash {
         // One canonical hash is one canonical form: the current pipeline.
-        return Some(Counted::new(run, current.clone(), None));
+        let standing = Standing::Fills {
+            pipeline: current.clone(),
+            up_to: None,
+        };
+        return Some(Counted::new(run, standing));
     }
-    let pipeline = handlers::lower(&run).ok()?;
-    if !lineage::is_prefix(&pipeline, current) {
-        // The seam the module's notes describe: a run the launch record
-        // names as this pipeline goes to the feeding runs from here.
+    let record = run.provenance.as_ref();
+    let recorded_prefix = record
+        .and_then(|record| record.prefix_of())
+        .is_some_and(|prefix| prefix.parent_pipeline_hash().to_string() == hash);
+    if let Ok(pipeline) = handlers::lower(&run) {
+        // The structural test is asked of every run the record does not
+        // already place: a run's first record wins, so it may name another
+        // parent than one it is also a prefix of.
+        if recorded_prefix || lineage::is_prefix(&pipeline, current) {
+            if let Some(up_to) = terminal(&pipeline).map(|node| node.id().clone()) {
+                let standing = Standing::Fills {
+                    pipeline,
+                    up_to: Some(up_to),
+                };
+                return Some(Counted::new(run, standing));
+            }
+        }
+    }
+    if record.and_then(|record| record.name()) != Some(name) {
         return None;
     }
-    let up_to = terminal(&pipeline)?.id().clone();
-    Some(Counted::new(run, pipeline, Some(up_to)))
+    let difference = difference(&run, document);
+    Some(Counted::new(run, Standing::SinceChanged(difference)))
+}
+
+/// The parameter difference between the pipeline's current `document` and
+/// `run`'s, the current document's column first: `compare_runs`'
+/// configuration matrix, the one `POST /compare` serves, over the current
+/// document set in a run of its own beside `run`. Only the configuration is
+/// read of that run: it carries `run`'s inputs, so the two are one
+/// benchmark's and always comparable.
+fn difference(run: &Run, document: &str) -> ConfigurationMatrix {
+    let current = Run {
+        id: run.id,
+        inputs: run.inputs.clone(),
+        metrics: ragondin_experiments::Metrics::default(),
+        config: ConfigDocument::new(document),
+        traces: BTreeMap::new(),
+        bindings: Vec::new(),
+        times: None,
+        provenance: None,
+    };
+    match compare_runs(&current, &[run]) {
+        Ok(comparison) => convert::configuration_matrix(&comparison.configuration),
+        Err(refusal) => ConfigurationMatrix::Unavailable {
+            run: run.id.to_string(),
+            reason: refusal.to_string(),
+        },
+    }
 }
 
 /// The column `counted` fills: its ground truth, its dataset check, and a
@@ -258,8 +361,11 @@ async fn filled_column(
     benchmark_names: Vec<String>,
 ) -> Result<(MatrixColumn, Option<String>), ApiError> {
     let run = &counted.run;
+    let Standing::Fills { pipeline, up_to } = &counted.standing else {
+        unreachable!("only a run that fills cells fills a column");
+    };
     let metrics = Metrics::of(run.metrics.iter().map(|(name, _)| name));
-    let outputs = Outputs::of(&counted.pipeline);
+    let outputs = Outputs::of(pipeline);
     let dataset = state
         .backends
         .registry
@@ -273,7 +379,7 @@ async fn filled_column(
             let key = cache::Key::of(&state.config.build, run);
             let traces = Arc::new(handlers::read_traces(run)?);
             let (pipeline, work_metrics, work_outputs) =
-                (counted.pipeline.clone(), metrics.clone(), outputs.clone());
+                (pipeline.clone(), metrics.clone(), outputs.clone());
             let (figures, failure) = handlers::work(move || {
                 Ok(handlers::figures(
                     &workspace,
@@ -314,7 +420,7 @@ async fn filled_column(
         ground_truth,
         GroundTruth::ReferenceAnswers | GroundTruth::Both
     );
-    let stages = Stages::of(&counted.pipeline);
+    let stages = Stages::of(pipeline);
     let figure_of = |id: &NodeId| -> Option<&NodeFigures> {
         figures
             .as_ref()?
@@ -325,8 +431,8 @@ async fn filled_column(
         .iter()
         .map(|node| {
             let id = node.id();
-            if let Some(up_to) = &counted.up_to {
-                if !counted.pipeline.nodes().iter().any(|own| own.id() == id) {
+            if let Some(up_to) = up_to {
+                if !pipeline.nodes().iter().any(|own| own.id() == id) {
                     return MatrixCell::PrefixStops {
                         up_to: up_to.as_str().to_owned(),
                     };
@@ -382,10 +488,7 @@ async fn filled_column(
             benchmark_names,
             ground_truth: Some(ground_truth),
             run: Some(counted.id.clone()),
-            up_to: counted
-                .up_to
-                .as_ref()
-                .map(|up_to| up_to.as_str().to_owned()),
+            up_to: up_to.as_ref().map(|up_to| up_to.as_str().to_owned()),
             dataset_check: Some(check),
             cells,
         },

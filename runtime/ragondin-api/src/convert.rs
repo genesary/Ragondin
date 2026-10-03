@@ -25,9 +25,9 @@ use crate::error::ApiError;
 use crate::response::{
     BenchmarkEntry, BenchmarkState, ConfigurationMatrix, DatasetCheck, DatasetStatus,
     DatasetVersions, EdgeKind, FoundVersions, Graph, GraphEdge, GraphInput, GraphNode, GroundTruth,
-    MetricDirection, MetricFamily, MetricRow, NodeMetrics, ParameterName, ParameterRow,
-    ParameterValue, RunDetail, RunInputs, RunSummary, ServiceBinding, TraceNodeView, TracePassage,
-    TraceValue,
+    LaunchedAs, LaunchedPrefix, MetricDirection, MetricFamily, MetricRow, NodeMetrics,
+    ParameterName, ParameterRow, ParameterValue, RunDetail, RunInputs, RunSummary, ServiceBinding,
+    TraceNodeView, TracePassage, TraceValue,
 };
 
 /// One run, as the listing shows it, with the names the request found for
@@ -206,6 +206,17 @@ fn node(node: &LogicalNode) -> GraphNode {
 /// the graph's spelling.
 pub(crate) fn family(of: &LogicalNode) -> String {
     node(of).family
+}
+
+/// A run's launch record, as the API spells it.
+pub(crate) fn launched_as(record: &ragondin_experiments::RunProvenance) -> LaunchedAs {
+    LaunchedAs {
+        name: record.name().map(str::to_owned),
+        prefix_of: record.prefix_of().map(|prefix| LaunchedPrefix {
+            up_to: prefix.up_to().to_owned(),
+            parent_pipeline_hash: prefix.parent_pipeline_hash().to_string(),
+        }),
+    }
 }
 
 /// The kind of value a node produces, as an edge leaving it carries it.

@@ -11,7 +11,11 @@ use axum::http::StatusCode;
 use ragondin_api::Server;
 use ragondin_benchmarks::identity::dataset_version;
 use ragondin_benchmarks::{Benchmark, Qrels, ReferenceAnswers};
-use ragondin_experiments::{Run, RunTimes, Trace, TraceChunk, TraceSummary, UnixMillis};
+use ragondin_experiments::{
+    lower_configuration, ConfigDocument, PrefixOf, Run, RunProvenance, RunTimes, Trace, TraceChunk,
+    TraceSummary, UnixMillis,
+};
+use ragondin_pipeline::PipelineHash;
 use ragondin_types::{DocId, Document, Query, QueryId};
 use serde_json::Value;
 use support::datasets::scratch;
@@ -556,15 +560,145 @@ async fn a_run_of_the_same_canonical_form_under_another_name_fills_its_cell() {
     let body = matrix_of(app(
         "matrix-fork",
         &[(NAME, HYBRID_RERANK_GEN), (fork, HYBRID_RERANK_GEN)],
-        vec![run(1, HYBRID_RERANK_GEN, &scifact(), "sci", Some(1_000))],
+        // Launched first under the fork's name: its record says so.
+        vec![launched(
+            run(1, HYBRID_RERANK_GEN, &scifact(), "sci", Some(1_000)),
+            RunProvenance::named(fork),
+        )],
     ))
     .await;
 
     assert_eq!(column(&body, "beir/scifact")["run"], id(1));
+    let feeding = feeding(&body, &id(1)).unwrap();
+    // Two facts, never resolved into one: the record, and the content.
+    assert_eq!(feeding["launched_as"]["name"], fork);
+    assert_eq!(feeding["pipeline_names"], serde_json::json!([fork, NAME]));
+    assert_eq!(feeding["content_since_changed"], Value::Null);
+}
+
+/// `run`, with the launch record `record`.
+fn launched(mut run: Run, record: RunProvenance) -> Run {
+    run.provenance = Some(record);
+    run
+}
+
+fn hash_of(document: &str) -> PipelineHash {
+    lower_configuration(&ConfigDocument::new(document))
+        .expect("a test pipeline lowers")
+        .content_hash()
+}
+
+#[tokio::test]
+async fn a_run_launched_as_the_pipeline_whose_content_has_since_changed_fills_no_cell() {
+    let earlier = HYBRID_RERANK_GEN.replace("top_k: 50", "top_k: 10");
+    let body = matrix_of(app(
+        "matrix-since-changed",
+        &[(NAME, HYBRID_RERANK_GEN)],
+        vec![
+            launched(
+                run(1, &earlier, &scifact(), "sci", Some(1_000)),
+                RunProvenance::named(NAME),
+            ),
+            launched(
+                run(2, &earlier, &squad(), "sq", Some(1_000)),
+                RunProvenance::named(NAME),
+            ),
+            run(3, HYBRID_RERANK_GEN, &squad(), "sq", Some(500)),
+        ],
+    ))
+    .await;
+
+    // Its only run on scifact is of the earlier content: the column links it,
+    // and no cell is filled from it.
+    let scifact = column(&body, "beir/scifact");
+    assert_eq!(scifact["run"], Value::Null);
+    for cell in scifact["cells"].as_array().unwrap() {
+        assert_eq!(
+            cell,
+            &serde_json::json!({"kind": "not_run_on_this_version", "run": id(1)})
+        );
+    }
+    // On squad, the run of the current content fills the column, though the
+    // earlier-content run is more recent.
+    assert_eq!(column(&body, "squad/dev")["run"], id(3));
+
+    let since_changed = feeding(&body, &id(1)).expect("listed as a feeding run");
+    assert_eq!(since_changed["fills_column"], false);
+    assert_eq!(since_changed["launched_as"]["name"], NAME);
+    assert_eq!(since_changed["pipeline_names"], serde_json::json!([]));
+    assert_eq!(since_changed["prefix_of"], Value::Null);
+    // The parameter difference against the current document, the current
+    // document first: `compare`'s configuration matrix.
+    let difference = &since_changed["content_since_changed"];
+    assert_eq!(difference["kind"], "compared");
     assert_eq!(
-        feeding(&body, &id(1)).unwrap()["pipeline_names"],
-        serde_json::json!([fork, NAME])
+        difference["parameters"],
+        serde_json::json!([{
+            "node": "dense",
+            "key": {"kind": "param", "name": "top_k"},
+            "values": [50, 10],
+        }])
     );
+    assert_eq!(feeding(&body, &id(2)).unwrap()["fills_column"], false);
+    // The benchmark it ran on is still missing for this version.
+    assert_eq!(body["missing"][0]["benchmark"], "beir/scifact");
+}
+
+#[tokio::test]
+async fn a_run_recorded_as_a_prefix_of_the_current_version_fills_by_its_record() {
+    // Not a prefix by structure — its declared input is named otherwise — but
+    // its record says it was cut from this version of the pipeline.
+    let renamed = UP_TO_RERANK.replace("question", "query");
+    let body = matrix_of(app(
+        "matrix-recorded-prefix",
+        &[(NAME, HYBRID_RERANK_GEN)],
+        vec![launched(
+            run(1, &renamed, &scifact(), "sci", Some(1_000)),
+            RunProvenance::prefix(NAME, PrefixOf::new("rerank", hash_of(HYBRID_RERANK_GEN))),
+        )],
+    ))
+    .await;
+
+    let prefixed = column(&body, "beir/scifact");
+    assert_eq!(prefixed["run"], id(1));
+    assert_eq!(prefixed["up_to"], "rerank");
+    assert_eq!(cell(&body, prefixed, "rerank")["kind"], "measured");
+    assert_eq!(
+        cell(&body, prefixed, "generate"),
+        &serde_json::json!({"kind": "prefix_stops", "up_to": "rerank"})
+    );
+    let feeding = feeding(&body, &id(1)).unwrap();
+    assert_eq!(
+        feeding["prefix_of"],
+        serde_json::json!({"pipeline": NAME, "up_to": "rerank"})
+    );
+    assert_eq!(
+        feeding["launched_as"]["prefix_of"],
+        serde_json::json!({
+            "up_to": "rerank",
+            "parent_pipeline_hash": hash_of(HYBRID_RERANK_GEN).to_string(),
+        })
+    );
+    assert_eq!(feeding["content_since_changed"], Value::Null);
+}
+
+#[tokio::test]
+async fn a_structural_prefix_fills_even_when_its_record_names_another_parent() {
+    let other = other_generator();
+    let body = matrix_of(app(
+        "matrix-prefix-other-parent",
+        &[(NAME, HYBRID_RERANK_GEN), ("other-generator", &other)],
+        vec![launched(
+            run(1, UP_TO_RERANK, &scifact(), "sci", Some(1_000)),
+            RunProvenance::prefix("other-generator", PrefixOf::new("rerank", hash_of(&other))),
+        )],
+    ))
+    .await;
+
+    assert_eq!(column(&body, "beir/scifact")["up_to"], "rerank");
+    let feeding = feeding(&body, &id(1)).unwrap();
+    assert_eq!(feeding["prefix_of"]["pipeline"], NAME);
+    assert_eq!(feeding["launched_as"]["name"], "other-generator");
 }
 
 #[tokio::test]

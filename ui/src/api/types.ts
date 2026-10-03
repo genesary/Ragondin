@@ -278,10 +278,21 @@ export type FamilyCapabilities = {
   local: string[];
 };
 
-/** A run that counts for the matrix's pipeline. */
+/**
+ * A run that counts for the matrix's pipeline: one that fills a cell, or
+ * one launched as it whose content has since changed.
+ */
 export type FeedingRun = {
   /** Every benchmark the registry pins to that digest, sorted. */
   benchmark_names: string[];
+  /**
+   * For a run launched as this pipeline whose content has since changed —
+   * "launched as N; content since changed", N this pipeline (ADR-C39 § 7) — its
+   * parameter difference against the pipeline's current document, by
+   * `POST /compare`'s configuration matrix, the current document's column
+   * first; `null` for a run that fills a cell.
+   */
+  content_since_changed: ConfigurationMatrix | null;
   /** The digest of the dataset it ran on. */
   dataset_version: string;
   /**
@@ -289,6 +300,12 @@ export type FeedingRun = {
    * benchmark.
    */
   fills_column: boolean;
+  /**
+   * The run's launch record, as it was written once with the run; `null`
+   * when it has none. ADR-C39 § 4's first fact: what the run was launched
+   * as, never resolved with `pipeline_names` into one name.
+   */
+  launched_as: LaunchedAs | null;
   /**
    * Every workspace document whose canonical hash is the run's, sorted —
    * ADR-C39 § 4's content fact.
@@ -387,6 +404,25 @@ export type ImportRequest = {
   path: string;
 };
 
+/** A run's launch record (ADR-C39 § 1). */
+export type LaunchedAs = {
+  /**
+   * The workspace pipeline name it was launched as — for a prefix run,
+   * its parent's; `null` when the record names none.
+   */
+  name: string | null;
+  /** For a prefix run, where it was cut from its parent; `null` otherwise. */
+  prefix_of: LaunchedPrefix | null;
+};
+
+/** Where a launch record says a prefix run was cut from its parent. */
+export type LaunchedPrefix = {
+  /** The canonical hash of the parent's version it was cut from. */
+  parent_pipeline_hash: string;
+  /** The node it stops at. */
+  up_to: string;
+};
+
 /**
  * Where the editor draws each node: UI metadata beside the document, never
  * in its hash. Also the body of `PUT /pipelines/{name}/layout`.
@@ -441,6 +477,10 @@ export type MatrixCell = {
   kind: "unverified";
 } | {
   kind: "no_figure";
+} | {
+  kind: "not_run_on_this_version";
+  /** That run's id, listed among the feeding runs. */
+  run: string;
 };
 
 /** One benchmark of the matrix, and the run that fills it. */
@@ -717,15 +757,16 @@ export type PipelineMatrix = {
    */
   cache_errors: string[];
   /**
-   * One column per benchmark a counted run ran on — and, with
+   * One column per benchmark a feeding run ran on — and, with
    * `include_available`, per benchmark the registry knows that none did —
    * ordered by benchmark name.
    */
   columns: MatrixColumn[];
   /**
    * Every run that counts for this pipeline — of its current canonical
-   * form, or a prefix of it — the most recent first, each saying whether
-   * it fills its column.
+   * form, a prefix of it, or launched as it with content that has since
+   * changed — the most recent first, each saying whether it fills its
+   * column.
    */
   feeding_runs: FeedingRun[];
   /**

@@ -725,7 +725,7 @@
         "type": "object"
       },
       "FeedingRun": {
-        "description": "A run that counts for the matrix's pipeline.",
+        "description": "A run that counts for the matrix's pipeline: one that fills a cell, or\none launched as it whose content has since changed.",
         "properties": {
           "benchmark_names": {
             "description": "Every benchmark the registry pins to that digest, sorted.",
@@ -734,6 +734,20 @@
             },
             "type": "array"
           },
+          "content_since_changed": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ConfigurationMatrix"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "For a run launched as this pipeline whose content has since changed —\n\"launched as N; content since changed\", N this pipeline (ADR-C39 § 7) — its\nparameter difference against the pipeline's current document, by\n`POST /compare`'s configuration matrix, the current document's column\nfirst; `null` for a run that fills a cell."
+          },
           "dataset_version": {
             "description": "The digest of the dataset it ran on.",
             "type": "string"
@@ -741,6 +755,20 @@
           "fills_column": {
             "description": "Whether it is the run its column shows: the most recent on its\nbenchmark.",
             "type": "boolean"
+          },
+          "launched_as": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LaunchedAs"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "The run's launch record, as it was written once with the run; `null`\nwhen it has none. ADR-C39 § 4's first fact: what the run was launched\nas, never resolved with `pipeline_names` into one name."
           },
           "pipeline_names": {
             "description": "Every workspace document whose canonical hash is the run's, sorted —\nADR-C39 § 4's content fact.",
@@ -777,8 +805,10 @@
         },
         "required": [
           "benchmark_names",
+          "content_since_changed",
           "dataset_version",
           "fills_column",
+          "launched_as",
           "pipeline_names",
           "prefix_of",
           "run",
@@ -973,6 +1003,53 @@
         "required": [
           "name",
           "path"
+        ],
+        "type": "object"
+      },
+      "LaunchedAs": {
+        "description": "A run's launch record (ADR-C39 § 1).",
+        "properties": {
+          "name": {
+            "description": "The workspace pipeline name it was launched as — for a prefix run,\nits parent's; `null` when the record names none.",
+            "nullable": true,
+            "type": "string"
+          },
+          "prefix_of": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LaunchedPrefix"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "For a prefix run, where it was cut from its parent; `null` otherwise."
+          }
+        },
+        "required": [
+          "name",
+          "prefix_of"
+        ],
+        "type": "object"
+      },
+      "LaunchedPrefix": {
+        "description": "Where a launch record says a prefix run was cut from its parent.",
+        "properties": {
+          "parent_pipeline_hash": {
+            "description": "The canonical hash of the parent's version it was cut from.",
+            "type": "string"
+          },
+          "up_to": {
+            "description": "The node it stops at.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "up_to",
+          "parent_pipeline_hash"
         ],
         "type": "object"
       },
@@ -1186,6 +1263,26 @@
             },
             "required": [
               "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "Not run on this version: the only runs on this benchmark were launched\nas this pipeline before its content changed (ADR-C39 § 6). They fill\nno cell; the most recent of them is linked.",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "not_run_on_this_version"
+                ],
+                "type": "string"
+              },
+              "run": {
+                "description": "That run's id, listed among the feeding runs.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "run"
             ],
             "type": "object"
           }
@@ -1845,14 +1942,14 @@
             "type": "array"
           },
           "columns": {
-            "description": "One column per benchmark a counted run ran on — and, with\n`include_available`, per benchmark the registry knows that none did —\nordered by benchmark name.",
+            "description": "One column per benchmark a feeding run ran on — and, with\n`include_available`, per benchmark the registry knows that none did —\nordered by benchmark name.",
             "items": {
               "$ref": "#/components/schemas/MatrixColumn"
             },
             "type": "array"
           },
           "feeding_runs": {
-            "description": "Every run that counts for this pipeline — of its current canonical\nform, or a prefix of it — the most recent first, each saying whether\nit fills its column.",
+            "description": "Every run that counts for this pipeline — of its current canonical\nform, a prefix of it, or launched as it with content that has since\nchanged — the most recent first, each saying whether it fills its\ncolumn.",
             "items": {
               "$ref": "#/components/schemas/FeedingRun"
             },
@@ -3627,7 +3724,7 @@
     },
     "/pipelines/{name}/matrix": {
       "get": {
-        "description": "A run fills a cell when its pipeline hash is the document's current one, under any name, or when its pipeline is a prefix of the current document by the structural test; any other run counts nowhere. Each column is the most recent such run on its benchmark — the greatest started_at_ms, a run with no time after every run with one, ties by run id — and every counted run is listed in feeding_runs. An empty cell says why: no_qrels, no_reference_answers, not_run_yet (with the benchmark), prefix_stops (with the node the prefix stops at), not_scored, unverified, no_figure. `include_available=true` adds a column for every benchmark the registry knows that no counted run ran on.",
+        "description": "A run fills a cell when its pipeline hash is the document's current one, under any name, or when it is a prefix of the current document — its launch record's parent_pipeline_hash is the current hash, or else the structural test says so, for every run. A run whose launch record names the pipeline and that is neither fills no cell: it is a feeding run with content_since_changed, its parameter difference against the current document, and a benchmark whose only runs are such runs reads not_run_on_this_version, linking one. Any other run counts nowhere. Each column is the most recent run filling it — the greatest started_at_ms, a run with no time after every run with one, ties by run id. A feeding run carries its launch record (launched_as) and the documents sharing its hash (pipeline_names) side by side. An empty cell says why: no_qrels, no_reference_answers, not_run_yet (with the benchmark), prefix_stops (with the node the prefix stops at), not_run_on_this_version (with the run), not_scored, unverified, no_figure. `include_available=true` adds a column for every benchmark the registry knows that no counted run ran on.",
         "parameters": [
           {
             "in": "path",

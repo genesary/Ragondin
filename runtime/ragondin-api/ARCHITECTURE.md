@@ -641,8 +641,8 @@ and `RunSummary`, `RunSummary::median_query_latency_nanos`,
 `QueryScores::text` and `QueryScores::duration_nanos`,
 `MetricRow::direction`, `PipelineSummary::modified_ms`, `Location::node`,
 `Location::edge`, and the pipeline matrix's `MatrixColumn`, `FeedingRun`,
-`MissingCells` and `MatrixCell`'s `measured` variant carry a `transform`
-that lists every property as required,
+`LaunchedAs`, `MissingCells` and `MatrixCell`'s `measured` variant carry a
+`transform` that lists every property as required,
 since `schemars` would otherwise leave an `Option` out and a generated client
 would type it as possibly absent. `Problem::location`, `Problem::etag` and
 `Problem::name`, each omitted when there is none, stay optional, as do
@@ -1235,16 +1235,34 @@ lowers to the canonical hash *H* (`validation::lower`; a document that does not
 validate is `pipeline_invalid`), a cell is filled only from:
 
 - **runs of the current canonical form**: the run's pipeline hash is *H*,
-  whatever name it was launched under, or none — a fork launched first under
+  whatever name its launch record gives, or none — a fork launched first under
   another name fills its cell here;
-- **prefixes of the current form**, by the structural test below, asked of
-  **every** run (ADR-C39 § 5).
+- **prefixes of the current form**: the record's
+  `prefix_of.parent_pipeline_hash` is *H*, or, failing that, the structural
+  test below says so — asked of **every** run, whatever its record names
+  (ADR-C39 § 5): a run's first record wins, so a prefix recorded under
+  another parent is still a prefix here.
 
-Every other run counts nowhere. Every counted run is listed in
-`feeding_runs`, the most recent first, with `pipeline_names` — every current
-document whose canonical hash is the run's, from `lineage::pipelines_by_hash`,
-ADR-C39 § 4's content fact — `prefix_of` (the pipeline and the node it stops
-at) for a prefix, and `fills_column`.
+**A run whose record names *N* and that is neither** — its content has
+changed since it was launched — fills no cell (ADR-C39 § 6, § 7). It is a
+feeding run, "launched as *N*; content since changed", carrying in
+`content_since_changed` its parameter difference against *N*'s current
+document: `compare_runs`' configuration matrix, the one `POST /compare` serves,
+over the current document set beside it in a run of its own that carries the
+run's inputs, the current document's column first — the existing diff, not a
+second one. A benchmark whose only runs are such runs gets a column whose
+every cell reads `not_run_on_this_version`, linking the most recent of them;
+a run filling cells on that benchmark, older or not, takes the column. No
+heuristic says whether it "is" an earlier version.
+
+Every other run counts nowhere. Every run that counts is listed in
+`feeding_runs`, the most recent first, with ADR-C39 § 4's two facts side by
+side and never resolved into one name — `launched_as`, the run's launch
+record (`name`, and `prefix_of` with `up_to` and `parent_pipeline_hash`),
+`null` without one, and `pipeline_names`, every current document whose
+canonical hash is the run's, from `lineage::pipelines_by_hash` — then
+`prefix_of` (this pipeline and the node the run stops at) for a prefix,
+`fills_column`, and `content_since_changed`.
 
 **The prefix rule** (`lineage::is_prefix`). Run *B*'s lowered graph is a
 prefix of *N*'s current one when *B* declares the same inputs, every node of
@@ -1294,25 +1312,19 @@ runs that fill nothing.
 - **An empty cell says why**: `no_qrels` (a ranking node on a benchmark
   without qrels) and `no_reference_answers` (the generator on one without
   reference answers), never measurable there; `not_run_yet`, with the
-  benchmark to launch, measurable and not measured; `prefix_stops`, with the
+  benchmark to launch, measurable and not measured;
+  `not_run_on_this_version`, with the run of earlier content it links;
+  `prefix_stops`, with the
   node the column's prefix run stops at — "not run: the prefix run stops at"
   that node.
 
-`missing` lists, per column, the nodes reading `not_run_yet` or
-`prefix_stops`: what a run of the whole pipeline on that benchmark would fill,
-named by the benchmark to launch it on. Nothing here launches.
+`missing` lists, per column, the nodes reading `not_run_yet`,
+`prefix_stops` or `not_run_on_this_version`: what a run of the whole pipeline
+on that benchmark would fill, named by the benchmark to launch it on. Nothing
+here launches.
 
-**Waiting on the launch record** (ADR-C39 § 1, which `ragondin-experiments`
-does not implement yet). This endpoint reads no record: the feeding runs are
-named by content alone, and two things wait on the record — a run whose
-record names *N* while its content has since changed, listed as "launched as
-*N*; content since changed" with its parameter difference against the current
-document (`compare`'s configuration matrix), and a benchmark whose only run is
-such a run reading "not run on this version"; and the record's
-`prefix_of.parent_pipeline_hash`, which makes a run a prefix of *N* when it
-equals *H*, before the structural test is asked. The seam is `counted` in
-`endpoints/matrix.rs`, where a run that counts for neither reason is dropped
-today.
+**The record is read, never stamped.** `Run::provenance` is the binary's to
+write (ADR-C39 § 3); this endpoint reads it in `counted`, `endpoints/matrix.rs`.
 
 Choices made here (`AGENTS.md` § Rules of engagement):
 

@@ -1208,13 +1208,14 @@ pub struct PipelineMatrix {
     /// reads like the pipeline. A judge row is reserved, and absent until the
     /// judge exists.
     pub rows: Vec<MatrixRow>,
-    /// One column per benchmark a counted run ran on — and, with
+    /// One column per benchmark a feeding run ran on — and, with
     /// `include_available`, per benchmark the registry knows that none did —
     /// ordered by benchmark name.
     pub columns: Vec<MatrixColumn>,
     /// Every run that counts for this pipeline — of its current canonical
-    /// form, or a prefix of it — the most recent first, each saying whether
-    /// it fills its column.
+    /// form, a prefix of it, or launched as it with content that has since
+    /// changed — the most recent first, each saying whether it fills its
+    /// column.
     pub feeding_runs: Vec<FeedingRun>,
     /// Per column, the nodes no run measured that a run of the whole
     /// pipeline on that benchmark would: what a launch would fill.
@@ -1311,10 +1312,18 @@ pub enum MatrixCell {
     /// Measurable and run, and no figure: the node ranked no judged query —
     /// it failed — or the run recorded no answer metric.
     NoFigure,
+    /// Not run on this version: the only runs on this benchmark were launched
+    /// as this pipeline before its content changed (ADR-C39 § 6). They fill
+    /// no cell; the most recent of them is linked.
+    NotRunOnThisVersion {
+        /// That run's id, listed among the feeding runs.
+        run: String,
+    },
 }
 
-/// A run that counts for the matrix's pipeline.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+/// A run that counts for the matrix's pipeline: one that fills a cell, or
+/// one launched as it whose content has since changed.
+#[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
 #[schemars(transform = every_property_required)]
 pub struct FeedingRun {
     /// The run's id.
@@ -1325,6 +1334,10 @@ pub struct FeedingRun {
     pub benchmark_names: Vec<String>,
     /// When it started, from its own record; `null` when unknown.
     pub started_at_ms: Option<u64>,
+    /// The run's launch record, as it was written once with the run; `null`
+    /// when it has none. ADR-C39 § 4's first fact: what the run was launched
+    /// as, never resolved with `pipeline_names` into one name.
+    pub launched_as: Option<LaunchedAs>,
     /// Every workspace document whose canonical hash is the run's, sorted —
     /// ADR-C39 § 4's content fact.
     pub pipeline_names: Vec<String>,
@@ -1335,6 +1348,32 @@ pub struct FeedingRun {
     /// Whether it is the run its column shows: the most recent on its
     /// benchmark.
     pub fills_column: bool,
+    /// For a run launched as this pipeline whose content has since changed —
+    /// "launched as N; content since changed", N this pipeline (ADR-C39 § 7) — its
+    /// parameter difference against the pipeline's current document, by
+    /// `POST /compare`'s configuration matrix, the current document's column
+    /// first; `null` for a run that fills a cell.
+    pub content_since_changed: Option<ConfigurationMatrix>,
+}
+
+/// A run's launch record (ADR-C39 § 1).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+#[schemars(transform = every_property_required)]
+pub struct LaunchedAs {
+    /// The workspace pipeline name it was launched as — for a prefix run,
+    /// its parent's; `null` when the record names none.
+    pub name: Option<String>,
+    /// For a prefix run, where it was cut from its parent; `null` otherwise.
+    pub prefix_of: Option<LaunchedPrefix>,
+}
+
+/// Where a launch record says a prefix run was cut from its parent.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct LaunchedPrefix {
+    /// The node it stops at.
+    pub up_to: String,
+    /// The canonical hash of the parent's version it was cut from.
+    pub parent_pipeline_hash: String,
 }
 
 /// A prefix run's place in its parent pipeline.
