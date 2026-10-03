@@ -57,7 +57,7 @@ function Outcome({ testing, status, uri }: { testing: boolean; status: RowStatus
   if (status.kind === 'connected' && status.at !== null) {
     return (
       <InlineMessage tone="info" title={`Connected · ${status.identity ?? 'no identity reported'}`}>
-        The identity a run on this binding would record.
+        The identity a run on this binding would record, read at <code>{uri}</code>.
       </InlineMessage>
     );
   }
@@ -101,10 +101,15 @@ function ServiceRow({ service, probe, testing, servedModel, onServedModel, onTes
           <>Tested at {clock(status.at)}.</>
         )}
       </p>
-      <div role="status" className="rg-setup__outcome">
-        <Outcome testing={testing} status={status} uri={service.uri} />
+      {/* One place for every outcome — testing, connected, refused — each a
+          message of the same shape, so the answer replaces "Testing…" without
+          moving the rows below. */}
+      <div className="rg-setup__outcome">
+        <div role="status">
+          <Outcome testing={testing} status={status} uri={service.uri} />
+        </div>
+        {refused === null ? null : <ErrorState problem={refused} />}
       </div>
-      {refused === null ? null : <ErrorState problem={refused} />}
       <div className="rg-setup__service-actions">
         <Input id={field} label="Served model" aria-label={`Served model for ${key}`} mono value={servedModel} onChange={(e) => onServedModel(e.target.value)} />
         <Button size="s" busy={testing} onClick={onTest} aria-label={`Test ${key}`}>

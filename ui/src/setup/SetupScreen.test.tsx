@@ -246,7 +246,7 @@ describe('the services', () => {
     const bge = await services.findByRole('listitem', { name: 'reranker/bge' });
     await waitFor(() => expect(within(bge).getByText('connected')).toBeTruthy());
     expect(bge.textContent).toContain('bge-reranker-v2-m3@sha256:1f2e');
-    expect(within(bge).getByText('http://127.0.0.1:9090').tagName).toBe('CODE');
+    expect(within(bge).getByText('http://127.0.0.1:9090', { selector: '.rg-setup__service-head code' }).tagName).toBe('CODE');
     expect(bge.textContent).toMatch(/read at \d{1,2}:\d{2}/);
     expect(api.requests.filter((r) => !r.startsWith('GET'))).toEqual(['PUT /api/v1/services/reranker/bge', 'POST /api/v1/services/reranker/bge/probe']);
     expect(api.bodies[api.requests.indexOf('PUT /api/v1/services/reranker/bge')]).toEqual({ uri: 'http://127.0.0.1:9090' });
