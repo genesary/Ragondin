@@ -1,9 +1,11 @@
 //! `GET /services`, `PUT`/`DELETE /services/{family}/{name}` and
 //! `POST /services/{family}/{name}/probe`.
 //!
-//! The bindings are the workspace's settings, read and written through
-//! `WorkspaceSettings`; whether one is acceptable is the composition root's
-//! to say, through `Launcher::check_binding`, in the words `--remote` uses.
+//! The bindings are the workspace's settings, read through
+//! `WorkspaceSettings` and changed by its per-key operations, each applied
+//! whole by the backend — no handler reads the settings to write them back.
+//! Whether one is acceptable is the composition root's to say, through
+//! `Launcher::check_binding`, in the words `--remote` uses.
 //! What a probe learnt is this server's memory, not the workspace's: it is
 //! kept per binding and address while the server runs, and an address
 //! changed is a binding never probed.
@@ -93,17 +95,11 @@ pub(crate) async fn bind(
         .backends
         .launcher
         .check_binding(&family, &name, &uri)?;
-    let _writing = state.services_writing.lock().await;
-    let mut settings = state.backends.settings.read().await?;
-    match settings
-        .services
-        .iter_mut()
-        .find(|binding| binding.family == family && binding.name == name)
-    {
-        Some(binding) => binding.uri = uri,
-        None => settings.services.push(ServiceBinding { family, name, uri }),
-    }
-    state.backends.settings.write(settings.clone()).await?;
+    let settings = state
+        .backends
+        .settings
+        .bind(ServiceBinding { family, name, uri })
+        .await?;
     Ok(Json(listing(&settings, &state.probes)))
 }
 
@@ -113,16 +109,9 @@ pub(crate) async fn unbind(
     ApiPath((family, name)): ApiPath<(String, String)>,
     _: ApiQuery<NoParameters>,
 ) -> Result<Json<ServiceListing>, ApiError> {
-    let _writing = state.services_writing.lock().await;
-    let mut settings = state.backends.settings.read().await?;
-    let before = settings.services.len();
-    settings
-        .services
-        .retain(|binding| !(binding.family == family && binding.name == name));
-    if settings.services.len() == before {
+    let Some(settings) = state.backends.settings.unbind(&family, &name).await? else {
         return Err(ApiError::ServiceNotFound { family, name });
-    }
-    state.backends.settings.write(settings.clone()).await?;
+    };
     memory(&state.probes).remove(&(family, name));
     Ok(Json(listing(&settings, &state.probes)))
 }

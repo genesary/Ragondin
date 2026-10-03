@@ -254,9 +254,32 @@ impl WorkspaceSettings for FakeSettings {
         Ok(self.settings.lock().unwrap().clone())
     }
 
-    async fn write(&self, settings: Settings) -> Result<(), ApiError> {
-        *self.settings.lock().unwrap() = settings;
-        Ok(())
+    async fn bind(&self, binding: ServiceBinding) -> Result<Settings, ApiError> {
+        let mut settings = self.settings.lock().unwrap();
+        match settings
+            .services
+            .iter_mut()
+            .find(|bound| bound.family == binding.family && bound.name == binding.name)
+        {
+            Some(bound) => bound.uri = binding.uri,
+            None => settings.services.push(binding),
+        }
+        Ok(settings.clone())
+    }
+
+    async fn unbind(&self, family: &str, name: &str) -> Result<Option<Settings>, ApiError> {
+        let mut settings = self.settings.lock().unwrap();
+        let before = settings.services.len();
+        settings
+            .services
+            .retain(|bound| !(bound.family == family && bound.name == name));
+        Ok((settings.services.len() != before).then(|| settings.clone()))
+    }
+
+    async fn set_datasets(&self, datasets: Option<PathBuf>) -> Result<Settings, ApiError> {
+        let mut settings = self.settings.lock().unwrap();
+        settings.datasets = datasets.unwrap_or_else(|| PathBuf::from("/workspace/datasets"));
+        Ok(settings.clone())
     }
 }
 

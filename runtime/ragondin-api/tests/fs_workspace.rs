@@ -103,7 +103,7 @@ fn a_malformed_workspace_toml_is_reported_with_its_file_and_line_and_never_repai
 }
 
 #[test]
-fn every_form_outside_the_settings_grammar_is_refused_naming_its_line() {
+fn every_form_outside_the_settings_schema_is_refused_naming_its_line() {
     for (text, line) in [
         ("datasets = 3\n", 1),
         ("[jobs]\n", 1),
@@ -115,13 +115,12 @@ fn every_form_outside_the_settings_grammar_is_refused_naming_its_line() {
             3,
         ),
         ("[services]\n[services]\n", 2),
-        ("datasets = \"\"\"x\"\"\"\n", 1),
         ("datasets = \"unterminated\n", 1),
         ("datasets = \"a\" trailing\n", 1),
-        // Not TOML, and so not read: a control character in a literal
-        // string or in a comment, whitespace TOML does not count as such
-        // (a no-break space here), and a `\u` escape that is not four hex
-        // digits — `u32::from_str_radix` alone would take the `+`.
+        // Not TOML, and so refused by the parser: a control character in a
+        // literal string or in a comment, whitespace TOML does not count as
+        // such (a no-break space here), and a `\u` escape that is not four
+        // hex digits.
         ("datasets = 'a\u{1}b'\n", 1),
         ("# a comment \u{7f} with DEL\ndatasets = \"a\"\n", 1),
         ("datasets = \"a\" # \u{0}\n", 1),
@@ -139,32 +138,6 @@ fn every_form_outside_the_settings_grammar_is_refused_naming_its_line() {
             other => panic!("{text:?}: {other:?}"),
         }
     }
-}
-
-#[test]
-fn a_no_break_space_is_named_by_its_code_point() {
-    for text in [
-        "\u{a0}datasets = \"a\"\n",
-        "datasets\u{a0}= \"a\"\n",
-        "datasets =\u{a0}\"a\"\n",
-    ] {
-        let root = scratch("no_break_space");
-        fs::write(root.join("workspace.toml"), text).expect("written");
-
-        let error = Workspace::open(&root).expect_err("refused");
-
-        assert!(error.to_string().contains("U+00A0"), "{text:?}: {error}");
-    }
-}
-
-#[test]
-fn a_byte_order_mark_is_refused_by_name() {
-    let root = scratch("bom");
-    fs::write(root.join("workspace.toml"), "\u{feff}datasets = \"a\"\n").expect("written");
-
-    let error = Workspace::open(&root).expect_err("refused");
-
-    assert!(error.to_string().contains("a byte-order mark"), "{error}");
 }
 
 #[tokio::test]
@@ -190,7 +163,11 @@ async fn settings_writes_are_atomic_and_a_service_round_trips_through_workspace_
         datasets: PathBuf::from("/data/benchmarks"),
         services: vec![qwen.clone()],
     };
-    settings.write(written.clone()).await.expect("writes");
+    settings
+        .set_datasets(Some(written.datasets.clone()))
+        .await
+        .expect("writes");
+    assert_eq!(settings.bind(qwen).await.expect("writes"), written);
 
     assert_eq!(settings.read().await.expect("reads"), written);
     // A second backend over the same file reads the same thing: it is on disk.
@@ -245,7 +222,10 @@ async fn escapes_survive_the_round_trip() {
         services: Vec::new(),
     };
 
-    settings.write(written.clone()).await.expect("writes");
+    settings
+        .set_datasets(Some(written.datasets.clone()))
+        .await
+        .expect("writes");
 
     assert_eq!(settings.read().await.expect("reads"), written);
 }

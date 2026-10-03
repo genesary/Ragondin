@@ -40,8 +40,8 @@ pub struct Workspace {
 /// Why a workspace did not open.
 #[derive(Debug, thiserror::Error)]
 pub enum WorkspaceError {
-    /// `workspace.toml` is outside its grammar. Reported, never repaired:
-    /// nothing was created or rewritten.
+    /// `workspace.toml` is not TOML, or is outside its schema. Reported,
+    /// never repaired: nothing was created or rewritten.
     #[error("{}:{line}: {reason}", path.display())]
     Malformed {
         /// The file.

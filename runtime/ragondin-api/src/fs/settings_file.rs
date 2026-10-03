@@ -1,17 +1,5 @@
-//! `workspace.toml`'s grammar: the subset of TOML the settings need, read and
-//! written by hand.
-//!
-//! **Why by hand.** A TOML parser is not among the dependencies ADR-C36 § 6
-//! admits, and that section makes any other entry a new decision — opened as
-//! #374 and decided by ADR-C38, which replaces this reader; the code predates
-//! it. A write here does not keep the comments a person adds. The settings are two
-//! things — a datasets directory and `family/name → uri` bindings — so the
-//! file needs one top-level key, one table and strings. This module reads
-//! exactly that, and refuses everything else with the line it is on, so a
-//! hand-edited file that leaves the subset is reported rather than misread.
-//! What it reads is valid TOML, so any TOML reader agrees with it on every
-//! file it accepts; `tests/fs_workspace.rs` holds the invalid forms it
-//! refuses.
+//! `workspace.toml`'s schema, checked over a `toml_edit` document, and the
+//! per-key edits that change the file in place (ADR-C38).
 //!
 //! ```toml
 //! datasets = "/data/benchmarks"   # optional; relative to the workspace
@@ -20,17 +8,28 @@
 //! "generator/qwen" = "http://127.0.0.1:8080"
 //! ```
 //!
-//! Read: blank lines and `#` comments, `datasets = <string>` before any
-//! table, one `[services]` table of `"<family>/<name>" = <string>`, strings
-//! basic (`"…"`, with TOML's escapes) or literal (`'…'`), and a trailing
-//! comment after a value. Whitespace is TOML's — a space or a tab, nothing
-//! else. Refused: any other key or table, a duplicate key or table, a value
-//! that is not a one-line string, a service key without its `/`, anything
-//! left on a line after its value, a control character other than a tab in
-//! a string or a comment, an escape TOML does not define, and a byte-order
-//! mark.
+//! **Reading.** The text is parsed as a [`Document`], which keeps each item's
+//! span, and then checked: a top-level `datasets` string, and one standard
+//! `[services]` table whose entries are `"<family>/<name>" = <string>`, the
+//! key split at its first `/`. Everything else is refused with the line it
+//! starts on — another key or table, a sub-table, an array of tables, an
+//! inline table, a dotted key, a value that is not a string, a service key
+//! without its `/` or with an empty family or name — and so is a parse
+//! error, which `toml_edit` reports with its span. A key or a value is read by
+//! what it means, never by how it is spelled: a basic, literal or multi-line
+//! string is the same string, so the file `toml_edit` writes is always read
+//! back.
+//!
+//! **Writing.** [`edit`] checks the text first, so a refused file is never
+//! edited, and then applies one [`Edit`] to the document parsed from it,
+//! changing that key and nothing else. Whether an edit is needed at all is
+//! decided on the settings, before this module is called
+//! (`FsSettings`): an operation that changes no setting never reaches it, so
+//! the file is not rewritten. What becomes of the comments around a key an
+//! edit touches is `ARCHITECTURE.md` § `workspace.toml`, read and edited in
+//! place: none is dropped.
 
-use std::collections::HashSet;
+use toml_edit::{Document, DocumentMut, Item, RawString, Table, Value};
 
 /// The settings as the file states them, before the datasets directory is
 /// resolved against the workspace.
@@ -42,14 +41,32 @@ pub(crate) struct SettingsFile {
     pub(crate) services: Vec<(String, String, String)>,
 }
 
-/// Why a file is outside the grammar, and on which line (from 1).
+/// Why a file is outside the schema, and on which line (from 1).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct GrammarError {
     pub(crate) line: usize,
     pub(crate) reason: String,
 }
 
-/// The comment every file this module writes begins with.
+/// One per-key change to the file.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Edit {
+    /// `[services]."<family>/<name>" = <uri>`: the address replaced when the
+    /// key is there, the key appended to `[services]` when it is not.
+    Bind {
+        family: String,
+        name: String,
+        uri: String,
+    },
+    /// `[services]."<family>/<name>"` removed.
+    Unbind { family: String, name: String },
+    /// `datasets = <directory>`, as it is to be written.
+    SetDatasets(String),
+    /// `datasets` removed.
+    ClearDatasets,
+}
+
+/// The comment a fresh workspace's file holds, and nothing else.
 const HEADER: &str = "\
 # The workspace's deployment settings, read by `ragondin ui`. Never hashed
 # into a run: an address here stays out of every pipeline and run identity.
@@ -60,6 +77,9 @@ const HEADER: &str = "\
 # \"generator/qwen\" = \"http://127.0.0.1:8080\"  # `--remote` bindings
 ";
 
+const DATASETS: &str = "datasets";
+const SERVICES: &str = "services";
+
 /// The file a fresh workspace starts with: the header, and nothing set.
 pub(crate) fn empty() -> String {
     HEADER.to_owned()
@@ -67,308 +87,329 @@ pub(crate) fn empty() -> String {
 
 /// Reads `text`.
 pub(crate) fn parse(text: &str) -> Result<SettingsFile, GrammarError> {
-    if text.starts_with('\u{feff}') {
-        return Err(GrammarError {
-            line: 1,
-            reason: "the file begins with a byte-order mark (U+FEFF), which this reader does \
-                     not read: save it as UTF-8 without one"
-                .to_owned(),
-        });
+    check(text, &document(text)?)
+}
+
+/// Applies `edit` to `text`, which is checked first, and returns the file
+/// with that one key changed.
+pub(crate) fn edit(text: &str, edit: &Edit) -> Result<String, GrammarError> {
+    let document = document(text)?;
+    check(text, &document)?;
+    let mut document = document.into_mut();
+    match edit {
+        Edit::Bind { family, name, uri } => bind(&mut document, &service_key(family, name), uri),
+        Edit::Unbind { family, name } => unbind(&mut document, &service_key(family, name)),
+        Edit::SetDatasets(datasets) => set_datasets(&mut document, datasets),
+        Edit::ClearDatasets => clear_datasets(&mut document),
     }
+    Ok(document.to_string())
+}
+
+/// `text` parsed, spans kept; a parse error names the line its span starts
+/// on.
+fn document(text: &str) -> Result<Document<&str>, GrammarError> {
+    Document::parse(text).map_err(|error| GrammarError {
+        line: error.span().map_or(1, |span| line_at(text, span.start)),
+        reason: error.message().to_owned(),
+    })
+}
+
+/// The key a binding is stated under.
+fn service_key(family: &str, name: &str) -> String {
+    format!("{family}/{name}")
+}
+
+/// The line, from 1, that byte `offset` of `text` is on.
+fn line_at(text: &str, offset: usize) -> usize {
+    let end = offset.min(text.len());
+    text.as_bytes()[..end]
+        .iter()
+        .filter(|byte| **byte == b'\n')
+        .count()
+        + 1
+}
+
+/// The schema, over a parsed document.
+fn check(text: &str, document: &Document<&str>) -> Result<SettingsFile, GrammarError> {
     let mut file = SettingsFile::default();
-    let mut bound: HashSet<(String, String)> = HashSet::new();
-    let mut in_services = false;
-    let mut seen_services = false;
-    for (index, raw) in text.lines().enumerate() {
-        let line = index + 1;
-        let refuse = |reason: String| GrammarError { line, reason };
-        let content = trim(raw);
-        if content.is_empty() {
-            continue;
-        }
-        if content.starts_with('#') {
-            check_comment(content).map_err(refuse)?;
-            continue;
-        }
-        if let Some(header) = content.strip_prefix('[') {
-            let (name, rest) = header
-                .split_once(']')
-                .ok_or_else(|| refuse("a table header that is not closed".to_owned()))?;
-            check_end(rest, "a table header").map_err(refuse)?;
-            if trim(name) != "services" {
+    let root = document.as_table();
+    for (key, item) in root.iter() {
+        let refuse = |reason: String| GrammarError {
+            line: line_of(text, root, key, item),
+            reason,
+        };
+        match (key, item) {
+            (_, Item::Table(table)) if table.is_dotted() => {
                 return Err(refuse(format!(
-                    "the table `[{}]`: only `[services]` is read",
-                    trim(name)
-                )));
+                    "the dotted key `{key}.…`: only `datasets` and the `[services]` table are \
+                     read, each written whole"
+                )))
             }
-            if seen_services {
-                return Err(refuse("`[services]` is declared twice".to_owned()));
-            }
-            seen_services = true;
-            in_services = true;
-            continue;
-        }
-        refuse_foreign_space(content).map_err(refuse)?;
-        let (key, rest) = parse_key(content).map_err(refuse)?;
-        let rest = trim_start(rest);
-        refuse_foreign_space(rest).map_err(refuse)?;
-        let rest = trim_start(
-            rest.strip_prefix('=')
-                .ok_or_else(|| refuse(format!("the key `{key}` is not followed by `=`")))?,
-        );
-        refuse_foreign_space(rest).map_err(refuse)?;
-        let (value, rest) = parse_string(rest).map_err(refuse)?;
-        check_end(rest, "the value").map_err(refuse)?;
-        if in_services {
-            let Some((family, name)) = key.split_once('/') else {
+            (_, Item::ArrayOfTables(_)) => {
                 return Err(refuse(format!(
-                    "the service key `{key}` is not `\"<family>/<name>\"`"
-                )));
-            };
-            if family.is_empty() || name.is_empty() {
+                    "`[[{key}]]`, an array of tables: only the `[services]` table is read"
+                )))
+            }
+            (_, Item::Value(Value::InlineTable(_))) => {
                 return Err(refuse(format!(
-                    "the service key `{key}` has an empty family or name"
-                )));
+                    "`{key}` is an inline table: only the `[services]` table is read, written \
+                     as `[services]` on its own line"
+                )))
             }
-            if !bound.insert((family.to_owned(), name.to_owned())) {
-                return Err(refuse(format!("`{key}` is bound twice")));
+            (DATASETS, Item::Value(value)) => match value.as_str() {
+                Some(datasets) => file.datasets = Some(datasets.to_owned()),
+                None => {
+                    return Err(refuse(format!(
+                        "`datasets` is a {}, not a string",
+                        value.type_name()
+                    )))
+                }
+            },
+            (SERVICES, Item::Table(table)) => {
+                file.services = services(text, table)?;
             }
-            file.services
-                .push((family.to_owned(), name.to_owned(), value));
-        } else if key == "datasets" {
-            if file.datasets.is_some() {
-                return Err(refuse("`datasets` is set twice".to_owned()));
+            (_, Item::Table(_)) => {
+                return Err(refuse(format!(
+                    "the table `[{key}]`: only `[services]` is read"
+                )))
             }
-            file.datasets = Some(value);
-        } else {
-            return Err(refuse(format!(
-                "the key `{key}`: only `datasets` and the `[services]` table are read"
-            )));
+            _ => {
+                return Err(refuse(format!(
+                    "the key `{key}`: only `datasets` and the `[services]` table are read"
+                )))
+            }
         }
     }
     Ok(file)
 }
 
-/// Writes `file`: the header, `datasets` when set, then `[services]` when
-/// any is bound. What [`parse`] reads back is `file`.
-pub(crate) fn render(file: &SettingsFile) -> String {
-    let mut text = empty();
-    if let Some(datasets) = &file.datasets {
-        text.push_str(&format!("\ndatasets = {}\n", quote(datasets)));
-    }
-    if !file.services.is_empty() {
-        text.push_str("\n[services]\n");
-        for (family, name, uri) in &file.services {
-            text.push_str(&format!(
-                "{} = {}\n",
-                quote(&format!("{family}/{name}")),
-                quote(uri)
-            ));
-        }
-    }
-    text
-}
-
-/// TOML's whitespace: a space or a tab, and nothing else — a no-break space
-/// is not whitespace there, so `str::trim` would accept what TOML refuses.
-const WHITESPACE: [char; 2] = [' ', '\t'];
-
-fn trim(text: &str) -> &str {
-    text.trim_matches(WHITESPACE)
-}
-
-fn trim_start(text: &str) -> &str {
-    text.trim_start_matches(WHITESPACE)
-}
-
-/// Refuses `text` when it begins with a character Unicode calls whitespace
-/// and TOML does not — a no-break space, typically pasted in — naming it by
-/// its code point, since it looks like a space in any editor.
-fn refuse_foreign_space(text: &str) -> Result<(), String> {
-    match text.chars().next() {
-        Some(c) if c.is_whitespace() && !WHITESPACE.contains(&c) => {
-            let what = if c == '\u{a0}' {
-                "a no-break space"
-            } else {
-                "a whitespace character"
-            };
-            Err(format!(
-                "{what} (U+{:04X}), which TOML does not count as whitespace: only a space or a \
-                 tab is",
-                c as u32
-            ))
-        }
-        _ => Ok(()),
-    }
-}
-
-/// A control character TOML forbids in a string or a comment: U+0000 to
-/// U+001F but the tab, and U+007F.
-fn is_forbidden_control(c: char) -> bool {
-    (c <= '\u{1f}' && c != '\t') || c == '\u{7f}'
-}
-
-/// A comment, from its `#`: anything but a forbidden control character.
-fn check_comment(comment: &str) -> Result<(), String> {
-    match comment.chars().find(|c| is_forbidden_control(*c)) {
-        Some(c) => Err(format!(
-            "a control character (U+{:04X}) in a comment",
-            c as u32
-        )),
-        None => Ok(()),
-    }
-}
-
-/// What follows `what` on its line: nothing, or a comment.
-fn check_end(rest: &str, what: &str) -> Result<(), String> {
-    let rest = trim(rest);
-    refuse_foreign_space(rest)?;
-    if rest.is_empty() {
-        Ok(())
-    } else if rest.starts_with('#') {
-        check_comment(rest)
-    } else {
-        Err(format!("`{rest}` after {what}"))
-    }
-}
-
-/// A bare key (`[A-Za-z0-9_-]+`) or a quoted one, and what follows it.
-fn parse_key(text: &str) -> Result<(String, &str), String> {
-    if text.starts_with('"') || text.starts_with('\'') {
-        return parse_string(text);
-    }
-    let end = text
-        .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '-'))
-        .unwrap_or(text.len());
-    if end == 0 {
-        return Err(format!("`{text}` is not a key"));
-    }
-    Ok((text[..end].to_owned(), &text[end..]))
-}
-
-/// A one-line basic or literal string at the start of `text`, unescaped,
-/// and what follows it.
-fn parse_string(text: &str) -> Result<(String, &str), String> {
-    if text.starts_with("\"\"\"") || text.starts_with("'''") {
-        return Err("a multi-line string: only one-line strings are read".to_owned());
-    }
-    if let Some(body) = text.strip_prefix('\'') {
-        let end = body
-            .find('\'')
-            .ok_or_else(|| "a literal string that is not closed".to_owned())?;
-        if let Some(c) = body[..end].chars().find(|c| is_forbidden_control(*c)) {
-            return Err(format!(
-                "a control character (U+{:04X}) inside a string",
-                c as u32
-            ));
-        }
-        return Ok((body[..end].to_owned(), &body[end + 1..]));
-    }
-    let Some(body) = text.strip_prefix('"') else {
-        return Err(format!("`{text}` is not a string; every value here is one"));
-    };
-    let mut value = String::new();
-    let mut chars = body.char_indices();
-    while let Some((at, c)) = chars.next() {
-        match c {
-            '"' => return Ok((value, &body[at + 1..])),
-            '\\' => {
-                let (_, escape) = chars
-                    .next()
-                    .ok_or_else(|| "a string that ends in an escape".to_owned())?;
-                match escape {
-                    'b' => value.push('\u{8}'),
-                    't' => value.push('\t'),
-                    'n' => value.push('\n'),
-                    'f' => value.push('\u{c}'),
-                    'r' => value.push('\r'),
-                    '"' => value.push('"'),
-                    '\\' => value.push('\\'),
-                    'u' | 'U' => {
-                        let width = if escape == 'u' { 4 } else { 8 };
-                        let digits: String = (0..width)
-                            .filter_map(|_| chars.next().map(|(_, digit)| digit))
-                            .collect();
-                        // Checked digit by digit first: `from_str_radix`
-                        // alone would take a leading `+`.
-                        let decoded = (digits.chars().count() == width
-                            && digits.chars().all(|digit| digit.is_ascii_hexdigit()))
-                        .then(|| u32::from_str_radix(&digits, 16).ok())
-                        .flatten()
-                        .and_then(char::from_u32)
-                        .ok_or_else(|| format!("`\\{escape}{digits}` is not a character"))?;
-                        value.push(decoded);
-                    }
-                    other => return Err(format!("`\\{other}` is not an escape TOML knows")),
-                }
-            }
-            c if is_forbidden_control(c) => {
-                return Err(format!(
-                    "a control character (U+{:04X}) inside a string",
-                    c as u32
-                ))
-            }
-            c => value.push(c),
-        }
-    }
-    Err("a string that is not closed".to_owned())
-}
-
-/// `value` as a basic string, escaped so [`parse_string`] reads it back.
-fn quote(value: &str) -> String {
-    let mut quoted = String::from("\"");
-    for c in value.chars() {
-        match c {
-            '"' => quoted.push_str("\\\""),
-            '\\' => quoted.push_str("\\\\"),
-            '\t' => quoted.push_str("\\t"),
-            '\n' => quoted.push_str("\\n"),
-            '\r' => quoted.push_str("\\r"),
-            c if is_forbidden_control(c) => quoted.push_str(&format!("\\u{:04X}", c as u32)),
-            c => quoted.push(c),
-        }
-    }
-    quoted.push('"');
-    quoted
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn the_empty_file_is_read_as_nothing_set() {
-        assert_eq!(parse(&empty()), Ok(SettingsFile::default()));
-    }
-
-    #[test]
-    fn what_is_rendered_is_read_back() {
-        let file = SettingsFile {
-            datasets: Some("/data/\"a\" \\ \u{1}\n".to_owned()),
-            services: vec![
-                (
-                    "generator".into(),
-                    "qwen".into(),
-                    "http://[::1]:8080".into(),
-                ),
-                ("embedder".into(), "bge".into(), "http://host".into()),
-            ],
+/// `[services]`'s bindings, in the file's order.
+fn services(text: &str, table: &Table) -> Result<Vec<(String, String, String)>, GrammarError> {
+    let mut services = Vec::new();
+    for (key, item) in table.iter() {
+        let refuse = |reason: String| GrammarError {
+            line: line_of(text, table, key, item),
+            reason,
         };
-
-        assert_eq!(parse(&render(&file)), Ok(file));
+        let uri = match item {
+            Item::Table(sub) if sub.is_dotted() => {
+                return Err(refuse(format!(
+                    "the dotted key `\"{key}\".…`: a binding is `\"<family>/<name>\" = <string>`"
+                )))
+            }
+            Item::Table(_) => {
+                return Err(refuse(format!(
+                    "the sub-table `[services.\"{key}\"]`: a binding is `\"<family>/<name>\" = \
+                     <string>`"
+                )))
+            }
+            Item::ArrayOfTables(_) => {
+                return Err(refuse(format!(
+                    "`[[services.\"{key}\"]]`, an array of tables: a binding is \
+                     `\"<family>/<name>\" = <string>`"
+                )))
+            }
+            Item::Value(Value::InlineTable(_)) => {
+                return Err(refuse(format!(
+                    "`{key}` is an inline table: a binding is `\"<family>/<name>\" = <string>`"
+                )))
+            }
+            Item::Value(value) => match value.as_str() {
+                Some(uri) => uri.to_owned(),
+                None => {
+                    return Err(refuse(format!(
+                        "`{key}` is a {}, not a string",
+                        value.type_name()
+                    )))
+                }
+            },
+            Item::None => continue,
+        };
+        // At the first `/`, as ADR-C32 § 2 splits a binding: a name may hold
+        // a `/`, a family may not.
+        let Some((family, name)) = key.split_once('/') else {
+            return Err(refuse(format!(
+                "the service key `{key}` is not `\"<family>/<name>\"`"
+            )));
+        };
+        if family.is_empty() {
+            return Err(refuse(format!(
+                "the service key `{key}` has an empty family"
+            )));
+        }
+        if name.is_empty() {
+            return Err(refuse(format!("the service key `{key}` has an empty name")));
+        }
+        services.push((family.to_owned(), name.to_owned(), uri));
     }
+    Ok(services)
+}
 
-    #[test]
-    fn literal_strings_comments_and_unicode_escapes_are_read() {
-        let file = parse(
-            "datasets = 'C:\\data' # windows\n[ services ] # bindings\n'generator/a' = \"http://h\\u00e9\"\n",
-        )
-        .expect("in the grammar");
+/// The line `key` of `table` starts on, from its span — the item's when the
+/// key has none.
+fn line_of(text: &str, table: &Table, key: &str, item: &Item) -> usize {
+    table
+        .key(key)
+        .and_then(|key| key.span())
+        .or_else(|| item.span())
+        .map_or(1, |span| line_at(text, span.start))
+}
 
-        assert_eq!(file.datasets.as_deref(), Some("C:\\data"));
-        assert_eq!(
-            file.services,
-            [("generator".into(), "a".into(), "http://hé".into())]
-        );
+/// A decor part as text: an unset one is empty.
+fn raw(part: Option<&RawString>) -> &str {
+    part.and_then(RawString::as_str).unwrap_or("")
+}
+
+/// `value`'s trailing comment, as a line of its own, or nothing.
+fn trailing_comment(value: &Value) -> String {
+    let suffix = raw(value.decor().suffix()).trim_start_matches([' ', '\t']);
+    if suffix.starts_with('#') {
+        format!("{}\n", suffix.trim_end_matches([' ', '\t']))
+    } else {
+        String::new()
+    }
+}
+
+/// `replacement` in place of `item`'s value, its decor — the trailing
+/// comment — kept.
+fn replace_value(item: &mut Item, replacement: &str) {
+    let decor = item.as_value().map(|value| value.decor().clone());
+    let mut value = Value::from(replacement);
+    if let Some(decor) = decor {
+        *value.decor_mut() = decor;
+    }
+    *item = Item::Value(value);
+}
+
+/// Takes the document's trailing comments, leaving none.
+fn take_trailing(document: &mut DocumentMut) -> String {
+    let trailing = document.trailing().as_str().unwrap_or("").to_owned();
+    document.set_trailing("");
+    trailing
+}
+
+fn bind(document: &mut DocumentMut, key: &str, uri: &str) {
+    let has_services = document.as_table().get(SERVICES).is_some();
+    if !has_services {
+        // The comments after the last item — a fresh file's header — stay
+        // above the table created after them, a blank line between.
+        let trailing = take_trailing(document);
+        let separator = if trailing.is_empty() && document.as_table().is_empty() {
+            ""
+        } else {
+            "\n"
+        };
+        let mut table = Table::new();
+        table
+            .decor_mut()
+            .set_prefix(format!("{trailing}{separator}"));
+        document.as_table_mut().insert(SERVICES, Item::Table(table));
+    }
+    if let Some(item) = services_mut(document).and_then(|table| table.get_mut(key)) {
+        replace_value(item, uri);
+        return;
+    }
+    // `[services]` is the document's last table, so a key appended to it is
+    // the document's last item: the comments that ended the file stay above
+    // it, and the file's bytes so far are unchanged.
+    let trailing = take_trailing(document);
+    if let Some(table) = services_mut(document) {
+        table.insert(key, Item::Value(Value::from(uri)));
+        if let Some(mut inserted) = table.key_mut(key) {
+            inserted.leaf_decor_mut().set_prefix(trailing);
+        }
+    }
+}
+
+/// `[services]`, when the document has it.
+fn services_mut(document: &mut DocumentMut) -> Option<&mut Table> {
+    document
+        .as_table_mut()
+        .get_mut(SERVICES)
+        .and_then(Item::as_table_mut)
+}
+
+fn unbind(document: &mut DocumentMut, key: &str) {
+    let Some(table) = services_mut(document) else {
+        return;
+    };
+    let Some(index) = table.iter().position(|(bound, _)| bound == key) else {
+        return;
+    };
+    let Some((removed, item)) = table.remove_entry(key) else {
+        return;
+    };
+    let comments = format!(
+        "{}{}",
+        raw(removed.leaf_decor().prefix()),
+        item.as_value().map(trailing_comment).unwrap_or_default()
+    );
+    // Onto the key that followed it, or — the last one — onto the end of the
+    // file, `[services]` being its last table.
+    let followed = match table.iter_mut().nth(index) {
+        Some((mut next, _)) => {
+            let prefix = format!("{comments}{}", raw(next.leaf_decor().prefix()));
+            next.leaf_decor_mut().set_prefix(prefix);
+            true
+        }
+        None => false,
+    };
+    if !followed {
+        prepend_trailing(document, &comments);
+    }
+}
+
+/// `comments` placed at the end of the file, before the comments already
+/// there.
+fn prepend_trailing(document: &mut DocumentMut, comments: &str) {
+    let trailing = take_trailing(document);
+    document.set_trailing(format!("{comments}{trailing}"));
+}
+
+fn set_datasets(document: &mut DocumentMut, datasets: &str) {
+    if let Some(item) = document.as_table_mut().get_mut(DATASETS) {
+        replace_value(item, datasets);
+        return;
+    }
+    // `datasets` is the document's first item: the comments that opened the
+    // file stay above it, and what was first keeps a blank line.
+    let services_prefix = services_mut(document).map(|table| {
+        let prefix = raw(table.decor().prefix()).to_owned();
+        table.decor_mut().set_prefix("\n");
+        prefix
+    });
+    let prefix = match services_prefix {
+        Some(prefix) => prefix,
+        None => {
+            let trailing = take_trailing(document);
+            if trailing.is_empty() {
+                trailing
+            } else {
+                format!("{trailing}\n")
+            }
+        }
+    };
+    let root = document.as_table_mut();
+    root.insert(DATASETS, Item::Value(Value::from(datasets)));
+    if let Some(mut inserted) = root.key_mut(DATASETS) {
+        inserted.leaf_decor_mut().set_prefix(prefix);
+    }
+}
+
+fn clear_datasets(document: &mut DocumentMut) {
+    let Some((removed, item)) = document.as_table_mut().remove_entry(DATASETS) else {
+        return;
+    };
+    let comments = format!(
+        "{}{}",
+        raw(removed.leaf_decor().prefix()),
+        item.as_value().map(trailing_comment).unwrap_or_default()
+    );
+    // Onto `[services]`, which follows it, or onto the end of the file.
+    if let Some(table) = services_mut(document) {
+        let prefix = format!("{comments}{}", raw(table.decor().prefix()));
+        table.decor_mut().set_prefix(prefix);
+    } else {
+        prepend_trailing(document, &comments);
     }
 }
