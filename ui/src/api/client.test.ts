@@ -279,6 +279,50 @@ describe('the API client, on a network failure', () => {
   });
 });
 
+describe('the API client, cancelled', () => {
+  it('passes the signal it is given to fetch, on a path with and without parameters and options', async () => {
+    const spy = stubFetch(async () => json({}));
+    const client = createApiClient();
+    const signal = new AbortController().signal;
+    await client.get('/workspace', { signal });
+    await client.get('/runs/{id}', { id: 'r1' }, { signal });
+    await client.get('/runs/{id}/queries', { id: 'r1' }, { query: { missing_gold_at: 10 }, signal });
+    await client.put('/pipelines/{name}', { document: '' }, { name: 'p' }, { headers: { 'If-Match': '"e1"' }, signal });
+    expect(spy.mock.calls.map((call) => call[1]?.signal)).toEqual([signal, signal, signal, signal]);
+    expect(spy.mock.calls[2]?.[0]).toBe('/api/v1/runs/r1/queries?missing_gold_at=10');
+  });
+
+  it('reports a request aborted before its answer as request_aborted, never as a network failure, and never throws', async () => {
+    stubFetch(
+      (_url, init) =>
+        new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => reject(new DOMException('The operation was aborted.', 'AbortError')));
+        }),
+    );
+    const controller = new AbortController();
+    const pending = createApiClient().get('/runs/{id}', { id: 'r1' }, { signal: controller.signal });
+    controller.abort();
+    const result = await pending;
+    expect(result.ok ? null : result.problem.code).toBe('request_aborted');
+    expect(result.build).toBeNull();
+  });
+
+  it('reports a request aborted while its body is read as request_aborted', async () => {
+    const controller = new AbortController();
+    const body = new ReadableStream({
+      start(stream) {
+        controller.signal.addEventListener('abort', () => stream.error(new DOMException('The operation was aborted.', 'AbortError')));
+      },
+    });
+    stubFetch(async () => new Response(body, { status: 200, headers: { 'content-type': 'application/json' } }));
+    const pending = createApiClient().get('/workspace', { signal: controller.signal });
+    await new Promise((r) => setTimeout(r, 0));
+    controller.abort();
+    const result = await pending;
+    expect(result.ok ? null : result.problem.code).toBe('request_aborted');
+  });
+});
+
 describe('the API client, writing', () => {
   // `/runs` takes no write, so no typed signature admits this call; the cast
   // reaches the one request builder the three methods share.

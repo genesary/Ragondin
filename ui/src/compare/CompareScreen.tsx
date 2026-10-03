@@ -65,6 +65,14 @@ function Comparing({ client, ids, baseline }: { client: ApiClient; ids: readonly
   // compared before the address moved, and is not asked for twice.
   const answered = useRef(new Map<string, Comparison>());
   const latest = useRef(0);
+  // The comparison read in flight, cancelled once a newer one overtakes it.
+  // A pairing's post is never held here: it writes, and the API may have
+  // kept it whether or not its answer still lands.
+  const reading = useRef<AbortController | null>(null);
+  const supersede = () => {
+    reading.current?.abort();
+    reading.current = null;
+  };
   // The address as it stands now: an answer that arrives later builds on
   // this, never on the ids and baseline it captured when it was asked.
   const request = useRef<CompareRequest>({ run_ids: [...ids], baseline });
@@ -72,6 +80,7 @@ function Comparing({ client, ids, baseline }: { client: ApiClient; ids: readonly
 
   const compare = useCallback(async () => {
     const mine = ++latest.current;
+    supersede();
     const body = request.current;
     const asked = keyOf(body.run_ids, body.baseline);
     const ready = answered.current.get(asked);
@@ -80,9 +89,12 @@ function Comparing({ client, ids, baseline }: { client: ApiClient; ids: readonly
       return;
     }
     setRead((prev) => ({ state: { status: 'loading' }, key: asked, shown: prev.state.status === 'loaded' ? prev.state.value : prev.shown }));
-    const result = await client.post('/compare', body);
-    // Only the answer to the last comparison asked for lands.
-    if (mine !== latest.current) return;
+    const controller = new AbortController();
+    reading.current = controller;
+    const result = await client.post('/compare', body, { signal: controller.signal });
+    // Only the answer to the last comparison asked for lands; the
+    // cancellation saves the server's work, this count is the guarantee.
+    if (mine !== latest.current || controller.signal.aborted) return;
     if (result.ok) answered.current.set(asked, result.value);
     setRead((prev) => ({ state: result.ok ? { status: 'loaded', value: result.value } : { status: 'error', problem: result.problem }, key: asked, shown: result.ok ? result.value : prev.shown }));
   }, [client]);
@@ -90,6 +102,8 @@ function Comparing({ client, ids, baseline }: { client: ApiClient; ids: readonly
   useEffect(() => {
     void compare();
   }, [compare, key]);
+  // The screen going cancels the read it leaves behind.
+  useEffect(() => supersede, []);
 
   const readListing = useCallback(async () => {
     setListing({ status: 'loading' });
@@ -117,6 +131,7 @@ function Comparing({ client, ids, baseline }: { client: ApiClient; ids: readonly
     // A pairing's answer is a comparison like any other: it lands only if
     // nothing newer was asked for meanwhile.
     const mine = ++latest.current;
+    supersede();
     const body = { ...request.current, pairing };
     const asked = keyOf(body.run_ids, body.baseline);
     const result = await client.post('/compare', body);

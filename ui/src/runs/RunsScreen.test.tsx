@@ -387,6 +387,21 @@ describe('the selection', () => {
     await waitFor(() => expect(window.location.hash).toBe(`#compare/${R1}+${R4}`));
   });
 
+  it('cancels a re-read a newer one overtakes, and shows no error for it', async () => {
+    let asked = 0;
+    const both: RunListing = { ...LATER, runs: [...LATER.runs, summary(hex('7'), DENSE, SCIFACT)] };
+    // The first listing answers; the re-read for R5 is held; the one for R5 and the seventh run answers both.
+    const api = show('#runs', routes(() => (++asked === 1 ? { body: LISTING } : asked === 2 ? new Promise(() => {}) : { body: both })));
+    await loaded();
+    act(() => navigate({ screen: 'runs', sel: [R5] }, { replace: true }));
+    await waitFor(() => expect(api.signals).toHaveLength(2));
+    expect(api.signals[1]?.aborted).toBe(false);
+    act(() => navigate({ screen: 'runs', sel: [R5, hex('7')] }, { replace: true }));
+    await waitFor(() => expect(box(hex('7')).checked).toBe(true));
+    expect(api.signals[1]?.aborted).toBe(true);
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
   it('takes the answer of the last listing asked for, not of the last to arrive', async () => {
     const answers: ((r: ApiResult<RunListing>) => void)[] = [];
     const client = {

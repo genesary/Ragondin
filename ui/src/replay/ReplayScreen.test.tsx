@@ -395,6 +395,22 @@ describe('only the last query asked lands', () => {
     expect(screen.getByRole('application', { name: /query q3$/ })).toBeTruthy();
     expect(screen.queryByRole('application', { name: /query q2$/ })).toBeNull();
   });
+
+  it("cancels q2's request when q3 is chosen, and shows no error for it", async () => {
+    const mock = api({ trace: (_run, q) => (q === 'q2' ? new Promise(() => {}) : traceOf(HYBRID_TRACE, q)) });
+    const view = show({ query: 'q1' });
+    await screen.findByRole('application', { name: /query q1$/ });
+    rerender(view, { query: 'q2' });
+    await screen.findByText('Reading query q2…');
+    const q2 = mock.requests.findIndex((r) => r.endsWith(`/trace/q2`));
+    expect(mock.signals[q2]?.aborted).toBe(false);
+    rerender(view, { query: 'q3' });
+    expect(await screen.findByRole('application', { name: /query q3$/ })).toBeTruthy();
+    expect(mock.signals[q2]?.aborted).toBe(true);
+    expect(screen.queryByText('request_aborted')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+    expect(screen.getByRole('status').textContent).toBe('');
+  });
 });
 
 describe('what is busy', () => {

@@ -419,6 +419,41 @@ describe('answers that arrive out of order', () => {
     expect(screen.getByText('third')).toBeTruthy();
   });
 
+  it('cancels the comparison a new baseline overtakes, and shows no error for it', async () => {
+    const h = held();
+    const api = show(THREE, routes(h.route));
+    await (await h.call(0)).release('first');
+    await screen.findByText('first');
+    baselineTo(HYBRID);
+    await h.call(1);
+    const compares = () => api.signals.filter((_, i) => api.requests[i]?.startsWith('POST '));
+    expect(compares()[1]?.aborted).toBe(false);
+    baselineTo(RERANK);
+    const third = await h.call(2);
+    expect(compares()[1]?.aborted).toBe(true);
+    await third.release('third');
+    expect(screen.getByText('third')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+    expect(screen.queryByText('request_aborted')).toBeNull();
+  });
+
+  it('never cancels a pairing a newer comparison overtakes: the API may have kept it', async () => {
+    const h = held();
+    const api = show(THREE, routes(h.route));
+    await (await h.call(0)).release('first');
+    await screen.findByText('first');
+    fireEvent.click(screen.getByRole('button', { name: 'Pair nodes…' }));
+    const panel = screen.getByRole('region', { name: 'Pair nodes' });
+    fireEvent.change(within(panel).getByLabelText('Pair the baseline with'), { target: { value: RERANK } });
+    fireEvent.click(within(panel).getByRole('button', { name: 'dense, baseline' }));
+    fireEvent.click(within(panel).getByRole('button', { name: 'rerank, B' }));
+    await h.call(1);
+    baselineTo(HYBRID);
+    await h.call(2);
+    const compares = api.signals.filter((_, i) => api.requests[i]?.startsWith('POST '));
+    expect(compares[1]?.aborted ?? false).toBe(false);
+  });
+
   it('keeps the comparison on screen while a newer one is read, every section busy, and says so in a status that stays', async () => {
     const h = held();
     show(THREE, routes(h.route));
