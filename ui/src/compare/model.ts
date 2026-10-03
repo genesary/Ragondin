@@ -4,7 +4,7 @@
 // run takes, which metrics share the bars' 0–1 scale, how a bound or a delta
 // is written, and the verdict sentence. ARCHITECTURE.md § The Compare screen.
 import { familyOfComponent, type Family, type HistogramBin, type RunSeries, type RunSlot, type StackSegment } from '../../design/index.ts';
-import type { Comparison, MetricDeltas, MetricDirection, MetricRow, NodePair, ParameterRow, ParameterValue, StageName } from '../api/types.ts';
+import type { Comparison, MetricDeltas, MetricDirection, MetricRow, NodePair, ParameterRow, ParameterValue, StageName, UnplacedPair } from '../api/types.ts';
 import { shortHash } from '../runs/model.ts';
 
 const SLOTS: readonly RunSlot[] = ['base', 'a', 'b', 'c', 'd'];
@@ -233,7 +233,11 @@ export function automaticLinks(c: Comparison, other: number): NodePair[] {
     });
 }
 
-/** The pairs drawn by hand between the baseline's pipeline and `other`'s, as the answer lists them. */
+/**
+ * The pairs drawn by hand between the baseline's pipeline and `other`'s, as
+ * the answer lists them: the whole pairing kept, placed or not — the one a
+ * change posts back, so a pair a run of earlier content lacks is not lost.
+ */
 export function manualPairs(c: Comparison, other: number): NodePair[] {
   const base = c.runs[0]?.pipeline ?? null;
   const them = c.runs[other]?.pipeline ?? null;
@@ -241,9 +245,37 @@ export function manualPairs(c: Comparison, other: number): NodePair[] {
   return c.pairings.find((p) => p.pipeline === base && p.other === them)?.pairs ?? [];
 }
 
-/** The stage section's subtitle: how many pairs are drawn by hand. */
+/** Whether the API reports `pair` as one run `other` could not place. */
+const isUnplaced = (c: Comparison, other: number, pair: NodePair) =>
+  c.unplaced_pairs.some((u) => u.run === c.runs[other]?.id && u.pair.node === pair.node && u.pair.other === pair.other);
+
+/** The pairs drawn by hand that run `other` placed: `manualPairs` less those the API lists in `unplaced_pairs` for it. */
+export function placedPairs(c: Comparison, other: number): NodePair[] {
+  return manualPairs(c, other).filter((pair) => !isUnplaced(c, other, pair));
+}
+
+/**
+ * The stage section's subtitle: how many pairs drawn by hand some run
+ * placed. A pair no run could place is not counted; `unplacedLabel` says why.
+ */
 export function pairsByHandLabel(c: Comparison): string {
-  const count = c.pairings.reduce((total, p) => total + p.pairs.length, 0);
+  const placed = new Set<string>();
+  for (let other = 1; other < c.runs.length; other += 1) {
+    for (const pair of placedPairs(c, other)) placed.add(JSON.stringify([c.runs[0]?.pipeline, c.runs[other]?.pipeline, pair.node, pair.other]));
+  }
+  const count = placed.size;
   if (count === 0) return 'Paired automatically';
   return `${n(count)} pair${count === 1 ? '' : 's'} by hand`;
+}
+
+/**
+ * A pair the API could not place, in words: the pair, then which run lacks
+ * its node — "dense ↔ splade: not in run B". Never moved onto another node,
+ * never left unsaid (decided in #402).
+ */
+export function unplacedLabel(c: Comparison, entry: UnplacedPair): string {
+  const index = c.runs.findIndex((r) => r.id === entry.run);
+  const run = `run ${index < 0 ? shortHash(entry.run) : letterOf(index)}`;
+  const where = entry.absent_from === 'baseline' ? 'the baseline' : entry.absent_from === 'run' ? run : `the baseline nor in ${run}`;
+  return `${entry.pair.node} ↔ ${entry.pair.other}: not in ${where}`;
 }

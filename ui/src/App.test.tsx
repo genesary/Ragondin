@@ -96,7 +96,7 @@ describe('the shell’s screens', () => {
 
   it('hands Runs the selection its address carries', async () => {
     const id = (c: string) => c.repeat(64);
-    const run = (c: string) => ({ id: id(c), pipeline: id('p'), dataset_version: id('d'), index_version: id('i'), engine_version: '0.0.0', metrics: {}, pipeline_names: [], benchmark_names: [], started_at_ms: null, finished_at_ms: null, metric_families: {}, median_query_latency_nanos: null });
+    const run = (c: string) => ({ id: id(c), pipeline: id('p'), dataset_version: id('d'), index_version: id('i'), engine_version: '0.0.0', metrics: {}, pipeline_names: [], launched_as: null, benchmark_names: [], started_at_ms: null, finished_at_ms: null, metric_families: {}, median_query_latency_nanos: null });
     mockApi({ 'GET /workspace': { body: WORKSPACE }, 'GET /runs': { body: { runs: [run('1'), run('2'), run('3')], unreadable: [], shapes: {} } } }, { build: BUILD });
     show(`#runs?sel=${id('2')},${id('1')}`);
     await within(main()).findAllByRole('checkbox');
@@ -157,7 +157,7 @@ describe('the shell’s screens', () => {
 
   describe('state within a screen', () => {
     const id = (c: string) => c.repeat(64);
-    const run = (c: string, dataset = id('d')) => ({ id: id(c), pipeline: id('p'), dataset_version: dataset, index_version: id('i'), engine_version: '0.0.0', metrics: {}, pipeline_names: [], benchmark_names: [], started_at_ms: null, finished_at_ms: null, metric_families: {}, median_query_latency_nanos: null });
+    const run = (c: string, dataset = id('d')) => ({ id: id(c), pipeline: id('p'), dataset_version: dataset, index_version: id('i'), engine_version: '0.0.0', metrics: {}, pipeline_names: [], launched_as: null, benchmark_names: [], started_at_ms: null, finished_at_ms: null, metric_families: {}, median_query_latency_nanos: null });
     const runsRoutes = () =>
       mockApi({ 'GET /workspace': { body: WORKSPACE }, 'GET /runs': { body: { runs: [run('1'), run('2'), run('3', id('e'))], unreadable: [], shapes: {} } } }, { build: BUILD });
     const row = (c: string) => within(main()).getByRole('row', { name: new RegExp(`^Run ${id(c).slice(0, 12)} on `) });

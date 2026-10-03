@@ -14,9 +14,11 @@ import {
   noVerdict,
   pairableNodes,
   pairsByHandLabel,
+  placedPairs,
   regressions,
   runSeries,
   stageLine,
+  unplacedLabel,
   verdict,
 } from './model.ts';
 
@@ -210,5 +212,28 @@ describe('pairing', () => {
     expect(pairsByHandLabel(one)).toBe('1 pair by hand');
     const two: Comparison = { ...one, pairings: [...one.pairings, { pipeline: 'dense-only', other: 'hybrid-rerank', pairs: [{ node: 'dense', other: 'rerank' }] }] };
     expect(pairsByHandLabel(two)).toBe('2 pairs by hand');
+  });
+
+  // Run B was launched as `hybrid-rerank`, whose document has gained `splade`
+  // since: of the two pairs kept, B has the nodes of one.
+  const earlier: Comparison = {
+    ...COMPARISON,
+    pairings: [{ pipeline: 'dense-only', other: 'hybrid-rerank', pairs: [{ node: 'dense', other: 'rerank' }, { node: 'dense', other: 'splade' }] }],
+    unplaced_pairs: [{ run: RERANK, pair: { node: 'dense', other: 'splade' }, absent_from: 'run' }],
+  };
+
+  it('counts the pairs a run placed, never one it could not', () => {
+    expect(pairsByHandLabel(earlier)).toBe('1 pair by hand');
+    expect(placedPairs(earlier, 2)).toEqual([{ node: 'dense', other: 'rerank' }]);
+    // The kept pairing is whole, so a pair drawn next keeps the one B lacks.
+    expect(manualPairs(earlier, 2)).toHaveLength(2);
+  });
+
+  it('says in words which run lacks each pair it could not place', () => {
+    const [entry] = earlier.unplaced_pairs;
+    expect(unplacedLabel(earlier, entry as Comparison['unplaced_pairs'][number])).toBe('dense ↔ splade: not in run B');
+    const pair = { node: 'colbert', other: 'splade' };
+    expect(unplacedLabel(earlier, { run: RERANK, pair, absent_from: 'baseline' })).toBe('colbert ↔ splade: not in the baseline');
+    expect(unplacedLabel(earlier, { run: HYBRID, pair, absent_from: 'both' })).toBe('colbert ↔ splade: not in the baseline nor in run A');
   });
 });

@@ -9,7 +9,7 @@ import { Button, FamilyTile, InlineMessage, Select } from '../../design/index.ts
 import type { ApiProblem } from '../api/client.ts';
 import type { Comparison, NodePair, Pairing } from '../api/types.ts';
 import { ErrorState } from '../shell/states.tsx';
-import { automaticLinks, manualPairs, pairableNodes, pipelineName, runSeries, stageLabel, type PairableNode } from './model.ts';
+import { automaticLinks, manualPairs, pairableNodes, pipelineName, runSeries, stageLabel, unplacedLabel, type PairableNode } from './model.ts';
 
 /** The height of one node row, in px: the 40px control token the rows are drawn at, so the links meet them. */
 export const PAIR_ROW = 40;
@@ -171,7 +171,7 @@ export function PairingPanel({ id, comparison, onPair }: PairingPanelProps) {
       </div>
       {unnamed !== undefined ? (
         <InlineMessage tone="info" title="Paired automatically only">
-          Run {pipelineName(unnamed)} matches no pipeline document of the workspace, or several: it pairs automatically only. A pairing is kept between two pipeline documents.
+          Run {pipelineName(unnamed)} was launched under no recorded name and matches no pipeline document of the workspace, or several: it pairs automatically only. A pairing is kept between two pipeline documents.
         </InlineMessage>
       ) : (
         <>
@@ -199,10 +199,12 @@ export function PairingPanel({ id, comparison, onPair }: PairingPanelProps) {
             {manual.length === 0 ? <li className="rg-pair__none">None yet.</li> : null}
             {manual.map((p) => {
               const rest = manual.filter((q) => q !== p);
+              // Kept but not placed in this run: said, never dropped from the list or from what is posted.
+              const unplaced = comparison.unplaced_pairs.find((u) => u.run === them?.id && u.pair.node === p.node && u.pair.other === p.other);
               return (
                 <li key={`${p.node}-${p.other}`}>
                   <span>
-                    {p.node} ↔ {p.other}
+                    {unplaced === undefined ? `${p.node} ↔ ${p.other}` : unplacedLabel(comparison, unplaced)}
                     {p.label == null ? null : ` — ${p.label}`}
                   </span>
                   <Button

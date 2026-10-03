@@ -1,5 +1,6 @@
 // A pipeline's heading in the Runs table, set in design/'s Table as a group
-// label: every name it goes by, each the way to its Pipeline screen, its
+// label: the name or names it is grouped under, each the way to its Pipeline
+// screen — or its short hash, when no name reaches it — its
 // shape as design/'s family tiles in pipeline order, and how many runs it
 // holds. The shape comes with the listing, so the heading is whole when it is
 // first drawn: nothing loads into it later, and nothing moves under it.
@@ -20,7 +21,7 @@ export function GroupLabel({ group, shape }: GroupLabelProps) {
   return (
     <span className="rg-runs__group">
       {group.names.length === 0 ? (
-        <a className="rg-runs__pipeline" href={formatHash({ screen: 'pipeline', name: group.key })}>
+        <a className="rg-runs__pipeline" href={formatHash({ screen: 'pipeline', name: group.pipeline })}>
           <span className="rg-visually-hidden">pipeline </span>
           <code>{shortHash(group.pipeline)}</code>
         </a>

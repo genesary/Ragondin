@@ -11,6 +11,8 @@ const row = (id: string): RunRow => ({
   source: { kind: 'run', id },
   pipeline: HASH,
   pipelineNames: [],
+  launchedAs: null,
+  launchRecorded: false,
   benchmark: 'd',
   benchmarkNames: [],
   status: { state: 'done' },
@@ -20,7 +22,7 @@ const row = (id: string): RunRow => ({
   prefix: null,
 });
 
-const group = (over: Partial<RunGroup> = {}): RunGroup => ({ key: HASH, names: ['hybrid'], pipeline: HASH, shapeKey: HASH, rows: [row('1'), row('2')], ...over });
+const group = (over: Partial<RunGroup> = {}): RunGroup => ({ key: 'name:hybrid', names: ['hybrid'], pipeline: HASH, shapeKey: HASH, rows: [row('1'), row('2')], ...over });
 
 const SHAPE: ShapeNode[] = [
   { node: 'bm25', family: 'retriever' },
@@ -56,7 +58,8 @@ describe('the group heading', () => {
   });
 
   it('names a pipeline without a name by its short hash, linking by the full one', () => {
-    show(group({ names: [] }));
+    // The group's key is not a pipeline's address: the hash is.
+    show(group({ key: `hash:${HASH}`, names: [] }));
     expect(screen.getByRole('link', { name: 'pipeline 821bafbd3fa0' }).getAttribute('href')).toBe(`#pipeline/${HASH}`);
   });
 

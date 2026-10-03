@@ -112,6 +112,7 @@ export const COMPARISON: Comparison = {
     },
   ],
   pairings: [],
+  unplaced_pairs: [],
   query_deltas: [
     {
       run: HYBRID,

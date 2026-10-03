@@ -127,12 +127,19 @@ pub struct RunSummary {
     /// The content hash of the canonical logical pipeline it ran.
     pub pipeline: String,
     /// Every workspace pipeline document whose canonical hash is the run's,
-    /// sorted; empty when none is. Found by content, so a document edited
-    /// since the run no longer names it. Of the two facts ADR-C39 § 4 exposes
-    /// about a run's pipeline, this is the content one; the launch record it
-    /// sits beside is not served yet, and the two are never resolved into one
-    /// name.
+    /// sorted; empty when none is. The current hash match, found by content
+    /// when the listing is asked for, so a document edited since the run no
+    /// longer names it. Of the two facts ADR-C39 § 4 exposes about a run's
+    /// pipeline, this is the content one; it is not a resolution of
+    /// [`launched_as`](Self::launched_as), nor that of this.
     pub pipeline_names: Vec<String>,
+    /// The run's launch record, as it was written once with the run, read
+    /// and never computed or inferred; `null` for a run stored without one.
+    /// Recorded at launch, so its name may be a pipeline whose content has
+    /// since changed, or that no longer exists. ADR-C39 § 4's other fact,
+    /// never resolved with [`pipeline_names`](Self::pipeline_names) into one
+    /// name.
+    pub launched_as: Option<LaunchedAs>,
     /// The benchmark dataset's version.
     pub dataset_version: String,
     /// Every registry entry pinned to [`dataset_version`](Self::dataset_version)
@@ -212,9 +219,11 @@ pub struct RunDetail {
     /// The graph lowered from [`configuration`](Self::configuration) by the
     /// pipeline grammar's one implementation — never by the browser.
     pub graph: Graph,
-    /// The run this one is a prefix of. Always absent today: no run is
-    /// recorded as a prefix yet.
-    pub prefix_of: Option<String>,
+    /// The run's launch record, as [`RunSummary::launched_as`] serves it;
+    /// `null` for a run stored without one. A prefix run says what it was
+    /// cut from here, in the record's `prefix_of`: the parent's name, the
+    /// node it stops at and the parent's canonical hash.
+    pub launched_as: Option<LaunchedAs>,
 }
 
 /// The components of a run's identity tuple.
@@ -866,6 +875,10 @@ pub struct Comparison {
     /// holds a pairing for with the baseline's, oriented from the baseline's
     /// pipeline.
     pub pairings: Vec<Pairing>,
+    /// Every pair of [`pairings`](Self::pairings) a run could not place,
+    /// with the run and the side lacking its node, in the runs' order; empty
+    /// when every pair was placed.
+    pub unplaced_pairs: Vec<UnplacedPair>,
     /// Each run other than the baseline: its per-query deltas against the
     /// baseline, for every ranking metric both recorded.
     pub query_deltas: Vec<RunDeltas>,
@@ -885,10 +898,15 @@ pub struct ComparedRun {
     pub id: String,
     /// The content hash of the canonical logical pipeline it ran.
     pub pipeline_hash: String,
-    /// The workspace pipeline it is a run of: the one pipeline document
-    /// whose canonical hash is the run's. `null` when none is — the
-    /// document was edited since, or removed — or when several are; such a
-    /// run is paired automatically only.
+    /// The workspace pipeline whose manual pairings apply to it (decided in #402): the
+    /// name its launch record gives when it has one, whether or not that
+    /// pipeline's content has changed since; otherwise the one pipeline
+    /// document whose canonical hash is the run's. `null` when it has no
+    /// record naming one and no document, or several, holds its hash; such a
+    /// run is paired automatically only. The lookup's answer, not a claim
+    /// about which version the run is: a run of earlier content gets the
+    /// pairs whose nodes it still has, and the rest are in
+    /// [`Comparison::unplaced_pairs`].
     pub pipeline: Option<String>,
 }
 
@@ -1081,6 +1099,37 @@ pub struct Pairing {
     /// The pairs. Empty in a request: "Reset to automatic", which removes
     /// the pairing.
     pub pairs: Vec<NodePair>,
+}
+
+/// A pair drawn by hand that a comparison could not apply to one of its
+/// runs: a node it names is not a retriever, fusion or reranker of the run
+/// it would be read in. A pairing is kept against two pipelines' current
+/// documents, and applies to a run launched under a pipeline's name whose
+/// content has since changed for the nodes that run still has (decided in #402); every
+/// other pair is reported here, never skipped and never guessed onto
+/// another node.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct UnplacedPair {
+    /// The compared run, other than the baseline, the pair was not applied
+    /// to.
+    pub run: String,
+    /// The pair, oriented from the baseline's pipeline as
+    /// [`Comparison::pairings`] holds it.
+    pub pair: NodePair,
+    /// Which run lacks its node.
+    pub absent_from: AbsentFrom,
+}
+
+/// Which run of a comparison lacks a node a pair drawn by hand names.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AbsentFrom {
+    /// The baseline lacks the pair's `node`.
+    Baseline,
+    /// The run lacks the pair's `other`.
+    Run,
+    /// Each lacks its node.
+    Both,
 }
 
 /// Two nodes compared with each other: the second is shown at the first's

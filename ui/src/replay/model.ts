@@ -7,6 +7,13 @@
 import type { DatasetCheck, Graph, MetricFamily, QueryScores, QueryTrace, RunListing, RunSummary, TracePassage, TraceNodeView } from '../api/types.ts';
 import type { NodeOverlay } from '../canvas/index.ts';
 
+/**
+ * The name a run goes by on this screen: the name its launch record gives,
+ * else the first current document holding its hash, else none — ADR-C39
+ * § 4's order, the Runs screen's grouping order.
+ */
+export const runName = (run: Pick<RunSummary, 'launched_as' | 'pipeline_names'>): string | null => run.launched_as?.name ?? run.pipeline_names[0] ?? null;
+
 /** A metric value as every screen prints a ranking metric: four decimals. */
 export const formatScore = (value: number) => value.toFixed(4);
 

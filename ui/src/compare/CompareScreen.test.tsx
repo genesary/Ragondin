@@ -16,7 +16,7 @@ const R5 = hex('6');
 const R6 = hex('7');
 const FIQA_RUN = hex('8');
 
-const summary = (id: string, dataset: string): RunSummary => ({ id, pipeline: hex('9'), dataset_version: dataset, index_version: hex('0'), engine_version: '0.0.0', metrics: {}, pipeline_names: [], benchmark_names: [], started_at_ms: null, finished_at_ms: null, metric_families: {}, median_query_latency_nanos: null });
+const summary = (id: string, dataset: string): RunSummary => ({ id, pipeline: hex('9'), dataset_version: dataset, index_version: hex('0'), engine_version: '0.0.0', metrics: {}, pipeline_names: [], launched_as: null, benchmark_names: [], started_at_ms: null, finished_at_ms: null, metric_families: {}, median_query_latency_nanos: null });
 const LISTING: RunListing = {
   runs: [summary(DENSE, SCIFACT), summary(HYBRID, SCIFACT), summary(RERANK, SCIFACT), summary(R4, SCIFACT), summary(R5, SCIFACT), summary(R6, SCIFACT), summary(FIQA_RUN, OTHER_BENCH)],
   unreadable: [],
@@ -184,6 +184,25 @@ describe('the charts', () => {
     expect([...figure.querySelectorAll('.rg-chart__group')].map((g) => g.textContent)).toEqual(['mrr@10', 'ndcg@10', 'recall@100']);
     expect([...figure.querySelectorAll('.rg-chart__best')].map((g) => g.textContent)).toEqual(['★ 0.6790', '★ 0.7032', '★ 0.9310', '★ 0.9310']);
     expect([...figure.querySelectorAll('.rg-chart__tick')].map((t) => t.textContent)).toEqual(['0', '0.2', '0.4', '0.6', '0.8', '1']);
+  });
+
+  it('counts only the pairs placed, and lists in words each pair a run could not place', async () => {
+    const earlier: Comparison = {
+      ...COMPARISON,
+      pairings: [{ pipeline: 'dense-only', other: 'hybrid-rerank', pairs: [{ node: 'dense', other: 'rerank' }, { node: 'dense', other: 'splade' }] }],
+      unplaced_pairs: [{ run: RERANK, pair: { node: 'dense', other: 'splade' }, absent_from: 'run' }],
+    };
+    show(THREE, routes(() => ({ body: earlier })));
+    await loaded();
+    expect(screen.getByText('1 pair by hand')).toBeTruthy();
+    const list = screen.getByRole('list', { name: 'Pairs not placed' });
+    expect(within(list).getAllByRole('listitem').map((li) => li.textContent)).toEqual(['dense ↔ splade: not in run B']);
+  });
+
+  it('draws no list of unplaced pairs when every pair was placed', async () => {
+    show(THREE);
+    await loaded();
+    expect(screen.queryByRole('list', { name: 'Pairs not placed' })).toBeNull();
   });
 
   it('draws the stage line: the legs, after fusion, after rerank; the dense-only line breaks where it has no stage', async () => {

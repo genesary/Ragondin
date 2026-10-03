@@ -36,8 +36,8 @@ the response types, the typed errors, and the traits the service consumes.
 | `cache` | The workspace's `cache/`: those derived figures, reconstructible, never a truth |
 | `endpoints` | The handlers of the workspace's endpoints — pipelines, benchmarks, services — and of `POST /compare` and `GET /pipelines/{name}/matrix` |
 | `stages` | A pipeline's stages, derived from its nodes' kinds and positions, by which a comparison aligns runs |
-| `lineage` | The current workspace documents whose canonical hash is a run's — ADR-C39 § 4's content fact, beside the run's launch record, which the pipeline matrix reads; `GET /runs` does not serve the record yet (#392) — and the structural prefix test, `is_prefix` |
-| `comparison` | The runs aligned by stage with the pairs drawn by hand, the best node of a stage per metric, a node's gain over the previous stage, and the bins of the per-query deltas |
+| `lineage` | The current workspace documents whose canonical hash is a run's — ADR-C39 § 4's content fact, served beside the run's launch record by `GET /runs` and the pipeline matrix — and the structural prefix test, `is_prefix` |
+| `comparison` | The runs aligned by stage with the pairs drawn by hand, the pairs a run cannot place, the best node of a stage per metric, a node's gain over the previous stage, and the bins of the per-query deltas |
 | `matrix` | The most-recent-run rule and the topological order of the pipeline matrix's rows |
 | `validation` | A pipeline document checked as `ragondin validate` checks a file |
 | `fs` | The workspace on disk and its file backends: `Workspace`, `FsSettings`, `FsPipelines`, `FsRegistry` |
@@ -650,8 +650,11 @@ carries its id, family, `impl:` name and parameters; an edge carries its
 producer, consumer, port and the kind of value its producer puts on it — the
 query for a declared input, and otherwise `produced_kind` of the producing
 node. The nodes come in the canonical order (by id), the edges grouped by
-consuming node, in port order. `prefix_of` is present and always absent: no
-run is recorded as a prefix yet.
+consuming node, in port order. A prefix run says what it was cut from in
+`launched_as.prefix_of` (below), the one place it is said: ADR-C39 § 2 makes
+a prefix a cut of a pipeline's version — the parent's name, the node it
+stops at and the parent's canonical hash — never a relation between two
+runs.
 
 **A run the store lists and cannot load** is listed in `GET /runs` under
 `unreadable`, with the store's reason, rather than dropped or failing the whole
@@ -666,9 +669,17 @@ listing — reported, never repaired.
 - `pipeline_names`: every workspace document whose canonical hash is the
   run's, from `lineage::pipelines_by_hash`, sorted. A list, never a pick:
   several documents can be one canonical form. It is the content fact of
-  the two ADR-C39 § 4 exposes about a run's pipeline; the launch record it
-  sits beside is not served yet, and the two are never resolved into one
-  name.
+  the two ADR-C39 § 4 exposes about a run's pipeline: the current hash
+  match.
+- `launched_as` — `RunDetail` carries it too — the other fact: the run's
+  launch record (`Run::provenance`, ADR-C39 § 1), `{name, prefix_of: {up_to,
+  parent_pipeline_hash}}` with each part `null` when the record holds none,
+  or `null` for a run stored without `provenance.json`. Read, never computed
+  or inferred, and serialized by `convert::launched_as` into `LaunchedAs`,
+  the type the pipeline matrix's feeding runs carry, so the record has one
+  schema across the API. Recorded at launch, its name may be a pipeline
+  whose content has changed since, or that no longer exists. Neither fact is
+  a resolution of the other, and no field says which a name came from.
 - `benchmark_names`: every registry entry pinned to the run's
   `dataset_version`, a manifest entry or an import, sorted — the pinning
   `Registry::dataset` locates by, read through `Registry::pinned`, which
@@ -701,7 +712,7 @@ every name list silently empty. A cache that fails does not: its first
 reason is `RunListing::cache_error`, and every latency is computed anyway.
 
 **A field serialized on every response is required in its schema**, nullable
-when it can be null: `RunDetail::prefix_of`, the two times of `RunDetail`
+when it can be null: `launched_as` on `RunDetail` and `RunSummary`, the two times of `RunDetail`
 and `RunSummary`, `RunSummary::median_query_latency_nanos`,
 `QueryScores::text` and `QueryScores::duration_nanos`,
 `MetricRow::direction`, `PipelineSummary::modified_ms`, `Location::node`,
@@ -1213,15 +1224,31 @@ answers `source: manual`, under the pair's label when it has one. Only the
 stages a kind decides take part — legs, after fusion, after rerank; the final
 ranking and the answer are the walk's, and a pair never moves them.
 
-- **A run is matched to its workspace pipeline by content — interim
-  behaviour.** A run names no pipeline. ADR-C39 decides run → pipeline
-  identity; until the code follows it, a run's pipeline is the one document
-  under `pipelines/` whose canonical hash is the run's (INV-8: the
-  canonical form, never the text), reported as each run's `pipeline`. No
-  document, or several, is `null`, and such a run pairs automatically only.
-  So a document edited since a run no longer names that run, and its pairing
-  reaches the runs of what the file holds now. The index is `lineage.rs`,
-  which the pipeline matrix reads too, for its feeding runs' names.
+- **Which pipeline's pairings apply to a run** — decided in #402, option 1.
+  A run's pipeline, for the pairing, is the name its launch record gives
+  (ADR-C39 § 1) when it gives one, whether or not that pipeline's content
+  has changed since; otherwise the one document under `pipelines/` whose
+  canonical hash is the run's (INV-8: the canonical form, never the text),
+  by `lineage::pipeline_of`. It is reported as each run's `pipeline`: the
+  lookup's answer, not a claim about which version the run is. No record
+  naming one and no document, or several, is `null`, and such a run pairs
+  automatically only. A recorded name the workspace no longer holds, or
+  holds only under another case, has no pairing, and the comparison goes on
+  without one: a pairing is read only for two names `PipelineSource::list`
+  holds exactly as given, so neither `pipeline_not_found` nor the case
+  alias's `request_invalid` can refuse the comparison.
+- **A run of earlier content gets the pairs whose nodes it still has.** A
+  pairing is kept against the two pipelines' current documents. Applied to
+  a run launched as *N* whose content has since changed, *N*'s pairs apply
+  to the nodes that run still has; every pair whose node either run lacks —
+  no retriever, fusion or reranker of that id in the run's own lowered
+  graph — is reported in the response's `unplaced_pairs`, with the run, the
+  pair as `pairings` holds it, and `absent_from` (`baseline`, `run` or
+  `both`). It is never skipped silently and never guessed onto another node
+  (ADR-C39 § 7: stated, not guessed). Options 2 (never apply) and 3 (all or
+  nothing) were rejected in #402. `comparison::align` and
+  `comparison::unplaced` share one test, so a pair is either placed or
+  reported.
 - **Pairings apply between the baseline's pipeline and each other run's**,
   read with `PipelineSource::read_pairing` and listed, oriented from the
   baseline's, in the response's `pairings`. A pairing between two runs

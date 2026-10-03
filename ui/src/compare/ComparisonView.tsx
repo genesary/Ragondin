@@ -26,7 +26,7 @@ import type { ApiProblem } from '../api/client.ts';
 import type { Comparison, Pairing, RunListing } from '../api/types.ts';
 import { formatHash } from '../routes.ts';
 import type { RequestState } from '../shell/states.tsx';
-import { barMetrics, binsOf, deltaOf, latencyBars, pairsByHandLabel, noVerdict, regressions, runSeries, stageLabel, stageLine, stageMetrics, verdict } from './model.ts';
+import { barMetrics, binsOf, deltaOf, latencyBars, pairsByHandLabel, noVerdict, regressions, runSeries, stageLabel, stageLine, stageMetrics, unplacedLabel, verdict } from './model.ts';
 import { PairingPanel, type PairOutcome } from './PairingPanel.tsx';
 import { RunBar } from './RunBar.tsx';
 import { BinsTable, LatencyTable, MetricsTable, ParameterMatrix, StageTable, ValuesTable } from './tables.tsx';
@@ -173,6 +173,20 @@ export function ComparisonView({ comparison: c, ids, baseline, busy, listing, on
               <InlineMessage tone="warning" title={`The automatic pairing is a guess at ${lowConfidence.map((r) => stageLabel(r.stage)).join(' and ')}`}>
                 A pipeline&apos;s graph is ambiguous there. If the stages below compare the wrong nodes, pair them by hand.
               </InlineMessage>
+            )}
+            {/* Every pair a run could not place, in words (decided in #402): drawn with the answer, so it moves nothing later. */}
+            {c.unplaced_pairs.length === 0 ? null : (
+              <div className="rg-compare__unplaced">
+                <InlineMessage
+                  tone="info"
+                  title={`${c.unplaced_pairs.length} pair${c.unplaced_pairs.length === 1 ? '' : 's'} drawn by hand not placed: a run lacks the node`}
+                />
+                <ul aria-label="Pairs not placed">
+                  {c.unplaced_pairs.map((u) => (
+                    <li key={`${u.run}-${u.pair.node}-${u.pair.other}`}>{unplacedLabel(c, u)}</li>
+                  ))}
+                </ul>
+              </div>
             )}
             {pairing ? <PairingPanel id={pairingId} comparison={c} onPair={onPair} /> : null}
             {line === null || metricAtStages === null ? (

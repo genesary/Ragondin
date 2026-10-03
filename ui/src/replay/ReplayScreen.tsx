@@ -10,7 +10,7 @@ import type { QueryTrace, RunDetail, RunListing, RunQueries } from '../api/types
 import { Canvas } from '../canvas/index.ts';
 import { navigate } from '../routes.ts';
 import { ErrorState, Loading, type RequestState } from '../shell/states.tsx';
-import { candidates, defaultMetric, firstJudged, overlayOf, passagesBanner } from './model.ts';
+import { candidates, defaultMetric, firstJudged, overlayOf, passagesBanner, runName } from './model.ts';
 import { NodeInspector, type Side } from './NodeInspector.tsx';
 import { QueryList } from './QueryList.tsx';
 import './Replay.css';
@@ -58,7 +58,10 @@ function useRead<T>(key: string | null, read: () => Promise<ApiResult<T>>): Read
 
 const loaded = <T,>(read: Read<T>): T | null => (read.state.status === 'loaded' ? read.state.value : null);
 const short = (id: string) => id.slice(0, 12);
-const nameOf = (listing: RunListing | null, id: string) => listing?.runs.find((r) => r.id === id)?.pipeline_names[0] ?? `run ${short(id)}`;
+const nameOf = (listing: RunListing | null, id: string) => {
+  const run = listing?.runs.find((r) => r.id === id);
+  return (run === undefined ? null : runName(run)) ?? `run ${short(id)}`;
+};
 /** Copies a run's full id; a browser that refuses the clipboard leaves the id in the hash's tooltip. */
 const copy = (hash: string) => {
   void navigator.clipboard?.writeText(hash).catch(() => {});
@@ -182,7 +185,7 @@ export function ReplayScreen({ client, run, query, with: other }: ReplayScreenPr
           ]}
         />
         {beside === null ? null : (
-          <Select id="replay-beside" label="Beside" value={beside} onChange={(e) => go(query, e.target.value)} options={offered.map((r) => ({ value: r.id, label: `${r.pipeline_names[0] ?? 'run'} · ${short(r.id)}` }))} />
+          <Select id="replay-beside" label="Beside" value={beside} onChange={(e) => go(query, e.target.value)} options={offered.map((r) => ({ value: r.id, label: `${runName(r) ?? 'run'} · ${short(r.id)}` }))} />
         )}
         {listed.metrics.length === 0 ? null : (
           <Select id="replay-metric" label="Metric" value={metric ?? ''} onChange={(e) => setMetric(e.target.value)} options={listed.metrics.map((m) => ({ value: m, label: m }))} />

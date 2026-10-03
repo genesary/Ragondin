@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 use ragondin_experiments::Direction;
 use ragondin_pipeline::NodeId;
 
-use crate::response::{DeltaBinName, NodePair};
+use crate::response::{AbsentFrom, DeltaBinName, NodePair};
 use crate::stages::{Stage, Stages};
 
 /// One run's column, for the alignment.
@@ -44,8 +44,9 @@ pub(crate) struct Row {
 /// gives it and into the stage of the baseline's node it is paired with, and
 /// that row then reads as manual, under the pair's label. Only the stages a
 /// node's kind decides take part — the legs, after fusion, after rerank: the
-/// final ranking and the answer are the walk's. A pair naming a node with
-/// none of them is passed over; `POST /compare` refuses to keep one.
+/// final ranking and the answer are the walk's. A pair naming a node either
+/// run lacks at those stages moves nothing, and is never guessed onto
+/// another node: [`unplaced`] reports it, by the same test.
 pub(crate) fn align(columns: &[Column<'_>]) -> Vec<Row> {
     let Some(baseline) = columns.first() else {
         return Vec::new();
@@ -69,13 +70,10 @@ pub(crate) fn align(columns: &[Column<'_>]) -> Vec<Row> {
     let mut manual: BTreeMap<Stage, Option<String>> = BTreeMap::new();
     for (index, column) in columns.iter().enumerate().skip(1) {
         for pair in column.pairs {
-            let (node, other) = (NodeId::new(&pair.node), NodeId::new(&pair.other));
-            let (Some(target), Some(from)) = (
-                baseline.stages.pairable_stage_of(&node),
-                column.stages.pairable_stage_of(&other),
-            ) else {
+            let Ok((target, from)) = placement(baseline, column, pair) else {
                 continue;
             };
+            let (node, other) = (NodeId::new(&pair.node), NodeId::new(&pair.other));
             if let Some(nodes) = cells[index].get_mut(&from) {
                 nodes.retain(|(id, _)| id != &other);
             }
@@ -121,6 +119,50 @@ pub(crate) fn align(columns: &[Column<'_>]) -> Vec<Row> {
             })
         })
         .collect()
+}
+
+/// The pairs drawn by hand that [`align`] cannot place, each with its
+/// column's index and the side that lacks its node — no retriever, fusion or
+/// reranker of that id in the baseline's run, in the column's run, or in
+/// both. A pairing is kept against two pipelines' current documents, and a
+/// run of earlier content may lack nodes it names (decided in #402): such a pair is
+/// reported, never passed over.
+pub(crate) fn unplaced<'a>(columns: &[Column<'a>]) -> Vec<(usize, &'a NodePair, AbsentFrom)> {
+    let Some(baseline) = columns.first() else {
+        return Vec::new();
+    };
+    columns
+        .iter()
+        .enumerate()
+        .skip(1)
+        .flat_map(|(index, column)| {
+            column.pairs.iter().filter_map(move |pair| {
+                placement(baseline, column, pair)
+                    .err()
+                    .map(|absent| (index, pair, absent))
+            })
+        })
+        .collect()
+}
+
+/// Where `pair` places its nodes — the baseline node's stage, and the stage
+/// the column's node leaves — or which side lacks its node: the one test
+/// [`align`] and [`unplaced`] share, so a pair is placed or reported, never
+/// neither.
+fn placement(
+    baseline: &Column<'_>,
+    column: &Column<'_>,
+    pair: &NodePair,
+) -> Result<(Stage, Stage), AbsentFrom> {
+    match (
+        baseline.stages.pairable_stage_of(&NodeId::new(&pair.node)),
+        column.stages.pairable_stage_of(&NodeId::new(&pair.other)),
+    ) {
+        (Some(target), Some(from)) => Ok((target, from)),
+        (None, Some(_)) => Err(AbsentFrom::Baseline),
+        (Some(_), None) => Err(AbsentFrom::Run),
+        (None, None) => Err(AbsentFrom::Both),
+    }
 }
 
 /// Per metric, the best value among `nodes` and the node it is from, by the
@@ -380,6 +422,52 @@ mod tests {
             last.cells,
             [cell(&[("rrf", false)]), cell(&[("dense", false)])]
         );
+    }
+
+    #[test]
+    fn a_pair_a_column_cannot_place_is_reported_by_the_side_that_lacks_its_node() {
+        let hybrid = Stages::of(&lowered(HYBRID));
+        let dense = Stages::of(&lowered(DENSE_ONLY));
+        let pair = |node: &str, other: &str| NodePair {
+            node: node.to_owned(),
+            other: other.to_owned(),
+            label: None,
+        };
+        let pairs = [
+            pair("rrf", "dense"),
+            pair("bm25", "splade"),
+            pair("colbert", "dense"),
+            pair("colbert", "splade"),
+        ];
+        let columns = [
+            Column {
+                stages: &hybrid,
+                pairs: &[],
+            },
+            Column {
+                stages: &dense,
+                pairs: &pairs,
+            },
+        ];
+
+        let unplaced: Vec<(usize, &str, &str, AbsentFrom)> = unplaced(&columns)
+            .into_iter()
+            .map(|(column, pair, absent)| (column, pair.node.as_str(), pair.other.as_str(), absent))
+            .collect();
+
+        assert_eq!(
+            unplaced,
+            [
+                (1, "bm25", "splade", AbsentFrom::Run),
+                (1, "colbert", "dense", AbsentFrom::Baseline),
+                (1, "colbert", "splade", AbsentFrom::Both),
+            ]
+        );
+        // The pairs placed are the ones `align` moves, and only those.
+        let rows = align(&columns);
+        assert!(rows
+            .iter()
+            .all(|row| !row.manual || row.stage == Stage::AfterFusion));
     }
 
     #[test]

@@ -5,7 +5,9 @@ mod support;
 use std::sync::Arc;
 
 use axum::http::StatusCode;
-use ragondin_experiments::{ConfigDocument, Run, RunTimes, Trace, TraceDocument, UnixMillis};
+use ragondin_experiments::{
+    ConfigDocument, PrefixOf, Run, RunProvenance, RunTimes, Trace, TraceDocument, UnixMillis,
+};
 use ragondin_types::QueryId;
 use serde_json::json;
 use support::datasets::scratch;
@@ -197,7 +199,157 @@ async fn the_detail_returns_the_stored_fields() {
     assert_eq!(body["metrics"]["mrr"], 0.5);
     assert_eq!(body["configuration"], run.config.as_str());
     assert_eq!(body["bindings"], json!([]));
-    assert_eq!(body["prefix_of"], serde_json::Value::Null);
+    assert_eq!(body["launched_as"], serde_json::Value::Null);
+}
+
+#[tokio::test]
+async fn the_listing_carries_the_launch_record_or_null() {
+    let mut named = another_run();
+    named.provenance = Some(RunProvenance::named("hybrid"));
+    let mut cut = fixture_run();
+    cut.id = "00000000000000000000000000000000000000000000000000000000000000bb"
+        .parse()
+        .unwrap();
+    cut.provenance = Some(RunProvenance::prefix(
+        "hybrid",
+        PrefixOf::new("fused", fixture_run().inputs.pipeline),
+    ));
+
+    let body = json(
+        send(
+            app(FakeRunStore::holding([fixture_run(), named, cut])),
+            get("/api/v1/runs"),
+        )
+        .await,
+    )
+    .await;
+
+    let by_id = |id: &str| {
+        body["runs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|run| run["id"] == id)
+            .cloned()
+            .expect("the run is listed")
+    };
+    assert_eq!(
+        by_id(OTHER_RUN)["launched_as"],
+        json!({ "name": "hybrid", "prefix_of": null })
+    );
+    assert_eq!(
+        by_id("00000000000000000000000000000000000000000000000000000000000000bb")["launched_as"],
+        json!({
+            "name": "hybrid",
+            "prefix_of": {
+                "up_to": "fused",
+                "parent_pipeline_hash": fixture_run().inputs.pipeline.to_string(),
+            },
+        })
+    );
+    // Stored without `provenance.json`: no record, never one inferred from
+    // the documents sharing its hash.
+    assert_eq!(by_id(FIXTURE_RUN)["launched_as"], serde_json::Value::Null);
+}
+
+#[tokio::test]
+async fn a_recorded_name_and_the_hash_matches_are_reported_independently() {
+    let text = fixture_run().config.as_str().to_owned();
+    // `hybrid` was edited since the run: one parameter changed, so its
+    // canonical form is no longer the run's.
+    let edited = text.replacen("top_k: 1", "top_k: 2", 1);
+    assert_ne!(edited, text, "the document was edited");
+    // Still a valid pipeline, so it is indexed: it just holds another form.
+    let lowered = ragondin_experiments::lower_configuration(&ConfigDocument::new(&edited))
+        .expect("the edited document lowers");
+    assert_ne!(lowered.content_hash(), fixture_run().inputs.pipeline);
+    let mut run = fixture_run();
+    run.provenance = Some(RunProvenance::named("hybrid"));
+    let mut backends = fakes(FakeRunStore::holding([run.clone()]));
+    backends.pipelines = Arc::new(HeldPipelines {
+        files: vec![("hybrid".to_owned(), edited)],
+    });
+
+    let body = json(send(app_with_backends(backends), get("/api/v1/runs")).await).await;
+
+    assert_eq!(body["runs"][0]["launched_as"]["name"], "hybrid");
+    assert_eq!(body["runs"][0]["pipeline_names"], json!([]));
+
+    // A fork still holding the run's content: both facts, unchanged, side by
+    // side — the record does not take the fork's name, nor the fork the
+    // record's.
+    let mut backends = fakes(FakeRunStore::holding([run.clone()]));
+    backends.pipelines = Arc::new(HeldPipelines {
+        files: vec![
+            (
+                "hybrid".to_owned(),
+                text.replacen("top_k: 1", "top_k: 2", 1),
+            ),
+            ("hybrid-fork".to_owned(), text.clone()),
+        ],
+    });
+
+    let body = json(send(app_with_backends(backends), get("/api/v1/runs")).await).await;
+
+    assert_eq!(
+        body["runs"][0]["launched_as"],
+        json!({ "name": "hybrid", "prefix_of": null })
+    );
+    assert_eq!(body["runs"][0]["pipeline_names"], json!(["hybrid-fork"]));
+
+    // An unedited fork: `hybrid` and `hybrid-fork` both hold the run's
+    // content. The record still names `hybrid` alone, and the hash matches
+    // name both — neither fact absorbs the other.
+    let mut backends = fakes(FakeRunStore::holding([run]));
+    backends.pipelines = Arc::new(HeldPipelines {
+        files: vec![
+            ("hybrid-fork".to_owned(), text.clone()),
+            ("hybrid".to_owned(), text),
+        ],
+    });
+
+    let body = json(send(app_with_backends(backends), get("/api/v1/runs")).await).await;
+
+    assert_eq!(
+        body["runs"][0]["launched_as"],
+        json!({ "name": "hybrid", "prefix_of": null })
+    );
+    assert_eq!(
+        body["runs"][0]["pipeline_names"],
+        json!(["hybrid", "hybrid-fork"])
+    );
+}
+
+#[tokio::test]
+async fn the_detail_carries_the_launch_record() {
+    let mut run = fixture_run();
+    run.provenance = Some(RunProvenance::prefix(
+        "hybrid",
+        PrefixOf::new("fused", fixture_run().inputs.pipeline),
+    ));
+
+    let body = json(
+        send(
+            app(FakeRunStore::holding([run])),
+            get(&format!("/api/v1/runs/{FIXTURE_RUN}")),
+        )
+        .await,
+    )
+    .await;
+
+    assert_eq!(
+        body["launched_as"],
+        json!({
+            "name": "hybrid",
+            "prefix_of": {
+                "up_to": "fused",
+                "parent_pipeline_hash": fixture_run().inputs.pipeline.to_string(),
+            },
+        })
+    );
+    // The old `prefix_of` string is gone: the record's `prefix_of` is the
+    // one place a prefix run says what it was cut from.
+    assert!(body.get("prefix_of").is_none());
 }
 
 #[tokio::test]

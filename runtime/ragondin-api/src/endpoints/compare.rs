@@ -26,7 +26,7 @@ use crate::request::CompareRequest;
 use crate::response::{
     ComparedRun, Comparison, Confidence, DeltaBin, MetricDeltas, NodeLatency, NodePair, Pairing,
     PairingSource, QueryDelta, RunDeltas, RunLatency, StageCell, StageName, StageNode, StageRow,
-    StageValue,
+    StageValue, UnplacedPair,
 };
 use crate::stages::{Stage, Stages};
 use crate::{cache, convert, lineage, validation};
@@ -72,10 +72,7 @@ pub(crate) async fn compare(
     })?;
 
     let index = lineage::pipelines_by_hash(state.backends.pipelines.as_ref()).await?;
-    let names: Vec<Option<String>> = runs
-        .iter()
-        .map(|run| lineage::pipeline_of(&index, run))
-        .collect();
+    let names: Vec<Option<String>> = runs.iter().map(|run| pairing_name(&index, run)).collect();
     if let Some(pairing) = &request.pairing {
         check_pairing(&state, pairing, &names).await?;
     }
@@ -116,6 +113,14 @@ pub(crate) async fn compare(
             pairs,
         })
         .collect();
+    let unplaced_pairs = comparison::unplaced(&columns)
+        .into_iter()
+        .map(|(column, pair, absent_from)| UnplacedPair {
+            run: compared[column].run.id.to_string(),
+            pair: pair.clone(),
+            absent_from,
+        })
+        .collect();
     let stages = comparison::align(&columns)
         .into_iter()
         .map(|row| stage_row(row, figures.as_deref()))
@@ -136,6 +141,7 @@ pub(crate) async fn compare(
         configuration: convert::configuration_matrix(&table.configuration),
         stages,
         pairings,
+        unplaced_pairs,
         query_deltas: figures
             .as_deref()
             .map(|figures| query_deltas(&compared, figures))
@@ -149,6 +155,19 @@ pub(crate) async fn compare(
         keep(&state, pairing).await?;
     }
     Ok(Json(response))
+}
+
+/// The workspace pipeline whose manual pairings apply to `run` (decided in #402): the
+/// name its launch record gives, when it gives one — the pairing then
+/// applies to the nodes the run still has, whatever its content has become,
+/// and `comparison::unplaced` reports the rest — and otherwise the one
+/// document `index` maps its hash to.
+fn pairing_name(index: &BTreeMap<String, Vec<String>>, run: &Run) -> Option<String> {
+    run.provenance
+        .as_ref()
+        .and_then(|record| record.name())
+        .map(str::to_owned)
+        .or_else(|| lineage::pipeline_of(index, run))
 }
 
 /// The run ids in the response's order — the baseline first, then the
@@ -285,6 +304,18 @@ async fn pairings(
     let Some(baseline) = &runs[0].name else {
         return Ok(Vec::new());
     };
+    // A recorded name may be a pipeline the workspace no longer holds, or
+    // holds only under another case (ADR-C39 § 10): it has no pairing, and
+    // the comparison goes on without one. A pairing is read only for two
+    // names stored exactly as given, so neither refusal can reach here.
+    let stored: BTreeSet<String> = state
+        .backends
+        .pipelines
+        .list()
+        .await?
+        .into_iter()
+        .map(|file| file.name)
+        .collect();
     let mut pairings: Vec<Pairing> = Vec::new();
     let mut seen = BTreeSet::new();
     for run in &runs[1..] {
@@ -299,6 +330,7 @@ async fn pairings(
             {
                 (!requested.pairs.is_empty()).then(|| oriented(requested, baseline))
             }
+            _ if !(stored.contains(baseline) && stored.contains(other)) => None,
             _ => {
                 state
                     .backends
