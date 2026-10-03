@@ -69,8 +69,14 @@ const show = (props: { run?: string; query?: string; with?: string } = {}) =>
     </div>,
   );
 
-const canvas = (name: RegExp | string) => screen.getByRole('application', { name });
 const nodeOf = (root: HTMLElement, id: string) => root.querySelector(`.react-flow__node[data-id="${id}"]`) as HTMLElement;
+/** A node once the canvas has drawn it: the application can be in the page a frame before its nodes. */
+const drawn = (root: HTMLElement, id: string) =>
+  waitFor(() => {
+    const node = nodeOf(root, id);
+    if (node === null) throw new Error(`node ${id} is not drawn yet`);
+    return node;
+  });
 const cardOf = (root: HTMLElement, id: string) => nodeOf(root, id).querySelector('.rg-node') as HTMLElement;
 const route = () => parseHash(window.location.hash);
 
@@ -82,6 +88,8 @@ describe('Replay, one run', () => {
     api();
     show({ query: 'q1' });
     const graph = await screen.findByRole('application', { name: /hybrid-rerank-gen/ });
+    // Every node of a canvas is drawn in the same frame: one drawn, all are.
+    await drawn(graph.parentElement!, 'rerank');
     const rerank = cardOf(graph.parentElement!, 'rerank');
     expect(rerank.getAttribute('data-replay')).toBe('true');
     expect(within(rerank).getByText('349 ms')).toBeTruthy();
@@ -96,7 +104,7 @@ describe('Replay, one run', () => {
     api();
     show({ query: 'q1' });
     const graph = await screen.findByRole('application', { name: /hybrid-rerank-gen/ });
-    const ids = nodeOf(graph.parentElement!, 'rerank').getAttribute('aria-describedby')!.split(' ');
+    const ids = (await drawn(graph.parentElement!, 'rerank')).getAttribute('aria-describedby')!.split(' ');
     expect(document.getElementById(ids[0]!)?.textContent).toBe("ndcg@10 0.8610. 2 gold passages in the top 10, at rank 1, 2. 4 discarded. 349 ms, 35% of this query's time.");
   });
 
@@ -104,7 +112,7 @@ describe('Replay, one run', () => {
     api();
     show({ query: 'q1' });
     const graph = await screen.findByRole('application', { name: /hybrid-rerank-gen/ });
-    fireEvent.click(nodeOf(graph.parentElement!, 'rerank'));
+    fireEvent.click(await drawn(graph.parentElement!, 'rerank'));
     const kept = await screen.findByRole('list', { name: 'Ranked by rerank, 4 chunks' });
     expect(within(kept).getAllByRole('listitem').map((li) => [li.querySelector('.rg-replay__chunk')?.textContent, li.getAttribute('data-gold')])).toEqual([
       ['c5', 'true'],
@@ -151,8 +159,8 @@ describe('the passages banner', () => {
     show({ query: 'q1' });
     const banner = (await screen.findByText(title)).closest('.rg-inline') as HTMLElement;
     expect(banner.querySelector('[title]')?.getAttribute('title')).toMatch(/^The run expects dataset 5{64}/);
-    const graph = canvas(/hybrid-rerank-gen/);
-    fireEvent.click(nodeOf(graph.parentElement!, 'rerank'));
+    const graph = await screen.findByRole('application', { name: /hybrid-rerank-gen/ });
+    fireEvent.click(await drawn(graph.parentElement!, 'rerank'));
     const kept = await screen.findByRole('list', { name: 'Ranked by rerank, 4 chunks' });
     expect(within(kept).queryByText('Passage 5 of the corpus.')).toBeNull();
     expect(within(kept).getAllByRole('listitem').every((li) => li.getAttribute('data-text') === 'none')).toBe(true);
@@ -172,6 +180,8 @@ describe('Replay side by side', () => {
     show({ query: 'q1', with: DENSE });
     const a = await screen.findByRole('application', { name: /^Run A, hybrid-rerank-gen/ });
     const b = await screen.findByRole('application', { name: /^Run B, dense-only/ });
+    await drawn(a.parentElement!, 'dense');
+    await drawn(b.parentElement!, 'dense');
     for (const id of ['bm25', 'rrf', 'rerank']) {
       expect(cardOf(a.parentElement!, id).getAttribute('data-only-here'), id).toBe('true');
       expect(within(cardOf(a.parentElement!, id)).getByText('only in A')).toBeTruthy();
@@ -185,7 +195,7 @@ describe('Replay side by side', () => {
     show({ query: 'q1', with: DENSE });
     const a = await screen.findByRole('application', { name: /^Run A/ });
     await screen.findByRole('application', { name: /^Run B/ });
-    fireEvent.click(nodeOf(a.parentElement!, 'rerank'));
+    fireEvent.click(await drawn(a.parentElement!, 'rerank'));
     const columnB = await screen.findByRole('region', { name: 'B, dense-only' });
     const columnA = screen.getByRole('region', { name: 'A, hybrid-rerank-gen' });
     expect(within(columnA).getByRole('list', { name: 'Ranked by rerank, 4 chunks' })).toBeTruthy();
@@ -269,6 +279,8 @@ describe('Replay of a failed run', () => {
     api();
     show({ run: FAILED, query: 'q1' });
     const graph = await screen.findByRole('application', { name: /hybrid-broken/ });
+    // Every node of a canvas is drawn in the same frame: one drawn, all are.
+    await drawn(graph.parentElement!, 'rerank');
     const rerank = cardOf(graph.parentElement!, 'rerank');
     expect(rerank.getAttribute('data-status')).toBe('failed');
     expect(within(rerank).getByText('The service at 127.0.0.1:7001 did not answer within 30 s.')).toBeTruthy();
@@ -349,7 +361,7 @@ describe('side by side, never two queries at once', () => {
     show({ query: 'q1', with: DENSE });
     const a = await screen.findByRole('application', { name: /^Run A/ });
     await screen.findByRole('application', { name: /^Run B/ });
-    fireEvent.click(nodeOf(a.parentElement!, 'answer'));
+    fireEvent.click(await drawn(a.parentElement!, 'answer'));
     await screen.findByRole('region', { name: 'B, dense-only' });
     expect(screen.queryByRole('heading', { name: 'Verdict' })).toBeNull();
     expect(screen.queryByText(/ranks none/)).toBeNull();
@@ -395,7 +407,7 @@ describe('side by side, the rest', () => {
     api();
     const view = render(<ReplayScreen client={createApiClient()} run={DENSE} query="q1" with={HYBRID} />);
     const b = await screen.findByRole('application', { name: /^Run B, hybrid-rerank-gen/ });
-    fireEvent.click(nodeOf(b.parentElement!, 'rerank'));
+    fireEvent.click(await drawn(b.parentElement!, 'rerank'));
     await screen.findByRole('region', { name: 'B, hybrid-rerank-gen' });
     view.rerender(<ReplayScreen client={createApiClient()} run={DENSE} query="q1" with={undefined} />);
     expect(await screen.findByText('Select a node to see what it produced for this query.')).toBeTruthy();
