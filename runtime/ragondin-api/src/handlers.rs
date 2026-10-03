@@ -21,6 +21,8 @@ use crate::derived::{self, Metrics, Outputs};
 use crate::endpoints::services::{self, Probes};
 use crate::error::ApiError;
 use crate::extract::{ApiPath, ApiQuery, NoParameters};
+use crate::fs::jobs_of;
+use crate::jobs::Queue;
 use crate::request::{MissingGoldAt, RunQueriesParameters};
 use crate::response::{
     BenchmarkState, QueryScores, QueryTrace, RunDetail, RunListing, RunQueries, SettingsSummary,
@@ -36,14 +38,21 @@ pub(crate) struct AppState {
     pub(crate) config: Arc<ServerConfig>,
     /// What each service's last probe learnt.
     pub(crate) probes: Probes,
+    /// The job queue, over the workspace's `jobs/`.
+    pub(crate) jobs: Arc<Queue>,
 }
 
 impl AppState {
+    /// The state, and the queue read back from the workspace's `jobs/` —
+    /// its restart recovery done here, before the router answers anything,
+    /// so no request sees a job running that this process did not start.
     pub(crate) fn new(backends: Backends, config: ServerConfig) -> Self {
+        let jobs = Queue::open(jobs_of(&config.workspace), &backends);
         Self {
             backends,
             config: Arc::new(config),
             probes: Probes::default(),
+            jobs,
         }
     }
 }

@@ -12,11 +12,13 @@
 //! launcher's issue (#353), which replaces both.
 
 use async_trait::async_trait;
+use std::sync::Arc;
+
 use ragondin_api::{
-    ApiError, Capabilities, FamilyCapabilities, Job, JobState, Launcher, Location, ServiceBinding,
-    ServiceIdentity, Submission,
+    ApiError, Cancellation, Capabilities, FamilyCapabilities, Launcher, LauncherError, Location,
+    RunObserver, ServiceBinding, ServiceIdentity, Submission,
 };
-use ragondin_experiments::RunId;
+use ragondin_experiments::{Run, RunId};
 use ragondin_pipeline::LogicalPipeline;
 
 use crate::binding::{self, Binding, Bindings, Family};
@@ -111,17 +113,24 @@ impl Launcher for BinaryLauncher {
         read_identity(binding, served_model).await
     }
 
-    async fn identity(&self, _submission: &Submission) -> Result<RunId, ApiError> {
-        Err(ApiError::BackendFailed {
-            detail: NOT_YET.to_owned(),
-        })
+    async fn identity(&self, _submission: &Submission) -> Result<RunId, LauncherError> {
+        Err(not_yet())
     }
 
-    async fn execute(&self, _job: Job) -> JobState {
-        JobState::Failed {
-            error: NOT_YET.to_owned(),
-            at_node: None,
-        }
+    async fn execute(
+        &self,
+        _submission: &Submission,
+        _observer: Arc<dyn RunObserver>,
+        _cancel: Cancellation,
+    ) -> Result<Run, LauncherError> {
+        Err(not_yet())
+    }
+}
+
+fn not_yet() -> LauncherError {
+    LauncherError::Execution {
+        error: NOT_YET.to_owned(),
+        at_node: None,
     }
 }
 
@@ -195,7 +204,6 @@ async fn read_identity(
 
 #[cfg(test)]
 mod tests {
-    use std::time::SystemTime;
 
     use ragondin_api::FamilyCapabilities;
 
@@ -301,25 +309,26 @@ mod tests {
             .expect_err("submission is not wired yet");
 
         assert!(
-            matches!(&error, ApiError::BackendFailed { detail } if detail.contains("not available in this build yet")),
+            matches!(&error, LauncherError::Execution { error, at_node: None } if error.contains("not available in this build yet")),
             "{error:?}"
         );
     }
 
     #[tokio::test]
     async fn execution_fails_as_not_available_in_this_build_yet() {
-        let job = Job {
-            id: "job-1".to_owned(),
-            run_id: RunId::from_digest([0; 32]),
-            submission: submission(),
-            created_at: SystemTime::UNIX_EPOCH,
-        };
+        struct Unobserved;
+        impl RunObserver for Unobserved {
+            fn query_done(&self, _: ragondin_api::QueryProgress) {}
+        }
 
-        let state = BinaryLauncher.execute(job).await;
+        let error = BinaryLauncher
+            .execute(&submission(), Arc::new(Unobserved), Cancellation::new())
+            .await
+            .expect_err("execution is not wired yet");
 
         assert!(
-            matches!(&state, JobState::Failed { error, at_node: None } if error.contains("not available in this build yet")),
-            "{state:?}"
+            matches!(&error, LauncherError::Execution { error, at_node: None } if error.contains("not available in this build yet")),
+            "{error:?}"
         );
     }
 

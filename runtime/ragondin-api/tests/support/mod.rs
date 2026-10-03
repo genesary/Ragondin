@@ -20,10 +20,11 @@ use async_trait::async_trait;
 use axum::body::Body;
 use axum::http::{Request, Response};
 use ragondin_api::{
-    content_type_for, router, ApiError, Asset, Assets, Backends, BenchmarkEntry, Capabilities,
-    FamilyCapabilities, Job, JobState, Launcher, Layout, LoadedDataset, Pairing, PinnedBenchmark,
-    PipelineFile, PipelineSource, Precondition, ProgressSink, Registry, Revision, RunDataset,
-    Server, ServerConfig, ServiceBinding, ServiceIdentity, Settings, Submission, WorkspaceSettings,
+    content_type_for, router, ApiError, Asset, Assets, Backends, BenchmarkEntry, Cancellation,
+    Capabilities, FamilyCapabilities, Launcher, LauncherError, Layout, LoadedDataset, Pairing,
+    PinnedBenchmark, PipelineFile, PipelineSource, Precondition, ProgressSink, Registry, Revision,
+    RunDataset, RunObserver, Server, ServerConfig, ServiceBinding, ServiceIdentity, Settings,
+    Submission, WorkspaceSettings,
 };
 use ragondin_benchmarks::identity::dataset_version;
 use ragondin_benchmarks::Benchmark;
@@ -219,12 +220,17 @@ impl Launcher for FakeLauncher {
         })
     }
 
-    async fn identity(&self, _submission: &Submission) -> Result<RunId, ApiError> {
+    async fn identity(&self, _submission: &Submission) -> Result<RunId, LauncherError> {
         Ok(FIXTURE_RUN.parse().unwrap())
     }
 
-    async fn execute(&self, _job: Job) -> JobState {
-        JobState::Cancelled
+    async fn execute(
+        &self,
+        _submission: &Submission,
+        _observer: Arc<dyn RunObserver>,
+        _cancel: Cancellation,
+    ) -> Result<Run, LauncherError> {
+        Err(LauncherError::Cancelled)
     }
 }
 

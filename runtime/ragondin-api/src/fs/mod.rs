@@ -37,6 +37,7 @@ mod workspace;
 pub use pipelines::FsPipelines;
 pub use registry::FsRegistry;
 pub use settings::FsSettings;
+pub(crate) use workspace::jobs_of;
 pub use workspace::{Workspace, WorkspaceError};
 
 /// Runs a call that reads or writes the disk on a blocking thread, so an
@@ -56,7 +57,7 @@ where
 /// Replaces `path` with `bytes` whole: written to a `.`-named file beside it,
 /// flushed to disk, and renamed over it, so a reader sees the old bytes or the
 /// new ones. The staging file is removed when anything fails.
-fn write_atomically(path: &Path, bytes: &[u8]) -> io::Result<()> {
+pub(crate) fn write_atomically(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let directory = path.parent().unwrap_or(Path::new("."));
     let file_name = path
         .file_name()

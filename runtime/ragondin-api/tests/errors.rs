@@ -110,13 +110,16 @@ async fn service_unreachable() {
 
 #[tokio::test]
 async fn run_exists() {
+    let link = format!("/api/v1/runs/{}", "ab".repeat(32));
     let (status, body) = render(ApiError::RunExists {
         run_id: "ab".repeat(32),
+        link: link.clone(),
     })
     .await;
     assert_eq!(status, StatusCode::CONFLICT);
     assert_problem(&body, status, "run_exists");
     assert!(body["hint"].as_str().unwrap().contains(&"ab".repeat(32)));
+    assert_eq!(body["link"], link);
 }
 
 #[tokio::test]
@@ -403,6 +406,39 @@ async fn body_too_large() {
     assert_problem(&body, status, "body_too_large");
 }
 
+#[tokio::test]
+async fn job_not_found() {
+    let (status, body) = render(ApiError::JobNotFound {
+        id: "1700000000000-1".to_owned(),
+    })
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_problem(&body, status, "job_not_found");
+}
+
+#[tokio::test]
+async fn job_not_queued() {
+    let (status, body) = render(ApiError::JobNotQueued {
+        id: "1700000000000-1".to_owned(),
+        state: "running".to_owned(),
+    })
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_problem(&body, status, "job_not_queued");
+    assert!(body["detail"].as_str().unwrap().contains("running"));
+}
+
+#[tokio::test]
+async fn job_finished() {
+    let (status, body) = render(ApiError::JobFinished {
+        id: "1700000000000-1".to_owned(),
+        state: "done".to_owned(),
+    })
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_problem(&body, status, "job_finished");
+}
+
 #[test]
 fn every_variant_has_a_distinct_code() {
     let codes = ApiError::CODES;
@@ -412,7 +448,7 @@ fn every_variant_has_a_distinct_code() {
     assert_eq!(sorted.len(), codes.len(), "codes are unique: {codes:?}");
     assert_eq!(
         codes.len(),
-        27,
+        30,
         "a variant added without a test here: {codes:?}"
     );
 }

@@ -22,7 +22,7 @@ use axum::routing::{MethodFilter, MethodRouter};
 use axum::Router;
 
 use crate::description::Parameters;
-use crate::endpoints::{benchmarks, compare, matrix, pipelines, services};
+use crate::endpoints::{benchmarks, compare, jobs, matrix, pipelines, services};
 use crate::extract::ApiInputs;
 use crate::handlers::{self, AppState};
 
@@ -32,6 +32,7 @@ pub(crate) enum Verb {
     Get,
     Post,
     Put,
+    Patch,
     Delete,
 }
 
@@ -42,6 +43,7 @@ impl Verb {
             Self::Get => "get",
             Self::Post => "post",
             Self::Put => "put",
+            Self::Patch => "patch",
             Self::Delete => "delete",
         }
     }
@@ -51,6 +53,7 @@ impl Verb {
             Self::Get => MethodFilter::GET,
             Self::Post => MethodFilter::POST,
             Self::Put => MethodFilter::PUT,
+            Self::Patch => MethodFilter::PATCH,
             Self::Delete => MethodFilter::DELETE,
         }
     }
@@ -70,12 +73,20 @@ pub(crate) trait Routes {
 
 /// Every route of the API.
 pub(crate) fn api(routes: &mut impl Routes) {
-    use Verb::{Delete, Get, Post, Put};
+    use Verb::{Delete, Get, Patch, Post, Put};
     routes.route(Get, "/workspace", handlers::workspace);
     routes.route(Get, "/runs", handlers::runs);
     routes.route(Get, "/runs/{id}", handlers::run);
     routes.route(Get, "/runs/{id}/queries", handlers::queries);
     routes.route(Get, "/runs/{id}/trace/{query}", handlers::trace);
+    routes.route(Post, "/runs", jobs::submit);
+    routes.route(Get, "/jobs", jobs::list);
+    // A static segment outranks a parameter, so `events` is never a job's
+    // id: the queue names a job `<millis>-<n>`.
+    routes.route(Get, "/jobs/events", crate::jobs::events);
+    routes.route(Get, "/jobs/{id}", jobs::read);
+    routes.route(Patch, "/jobs/{id}", jobs::reorder);
+    routes.route(Delete, "/jobs/{id}", jobs::cancel);
     routes.route(Post, "/compare", compare::compare);
     routes.route(Get, "/pipelines", pipelines::list);
     // A static segment outranks a parameter, so `validate` is never a
@@ -88,6 +99,7 @@ pub(crate) fn api(routes: &mut impl Routes) {
     routes.route(Get, "/pipelines/{name}/matrix", matrix::matrix);
     routes.route(Get, "/benchmarks", benchmarks::list);
     routes.route(Post, "/benchmarks/import", benchmarks::import);
+    routes.route(Post, "/benchmarks/{name}/download", benchmarks::download);
     routes.route(Get, "/services", services::list);
     routes.route(Put, "/services/{family}/{name}", services::bind);
     routes.route(Delete, "/services/{family}/{name}", services::unbind);
@@ -185,12 +197,16 @@ mod tests {
     }
 
     /// Each route carries the query and header types its handler takes:
-    /// every handler an `ApiQuery`, and only the pipeline write headers.
+    /// every handler an `ApiQuery`, and only the pipeline write and the event
+    /// stream headers.
     #[test]
     fn each_route_carries_its_handler_s_query_and_header_types() {
         for route in declared() {
             assert!(route.query.is_some(), "{} {}", route.method, route.path);
-            let reads_headers = (route.method, route.path) == ("put", "/pipelines/{name}");
+            let reads_headers = matches!(
+                (route.method, route.path),
+                ("put", "/pipelines/{name}") | ("get", "/jobs/events")
+            );
             assert_eq!(
                 route.headers.is_some(),
                 reads_headers,

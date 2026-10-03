@@ -39,6 +39,9 @@ async-trait = { workspace = true } # dyn-compatible async traits (frozen: async_
 # depend on that crate and never download, carry no HTTP or TLS stack.
 reqwest = { workspace = true }
 axum = { workspace = true }        # the router and the Tower layers of the server's envelope (ADR-C36 § 6)
+# The event stream's `Stream` (`GET /jobs/events`): the one stream utility
+# ADR-C36 § 6 admits, with its workspace entry's features — none.
+futures-util = { workspace = true }
 schemars = { workspace = true }    # the response types' schemas, assembled into the API description
 serde = { workspace = true }
 serde_json = { workspace = true }  # the JSON bodies, and the description document

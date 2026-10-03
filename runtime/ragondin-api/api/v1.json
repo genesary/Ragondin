@@ -698,6 +698,19 @@
           }
         ]
       },
+      "DownloadAccepted": {
+        "description": "`POST /benchmarks/{name}/download`: the download job accepted.",
+        "properties": {
+          "job_id": {
+            "description": "The job's id, under `/jobs/{id}`.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id"
+        ],
+        "type": "object"
+      },
       "EdgeKind": {
         "description": "The kind of value travelling along an edge.",
         "oneOf": [
@@ -1065,6 +1078,330 @@
           "path"
         ],
         "type": "object"
+      },
+      "JobFault": {
+        "description": "A job file the queue could not read, or a write of it that failed.",
+        "properties": {
+          "path": {
+            "description": "The file.",
+            "type": "string"
+          },
+          "reason": {
+            "description": "What went wrong, and what the queue did about it.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "JobListing": {
+        "description": "`GET /jobs`: every job, in its place, and every fault of the queue's\nrecord.",
+        "properties": {
+          "faults": {
+            "description": "A job file that does not read, or a write of the queue's record that\nfailed — reported, never repaired.",
+            "items": {
+              "$ref": "#/components/schemas/JobFault"
+            },
+            "type": "array"
+          },
+          "jobs": {
+            "description": "The jobs, by position: those ended and the one running before those\nqueued, each lane's queued jobs in the order its worker takes them.",
+            "items": {
+              "$ref": "#/components/schemas/JobSummary"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "jobs",
+          "faults"
+        ],
+        "type": "object"
+      },
+      "JobStatus": {
+        "description": "Where a job stands. A time is in milliseconds since the epoch, `null`\nwhen the clock read before it.",
+        "oneOf": [
+          {
+            "description": "Waiting for its lane's worker.",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "queued"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "Executing: a run counts queries, a download bytes.",
+            "properties": {
+              "done": {
+                "description": "Queries executed, or bytes received.",
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "kind": {
+                "enum": [
+                  "running"
+                ],
+                "type": "string"
+              },
+              "median_latency_nanos": {
+                "description": "A run's median query latency so far: the lower median of each\nexecuted query's latency, the sum of its trace's durations — the\nfigure `GET /runs` lists once it is filed. `null` before the\nfirst query, and for a download.",
+                "format": "uint64",
+                "minimum": 0,
+                "nullable": true,
+                "type": "integer"
+              },
+              "started_at_ms": {
+                "description": "When the worker took it.",
+                "format": "uint64",
+                "minimum": 0,
+                "nullable": true,
+                "type": "integer"
+              },
+              "total": {
+                "description": "Queries in the benchmark, or bytes in the snapshot; `null` until\nthe first tick.",
+                "format": "uint64",
+                "minimum": 0,
+                "nullable": true,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "done",
+              "kind",
+              "median_latency_nanos",
+              "started_at_ms",
+              "total"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "Finished.",
+            "properties": {
+              "finished_at_ms": {
+                "description": "When it finished.",
+                "format": "uint64",
+                "minimum": 0,
+                "nullable": true,
+                "type": "integer"
+              },
+              "id_mismatch": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/RunIdMismatch"
+                  },
+                  {
+                    "enum": [
+                      null
+                    ],
+                    "nullable": true
+                  }
+                ],
+                "description": "Both ids, when the run is filed under another than the one it\nannounced."
+              },
+              "kind": {
+                "enum": [
+                  "done"
+                ],
+                "type": "string"
+              },
+              "run_id": {
+                "description": "The id the run is filed under — computed from what ran; `null`\nfor a download.",
+                "nullable": true,
+                "type": "string"
+              }
+            },
+            "required": [
+              "finished_at_ms",
+              "id_mismatch",
+              "kind",
+              "run_id"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "Failed; `interrupted` for a job found running when the service\nstarted.",
+            "properties": {
+              "at_node": {
+                "description": "The node that failed, when one did.",
+                "nullable": true,
+                "type": "string"
+              },
+              "error": {
+                "description": "What failed.",
+                "type": "string"
+              },
+              "finished_at_ms": {
+                "description": "When it failed.",
+                "format": "uint64",
+                "minimum": 0,
+                "nullable": true,
+                "type": "integer"
+              },
+              "kind": {
+                "enum": [
+                  "failed"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "at_node",
+              "error",
+              "finished_at_ms",
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "Cancelled before it finished.",
+            "properties": {
+              "finished_at_ms": {
+                "description": "When it was cancelled.",
+                "format": "uint64",
+                "minimum": 0,
+                "nullable": true,
+                "type": "integer"
+              },
+              "kind": {
+                "enum": [
+                  "cancelled"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "finished_at_ms",
+              "kind"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "JobSummary": {
+        "description": "One job: what it does and where it stands.",
+        "properties": {
+          "created_at_ms": {
+            "description": "When it was accepted, in milliseconds since the epoch; `null` when\nthe clock read before it.",
+            "format": "uint64",
+            "minimum": 0,
+            "nullable": true,
+            "type": "integer"
+          },
+          "id": {
+            "description": "Its id.",
+            "type": "string"
+          },
+          "position": {
+            "description": "Its place: a lane's worker takes the queued job with the lowest.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "state": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/JobStatus"
+              }
+            ],
+            "description": "Where it stands."
+          },
+          "work": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/JobWork"
+              }
+            ],
+            "description": "What it does."
+          }
+        },
+        "required": [
+          "created_at_ms",
+          "id",
+          "position",
+          "state",
+          "work"
+        ],
+        "type": "object"
+      },
+      "JobWork": {
+        "description": "What a job does.",
+        "oneOf": [
+          {
+            "description": "A run, on the run lane.",
+            "properties": {
+              "benchmark": {
+                "description": "The benchmark.",
+                "type": "string"
+              },
+              "bindings": {
+                "description": "The `Remote` bindings in force at submission.",
+                "items": {
+                  "$ref": "#/components/schemas/ServiceBinding"
+                },
+                "type": "array"
+              },
+              "kind": {
+                "enum": [
+                  "run"
+                ],
+                "type": "string"
+              },
+              "pipeline": {
+                "description": "The pipeline's name in the workspace.",
+                "type": "string"
+              },
+              "run_id": {
+                "description": "The run id announced at submission.",
+                "type": "string"
+              },
+              "up_to": {
+                "description": "The node a prefix run stops after; `null` for a whole run.",
+                "nullable": true,
+                "type": "string"
+              }
+            },
+            "required": [
+              "benchmark",
+              "bindings",
+              "kind",
+              "pipeline",
+              "run_id",
+              "up_to"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "A benchmark download, on the download lane.",
+            "properties": {
+              "benchmark": {
+                "description": "The benchmark's selector.",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "download"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "benchmark",
+              "kind"
+            ],
+            "type": "object"
+          }
+        ]
       },
       "LaunchedAs": {
         "description": "A run's launch record (ADR-C39 § 1).",
@@ -2309,7 +2646,10 @@
               "route_not_found",
               "method_not_allowed",
               "runs_not_comparable",
-              "body_too_large"
+              "body_too_large",
+              "job_not_found",
+              "job_not_queued",
+              "job_finished"
             ],
             "type": "string"
           },
@@ -2324,6 +2664,11 @@
           },
           "hint": {
             "description": "The action that would resolve it.",
+            "type": "string"
+          },
+          "link": {
+            "description": "For `run_exists`, where what already holds the run id is read:\n`/api/v1/jobs/<id>` for a job queued or running under it,\n`/api/v1/runs/<id>` for a stored run. Present only then.",
+            "nullable": true,
             "type": "string"
           },
           "location": {
@@ -2476,6 +2821,40 @@
         ],
         "type": "object"
       },
+      "ReorderRequest": {
+        "additionalProperties": false,
+        "description": "`PATCH /jobs/{id}`: where to move a queued job.",
+        "properties": {
+          "position": {
+            "description": "Its place among its lane's queued jobs, from 0 — the next taken. A\nplace past the last moves it last.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "position"
+        ],
+        "type": "object"
+      },
+      "RunAccepted": {
+        "description": "`POST /runs`: the job accepted, and the run id it announced.",
+        "properties": {
+          "job_id": {
+            "description": "The job's id, under `/jobs/{id}`.",
+            "type": "string"
+          },
+          "run_id": {
+            "description": "The run id the launcher announced: the one the run is filed under,\nunless what ran differs from what was announced, which the job's\nterminal state then reports.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id",
+          "run_id"
+        ],
+        "type": "object"
+      },
       "RunDeltas": {
         "description": "One run's per-query deltas against the baseline.",
         "properties": {
@@ -2578,6 +2957,24 @@
           "launched_as",
           "metrics",
           "started_at_ms"
+        ],
+        "type": "object"
+      },
+      "RunIdMismatch": {
+        "description": "A run filed under another id than it announced: both.",
+        "properties": {
+          "announced": {
+            "description": "The id announced at submission.",
+            "type": "string"
+          },
+          "decided": {
+            "description": "The id computed from what ran, which the run is filed under.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "announced",
+          "decided"
         ],
         "type": "object"
       },
@@ -2735,6 +3132,30 @@
           "queries",
           "ranking_node",
           "run"
+        ],
+        "type": "object"
+      },
+      "RunRequest": {
+        "additionalProperties": false,
+        "description": "`POST /runs`: what to run. The bindings are not sent: the workspace's\nbindings in force — those `GET /services` lists — are snapshotted into\nthe job at submission.",
+        "properties": {
+          "benchmark": {
+            "description": "The benchmark's selector, `<format>/<name>`.",
+            "type": "string"
+          },
+          "pipeline": {
+            "description": "The workspace pipeline's name; its document is snapshotted into the\njob at submission, so an edit afterwards changes nothing queued.",
+            "type": "string"
+          },
+          "up_to": {
+            "description": "The node a prefix run stops after; absent for the whole pipeline.",
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "pipeline",
+          "benchmark"
         ],
         "type": "object"
       },
@@ -3640,6 +4061,44 @@
         "summary": "Imports a corpus on the server's disk as a local benchmark."
       }
     },
+    "/benchmarks/{name}/download": {
+      "post": {
+        "description": "The download runs on its own lane, alongside a run; its progress is bytes. A name the manifest does not hold, a benchmark already on disk or a digest that differs fails the job, in the registry's words.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DownloadAccepted"
+                }
+              }
+            },
+            "description": "Queues a download of a benchmark the manifest names, verified against its digests."
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "An error, as application/problem+json."
+          }
+        },
+        "summary": "Queues a download of a benchmark the manifest names, verified against its digests."
+      }
+    },
     "/compare": {
       "post": {
         "description": "Two to five runs, each once, the baseline among them. More than five, or runs whose dataset_version differs, is runs_not_comparable (409), naming the ceiling or both versions; there is no comparison across benchmarks. A body's `pairing` — between the baseline's pipeline and another compared run's — is checked first and applied to this comparison, and kept under `pipelines/<pipeline>.pairing/<other>.json` only once the response is built, so a refused request keeps nothing; it is read in both directions after. With no pairs it is removed (\"Reset to automatic\"). A pairing of other pipelines, or a pair naming a node that is not a retriever, fusion or reranker of its pipeline, is request_invalid. A run's pipeline, for its pairings, is the name its launch record gives, whatever that pipeline's content has become, else the one document holding its hash. A pairing applies to the nodes each run has; every pair a run cannot place is listed in unplaced_pairs with the side lacking its node, never skipped and never moved onto another node.",
@@ -3677,6 +4136,185 @@
           }
         },
         "summary": "Runs of one benchmark against a baseline: the metric table, the parameter matrix, the stages with their pairing, the per-query deltas and their bins, and the latency per node."
+      }
+    },
+    "/jobs": {
+      "get": {
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobListing"
+                }
+              }
+            },
+            "description": "Every job, by position, and every fault of the queue's record."
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "An error, as application/problem+json."
+          }
+        },
+        "summary": "Every job, by position, and every fault of the queue's record."
+      }
+    },
+    "/jobs/events": {
+      "get": {
+        "description": "Each event is named after the state entered — queued, running, done, failed, cancelled — or reordered, and its data is the job as a JobSummary; a run's running events tick once per query, a download's in bytes. Its id is `<process>:<number>`: reconnecting with Last-Event-ID replays every event missed, once, while this server still holds them. Otherwise the stream begins with resync, whose data is the whole queue as a JobListing.",
+        "parameters": [
+          {
+            "description": "The id of the last event the client received, to resume after it.\nAbsent, or one this server no longer holds the events after, and the\nstream begins with `resync`.",
+            "in": "header",
+            "name": "Last-Event-ID",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Every job transition and progress tick, as server-sent events."
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "An error, as application/problem+json."
+          }
+        },
+        "summary": "Every job transition and progress tick, as server-sent events."
+      }
+    },
+    "/jobs/{id}": {
+      "delete": {
+        "description": "The running job stays running until the launcher honours the cancellation; the cancelled event says when, and the traces of the queries it executed are kept under jobs/<id>/partial/, never in the store. A job that already ended is job_finished (409).",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobSummary"
+                }
+              }
+            },
+            "description": "Cancels a job: a queued one at once, never executed; the running one between two queries."
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "An error, as application/problem+json."
+          }
+        },
+        "summary": "Cancels a job: a queued one at once, never executed; the running one between two queries."
+      },
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobSummary"
+                }
+              }
+            },
+            "description": "One job: what it does and where it stands."
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "An error, as application/problem+json."
+          }
+        },
+        "summary": "One job: what it does and where it stands."
+      },
+      "patch": {
+        "description": "A job that is not queued is job_not_queued (409).",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReorderRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobListing"
+                }
+              }
+            },
+            "description": "Moves a queued job among its lane's queued jobs, and answers the queue in its new order."
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "An error, as application/problem+json."
+          }
+        },
+        "summary": "Moves a queued job among its lane's queued jobs, and answers the queue in its new order."
       }
     },
     "/pipelines": {
@@ -4002,6 +4640,43 @@
           }
         },
         "summary": "Every run the store holds, and every one it cannot read."
+      },
+      "post": {
+        "description": "The pipeline's document is read from the workspace and validated (pipeline_invalid), the bindings in force are read from the settings, and the launcher computes the run id from constructed components and the services' identities — impl_not_in_build, service_unreachable or pipeline_invalid when it cannot. An id a job not yet ended holds, or the store holds, is run_exists (409), whose `link` is the job's or the run's path. The run is filed under the id computed from what ran; when it differs from the announced one, the job's done state reports both.",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RunRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunAccepted"
+                }
+              }
+            },
+            "description": "Queues a run of a workspace pipeline on a benchmark, under the run id the launcher announces for it."
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "An error, as application/problem+json."
+          }
+        },
+        "summary": "Queues a run of a workspace pipeline on a benchmark, under the run id the launcher announces for it."
       }
     },
     "/runs/{id}": {

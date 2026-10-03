@@ -279,6 +279,12 @@ export type DeltaBin = {
  */
 export type DeltaBinName = "much_worse" | "worse" | "slightly_worse" | "unchanged" | "slightly_better" | "better" | "much_better";
 
+/** `POST /benchmarks/{name}/download`: the download job accepted. */
+export type DownloadAccepted = {
+  /** The job's id, under `/jobs/{id}`. */
+  job_id: string;
+};
+
 /** The kind of value travelling along an edge. */
 export type EdgeKind = "query" | "chunks" | "context" | "answer" | "opaque";
 
@@ -427,6 +433,119 @@ export type ImportRequest = {
    * server's disk.
    */
   path: string;
+};
+
+/** A job file the queue could not read, or a write of it that failed. */
+export type JobFault = {
+  /** The file. */
+  path: string;
+  /** What went wrong, and what the queue did about it. */
+  reason: string;
+};
+
+/**
+ * `GET /jobs`: every job, in its place, and every fault of the queue's
+ * record.
+ */
+export type JobListing = {
+  /**
+   * A job file that does not read, or a write of the queue's record that
+   * failed — reported, never repaired.
+   */
+  faults: JobFault[];
+  /**
+   * The jobs, by position: those ended and the one running before those
+   * queued, each lane's queued jobs in the order its worker takes them.
+   */
+  jobs: JobSummary[];
+};
+
+/**
+ * Where a job stands. A time is in milliseconds since the epoch, `null`
+ * when the clock read before it.
+ */
+export type JobStatus = {
+  kind: "queued";
+} | {
+  /** Queries executed, or bytes received. */
+  done: number;
+  kind: "running";
+  /**
+   * A run's median query latency so far: the lower median of each
+   * executed query's latency, the sum of its trace's durations — the
+   * figure `GET /runs` lists once it is filed. `null` before the
+   * first query, and for a download.
+   */
+  median_latency_nanos: number | null;
+  /** When the worker took it. */
+  started_at_ms: number | null;
+  /**
+   * Queries in the benchmark, or bytes in the snapshot; `null` until
+   * the first tick.
+   */
+  total: number | null;
+} | {
+  /** When it finished. */
+  finished_at_ms: number | null;
+  /**
+   * Both ids, when the run is filed under another than the one it
+   * announced.
+   */
+  id_mismatch: RunIdMismatch | null;
+  kind: "done";
+  /**
+   * The id the run is filed under — computed from what ran; `null`
+   * for a download.
+   */
+  run_id: string | null;
+} | {
+  /** The node that failed, when one did. */
+  at_node: string | null;
+  /** What failed. */
+  error: string;
+  /** When it failed. */
+  finished_at_ms: number | null;
+  kind: "failed";
+} | {
+  /** When it was cancelled. */
+  finished_at_ms: number | null;
+  kind: "cancelled";
+};
+
+/** One job: what it does and where it stands. */
+export type JobSummary = {
+  /**
+   * When it was accepted, in milliseconds since the epoch; `null` when
+   * the clock read before it.
+   */
+  created_at_ms: number | null;
+  /** Its id. */
+  id: string;
+  /** Its place: a lane's worker takes the queued job with the lowest. */
+  position: number;
+  /** Where it stands. */
+  state: JobStatus;
+  /** What it does. */
+  work: JobWork;
+};
+
+/** What a job does. */
+export type JobWork = {
+  /** The benchmark. */
+  benchmark: string;
+  /** The `Remote` bindings in force at submission. */
+  bindings: ServiceBinding[];
+  kind: "run";
+  /** The pipeline's name in the workspace. */
+  pipeline: string;
+  /** The run id announced at submission. */
+  run_id: string;
+  /** The node a prefix run stops after; `null` for a whole run. */
+  up_to: string | null;
+} | {
+  /** The benchmark's selector. */
+  benchmark: string;
+  kind: "download";
 };
 
 /** A run's launch record (ADR-C39 § 1). */
@@ -917,7 +1036,7 @@ export type Problem = {
    * The stable code a client matches on: one of `ApiError::CODES`, which
    * the schema lists as an enum so a generated client can narrow on it.
    */
-  code: "pipeline_invalid" | "impl_not_in_build" | "service_unreachable" | "run_exists" | "run_unreadable" | "run_not_found" | "query_not_found" | "parameter_invalid" | "dataset_absent" | "dataset_differs" | "benchmark_not_found" | "benchmark_exists" | "download_failed" | "download_cancelled" | "import_refused" | "pipeline_not_found" | "precondition_failed" | "binding_refused" | "service_not_found" | "request_invalid" | "backend_failed" | "host_refused" | "origin_refused" | "route_not_found" | "method_not_allowed" | "runs_not_comparable" | "body_too_large";
+  code: "pipeline_invalid" | "impl_not_in_build" | "service_unreachable" | "run_exists" | "run_unreadable" | "run_not_found" | "query_not_found" | "parameter_invalid" | "dataset_absent" | "dataset_differs" | "benchmark_not_found" | "benchmark_exists" | "download_failed" | "download_cancelled" | "import_refused" | "pipeline_not_found" | "precondition_failed" | "binding_refused" | "service_not_found" | "request_invalid" | "backend_failed" | "host_refused" | "origin_refused" | "route_not_found" | "method_not_allowed" | "runs_not_comparable" | "body_too_large" | "job_not_found" | "job_not_queued" | "job_finished";
   /** What happened, in this occurrence's words. */
   detail: string;
   /**
@@ -928,6 +1047,12 @@ export type Problem = {
   etag?: string | null;
   /** The action that would resolve it. */
   hint: string;
+  /**
+   * For `run_exists`, where what already holds the run id is read:
+   * `/api/v1/jobs/<id>` for a job queued or running under it,
+   * `/api/v1/runs/<id>` for a stored run. Present only then.
+   */
+  link?: string | null;
   /**
    * Where in a pipeline a validation failure is. Present only for
    * `pipeline_invalid`.
@@ -1009,6 +1134,27 @@ export type QueryTrace = {
   text: string | null;
 };
 
+/** `PATCH /jobs/{id}`: where to move a queued job. */
+export type ReorderRequest = {
+  /**
+   * Its place among its lane's queued jobs, from 0 — the next taken. A
+   * place past the last moves it last.
+   */
+  position: number;
+};
+
+/** `POST /runs`: the job accepted, and the run id it announced. */
+export type RunAccepted = {
+  /** The job's id, under `/jobs/{id}`. */
+  job_id: string;
+  /**
+   * The run id the launcher announced: the one the run is filed under,
+   * unless what ran differs from what was announced, which the job's
+   * terminal state then reports.
+   */
+  run_id: string;
+};
+
 /** One run's per-query deltas against the baseline. */
 export type RunDeltas = {
   /**
@@ -1054,6 +1200,14 @@ export type RunDetail = {
    * identity; `null` when unknown.
    */
   started_at_ms: number | null;
+};
+
+/** A run filed under another id than it announced: both. */
+export type RunIdMismatch = {
+  /** The id announced at submission. */
+  announced: string;
+  /** The id computed from what ran, which the run is filed under. */
+  decided: string;
 };
 
 /** The components of a run's identity tuple. */
@@ -1158,6 +1312,23 @@ export type RunQueries = {
   ranking_node: string | null;
   /** The run's id. */
   run: string;
+};
+
+/**
+ * `POST /runs`: what to run. The bindings are not sent: the workspace's
+ * bindings in force — those `GET /services` lists — are snapshotted into
+ * the job at submission.
+ */
+export type RunRequest = {
+  /** The benchmark's selector, `<format>/<name>`. */
+  benchmark: string;
+  /**
+   * The workspace pipeline's name; its document is snapshotted into the
+   * job at submission, so an edit afterwards changes nothing queued.
+   */
+  pipeline: string;
+  /** The node a prefix run stops after; absent for the whole pipeline. */
+  up_to?: string | null;
 };
 
 /** One run, as the listing shows it. */
@@ -1526,12 +1697,67 @@ export type Paths = {
       response: BenchmarkEntry;
     };
   };
+  "/benchmarks/{name}/download": {
+    /** Queues a download of a benchmark the manifest names, verified against its digests. */
+    post: {
+      params: {
+        name: string;
+      };
+      response: DownloadAccepted;
+    };
+  };
   "/compare": {
     /** Runs of one benchmark against a baseline: the metric table, the parameter matrix, the stages with their pairing, the per-query deltas and their bins, and the latency per node. */
     post: {
       params: Record<string, never>;
       body: CompareRequest;
       response: Comparison;
+    };
+  };
+  "/jobs": {
+    /** Every job, by position, and every fault of the queue's record. */
+    get: {
+      params: Record<string, never>;
+      response: JobListing;
+    };
+  };
+  "/jobs/events": {
+    /** Every job transition and progress tick, as server-sent events. */
+    get: {
+      params: Record<string, never>;
+      headers: {
+        /**
+         * The id of the last event the client received, to resume after it.
+         * Absent, or one this server no longer holds the events after, and the
+         * stream begins with `resync`.
+         */
+        "Last-Event-ID"?: string;
+      };
+      response: null;
+    };
+  };
+  "/jobs/{id}": {
+    /** Cancels a job: a queued one at once, never executed; the running one between two queries. */
+    delete: {
+      params: {
+        id: string;
+      };
+      response: JobSummary;
+    };
+    /** One job: what it does and where it stands. */
+    get: {
+      params: {
+        id: string;
+      };
+      response: JobSummary;
+    };
+    /** Moves a queued job among its lane's queued jobs, and answers the queue in its new order. */
+    patch: {
+      params: {
+        id: string;
+      };
+      body: ReorderRequest;
+      response: JobListing;
     };
   };
   "/pipelines": {
@@ -1614,6 +1840,12 @@ export type Paths = {
     get: {
       params: Record<string, never>;
       response: RunListing;
+    };
+    /** Queues a run of a workspace pipeline on a benchmark, under the run id the launcher announces for it. */
+    post: {
+      params: Record<string, never>;
+      body: RunRequest;
+      response: RunAccepted;
     };
   };
   "/runs/{id}": {
@@ -1699,4 +1931,4 @@ export type Paths = {
 };
 
 /** The operations whose success response has no body: the client accepts an empty answer from these, and from a 204. */
-export const EMPTY_ANSWERS: readonly string[] = [];
+export const EMPTY_ANSWERS: readonly string[] = ["GET /jobs/events"];

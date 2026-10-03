@@ -15,7 +15,7 @@
 use std::collections::BTreeMap;
 
 use schemars::JsonSchema;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// `GET /workspace`: where the server works, how it is set up, which build is
 /// answering and what that build can run.
@@ -61,7 +61,7 @@ pub struct SettingsSummary {
 
 /// A `Remote` component bound by family and name to the address it answers
 /// at — in the workspace's settings, and as a run recorded it.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ServiceBinding {
     /// The family the name is bound in: `generator`, `embedder`, ….
     pub family: String,
@@ -824,6 +824,11 @@ pub struct Problem {
     /// about, when it is known. Absent otherwise — never guessed.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    /// For `run_exists`, where what already holds the run id is read:
+    /// `/api/v1/jobs/<id>` for a job queued or running under it,
+    /// `/api/v1/runs/<id>` for a stored run. Present only then.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub link: Option<String>,
 }
 
 /// Where in a pipeline a validation failure is.
@@ -1490,6 +1495,160 @@ pub struct MissingCells {
     pub dataset_version: String,
     /// The nodes, in the rows' order.
     pub nodes: Vec<String>,
+}
+
+/// `POST /runs`: the job accepted, and the run id it announced.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct RunAccepted {
+    /// The job's id, under `/jobs/{id}`.
+    pub job_id: String,
+    /// The run id the launcher announced: the one the run is filed under,
+    /// unless what ran differs from what was announced, which the job's
+    /// terminal state then reports.
+    pub run_id: String,
+}
+
+/// `POST /benchmarks/{name}/download`: the download job accepted.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct DownloadAccepted {
+    /// The job's id, under `/jobs/{id}`.
+    pub job_id: String,
+}
+
+/// `GET /jobs`: every job, in its place, and every fault of the queue's
+/// record.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct JobListing {
+    /// The jobs, by position: those ended and the one running before those
+    /// queued, each lane's queued jobs in the order its worker takes them.
+    pub jobs: Vec<JobSummary>,
+    /// A job file that does not read, or a write of the queue's record that
+    /// failed — reported, never repaired.
+    pub faults: Vec<JobFault>,
+}
+
+/// A job file the queue could not read, or a write of it that failed.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct JobFault {
+    /// The file.
+    pub path: String,
+    /// What went wrong, and what the queue did about it.
+    pub reason: String,
+}
+
+/// One job: what it does and where it stands.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+#[schemars(transform = every_property_required)]
+pub struct JobSummary {
+    /// Its id.
+    pub id: String,
+    /// Its place: a lane's worker takes the queued job with the lowest.
+    pub position: u64,
+    /// When it was accepted, in milliseconds since the epoch; `null` when
+    /// the clock read before it.
+    pub created_at_ms: Option<u64>,
+    /// What it does.
+    pub work: JobWork,
+    /// Where it stands.
+    pub state: JobStatus,
+}
+
+/// What a job does.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+#[schemars(transform = every_variant_property_required)]
+pub enum JobWork {
+    /// A run, on the run lane.
+    Run {
+        /// The run id announced at submission.
+        run_id: String,
+        /// The pipeline's name in the workspace.
+        pipeline: String,
+        /// The benchmark.
+        benchmark: String,
+        /// The `Remote` bindings in force at submission.
+        bindings: Vec<ServiceBinding>,
+        /// The node a prefix run stops after; `null` for a whole run.
+        up_to: Option<String>,
+    },
+    /// A benchmark download, on the download lane.
+    Download {
+        /// The benchmark's selector.
+        benchmark: String,
+    },
+}
+
+/// Where a job stands. A time is in milliseconds since the epoch, `null`
+/// when the clock read before it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+#[schemars(transform = every_variant_property_required)]
+pub enum JobStatus {
+    /// Waiting for its lane's worker.
+    Queued,
+    /// Executing: a run counts queries, a download bytes.
+    Running {
+        /// Queries executed, or bytes received.
+        done: u64,
+        /// Queries in the benchmark, or bytes in the snapshot; `null` until
+        /// the first tick.
+        total: Option<u64>,
+        /// When the worker took it.
+        started_at_ms: Option<u64>,
+        /// A run's median query latency so far: the lower median of each
+        /// executed query's latency, the sum of its trace's durations — the
+        /// figure `GET /runs` lists once it is filed. `null` before the
+        /// first query, and for a download.
+        median_latency_nanos: Option<u64>,
+    },
+    /// Finished.
+    Done {
+        /// The id the run is filed under — computed from what ran; `null`
+        /// for a download.
+        run_id: Option<String>,
+        /// Both ids, when the run is filed under another than the one it
+        /// announced.
+        id_mismatch: Option<RunIdMismatch>,
+        /// When it finished.
+        finished_at_ms: Option<u64>,
+    },
+    /// Failed; `interrupted` for a job found running when the service
+    /// started.
+    Failed {
+        /// What failed.
+        error: String,
+        /// The node that failed, when one did.
+        at_node: Option<String>,
+        /// When it failed.
+        finished_at_ms: Option<u64>,
+    },
+    /// Cancelled before it finished.
+    Cancelled {
+        /// When it was cancelled.
+        finished_at_ms: Option<u64>,
+    },
+}
+
+/// A run filed under another id than it announced: both.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct RunIdMismatch {
+    /// The id announced at submission.
+    pub announced: String,
+    /// The id computed from what ran, which the run is filed under.
+    pub decided: String,
+}
+
+/// [`every_property_required`] applied to each variant of a tagged enum,
+/// whose schema is a `oneOf` of one object per variant: a variant's field is
+/// serialized whether or not it is `null`, so it is required.
+fn every_variant_property_required(schema: &mut schemars::Schema) {
+    if let Some(serde_json::Value::Array(variants)) = schema.get_mut("oneOf") {
+        for variant in variants {
+            if let Ok(variant) = <&mut schemars::Schema>::try_from(variant) {
+                every_property_required(variant);
+            }
+        }
+    }
 }
 
 /// Marks every property of a struct's schema required.

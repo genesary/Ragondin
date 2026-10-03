@@ -214,3 +214,41 @@ pub struct CompareRequest {
     /// automatically again. Absent changes nothing.
     pub pairing: Option<crate::response::Pairing>,
 }
+
+/// `POST /runs`: what to run. The bindings are not sent: the workspace's
+/// bindings in force — those `GET /services` lists — are snapshotted into
+/// the job at submission.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RunRequest {
+    /// The workspace pipeline's name; its document is snapshotted into the
+    /// job at submission, so an edit afterwards changes nothing queued.
+    pub pipeline: String,
+    /// The benchmark's selector, `<format>/<name>`.
+    pub benchmark: String,
+    /// The node a prefix run stops after; absent for the whole pipeline.
+    pub up_to: Option<String>,
+}
+
+/// `PATCH /jobs/{id}`: where to move a queued job.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ReorderRequest {
+    /// Its place among its lane's queued jobs, from 0 — the next taken. A
+    /// place past the last moves it last.
+    pub position: u64,
+}
+
+/// `GET /jobs/events`: the header a reconnecting client sends.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, JsonSchema)]
+pub struct EventsHeaders {
+    /// The id of the last event the client received, to resume after it.
+    /// Absent, or one this server no longer holds the events after, and the
+    /// stream begins with `resync`.
+    #[serde(rename = "Last-Event-ID")]
+    pub last_event_id: Option<String>,
+}
+
+impl crate::extract::HeaderFields for EventsHeaders {
+    const NAMES: &'static [&'static str] = &["Last-Event-ID"];
+}
