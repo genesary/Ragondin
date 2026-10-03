@@ -109,14 +109,14 @@ describe('the header', () => {
     expect(subtitle.textContent).toBe(`Derived from 3 runs: each column is the most recent run on its benchmark; nothing here is stored. Canonical hash ${'a'.repeat(12)}`);
   });
 
-  it('reads every ranking row by the ranking metric chosen, the first in name order by default', async () => {
+  it('reads every ranking row by the ranking metric chosen, ndcg@10 by default as every view opens on', async () => {
     show(`#pipeline/${NAME}`);
     await loaded();
     const select = screen.getByRole('combobox', { name: 'Ranking metric' }) as HTMLSelectElement;
-    expect(select.value).toBe('mrr');
-    expect(screen.getByRole('rowheader', { name: /rerank/ }).textContent).toContain('mrr');
-    fireEvent.change(select, { target: { value: 'ndcg@10' } });
+    expect(select.value).toBe('ndcg@10');
     expect(screen.getByRole('rowheader', { name: /rerank/ }).textContent).toContain('ndcg@10');
+    fireEvent.change(select, { target: { value: 'mrr' } });
+    expect(screen.getByRole('rowheader', { name: /rerank/ }).textContent).toContain('mrr');
   });
 });
 

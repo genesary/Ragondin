@@ -7,6 +7,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button, ButtonLink, EmptyState, FAMILY_LABEL, FamilyTile, InlineMessage, Section, Select, Sheet, familyOfComponent } from '../../design/index.ts';
 import type { ApiClient } from '../api/client.ts';
 import type { PipelineListing, PipelineMatrix } from '../api/types.ts';
+import { defaultMetric } from '../metrics.ts';
 import { formatHash, navigate } from '../routes.ts';
 import { shortHash } from '../runs/model.ts';
 import { ErrorState, Loading, type RequestState } from '../shell/states.tsx';
@@ -118,7 +119,8 @@ function Reading({ client, name, listing, launch }: { client: ApiClient; name: s
 function Loaded({ matrix, listing, launch }: { matrix: PipelineMatrix; listing: RequestState<PipelineListing>; launch: Launch | undefined }) {
   const metrics = rankingMetrics(matrix);
   const [chosen, setChosen] = useState<string | null>(null);
-  const metric = chosen !== null && metrics.includes(chosen) ? chosen : (metrics[0] ?? '');
+  // Every metric a ranking row reads is a ranking metric, so no family is passed: ndcg@10, else the first.
+  const metric = chosen !== null && metrics.includes(chosen) ? chosen : (defaultMetric(metrics, {}) ?? '');
   const empty = matrix.feeding_runs.length === 0 && matrix.columns.every((c) => c.run === null);
   const missing = missingCount(matrix);
   const unverified = matrix.columns.filter((c) => c.dataset_check !== null && c.dataset_check.status !== 'verified');
