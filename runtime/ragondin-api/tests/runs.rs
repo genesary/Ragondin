@@ -644,3 +644,51 @@ async fn the_latency_is_served_from_the_cache_the_second_time() {
     std::fs::remove_dir_all(workspace.join("cache")).unwrap();
     assert_eq!(listing().await, first, "the same body, rebuilt");
 }
+
+#[tokio::test]
+async fn a_pipeline_document_carries_the_graph_a_run_of_it_serves() {
+    // The fixture run's own document, stored as a workspace pipeline with a
+    // comment the graph does not see.
+    let text = format!("# kept\n{}", fixture_run().config.as_str());
+    let backends = || {
+        let mut backends = fakes(FakeRunStore::holding([fixture_run()]));
+        backends.pipelines = Arc::new(HeldPipelines {
+            files: vec![
+                ("stub".to_owned(), text.clone()),
+                ("broken".to_owned(), "pipeline: [".to_owned()),
+            ],
+        });
+        backends
+    };
+
+    let pipeline =
+        json(send(app_with_backends(backends()), get("/api/v1/pipelines/stub")).await).await;
+    let run = json(
+        send(
+            app_with_backends(backends()),
+            get(&format!("/api/v1/runs/{FIXTURE_RUN}")),
+        )
+        .await,
+    )
+    .await;
+
+    assert!(pipeline["graph"].is_object(), "{pipeline}");
+    assert_eq!(pipeline["graph"], run["graph"]);
+
+    // A document that does not validate opens as text alone: `graph` is
+    // there, and null.
+    let broken = json(
+        send(
+            app_with_backends(backends()),
+            get("/api/v1/pipelines/broken"),
+        )
+        .await,
+    )
+    .await;
+    assert!(broken["error"].is_object(), "{broken}");
+    assert_eq!(
+        broken.get("graph"),
+        Some(&serde_json::Value::Null),
+        "{broken}"
+    );
+}

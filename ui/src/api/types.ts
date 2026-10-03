@@ -775,7 +775,7 @@ export type ParameterRow = {
 /** A node parameter's value. */
 export type ParameterValue = boolean | number | string | ParameterValue[];
 
-/** `GET /pipelines/{name}`: one pipeline document, verbatim. */
+/** `GET /pipelines/{name}`: one pipeline document, verbatim, and its graph. */
 export type PipelineDetail = {
   /** The document, byte for byte as the file holds it. */
   document: string;
@@ -783,6 +783,13 @@ export type PipelineDetail = {
   error: PipelineError | null;
   /** The digest of those bytes; also the response's `ETag` header, quoted. */
   etag: string;
+  /**
+   * Its graph, when it validates: the one `GET /runs/{id}` serves for a
+   * run of it, lowered by the same load and converted by the same
+   * conversion — never parsed by the browser. `null` when it does not
+   * validate, and the document is then text alone.
+   */
+  graph: Graph | null;
   /** The content hash of its canonical logical form, when it validates. */
   hash: string | null;
   /** Its name. */

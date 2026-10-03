@@ -546,6 +546,20 @@ in `tests/workspace_toml.rs`:
   own, last writer wins, which costs a position, never a pipeline. Writing a
   layout needs the pipeline to exist (`pipeline_not_found` otherwise); it is
   re-serialized as JSON, since the verbatim rule is the document's.
+- **A read carries the document's graph** — `PipelineDetail::graph`, the
+  `Graph` `GET /runs/{id}` serves for a run of it: lowered once by
+  `validation::lower` (`parse_document`, the one load) and converted by
+  `convert::graph`, the conversion a run's detail uses, so the editor opens a
+  stored pipeline without parsing YAML, and the two graphs of one canonical
+  form are one value (`tests/runs.rs` compares them). `null` when the
+  document does not validate, which then opens as text alone, its `error`
+  saying why. **Serving the wire-schema document instead, so that an invalid
+  one opens on the canvas too, was weighed and not taken** — a choice made
+  here: `parse_document` answers a `LogicalPipeline` or a refusal, never the
+  `RawPipeline` it parsed, so serving it would need a second load in this
+  crate or a change to `ragondin-config`; and a canvas holding a document
+  that does not validate has nothing it may save, since the editor writes a
+  file only when the pipeline validates (ADR-016 § 3).
 
 ### Validation, in the CLI's words
 
@@ -737,7 +751,7 @@ when it can be null: `launched_as` on `RunDetail` and `RunSummary`, the two time
 and `RunSummary`, `RunSummary::median_query_latency_nanos`,
 `QueryScores::text` and `QueryScores::duration_nanos`,
 `MetricRow::direction`, `PipelineSummary::modified_ms`,
-`FamilyCapabilities::ports`, `Location::node`,
+`PipelineDetail::graph`, `FamilyCapabilities::ports`, `Location::node`,
 `Location::edge`, and the pipeline matrix's `MatrixColumn`, `FeedingRun`,
 `LaunchedAs`, `MissingCells` and `MatrixCell`'s `measured` variant carry a
 `transform` that lists every property as required,

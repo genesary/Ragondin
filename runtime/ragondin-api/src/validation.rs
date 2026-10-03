@@ -26,7 +26,13 @@ use crate::response::{EdgeLocation, Location};
 /// not a pipeline, as `pipeline_invalid`. The one place this crate renders a
 /// document's hash: every listing, write and lineage reads it here.
 pub(crate) fn check(document: &str) -> Result<String, ApiError> {
-    Ok(lower(document)?.content_hash().to_string())
+    Ok(hash(&lower(document)?))
+}
+
+/// The content hash of a pipeline [`lower`] answered, rendered as
+/// [`check`] renders it — for a caller that needs the pipeline as well.
+pub(crate) fn hash(pipeline: &LogicalPipeline) -> String {
+    pipeline.content_hash().to_string()
 }
 
 /// `document`'s validated logical pipeline, or why it is not one, as

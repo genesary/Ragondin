@@ -728,8 +728,8 @@ pub struct PipelineSummary {
     pub error: Option<PipelineError>,
 }
 
-/// `GET /pipelines/{name}`: one pipeline document, verbatim.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+/// `GET /pipelines/{name}`: one pipeline document, verbatim, and its graph.
+#[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
 #[schemars(transform = every_property_required)]
 pub struct PipelineDetail {
     /// Its name.
@@ -742,6 +742,11 @@ pub struct PipelineDetail {
     pub hash: Option<String>,
     /// Why it does not validate, when it does not.
     pub error: Option<PipelineError>,
+    /// Its graph, when it validates: the one `GET /runs/{id}` serves for a
+    /// run of it, lowered by the same load and converted by the same
+    /// conversion — never parsed by the browser. `null` when it does not
+    /// validate, and the document is then text alone.
+    pub graph: Option<Graph>,
 }
 
 /// Why a pipeline document does not validate: `pipeline_invalid`'s detail and

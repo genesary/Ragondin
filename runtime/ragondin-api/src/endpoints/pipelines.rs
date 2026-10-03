@@ -18,6 +18,7 @@ use axum::Json;
 use ragondin_experiments::UnixMillis;
 
 use crate::backends::{PipelineFile, Precondition, Revision};
+use crate::convert;
 use crate::error::ApiError;
 use crate::extract::{ApiHeaders, ApiJson, ApiPath, ApiQuery, NoParameters};
 use crate::handlers::AppState;
@@ -66,7 +67,16 @@ pub(crate) async fn read(
     _: ApiQuery<NoParameters>,
 ) -> Result<Response, ApiError> {
     let file = state.backends.pipelines.read(&name).await?;
-    let (hash, error) = verdict(&file.document);
+    // Lowered once: the hash and the graph are both read off the pipeline
+    // the one load answers.
+    let (hash, error, graph) = match validation::lower(&file.document) {
+        Ok(pipeline) => (
+            Some(validation::hash(&pipeline)),
+            None,
+            Some(convert::graph(&pipeline)),
+        ),
+        Err(refusal) => (None, Some(refused(refusal)), None),
+    };
     let etag = file.revision.clone();
     Ok(with_etag(
         Json(PipelineDetail {
@@ -75,6 +85,7 @@ pub(crate) async fn read(
             etag: etag.as_str().to_owned(),
             hash,
             error,
+            graph,
         }),
         &etag,
     ))
@@ -161,21 +172,23 @@ pub(crate) async fn write_layout(
 fn verdict(document: &str) -> (Option<String>, Option<PipelineError>) {
     match validation::check(document) {
         Ok(hash) => (Some(hash), None),
-        Err(ApiError::PipelineInvalid { detail, location }) => {
-            (None, Some(PipelineError { detail, location }))
-        }
-        // `check` answers nothing else; were it to, the document is still
+        Err(refusal) => (None, Some(refused(refusal))),
+    }
+}
+
+/// Why a document does not validate, from the load's refusal.
+fn refused(refusal: ApiError) -> PipelineError {
+    match refusal {
+        ApiError::PipelineInvalid { detail, location } => PipelineError { detail, location },
+        // The load answers nothing else; were it to, the document is still
         // reported as not validating rather than dropped from the listing.
-        Err(other) => (
-            None,
-            Some(PipelineError {
-                detail: other.to_string(),
-                location: crate::response::Location {
-                    node: None,
-                    edge: None,
-                },
-            }),
-        ),
+        other => PipelineError {
+            detail: other.to_string(),
+            location: crate::response::Location {
+                node: None,
+                edge: None,
+            },
+        },
     }
 }
 

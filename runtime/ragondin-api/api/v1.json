@@ -2065,7 +2065,7 @@
         "description": "A node parameter's value."
       },
       "PipelineDetail": {
-        "description": "`GET /pipelines/{name}`: one pipeline document, verbatim.",
+        "description": "`GET /pipelines/{name}`: one pipeline document, verbatim, and its graph.",
         "properties": {
           "document": {
             "description": "The document, byte for byte as the file holds it.",
@@ -2089,6 +2089,20 @@
             "description": "The digest of those bytes; also the response's `ETag` header, quoted.",
             "type": "string"
           },
+          "graph": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Graph"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "Its graph, when it validates: the one `GET /runs/{id}` serves for a\nrun of it, lowered by the same load and converted by the same\nconversion — never parsed by the browser. `null` when it does not\nvalidate, and the document is then text alone."
+          },
           "hash": {
             "description": "The content hash of its canonical logical form, when it validates.",
             "nullable": true,
@@ -2103,6 +2117,7 @@
           "document",
           "error",
           "etag",
+          "graph",
           "hash",
           "name"
         ],
