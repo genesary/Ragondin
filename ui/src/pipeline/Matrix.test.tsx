@@ -269,8 +269,9 @@ describe('the table for assistive technology', () => {
     expect(screen.getByRole('region', { name: `${NAME}: each node on each benchmark` }).getAttribute('tabindex')).toBe('0');
   });
 
-  it('keeps every cell two lines tall and as wide as a value with its gain, whatever its state, so nothing moves when a metric is chosen', () => {
+  it('keeps every cell two lines tall, whatever its state, so no row moves when a metric is chosen', () => {
     expect(declared(css, '.rg-matrix__cell', 'min-height')).toBe('calc(2 * var(--space-5))');
-    expect(declared(css, '.rg-matrix__cell', 'min-width')).toBe('calc(var(--space-16) + var(--space-8))');
+    // No width is claimed: the table's automatic layout shares the width out again on every change.
+    expect(declared(css, '.rg-matrix__cell', 'min-width')).toBeUndefined();
   });
 });

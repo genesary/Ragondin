@@ -185,6 +185,8 @@ describe('the runs that feed it', () => {
     expect(old.textContent).toContain(`Launched as ${NAME}; content since changed`);
     expect(old.textContent).toContain('fills no cell');
     const diff = within(old).getByRole('table', { name: `What differs between ${NAME} now and run ${RUN_OLD.slice(0, 12)}` });
+    // It scrolls sideways on a phone: its scroll box is a named tab stop, as the matrix's is.
+    expect(within(old).getByRole('region', { name: `What differs between ${NAME} now and run ${RUN_OLD.slice(0, 12)}` }).getAttribute('tabindex')).toBe('0');
     const row = within(diff).getByRole('row', { name: /top_k/ });
     expect(within(row).getAllByRole('cell').map((c) => c.textContent)).toEqual(['top_k', '50', '100']);
   });

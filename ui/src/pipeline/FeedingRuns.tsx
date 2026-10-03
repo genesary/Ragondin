@@ -27,6 +27,7 @@ function Difference({ difference, pipeline, run }: { difference: ConfigurationMa
     <Table
       caption={`What differs between ${pipeline} now and run ${shortHash(run)}`}
       rowHeaders
+      region
       columns={[
         { id: 'node', label: 'Node' },
         { id: 'key', label: 'Parameter' },

@@ -94,8 +94,6 @@
   display: grid;
   align-content: start;
   min-height: calc(2 * var(--space-5));
-  /* As wide as a value with its gain, so the bold best gain does not widen its column by a pixel or two. */
-  min-width: calc(var(--space-16) + var(--space-8));
 }
 .rg-matrix__line {
   display: flex;
