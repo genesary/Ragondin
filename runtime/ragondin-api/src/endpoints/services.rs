@@ -1,10 +1,11 @@
 //! `GET /services`, `PUT`/`DELETE /services/{family}/{name}` and
 //! `POST /services/{family}/{name}/probe`.
 //!
-//! The bindings are the workspace's settings, read through `WorkspaceSettings`
-//! and changed by its per-key operations, each applied whole by the backend —
-//! no handler reads the settings to write them back; whether one is acceptable is the composition root's
-//! to say, through `Launcher::check_binding`, in the words `--remote` uses.
+//! The bindings are the workspace's settings, read through
+//! `WorkspaceSettings` and changed by its per-key operations, each applied
+//! whole by the backend — no handler reads the settings to write them back.
+//! Whether one is acceptable is the composition root's to say, through
+//! `Launcher::check_binding`, in the words `--remote` uses.
 //! What a probe learnt is this server's memory, not the workspace's: it is
 //! kept per binding and address while the server runs, and an address
 //! changed is a binding never probed.

@@ -430,14 +430,15 @@ so every bump is a deliberate, reviewed one.
 **Choices made here** (`AGENTS.md` § Rules of engagement), each with its test
 in `tests/workspace_toml.rs`:
 
-- **No removal drops a comment, whichever key it removes.** ADR-C38 requires
-  that a removed *first* key's prefix move onto what follows, so that the
-  file's header is not deleted with it. "First" could mean the document's
-  first key (`datasets`, which carries the header) or `[services]`' first
-  (which carries the comments above the bindings); the rule here covers
-  both and every other key: the comments above a removed key, and its
+- **No removal drops a comment, whichever key it removes.** ADR-C38 §
+  Consequences requires that "comments above, beside and below an entry
+  survive adding, replacing and removing it", and a removed entry's own
+  comments are among them. So the comments above a removed key, and its
   trailing comment as a line of its own, go above whatever followed it —
-  the next binding, or `[services]`' header after `datasets`. A comment that
+  the next binding, or `[services]`' header after `datasets` — for every
+  key, not only the first: the rule that a removed first key's prefix moves
+  on, so the file's header survives, is the case of this one where the
+  first key is the document's (`datasets`) or `[services]`'. A comment that
   described the removed binding is then the person's to delete, which beats
   deleting one they meant to keep.
 - **A removed key that nothing follows** leaves those comments at the end of
@@ -469,6 +470,9 @@ in `tests/workspace_toml.rs`:
   `PUT` of a fresh workspace — go above the first item created, a blank line
   between them; a `datasets` created in a file that has a `[services]` table
   takes the comments that opened the file, so the header stays on top.
+  Together with the rule above, one consequence follows: unbinding the last
+  binding moves its comments to the end of the file, so the next `bind`
+  places them above the binding it appends.
 
 ### The pipelines
 

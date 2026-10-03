@@ -167,7 +167,9 @@ pub enum ApiError {
         current: Option<String>,
     },
     /// A service binding refused: a family, name or address the composition
-    /// root would refuse on `--remote`, in its words.
+    /// root would refuse on `--remote`, in its words — or one the settings
+    /// backend cannot store so that it reads back as the same binding, in
+    /// its own words.
     #[error("{detail}")]
     BindingRefused {
         /// The composition root's refusal.

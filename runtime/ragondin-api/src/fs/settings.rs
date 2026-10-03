@@ -30,7 +30,9 @@ pub struct FsSettings {
     file: Arc<PathBuf>,
     default_datasets: Arc<PathBuf>,
     // Held across an operation's read and write of the file, so two
-    // operations never start from what the other is replacing.
+    // operations never start from what the other is replacing. Owned by the
+    // blocking task, so a request dropped mid-write does not release it
+    // while the write goes on.
     writing: Arc<tokio::sync::Mutex<()>>,
 }
 
@@ -81,9 +83,10 @@ impl FsSettings {
     where
         F: FnOnce(&Self, &Settings) -> Result<Option<Edit>, ApiError> + Send + 'static,
     {
-        let _writing = self.writing.lock().await;
+        let writing = Arc::clone(&self.writing).lock_owned().await;
         let this = self.clone();
         blocking(move || {
+            let _writing = writing;
             let text = this.read_text()?;
             let current =
                 this.settings(settings_file::parse(&text).map_err(|e| this.malformed(e))?);
