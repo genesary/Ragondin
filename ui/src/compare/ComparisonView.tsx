@@ -94,7 +94,10 @@ export function ComparisonView({ comparison: c, ids, baseline, busy, listing, on
   const run = c.runs[runAt] ?? c.runs[1];
   const runName = series[runAt]?.label ?? '';
   const deltas = c.query_deltas.find((d) => d.run === run?.id)?.metrics ?? [];
-  const md = deltas.find((m) => m.metric === queryMetric) ?? deltas[0] ?? null;
+  // Every per-query delta is of a ranking metric, so no family is passed:
+  // the stage line's rule, ndcg@10, else the first.
+  const shownMetric = deltas.some((m) => m.metric === queryMetric) ? queryMetric : defaultMetric(deltas.map((m) => m.metric), {});
+  const md = deltas.find((m) => m.metric === shownMetric) ?? null;
   const bins = md === null ? [] : binsOf(md);
   const open = md?.bins.find((b) => b.bin === openBin) ?? null;
   const openBinView = bins.find((b) => b.id === openBin) ?? null;

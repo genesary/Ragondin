@@ -229,6 +229,7 @@ describe('the charts', () => {
   it('draws the histogram\'s seven bins with their counts and its worse and better halves', async () => {
     show(THREE);
     await loaded();
+    fireEvent.change(screen.getByLabelText('Per-query metric'), { target: { value: 'mrr@10' } });
     const group = screen.getByRole('group', { name: 'Per-query change in mrr@10, A · hybrid against the baseline' });
     expect(within(group).getAllByRole('button')).toHaveLength(7);
     expect(screen.getAllByText('worse', { selector: '.rg-hist__half' })).toHaveLength(1);
@@ -240,6 +241,7 @@ describe('the charts', () => {
   it('lists a bar\'s queries on Enter or click, each opening Replay beside the baseline', async () => {
     show(THREE);
     await loaded();
+    fireEvent.change(screen.getByLabelText('Per-query metric'), { target: { value: 'mrr@10' } });
     fireEvent.click(screen.getByRole('radio', { name: 'B · hybrid-rerank' }));
     fireEvent.click(screen.getByRole('button', { name: 'much worse, below −0.3: 6 queries' }));
     const list = screen.getByRole('region', { name: '6 queries much worse, below −0.3' });
@@ -265,7 +267,10 @@ describe('the charts', () => {
     await loaded();
     // The one rule every view opens on (src/metrics.ts): ndcg@10 when the stages carry it.
     expect((screen.getByLabelText('Stage metric') as HTMLSelectElement).value).toBe('ndcg@10');
-    expect((screen.getByLabelText('Per-query metric') as HTMLSelectElement).value).toBe('mrr@10');
+    // The same rule for the per-query deltas, never the API's first (mrr@10 in the fixture).
+    expect((screen.getByLabelText('Per-query metric') as HTMLSelectElement).value).toBe('ndcg@10');
+    expect(screen.getByRole('group', { name: 'Per-query change in ndcg@10, A · hybrid against the baseline' })).toBeTruthy();
+    expect(screen.getByRole('region', { name: 'Verdict' }).textContent).toContain('On ndcg@10, A · hybrid against the baseline');
   });
 
   it('gives every chart a table, one keyboard stop away', async () => {
@@ -334,6 +339,7 @@ describe('the verdict', () => {
   it('ends the page: the sentence, then the one primary action, to the worst regression beside the baseline', async () => {
     show(THREE);
     await loaded();
+    fireEvent.change(screen.getByLabelText('Per-query metric'), { target: { value: 'mrr@10' } });
     fireEvent.click(screen.getByRole('radio', { name: 'B · hybrid-rerank' }));
     const section = screen.getByRole('region', { name: 'Verdict' });
     expect(section.textContent).toContain('On mrr@10, B · hybrid-rerank against the baseline: 131 queries improve, 108 are unchanged, 61 get worse — 6 by more than 0.3.');
