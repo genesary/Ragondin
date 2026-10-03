@@ -155,6 +155,10 @@ describe('renderNotices and missingNotices', () => {
     }
   });
 
+  it('points at the notices of the Rust crates the binary links', () => {
+    expect(renderNotices(entries, fonts)).toContain('/third-party-notices-rust.txt');
+  });
+
   it('finds nothing missing in what it wrote', () => {
     expect(missingNotices(renderNotices(entries, fonts), entries, fonts)).toEqual([]);
   });
