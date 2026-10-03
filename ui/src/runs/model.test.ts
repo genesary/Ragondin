@@ -9,6 +9,7 @@ const row = (id: string, over: Partial<RunRow> = {}): RunRow => ({
   pipeline: hex('p'),
   pipelineNames: [],
   launchedAs: null,
+  launchRecorded: false,
   benchmark: hex('b'),
   benchmarkNames: [],
   status: { state: 'done' },
@@ -216,6 +217,22 @@ describe('the other fact', () => {
     // Under the hash matches, or the hash: that no launch was recorded.
     expect(otherFact(row('1', { pipelineNames: ['hybrid'] }))).toBe('launch not recorded');
     expect(otherFact(row('1'))).toBe('launch not recorded');
+  });
+
+  it('says a record without a name was recorded, never that nothing was', () => {
+    expect(otherFact(row('1', { launchRecorded: true, pipelineNames: ['hybrid'] }))).toBe('launch recorded without a name');
+  });
+
+  it('draws no secondary label when the only document holding the content is the recorded name', () => {
+    expect(otherFact(row('1', { launchedAs: 'hybrid', launchRecorded: true, pipelineNames: ['hybrid'] }))).toBeNull();
+  });
+
+  it('reads whether the run has a launch record at all', () => {
+    const rows = rowsFromListing(listingOf(summary(hex('1'), { launched_as: { name: null, prefix_of: null } }), summary(hex('2'))));
+    expect(rows.map((r) => [r.source.id, r.launchedAs, r.launchRecorded])).toEqual([
+      [hex('1'), null, true],
+      [hex('2'), null, false],
+    ]);
   });
 });
 

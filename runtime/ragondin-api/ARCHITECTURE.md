@@ -651,11 +651,10 @@ producer, consumer, port and the kind of value its producer puts on it — the
 query for a declared input, and otherwise `produced_kind` of the producing
 node. The nodes come in the canonical order (by id), the edges grouped by
 consuming node, in port order. A prefix run says what it was cut from in
-`launched_as.prefix_of` (below), the one place it is said: `RunDetail` had a
-`prefix_of` string, "the run this one is a prefix of", always absent, and it
-is gone — ADR-C39 § 2 makes a prefix a cut of a pipeline's version, named by
-the parent's name, the node it stops at and the parent's canonical hash,
-never a relation between two runs.
+`launched_as.prefix_of` (below), the one place it is said: ADR-C39 § 2 makes
+a prefix a cut of a pipeline's version — the parent's name, the node it
+stops at and the parent's canonical hash — never a relation between two
+runs.
 
 **A run the store lists and cannot load** is listed in `GET /runs` under
 `unreadable`, with the store's reason, rather than dropped or failing the whole
@@ -1233,9 +1232,11 @@ ranking and the answer are the walk's, and a pair never moves them.
   by `lineage::pipeline_of`. It is reported as each run's `pipeline`: the
   lookup's answer, not a claim about which version the run is. No record
   naming one and no document, or several, is `null`, and such a run pairs
-  automatically only. A recorded name the workspace no longer holds has no
-  pairing (`read_pairing`'s `pipeline_not_found` is read as none), and the
-  comparison goes on without one.
+  automatically only. A recorded name the workspace no longer holds, or
+  holds only under another case, has no pairing, and the comparison goes on
+  without one: a pairing is read only for two names `PipelineSource::list`
+  holds exactly as given, so neither `pipeline_not_found` nor the case
+  alias's `request_invalid` can refuse the comparison.
 - **A run of earlier content gets the pairs whose nodes it still has.** A
   pairing is kept against the two pipelines' current documents. Applied to
   a run launched as *N* whose content has since changed, *N*'s pairs apply

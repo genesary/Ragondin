@@ -21,6 +21,21 @@ const choose = (run: string) => fireEvent.change(screen.getByLabelText('Pair the
 const node = (name: string) => screen.getByRole('button', { name });
 
 describe('PairingPanel', () => {
+  it('says beside a kept pair that the run lacks its node, and keeps it in what it posts', async () => {
+    const earlier: Comparison = {
+      ...COMPARISON,
+      pairings: [{ pipeline: 'dense-only', other: 'hybrid-rerank', pairs: [{ node: 'dense', other: 'rerank' }, { node: 'dense', other: 'splade' }] }],
+      unplaced_pairs: [{ run: RERANK, pair: { node: 'dense', other: 'splade' }, absent_from: 'run' }],
+    };
+    const onPair = panel(earlier);
+    choose(RERANK);
+    const kept = within(screen.getByRole('list', { name: 'Pairs drawn by hand' })).getAllByRole('listitem');
+    expect(kept.map((li) => li.querySelector('span')?.textContent)).toEqual(['dense ↔ rerank', 'dense ↔ splade: not in run B']);
+    // Removing the placed pair posts the rest of the kept pairing, the unplaced pair with it.
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Remove the pair dense and rerank' })));
+    expect(onPair).toHaveBeenCalledWith({ pipeline: 'dense-only', other: 'hybrid-rerank', pairs: [{ node: 'dense', other: 'splade' }] });
+  });
+
   it('lays the baseline\'s nodes and the other run\'s in two columns', () => {
     panel();
     choose(RERANK);

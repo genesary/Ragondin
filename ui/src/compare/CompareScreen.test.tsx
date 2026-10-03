@@ -186,6 +186,25 @@ describe('the charts', () => {
     expect([...figure.querySelectorAll('.rg-chart__tick')].map((t) => t.textContent)).toEqual(['0', '0.2', '0.4', '0.6', '0.8', '1']);
   });
 
+  it('counts only the pairs placed, and lists in words each pair a run could not place', async () => {
+    const earlier: Comparison = {
+      ...COMPARISON,
+      pairings: [{ pipeline: 'dense-only', other: 'hybrid-rerank', pairs: [{ node: 'dense', other: 'rerank' }, { node: 'dense', other: 'splade' }] }],
+      unplaced_pairs: [{ run: RERANK, pair: { node: 'dense', other: 'splade' }, absent_from: 'run' }],
+    };
+    show(THREE, routes(() => ({ body: earlier })));
+    await loaded();
+    expect(screen.getByText('1 pair by hand')).toBeTruthy();
+    const list = screen.getByRole('list', { name: 'Pairs not placed' });
+    expect(within(list).getAllByRole('listitem').map((li) => li.textContent)).toEqual(['dense ↔ splade: not in run B']);
+  });
+
+  it('draws no list of unplaced pairs when every pair was placed', async () => {
+    show(THREE);
+    await loaded();
+    expect(screen.queryByRole('list', { name: 'Pairs not placed' })).toBeNull();
+  });
+
   it('draws the stage line: the legs, after fusion, after rerank; the dense-only line breaks where it has no stage', async () => {
     show(THREE);
     await loaded();

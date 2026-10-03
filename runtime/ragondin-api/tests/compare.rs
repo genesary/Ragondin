@@ -1339,3 +1339,59 @@ async fn a_run_s_record_names_its_pairing_before_the_documents_sharing_its_hash(
     assert_eq!(body["pairings"], json!([]));
     assert_eq!(row(&body, "after_fusion")["source"], "automatic");
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_recorded_name_held_only_as_a_case_alias_gives_no_pairing_and_the_comparison_answers() {
+    // `colbert-rerank` is stored; the record says `Colbert-Rerank`, which on
+    // a filesystem that ignores case would be the same file. The lookup
+    // never reads a pairing through an alias: none applies, and the
+    // comparison is still answered.
+    let hybrid = hybrid_rerank_run(0x01);
+    let mut colbert = colbert_rerank_run(0x02);
+    colbert.provenance = Some(RunProvenance::named("Colbert-Rerank"));
+    let (root, workspace) = paired_workspace("compare_pairing_case_alias");
+    keep_pairs(&workspace, r#"[{"node":"rrf","other":"colbert"}]"#);
+
+    let (status, body) = post_compare(
+        app(
+            vec![hybrid.clone(), colbert.clone()],
+            &root,
+            Some(FsPipelines::new(&workspace)),
+        ),
+        json!({ "run_ids": ids(&[&hybrid, &colbert]), "baseline": hybrid.id.to_string() }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["runs"][1]["pipeline"], "Colbert-Rerank");
+    assert_eq!(body["pairings"], json!([]));
+    assert_eq!(body["unplaced_pairs"], json!([]));
+    assert_eq!(row(&body, "after_fusion")["source"], "automatic");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_recorded_name_the_workspace_no_longer_holds_gives_no_pairing_and_the_comparison_answers()
+{
+    // The baseline was launched as `hybrid-v0`, since deleted: it has no
+    // pairing, never a refused comparison.
+    let mut hybrid = hybrid_rerank_run(0x01);
+    hybrid.provenance = Some(RunProvenance::named("hybrid-v0"));
+    let colbert = colbert_rerank_run(0x02);
+    let (root, workspace) = paired_workspace("compare_pairing_gone_name");
+    keep_pairs(&workspace, r#"[{"node":"rrf","other":"colbert"}]"#);
+
+    let (status, body) = post_compare(
+        app(
+            vec![hybrid.clone(), colbert.clone()],
+            &root,
+            Some(FsPipelines::new(&workspace)),
+        ),
+        json!({ "run_ids": ids(&[&hybrid, &colbert]), "baseline": hybrid.id.to_string() }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["runs"][0]["pipeline"], "hybrid-v0");
+    assert_eq!(body["pairings"], json!([]));
+    assert_eq!(body["unplaced_pairs"], json!([]));
+}

@@ -93,6 +93,7 @@ export function runRow(row: RunRow, { selected, refusal, columns, onToggle }: Ru
         disabledReason={refusal.short}
       />
     );
+  const fact = otherFact(row);
   const run = (
     <>
       {to === null ? (
@@ -109,7 +110,7 @@ export function runRow(row: RunRow, { selected, refusal, columns, onToggle }: Ru
         </span>
       )}
       {/* The fact the group is not headed by: text from the first draw, so nothing moves in later. */}
-      <span className="rg-runs__fact">{otherFact(row)}</span>
+      {fact === null ? null : <span className="rg-runs__fact">{fact}</span>}
     </>
   );
 

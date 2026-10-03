@@ -12,6 +12,7 @@ const row = (id: string): RunRow => ({
   pipeline: HASH,
   pipelineNames: [],
   launchedAs: null,
+  launchRecorded: false,
   benchmark: 'd',
   benchmarkNames: [],
   status: { state: 'done' },

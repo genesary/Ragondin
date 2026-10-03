@@ -304,6 +304,18 @@ async fn pairings(
     let Some(baseline) = &runs[0].name else {
         return Ok(Vec::new());
     };
+    // A recorded name may be a pipeline the workspace no longer holds, or
+    // holds only under another case (ADR-C39 § 10): it has no pairing, and
+    // the comparison goes on without one. A pairing is read only for two
+    // names stored exactly as given, so neither refusal can reach here.
+    let stored: BTreeSet<String> = state
+        .backends
+        .pipelines
+        .list()
+        .await?
+        .into_iter()
+        .map(|file| file.name)
+        .collect();
     let mut pairings: Vec<Pairing> = Vec::new();
     let mut seen = BTreeSet::new();
     for run in &runs[1..] {
@@ -318,14 +330,13 @@ async fn pairings(
             {
                 (!requested.pairs.is_empty()).then(|| oriented(requested, baseline))
             }
+            _ if !(stored.contains(baseline) && stored.contains(other)) => None,
             _ => {
-                // A recorded name may be a pipeline the workspace no longer
-                // holds (ADR-C39 § 10): it has no pairing, and the comparison
-                // goes on without one rather than failing.
-                match state.backends.pipelines.read_pairing(baseline, other).await {
-                    Err(ApiError::PipelineNotFound { .. }) => None,
-                    read => read?,
-                }
+                state
+                    .backends
+                    .pipelines
+                    .read_pairing(baseline, other)
+                    .await?
             }
         };
         pairings.extend(pairing);

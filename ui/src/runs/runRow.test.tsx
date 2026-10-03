@@ -13,6 +13,7 @@ const done = (over: Partial<RunRow> = {}): RunRow => ({
   pipeline: 'p'.repeat(64),
   pipelineNames: ['hybrid'],
   launchedAs: null,
+  launchRecorded: false,
   benchmark: 'd'.repeat(64),
   benchmarkNames: ['beir/scifact'],
   status: { state: 'done' },

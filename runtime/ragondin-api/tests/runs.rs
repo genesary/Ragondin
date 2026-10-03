@@ -278,14 +278,14 @@ async fn a_recorded_name_and_the_hash_matches_are_reported_independently() {
     // A fork still holding the run's content: both facts, unchanged, side by
     // side — the record does not take the fork's name, nor the fork the
     // record's.
-    let mut backends = fakes(FakeRunStore::holding([run]));
+    let mut backends = fakes(FakeRunStore::holding([run.clone()]));
     backends.pipelines = Arc::new(HeldPipelines {
         files: vec![
             (
                 "hybrid".to_owned(),
                 text.replacen("top_k: 1", "top_k: 2", 1),
             ),
-            ("hybrid-fork".to_owned(), text),
+            ("hybrid-fork".to_owned(), text.clone()),
         ],
     });
 
@@ -296,6 +296,28 @@ async fn a_recorded_name_and_the_hash_matches_are_reported_independently() {
         json!({ "name": "hybrid", "prefix_of": null })
     );
     assert_eq!(body["runs"][0]["pipeline_names"], json!(["hybrid-fork"]));
+
+    // An unedited fork: `hybrid` and `hybrid-fork` both hold the run's
+    // content. The record still names `hybrid` alone, and the hash matches
+    // name both — neither fact absorbs the other.
+    let mut backends = fakes(FakeRunStore::holding([run]));
+    backends.pipelines = Arc::new(HeldPipelines {
+        files: vec![
+            ("hybrid-fork".to_owned(), text.clone()),
+            ("hybrid".to_owned(), text),
+        ],
+    });
+
+    let body = json(send(app_with_backends(backends), get("/api/v1/runs")).await).await;
+
+    assert_eq!(
+        body["runs"][0]["launched_as"],
+        json!({ "name": "hybrid", "prefix_of": null })
+    );
+    assert_eq!(
+        body["runs"][0]["pipeline_names"],
+        json!(["hybrid", "hybrid-fork"])
+    );
 }
 
 #[tokio::test]

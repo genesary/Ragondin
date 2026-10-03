@@ -58,6 +58,8 @@ export type RunRow = {
    * with it into one name (ADR-C39 § 4).
    */
   launchedAs: string | null;
+  /** Whether the run has a launch record at all — one may name no pipeline. */
+  launchRecorded: boolean;
   /** The benchmark's identity: its dataset version, what "one benchmark" compares. */
   benchmark: string;
   /** Every registry entry pinned to `benchmark`, sorted; empty when the source knows none. */
@@ -155,6 +157,7 @@ export function rowsFromListing(listing: RunListing): RunRow[] {
       pipeline: run.pipeline,
       pipelineNames: run.pipeline_names,
       launchedAs: run.launched_as?.name ?? null,
+      launchRecorded: run.launched_as !== null,
       benchmark: run.dataset_version,
       benchmarkNames: run.benchmark_names,
       status: { state: 'done' },
@@ -213,12 +216,15 @@ export function groupRows(rows: readonly RunRow[]): RunGroup[] {
 /**
  * The fact a row's group is not headed by, as its secondary label: under a
  * recorded name, the current documents holding the run's content, or that
- * none does; under the hash matches or the hash, that no launch was
- * recorded. Facts only: nothing here says a run is an earlier version of
- * anything (ADR-C39 § 7).
+ * none does — and nothing when the one document holding it is the recorded
+ * name itself, which the heading already says; under the hash matches or
+ * the hash, that no launch was recorded, or that one was, without a name.
+ * Facts only: nothing here says a run is an earlier version of anything
+ * (ADR-C39 § 7).
  */
-export function otherFact(row: Pick<RunRow, 'launchedAs' | 'pipelineNames'>): string {
-  if (row.launchedAs === null) return 'launch not recorded';
+export function otherFact(row: Pick<RunRow, 'launchedAs' | 'launchRecorded' | 'pipelineNames'>): string | null {
+  if (row.launchedAs === null) return row.launchRecorded ? 'launch recorded without a name' : 'launch not recorded';
+  if (row.pipelineNames.length === 1 && row.pipelineNames[0] === row.launchedAs) return null;
   return row.pipelineNames.length === 0 ? 'no current document has this content' : `content held by ${row.pipelineNames.join(', ')}`;
 }
 
