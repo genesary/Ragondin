@@ -6,7 +6,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { EmptyState, InlineMessage, RunSwatch, SegmentedControl, Select, Sheet } from '../../design/index.ts';
 import type { ApiClient, ApiProblem, ApiResult } from '../api/client.ts';
-import type { QueryTrace, RunDetail, RunListing, RunQueries } from '../api/types.ts';
+import type { Graph, QueryTrace, RunDetail, RunListing, RunQueries } from '../api/types.ts';
 import { Canvas } from '../canvas/index.ts';
 import { navigate } from '../routes.ts';
 import { ErrorState, Loading, type RequestState } from '../shell/states.tsx';
@@ -89,6 +89,12 @@ const copy = (hash: string) => {
 
 type Selected = { node: string; from: 'A' | 'B' };
 
+/** Whether a graph has a node or a declared input of this id. */
+const has = (graph: Graph, id: string) => graph.nodes.some((n) => n.id === id) || graph.inputs.some((i) => i.id === id);
+
+/** The B last drawn beside A: kept on screen, stale, while B's answer for a newer query is read. */
+type Kept = { run: string; graph: Graph; trace: QueryTrace };
+
 export function ReplayScreen({ client, run, query, with: other }: ReplayScreenProps) {
   const detail = useRead<RunDetail>(`detail ${run}`, (signal) => client.get('/runs/{id}', { id: run }, { signal }));
   const queries = useRead<RunQueries>(`queries ${run}`, (signal) => client.get('/runs/{id}/queries', { id: run }, { signal }));
@@ -117,10 +123,51 @@ export function ReplayScreen({ client, run, query, with: other }: ReplayScreenPr
     [run],
   );
 
+  const graph = loaded(detail)?.graph;
+  const nameA = nameOf(runs, run);
+  const shownTrace = trace.state.status === 'loaded' ? trace.state.value : trace.shown?.run === run ? trace.shown : null;
+  const otherGraph = loaded(otherDetail)?.graph;
+  // B is drawn as current only on the query A shows: an older answer of B's
+  // is never drawn as if it were for a newer query of A's.
+  const otherAnswer = otherTrace.state.status === 'loaded' ? otherTrace.state.value : null;
+  const shownOther = beside !== null && shownTrace !== null && otherAnswer !== null && otherAnswer.run === beside && otherAnswer.query === shownTrace.query ? otherAnswer : null;
+  // What keeps B from standing there, said in its place: the first of its reads that failed.
+  const otherFailure = [otherDetail, otherQueries, otherTrace].find((r) => r.state.status === 'error');
+  const sides: Side[] =
+    shownTrace === null || graph === undefined || listed === null
+      ? []
+      : [
+          { letter: 'A', name: nameA, graph, trace: shownTrace, queries: listed },
+          ...(beside !== null && otherFailure === undefined && otherGraph !== undefined && shownOther !== null ? [{ letter: 'B' as const, name: nameOf(runs, beside), graph: otherGraph, trace: shownOther, queries: loaded(otherQueries) }] : []),
+        ];
+  // The B last drawn is remembered, so that while B reads a newer query its
+  // canvas stays where it was — the same canvas, its pan and zoom kept —
+  // muted and labelled stale, rather than unmounted and rebuilt.
+  const [kept, setKept] = useState<Kept | null>(null);
+  const drawnB = sides[1];
+  const drawnGraph = drawnB?.graph;
+  const drawnTrace = drawnB?.trace;
+  useEffect(() => {
+    if (beside !== null && drawnGraph !== undefined && drawnTrace !== undefined) setKept({ run: beside, graph: drawnGraph, trace: drawnTrace });
+  }, [beside, drawnGraph, drawnTrace]);
+  // B put away, or switched to another run, forgets it: B's next first read
+  // shows its loading line, never a canvas of another run or an older visit.
+  useEffect(() => {
+    setKept((k) => (k !== null && k.run === beside ? k : null));
+  }, [beside]);
+  // Only the same run's canvas is kept, and never over a failure, which is said in its place.
+  const stale = sides.length === 1 && beside !== null && otherFailure === undefined && kept?.run === beside ? kept : null;
+  const graphB = drawnB?.graph ?? stale?.graph ?? null;
+
   // A node selected in B goes with B: in A it would read as "not run".
   useEffect(() => {
     if (beside === null) setSelected((s) => (s?.from === 'B' ? null : s));
   }, [beside]);
+  // So does a node neither graph on screen has — B switched to a run that lacks it.
+  useEffect(() => {
+    if (graph === undefined) return;
+    setSelected((s) => (s !== null && !has(graph, s.node) && (graphB === null || !has(graphB, s.node)) ? null : s));
+  }, [graph, graphB]);
 
   // No query chosen: the first judged one, filled in as a correction.
   const first = listed === null ? null : firstJudged(listed.queries);
@@ -130,7 +177,6 @@ export function ReplayScreen({ client, run, query, with: other }: ReplayScreenPr
 
   if (detail.state.status === 'error') return <ErrorState problem={detail.state.problem} onRetry={detail.retry} />;
   if (queries.state.status === 'error') return <ErrorState problem={queries.state.problem} onRetry={queries.retry} />;
-  const graph = loaded(detail)?.graph;
   if (graph === undefined || listed === null) {
     return (
       <Sheet>
@@ -153,24 +199,10 @@ export function ReplayScreen({ client, run, query, with: other }: ReplayScreenPr
     );
   }
 
-  const nameA = nameOf(runs, run);
-  const shownTrace = trace.state.status === 'loaded' ? trace.state.value : trace.shown?.run === run ? trace.shown : null;
-  const otherGraph = loaded(otherDetail)?.graph;
-  // B stands beside A only on the query A shows: an older answer of B's is
-  // never drawn beside a newer query of A's, and B's place is held instead.
-  const otherAnswer = otherTrace.state.status === 'loaded' ? otherTrace.state.value : null;
-  const shownOther = beside !== null && shownTrace !== null && otherAnswer !== null && otherAnswer.run === beside && otherAnswer.query === shownTrace.query ? otherAnswer : null;
-  // What keeps B from standing there, said in its place: the first of its reads that failed.
-  const otherFailure = [otherDetail, otherQueries, otherTrace].find((r) => r.state.status === 'error');
-  const sides: Side[] =
-    shownTrace === null
-      ? []
-      : [
-          { letter: 'A', name: nameA, graph, trace: shownTrace, queries: listed },
-          ...(beside !== null && otherFailure === undefined && otherGraph !== undefined && shownOther !== null ? [{ letter: 'B' as const, name: nameOf(runs, beside), graph: otherGraph, trace: shownOther, queries: loaded(otherQueries) }] : []),
-        ];
+  // What the stage draws: the sides, and B's kept canvas while B is stale.
+  const drawn: Side[] = stale === null ? sides : [...sides, { letter: 'B', name: nameOf(runs, stale.run), graph: stale.graph, trace: stale.trace, queries: null }];
   const held: Held | null =
-    beside === null || sides.length === 2
+    beside === null || drawn.length === 2
       ? null
       : { name: nameOf(runs, beside), failure: otherFailure !== undefined && otherFailure.state.status === 'error' ? { problem: otherFailure.state.problem, retry: otherFailure.retry } : null };
   const filtering = missing && missed.state.status === 'loading';
@@ -234,14 +266,17 @@ export function ReplayScreen({ client, run, query, with: other }: ReplayScreenPr
           {shownTrace === null ? (
             trace.state.status === 'error' ? <ErrorState problem={trace.state.problem} onRetry={trace.retry} /> : <Loading label={`Reading query ${query}…`} />
           ) : (
-            <Stage sides={sides} held={held} trace={trace.state.status === 'error' ? trace.state : null} onRetry={trace.retry} metric={metric} selected={selected} onSelect={setSelected} />
+            <Stage sides={drawn} stale={stale === null ? null : { asked: query, reading: otherTrace.state.status === 'loading' }} held={held} trace={trace.state.status === 'error' ? trace.state : null} onRetry={trace.retry} metric={metric} selected={selected} onSelect={setSelected} />
           )}
         </div>
         <div className="rg-replay__panel">
           {selected === null || sides.length === 0 ? (
             <p className="rg-replay__placeholder">Select a node to see what it produced for this query.</p>
+          ) : sides.length === 1 && !has(graph, selected.node) ? (
+            // A node only B has, selected on B's kept canvas while B reads this query.
+            <p className="rg-replay__placeholder">No such node in A.</p>
           ) : (
-            <NodeInspector node={selected.node} from={sides.length === 2 ? selected.from : 'A'} sides={sides} metric={metric} onClose={() => setSelected(null)} />
+            <NodeInspector node={selected.node} from={sides.length === 2 ? selected.from : 'A'} sides={sides} held={beside !== null && sides.length === 1} metric={metric} onClose={() => setSelected(null)} />
           )}
         </div>
       </div>
@@ -249,12 +284,18 @@ export function ReplayScreen({ client, run, query, with: other }: ReplayScreenPr
   );
 }
 
-/** B's place while B cannot stand beside A: being read, or failed with what failed. */
+/** B's place while B has no canvas to show — its first read, a run just chosen, or a failure, with what failed. */
 type Held = { name: string; failure: { problem: ApiProblem; retry: () => void } | null };
 
 type StageProps = {
+  /** A, then B: drawn current, or kept from an earlier query while `stale`. */
   sides: readonly Side[];
-  /** The run beside while it cannot be drawn: its place is held, so its canvas arriving moves nothing. */
+  /**
+   * B's canvas is kept from an earlier query: B is muted and labelled stale,
+   * with the query asked when B's answer for it is being read.
+   */
+  stale: { asked: string; reading: boolean } | null;
+  /** The run beside while it has no canvas, current or kept: its place is held, so its canvas arriving moves nothing. */
   held: Held | null;
   /** The newer query's failure, shown above the one still on screen. */
   trace: Extract<RequestState<QueryTrace>, { status: 'error' }> | null;
@@ -265,7 +306,7 @@ type StageProps = {
 };
 
 /** The query's head, the banner, and the canvas — or two, stacked, with their run labels. */
-function Stage({ sides, held, trace, onRetry, metric, selected, onSelect }: StageProps) {
+function Stage({ sides, stale, held, trace, onRetry, metric, selected, onSelect }: StageProps) {
   const a = sides[0]!;
   const b = sides[1];
   const overlays = useMemo(
@@ -279,7 +320,6 @@ function Stage({ sides, held, trace, onRetry, metric, selected, onSelect }: Stag
     return [{ ...banner, letter: side.letter, title: sides.length === 2 ? `Run ${side.letter}: ${banner.title.charAt(0).toLowerCase()}${banner.title.slice(1)}` : banner.title }];
   });
   const failed = a.trace.nodes.find((n) => n.error !== null);
-  const has = (side: Side, id: string) => side.graph.nodes.some((n) => n.id === id) || side.graph.inputs.some((i) => i.id === id);
   return (
     <>
       <h2 className="rg-replay__query" title={a.trace.text ?? undefined}>
@@ -295,17 +335,25 @@ function Stage({ sides, held, trace, onRetry, metric, selected, onSelect }: Stag
       {failed === undefined ? null : <InlineMessage tone="warning" title={`This query failed at ${failed.node}; the nodes after it did not run.`} />}
       <div className="rg-replay__canvases" data-columns={held === null ? sides.length : 2}>
         {sides.map((side, i) => {
-          const mine = selected === null ? null : selected.from === side.letter || has(side, selected.node) ? selected.node : null;
+          const mine = selected !== null && has(side.graph, selected.node) ? selected.node : null;
+          const old = side.letter === 'B' && stale !== null;
+          // The key is the letter, whether B is current or kept: B's canvas stays mounted across queries.
           return (
-            <div key={side.letter} className="rg-replay__canvas">
+            <div key={side.letter} className="rg-replay__canvas" data-stale={old || undefined}>
               {b === undefined && held === null ? null : <RunSwatch slot={side.letter === 'A' ? 'a' : 'b'} name={side.name} />}
               <Canvas
                 graph={side.graph}
-                label={`Run ${side.letter}, ${side.name}, query ${side.trace.query}`}
+                label={`Run ${side.letter}, ${side.name}, query ${side.trace.query}${old ? ', stale' : ''}`}
                 overlay={overlays[i]}
-                selected={mine !== null && has(side, mine) ? mine : null}
+                selected={mine}
                 onSelect={(id) => onSelect(id === null ? null : { node: id, from: side.letter })}
               />
+              {old ? (
+                <p className="rg-replay__stale">
+                  Stale: query {side.trace.query}
+                  {stale?.reading === true ? `, reading ${stale.asked}…` : null}
+                </p>
+              ) : null}
             </div>
           );
         })}
