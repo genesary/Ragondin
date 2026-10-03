@@ -2,6 +2,13 @@
    tables, swatches and controls are drawn by their own stylesheets; every
    value here is a token (ARCHITECTURE.md § The design system). */
 
+/* The shell's main column is a grid track an item sizes: with the default
+   min-width the screen would grow the page to its widest table, as wide content
+   scrolls inside its own named region instead (ARCHITECTURE.md § The Compare screen). */
+.rg-compare { min-width: 0; }
+/* A chart is a grid whose one column a shown table would size; the table scrolls in its region instead. */
+.rg-compare .rg-chart__table { min-width: 0; }
+
 /* The run bar: the runs, then the baseline and the run to add, wrapping on a narrow screen. */
 .rg-compare__runs { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-4); margin: 0 0 var(--space-4); padding: 0; list-style: none; }
 .rg-compare__run { display: inline-flex; align-items: center; gap: var(--space-2); min-width: 0; }
@@ -40,7 +47,8 @@
 .rg-pair { display: grid; gap: var(--space-3); margin-bottom: var(--space-4); padding: var(--space-4); border: 1px solid var(--line); border-radius: var(--radius-m); background: var(--surface-2); }
 .rg-pair__grid { display: grid; grid-template-columns: minmax(0, 1fr) 64px minmax(0, 1fr); column-gap: var(--space-2); row-gap: var(--space-2); }
 .rg-pair__head { font: var(--type-label); color: var(--ink-2); }
-.rg-pair__column { display: grid; grid-auto-rows: var(--size-control-l); margin: 0; padding: 0; list-style: none; }
+/* One column no wider than its track: a long node name is cut with an ellipsis rather than widening the panel. */
+.rg-pair__column { display: grid; grid-template-columns: minmax(0, 1fr); grid-auto-rows: var(--size-control-l); margin: 0; padding: 0; list-style: none; }
 .rg-pair__node {
   display: flex;
   align-items: center;
@@ -60,6 +68,11 @@
 .rg-pair__node .rg-tile { transform: scale(0.75); }
 .rg-pair__name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rg-pair__stage { margin-left: auto; font: var(--type-micro); color: var(--ink-3); white-space: nowrap; }
+/* At phone width (the shell's breakpoint) a column holds a tile and a name, no more: the stage's
+   words give way to the name, which is what tells the node, and the column heading says the run. */
+@media (max-width: 640px) {
+  .rg-pair__stage { display: none; }
+}
 .rg-pair__links { overflow: visible; }
 .rg-pair__link { stroke: var(--ink-2); stroke-width: 1.5; }
 .rg-pair__link[data-source="automatic"] { stroke: var(--line-control); stroke-dasharray: 4 3; }

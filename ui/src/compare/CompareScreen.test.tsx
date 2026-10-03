@@ -1,7 +1,7 @@
 /** @vitest-environment happy-dom */
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { declared } from '../../design/testing/css.ts';
+import { declared, rulesFor } from '../../design/testing/css.ts';
 import { createApiClient, type ApiClient } from '../api/client.ts';
 import { mockApi, type MockReply, type MockRoutes } from '../api/testing.ts';
 import type { CompareRequest, Comparison, Problem, RunListing, RunSummary } from '../api/types.ts';
@@ -308,6 +308,42 @@ describe('the charts', () => {
     fireEvent.click(toggles[1] as HTMLElement);
     const table = screen.getByRole('table', { name: 'ndcg@10 at each stage, as a table' });
     expect(within(table).getAllByText('no stage here')).toHaveLength(3);
+  });
+});
+
+describe('at phone width', () => {
+  // The shell's main column is a grid track sized by its item: an item that
+  // keeps the default `min-width: auto` grows the page to its widest table
+  // (about 613 px at a 390 px viewport, #428). Measured in a browser in the PR.
+  it('lets the screen shrink below its widest content, so the page never scrolls sideways', () => {
+    expect(declared(css, '.rg-compare', 'min-width')).toBe('0');
+  });
+
+  it('keeps a chart\'s shown table and the pairing panel\'s node columns from widening the screen', () => {
+    // A chart is a grid whose one column a shown table would size: the table scrolls in its region instead.
+    expect(declared(css, '.rg-compare .rg-chart__table', 'min-width')).toBe('0');
+    // A node's name is cut with an ellipsis rather than pushing its column past the panel.
+    expect(declared(css, '.rg-pair__column', 'grid-template-columns')).toBe('minmax(0, 1fr)');
+    // At phone width the stage's words give way to the node's name, which is what tells the node;
+    // the shell's breakpoint, and nothing changes above it.
+    const narrow = rulesFor(css, '.rg-pair__stage').filter((r) => r.atRule === '@media (max-width: 640px)');
+    expect(narrow.map((r) => r.declarations.get('display'))).toEqual(['none']);
+  });
+
+  it('scrolls every table inside a region named by its caption, one tab stop, rather than widening the page', async () => {
+    show(THREE);
+    await loaded();
+    for (const toggle of screen.getAllByRole('button', { name: 'Show as a table' })) fireEvent.click(toggle);
+    fireEvent.click(screen.getByRole('button', { name: 'much worse, below −0.3: 1 query' }));
+    const tables = screen.getAllByRole('table');
+    expect(tables.length).toBeGreaterThanOrEqual(7);
+    for (const table of tables) {
+      const caption = table.getAttribute('aria-label') ?? '';
+      expect(caption).not.toBe('');
+      const region = table.closest('[role="region"]') as HTMLElement | null;
+      expect(region?.getAttribute('aria-label'), caption).toBe(caption);
+      expect(region?.tabIndex, caption).toBe(0);
+    }
   });
 });
 

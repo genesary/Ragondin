@@ -56,7 +56,7 @@ export function MetricsTable({ comparison, series }: { comparison: Comparison; s
       }),
     ],
   }));
-  return <Table caption={`Metrics of ${comparison.runs.length} runs against the baseline`} columns={[{ id: 'metric', label: 'Metric' }, ...series.map(runColumn)]} rows={rows} />;
+  return <Table region caption={`Metrics of ${comparison.runs.length} runs against the baseline`} columns={[{ id: 'metric', label: 'Metric' }, ...series.map(runColumn)]} rows={rows} />;
 }
 
 /** The parameter × run matrix: only what differs across the runs, as the API lists it, each departure from the baseline marked. */
@@ -93,6 +93,7 @@ export function ParameterMatrix({ configuration, series }: { configuration: Conf
   });
   return (
     <Table
+      region
       caption="Parameters that differ across the runs"
       columns={[{ id: 'node', label: 'Node' }, { id: 'key', label: 'Parameter' }, ...series.map((s) => ({ ...runColumn(s), numeric: false }))]}
       rows={rows}
@@ -121,7 +122,7 @@ export function StageTable({ comparison, series, metric }: { comparison: Compari
       ],
     };
   });
-  return <Table caption="Stages of each run" columns={[{ id: 'stage', label: 'Stage' }, ...series.map(runColumn)]} rows={rows} />;
+  return <Table region caption="Stages of each run" columns={[{ id: 'stage', label: 'Stage' }, ...series.map(runColumn)]} rows={rows} />;
 }
 
 /** A chart's values as a table: one row per position, one column per run, a gap in its words. */
@@ -148,6 +149,7 @@ export function ValuesTable({
 }) {
   return (
     <Table
+      region
       caption={caption}
       columns={[{ id: 'row', label: first }, ...series.map((s) => ({ id: s.id, label: s.label, numeric: true }))]}
       rows={rows.map((r, i) => ({
@@ -173,6 +175,7 @@ export function LatencyTable({ bars, segments, format }: { bars: readonly { id: 
   ]);
   return (
     <Table
+      region
       caption="Median latency per node, in milliseconds, as a table"
       columns={[
         { id: 'node', label: 'Node' },
@@ -188,6 +191,7 @@ export function LatencyTable({ bars, segments, format }: { bars: readonly { id: 
 export function BinsTable({ caption, bins }: { caption: string; bins: readonly HistogramBin[] }) {
   return (
     <Table
+      region
       caption={caption}
       columns={[
         { id: 'bin', label: 'Bin' },
