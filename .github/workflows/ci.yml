@@ -143,6 +143,19 @@ jobs:
       - name: ADR index is current
         run: python3 scripts/gen-adr-index.py --check
 
+      # The licence notices of the Rust crates the binary links, which it
+      # embeds and prints (`ragondin --notices`). The generator's own tests run
+      # first, for the reason the two pairs above give; they write their
+      # crates and their `cargo metadata` by hand, so they fetch nothing. The
+      # check reads `cargo metadata --all-features`, which the invariant step
+      # has already resolved, and fails naming every linked crate the
+      # committed file has no notice for.
+      - name: Rust notices generator behaves as documented
+        run: python3 scripts/test-gen-rust-notices.py
+
+      - name: Rust crates' notices are current
+        run: python3 scripts/gen-rust-notices.py --check
+
       # Nothing above this line looks at what the dependency graph *contains* --
       # advisories, licences, duplicate versions, source registries. The policy
       # lives in deny.toml at the workspace root; `just check-deny` runs the same

@@ -197,6 +197,9 @@ export function renderNotices(entries, fonts) {
     'The UI that `ragondin ui` serves bundles the third-party software and fonts',
     'below; each is distributed under the licence reproduced with it.',
     '',
+    'The notices of the Rust crates the binary itself links are served at',
+    '/third-party-notices-rust.txt, and printed by `ragondin --notices`.',
+    '',
   ].join('\n');
   return [header, ...entries.map(packageBlock), ...fonts.map(fontBlock)].join('\n');
 }

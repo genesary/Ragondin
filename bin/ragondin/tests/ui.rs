@@ -697,6 +697,23 @@ mod with_the_feature {
         }
     }
 
+    /// The Rust crates' notices are the binary's own, not the bundle's: every
+    /// `ui` build serves them, whether it embedded `ui/dist/` or the notice
+    /// page, as the text `ragondin --notices` prints.
+    #[test]
+    fn every_ui_build_serves_the_rust_crates_notices() {
+        let server = Server::start(&workspace("rust_notices"), &[]);
+        let notices = http::get(server.authority(), "/third-party-notices-rust.txt");
+        let committed = include_str!("../third-party-notices-rust.txt");
+
+        assert_eq!(notices.status, 200, "{notices:?}");
+        assert_eq!(
+            notices.header("content-type"),
+            Some("text/plain; charset=utf-8")
+        );
+        assert_eq!(notices.body, committed);
+    }
+
     #[test]
     fn the_release_assertion_fails_on_the_notice_page_and_passes_on_a_real_build() {
         let notice = include_str!(concat!(env!("OUT_DIR"), "/ui-notice/index.html"));

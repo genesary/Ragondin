@@ -241,3 +241,46 @@ fn the_help_for_ui_points_at_the_third_party_notices() {
     assert!(help.contains("Apache-2.0"), "{help}");
     assert!(help.contains("/third-party-notices.txt"), "{help}");
 }
+
+#[test]
+fn the_notices_flag_prints_the_rust_crates_notices_embedded_in_the_binary() {
+    // Reachable from the installed binary alone: run from a directory that
+    // holds no source tree, and the file `scripts/gen-rust-notices.py` wrote
+    // comes back whole, from the binary.
+    let output = Command::cargo_bin("ragondin")
+        .expect("the binary under test is built by `cargo test`")
+        .arg("--notices")
+        .current_dir(std::env::temp_dir())
+        .output()
+        .expect("the binary runs");
+    let committed = std::fs::read_to_string(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("third-party-notices-rust.txt"),
+    )
+    .expect("the generated notices are committed");
+
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert_eq!(stdout(&output), committed);
+}
+
+#[test]
+fn no_argument_at_all_still_prints_the_help_and_fails() {
+    // `--notices` makes the subcommand optional to the parser; a bare
+    // `ragondin` must still read as a mistake, as it did before.
+    let output = ragondin(&[]);
+
+    assert_eq!(output.status.code(), Some(2), "{}", stdout(&output));
+    assert!(
+        stderr(&output).contains("Usage: ragondin"),
+        "{}",
+        stderr(&output)
+    );
+}
+
+#[test]
+fn the_help_names_the_notices_flag() {
+    let output = ragondin(&["--help"]);
+    let help = stdout(&output);
+
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert!(help.contains("--notices"), "{help}");
+}
