@@ -1022,11 +1022,37 @@
           }
         ]
       },
+      "MetricFamily": {
+        "description": "Which ground truth a metric reads, as the listing names it.",
+        "oneOf": [
+          {
+            "description": "Scored from qrels.",
+            "enum": [
+              "ranking"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "Scored from reference answers.",
+            "enum": [
+              "answers"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "A name the catalogue does not know: shown with its stored name and\nvalue, ranked against nothing.",
+            "enum": [
+              "unknown"
+            ],
+            "type": "string"
+          }
+        ]
+      },
       "MetricRow": {
         "description": "One metric across the runs compared.",
         "properties": {
           "best": {
-            "description": "The runs holding the best value, by `direction`: every one on a tie.",
+            "description": "The runs holding the best value, by `direction`: every one on a tie;\nnone when `direction` is `null`.",
             "items": {
               "type": "string"
             },
@@ -1042,12 +1068,18 @@
             "type": "array"
           },
           "direction": {
-            "allOf": [
+            "anyOf": [
               {
                 "$ref": "#/components/schemas/MetricDirection"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
               }
             ],
-            "description": "Which way it improves, read off its name: `lower` for a latency,\n`higher` for every other."
+            "description": "Which way it improves, from `ragondin-metrics`' catalogue; `null`\nfor a name the catalogue does not know, which then has no best."
           },
           "name": {
             "description": "The metric's name.",
@@ -1064,11 +1096,11 @@
           }
         },
         "required": [
-          "name",
-          "direction",
-          "values",
+          "best",
           "deltas",
-          "best"
+          "direction",
+          "name",
+          "values"
         ],
         "type": "object"
       },
@@ -1699,9 +1731,10 @@
         "description": "One query, as the run executed it.",
         "properties": {
           "duration_nanos": {
-            "description": "The sum of its nodes' durations, in nanoseconds: each component's own\ntime, as the trace records it.",
+            "description": "Its latency, in nanoseconds: the sum of its nodes' durations — each\ncomponent's own time, as the trace records it. `null` when that sum\noverflows, which only a malformed trace can make it do.",
             "format": "uint64",
             "minimum": 0,
+            "nullable": true,
             "type": "integer"
           },
           "id": {
@@ -1936,6 +1969,10 @@
       "RunListing": {
         "description": "`GET /runs`: every run the store holds, and every one it holds but cannot\nread.",
         "properties": {
+          "cache_error": {
+            "description": "Why a run's median query latency could not be read from or written\nto the workspace's `cache/`, the first such reason; absent when the\ncache served or took every run, so a listing whose cache works reads\nas it always has. The listing is complete either way: the cache is\nnever a truth, so its failure fails nothing.",
+            "type": "string"
+          },
           "runs": {
             "description": "The readable runs, in the store's listing order.",
             "items": {
@@ -2062,6 +2099,20 @@
             "description": "The index's version.",
             "type": "string"
           },
+          "median_query_latency_nanos": {
+            "description": "The lower median, over the run's queries, of each query's latency —\nthe sum of its trace's node durations — in nanoseconds.\nDerived, never stored in the run: read from the traces alone, so a\nrun whose dataset is not on disk has it too, and cached under the\nworkspace's `cache/`. Not the run's wall time, which\n`finished_at_ms − started_at_ms` gives, preparation included. `null`\nwhen no trace of the run reads.",
+            "format": "uint64",
+            "minimum": 0,
+            "nullable": true,
+            "type": "integer"
+          },
+          "metric_families": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/MetricFamily"
+            },
+            "description": "The family of each metric, keyed exactly like\n[`metrics`](Self::metrics): from `ragondin-metrics`' catalogue, and\n`unknown` for a name it does not know — kept, never dropped.",
+            "type": "object"
+          },
           "metrics": {
             "additionalProperties": {
               "format": "double",
@@ -2096,6 +2147,8 @@
           "finished_at_ms",
           "id",
           "index_version",
+          "median_query_latency_nanos",
+          "metric_families",
           "metrics",
           "pipeline",
           "pipeline_names",

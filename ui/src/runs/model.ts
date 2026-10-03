@@ -6,11 +6,18 @@
 // and its column or label is not drawn: nothing here is invented to fill a
 // cell. ARCHITECTURE.md § The Runs screen.
 import { familyOfComponent, type Family } from '../../design/index.ts';
-import type { Graph, RunListing, RunSummary } from '../api/types.ts';
+import type { Graph, MetricFamily, RunListing, RunSummary } from '../api/types.ts';
 import type { Route } from '../routes.ts';
 
-/** Which ground truth a metric reads: qrels score `ranking`, reference answers `answers` (ADR-008, ADR-C30 § 1). */
-export type MetricFamily = 'ranking' | 'answers';
+/**
+ * Which ground truth a metric reads, as the API's catalogue says: qrels score
+ * `ranking`, reference answers `answers` (ADR-008, ADR-C30 § 1), and a name
+ * the catalogue does not know is `unknown` — shown, never hidden.
+ */
+export type { MetricFamily };
+
+/** The order families are drawn in on a row. */
+const FAMILY_ORDER: readonly MetricFamily[] = ['ranking', 'answers', 'unknown'];
 
 /** Metrics of one family, or of a family the source does not say (`null`). */
 export type MetricGroup = { family: MetricFamily | null; metrics: { name: string; value: number }[] };
@@ -50,7 +57,11 @@ export type RunRow = {
   status: RowStatus;
   /** One group per family the run recorded, none when it recorded no metric. */
   metrics: MetricGroup[];
-  /** Median query latency, in milliseconds, when the source reports one. */
+  /**
+   * The run's median query latency — the lower median over its queries of
+   * each one's summed node durations — in milliseconds, when the source
+   * reports one. Not the run's wall time.
+   */
   latencyMs: number | null;
   /** When the run started, as an ISO 8601 instant, when the source reports one. */
   startedAt: string | null;
@@ -109,15 +120,28 @@ export function byMostRecent(a: Pick<RunSummary, 'id' | 'started_at_ms'>, b: Pic
 }
 
 /**
+ * A run's metrics grouped by the family the listing gives each — ranking,
+ * then answers, then unknown — each group in the order the run recorded them.
+ * A name the listing gives no family for is `unknown`: shown, never dropped.
+ */
+function metricGroups(run: RunSummary): MetricGroup[] {
+  const metrics = Object.entries(run.metrics).map(([name, value]) => ({ name, value, family: run.metric_families[name] ?? 'unknown' }));
+  return FAMILY_ORDER.flatMap((family) => {
+    const own = metrics.filter((m) => m.family === family).map(({ name, value }) => ({ name, value }));
+    return own.length === 0 ? [] : [{ family, metrics: own }];
+  });
+}
+
+/**
  * The listing's runs as rows, most recent first (`byMostRecent`). Every run
  * the store holds is finished, so each is `done`. The names are every one the
- * listing gives; the start time is the run's own record, or null. The listing
- * carries no latency, metric family or prefix relation (#383, #357), so those
- * are null and the metrics are one group of unsaid family.
+ * listing gives; the start time is the run's own record, or null; the metrics
+ * are grouped by the family the listing gives each; the latency is the
+ * listing's median query latency, or null. The listing carries no prefix
+ * relation (#357), so that is null.
  */
 export function rowsFromListing(listing: RunListing): RunRow[] {
   return [...listing.runs].sort(byMostRecent).map((run) => {
-    const metrics = Object.entries(run.metrics).map(([name, value]) => ({ name, value }));
     return {
       source: { kind: 'run', id: run.id },
       pipeline: run.pipeline,
@@ -125,8 +149,8 @@ export function rowsFromListing(listing: RunListing): RunRow[] {
       benchmark: run.dataset_version,
       benchmarkNames: run.benchmark_names,
       status: { state: 'done' },
-      metrics: metrics.length === 0 ? [] : [{ family: null, metrics }],
-      latencyMs: null,
+      metrics: metricGroups(run),
+      latencyMs: run.median_query_latency_nanos === null ? null : run.median_query_latency_nanos / 1e6,
       startedAt: run.started_at_ms === null ? null : new Date(run.started_at_ms).toISOString(),
       prefix: null,
     };
@@ -175,11 +199,23 @@ export const benchmarkLabel = (row: Pick<RunRow, 'benchmark' | 'benchmarkNames'>
 /**
  * A metric's value as its chip prints it (design/'s MetricChip): four
  * decimals for a ranking metric, a percentage to one decimal for an answer
- * metric; four decimals while the family is not known.
+ * metric, the stored value as it is for a metric of unknown family — nothing
+ * says how to round it — and four decimals while a source says no family.
  */
 export function formatMetric(family: MetricFamily | null, value: number): string {
-  return family === 'answers' ? (value * 100).toFixed(1) : value.toFixed(4);
+  if (family === 'answers') return (value * 100).toFixed(1);
+  if (family === 'unknown') return String(value);
+  return value.toFixed(4);
 }
+
+/** What the design calls an answer metric (`EM 41.2`); every other metric goes by its stored name. */
+const METRIC_LABEL: Readonly<Record<string, string>> = { exact_match: 'EM', token_f1: 'F1' };
+
+/** A metric's name as its chip prints it. */
+export const metricLabel = (name: string) => METRIC_LABEL[name] ?? name;
+
+/** A latency in milliseconds as a cell prints it: whole milliseconds, or two significant figures under ten, so a fast query does not read as 0 ms. */
+export const formatLatency = (ms: number) => `${ms >= 10 ? Math.round(ms).toLocaleString('en-US') : Number(ms.toPrecision(2)).toString()} ms`;
 
 /** One node of a pipeline's shape: its family's tile, or its family as a word when no tile draws it. */
 export type ShapeNode = { node: string; family: Family; word?: never } | { node: string; family: null; word: string };

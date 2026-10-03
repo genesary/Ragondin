@@ -10,10 +10,13 @@
 //! by, so that
 //! the figure at the last ranking node is the one `metrics.json` holds:
 //!
-//! - **Which metrics.** The ones the run recorded, by name — `ndcg@<k>`,
+//! - **Which metrics.** The ones the run recorded whose name
+//!   `ragondin-metrics`' catalogue knows (`Metric::parse`) — `ndcg@<k>`,
 //!   `recall@<k>`, `mrr`, `exact_match`, `token_f1` — each at the cutoff its
-//!   own name states. A name this module does not know (a latency
-//!   percentile, say) is not a per-query figure and is left out.
+//!   own name states, and read by the family the catalogue gives it. A name
+//!   the catalogue does not know (a latency percentile, say) has no
+//!   per-query figure here; the run's own value of it is still listed, as
+//!   family `unknown`, by `GET /runs`.
 //! - **Which ranking.** Documents, folded from the chunks a node produced by
 //!   first occurrence: several chunks of one document count once, at the rank
 //!   of the best one — `ragondin_metrics::documents_by_first_occurrence`, the
@@ -36,49 +39,13 @@
 use std::collections::{BTreeMap, HashMap};
 
 use ragondin_benchmarks::Benchmark;
-use ragondin_experiments::{ranking_node, terminal, Trace, TraceSummary};
+use ragondin_experiments::{lower_median, ranking_node, terminal, Run, Trace, TraceSummary};
 use ragondin_metrics::{
     documents_by_first_occurrence, exact_match, ndcg_at_k, recall_at_k, reciprocal_rank, token_f1,
+    Family, Metric,
 };
 use ragondin_pipeline::{produced_kind, LogicalPipeline, NodeId, ValueKind};
 use ragondin_types::{DocId, QueryId};
-
-/// A metric the harness records, read off its name in `metrics.json`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Metric {
-    /// `ndcg@<k>`.
-    Ndcg(usize),
-    /// `recall@<k>`.
-    Recall(usize),
-    /// `mrr`: the reciprocal rank, uncut, as `trec_eval`'s `recip_rank`.
-    ReciprocalRank,
-    /// `exact_match`.
-    ExactMatch,
-    /// `token_f1`.
-    TokenF1,
-}
-
-impl Metric {
-    fn parse(name: &str) -> Option<Self> {
-        let cutoff = |prefix: &str| {
-            name.strip_prefix(prefix)
-                .and_then(|k| k.parse::<usize>().ok())
-                .filter(|k| *k > 0)
-        };
-        match name {
-            "mrr" => Some(Self::ReciprocalRank),
-            "exact_match" => Some(Self::ExactMatch),
-            "token_f1" => Some(Self::TokenF1),
-            _ => cutoff("ndcg@")
-                .map(Self::Ndcg)
-                .or_else(|| cutoff("recall@").map(Self::Recall)),
-        }
-    }
-
-    fn ranks(self) -> bool {
-        matches!(self, Self::Ndcg(_) | Self::Recall(_) | Self::ReciprocalRank)
-    }
-}
 
 /// The metrics a run recorded that can be read per query, by name, in name
 /// order.
@@ -105,11 +72,15 @@ impl Metrics {
     }
 
     fn ranking(&self) -> impl Iterator<Item = &(String, Metric)> {
-        self.0.iter().filter(|(_, metric)| metric.ranks())
+        self.0
+            .iter()
+            .filter(|(_, metric)| metric.family() == Family::Ranking)
     }
 
     fn answer(&self) -> impl Iterator<Item = &(String, Metric)> {
-        self.0.iter().filter(|(_, metric)| !metric.ranks())
+        self.0
+            .iter()
+            .filter(|(_, metric)| metric.family() == Family::Answers)
     }
 
     /// Every ranking metric of `ranked` against `judgments`.
@@ -121,9 +92,9 @@ impl Metrics {
         self.ranking()
             .map(|(name, metric)| {
                 let value = match metric {
-                    Metric::Ndcg(k) => ndcg_at_k(ranked, judgments, *k),
-                    Metric::Recall(k) => recall_at_k(ranked, judgments, *k),
-                    Metric::ReciprocalRank => reciprocal_rank(ranked, judgments),
+                    Metric::Ndcg { k } => ndcg_at_k(ranked, judgments, *k),
+                    Metric::Recall { k } => recall_at_k(ranked, judgments, *k),
+                    Metric::Mrr => reciprocal_rank(ranked, judgments),
                     Metric::ExactMatch | Metric::TokenF1 => unreachable!("not a ranking metric"),
                 };
                 (name.clone(), value)
@@ -139,12 +110,29 @@ impl Metrics {
                 let value = match metric {
                     Metric::ExactMatch => exact_match(answer, references),
                     Metric::TokenF1 => token_f1(answer, references),
-                    _ => unreachable!("not an answer metric"),
+                    Metric::Ndcg { .. } | Metric::Recall { .. } | Metric::Mrr => {
+                        unreachable!("not an answer metric")
+                    }
                 };
                 (name.clone(), value)
             })
             .collect()
     }
+}
+
+/// The run's median query latency: the lower median, over the queries whose
+/// trace reads, of each one's latency (`Trace::latency_nanos`); `None` when
+/// none reads. A trace that does not read, or whose durations overflow, has
+/// no latency to give and is left out of the median rather than failing the
+/// listing that shows it. Read from the traces alone: no dataset is needed.
+pub(crate) fn median_query_latency(run: &Run) -> Option<u64> {
+    lower_median(
+        run.traces
+            .values()
+            .filter_map(|document| Trace::try_from(document).ok())
+            .filter_map(|trace| trace.latency_nanos())
+            .collect(),
+    )
 }
 
 /// The nodes of a pipeline the derived data is read at.
@@ -376,21 +364,4 @@ pub(crate) fn gold_missing(
             .take(k)
             .any(|document| is_gold(judgments, document)),
     )
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_metric_is_read_off_its_recorded_name() {
-        assert_eq!(Metric::parse("ndcg@10"), Some(Metric::Ndcg(10)));
-        assert_eq!(Metric::parse("recall@100"), Some(Metric::Recall(100)));
-        assert_eq!(Metric::parse("mrr"), Some(Metric::ReciprocalRank));
-        assert_eq!(Metric::parse("exact_match"), Some(Metric::ExactMatch));
-        assert_eq!(Metric::parse("token_f1"), Some(Metric::TokenF1));
-        for other in ["ndcg@0", "ndcg@", "ndcg@x", "latency_p50", "precision@10"] {
-            assert_eq!(Metric::parse(other), None, "{other}");
-        }
-    }
 }

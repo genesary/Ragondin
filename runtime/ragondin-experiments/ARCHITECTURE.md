@@ -17,7 +17,8 @@ view of the product.
 | `Run` | One execution: its identity tuple's components, its metrics, the configuration document, the per-query traces |
 | `RunStore` | The trait a run store backend implements: `save`, `load` by id, `ids` — every stored run's id |
 | `FileSystemRunStore` | `RunStore`'s first implementation, one directory per run; also `compare` by two ids |
-| `Trace` | The stored trace document's one typed definition, converted to and from `TraceDocument` |
+| `Trace` | The stored trace document's one typed definition, converted to and from `TraceDocument`; a query's latency, `Trace::latency_nanos` |
+| `lower_median` | The one median of durations: of a run's query latencies, and of one node's durations over a run's queries |
 | `terminal`, `ranking_node` | The walk (ADR-C30 § 3): which node's ranking a pipeline's retrieval metrics are read from, with `WalkError` naming where it stops |
 | `conformance` | Behind the `conformance` feature: the suite every `RunStore` backend passes |
 | `compare`, `compare_runs` | The diff behind `ragondin compare`: metric by metric, and the configuration parameters the two runs differ in; and the same over a baseline and further runs of one benchmark, behind `POST /compare` |
@@ -225,8 +226,11 @@ harness.
   `Trace` (§ The trace has one typed definition).
 - **Metrics are recorded here, never computed here.** `ragondin-metrics` scores
   one query and the harness averages over a query set; a `Metrics` value is the
-  figure a comparison puts side by side. The names are not a fixed catalogue —
-  quality, cost and latency all land in the same map (§6.5).
+  figure a comparison puts side by side. The map takes any name — quality,
+  cost and latency all land in it (§6.5) — and a stored name is kept whatever
+  it is. `ragondin-metrics`' closed catalogue names the metrics the harness
+  writes, with their family and direction; a stored name it does not know is
+  still a metric here, with no direction.
 - **A metric JSON cannot write is refused on the way in.** `serde_json` writes a
   non-finite float as `null`, and `null` does not read back as an `f64`, so a
   run stored with one would be unreadable for good under an id whose existence
@@ -310,6 +314,18 @@ three rules, which this crate keeps:
 - **No version now; the first incompatible change adds one**, in the same
   change — which is a change to what the trace carries and escalates
   (`AGENTS.md` § Rules of engagement).
+
+**A query's latency has one definition**, beside the trace it is read
+from: `Trace::latency_nanos`, the sum of its nodes' `duration_nanos` — read
+from the trace's values (INV-10), never from a log. The sum is checked, not
+saturating: durations past `u64` nanoseconds, some 584 years, are a malformed
+trace rather than a slow query, so the answer is `None` and no reader ranks a
+clamped figure. Its median is `lower_median`, the lower of the two middle
+values over an even count, so the figure reported is one that occurred. Both
+are this crate's because both readers of a run's durations reach it —
+`ragondin-api`'s listing and its comparison — and a definition each kept its
+own copy of could drift between the two. Neither is written onto the `Run`:
+latency is derived, and the store writes nothing derived.
 
 Two choices made here. A chunk's score is an `f64` where the engine records
 an `f32`: the harness widens it losslessly, as the hand-built renderer did, and
@@ -442,11 +458,14 @@ others in the order given.
 
 Choices made here (`AGENTS.md` § Rules of engagement):
 
-- **Which way a metric improves is read off its name** (`Direction::of`),
-  since the metrics are no fixed catalogue (§ Local invariants): a name
-  holding `latency` is better lower, every other better higher — as every
-  metric the harness records is. The direction is part of each row, so a
-  reader sees which one was used.
+- **Which way a metric improves is `ragondin-metrics`' catalogue's**
+  (`Direction::of`, re-exported here as `ragondin_experiments::Direction`
+  rather than mapped onto a second enum, so a comparison and the catalogue
+  name one type): every metric the harness records is better higher, and a
+  name the catalogue does not know — a latency percentile among them — has
+  no direction, `None`. The direction is part of each row, so a reader sees
+  which one was used, and a row with none has no best (§ Local invariants:
+  a stored name is kept whatever it is).
 - **`best` and `deltas` are methods of `MetricRow`**, computed from its
   values rather than stored beside them: a row cannot hold a best value its
   values contradict. A tie names every run holding the value; a run that did

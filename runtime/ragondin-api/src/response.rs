@@ -108,6 +108,14 @@ pub struct RunListing {
     /// pipeline whose every run's stored document no longer lowers has no
     /// entry, as `GET /runs/{id}` has no graph for it.
     pub shapes: BTreeMap<String, Graph>,
+    /// Why a run's median query latency could not be read from or written
+    /// to the workspace's `cache/`, the first such reason; absent when the
+    /// cache served or took every run, so a listing whose cache works reads
+    /// as it always has. The listing is complete either way: the cache is
+    /// never a truth, so its failure fails nothing.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "String", default)]
+    pub cache_error: Option<String>,
 }
 
 /// One run, as the listing shows it.
@@ -145,6 +153,31 @@ pub struct RunSummary {
     pub finished_at_ms: Option<u64>,
     /// What the run scored, by metric name.
     pub metrics: BTreeMap<String, f64>,
+    /// The family of each metric, keyed exactly like
+    /// [`metrics`](Self::metrics): from `ragondin-metrics`' catalogue, and
+    /// `unknown` for a name it does not know — kept, never dropped.
+    pub metric_families: BTreeMap<String, MetricFamily>,
+    /// The lower median, over the run's queries, of each query's latency —
+    /// the sum of its trace's node durations — in nanoseconds.
+    /// Derived, never stored in the run: read from the traces alone, so a
+    /// run whose dataset is not on disk has it too, and cached under the
+    /// workspace's `cache/`. Not the run's wall time, which
+    /// `finished_at_ms − started_at_ms` gives, preparation included. `null`
+    /// when no trace of the run reads.
+    pub median_query_latency_nanos: Option<u64>,
+}
+
+/// Which ground truth a metric reads, as the listing names it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum MetricFamily {
+    /// Scored from qrels.
+    Ranking,
+    /// Scored from reference answers.
+    Answers,
+    /// A name the catalogue does not know: shown with its stored name and
+    /// value, ranked against nothing.
+    Unknown,
 }
 
 /// A run the store lists but cannot load, and why.
@@ -333,9 +366,10 @@ pub struct QueryScores {
     /// reference. Empty when it is judged on neither, or when the ground
     /// truth is not verified.
     pub scores: BTreeMap<String, f64>,
-    /// The sum of its nodes' durations, in nanoseconds: each component's own
-    /// time, as the trace records it.
-    pub duration_nanos: u64,
+    /// Its latency, in nanoseconds: the sum of its nodes' durations — each
+    /// component's own time, as the trace records it. `null` when that sum
+    /// overflows, which only a malformed trace can make it do.
+    pub duration_nanos: Option<u64>,
 }
 
 /// One node's ranking metrics over the run.
@@ -860,18 +894,20 @@ pub struct ComparedRun {
 
 /// One metric across the runs compared.
 #[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
+#[schemars(transform = every_property_required)]
 pub struct MetricRow {
     /// The metric's name.
     pub name: String,
-    /// Which way it improves, read off its name: `lower` for a latency,
-    /// `higher` for every other.
-    pub direction: MetricDirection,
+    /// Which way it improves, from `ragondin-metrics`' catalogue; `null`
+    /// for a name the catalogue does not know, which then has no best.
+    pub direction: Option<MetricDirection>,
     /// Each run's value; `null` where the run did not record it.
     pub values: Vec<Option<f64>>,
     /// Each run's value minus the baseline's; `null` where either did not
     /// record it. The baseline's own is `0`.
     pub deltas: Vec<Option<f64>>,
-    /// The runs holding the best value, by `direction`: every one on a tie.
+    /// The runs holding the best value, by `direction`: every one on a tie;
+    /// none when `direction` is `null`.
     pub best: Vec<String>,
 }
 

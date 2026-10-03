@@ -495,9 +495,11 @@ async fn three_runs_give_the_metric_table_with_best_and_deltas_and_the_differing
             && (deltas[1] - 0.1).abs() < 1e-12
             && (deltas[2] - 0.2).abs() < 1e-12
     );
+    // A name the catalogue does not know: kept, with no direction and no
+    // best (`compare_marks_no_best_value_for_an_unknown_metric`).
     let latency = metric("latency_p50_ms");
-    assert_eq!(latency["direction"], "lower");
-    assert_eq!(latency["best"], json!([dense.id.to_string()]));
+    assert_eq!(latency["direction"], Value::Null);
+    assert_eq!(latency["best"], json!([]));
     let recall = metric("recall@10");
     assert_eq!(recall["values"], json!([null, null, 0.9]));
     assert_eq!(recall["deltas"], json!([null, null, null]));
@@ -526,6 +528,47 @@ async fn three_runs_give_the_metric_table_with_best_and_deltas_and_the_differing
         .find(|row| row["node"] == "dense")
         .unwrap();
     assert_eq!(top_k["values"], json!([100, 50, 50]));
+}
+
+/// A metric the catalogue does not know has no direction, so no run holds
+/// its best value; its values and deltas are reported all the same.
+#[tokio::test(flavor = "multi_thread")]
+async fn compare_marks_no_best_value_for_an_unknown_metric() {
+    let mut dense = dense_only_run(0x01);
+    dense.metrics.insert("foo_score".to_owned(), 2.0);
+    let mut hybrid = hybrid_run(0x02);
+    hybrid.metrics.insert("foo_score".to_owned(), 3.5);
+    let workspace = scratch("compare_unknown_metric");
+
+    let (status, body) = post_compare(
+        app(vec![dense.clone(), hybrid.clone()], &workspace, None),
+        json!({
+            "run_ids": ids(&[&dense, &hybrid]),
+            "baseline": dense.id.to_string(),
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let foo = body["metrics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["name"] == "foo_score")
+        .expect("an unknown metric is listed, never dropped");
+    assert_eq!(foo["direction"], Value::Null);
+    assert_eq!(foo["best"], json!([]));
+    assert_eq!(foo["values"], json!([2.0, 3.5]));
+    assert_eq!(foo["deltas"], json!([0.0, 1.5]));
+    // A known metric beside it still names its best.
+    let mrr = body["metrics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["name"] == "mrr")
+        .unwrap();
+    assert_eq!(mrr["direction"], "higher");
+    assert_eq!(mrr["best"], json!([hybrid.id.to_string()]));
 }
 
 #[tokio::test(flavor = "multi_thread")]

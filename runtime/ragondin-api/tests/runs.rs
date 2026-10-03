@@ -5,11 +5,13 @@ mod support;
 use std::sync::Arc;
 
 use axum::http::StatusCode;
-use ragondin_experiments::{ConfigDocument, Run, RunTimes, UnixMillis};
+use ragondin_experiments::{ConfigDocument, Run, RunTimes, Trace, TraceDocument, UnixMillis};
+use ragondin_types::QueryId;
 use serde_json::json;
+use support::datasets::scratch;
 use support::{
-    app, app_with_backends, fakes, fixture_run, get, json, send, FakeRunStore, HeldPipelines,
-    PinningRegistry, FIXTURE_RUN,
+    app, app_over, app_with_backends, fakes, fixture_run, get, json, send, FakeRegistry,
+    FakeRunStore, HeldPipelines, PinningRegistry, FIXTURE_RUN,
 };
 
 const OTHER_RUN: &str = "00000000000000000000000000000000000000000000000000000000000000aa";
@@ -309,4 +311,184 @@ async fn a_stored_document_that_no_longer_lowers_is_run_unreadable_not_guessed()
     let body = json(response).await;
     assert_eq!(body["code"], "run_unreadable");
     assert!(body["detail"].as_str().unwrap().contains("schema version"));
+}
+
+#[tokio::test]
+async fn every_metric_in_the_listing_carries_its_family() {
+    let body = json(
+        send(
+            app(FakeRunStore::holding([fixture_run(), another_run()])),
+            get("/api/v1/runs"),
+        )
+        .await,
+    )
+    .await;
+
+    for run in body["runs"].as_array().unwrap() {
+        let metrics: Vec<&String> = run["metrics"].as_object().unwrap().keys().collect();
+        let families: Vec<&String> = run["metric_families"].as_object().unwrap().keys().collect();
+        assert_eq!(families, metrics, "{run}");
+    }
+    let fixture = &body["runs"][1];
+    assert_eq!(fixture["id"], FIXTURE_RUN);
+    assert_eq!(
+        fixture["metric_families"],
+        json!({
+            "exact_match": "answers",
+            "mrr": "ranking",
+            "ndcg@10": "ranking",
+            "recall@10": "ranking",
+            "token_f1": "answers",
+        })
+    );
+}
+
+#[tokio::test]
+async fn an_unknown_metric_is_listed_as_unknown_and_kept() {
+    let mut run = another_run();
+    run.metrics.insert("foo_score", 0.125);
+
+    let body = json(send(app(FakeRunStore::holding([run])), get("/api/v1/runs")).await).await;
+
+    assert_eq!(body["runs"][0]["metrics"]["foo_score"], 0.125);
+    assert_eq!(body["runs"][0]["metric_families"]["foo_score"], "unknown");
+    assert_eq!(body["runs"][0]["metric_families"]["ndcg@10"], "ranking");
+}
+
+/// Each query's latency is the sum of its trace's durations; the listing's
+/// is the lower median of those, over the queries.
+fn lower_median_of_query_latencies(run: &Run) -> u64 {
+    let mut latencies: Vec<u64> = run
+        .traces
+        .values()
+        .map(|document| {
+            let trace = Trace::try_from(document).unwrap();
+            trace.nodes.iter().map(|node| node.duration_nanos).sum()
+        })
+        .collect();
+    latencies.sort_unstable();
+    latencies[(latencies.len() - 1) / 2]
+}
+
+#[tokio::test]
+async fn the_listing_s_latency_is_the_lower_median_of_query_latencies() {
+    let run = fixture_run();
+    let expected = lower_median_of_query_latencies(&run);
+    // The fixture's four queries take 37 836, 17 249, 18 458 and 15 126 ns:
+    // of the two middle values, the lower.
+    assert_eq!(expected, 17_249);
+
+    let body = json(send(app(FakeRunStore::holding([run])), get("/api/v1/runs")).await).await;
+
+    assert_eq!(body["runs"][0]["median_query_latency_nanos"], expected);
+}
+
+const THIRD_RUN: &str = "00000000000000000000000000000000000000000000000000000000000000bb";
+
+#[tokio::test]
+async fn a_run_with_no_trace_that_reads_has_no_latency() {
+    let mut empty = another_run();
+    empty.traces.clear();
+    let mut torn = fixture_run();
+    for document in torn.traces.values_mut() {
+        *document = TraceDocument::new(json!({ "nodes": [{ "node": "leg" }] }));
+    }
+    // One trace that does not read: the median is over the three that do.
+    let mut partly = fixture_run();
+    partly.id = THIRD_RUN.parse().unwrap();
+    partly.traces.insert(
+        QueryId::new("q-1"),
+        TraceDocument::new(json!({ "nodes": "not a list" })),
+    );
+
+    let body = json(
+        send(
+            app(FakeRunStore::holding([empty, torn, partly])),
+            get("/api/v1/runs"),
+        )
+        .await,
+    )
+    .await;
+
+    let latency = |id: &str| {
+        body["runs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|run| run["id"] == id)
+            .unwrap()["median_query_latency_nanos"]
+            .clone()
+    };
+    assert_eq!(latency(OTHER_RUN), serde_json::Value::Null);
+    assert_eq!(latency(FIXTURE_RUN), serde_json::Value::Null);
+    // 15 126, 17 249 and 18 458: the middle one.
+    assert_eq!(latency(THIRD_RUN), 17_249);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_latency_needs_no_dataset() {
+    // A registry with no dataset at all: the run's is not on disk.
+    let workspace = scratch("runs_latency_no_dataset");
+    let run = fixture_run();
+    let expected = lower_median_of_query_latencies(&run);
+
+    let body = json(
+        send(
+            app_over(
+                FakeRunStore::holding([run]),
+                Arc::new(FakeRegistry),
+                &workspace,
+            ),
+            get("/api/v1/runs"),
+        )
+        .await,
+    )
+    .await;
+
+    assert_eq!(body["runs"][0]["median_query_latency_nanos"], expected);
+    assert!(body.get("cache_error").is_none(), "{body}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_latency_is_served_from_the_cache_the_second_time() {
+    let workspace = scratch("runs_latency_cache");
+    let run = fixture_run();
+    let listing = || async {
+        json(
+            send(
+                app_over(
+                    FakeRunStore::holding([run.clone()]),
+                    Arc::new(FakeRegistry),
+                    &workspace,
+                ),
+                get("/api/v1/runs"),
+            )
+            .await,
+        )
+        .await
+    };
+
+    let first = listing().await;
+    let file = workspace
+        .join("cache")
+        .join(FIXTURE_RUN)
+        .join("latency.json");
+    assert!(
+        file.is_file(),
+        "the latency is cached under cache/<run_id>/"
+    );
+    assert_eq!(listing().await, first, "the same body, from the cache");
+
+    // The figure the second listing serves is the file's, not one computed
+    // again from the traces: a value written there by hand is what comes
+    // back.
+    let mut cached: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
+    cached["median_query_latency_nanos"] = json!(42);
+    std::fs::write(&file, serde_json::to_vec(&cached).unwrap()).unwrap();
+    assert_eq!(listing().await["runs"][0]["median_query_latency_nanos"], 42);
+
+    // Removed, it is computed again: the cache is never a truth.
+    std::fs::remove_dir_all(workspace.join("cache")).unwrap();
+    assert_eq!(listing().await, first, "the same body, rebuilt");
 }

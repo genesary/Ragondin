@@ -8,6 +8,7 @@ import {
   deltaOf,
   departures,
   formatParameter,
+  formatValue,
   latencyBars,
   manualPairs,
   noVerdict,
@@ -49,6 +50,17 @@ describe('deltaOf', () => {
     expect(deltaOf('lower', 129)).toEqual({ text: '+129.0', meaning: 'worse', direction: 'up' });
     expect(deltaOf('lower', -2)).toEqual({ text: '−2.0', meaning: 'better', direction: 'down' });
     expect(deltaOf('higher', 0)).toEqual({ text: '0.0000', meaning: 'same', direction: 'none' });
+  });
+
+  it('signs the delta of a metric with no direction and calls it neither better nor worse', () => {
+    expect(deltaOf(null, 1.5)).toEqual({ text: '+1.5', meaning: null, direction: 'up' });
+    expect(deltaOf(null, -0.25)).toEqual({ text: '−0.25', meaning: null, direction: 'down' });
+    expect(deltaOf(null, 0)).toEqual({ text: '0', meaning: 'same', direction: 'none' });
+  });
+
+  it('prints a metric with no direction as stored, as the Runs screen does', () => {
+    expect(formatValue(null, 0.123456789)).toBe('0.123456789');
+    expect(formatValue(null, 2)).toBe('2');
   });
 
   it('reads a delta too small to print as unchanged, never as a coloured +0.0000', () => {

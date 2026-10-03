@@ -37,7 +37,7 @@ the response types, the typed errors, and the traits the service consumes.
 | `endpoints` | The handlers of the workspace's endpoints — pipelines, benchmarks, services — and of `POST /compare` |
 | `stages` | A pipeline's stages, derived from its nodes' kinds and positions, by which a comparison aligns runs |
 | `lineage` | Which workspace pipeline a run is a run of, by canonical hash — interim: ADR-C39 decides run → pipeline identity; the code does not follow it yet (#392) |
-| `comparison` | The runs aligned by stage with the pairs drawn by hand, the bins of the per-query deltas, a node's median latency |
+| `comparison` | The runs aligned by stage with the pairs drawn by hand, and the bins of the per-query deltas |
 | `validation` | A pipeline document checked as `ragondin validate` checks a file |
 | `fs` | The workspace on disk and its file backends: `Workspace`, `FsSettings`, `FsPipelines`, `FsRegistry` |
 | `conformance` | The suite every `Registry` backend passes, behind the `conformance` feature |
@@ -606,6 +606,21 @@ listing — reported, never repaired.
   `dataset_version`, a manifest entry or an import, sorted — the pinning
   `Registry::dataset` locates by, read through `Registry::pinned`, which
   loads nothing: naming a benchmark is not verifying it.
+- `metric_families`: keyed exactly like `metrics`, each metric's family as
+  `ragondin-metrics`' catalogue gives it (`Metric::parse`, then
+  `Metric::family`) — `ranking` or `answers` — and `unknown` for a name the
+  catalogue does not know. Such a metric is kept in `metrics`, never
+  dropped; the family says only that nothing here knows how to read it.
+- `median_query_latency_nanos`: the lower median
+  (`ragondin_experiments::lower_median`), over the run's queries, of each
+  query's latency (`Trace::latency_nanos`, the sum of its trace's node
+  durations); `null` when no trace reads. A trace that does not read, or
+  whose durations overflow, is left out of the median rather than failing
+  the listing. It is derived data: read from the traces alone — never from
+  the dataset, so a run whose dataset is not on disk has it — and cached as
+  `cache/<run_id>/latency.json` (§ *The cache: a choice made here*). It is not
+  the run's wall time, `finished_at_ms − started_at_ms`, which counts
+  preparation too.
 
 `RunListing::shapes` carries each listed pipeline's graph once, keyed by its
 canonical hash, by the conversion `GET /runs/{id}` serves (`convert::shape`
@@ -615,15 +630,20 @@ it is lowered from the first of its runs whose document lowers, and a
 pipeline none of whose documents lowers has no entry. The workspace's
 pipelines and the registry's pins are each read once per request, and a
 failure of either fails the listing, by design, rather than answering with
-every name list silently empty.
+every name list silently empty. A cache that fails does not: its first
+reason is `RunListing::cache_error`, and every latency is computed anyway.
 
 **A field serialized on every response is required in its schema**, nullable
 when it can be null: `RunDetail::prefix_of`, the two times of `RunDetail`
-and `RunSummary`, `PipelineSummary::modified_ms`, `Location::node` and
+and `RunSummary`, `RunSummary::median_query_latency_nanos`,
+`QueryScores::text` and `QueryScores::duration_nanos`,
+`MetricRow::direction`, `PipelineSummary::modified_ms`, `Location::node` and
 `Location::edge` carry a `transform` that lists every property as required,
 since `schemars` would otherwise leave an `Option` out and a generated client
-would type it as possibly absent. `Problem::location`, `Problem::etag` and `Problem::name`,
-each omitted when there is none, stay optional, as does `NodePair::label`,
+would type it as possibly absent. `Problem::location`, `Problem::etag` and
+`Problem::name`, each omitted when there is none, stay optional, as do
+`RunListing::cache_error`, omitted while the cache works so a working
+listing reads as it always has, and `NodePair::label`,
 which a request may leave out. **A request body refuses a
 field it does not read** (`deny_unknown_fields`), so a misspelled field is
 `request_invalid` rather than dropped; its schema says
@@ -878,10 +898,14 @@ A reading of the trace against the run's own ground truth, with
 `ragondin-metrics` and the rules the harness scores by, called rather than
 restated (`derived.rs`):
 
-- **The metrics are the ones the run recorded**, by name: `ndcg@<k>`,
+- **The metrics are the ones the run recorded whose name
+  `ragondin-metrics`' catalogue knows** (`Metric::parse`): `ndcg@<k>`,
   `recall@<k>`, `mrr` (uncut, as the harness records it), `exact_match`,
-  `token_f1`, each at the cutoff its own name states. Other names — a latency
-  percentile — are not per-query figures and are not listed.
+  `token_f1`, each at the cutoff its own name states and read by the family
+  the catalogue gives it. The harness writes its names through the same
+  catalogue, so the name written and the name read have one spelling. Other
+  names — a latency percentile — are not per-query figures and are not
+  listed here; `GET /runs` lists their stored values as family `unknown`.
 - **Documents, folded from chunks by first occurrence**: several chunks of one
   document count once, at the rank of the best —
   `ragondin_metrics::documents_by_first_occurrence`, the fold the harness
@@ -941,9 +965,11 @@ restated (`derived.rs`):
 - **No pagination.** The listing answers every query of the run at once —
   SQuAD's thousand in one body. Paging it is a change to this endpoint when a
   screen needs it.
-- **Durations**: a query's is the sum of its nodes' `duration_nanos`, each
-  component's own time. The run's latency percentiles are `metrics.json`'s and
-  are not recomputed.
+- **Durations**: a query's is its latency, `Trace::latency_nanos` — the sum
+  of its nodes' `duration_nanos`, each component's own time, in checked
+  addition: `null` for a sum past `u64`, which only a malformed trace
+  reaches. A latency percentile a run's `metrics.json` holds is served as
+  stored and not recomputed.
 
 ### Passage text, and the ground truth, only against the run's own dataset
 
@@ -986,8 +1012,11 @@ rather than discovered.
 ### The cache: a choice made here
 
 `cache/<run_id>/derived.json`, one JSON file per run, written only once the
-dataset has verified: the per-query scores and the per-node metrics. It is
-keyed on everything they were computed from — the file format, the build, the
+dataset has verified: the per-query scores and the per-node metrics. Beside
+it, `cache/<run_id>/latency.json` holds the run's median query latency for
+`GET /runs`, written whether or not the dataset is on disk, since it reads
+the traces alone. Each is keyed on everything its figures were computed
+from — the file format, the build, the
 run id, the `dataset_version`, and a digest of the run's own content (every
 trace document and every metric, through `ragondin_benchmarks::identity`'s
 encoder under a domain of this crate's) — and is used only when the whole key
@@ -1013,10 +1042,17 @@ binary's build identity (#365) provides; its doc comment says so.
   overwritten — it is derived data, so rebuilding it loses nothing, unlike a
   stored run, which is reported and never repaired.
 - **A cache that cannot be read or written fails nothing.** The figures are
-  computed anyway and served, and the reason is reported in the listing's
-  `cache_error`, so a read-only workspace stays usable and a broken cache is
-  never silent.
-- **What it saves, and what it does not.** The cache saves every per-query
+  computed anyway and served, and the reason is reported in the response's
+  `cache_error` — `RunQueries`', or `RunListing`'s for the latency — so a
+  read-only workspace stays usable and a broken cache is never silent.
+- **What it saves, and what it does not.** `latency.json` saves only the
+  parse of each of a run's traces into a `Trace`, and its sum. It saves no
+  load: every `GET /runs` still loads every run, traces included, from the
+  store. And it costs a digest of every trace on every request, hit or miss:
+  `Key::of` serializes each trace document and hashes it to build the key
+  the file is checked against, so a hit may cost more than computing the
+  sums directly. That trade-off is not measured yet. For `derived.json`:
+  the cache saves every per-query
   and per-node figure of the listing; it saves no load. The trace endpoint
   reads nothing from it: it reads the chunk set to resolve text, and one
   query's figures cost nothing. **The load is the registry's to save**: every
@@ -1045,8 +1081,10 @@ in the order given.
 ### The table and the matrix
 
 The metric table — every metric any run recorded, each run's value, the best
-of each row by the direction its name implies, each run's delta to the
-baseline — and the parameter matrix — every parameter not identical across
+of each row by the direction `ragondin-metrics`' catalogue gives it (none for
+a name the catalogue does not know: its `direction` is `null` and its `best`
+empty, its deltas reported all the same), each run's delta to the baseline —
+and the parameter matrix — every parameter not identical across
 the runs — are `ragondin-experiments`' `compare_runs`, converted in
 `convert.rs`: the computation `ragondin compare` prints for two runs, so the
 two cannot drift. Runs of different `dataset_version`s are refused there, and
@@ -1167,10 +1205,12 @@ Moving the edges is a change to that design document first, then to
 ### The latency
 
 Each run's nodes that ran, in the canonical order, with the median of their
-`duration_nanos` over the queries — the lower of the two middle values over
-an even count, a duration that occurred, a choice made here — and how many
-queries that is. The run's latency percentiles are `metrics.json`'s, in the
-table, and are not recomputed.
+`duration_nanos` over the queries — `ragondin_experiments::lower_median`, the
+lower of the two middle values over an even count, a duration that occurred,
+the one median of durations `GET /runs`' median query latency is also taken
+by — and how many queries that is. This is one node's duration, not a
+query's latency. A latency percentile a run's `metrics.json` holds is in the
+table as stored, with no direction, and is not recomputed.
 
 ## The assets
 

@@ -13,6 +13,9 @@ const FIQA = hex('f');
 const HYBRID = hex('a');
 const DENSE = hex('c');
 
+/** The family the API's catalogue gives a name, as `GET /runs` sends it. */
+const familyOf = (name: string) => (name === 'exact_match' || name === 'token_f1' ? 'answers' : /^(ndcg@|recall@)\d+$|^mrr$/.test(name) ? 'ranking' : 'unknown');
+
 const summary = (id: string, pipeline: string, dataset: string, metrics: Record<string, number> = {}, over: Partial<RunSummary> = {}): RunSummary => ({
   id,
   pipeline,
@@ -24,6 +27,8 @@ const summary = (id: string, pipeline: string, dataset: string, metrics: Record<
   started_at_ms: null,
   finished_at_ms: null,
   metrics,
+  metric_families: Object.fromEntries(Object.keys(metrics).map((name) => [name, familyOf(name)])),
+  median_query_latency_nanos: null,
   ...over,
 });
 
@@ -193,10 +198,21 @@ describe('over a listing with two benchmarks', () => {
   it('shows on each row only the metrics its run recorded, and no cell reads "—"', async () => {
     show('#runs');
     await loaded();
-    expect(within(rowOf(R3)).getByText('exact_match')).toBeTruthy();
-    expect(within(rowOf(R2)).queryByText('exact_match')).toBeNull();
+    // An answer metric as the design writes it: EM 41.2, from 0.412.
+    expect(within(rowOf(R3)).getByText('EM').nextElementSibling?.textContent).toBe('41.2');
+    expect(within(rowOf(R2)).queryByText('EM')).toBeNull();
     expect(within(rowOf(R2)).queryByText('mrr')).toBeNull();
     for (const cell of screen.getAllByRole('cell')) expect(cell.textContent?.trim()).not.toBe('—');
+  });
+
+  it('the latency is labelled as a median query latency', async () => {
+    const timed: RunListing = { ...LISTING, runs: LISTING.runs.map((run) => (run.id === R1 ? { ...run, median_query_latency_nanos: 17_249_000 } : run)) };
+    show('#runs', routes({ body: timed }));
+    const table = await screen.findByRole('table', { name: 'Runs, grouped by pipeline' });
+    const headers = within(table).getAllByRole('columnheader').map((h) => h.textContent);
+    expect(headers).toContain('Median query latency');
+    expect(headers).not.toContain('Latency');
+    expect(within(rowOf(R1)).getByText('17 ms')).toBeTruthy();
   });
 
   it('lists the runs the store cannot read, with why, rather than dropping them', async () => {

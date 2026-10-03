@@ -10,6 +10,13 @@
 //! described under [Generation metrics](#generation-metrics), and every section
 //! before that one is about retrieval.
 //!
+//! Beside the functions, [`Metric`] is the **metric catalogue**: the closed
+//! list of the metrics a run records, each with the name it is stored under,
+//! its [`Family`] and its [`Direction`]. The harness writes a run's metric
+//! names through it and every reader parses them back through it; a stored
+//! name it does not know is unknown to every reader, and never dropped
+//! (`ARCHITECTURE.md` § The catalogue).
+//!
 //! # What these functions are, and are not
 //!
 //! Each one scores **a single query**. The figure a benchmark reports —
@@ -171,9 +178,11 @@ use std::collections::BTreeSet;
 
 use ragondin_types::DocId;
 
+mod catalogue;
 mod fold;
 mod generation;
 
+pub use catalogue::{Direction, Family, Metric};
 pub use fold::documents_by_first_occurrence;
 pub use generation::{exact_match, normalize_answer, token_f1};
 

@@ -23,7 +23,11 @@ const runColumn = (s: RunSeries) => ({
 /** The column indices of a row's best runs, by the API's `best`. */
 const bestColumns = (c: Comparison, row: MetricRow) => row.best.map((id) => c.runs.findIndex((r) => r.id === id) + 1).filter((i) => i > 0);
 
-/** The metric table: each run's value, the best of each row in bold, each delta against the baseline signed, coloured and worded. */
+/**
+ * The metric table: each run's value, the best of each row in bold, each
+ * delta against the baseline signed, coloured and worded — signed alone for a
+ * metric the API gives no direction, which has no best.
+ */
 export function MetricsTable({ comparison, series }: { comparison: Comparison; series: readonly RunSeries[] }) {
   const rows: TableRow[] = comparison.metrics.map((row) => ({
     id: row.name,
@@ -37,7 +41,10 @@ export function MetricsTable({ comparison, series }: { comparison: Comparison; s
         return (
           <>
             {formatValue(row.direction, v)}
-            {delta === null ? null : (
+            {delta === null ? null : delta.meaning === null ? (
+              // No direction, so no colour, arrow or word: the sign alone says which way it moved.
+              <span className="rg-compare__delta">{delta.text}</span>
+            ) : (
               <span className="rg-compare__delta">
                 <Delta meaning={delta.meaning} direction={delta.direction}>
                   {delta.text}

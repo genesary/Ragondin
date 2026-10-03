@@ -259,7 +259,9 @@ reader can disagree with it.
    and MAP@k exist in `ragondin-metrics` and are not computed, because a metric
    nothing asked for is a number someone has to maintain. MRR is the **uncut**
    `reciprocal_rank`, matching `trec_eval`'s `recip_rank`, which is why its
-   name carries no `@k`.
+   name carries no `@k`. Every name is written through `ragondin-metrics`'
+   closed catalogue (`Metric`'s `Display`), never spelled here: the name
+   written and the name a reader parses back have one definition.
 3. **A query with no qrels line at all is executed and left unscored** by the
    retrieval family, as a query with no reference answer is by the generation
    one (ADR-C30 § 1 applies the same rule to each piece).

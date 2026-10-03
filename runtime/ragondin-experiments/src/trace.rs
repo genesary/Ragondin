@@ -65,6 +65,35 @@ pub struct Trace {
     pub nodes: Vec<TraceNode>,
 }
 
+impl Trace {
+    /// The query's latency: the sum of its nodes' `duration_nanos`, the one
+    /// definition every reader of a query's latency computes it by — read
+    /// from the trace's values (INV-10), never from a log.
+    ///
+    /// Checked addition, not saturating: durations whose sum overflows `u64`
+    /// nanoseconds — some 584 years — are a malformed trace, not a slow
+    /// query, so the answer is `None`, never a latency clamped to
+    /// `u64::MAX` that a median would read as a real figure.
+    pub fn latency_nanos(&self) -> Option<u64> {
+        self.nodes
+            .iter()
+            .try_fold(0u64, |sum, node| sum.checked_add(node.duration_nanos))
+    }
+}
+
+/// The lower median of `values`: of the two middle values over an even
+/// count, the lower, so the figure reported is one that occurred. `None` for
+/// no values.
+///
+/// The one rule for a median of durations: of a run's query latencies
+/// ([`Trace::latency_nanos`]), and of one node's durations over a run's
+/// queries.
+pub fn lower_median(mut values: Vec<u64>) -> Option<u64> {
+    values.sort_unstable();
+    let middle = values.len().checked_sub(1)? / 2;
+    values.get(middle).copied()
+}
+
 /// What one node received, produced and took.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TraceNode {

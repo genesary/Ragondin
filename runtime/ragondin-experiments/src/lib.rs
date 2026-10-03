@@ -20,7 +20,9 @@
 //!   and filesystem-backed by a choice that module argues.
 //! - [`mod@trace`] — [`Trace`], the one typed definition of a stored trace
 //!   document, read out of a [`TraceDocument`] and written back into one
-//!   (ADR-C36 § 2). The store itself never parses a trace.
+//!   (ADR-C36 § 2), with a query's latency ([`Trace::latency_nanos`]) and the
+//!   [`lower_median`] every median of durations is taken by. The store itself
+//!   never parses a trace.
 //! - [`walk`] — [`terminal`] and [`ranking_node`], the one definition of
 //!   ADR-C30 § 3's walk to the ranking a pipeline is scored on, called by the
 //!   harness that writes a run's metrics and by the API that reads them back.
@@ -58,5 +60,7 @@ pub use run::{
     RunProvenance, RunTimes, TraceDocument, UnixMillis,
 };
 pub use store::{FileSystemRunStore, RunStore, RunStoreError};
-pub use trace::{Trace, TraceChunk, TraceError, TraceNode, TraceProblem, TraceSummary};
+pub use trace::{
+    lower_median, Trace, TraceChunk, TraceError, TraceNode, TraceProblem, TraceSummary,
+};
 pub use walk::{ranking_node, terminal, WalkError};

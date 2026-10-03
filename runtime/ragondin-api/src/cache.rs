@@ -1,13 +1,20 @@
 //! The workspace's `cache/`: reconstructible derived data, never a truth
 //! (the design document § 6). Deleting it changes no response.
 //!
-//! One file per run, `cache/<run_id>/derived.json`: the per-query scores and
-//! the per-node metrics (`derived.rs`). It is written only once the dataset on
-//! disk has been loaded and found to digest to the run's `dataset_version`,
-//! and it names everything the figures were computed from — that digest, a
-//! digest of the run's own content (its traces and its metrics), and the
-//! build that computed them — so that it is used only when all of them still
-//! hold. No clock is consulted:
+//! Two files per run, under `cache/<run_id>/`, each keyed the same way:
+//!
+//! - `derived.json`: the per-query scores and the per-node metrics
+//!   (`derived.rs`). It is written only once the dataset on disk has been
+//!   loaded and found to digest to the run's `dataset_version`.
+//! - `latency.json`: the run's median query latency, which `GET /runs`
+//!   lists. It is read from the run's traces alone, so it is written whether
+//!   or not the run's dataset is on disk, and nothing about the dataset is
+//!   verified for it.
+//!
+//! The key names everything a file's figures were computed from — the run's
+//! `dataset_version`, a digest of the run's own content (its traces and its
+//! metrics), and the build that computed them — so that a file is used only
+//! when all of them still hold. No clock is consulted:
 //!
 //! - a dataset changed on disk no longer verifies, so its cache is never read;
 //!   one restored to the run's version verifies again, and the file is valid
@@ -37,7 +44,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::derived::NodeFigures;
 
-/// The layout this build writes. A file under another is a miss.
+/// The layout this build writes, of either file. A file under another is a
+/// miss.
 const FORMAT: u32 = 2;
 
 /// The domain separator of the run-content digest.
@@ -90,11 +98,19 @@ fn content_digest(run: &Run) -> String {
     hex
 }
 
-/// What is cached for one run.
+/// What `derived.json` holds for one run.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 struct Entry {
     key: Key,
     figures: StoredFigures,
+}
+
+/// What `latency.json` holds for one run: its median query latency, `None`
+/// when no trace of it reads — an answer cached like any other.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+struct LatencyEntry {
+    key: Key,
+    median_query_latency_nanos: Option<u64>,
 }
 
 /// The per-query scores and the per-node metrics of a run whose dataset
@@ -182,9 +198,14 @@ impl StoredFigures {
     }
 }
 
-/// The run's cache file under the workspace.
+/// The run's derived-data file under the workspace.
 fn file(workspace: &Path, run: &str) -> PathBuf {
     workspace.join("cache").join(run).join("derived.json")
+}
+
+/// The run's latency file under the workspace.
+fn latency_file(workspace: &Path, run: &str) -> PathBuf {
+    workspace.join("cache").join(run).join("latency.json")
 }
 
 fn failed(path: &Path, what: &str, error: impl std::fmt::Display) -> String {
@@ -195,24 +216,62 @@ fn failed(path: &Path, what: &str, error: impl std::fmt::Display) -> String {
 /// file could not be read; a file that does not parse, or holds another key,
 /// is a miss, not an error.
 pub(crate) fn read(workspace: &Path, key: &Key) -> Result<Option<Figures>, String> {
-    let path = file(workspace, &key.run);
-    let bytes = match std::fs::read(&path) {
-        Ok(bytes) => bytes,
-        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(failed(&path, "reading", error)),
-    };
-    Ok(serde_json::from_slice::<Entry>(&bytes)
-        .ok()
+    Ok(read_file::<Entry>(&file(workspace, &key.run))?
         .filter(|entry| &entry.key == key)
         .map(|entry| entry.figures.figures()))
 }
 
-/// Writes `figures` under `key`, whole or not at all: to a file of this
-/// writer's own beside the destination, then renamed over it, so a reader
-/// never sees half a file and two writers of the same values do not
-/// interleave. `Err` is why it could not; the staging file is removed then.
+/// Writes `figures` under `key`, whole or not at all (`write_file`). `Err`
+/// is why it could not.
 pub(crate) fn write(workspace: &Path, key: &Key, figures: &Figures) -> Result<(), String> {
-    let path = file(workspace, &key.run);
+    let entry = Entry {
+        key: key.clone(),
+        figures: StoredFigures::from(figures),
+    };
+    write_file(&file(workspace, &key.run), &entry)
+}
+
+/// The cached median query latency under `key`, if a file holds it: the
+/// outer `None` is a miss, the inner one a run with no trace that reads.
+/// `Err` and a miss mean what they mean for [`read`].
+pub(crate) fn read_latency(workspace: &Path, key: &Key) -> Result<Option<Option<u64>>, String> {
+    Ok(
+        read_file::<LatencyEntry>(&latency_file(workspace, &key.run))?
+            .filter(|entry| &entry.key == key)
+            .map(|entry| entry.median_query_latency_nanos),
+    )
+}
+
+/// Writes a run's median query latency under `key`, as [`write`] writes its
+/// figures.
+pub(crate) fn write_latency(
+    workspace: &Path,
+    key: &Key,
+    latency: Option<u64>,
+) -> Result<(), String> {
+    let entry = LatencyEntry {
+        key: key.clone(),
+        median_query_latency_nanos: latency,
+    };
+    write_file(&latency_file(workspace, &key.run), &entry)
+}
+
+/// The entry `path` holds, `None` when there is no file or it does not parse
+/// as one. `Err` is why it could not be read.
+fn read_file<T: serde::de::DeserializeOwned>(path: &Path) -> Result<Option<T>, String> {
+    let bytes = match std::fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(failed(path, "reading", error)),
+    };
+    Ok(serde_json::from_slice(&bytes).ok())
+}
+
+/// Writes `entry` to `path`, whole or not at all: to a file of this writer's
+/// own beside the destination, then renamed over it, so a reader never sees
+/// half a file and two writers of the same values do not interleave. `Err`
+/// is why it could not; the staging file is removed then.
+fn write_file<T: Serialize>(path: &Path, entry: &T) -> Result<(), String> {
     let directory = path.parent().expect("the cache file is under a directory");
     std::fs::create_dir_all(directory).map_err(|error| failed(directory, "creating", error))?;
     // One writer per thread at a time, and the handler runs on a blocking
@@ -221,17 +280,17 @@ pub(crate) fn write(workspace: &Path, key: &Key, figures: &Figures) -> Result<()
         .chars()
         .filter(char::is_ascii_alphanumeric)
         .collect();
-    let staging = directory.join(format!(".derived.{}.{thread}.partial", std::process::id()));
-    let entry = Entry {
-        key: key.clone(),
-        figures: StoredFigures::from(figures),
-    };
-    let bytes = serde_json::to_vec(&entry).map_err(|error| failed(&path, "serializing", error))?;
+    let stem = path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .expect("a cache file has a UTF-8 name");
+    let staging = directory.join(format!(".{stem}.{}.{thread}.partial", std::process::id()));
+    let bytes = serde_json::to_vec(entry).map_err(|error| failed(path, "serializing", error))?;
     let written = std::fs::write(&staging, bytes)
         .map_err(|error| failed(&staging, "writing", error))
         .and_then(|()| {
-            std::fs::rename(&staging, &path)
-                .map_err(|error| failed(&path, "renaming into place", error))
+            std::fs::rename(&staging, path)
+                .map_err(|error| failed(path, "renaming into place", error))
         });
     if written.is_err() {
         // Best effort: the write's own error is the one reported, and a
@@ -284,6 +343,25 @@ mod tests {
         let mut other = key("run");
         other.content = "2".repeat(64);
         assert_eq!(read(&workspace, &other).unwrap(), None);
+    }
+
+    #[test]
+    fn a_latency_reads_back_under_its_key_beside_the_figures_and_under_no_other() {
+        let workspace = scratch("latency_round_trip");
+        write_latency(&workspace, &key("run"), Some(17_249)).unwrap();
+        write(&workspace, &key("run"), &figures()).unwrap();
+        assert_eq!(
+            read_latency(&workspace, &key("run")).unwrap(),
+            Some(Some(17_249))
+        );
+        assert_eq!(read(&workspace, &key("run")).unwrap(), Some(figures()));
+        let mut other = key("run");
+        other.build = "another".to_owned();
+        assert_eq!(read_latency(&workspace, &other).unwrap(), None);
+
+        // No trace that reads is an answer, and cached as one.
+        write_latency(&workspace, &key("none"), None).unwrap();
+        assert_eq!(read_latency(&workspace, &key("none")).unwrap(), Some(None));
     }
 
     #[test]

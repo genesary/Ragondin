@@ -95,8 +95,22 @@ describe('a done run', () => {
   it('shows answer metrics only, under `answers`, for a benchmark that carries reference answers only', () => {
     show(done({ metrics: [{ family: 'answers', metrics: [{ name: 'exact_match', value: 0.4123 }] }] }));
     const group = screen.getByRole('group', { name: 'answers' });
-    expect(within(group).getByText('exact_match').nextElementSibling?.textContent).toBe('41.2');
+    expect(within(group).getByText('EM').nextElementSibling?.textContent).toBe('41.2');
     expect(screen.queryByRole('group', { name: 'ranking' })).toBeNull();
+  });
+
+  it('answers metrics render as a percentage with one decimal', () => {
+    show(done({ metrics: [{ family: 'answers', metrics: [{ name: 'exact_match', value: 0.412 }, { name: 'token_f1', value: 0.49074 }] }] }));
+    const group = screen.getByRole('group', { name: 'answers' });
+    expect(within(group).getByText('EM').parentElement?.textContent).toBe('EM41.2');
+    expect(within(group).getByText('F1').nextElementSibling?.textContent).toBe('49.1');
+  });
+
+  it('an unknown metric family is shown, not hidden', () => {
+    show(done({ metrics: [{ family: 'ranking', metrics: [{ name: 'mrr', value: 0.5 }] }, { family: 'unknown', metrics: [{ name: 'foo_score', value: 0.123456789 }] }] }));
+    const group = screen.getByRole('group', { name: 'unknown' });
+    expect(within(group).getByText('unknown')).toBeTruthy();
+    expect(within(group).getByText('foo_score').nextElementSibling?.textContent).toBe('0.123456789');
   });
 
   it('shows both families, ranking first, for a benchmark that carries both', () => {
@@ -126,6 +140,8 @@ describe('a done run', () => {
   it('shows its latency and its start time when the columns are drawn and the source reports them', () => {
     show(done({ latencyMs: 412.4, startedAt: '2026-09-30T14:03:00Z' }), { columns: { latency: true, started: true } });
     expect(screen.getByText('412 ms')).toBeTruthy();
+    show(done({ latencyMs: 0.017249 }), { columns: { latency: true, started: false } });
+    expect(screen.getByText('0.017 ms')).toBeTruthy();
     expect(document.querySelector('time')?.getAttribute('datetime')).toBe('2026-09-30T14:03:00Z');
   });
 
