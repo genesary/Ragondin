@@ -208,7 +208,7 @@ const detail = (id: string, graph: Graph): RunDetail => ({
   bindings: [],
   metrics: {},
   inputs: { dataset_version: SCIFACT, index_version: INDEX, engine_version: '0.1.0', model_hashes: {}, pipeline: id },
-  prefix_of: null,
+  launched_as: null,
   started_at_ms: null,
   finished_at_ms: null,
 });
@@ -220,6 +220,7 @@ const summary = (id: string, name: string, dataset: string): RunSummary => ({
   id,
   pipeline: id,
   pipeline_names: [name],
+  launched_as: null,
   dataset_version: dataset,
   index_version: INDEX,
   benchmark_names: [dataset === SCIFACT ? 'beir/scifact' : 'beir/nfcorpus'],

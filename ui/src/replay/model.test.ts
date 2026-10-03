@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { DENSE, DENSE_GRAPH, DENSE_TRACE, FAILED_TRACE, HYBRID, HYBRID_GRAPH, HYBRID_QUERIES, HYBRID_TRACE, LISTING, withPassages } from './fixtures.ts';
-import { candidates, counterpart, defaultMetric, firstJudged, formatMs, listOf, matching, overlayOf, passagesBanner, terminalOf, verdict } from './model.ts';
+import { candidates, counterpart, defaultMetric, firstJudged, formatMs, listOf, matching, overlayOf, passagesBanner, runName, terminalOf, verdict } from './model.ts';
 
 describe('overlayOf, building the canvas overlay from a trace', () => {
   const overlay = overlayOf({ graph: HYBRID_GRAPH, trace: HYBRID_TRACE, metric: 'ndcg@10' });
@@ -199,5 +199,14 @@ describe('passagesBanner', () => {
     expect(passagesBanner({ ...base, status: 'index_differs', found: { dataset_version: base.expected.dataset_version, index_version: '8'.repeat(64) } })?.title).toBe(
       'Passage text is hidden: the chunk set derived from the dataset differs from the one this run used.',
     );
+  });
+});
+
+describe('runName, a run as Replay names it', () => {
+  const run = LISTING.runs[0]!;
+  it('names a run by its recorded name first, then its first hash match, else nothing (ADR-C39 § 4)', () => {
+    expect(runName({ ...run, launched_as: { name: 'hybrid', prefix_of: null }, pipeline_names: ['hybrid-fork'] })).toBe('hybrid');
+    expect(runName({ ...run, launched_as: null, pipeline_names: ['hybrid-fork'] })).toBe('hybrid-fork');
+    expect(runName({ ...run, launched_as: { name: null, prefix_of: null }, pipeline_names: [] })).toBeNull();
   });
 });
