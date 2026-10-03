@@ -65,6 +65,12 @@ describe('mockApi, a query string', () => {
     expect(missing.ok && missing.value.run).toBe('3');
   });
 
+  it('hands a GET reply the path it was sent, so one template can answer two ids', async () => {
+    mockApi({ 'GET /runs/{id}/queries': (_query, path) => ({ body: { ...QUERIES, run: path } }) });
+    const result = await createApiClient().get('/runs/{id}/queries', { id: 'r 1' }, { query: { missing_gold_at: 3 } });
+    expect(result.ok && result.value.run).toBe('/api/v1/runs/r%201/queries');
+  });
+
   it('still refuses a path that only starts like a template', async () => {
     mockApi({ 'GET /runs/{id}': { body: {} as import('./types.ts').RunDetail } });
     const result = await createApiClient().get('/runs/{id}/queries', { id: 'r' });

@@ -48,7 +48,7 @@
 .rg-replay__queries { display: grid; align-content: start; gap: var(--space-3); min-width: 0; }
 .rg-replay__filter { display: flex; flex-wrap: wrap; gap: var(--space-2); }
 .rg-replay__count { margin: 0; font: var(--type-caption); color: var(--ink-3); }
-.rg-replay__listbox { position: relative; height: 480px; max-height: 60vh; overflow-y: auto; border: 1px solid var(--line); border-radius: var(--radius-s); background: var(--surface); }
+.rg-replay__listbox { position: relative; height: 480px; overflow-y: auto; border: 1px solid var(--line); border-radius: var(--radius-s); background: var(--surface); }
 .rg-replay__listbox:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 .rg-replay__option {
   position: absolute;
