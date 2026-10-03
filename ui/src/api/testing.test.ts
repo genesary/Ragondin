@@ -45,3 +45,29 @@ describe('mockApi, writing', () => {
     expect(api.bodies).toEqual([undefined]);
   });
 });
+
+describe('mockApi, a query string', () => {
+  const QUERIES = { run: 'r', answer_node: null, cache_error: null, metrics: [], nodes: [], queries: [], ranking_node: null } as unknown as import('./types.ts').RunQueries;
+
+  it('answers a request carrying a query string from its path template, and records the query string', async () => {
+    const api = mockApi({ 'GET /runs/{id}/queries': { body: QUERIES } });
+    const result = await createApiClient().get('/runs/{id}/queries', { id: 'r' }, { query: { missing_gold_at: 10 } });
+    expect(result.ok).toBe(true);
+    expect(api.requests).toEqual(['GET /api/v1/runs/r/queries?missing_gold_at=10']);
+  });
+
+  it('lets a GET reply depend on the query string it was sent', async () => {
+    mockApi({ 'GET /runs/{id}/queries': (query) => ({ body: { ...QUERIES, run: query.get('missing_gold_at') ?? 'all' } }) });
+    const client = createApiClient();
+    const all = await client.get('/runs/{id}/queries', { id: 'r' });
+    const missing = await client.get('/runs/{id}/queries', { id: 'r' }, { query: { missing_gold_at: 3 } });
+    expect(all.ok && all.value.run).toBe('all');
+    expect(missing.ok && missing.value.run).toBe('3');
+  });
+
+  it('still refuses a path that only starts like a template', async () => {
+    mockApi({ 'GET /runs/{id}': { body: {} as import('./types.ts').RunDetail } });
+    const result = await createApiClient().get('/runs/{id}/queries', { id: 'r' });
+    expect(!result.ok && result.problem.code).toBe('route_not_found');
+  });
+});

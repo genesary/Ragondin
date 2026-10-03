@@ -74,17 +74,20 @@ export type MockReply<T> = { body: T; build?: string } | { problem: Problem; bui
  * The mocked answers, keyed by method and the description's own path
  * template: a key the description does not have, or a body that is not its
  * path's generated type, does not compile. A list is answered in order, its
- * last reply repeating. A POST may answer from the body it was sent, typed as
- * its path's request body — and later, through a promise the test resolves,
- * so two answers can be made to arrive out of order.
+ * last reply repeating. A GET may answer from the query string it was sent,
+ * and a POST from the body it was sent, typed as its path's request body —
+ * and later, through a promise the test resolves, so two answers can be made
+ * to arrive out of order.
  */
 export type MockRoutes = {
-  [P in PathWith<'get'> as `GET ${P}`]?: MockReply<Answer<P, 'get'>> | MockReply<Answer<P, 'get'>>[];
+  [P in PathWith<'get'> as `GET ${P}`]?: MockReply<Answer<P, 'get'>> | MockReply<Answer<P, 'get'>>[] | ((query: URLSearchParams) => MockReply<Answer<P, 'get'>> | Promise<MockReply<Answer<P, 'get'>>>);
 } & {
   [P in PathWith<'post'> as `POST ${P}`]?: MockReply<Answer<P, 'post'>> | MockReply<Answer<P, 'post'>>[] | ((body: Body<P, 'post'>) => MockReply<Answer<P, 'post'>> | Promise<MockReply<Answer<P, 'post'>>>);
 };
 
-const pattern = (template: string) => new RegExp(`^${API_BASE}${template.replace(/[.*+?^$()|[\]\\]/g, '\\$&').replace(/\{[^}]+\}/g, '[^/]+')}$`);
+// A path template as a pattern over the whole path, which a query string may
+// follow: the client writes one after `?` (ARCHITECTURE.md § The client).
+const pattern = (template: string) => new RegExp(`^${API_BASE}${template.replace(/[.*+?^$()|[\]\\]/g, '\\$&').replace(/\{[^}]+\}/g, '[^/?]+')}(?:\\?.*)?$`);
 
 /**
  * Replaces the global `fetch` with answers from `routes`, each carrying the
@@ -97,10 +100,11 @@ const pattern = (template: string) => new RegExp(`^${API_BASE}${template.replace
 export function mockApi(routes: MockRoutes, { build = 'test-build' }: { build?: string } = {}) {
   const requests: string[] = [];
   const bodies: unknown[] = [];
-  type Replies = MockReply<unknown>[] | ((body: unknown) => MockReply<unknown> | Promise<MockReply<unknown>>);
+  // A function is handed the request's query string for a GET, its parsed body otherwise.
+  type Replies = MockReply<unknown>[] | ((sent: unknown) => MockReply<unknown> | Promise<MockReply<unknown>>);
   const table = Object.entries(routes).map(([key, replies]) => {
     const [method = '', template = ''] = key.split(' ');
-    const list: Replies = typeof replies === 'function' ? (replies as (body: unknown) => MockReply<unknown> | Promise<MockReply<unknown>>) : ((Array.isArray(replies) ? [...replies] : [replies]) as MockReply<unknown>[]);
+    const list: Replies = typeof replies === 'function' ? (replies as (sent: unknown) => MockReply<unknown> | Promise<MockReply<unknown>>) : ((Array.isArray(replies) ? [...replies] : [replies]) as MockReply<unknown>[]);
     return { method, match: pattern(template), replies: list };
   });
   const answer = (status: number, type: string, body: unknown, identity: string) =>
@@ -113,7 +117,8 @@ export function mockApi(routes: MockRoutes, { build = 'test-build' }: { build?: 
     bodies.push(sent);
     const route = table.find((r) => r.method === method && r.match.test(url));
     const replies = route?.replies;
-    const reply = replies === undefined ? undefined : typeof replies === 'function' ? await replies(sent) : replies.length > 1 ? replies.shift() : replies[0];
+    const query = new URLSearchParams(url.includes('?') ? url.slice(url.indexOf('?') + 1) : '');
+    const reply = replies === undefined ? undefined : typeof replies === 'function' ? await replies(method === 'GET' ? query : sent) : replies.length > 1 ? replies.shift() : replies[0];
     if (reply === undefined) {
       const problem: Problem = {
         type: 'urn:ragondin:problem:route_not_found',
