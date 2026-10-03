@@ -1,0 +1,7 @@
+# The workspace's deployment settings, read by `ragondin ui`. Never hashed
+# into a run: an address here stays out of every pipeline and run identity.
+#
+# datasets = "datasets"                       # where benchmarks are read;
+#                                             # <workspace>/datasets when absent
+# [services]
+# "generator/qwen" = "http://127.0.0.1:8080"  # `--remote` bindings

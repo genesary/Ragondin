@@ -45,6 +45,10 @@ serde_json = { workspace = true }  # the JSON bodies, and the description docume
 # A pipeline document's etag: the SHA-256 of its bytes (`src/fs/pipelines.rs`).
 sha2 = { workspace = true }
 thiserror = { workspace = true }   # typed errors (ADR-C13): no anyhow in this crate
+# `workspace.toml`, checked by meaning and edited in place with its comments
+# kept (`src/fs/settings_file.rs`, ADR-C38). The workspace entry's features,
+# none appended.
+toml_edit = { workspace = true }
 # `spawn_blocking`: `RunStore` is synchronous and its file backend blocks, so a
 # handler moves the call off the async workers rather than stalling one.
 tokio = { workspace = true }

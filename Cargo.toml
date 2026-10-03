@@ -135,6 +135,18 @@ axum = { version = "0.7", default-features = false, features = [
 # needs. No OpenAPI generator crate: the description is assembled by hand from
 # these schemas.
 schemars = "1"
+# `workspace.toml`, the workspace's settings file, read and edited in place so
+# that a person's comments, key order and blank lines survive the API's writes
+# (ADR-C38, which adds this entry to ADR-C36 § 6). Used by `ragondin-api`
+# only, so it is reached only through that crate, under the binary's `ui`
+# feature: the default build and the core never see it (INV-4). `parse` reads
+# a `Document`, which keeps each item's span for the line a refusal names;
+# `display` writes the edited document back. No other feature, and no `serde`:
+# the file is checked by meaning, never deserialised into a type. It brings
+# `toml_parser`, `toml_datetime`, `toml_writer` and `winnow`, all MIT and/or
+# Apache-2.0. The crate is on a 0.x line and nothing in CI checks the MSRV
+# (1.85 for 0.25, the workspace's), so every bump is a deliberate, reviewed one.
+toml_edit = { version = "0.25", default-features = false, features = ["parse", "display"] }
 # The UI's built assets, embedded into the binary (ADR-C36 § 6), used by
 # `bin/ragondin` only, behind its `ui` feature. `default-features = false`
 # (there are none today) and one feature, `debug-embed`: a debug build embeds

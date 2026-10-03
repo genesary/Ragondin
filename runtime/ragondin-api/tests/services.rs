@@ -138,6 +138,44 @@ async fn deleting_a_service_unbinds_it_and_an_unbound_one_is_not_found() {
 }
 
 #[tokio::test]
+async fn a_put_and_a_delete_keep_the_comments_of_a_commented_workspace_toml() {
+    let workspace = scratch("commented");
+    let commented = "\
+# Our workspace.
+
+datasets = 'benchmarks' # shared
+
+[services]
+# The judge.
+\"generator/judge\" = \"http://judge:1\" # do not remove
+";
+    fs::write(workspace.settings_file(), commented).unwrap();
+    let app = server(&workspace);
+
+    let put = send(
+        app.clone(),
+        put_service("/api/v1/services/generator/qwen", "http://host:1"),
+    )
+    .await;
+    assert_eq!(put.status(), StatusCode::OK);
+    assert_eq!(
+        fs::read_to_string(workspace.settings_file()).unwrap(),
+        format!("{commented}\"generator/qwen\" = \"http://host:1\"\n")
+    );
+
+    let delete = send(
+        app,
+        write_request("DELETE", "/api/v1/services/generator/qwen", &json!({}), &[]),
+    )
+    .await;
+    assert_eq!(delete.status(), StatusCode::OK);
+    assert_eq!(
+        fs::read_to_string(workspace.settings_file()).unwrap(),
+        commented
+    );
+}
+
+#[tokio::test]
 async fn a_service_change_leaves_the_pipelines_and_the_runs_untouched() {
     let workspace = scratch("untouched");
     let pipeline = workspace.pipelines().join("hybrid.yaml");
