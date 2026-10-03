@@ -4,7 +4,7 @@
 mod support;
 
 use axum::http::StatusCode;
-use ragondin_api::{Capabilities, FamilyCapabilities};
+use ragondin_api::{family_ports, Capabilities, FamilyCapabilities, NotCarried};
 use serde_json::json;
 use support::{app, app_with, get, json, send, FakeLauncher, FakeRunStore, BUILD};
 
@@ -31,10 +31,29 @@ async fn the_workspace_reports_its_path_settings_and_build() {
 async fn the_workspace_reports_the_capabilities_the_launcher_returns() {
     let launcher = FakeLauncher {
         capabilities: Capabilities {
-            families: vec![FamilyCapabilities {
-                family: "reranker".to_owned(),
-                local: vec!["cross_encoder".to_owned()],
-            }],
+            families: vec![
+                FamilyCapabilities {
+                    family: "reranker".to_owned(),
+                    local: vec!["cross_encoder".to_owned()],
+                    ports: family_ports("reranker"),
+                    not_carried: Vec::new(),
+                },
+                FamilyCapabilities {
+                    family: "fusion".to_owned(),
+                    local: vec![],
+                    ports: family_ports("fusion"),
+                    not_carried: vec![NotCarried {
+                        name: "rrf".to_owned(),
+                        reason: "needs the `fusion` feature".to_owned(),
+                    }],
+                },
+                FamilyCapabilities {
+                    family: "embedder".to_owned(),
+                    local: vec![],
+                    ports: family_ports("embedder"),
+                    not_carried: Vec::new(),
+                },
+            ],
             remote: false,
         },
     };
@@ -50,7 +69,27 @@ async fn the_workspace_reports_the_capabilities_the_launcher_returns() {
     assert_eq!(
         body["capabilities"],
         json!({
-            "families": [{ "family": "reranker", "local": ["cross_encoder"] }],
+            "families": [
+                {
+                    "family": "reranker",
+                    "local": ["cross_encoder"],
+                    "ports": {
+                        "produces": "chunks",
+                        "consumes": { "shape": "fixed", "kinds": ["query", "chunks"] },
+                    },
+                    "not_carried": [],
+                },
+                {
+                    "family": "fusion",
+                    "local": [],
+                    "ports": {
+                        "produces": "chunks",
+                        "consumes": { "shape": "variadic", "kind": "chunks" },
+                    },
+                    "not_carried": [{ "name": "rrf", "reason": "needs the `fusion` feature" }],
+                },
+                { "family": "embedder", "local": [], "ports": null, "not_carried": [] },
+            ],
             "remote": false,
         })
     );

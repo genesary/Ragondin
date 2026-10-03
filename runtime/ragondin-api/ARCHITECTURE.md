@@ -631,6 +631,27 @@ the runs the store lists, the benchmarks whose state is `ready` or `local` —
 the registry verifies every dataset to say so (§ The `Registry` file
 backend) — and the services connected.
 
+### `GET /workspace`'s capabilities
+
+What the launcher returns, served as it returns it. Per family:
+
+- **The `Local` names carried, and those not carried with the reason in
+  words** — the binary's, from its own `LOCAL` table and the features each
+  entry needs (`bin/ragondin/ARCHITECTURE.md` § What `Launcher` answers
+  here): only the composition root knows them (INV-12).
+- **The family's ports**: what a node of it produces, and what it consumes —
+  `{"shape": "fixed", "kinds": [...]}`, one kind per port in port order, or
+  `{"shape": "variadic", "kind": ...}`, any number of ports of one kind; `null`
+  for `embedder`, which no node is. **The port grammar has one definition**,
+  `ragondin-pipeline`'s `produced_kind` and `consumed_kinds` (ADR-C16), and
+  `family_ports` (in `convert.rs`, exported for the launcher) reads it rather
+  than restating it: the kinds derive from a node's variant alone, so it asks
+  one node of each family, empty but for its variant, and matches the family
+  by the graph's own spelling of it. The browser draws a new node's ports,
+  and refuses a mis-kinded edge during a drag, from this — never from a table
+  of its own. It does not depend on the build, so it is the same in every
+  build; the launcher fills it because the response type is one value.
+
 ## Response types are this crate's own
 
 Every type the API serializes is in `src/response.rs`, derives `serde` and
@@ -715,7 +736,8 @@ reason is `RunListing::cache_error`, and every latency is computed anyway.
 when it can be null: `launched_as` on `RunDetail` and `RunSummary`, the two times of `RunDetail`
 and `RunSummary`, `RunSummary::median_query_latency_nanos`,
 `QueryScores::text` and `QueryScores::duration_nanos`,
-`MetricRow::direction`, `PipelineSummary::modified_ms`, `Location::node`,
+`MetricRow::direction`, `PipelineSummary::modified_ms`,
+`FamilyCapabilities::ports`, `Location::node`,
 `Location::edge`, and the pipeline matrix's `MatrixColumn`, `FeedingRun`,
 `LaunchedAs`, `MissingCells` and `MatrixCell`'s `measured` variant carry a
 `transform` that lists every property as required,

@@ -208,6 +208,17 @@ export type ConfigurationMatrix = {
   run: string;
 };
 
+/** What a node family's input edges carry. */
+export type ConsumedPorts = {
+  /** One kind per port, in port order. */
+  kinds: EdgeKind[];
+  shape: "fixed";
+} | {
+  /** The kind every port carries. */
+  kind: EdgeKind;
+  shape: "variadic";
+};
+
 /**
  * A run launched as the matrix's pipeline whose content has since changed:
  * stated as a fact, never guessed to be an earlier version (ADR-C39 § 7).
@@ -292,7 +303,10 @@ export type EdgeLocation = {
   to: string;
 };
 
-/** One family's local implementations in this build. */
+/**
+ * One family: its ports, the local implementations this build carries in
+ * it, and those it does not carry and why.
+ */
 export type FamilyCapabilities = {
   /**
    * The family, spelled as `--remote` and a service binding spell it: a
@@ -305,6 +319,28 @@ export type FamilyCapabilities = {
    * or for `embedder`, `embedder:` values.
    */
   local: string[];
+  /**
+   * The names the binary gives a `Local` component of the family in some
+   * build and not in this one, each with what a build needs to carry it.
+   */
+  not_carried: NotCarried[];
+  /**
+   * The ports a node of the family declares, as the pipeline grammar
+   * derives them from the family alone; `null` for `embedder`, which no
+   * node is.
+   */
+  ports: FamilyPorts | null;
+};
+
+/**
+ * The ports of a node family: the kind it puts on its output edge, and
+ * the kinds its input edges carry, by position.
+ */
+export type FamilyPorts = {
+  /** The kinds of value it consumes. */
+  consumes: ConsumedPorts;
+  /** The kind of value a node of the family produces. */
+  produces: EdgeKind;
 };
 
 /**
@@ -682,6 +718,17 @@ export type NodePair = {
   node: string;
   /** A node of `other`. */
   other: string;
+};
+
+/** A `Local` implementation this build does not carry. */
+export type NotCarried = {
+  /** Its name: an `impl:` value, or for `embedder`, an `embedder:` value. */
+  name: string;
+  /**
+   * Why this build does not carry it, in words: the feature a build needs
+   * to carry it.
+   */
+  reason: string;
 };
 
 /**

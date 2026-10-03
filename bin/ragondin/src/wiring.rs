@@ -66,40 +66,105 @@ const ONNX_EMBEDDER: &str = "onnx";
 /// refuses to bind one (ADR-C32 § 2): the registry's last registration wins,
 /// so a binding would silently replace the `Local` component, and a list that
 /// followed this build's features would let one command line mean two things.
-const LOCAL: [(Family, &str); 7] = [
-    (Family::Retriever, BM25),
-    (Family::Retriever, DENSE),
-    (Family::Fusion, RRF),
-    (Family::Reranker, CROSS_ENCODER),
-    (Family::ContextBuilder, CONCAT),
-    (Family::Generator, STUB_GENERATOR),
-    (Family::Embedder, ONNX_EMBEDDER),
+///
+/// Each entry carries its [`Gate`]: the features that carry it, beside
+/// whether this build has one — written in one row, so an entry cannot be
+/// added without saying what carries it.
+const LOCAL: [(Family, &str, Gate); 7] = [
+    (
+        Family::Retriever,
+        BM25,
+        Gate {
+            features: &["bm25"],
+            on: cfg!(feature = "bm25"),
+        },
+    ),
+    // Carried by a build that can construct an embedder for it, `onnx` or
+    // `remote`, which is when [`register`] can register it.
+    (
+        Family::Retriever,
+        DENSE,
+        Gate {
+            features: &["onnx", "remote"],
+            on: cfg!(any(feature = "onnx", feature = "remote")),
+        },
+    ),
+    // A normal dependency, in every build.
+    (Family::Fusion, RRF, Gate::ALWAYS),
+    (
+        Family::Reranker,
+        CROSS_ENCODER,
+        Gate {
+            features: &["onnx"],
+            on: cfg!(feature = "onnx"),
+        },
+    ),
+    // A normal dependency, in every build.
+    (Family::ContextBuilder, CONCAT, Gate::ALWAYS),
+    (
+        Family::Generator,
+        STUB_GENERATOR,
+        Gate {
+            features: &["stub"],
+            on: cfg!(feature = "stub"),
+        },
+    ),
+    (
+        Family::Embedder,
+        ONNX_EMBEDDER,
+        Gate {
+            features: &["onnx"],
+            on: cfg!(feature = "onnx"),
+        },
+    ),
 ];
+
+/// What carries a [`LOCAL`] entry: any one of `features`, and whether this
+/// build has one. `on` is the `cfg!` of exactly `features`, written beside
+/// them because `cfg!` takes a literal.
+// Read only by what `ragondin ui` reports.
+#[cfg_attr(not(feature = "ui"), allow(dead_code))]
+struct Gate {
+    features: &'static [&'static str],
+    on: bool,
+}
+
+impl Gate {
+    /// No feature: in every build.
+    const ALWAYS: Gate = Gate {
+        features: &[],
+        on: true,
+    };
+}
 
 /// Whether this composition root gives `name` to a `Local` component of
 /// `family` in any build of it.
 pub fn is_local(family: Family, name: &str) -> bool {
-    LOCAL.contains(&(family, name))
+    LOCAL
+        .iter()
+        .any(|(of, local, _)| *of == family && *local == name)
 }
 
 /// The `Local` components **this** build carries, by family, in [`LOCAL`]'s
 /// order: its entries whose feature is on. What `ragondin ui` reports as the
-/// build's capabilities. `dense` is carried by a build that can construct an
-/// embedder for it, `onnx` or `remote`, which is when [`register`] can
-/// register it.
+/// build's capabilities.
 #[cfg(feature = "ui")]
 pub fn carried() -> impl Iterator<Item = (Family, &'static str)> {
-    LOCAL.into_iter().filter(|(_, name)| match *name {
-        BM25 => cfg!(feature = "bm25"),
-        DENSE => cfg!(any(feature = "onnx", feature = "remote")),
-        CROSS_ENCODER | ONNX_EMBEDDER => cfg!(feature = "onnx"),
-        STUB_GENERATOR => cfg!(feature = "stub"),
-        // Normal dependencies, in every build.
-        RRF | CONCAT => true,
-        // An entry added to `LOCAL` and not here is reported by no build;
-        // the `--all-features` capabilities test lists every entry.
-        _ => false,
-    })
+    LOCAL
+        .into_iter()
+        .filter(|(_, _, gate)| gate.on)
+        .map(|(family, name, _)| (family, name))
+}
+
+/// The `Local` components this build does **not** carry, by family, in
+/// [`LOCAL`]'s order, each with the features any one of which would carry
+/// it: [`carried`]'s complement over the same table.
+#[cfg(feature = "ui")]
+pub fn not_carried() -> impl Iterator<Item = (Family, &'static str, &'static [&'static str])> {
+    LOCAL
+        .into_iter()
+        .filter(|(_, _, gate)| !gate.on)
+        .map(|(family, name, gate)| (family, name, gate.features))
 }
 
 /// The keys every `dense` node may carry, whatever embedder it names

@@ -609,10 +609,21 @@ API crate holds it as an `Arc<dyn Launcher>` and names no component.
   — `retriever`, `fusion`, `reranker`, `context_builder`, `generator`,
   `embedder` — each with the `Local` names this build carries
   (`wiring::carried`, the `LOCAL` table filtered by the features that compile
-  each one), and whether `remote` is on. `embedder` is listed though it is
-  not a `component:` value, because `onnx` is a `Local` implementation a
-  `dense` node names. A family whose every implementation is gated off is
-  listed with none.
+  each one), the names it does not carry with the reason in words
+  (`wiring::not_carried`, the complement over the same table: "needs the
+  `onnx` feature", "needs the `onnx` or the `remote` feature"), the family's
+  ports (`ragondin_api::family_ports`, which reads `ragondin-pipeline`'s
+  `produced_kind` and `consumed_kinds`; `null` for `embedder`), and whether
+  `remote` is on. `embedder` is listed though it is not a `component:` value,
+  because `onnx` is a `Local` implementation a `dense` node names. A family
+  whose every implementation is gated off is listed with none carried.
+  **Each `LOCAL` entry carries its `Gate`** — the features any one of which
+  carries it, beside the `cfg!` of exactly those features — in the entry's
+  own row: an entry cannot be added without saying what carries it, and the
+  carried list and the not-carried list are one filter's two halves, so no
+  entry is in neither. The feature's name is written twice in that row, as a
+  string and inside `cfg!`, because `cfg!` takes a literal; the two
+  per-configuration capability tests (`ui` alone, every feature) read both.
 - **`check_binding(family, name, uri)`**: `binding::check`, which runs the
   refusals `--remote` makes of one argument on its text — the form, the
   family, the URI, a `Local` name — and words them as `bench` does, naming

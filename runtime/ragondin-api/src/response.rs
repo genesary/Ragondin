@@ -81,8 +81,10 @@ pub struct Capabilities {
     pub remote: bool,
 }
 
-/// One family's local implementations in this build.
+/// One family: its ports, the local implementations this build carries in
+/// it, and those it does not carry and why.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+#[schemars(transform = every_property_required)]
 pub struct FamilyCapabilities {
     /// The family, spelled as `--remote` and a service binding spell it: a
     /// node family as a configuration's `component:` value, or `embedder`,
@@ -91,6 +93,49 @@ pub struct FamilyCapabilities {
     /// The names this build gives a `Local` component in it: `impl:` values,
     /// or for `embedder`, `embedder:` values.
     pub local: Vec<String>,
+    /// The ports a node of the family declares, as the pipeline grammar
+    /// derives them from the family alone; `null` for `embedder`, which no
+    /// node is.
+    pub ports: Option<FamilyPorts>,
+    /// The names the binary gives a `Local` component of the family in some
+    /// build and not in this one, each with what a build needs to carry it.
+    pub not_carried: Vec<NotCarried>,
+}
+
+/// The ports of a node family: the kind it puts on its output edge, and
+/// the kinds its input edges carry, by position.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct FamilyPorts {
+    /// The kind of value a node of the family produces.
+    pub produces: EdgeKind,
+    /// The kinds of value it consumes.
+    pub consumes: ConsumedPorts,
+}
+
+/// What a node family's input edges carry.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(tag = "shape", rename_all = "snake_case")]
+pub enum ConsumedPorts {
+    /// Exactly these kinds, in this order: port `i` carries `kinds[i]`.
+    Fixed {
+        /// One kind per port, in port order.
+        kinds: Vec<EdgeKind>,
+    },
+    /// Any number of ports, every one carrying `kind`.
+    Variadic {
+        /// The kind every port carries.
+        kind: EdgeKind,
+    },
+}
+
+/// A `Local` implementation this build does not carry.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct NotCarried {
+    /// Its name: an `impl:` value, or for `embedder`, an `embedder:` value.
+    pub name: String,
+    /// Why this build does not carry it, in words: the feature a build needs
+    /// to carry it.
+    pub reason: String,
 }
 
 /// `GET /runs`: every run the store holds, and every one it holds but cannot
