@@ -1458,10 +1458,13 @@ pub struct LaunchedAs {
     pub name: Option<String>,
     /// For a prefix run, where it was cut from its parent; `null` otherwise.
     pub prefix_of: Option<LaunchedPrefix>,
-    /// Whether the workspace holds [`name`](Self::name) now, read from the
-    /// same listing of `pipelines/` as the response's hash matches; `null`
-    /// when the record names none. A fact about the name, not the content:
-    /// a document held under it may hold other content since.
+    /// Whether the workspace holds [`name`](Self::name) now; `null` when the
+    /// record names none, and only then. `GET /runs` and the pipeline matrix
+    /// read it from the same listing of `pipelines/` as their hash matches;
+    /// `GET /runs/{id}` lists no `pipelines/`, so it stays one run's read
+    /// that a broken document cannot fail, and sends `unchecked`. A fact
+    /// about the name, not the content: a document held under it may hold
+    /// other content since.
     pub held: Option<NameHeld>,
 }
 
@@ -1470,15 +1473,17 @@ pub struct LaunchedAs {
 #[serde(rename_all = "snake_case")]
 pub enum NameHeld {
     /// A document is stored under the name exactly as recorded, whether or
-    /// not it validates.
+    /// not it validates, and none under a case alias of it.
     Exactly,
-    /// No document is stored under the name as recorded, but one is under
-    /// the same name in another case (ASCII): on a filesystem that ignores
-    /// case the two are one file, and reading the name as recorded is
-    /// refused (`request_invalid`) rather than answered with the other.
+    /// A document is stored under the same name in another ASCII case, a
+    /// case alias the backend refuses to read the name as (`request_invalid`)
+    /// — whether or not the name is also stored as recorded, as it can be on
+    /// a filesystem that keeps case.
     OtherCase,
     /// No document is stored under the name in any case.
     Gone,
+    /// This endpoint does not check: `GET /runs/{id}` lists no `pipelines/`.
+    Unchecked,
 }
 
 /// Where a launch record says a prefix run was cut from its parent.

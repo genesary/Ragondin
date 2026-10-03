@@ -1407,17 +1407,30 @@ async fn a_recorded_name_the_workspace_no_longer_holds_gives_no_pairing_and_the_
 /// With `deleted_after_listing`, every pairing read answers
 /// `pipeline_not_found`, as it does for a document deleted between the
 /// listing and the read.
+///
+/// With `alias`, the listing also holds an invalid document under that name,
+/// and a pairing read for a name it is a case alias of is refused with
+/// `request_invalid`, as the file backend refuses one where both spellings
+/// are stored (a filesystem that keeps case).
 struct CountedListings {
     inner: FsPipelines,
     listed: AtomicUsize,
     deleted_after_listing: bool,
+    alias: Option<&'static str>,
 }
 
 #[async_trait]
 impl PipelineSource for CountedListings {
     async fn list(&self) -> Result<Vec<PipelineFile>, ApiError> {
         self.listed.fetch_add(1, Ordering::SeqCst);
-        self.inner.list().await
+        let mut files = self.inner.list().await?;
+        if let Some(alias) = self.alias {
+            let mut file = files[0].clone();
+            file.name = alias.to_owned();
+            file.document = "pipeline: [".to_owned();
+            files.push(file);
+        }
+        Ok(files)
     }
 
     async fn read(&self, name: &str) -> Result<PipelineFile, ApiError> {
@@ -1446,6 +1459,15 @@ impl PipelineSource for CountedListings {
             return Err(ApiError::PipelineNotFound {
                 name: pipeline.to_owned(),
             });
+        }
+        if let Some(alias) = self.alias {
+            for name in [pipeline, other] {
+                if name != alias && name.eq_ignore_ascii_case(alias) {
+                    return Err(ApiError::RequestInvalid {
+                        detail: format!("`{name}` differs from `{alias}` only in case"),
+                    });
+                }
+            }
         }
         self.inner.read_pairing(pipeline, other).await
     }
@@ -1489,6 +1511,7 @@ async fn a_pipeline_deleted_between_the_listing_and_its_pairing_read_has_no_pair
         inner: FsPipelines::new(&workspace),
         listed: AtomicUsize::new(0),
         deleted_after_listing: true,
+        alias: None,
     });
 
     let (status, body) = post_compare(
@@ -1515,6 +1538,7 @@ async fn a_comparison_lists_the_workspace_s_pipelines_once() {
         inner: FsPipelines::new(&workspace),
         listed: AtomicUsize::new(0),
         deleted_after_listing: false,
+        alias: None,
     });
     let (status, body) = post_compare(
         counted_app(
@@ -1530,4 +1554,29 @@ async fn a_comparison_lists_the_workspace_s_pipelines_once() {
     assert_eq!(body["runs"][0]["pipeline"], "hybrid-rerank");
     assert_eq!(body["runs"][1]["pipeline"], "colbert-rerank");
     assert_eq!(pipelines.listed.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_pipeline_stored_beside_a_case_alias_has_no_pairing_and_the_comparison_goes_on() {
+    // `hybrid-rerank` and `Hybrid-Rerank` both stored: the backend refuses a
+    // pairing read for either spelling, so the name is not held exactly and
+    // no pairing is read for it.
+    let (hybrid, colbert) = (hybrid_rerank_run(0x01), colbert_rerank_run(0x02));
+    let (root, workspace) = paired_workspace("compare_pairing_beside_a_case_alias");
+    let pipelines = Arc::new(CountedListings {
+        inner: FsPipelines::new(&workspace),
+        listed: AtomicUsize::new(0),
+        deleted_after_listing: false,
+        alias: Some("Hybrid-Rerank"),
+    });
+
+    let (status, body) = post_compare(
+        counted_app(vec![hybrid.clone(), colbert.clone()], &root, pipelines),
+        json!({ "run_ids": ids(&[&hybrid, &colbert]), "baseline": hybrid.id.to_string() }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["runs"][0]["pipeline"], "hybrid-rerank");
+    assert_eq!(body["pairings"], json!([]));
 }

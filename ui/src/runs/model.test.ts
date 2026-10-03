@@ -179,6 +179,17 @@ describe('groupRows', () => {
     ]);
   });
 
+  it('fails closed: a recorded name the rows do not say is held is not taken as held', () => {
+    const groups = groupRows([
+      row('1', { pipeline: hex('a'), launchedAs: 'hybrid', launchedHeld: null }),
+      row('2', { pipeline: hex('c'), launchedAs: 'dense', launchedHeld: 'unchecked' }),
+    ]);
+    expect(groups.map((g) => [g.names, g.held])).toEqual([
+      [['hybrid'], 'unchecked'],
+      [['dense'], 'unchecked'],
+    ]);
+  });
+
   it('puts a run without a record whose one hash match is a recorded name in that name’s group', () => {
     const groups = groupRows([row('1', { pipeline: hex('a'), launchedAs: 'hybrid' }), row('2', { pipeline: hex('a'), pipelineNames: ['hybrid'] })]);
     expect(groups.map((g) => [g.names, ids(g.rows)])).toEqual([[['hybrid'], ['1', '2']]]);

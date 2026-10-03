@@ -47,6 +47,16 @@ pub struct Backends {
     pub launcher: Arc<dyn Launcher>,
 }
 
+/// Whether `name` is a case alias of the stored pipeline `stored`: the same
+/// name in another ASCII case, and not the same spelling. A source refuses
+/// such a name (`request_invalid`), because on a filesystem that ignores case
+/// the two are one file (`ARCHITECTURE.md` § The pipelines). The one place
+/// the rule is written: the file backend refuses by it, and
+/// `lineage::Index::held` reads a recorded name by it.
+pub(crate) fn case_alias(stored: &str, name: &str) -> bool {
+    stored != name && stored.eq_ignore_ascii_case(name)
+}
+
 /// The workspace's pipeline documents and their layouts.
 ///
 /// Locally, `pipelines/<name>.yaml` beside `<name>.layout.json`

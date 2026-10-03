@@ -13,7 +13,7 @@ use serde_json::json;
 use support::datasets::scratch;
 use support::{
     app, app_over, app_with_backends, fakes, fixture_run, get, json, send, FakeRegistry,
-    FakeRunStore, HeldPipelines, ListCounted, PinningRegistry, FIXTURE_RUN,
+    FakeRunStore, HeldPipelines, ListCounted, PinningRegistry, UnlistablePipelines, FIXTURE_RUN,
 };
 
 const OTHER_RUN: &str = "00000000000000000000000000000000000000000000000000000000000000aa";
@@ -347,7 +347,7 @@ async fn the_detail_carries_the_launch_record() {
                 "up_to": "fused",
                 "parent_pipeline_hash": fixture_run().inputs.pipeline.to_string(),
             },
-            "held": "gone",
+            "held": "unchecked",
         })
     );
     // The old `prefix_of` string is gone: the record's `prefix_of` is the
@@ -734,16 +734,54 @@ async fn a_recorded_name_held_by_a_document_that_does_not_validate_is_held() {
 }
 
 #[tokio::test]
-async fn the_detail_says_whether_its_recorded_name_is_held() {
-    let (backends, _) = held_backends();
+async fn the_detail_does_not_check_whether_its_recorded_name_is_held() {
+    let (backends, pipelines) = held_backends();
     let app = app_with_backends(backends);
 
     let cased = json(send(app.clone(), get(&format!("/api/v1/runs/{CASED}"))).await).await;
     let gone = json(send(app, get(&format!("/api/v1/runs/{GONE}"))).await).await;
 
+    // `unchecked`, not a guess and not `null`, which means "no name": the
+    // detail lists no `pipelines/`, so it stays one run's read.
     assert_eq!(
         cased["launched_as"],
-        json!({ "name": "Hybrid", "prefix_of": null, "held": "other_case" })
+        json!({ "name": "Hybrid", "prefix_of": null, "held": "unchecked" })
     );
-    assert_eq!(gone["launched_as"]["held"], "gone");
+    assert_eq!(gone["launched_as"]["held"], "unchecked");
+    assert_eq!(pipelines.listed(), 0);
+}
+
+#[tokio::test]
+async fn the_detail_answers_when_the_workspace_s_pipelines_cannot_be_listed() {
+    let mut backends = fakes(FakeRunStore::holding([launched(HELD, "hybrid")]));
+    backends.pipelines = Arc::new(UnlistablePipelines);
+
+    let response = send(
+        app_with_backends(backends),
+        get(&format!("/api/v1/runs/{HELD}")),
+    )
+    .await;
+
+    // Replay reads this; one unreadable document must not take it down.
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(json(response).await["launched_as"]["held"], "unchecked");
+}
+
+#[tokio::test]
+async fn a_recorded_name_stored_beside_a_case_alias_is_not_held_exactly() {
+    // `hybrid.yaml` and `Hybrid.yaml`, made by hand on a filesystem that
+    // keeps case: the file backend refuses to read `hybrid`, a case alias of
+    // the stored `Hybrid`, so the name does not lead anywhere as recorded.
+    let text = fixture_run().config.as_str().to_owned();
+    let mut backends = fakes(FakeRunStore::holding([launched(HELD, "hybrid")]));
+    backends.pipelines = Arc::new(HeldPipelines {
+        files: vec![
+            ("Hybrid".to_owned(), text.clone()),
+            ("hybrid".to_owned(), text),
+        ],
+    });
+
+    let body = json(send(app_with_backends(backends), get("/api/v1/runs")).await).await;
+
+    assert_eq!(body["runs"][0]["launched_as"]["held"], "other_case");
 }

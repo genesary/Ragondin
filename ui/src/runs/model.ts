@@ -96,8 +96,9 @@ export type RunGroup = {
   names: string[];
   /**
    * Whether the workspace holds the name the group is headed by: a recorded
-   * name as its runs' records say, and `exactly` for hash matches — current
-   * documents of the same listing — and for a group headed by its hash.
+   * name as its runs' records say — `unchecked` when they say nothing, so it
+   * fails closed, unlinked — and `exactly` for hash matches, current
+   * documents of the same listing, and for a group headed by its hash.
    */
   held: NameHeld;
   /** The canonical hash of the group's most recent run of its own — not a prefix — or, with none, of its first run. */
@@ -222,8 +223,10 @@ export function groupRows(rows: readonly RunRow[]): RunGroup[] {
   return [...ordered].map(([key, { names, rows: members }]) => {
     const own = members.filter((r) => r.prefix === null);
     const head = own[0] ?? (members[0] as RunRow);
-    // Every row's record comes from one listing, so the first that names the heading says it; a hash match is held.
-    const held = members.find((r) => r.launchedAs === names[0] && r.launchedHeld !== null)?.launchedHeld ?? 'exactly';
+    // Every row's record comes from one listing, so the first that names the heading says it. A heading no record
+    // names is hash matches, current documents, so held; one a record names but says nothing of fails closed, unlinked.
+    const recorded = members.find((r) => r.launchedAs !== null && r.launchedAs === names[0]);
+    const held: NameHeld = recorded === undefined ? 'exactly' : (recorded.launchedHeld ?? 'unchecked');
     return { key, names, held, pipeline: head.pipeline, shapeKey: own.length === 0 ? null : head.pipeline, rows: members };
   });
 }

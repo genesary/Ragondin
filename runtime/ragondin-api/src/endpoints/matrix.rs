@@ -258,7 +258,7 @@ pub(crate) async fn matrix(
                     .run
                     .provenance
                     .as_ref()
-                    .map(|record| convert::launched_as(record, &workspace_index)),
+                    .map(|record| convert::launched_as(record, Some(&workspace_index))),
                 pipeline_names,
                 prefix_of: match &each.standing {
                     Standing::Fills {

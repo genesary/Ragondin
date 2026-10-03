@@ -75,6 +75,12 @@ describe('the group heading', () => {
     expect(header.textContent).not.toContain('no longer');
   });
 
+  it('does not link a recorded name nothing checked, and says so', () => {
+    show(group({ names: ['hybrid'], held: 'unchecked' }));
+    expect(screen.queryByRole('link')).toBeNull();
+    expect(document.querySelector('th[scope="rowgroup"]')?.textContent).toContain('not checked against the workspace');
+  });
+
   it('links a recorded name the workspace holds exactly', () => {
     show(group({ names: ['hybrid'], held: 'exactly' }));
     expect(screen.getByRole('link', { name: 'hybrid' }).getAttribute('href')).toBe('#pipeline/hybrid');

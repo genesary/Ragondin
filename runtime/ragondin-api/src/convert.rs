@@ -26,7 +26,7 @@ use crate::lineage;
 use crate::response::{
     BenchmarkEntry, BenchmarkState, ConfigurationMatrix, DatasetCheck, DatasetStatus,
     DatasetVersions, EdgeKind, FoundVersions, Graph, GraphEdge, GraphInput, GraphNode, GroundTruth,
-    LaunchedAs, LaunchedPrefix, MetricDirection, MetricFamily, MetricRow, NodeMetrics,
+    LaunchedAs, LaunchedPrefix, MetricDirection, MetricFamily, MetricRow, NameHeld, NodeMetrics,
     ParameterName, ParameterRow, ParameterValue, RunDetail, RunInputs, RunSummary, ServiceBinding,
     TraceNodeView, TracePassage, TraceValue,
 };
@@ -52,7 +52,7 @@ pub(crate) fn summary(
         launched_as: run
             .provenance
             .as_ref()
-            .map(|record| launched_as(record, index)),
+            .map(|record| launched_as(record, Some(index))),
         dataset_version: run.inputs.dataset_version.clone(),
         benchmark_names,
         index_version: run.inputs.index_version.clone(),
@@ -99,7 +99,7 @@ pub(crate) fn shape(run: &Run) -> Option<Graph> {
 /// One run, whole: its stored fields and the graph lowered from its stored
 /// configuration by `ragondin-experiments`' one lowering path. A document
 /// that no longer lowers is `run_unreadable`, never a guessed graph.
-pub(crate) fn detail(run: &Run, index: &lineage::Index) -> Result<RunDetail, ApiError> {
+pub(crate) fn detail(run: &Run) -> Result<RunDetail, ApiError> {
     let pipeline = lower_configuration(&run.config).map_err(|reason| ApiError::RunUnreadable {
         run_id: run.id.to_string(),
         reason,
@@ -117,7 +117,7 @@ pub(crate) fn detail(run: &Run, index: &lineage::Index) -> Result<RunDetail, Api
         launched_as: run
             .provenance
             .as_ref()
-            .map(|record| launched_as(record, index)),
+            .map(|record| launched_as(record, None)),
     })
 }
 
@@ -218,13 +218,18 @@ pub(crate) fn family(of: &LogicalNode) -> String {
 }
 
 /// A run's launch record, as the API spells it.
+/// `record` as the API serves it, `held` read from `index` — or
+/// [`NameHeld::Unchecked`] without one, for an endpoint that lists no
+/// `pipelines/`.
 pub(crate) fn launched_as(
     record: &ragondin_experiments::RunProvenance,
-    index: &lineage::Index,
+    index: Option<&lineage::Index>,
 ) -> LaunchedAs {
     LaunchedAs {
         name: record.name().map(str::to_owned),
-        held: record.name().map(|name| index.held(name)),
+        held: record
+            .name()
+            .map(|name| index.map_or(NameHeld::Unchecked, |index| index.held(name))),
         prefix_of: record.prefix_of().map(|prefix| LaunchedPrefix {
             up_to: prefix.up_to().to_owned(),
             parent_pipeline_hash: prefix.parent_pipeline_hash().to_string(),

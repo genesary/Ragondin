@@ -680,15 +680,20 @@ listing — reported, never repaired.
   schema across the API. Recorded at launch, its name may be a pipeline
   whose content has changed since, or that no longer exists. Neither fact is
   a resolution of the other, and no field says which a name came from.
-  `held` says which of the last is true of the name now: `exactly` (a
-  document is stored under it, valid or not), `other_case` (only under the
-  same name in another ASCII case — the file backend's case-alias rule, so
-  reading it as recorded is refused) or `gone`; `null` when the record names
-  none. It is read from the same `lineage::index` listing as
-  `pipeline_names`, one listing of `pipelines/` per `GET /runs` — and per
-  `GET /runs/{id}` and per pipeline matrix — so the two facts never come
-  from two listings, and the UI needs no read of its own to know whether a
-  recorded name still leads anywhere. A fact about the name, never the
+  `held` says which of the last is true of the name now, as a read of it
+  would be answered: `other_case` when a stored document is a case alias of
+  it (`backends::case_alias`, the one rule the file backend refuses a read
+  by — checked first, since the backend refuses the name even when it is
+  also stored as given), else `exactly` (a document is stored under it,
+  valid or not), else `gone`; `null` when the record names none, and only
+  then. `GET /runs` and the pipeline matrix read it from the same
+  `lineage::index` listing as `pipeline_names` — one listing of
+  `pipelines/` per request — so the two facts never come from two
+  listings, and the UI needs no read of its own to know whether a recorded
+  name still leads anywhere. **`GET /runs/{id}` does not check**: it lists
+  no `pipelines/`, so it stays one run's read that a broken document cannot
+  fail — Replay reads it — and sends `unchecked`, a value of its own, so
+  `null` keeps its one meaning. A fact about the name, never the
   content.
 - `benchmark_names`: every registry entry pinned to the run's
   `dataset_version`, a manifest entry or an import, sorted — the pinning
@@ -1244,8 +1249,9 @@ ranking and the answer are the walk's, and a pair never moves them.
   naming one and no document, or several, is `null`, and such a run pairs
   automatically only. A recorded name the workspace no longer holds, or
   holds only under another case, has no pairing, and the comparison goes on
-  without one: a pairing is read only for two names `PipelineSource::list`
-  holds exactly as given, so neither `pipeline_not_found` nor the case
+  without one: a pairing is read only for two names the listing holds
+  exactly (`lineage::Index::held`: stored as given, and no case alias of
+  either stored beside it), so neither `pipeline_not_found` nor the case
   alias's `request_invalid` can refuse the comparison. The comparison lists
   the pipelines once (`lineage::index`): the names it looks a pairing up
   among are those of the listing it found each run's pipeline in. That

@@ -19,7 +19,7 @@ export type GroupLabelProps = {
 };
 
 /** Why a recorded name is not a link, in words, by what the listing says of it. */
-const NOT_HELD = { gone: 'no longer a document in this workspace', other_case: 'held only under another case' } as const;
+const NOT_HELD = { gone: 'no longer a document in this workspace', other_case: 'held only under another case', unchecked: 'not checked against the workspace' } as const;
 
 const runs = (n: number) => `${n.toLocaleString('en-US')} run${n === 1 ? '' : 's'}`;
 

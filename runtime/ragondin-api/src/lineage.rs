@@ -23,7 +23,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use ragondin_experiments::Run;
 use ragondin_pipeline::LogicalPipeline;
 
-use crate::backends::PipelineSource;
+use crate::backends::{case_alias, PipelineSource};
 use crate::error::ApiError;
 use crate::response::NameHeld;
 use crate::validation;
@@ -40,12 +40,13 @@ pub(crate) struct Index {
 }
 
 /// The workspace's pipelines, listed once: by canonical hash, and every name.
-/// `GET /runs` reads both from the one listing, the hash matches and whether
-/// each recorded name is held ([`Index::held`]), so the two facts are never
-/// of two listings. `POST /compare` reads both from the one listing, which narrows the window
-/// in which a document deleted meanwhile names a run's pipeline and is then
-/// missing; it cannot close it, since the document can still go before its
-/// pairing is read.
+/// Each reader takes both facts from the one listing. `GET /runs` and the
+/// pipeline matrix read the hash matches and whether each recorded name is
+/// held ([`Index::held`]), so the two are never of two listings; `POST
+/// /compare` reads the runs' pipelines and, by [`Index::held`], which of them
+/// a pairing is read for. That narrows the window in which a document deleted
+/// meanwhile names a run's pipeline and is then missing; it cannot close it,
+/// since the document can still go before its pairing is read.
 pub(crate) async fn index(source: &dyn PipelineSource) -> Result<Index, ApiError> {
     let mut index = Index {
         by_hash: BTreeMap::new(),
@@ -67,18 +68,15 @@ pub(crate) async fn index(source: &dyn PipelineSource) -> Result<Index, ApiError
 }
 
 impl Index {
-    /// Whether the listing holds `name`: as given, only in another case, or
-    /// not at all — the same ASCII case rule the file backend refuses a case
-    /// alias by.
+    /// Whether the listing holds `name` as the backend would answer a read of
+    /// it: a case alias of a stored name first ([`case_alias`]), since the
+    /// backend refuses the name then even when it is also stored as given;
+    /// then as given; otherwise not at all.
     pub(crate) fn held(&self, name: &str) -> NameHeld {
-        if self.names.contains(name) {
-            NameHeld::Exactly
-        } else if self
-            .names
-            .iter()
-            .any(|stored| stored.eq_ignore_ascii_case(name))
-        {
+        if self.names.iter().any(|stored| case_alias(stored, name)) {
             NameHeld::OtherCase
+        } else if self.names.contains(name) {
+            NameHeld::Exactly
         } else {
             NameHeld::Gone
         }
