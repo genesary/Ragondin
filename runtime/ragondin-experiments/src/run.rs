@@ -1,6 +1,6 @@
 //! What a run *is*: [`RunId`], [`RunInputs`], [`Metrics`], [`ConfigDocument`],
-//! [`TraceDocument`], [`RunBinding`], [`RunTimes`] and the [`Run`] record that
-//! holds them.
+//! [`TraceDocument`], [`RunBinding`], [`RunTimes`], [`RunProvenance`] with its
+//! [`PrefixOf`], and the [`Run`] record that holds them.
 //!
 //! A run is one execution of a pipeline over a benchmark, together with its
 //! metrics and its traces, and it is named by the content-addressed tuple of
@@ -366,6 +366,87 @@ impl RunTimes {
     }
 }
 
+/// How a run was launched: the workspace pipeline name it was launched as
+/// and, for a prefix run, which version of that parent it was cut from and
+/// where (ADR-C39 § 1, § 2).
+///
+/// Provenance, not identity: not in [`RunInputs`], and not digested into the
+/// [`RunId`] (INV-8), so a run with a record and the same run without one have
+/// one id. A fact about the run's first launch, not proof of lineage: a name
+/// reused for other content, or renamed by hand, still reads as recorded.
+///
+/// Built only with a name ([`named`](Self::named),
+/// [`prefix`](Self::prefix)), or empty ([`Default`]). Read back
+/// tolerantly: a record holding `prefix_of` and no `name` deserializes,
+/// although no constructor builds one, and a field this build does not know
+/// is ignored, so a later field is added without a version.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunProvenance {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    prefix_of: Option<PrefixOf>,
+}
+
+impl RunProvenance {
+    /// A run launched as the workspace pipeline `name`.
+    pub fn named(name: impl Into<String>) -> Self {
+        Self {
+            name: Some(name.into()),
+            prefix_of: None,
+        }
+    }
+
+    /// A prefix of the workspace pipeline `parent`, cut as `prefix` says.
+    /// `parent` names the parent, never an earlier version of the run.
+    pub fn prefix(parent: impl Into<String>, prefix: PrefixOf) -> Self {
+        Self {
+            name: Some(parent.into()),
+            prefix_of: Some(prefix),
+        }
+    }
+
+    /// The workspace pipeline name the run was launched as; with
+    /// [`prefix_of`](Self::prefix_of), the parent's name.
+    pub fn name(&self) -> Option<&str> {
+        self.name.as_deref()
+    }
+
+    /// Where the run was cut from its parent, for a prefix run.
+    pub fn prefix_of(&self) -> Option<&PrefixOf> {
+        self.prefix_of.as_ref()
+    }
+}
+
+/// Where a prefix run was cut from its parent: the node it stops at, and the
+/// canonical hash of the parent's version it was cut from.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PrefixOf {
+    up_to: String,
+    parent_pipeline_hash: PipelineHash,
+}
+
+impl PrefixOf {
+    /// The cut at node `up_to` of the parent whose canonical hash is
+    /// `parent_pipeline_hash`.
+    pub fn new(up_to: impl Into<String>, parent_pipeline_hash: PipelineHash) -> Self {
+        Self {
+            up_to: up_to.into(),
+            parent_pipeline_hash,
+        }
+    }
+
+    /// The node the run stops at.
+    pub fn up_to(&self) -> &str {
+        &self.up_to
+    }
+
+    /// The canonical hash of the parent's version the run was cut from.
+    pub fn parent_pipeline_hash(&self) -> &PipelineHash {
+        &self.parent_pipeline_hash
+    }
+}
+
 /// One execution of a pipeline over a benchmark: what identified it, what it
 /// scored, and what it did.
 ///
@@ -392,6 +473,11 @@ pub struct Run {
     /// recorded, or assembled by a caller with no clock reading. Outside
     /// identity: see [`RunTimes`].
     pub times: Option<RunTimes>,
+    /// How the run was launched, stamped by the composition root that
+    /// launched it; `None` when nothing was recorded — a run stored before
+    /// the record existed, or launched where no workspace name applied.
+    /// Outside identity: see [`RunProvenance`].
+    pub provenance: Option<RunProvenance>,
 }
 
 #[cfg(test)]

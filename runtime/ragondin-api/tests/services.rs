@@ -273,6 +273,36 @@ async fn a_probe_with_no_body_reads_as_one_with_no_served_model() {
     );
 }
 
+/// No body is no served model, but a body that is `null` is no probe
+/// request: it is refused, as it was when the body was read as bytes.
+#[tokio::test]
+async fn a_probe_whose_body_is_null_is_request_invalid() {
+    let workspace = scratch("probe_null_body");
+    let app = server(&workspace);
+    send(
+        app.clone(),
+        put_service(
+            "/api/v1/services/context_builder/lines",
+            "http://127.0.0.1:8080",
+        ),
+    )
+    .await;
+
+    let response = send(
+        app,
+        write_request(
+            "POST",
+            "/api/v1/services/context_builder/lines/probe",
+            &Value::Null,
+            &[],
+        ),
+    )
+    .await;
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(body_json(response).await["code"], "request_invalid");
+}
+
 /// A misspelled field is refused, not dropped: dropped, `served_modle`
 /// would probe without the served model the client meant.
 #[tokio::test]

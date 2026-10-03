@@ -29,5 +29,16 @@ fn the_file_system_run_store_is_a_conformant_run_store() {
             fs::remove_file(store.root().join(id.to_string()).join("metrics.json"))
                 .expect("a stored run has a metrics file to remove");
         },
+        // A run directory the harness wrote before the launch record
+        // existed, committed as it was: no `provenance.json`.
+        || {
+            let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/stored-before-typed-trace");
+            let id: RunId = "b41e0752792e728f5dd893043b42d2a2d71f0b0039157a177e0a267e0420ea6f"
+                .parse()
+                .expect("the fixture is named by a run id");
+            assert!(!root.join(id.to_string()).join("provenance.json").exists());
+            (FileSystemRunStore::new(root), id)
+        },
     );
 }

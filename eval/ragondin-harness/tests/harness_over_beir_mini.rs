@@ -144,6 +144,14 @@ async fn the_harness_scores_the_fixture_benchmark_and_returns_a_run() {
 }
 
 #[tokio::test]
+async fn the_harness_assembles_the_run_with_no_launch_record() {
+    // Only the composition root knows how a run was launched (ADR-C39 § 3).
+    let run = run_the_harness(&benchmark()).await;
+
+    assert_eq!(run.provenance, None);
+}
+
+#[tokio::test]
 async fn every_executed_query_leaves_its_own_trace_in_the_run() {
     let run = run_the_harness(&benchmark()).await;
 

@@ -250,12 +250,39 @@ function pathsType(paths, typeOf) {
     const operations = Object.entries(methods).map(([method, op]) => {
       const where = `${method.toUpperCase()} ${path}`;
       onlyKnown(op, OPERATION_KEYS, where, 'operation');
-      const params = (/** @type {Schema[]} */ (op.parameters ?? [])).map((p) => {
+      // A Map, so a location named after an inherited key (`constructor`,
+      // `__proto__`) is unknown rather than an object's own member.
+      /** @type {Map<unknown, string[]>} */
+      const byPlace = new Map([
+        ['path', []],
+        ['query', []],
+        ['header', []],
+      ]);
+      /** @type {Set<string>} */
+      const seen = new Set();
+      for (const p of /** @type {Schema[]} */ (op.parameters ?? [])) {
         onlyKnown(p, PARAMETER_KEYS, where, 'parameter');
-        if (p.in !== 'path') refuse(where, `a parameter in \`${p.in}\`, not in the path`);
-        return `        ${propertyName(p.name)}: ${typeOf(p.schema ?? {}, `${where} ${p.name}`, '        ')};`;
-      });
-      const lines = [params.length === 0 ? '      params: Record<string, never>;' : `      params: {\n${params.join('\n')}\n      };`];
+        const place = byPlace.get(p.in);
+        if (place === undefined) return refuse(where, `a parameter in \`${String(p.in)}\`, which is not the path, the query string or a header`);
+        // One name per location: a second would be a second member of one
+        // type. A header's name is case-insensitive in HTTP, so two that
+        // differ only in case are one header declared twice.
+        const key = `${p.in}\n${p.in === 'header' ? String(p.name).toLowerCase() : p.name}`;
+        if (seen.has(key)) refuse(where, `the ${p.in} parameter \`${p.name}\` declared twice`);
+        seen.add(key);
+        // A path parameter is always required; a query or header one is
+        // optional unless the description says otherwise.
+        const optional = p.in !== 'path' && p.required !== true ? '?' : '';
+        const comment = p.in === 'path' ? '' : doc(p.description, '        ');
+        place.push(`${comment}        ${propertyName(p.name)}${optional}: ${typeOf(p.schema ?? {}, `${where} ${p.name}`, '        ')};`);
+      }
+      const block = (/** @type {string} */ key, /** @type {string[]} */ members) => `      ${key}: {\n${members.join('\n')}\n      };`;
+      const inPath = byPlace.get('path') ?? [];
+      const inQuery = byPlace.get('query') ?? [];
+      const inHeader = byPlace.get('header') ?? [];
+      const lines = [inPath.length === 0 ? '      params: Record<string, never>;' : block('params', inPath)];
+      if (inQuery.length > 0) lines.push(block('query', inQuery));
+      if (inHeader.length > 0) lines.push(block('headers', inHeader));
       if (op.requestBody !== undefined) {
         onlyKnown(op.requestBody, REQUEST_BODY_KEYS, where, 'request body');
         if (op.requestBody.required === false) refuse(where, 'an optional request body, which the client always sends');

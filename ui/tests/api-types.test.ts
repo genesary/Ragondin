@@ -197,13 +197,111 @@ describe('renderApiTypes', () => {
     );
   });
 
+  it('renders query and header parameters beside the path’s, each optional unless required', () => {
+    const R = { 200: { content: { 'application/json': { schema: { $ref: '#/components/schemas/R' } } } } };
+    const string = { type: 'string' };
+    const out = renderApiTypes(
+      description(
+        { R: { type: 'string' } },
+        {
+          '/q': { get: { parameters: [{ in: 'query', name: 'missing_gold_at', required: false, schema: { type: 'integer', minimum: 1 } }], responses: R } },
+          '/h': {
+            get: {
+              parameters: [
+                { in: 'header', name: 'If-Match', required: false, description: 'The etag read.', schema: string },
+                { in: 'header', name: 'X-Required', required: true, schema: string },
+              ],
+              responses: R,
+            },
+          },
+          '/both/{id}': {
+            put: {
+              parameters: [
+                { in: 'path', name: 'id', required: true, schema: string },
+                { in: 'query', name: 'n', required: true, schema: { type: 'integer' } },
+                { in: 'header', name: 'If-None-Match', required: false, schema: string },
+              ],
+              requestBody: { content: { 'application/json': { schema: { $ref: '#/components/schemas/R' } } } },
+              responses: R,
+            },
+          },
+        },
+      ),
+    );
+    expect(typeOf(out, 'Paths')).toBe(
+      '{ "/q": { get: { params: Record<string, never>; query: { missing_gold_at?: number; }; response: R; }; }; ' +
+        '"/h": { get: { params: Record<string, never>; headers: { /** The etag read. */ "If-Match"?: string; "X-Required": string; }; response: R; }; }; ' +
+        '"/both/{id}": { put: { params: { id: string; }; query: { n: number; }; headers: { "If-None-Match"?: string; }; body: R; response: R; }; }; }',
+    );
+  });
+
   it.each([
     ['a schema form it does not know', description({ X: { type: 'object', patternProperties: {} } }), /patternProperties/],
     ['a reference outside the schemas', description({ X: { $ref: 'other.json#/X' } }), /other\.json/],
     [
-      'a parameter that is not in the path',
-      description({}, { '/x': { get: { parameters: [{ in: 'query', name: 'q', schema: { type: 'string' } }], responses: {} } } }),
-      /query/,
+      'a parameter in a cookie, naming the operation',
+      description({}, { '/x': { get: { parameters: [{ in: 'cookie', name: 'c', required: false, schema: { type: 'string' } }], responses: OK } } }),
+      /GET \/x.*cookie/,
+    ],
+    [
+      'a parameter located in an inherited key (`constructor`)',
+      description({}, { '/x': { get: { parameters: [{ in: 'constructor', name: 'c', required: true, schema: { type: 'string' } }], responses: OK } } }),
+      /GET \/x.*constructor/,
+    ],
+    [
+      'a parameter located in an inherited key (`__proto__`)',
+      description({}, { '/x': { get: { parameters: [{ in: '__proto__', name: 'c', required: true, schema: { type: 'string' } }], responses: OK } } }),
+      /GET \/x.*__proto__/,
+    ],
+    [
+      'two query parameters of one name',
+      description({}, {
+        '/x': {
+          get: {
+            parameters: [
+              { in: 'query', name: 'q', required: false, schema: { type: 'string' } },
+              { in: 'query', name: 'q', required: false, schema: { type: 'integer' } },
+            ],
+            responses: OK,
+          },
+        },
+      }),
+      /GET \/x.*`q`.*twice/,
+    ],
+    [
+      'two headers of one name',
+      description({}, {
+        '/x': {
+          get: {
+            parameters: [
+              { in: 'header', name: 'If-Match', required: false, schema: { type: 'string' } },
+              { in: 'header', name: 'If-Match', required: false, schema: { type: 'string' } },
+            ],
+            responses: OK,
+          },
+        },
+      }),
+      /GET \/x.*`If-Match`.*twice/,
+    ],
+    [
+      'two headers whose names differ only in case, which HTTP reads as one',
+      description({}, {
+        '/x': {
+          get: {
+            parameters: [
+              { in: 'header', name: 'If-Match', required: false, schema: { type: 'string' } },
+              { in: 'header', name: 'if-match', required: false, schema: { type: 'string' } },
+            ],
+            responses: OK,
+          },
+        },
+      }),
+      /GET \/x.*`if-match`.*twice/,
+    ],
+    [
+      'a parameter in no location it knows',
+      description({}, { '/x': { get: { parameters: [{ in: 'body', name: 'b', required: true, schema: { type: 'string' } }], responses: OK } } }),
+      /GET \/x.*body/,
     ],
     ['a path with no success response', description({}, { '/x': { get: { parameters: [], responses: {} } } }), /success/],
     ['a second success response', description({}, { '/x': { get: { responses: { ...OK, 201: OK[200] } } } }), /second success/],

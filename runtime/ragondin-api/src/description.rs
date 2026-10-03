@@ -4,8 +4,10 @@
 //!
 //! It exists so that a change to the API is a reviewed diff, and so that the
 //! UI's types can be generated from it. It is deliberately minimal — paths,
-//! methods, the request and response schema of each, the problem schema of
-//! every error, and the schemas under `components/schemas` — and no OpenAPI
+//! methods, the parameters of each in the path, the query string and the
+//! request headers, the request and response schema of each, the problem
+//! schema of every error, and the schemas under `components/schemas` — and
+//! no OpenAPI
 //! generator crate builds it (ADR-C36 § 6 admits none). `just
 //! gen-api-description` rewrites the file; `tests/description.rs` fails when
 //! it is stale.
@@ -13,7 +15,7 @@
 use std::collections::BTreeMap;
 
 use schemars::generate::SchemaSettings;
-use schemars::SchemaGenerator;
+use schemars::{JsonSchema, Schema, SchemaGenerator};
 use serde_json::{json, Map, Value};
 
 use crate::request::{
@@ -39,12 +41,102 @@ pub struct Operation {
     /// The schema name of its JSON request body, when it reads one.
     pub request: Option<&'static str>,
     /// What more a reader needs to know, rendered as the operation's
-    /// `description` when present. Its path parameters are read off
-    /// [`path`](Self::path), and no operation declares a query parameter or
-    /// a header: the UI's type generator refuses both until a screen that
-    /// sends one extends it (`ui/ARCHITECTURE.md` § The generated types), so
-    /// an operation that takes one says so here.
+    /// `description` when present. Its parameters are not stated here: the
+    /// path's are read off [`path`](Self::path), and the query's and the
+    /// headers' off the route's handler — the `ApiQuery` and `ApiHeaders`
+    /// types it takes, which the route list records (ADR-C37 § 5).
     pub description: Option<&'static str>,
+}
+
+/// How a query or header type gives its schema: [`schema_of`] at that type.
+pub(crate) type Parameters = fn(&mut SchemaGenerator) -> Schema;
+
+/// `T`'s own schema, as a route's query or header type declares it.
+pub(crate) fn schema_of<T: JsonSchema>(generator: &mut SchemaGenerator) -> Schema {
+    T::json_schema(generator)
+}
+
+/// Where a parameter travels, besides the path.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Place {
+    Query,
+    Header,
+}
+
+impl Place {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Query => "query",
+            Self::Header => "header",
+        }
+    }
+}
+
+/// The parameters `of` declares, as OpenAPI parameters in `place`: one per
+/// property of its object schema, `required` as the schema says, with the
+/// property's documentation as the parameter's. A query type that is not
+/// closed — `additionalProperties` anything but `false`, as a map or a
+/// flattened map gives — is refused, since its handler would accept a
+/// parameter the description does not declare (ADR-C37 § 5); a header type
+/// is not closed, since a request carries headers no handler reads.
+fn declare_parameters(
+    generator: &mut SchemaGenerator,
+    place: Place,
+    of: Parameters,
+) -> Result<Vec<Value>, String> {
+    // The generator's own transforms — OpenAPI's `nullable`, among them —
+    // as it applies them to every definition.
+    let mut schema = of(generator);
+    for transform in generator.transforms_mut() {
+        transform.transform(&mut schema);
+    }
+    let schema = schema.to_value();
+    if schema.get("type") != Some(&json!("object")) {
+        return Err(format!(
+            "a {} parameter type is a struct, and this schema is not one: {schema}",
+            place.name()
+        ));
+    }
+    if place == Place::Query && schema.get("additionalProperties") != Some(&Value::Bool(false)) {
+        return Err(format!(
+            "a query parameter type is closed, `#[serde(deny_unknown_fields)]`, and this \
+             schema's `additionalProperties` is not `false`: {schema}"
+        ));
+    }
+    // A closed struct with no field — `NoParameters` — declares none.
+    let none = Map::new();
+    let properties = match schema.get("properties") {
+        Some(Value::Object(properties)) => properties,
+        None => &none,
+        Some(_) => return Err(format!("`properties` that is not an object: {schema}")),
+    };
+    let required: Vec<&str> = schema
+        .get("required")
+        .and_then(Value::as_array)
+        .map(|names| names.iter().filter_map(Value::as_str).collect())
+        .unwrap_or_default();
+    Ok(properties
+        .iter()
+        .map(|(name, property)| {
+            let mut property = property.clone();
+            let documented = property.as_object_mut().and_then(|property| {
+                // An absent parameter is not a `null` one: optional is
+                // `required`'s to say.
+                property.remove("nullable");
+                property.remove("description")
+            });
+            let mut parameter = json!({
+                "name": name,
+                "in": place.name(),
+                "required": required.contains(&name.as_str()),
+                "schema": property,
+            });
+            if let Some(description) = documented {
+                parameter["description"] = description;
+            }
+            parameter
+        })
+        .collect())
 }
 
 /// Every operation the router serves. `tests/description.rs` checks that each
@@ -80,9 +172,7 @@ pub const OPERATIONS: &[Operation] = &[
         summary: "A run's queries with their scores read from the trace, and its per-node ranking metrics.",
         response: "RunQueries",
         request: None,
-        description: Some(
-            "Takes one optional query parameter, `missing_gold_at=<k>`, a positive integer: keep only the judged queries with no gold document (grade above 0) in the top k of the output ranking. It needs the run's own dataset, and answers dataset_absent or dataset_differs without it. Any other parameter, or this one twice, is parameter_invalid. Not declared under `parameters`: the UI's type generator refuses query parameters until the screen that first sends one extends it.",
-        ),
+        description: None,
     },
     Operation {
         method: "get",
@@ -125,7 +215,7 @@ pub const OPERATIONS: &[Operation] = &[
         response: "PipelineDetail",
         request: None,
         description: Some(
-            "The etag is also the response's `ETag` header, quoted. Not declared as a header: the UI's type generator reads path parameters only.",
+            "The etag is also the response's `ETag` header, quoted.",
         ),
     },
     Operation {
@@ -135,7 +225,7 @@ pub const OPERATIONS: &[Operation] = &[
         response: "PipelineWritten",
         request: Some("PipelineDocument"),
         description: Some(
-            "Requires the header `If-Match: \"<etag>\"` to replace the stored document (`If-Match: *` for whatever is stored), or `If-None-Match: *` to create one. A stale etag, `If-Match: *` with nothing stored, a creation over an existing document, or neither header is precondition_failed (412), with the current etag in the `ETag` header, the detail and the problem's `etag` member, and nothing written. A document the composition root refuses — a key no component reads — is pipeline_invalid, in `ragondin bench`'s words. The answer's etag is also its `ETag` header. Not declared as headers: the UI's type generator reads path parameters only.",
+            "A write states one precondition: `If-Match` to replace the stored document, or `If-None-Match: *` to create one. A stale etag, `If-Match: *` with nothing stored, a creation over an existing document, or neither header is precondition_failed (412), with the current etag in the `ETag` header, the detail and the problem's `etag` member, and nothing written; both headers at once is request_invalid. A document the composition root refuses — a key no component reads — is pipeline_invalid, in `ragondin bench`'s words. The answer's etag is also its `ETag` header.",
         ),
     },
     Operation {
@@ -237,12 +327,53 @@ fn description() -> Value {
     generator.subschema_for::<ServiceAddress>();
     generator.subschema_for::<ProbeRequest>();
     generator.subschema_for::<CompareRequest>();
+    // The query and header parameters, before the definitions are taken: a
+    // type one of them refers to is defined under its own name too.
+    let mut routes = crate::routes::Declared::default();
+    crate::routes::api(&mut routes);
+    for route in &routes.0 {
+        assert!(
+            OPERATIONS
+                .iter()
+                .any(|operation| (operation.method, operation.path) == (route.method, route.path)),
+            "{} {} is routed and not described",
+            route.method,
+            route.path
+        );
+    }
+    let declared: Vec<Vec<Value>> = OPERATIONS
+        .iter()
+        .map(|operation| {
+            let route = routes
+                .0
+                .iter()
+                .find(|route| (route.method, route.path) == (operation.method, operation.path))
+                .unwrap_or_else(|| {
+                    panic!(
+                        "{} {} is described and not routed",
+                        operation.method, operation.path
+                    )
+                });
+            let mut declared = Vec::new();
+            for (place, of) in [(Place::Query, route.query), (Place::Header, route.headers)] {
+                if let Some(of) = of {
+                    declared.extend(
+                        declare_parameters(&mut generator, place, of).unwrap_or_else(|refused| {
+                            panic!("{} {}: {refused}", operation.method, operation.path)
+                        }),
+                    );
+                }
+            }
+            declared
+        })
+        .collect();
     let schemas: Map<String, Value> = generator.take_definitions(true);
 
     let mut paths: BTreeMap<&str, Map<String, Value>> = BTreeMap::new();
-    for operation in OPERATIONS {
-        // Each `{name}` of the path, in order.
-        let parameters: Vec<Value> = operation
+    for (operation, declared) in OPERATIONS.iter().zip(declared) {
+        // Each `{name}` of the path, in order, then the query's and the
+        // headers'.
+        let mut parameters: Vec<Value> = operation
             .path
             .split('/')
             .filter_map(|segment| segment.strip_prefix('{')?.strip_suffix('}'))
@@ -255,6 +386,7 @@ fn description() -> Value {
                 })
             })
             .collect();
+        parameters.extend(declared);
         let mut entry = json!({
             "summary": operation.summary,
             "parameters": parameters,
@@ -301,4 +433,88 @@ fn description() -> Value {
         "paths": paths,
         "components": { "schemas": schemas },
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use schemars::JsonSchema;
+    use serde::Deserialize;
+
+    use super::*;
+
+    fn declare<T: JsonSchema>(place: Place) -> Result<Vec<Value>, String> {
+        let mut generator: SchemaGenerator = SchemaSettings::openapi3().into_generator();
+        declare_parameters(&mut generator, place, schema_of::<T>)
+    }
+
+    #[allow(dead_code)]
+    #[derive(Deserialize, JsonSchema)]
+    #[serde(deny_unknown_fields)]
+    struct Closed {
+        /// How many.
+        depth: Option<u32>,
+        kind: u8,
+    }
+
+    #[allow(dead_code)]
+    #[derive(Deserialize, JsonSchema)]
+    struct Open {
+        depth: Option<u32>,
+    }
+
+    /// The shape that loses the checks: every parameter the struct does not
+    /// name lands in the map. (Under `deny_unknown_fields` the derived schema
+    /// drops the map and reads as closed; serde then refuses an unknown
+    /// parameter too, so the closed schema is what the type does.)
+    #[allow(dead_code)]
+    #[derive(Deserialize, JsonSchema)]
+    struct Flattened {
+        depth: Option<u32>,
+        #[serde(flatten)]
+        rest: BTreeMap<String, String>,
+    }
+
+    #[test]
+    fn a_closed_query_type_declares_each_field_required_as_its_type_says() {
+        let declared = declare::<Closed>(Place::Query).expect("a closed struct is declared");
+        assert_eq!(
+            declared,
+            [
+                json!({
+                    "name": "depth",
+                    "in": "query",
+                    "required": false,
+                    "description": "How many.",
+                    "schema": { "type": "integer", "format": "uint32", "minimum": 0 },
+                }),
+                json!({
+                    "name": "kind",
+                    "in": "query",
+                    "required": true,
+                    "schema": { "type": "integer", "format": "uint8", "minimum": 0, "maximum": 255 },
+                }),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_query_type_that_is_not_closed_cannot_be_declared() {
+        let refused = declare::<Open>(Place::Query).unwrap_err();
+        assert!(refused.contains("additionalProperties"), "{refused}");
+    }
+
+    #[test]
+    fn a_map_or_a_flattened_field_cannot_be_declared_as_query_parameters() {
+        assert!(declare::<BTreeMap<String, u32>>(Place::Query).is_err());
+        assert!(declare::<Flattened>(Place::Query).is_err());
+    }
+
+    #[test]
+    fn a_header_type_need_not_be_closed() {
+        let declared = declare::<Open>(Place::Header).expect("a header type is open");
+        assert_eq!(declared[0]["in"], "header");
+        assert_eq!(declared[0]["required"], false);
+    }
 }

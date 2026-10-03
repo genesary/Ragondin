@@ -26,7 +26,9 @@ the response types, the typed errors, and the traits the service consumes.
 | `Backends` | The five backends, each an `Arc<dyn …>`: `RunStore`, `PipelineSource`, `Registry`, `WorkspaceSettings`, `Launcher` |
 | `backends` | The four traits this crate defines, and the values they exchange |
 | `response` | Every type the API serializes — the response bodies and `Problem` |
-| `request` | Every request body the API reads |
+| `request` | Every request body the API reads, and the types its query parameters and request headers are read into |
+| `extract` | The extractors every handler reads its input through — `ApiPath`, `ApiQuery`, `ApiHeaders`, `ApiJson` — `NoParameters`, and `ApiInput`, the bound a handler's every argument meets (ADR-C37) |
+| `routes` | Every route of the `/api` router, listed once: built into the router, and recorded for the description, each registered through the `ApiInput` guard |
 | `error` | `ApiError`, its stable codes, its `application/problem+json` rendering |
 | `layers` | The server's defence of its origin, as Tower layers on the router |
 | `description` | The API description, assembled from the declared operations and the `schemars` schemas |
@@ -424,12 +426,14 @@ handler writes it.
   when it states neither, since a write that does not say what it read
   cannot be kept from overwriting a change. This is the server's half of
   ADR-016's promise that the editor never overwrites a file changed since it
-  read it; the editor (#356) sends the header. The UI's type generator reads
-  path parameters only, so the headers are stated in the operations'
-  descriptions, not as described parameters. **ADR-C37 decides that they are
-  declared as `in: header` parameters, read through `ApiHeaders<T>`
-  (§ Request input goes through one extractor module); until that lands,
-  #356 must not hand-write header plumbing.**
+  read it; the editor sends the header. **Both headers are declared as
+  optional `in: header` parameters of `PUT /pipelines/{name}`**, read through
+  `ApiHeaders<PreconditionHeaders>` (§ Request input goes through one
+  extractor module), so the UI's generated client sends them and no screen
+  writes header plumbing. Which of the two a write states, `*`, and a weak
+  `W/` tag read as its strong form, are the handler's to decide
+  (`precondition` in `endpoints/pipelines.rs`); the extractor only reads
+  them, each trimmed.
 - **A write is checked, validated, then stored**: the document is lowered
   (`validation::lower`, `pipeline_invalid`) and handed to
   `Launcher::check_document` with the workspace's bindings — `bench`'s key
@@ -614,7 +618,7 @@ when it can be null: `RunDetail::prefix_of`, the two times of `RunDetail`
 and `RunSummary`, `PipelineSummary::modified_ms`, `Location::node` and
 `Location::edge` carry a `transform` that lists every property as required,
 since `schemars` would otherwise leave an `Option` out and a generated client
-would type it as possibly absent. `Problem::location` and `Problem::etag`,
+would type it as possibly absent. `Problem::location`, `Problem::etag` and `Problem::name`,
 each omitted when there is none, stay optional, as does `NodePair::label`,
 which a request may leave out. **A request body refuses a
 field it does not read** (`deny_unknown_fields`), so a misspelled field is
@@ -626,8 +630,9 @@ closed object TypeScript gives anyway. `Problem::code`'s schema is an enum of
 ## Request input goes through one extractor module
 
 **ADR-C37 requires that a handler of the `/api` router reads request input
-only through this crate's own extractors**, defined in one module:
-`ApiPath<T>`, `ApiQuery<T>`, `ApiHeaders<T>` and `ApiJson<T>`, each with
+only through this crate's own extractors**, defined in one module,
+`src/extract.rs`: `ApiPath<T>`, `ApiQuery<T>`, `ApiHeaders<T>` and
+`ApiJson<T>`, each with
 `Rejection = ApiError`, so every refusal is a problem body (ADR-C37 § 2). No
 such handler takes `axum::extract::Query`, `axum::extract::Path`,
 `axum::extract::Json` or a `HeaderMap` to read a request header, and none
@@ -641,21 +646,114 @@ header a handler reads are declared in the description from their schemas
 (ADR-C37 § 3 to § 5). A new endpoint that reads raw input is the sign a
 reviewer looks for.
 
-**Today's handlers predate the rule.** `GET /runs/{id}/queries` and
-`GET /runs/{id}/trace/{query}` still read the query string with the
-hand-written `parameters` function, the path-taking handlers take
-`axum::extract::Path` — so an undecodable path segment such as `%FF` answers
-axum's plain-text `400` — `PUT /pipelines/{name}` reads its headers from a
-`HeaderMap`, and a body is read as bytes and parsed in `endpoints/mod.rs`.
-The pull request that implements ADR-C37 replaces all four, and appends
-`query` to the `axum` entry with its first user (§ Dependencies).
+**Every handler takes an `ApiQuery`**: `ApiQuery<NoParameters>` when it
+takes no parameter — an empty braced struct that refuses any — and
+`ApiQuery<RunQueriesParameters>` for `GET /runs/{id}/queries`, whose one
+value, `missing_gold_at`, is the newtype `MissingGoldAt`. The parameter and
+header types are in `src/request.rs`. **The description reads them off the
+routes**: every route is listed once, in `routes::api`, and read twice — by
+`routes::Builder`, which makes the axum router, and by `routes::Declared`,
+which records each handler's `ApiQuery` and `ApiHeaders` types — so
+`description.rs` declares the types the handlers take, never a second list
+kept beside them; a route without an operation, or the reverse, stops the
+description. A header type names its headers in `HeaderFields::NAMES`, read
+once per type rather than from the schema on every request, and the
+description checks that list against the type's schema. Two tests hold the
+rule over every operation in `OPERATIONS` (`tests/extractors.rs`): an
+undeclared query parameter answers `parameter_invalid`, and a path segment
+that does not decode to UTF-8 answers `parameter_invalid` naming the path
+parameter.
+
+**How it is enforced.** By the compiler, for every handler: `routes::Routes::route`,
+the one way a route of the `/api` router is registered, takes a handler only
+when axum's `Handler<T, S>` types its arguments as `T = (M, T1, …, Tn)` with
+every `Ti` an `ApiInput` — `State`, `ApiPath`, `ApiQuery`, `ApiHeaders` or
+`ApiJson` (`ApiInputs`, implemented by macro for up to eight arguments). A
+handler that takes axum's `Path`, `Query` or `Json` — bare, in an `Option`
+or in a `Result` — `Bytes`, `RawQuery`, the `Uri`, the `Request` or a
+`HeaderMap` does not compile, whatever it is imported as.
+
+**`Routes::route` is the only way in, by `clippy.toml`.** The guard binds
+only what is registered through it, so `clippy.toml` — in this package, not
+at the workspace root, where it would reach every crate — refuses, under
+`disallowed-methods`, every method that adds a route, a service, a fallback
+or a layer:
+
+- on `axum::Router`: `route`, `route_service`, `nest`, `nest_service`,
+  `merge`, `layer`, `route_layer`, `fallback`, `fallback_service` and
+  `method_not_allowed_fallback`;
+- on `axum::routing::MethodRouter`: `on_service`, `fallback`,
+  `fallback_service`, `layer` and `route_layer`;
+- the free functions `axum::routing::on_service`, `any_service` and each
+  method's `*_service`;
+- `axum::middleware::from_fn` and `from_fn_with_state`.
+
+Two sites allow them, each saying why:
+
+- `routes::Builder::into_router` — the one `Router::route` an /api handler
+  meets, every method router built through the guard, and the
+  `MethodRouter::fallback` that answers a method it does not serve with
+  `method_not_allowed`;
+- `router` in `lib.rs` — the one assembly site: the nest under `/api`, the
+  bare-prefix route and the naming fallback (ADR-C37 § 2's exception: they
+  take the `Uri` and the `Method` only to name the request), the assets'
+  fallback service (`assets::endpoint`, outside the `/api` router), and the
+  envelope's layer stack (`layers::envelope`, ADR-C10), applied last with one
+  `Router::layer`.
+
+One more allow covers `from_fn_with_state` alone: it sits on
+`layers::middleware`, a one-line wrapper that makes one of the envelope's
+middleware functions a layer. `layers::envelope`, which stacks them, carries
+no allow, so a route, a nested router or a service added there is refused
+like anywhere else. A route, a service or a fallback added outside the two
+sites fails `just clippy`. Within them, review holds the line. `clippy.toml` also refuses `axum::extract::Path`,
+`axum::extract::Query` and `axum::http::HeaderMap` under `disallowed-types`
+in the crate's other code, and `src/extract.rs` alone allows them, saying
+why. `axum::extract::Json` is not on that list, because
+it *is* `axum::Json`, the response every handler returns, and
+`disallowed-types` cannot tell an argument from a return type; the guard
+refuses it as an argument.
+
+Choices made here (`AGENTS.md` § Rules of engagement), each within what
+ADR-C37 decides:
+
+- **`name` is present exactly when the extractor knows it.** A path value is
+  named by axum's rejection, for a tuple by the route's own parameter list,
+  and — when a value's own type refuses it without a key or a position — by
+  the route's parameter if it has only one; among several, none is guessed.
+  A query value that is not percent-encoded UTF-8 is named when its
+  name decodes, and not when the name itself does not. A header sent twice
+  is named by its wire spelling, `If-Match`. A refusal from the
+  deserializer — an unknown, repeated or unreadable parameter — names none:
+  serde's reason is text, and a name parsed out of it would be a guess. A
+  value type describes itself instead (`` `missing_gold_at` is a positive
+  integer ``).
+- **A header value is read as trimmed text**, into a JSON object of strings
+  the header type is deserialized from, so its fields read strings: they are
+  `Option<String>` where the header's meaning is the handler's to read —
+  the precondition's `*` and weak tags stay in `precondition`, as they were.
+  A value that is not text is `request_invalid`, as before the headers were
+  declared.
+- **An empty body reads as JSON `null`**, so `ApiJson<Option<T>>` reads no
+  body as `None` — what the probe needs, a context builder sending none —
+  and every other body type refuses it, `request_invalid`, as before. A body
+  that is the literal `null` is refused whatever the type, so the probe
+  refuses it as it did when it read bytes.
+- **A query type's closure is checked on its schema**, `additionalProperties:
+  false`, which refuses a struct without `deny_unknown_fields`, a map, and a
+  flattened map. A `#[serde(flatten)]` field under `deny_unknown_fields`
+  leaves no mark on the schema — `schemars` renders the struct closed — and
+  serde then refuses an unknown parameter too, so the schema says what the
+  type does; the rule against it (ADR-C37 § 4) is review's to hold.
 
 ## The error codes
 
 `ApiError` is typed with `thiserror` (ADR-C13); `anyhow` is not a dependency.
 Each variant renders as `application/problem+json` — `type`
 (`urn:ragondin:problem:<code>`), `title`, `status`, `detail`, `code`, `hint`,
-and `location` for a validation failure. `ApiError::CODES` lists them. A code
+`location` for a validation failure, and `name` for a `parameter_invalid`
+whose parameter is known — absent otherwise, never guessed (§ Request input
+goes through one extractor module). `ApiError::CODES` lists them. A code
 no handler raises yet still exists, so a later endpoint adds a handler, not a
 code.
 
@@ -668,7 +766,7 @@ code.
 | `run_unreadable` | 500 | a stored run this build cannot read: torn, malformed, or a configuration that no longer lowers | `GET /runs/{id}` |
 | `run_not_found` | 404 | no run under this id, or a string that is not a run id | `GET /runs/{id}` and below |
 | `query_not_found` | 404 | a query id the run's traces do not hold | `GET /runs/{id}/trace/{query}` |
-| `parameter_invalid` | 400 | a query parameter the endpoint does not take, given twice, or a value it cannot read | `GET /runs/{id}/queries`, `GET /runs/{id}/trace/{query}` |
+| `parameter_invalid` | 400 | a query parameter the endpoint does not take, given twice, or a value it cannot read; a query string that is not percent-encoded UTF-8; a path value that does not decode to UTF-8 or does not read, naming the path parameter; a header the endpoint reads, sent twice, naming it. `name` carries the parameter when it is known | every endpoint |
 | `dataset_absent` | 404 | ground truth needed, and the run's dataset is not on disk or pinned by nothing | `GET /runs/{id}/queries?missing_gold_at=` |
 | `dataset_differs` | 409 | ground truth needed, and the dataset on disk is not the run's: its digest differs, or it does not load (the detail says which) | `GET /runs/{id}/queries?missing_gold_at=` |
 | `benchmark_not_found` | 404 | a benchmark name the registry does not know, or a download of one the manifest does not hold | `FsRegistry` |
@@ -680,13 +778,14 @@ code.
 | `precondition_failed` | 412 | a pipeline write whose `If-Match` names another revision or, as `*`, meets no file, whose `If-None-Match: *` meets an existing file, or that states neither; the current etag in `ETag`, the detail and the `etag` member | `PUT /pipelines/{name}` |
 | `binding_refused` | 422 | a binding the composition root would refuse on `--remote`, in its words | `PUT /services/{family}/{name}`, the probe |
 | `service_not_found` | 404 | no service bound under this family and name | `DELETE /services/…`, the probe |
-| `request_invalid` | 400 | a body that is not the operation's JSON — a field missing, or one it does not read — a pipeline name that is not one file name on a write or differs from a stored one only in case, a layout of another version, a probe its family cannot answer as asked | every endpoint that reads a body |
+| `request_invalid` | 400 | a body that is not the operation's JSON — a field missing, or one it does not read — a pipeline name that is not one file name on a write or differs from a stored one only in case, a layout of another version, a probe its family cannot answer as asked; a body that fails to buffer — a connection that breaks off mid-body; a precondition header whose value is not text | every endpoint that reads a body |
 | `backend_failed` | 500 | a backend failed otherwise — listing the store, say | `GET /runs`, `GET /workspace`, the file backends |
 | `host_refused` | 421 | the `Host` layer refused the request | every path |
 | `origin_refused` | 403 | the `Origin` layer refused the request | every path |
 | `route_not_found` | 404 | a path under `/api` that names no endpoint | the API's fallback |
 | `method_not_allowed` | 405 | an endpoint asked for with a method it does not serve; `Allow` lists the ones it does | each endpoint |
 | `runs_not_comparable` | 409 | runs evaluated on different benchmarks — the detail names both `dataset_version`s — or more than a baseline and four runs, naming the ceiling | `POST /compare` |
+| `body_too_large` | 413 | a body over axum's default body limit, which `ApiJson` reads under | every endpoint that reads a body |
 
 Choices made here (`AGENTS.md` § Rules of engagement), since the design
 document § 8 lists seven codes and leaves the rest to the implementation:
@@ -730,9 +829,18 @@ document § 8 lists seven codes and leaves the rest to the implementation:
   it was `backend_failed` (500) before, which told the client the server had
   failed. `request_invalid` is the 400 every malformed body gets, as a
   problem body rather than axum's plain-text rejection — so a body is read
-  as bytes and parsed here (`endpoints/mod.rs`); it is not
-  `parameter_invalid`, which names a query parameter, so a client can tell
-  which part of its request to correct.
+  by `ApiJson`, buffered and parsed here; it is not `parameter_invalid`,
+  which names a parameter, so a client can tell which part of its request
+  to correct.
+- **Two refusals of a body's buffering, which ADR-C37 made problem bodies.**
+  A body over the limit is `body_too_large`, its own code because its
+  status is HTTP's 413 and its action differs — send less, not send
+  otherwise. A body that fails to buffer is `request_invalid`: the request's
+  body could not be read, the client's action is to send it again, and a
+  code of its own would buy it nothing it can act on differently.
+- **An invalid path value is `parameter_invalid`**, naming the path
+  parameter (ADR-C37 § 4) — never `run_not_found` or `pipeline_not_found`,
+  which would tell the client a thing is absent when its request named none.
 - **`runs_not_comparable` for `POST /compare`**, a 409 as the issue that
   added it asked: `pipeline_invalid` would tell the client a document is
   wrong, and `request_invalid` that the body is — here the request is
@@ -804,10 +912,8 @@ restated (`derived.rs`):
   It is the only parameter the listing takes, and the trace takes none; a
   name and a value are percent-decoded, and any other parameter, the same one
   twice, or a value that is not a positive integer is `parameter_invalid`.
-  It is stated in the operation's `description` in `api/v1.json`, not
-  declared under `parameters`: the UI's type generator refuses a query
-  parameter (`ui/ARCHITECTURE.md` § The generated types) until the screen
-  that first sends one extends it.
+  It is declared as an optional `in: query` parameter in `api/v1.json`, from
+  `RunQueriesParameters`, so the UI's generated client sends it.
 - **No pagination.** The listing answers every query of the run at once —
   SQuAD's thousand in one body. Paging it is a change to this endpoint when a
   screen needs it.
@@ -901,8 +1007,8 @@ make every run's detail load and digest its dataset.
 `POST /compare` compares runs of one benchmark against a baseline (the
 design document § 3, § 5). Its options travel in the JSON body —
 `{run_ids, baseline, pairing?}`, read as every body is, refusing a field it
-does not read — and never in the query string, which decision #371 has yet
-to settle. Two to five run ids, each once, the baseline among them, or
+does not read — and the query string takes no parameter, `NoParameters`
+(ADR-C37 § 4: a list travels in a JSON body). Two to five run ids, each once, the baseline among them, or
 `request_invalid`; the response lists the baseline first, then the others
 in the order given.
 
@@ -1162,10 +1268,12 @@ All admitted by ADR-C36 § 6, each argued in its root `Cargo.toml` comment:
 false`; `json` for the endpoints, and `tokio` and `http1` for `axum::serve`,
 inside `serve`,
 named now because appending a feature to the entry later would escalate — one
-`hyper` in `Cargo.lock`, which no core crate reaches; ADR-C37 § 1 admits one
-more, `query`, appended in the pull request that first uses it and not
-before), `schemars`, and `tokio`,
-whose workspace entry now names `net`, `sync` and `time`. `tower`, the
+`hyper` in `Cargo.lock`, which no core crate reaches; and `query`, appended
+by ADR-C37 § 1 for `ApiQuery`, the one grant that decision makes). `query`
+brings no crate: `serde_urlencoded` 0.7.1 was already in the closure through
+`reqwest`, so `Cargo.lock` lists the same packages at the same versions, and
+gains only the `axum → serde_urlencoded` edge in `axum`'s dependency list.
+Then `schemars`, and `tokio`, whose workspace entry now names `net`, `sync` and `time`. `tower`, the
 workspace's serving-envelope entry, is a dependency for the `Service` trait
 `Server` implements, which needs no feature; the tests also use
 `ServiceExt::oneshot`, whose `util` feature comes from `axum`'s own

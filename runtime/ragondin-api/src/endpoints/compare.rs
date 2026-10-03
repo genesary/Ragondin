@@ -10,18 +10,17 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use axum::body::Bytes;
 use axum::extract::State;
 use axum::Json;
 use ragondin_experiments::{compare_runs, Direction, Run, Trace};
 use ragondin_pipeline::LogicalPipeline;
 use ragondin_types::QueryId;
 
-use super::json_body;
 use crate::backends::RunDataset;
 use crate::comparison::{self, Column, BINS};
 use crate::derived::{Metrics, NodeFigures, Outputs};
 use crate::error::ApiError;
+use crate::extract::{ApiJson, ApiQuery, NoParameters};
 use crate::handlers::{self, AppState};
 use crate::request::CompareRequest;
 use crate::response::{
@@ -55,9 +54,9 @@ struct Compared {
 /// a pairing that names nothing — changes nothing on disk.
 pub(crate) async fn compare(
     State(state): State<AppState>,
-    body: Bytes,
+    _: ApiQuery<NoParameters>,
+    ApiJson(request): ApiJson<CompareRequest>,
 ) -> Result<Json<Comparison>, ApiError> {
-    let request: CompareRequest = json_body(&body)?;
     let order = order(&request)?;
 
     let mut runs = Vec::with_capacity(order.len());
