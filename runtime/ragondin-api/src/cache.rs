@@ -38,9 +38,9 @@ use std::fmt::Write as _;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
-use ragondin_benchmarks::identity::Encoder;
 use ragondin_experiments::Run;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use crate::derived::NodeFigures;
 
@@ -48,8 +48,9 @@ use crate::derived::NodeFigures;
 /// miss.
 const FORMAT: u32 = 2;
 
-/// The domain separator of the run-content digest.
-const CONTENT_DOMAIN: &str = "ragondin-api/cache-run-content/v1";
+/// The domain separator of the run-content digest. `v2` streams each trace
+/// (`content_digest`); a file keyed under `v1` is a miss.
+const CONTENT_DOMAIN: &str = "ragondin-api/cache-run-content/v2";
 
 /// What a cache file is keyed on: everything its figures were computed from.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -76,26 +77,50 @@ impl Key {
 }
 
 /// A digest of what the figures are read from inside the run: every trace
-/// document, by query, and every metric, by name — each through its JSON
-/// text, whose objects are ordered maps in this build.
+/// document, by query, and every metric, by name.
+///
+/// Each trace goes in through its JSON text, whose objects are ordered maps
+/// in this build, written straight into the hasher rather than built as a
+/// string first: building the string was a third of the key's cost
+/// (§ *The cache: a choice made here* has the figures). Streamed, the text's
+/// length is not known before it is written, so it is not length-prefixed
+/// as the encoder's fields are; it is closed by `0xFF` instead, a byte no
+/// UTF-8 text holds, so where one trace ends is never in doubt. The query
+/// ids and the metrics are written as `ragondin_benchmarks::identity`'s
+/// encoder writes a field and a count: a length, little-endian, then the
+/// bytes.
 fn content_digest(run: &Run) -> String {
-    let mut encoder = Encoder::new(CONTENT_DOMAIN);
-    encoder.count(run.traces.len());
+    let mut hasher = Sha256::new();
+    field(&mut hasher, CONTENT_DOMAIN.as_bytes());
+    count(&mut hasher, run.traces.len());
     for (query, trace) in &run.traces {
-        encoder.field(query.as_str().as_bytes());
-        encoder.field(trace.as_value().to_string().as_bytes());
+        field(&mut hasher, query.as_str().as_bytes());
+        serde_json::to_writer(&mut hasher, trace.as_value())
+            .expect("a JSON value always serializes, and a hasher never fails a write");
+        hasher.update([0xFF]);
     }
-    encoder.count(run.metrics.len());
+    count(&mut hasher, run.metrics.len());
     for (name, value) in run.metrics.iter() {
-        encoder.field(name.as_bytes());
-        encoder.field(&value.to_bits().to_le_bytes());
+        field(&mut hasher, name.as_bytes());
+        field(&mut hasher, &value.to_bits().to_le_bytes());
     }
     let mut hex = String::with_capacity(64);
-    for byte in encoder.finish() {
+    for byte in hasher.finalize() {
         // Infallible: writing to a `String` cannot fail.
         let _ = write!(hex, "{byte:02x}");
     }
     hex
+}
+
+/// A count, as a little-endian `u64` whatever the machine's width.
+fn count(hasher: &mut Sha256, count: usize) {
+    hasher.update((count as u64).to_le_bytes());
+}
+
+/// A byte string, preceded by its length.
+fn field(hasher: &mut Sha256, bytes: &[u8]) {
+    count(hasher, bytes.len());
+    hasher.update(bytes);
 }
 
 /// What `derived.json` holds for one run.
@@ -301,6 +326,9 @@ fn write_file<T: Serialize>(path: &Path, entry: &T) -> Result<(), String> {
 }
 
 #[cfg(test)]
+mod cost;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -333,6 +361,55 @@ mod tests {
         let _ = std::fs::remove_dir_all(&path);
         std::fs::create_dir_all(&path).unwrap();
         path
+    }
+
+    #[test]
+    fn the_key_holds_for_the_same_content_and_changes_with_any_of_it() {
+        use ragondin_experiments::TraceDocument;
+        use ragondin_types::QueryId;
+
+        let base = cost::run(1, 3, 10);
+        assert_eq!(Key::of("b", &base), Key::of("b", &base.clone()));
+
+        type Edit<'a> = (&'a str, &'a dyn Fn(&mut Run));
+        let changed = |change: &dyn Fn(&mut Run)| {
+            let mut run = base.clone();
+            change(&mut run);
+            Key::of("b", &run)
+        };
+        let q1 = QueryId::new("q1");
+        let edits: [Edit; 6] = [
+            ("one duration", &|run| {
+                let mut value = run.traces[&q1].as_value().clone();
+                value["nodes"][0]["duration_nanos"] = 7.into();
+                run.traces.insert(q1.clone(), TraceDocument::new(value));
+            }),
+            ("one chunk's score", &|run| {
+                let mut value = run.traces[&q1].as_value().clone();
+                value["nodes"][0]["output"]["chunks"]["ranked"][0]["score"] = 0.25.into();
+                run.traces.insert(q1.clone(), TraceDocument::new(value));
+            }),
+            ("a query renamed", &|run| {
+                let trace = run.traces.remove(&q1).unwrap();
+                run.traces.insert(QueryId::new("q1x"), trace);
+            }),
+            ("a query dropped", &|run| {
+                run.traces.remove(&q1);
+            }),
+            ("one metric", &|run| {
+                run.metrics.insert("mrr", 0.25);
+            }),
+            ("two traces swapped", &|run| {
+                let q0 = QueryId::new("q0");
+                let first = run.traces[&q0].clone();
+                let second = run.traces[&q1].clone();
+                run.traces.insert(q0, second);
+                run.traces.insert(q1.clone(), first);
+            }),
+        ];
+        for (what, edit) in edits {
+            assert_ne!(changed(edit), Key::of("b", &base), "{what} changes the key");
+        }
     }
 
     #[test]

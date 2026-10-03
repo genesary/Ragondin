@@ -27,6 +27,9 @@
 //! feature, serves the front end and its JSON API on a loopback address
 //! (ADR-C36 § 1); a build without the feature refuses it, naming the feature.
 //!
+//! Beside the subcommands, `ragondin --notices` prints the licence notices of
+//! the Rust crates the binary links, which [`notices`] embeds.
+//!
 //! **`bench` is where the composition root does its job** (§4.3): it is the one
 //! subcommand that registers concrete components on an `EngineContext`, which
 //! is why this crate — and no crate under it — depends on them (INV-5). The
@@ -47,6 +50,7 @@ use clap::{Parser, Subcommand};
 mod bench;
 mod binding;
 mod compare;
+mod notices;
 #[cfg(feature = "ui")]
 mod ui;
 mod validate;
@@ -67,11 +71,18 @@ mod remote_fakes;
     long_about = "One binary, one configuration file, it runs.\n\n\
                   A pipeline is described by a single YAML file. `validate` \
                   checks one without running it; the other subcommands take \
-                  the same file into an evaluation or a serving deployment."
+                  the same file into an evaluation or a serving deployment.\n\n\
+                  ragondin is licensed under Apache-2.0. `--notices` prints \
+                  the licence notices of the Rust crates it links."
 )]
+#[command(arg_required_else_help = true, args_conflicts_with_subcommands = true)]
 struct Cli {
+    /// Print the licence notices of the Rust crates this binary links, and
+    /// exit.
+    #[arg(long, exclusive = true)]
+    notices: bool,
     #[command(subcommand)]
-    command: Command,
+    command: Option<Command>,
 }
 
 /// The five subcommands of `docs/code-architecture.md` §4.2.
@@ -88,7 +99,10 @@ enum Command {
         is prepared once, and the components this build carries are \
         constructed from it. Every query of the benchmark is executed and the \
         judged ones are scored; the run is written to the store and its \
-        identity and metrics are printed.\n\n\
+        identity and metrics are printed. A run the store already holds is \
+        kept as it is: this execution is not saved, and `bench` prints the \
+        run's id and `already stored, launched as <name>; this execution was \
+        not kept`, without the name when the stored run records none.\n\n\
         `--benchmark` names a format and a dataset: `beir/<dir>` (qrels only), \
         `beir-qa/<dir>` (the same directory with its `answers.jsonl`), or \
         `squad/<dir>` (the SQuAD v1.1 dev file). A benchmark carrying reference \
@@ -171,7 +185,8 @@ enum Command {
         feature refuses this subcommand.\n\n\
         ragondin is licensed under Apache-2.0. The UI it serves bundles \
         third-party software and fonts under their own licences, whose notices \
-        it serves at `/third-party-notices.txt`."
+        it serves at `/third-party-notices.txt`; the notices of the Rust crates \
+        the binary links are served at `/third-party-notices-rust.txt`."
     )]
     Ui {
         /// The workspace directory, its runs in `<dir>/runs`.
@@ -212,7 +227,20 @@ enum Command {
 /// Dispatches one parsed command. Thin by rule: a subcommand handler composes
 /// and plumbs, and the work belongs to the crate behind it.
 async fn dispatch(cli: Cli) -> Result<()> {
-    match cli.command {
+    // The parser lets the subcommand be absent only for `--notices`, which
+    // takes no other argument; a bare `ragondin` is help and exit 2 there.
+    let command = match (cli.notices, cli.command) {
+        (true, _) => {
+            print!("{}", notices::RUST_CRATES);
+            return Ok(());
+        }
+        (false, Some(command)) => command,
+        (false, None) => unreachable!(
+            "clap's arg_required_else_help answers a bare `ragondin` before dispatch, \
+             and `--notices` is the only argument accepted without a subcommand"
+        ),
+    };
+    match command {
         Command::Validate { config } => validate::run(&config).await,
         Command::Compare {
             run_a,

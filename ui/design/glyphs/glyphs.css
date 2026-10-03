@@ -5,9 +5,11 @@
   vertical-align: -3px;
 }
 
-/* A family tile: the pigment, the glyph in on-family ink. */
+/* A family tile: the pigment, the glyph in the ink made for that pigment
+   (4.5:1+ in both themes; dark ink on some dark pigments, light on others). */
 .rg-tile {
   --fam: var(--family-query);
+  --fam-ink: var(--on-family-query);
   width: 24px;
   height: 24px;
   flex: none;
@@ -15,21 +17,22 @@
   place-content: center;
   border-radius: var(--radius-s);
   background: var(--fam);
-  color: var(--on-family);
+  color: var(--fam-ink);
 }
 .rg-tile .rg-glyph {
   display: block;
 }
-.rg-tile[data-family="query"] { --fam: var(--family-query); }
-.rg-tile[data-family="retriever"] { --fam: var(--family-retriever); }
-.rg-tile[data-family="fusion"] { --fam: var(--family-fusion); }
-.rg-tile[data-family="reranker"] { --fam: var(--family-reranker); }
-.rg-tile[data-family="context"] { --fam: var(--family-context); }
-.rg-tile[data-family="generator"] { --fam: var(--family-generator); }
-.rg-tile[data-family="judge"] { --fam: var(--family-judge); }
+.rg-tile[data-family="query"] { --fam: var(--family-query); --fam-ink: var(--on-family-query); }
+.rg-tile[data-family="retriever"] { --fam: var(--family-retriever); --fam-ink: var(--on-family-retriever); }
+.rg-tile[data-family="fusion"] { --fam: var(--family-fusion); --fam-ink: var(--on-family-fusion); }
+.rg-tile[data-family="reranker"] { --fam: var(--family-reranker); --fam-ink: var(--on-family-reranker); }
+.rg-tile[data-family="context"] { --fam: var(--family-context); --fam-ink: var(--on-family-context); }
+.rg-tile[data-family="generator"] { --fam: var(--family-generator); --fam-ink: var(--on-family-generator); }
+.rg-tile[data-family="judge"] { --fam: var(--family-judge); --fam-ink: var(--on-family-judge); }
 /* Control flow is structure, not a family: neutral, and a diamond. */
 .rg-tile[data-family="control"] {
   --fam: var(--family-query);
+  --fam-ink: var(--on-family-query);
   border-radius: 4px;
   transform: rotate(45deg) scale(0.82);
 }

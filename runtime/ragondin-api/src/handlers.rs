@@ -437,8 +437,10 @@ pub(crate) fn figures(
 /// the run's traces into a `Trace` and summing it. It saves no load — the
 /// listing has already loaded every run, traces included — and it costs a
 /// digest of every trace on every request, hit or miss, since the key
-/// (`cache::Key::of`) serializes each trace document and hashes it. Whether
-/// that digest costs less than the parse it saves is not measured here.
+/// (`cache::Key::of`) streams each trace document's text into a hash. The
+/// digest is measured at about half the parse it saves, so a hit is still
+/// the cheaper path; `ARCHITECTURE.md` § *The cache: a choice made here*
+/// has the figures.
 fn latency(workspace: &std::path::Path, build: &str, run: &Run) -> (Option<u64>, Option<String>) {
     let key = cache::Key::of(build, run);
     let (cached, read_failure) = match cache::read_latency(workspace, &key) {

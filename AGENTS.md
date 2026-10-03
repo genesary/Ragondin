@@ -53,6 +53,17 @@ just check-adr-index
 # Regenerate that index after changing an ADR's front-matter
 just gen-adr-index
 
+# The licence notices of the Rust crates the binary links,
+# bin/ragondin/third-party-notices-rust.txt, are current: the check names
+# every linked crate the file has no notice for. Generated from `cargo
+# metadata --all-features` by a script with no dependency, and tested by its
+# own recipe.
+just check-rust-notices
+just test-gen-rust-notices
+
+# Regenerate those notices after a dependency change
+just gen-rust-notices
+
 # The dependency graph: RustSec advisories, licences, duplicate versions, source
 # registries. Policy in deny.toml. Needs the version CI runs:
 # `cargo install cargo-deny --locked --version 0.20.2`

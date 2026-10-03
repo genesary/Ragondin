@@ -20,11 +20,20 @@ mod generated {
     include!(concat!(env!("OUT_DIR"), "/assets.rs"));
 }
 
-/// The embedded files, as `ragondin-api` asks for them.
+/// The embedded files, as `ragondin-api` asks for them: the UI's, and beside
+/// them the licence notices of the Rust crates this binary links
+/// ([`notices::PATH`](crate::notices::PATH)), which are the binary's own and
+/// so served whether `ui/dist/` was embedded or the notice page was.
 pub struct Embedded;
 
 impl Assets for Embedded {
     fn get(&self, path: &str) -> Option<Asset> {
+        if path == crate::notices::PATH {
+            return Some(Asset {
+                bytes: crate::notices::RUST_CRATES.as_bytes().into(),
+                content_type: content_type_for(path),
+            });
+        }
         generated::Assets::get(path).map(|file| Asset {
             bytes: file.data,
             content_type: content_type_for(path),

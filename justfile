@@ -122,6 +122,26 @@ gen-adr-index:
 check-adr-index:
     python3 scripts/gen-adr-index.py --check
 
+# Regenerate bin/ragondin/third-party-notices-rust.txt, the licence notices of
+# every Rust crate the binary links, from `cargo metadata --all-features` and
+# the licence files of each crate (bin/ragondin/ARCHITECTURE.md § The licence
+# notices of the Rust crates). The binary embeds it, so run this after a
+# dependency change; `check-rust-notices` fails until it has been.
+gen-rust-notices:
+    python3 scripts/gen-rust-notices.py
+
+# Verify the Rust crates' notices are current, naming every linked crate the
+# committed file has no notice for.
+check-rust-notices:
+    python3 scripts/gen-rust-notices.py --check
+
+# Test that generator and its check. Their failure mode is a notices file that
+# reads as complete while leaving a linked crate out; the fixtures are crates
+# and a `cargo metadata` document written by hand under the system temporary
+# directory, so nothing is fetched and nothing is committed.
+test-gen-rust-notices:
+    python3 scripts/test-gen-rust-notices.py
+
 # Regenerate the front end's API description, runtime/ragondin-api/api/v1.json,
 # from that crate's declared operations and response types. The file is a
 # golden: `cargo test -p ragondin-api` fails while it is stale, so a change to
@@ -223,4 +243,4 @@ check-node:
 # needs Node, for `build-ui` and `check-ui`, and checks for it first; every
 # other recipe it runs is cargo or Python. `build-ui` runs before
 # `test-features`, the first recipe that embeds ui/dist/.
-check: check-node fmt build test build-ui test-features clippy check-features doc test-check-invariants check-invariants test-check-doc-links check-doc-links check-adr-index check-deny check-ui
+check: check-node fmt build test build-ui test-features clippy check-features doc test-check-invariants check-invariants test-check-doc-links check-doc-links check-adr-index test-gen-rust-notices check-rust-notices check-deny check-ui
