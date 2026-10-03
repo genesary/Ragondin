@@ -284,7 +284,9 @@ describe('the tables', () => {
     const row = within(table).getByText('foo_score').closest('tr') as HTMLElement;
     expect(row.querySelectorAll('td[data-best]')).toHaveLength(0);
     expect(row.querySelectorAll('.rg-delta')).toHaveLength(0);
-    expect([...row.querySelectorAll('.rg-compare__delta')].map((d) => d.textContent)).toEqual(['+1.5000', '−1.0000']);
+    expect([...row.querySelectorAll('.rg-compare__delta')].map((d) => d.textContent)).toEqual(['+1.5', '−1']);
+    // Printed as stored, as the Runs screen prints a metric of unknown family.
+    expect(within(row).getByText('3.5')).toBeTruthy();
   });
 
   it('shows only the parameters that differ, departures from the baseline marked', async () => {

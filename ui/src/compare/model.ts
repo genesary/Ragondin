@@ -36,10 +36,14 @@ const MINUS = '−';
 
 /**
  * A value as the table prints it: four decimals where higher is better, one
- * where lower is (a latency), and four for a metric the API gives no
- * direction.
+ * where lower is (a latency), and as stored for a metric the API gives no
+ * direction — a name its catalogue does not know, which the Runs screen
+ * prints as stored too: nothing says how to round it.
  */
-export const formatValue = (direction: MetricDirection | null, value: number) => (direction === 'lower' ? value.toFixed(1) : value.toFixed(4));
+export const formatValue = (direction: MetricDirection | null, value: number) => {
+  if (direction === null) return String(value);
+  return direction === 'lower' ? value.toFixed(1) : value.toFixed(4);
+};
 
 /**
  * A delta against the baseline: its sign, what it means by the metric's

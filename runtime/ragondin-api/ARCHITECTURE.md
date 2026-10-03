@@ -632,7 +632,7 @@ reason is `RunListing::cache_error`, and every latency is computed anyway.
 **A field serialized on every response is required in its schema**, nullable
 when it can be null: `RunDetail::prefix_of`, the two times of `RunDetail`
 and `RunSummary`, `RunSummary::median_query_latency_nanos`,
-`QueryScores::duration_nanos`,
+`QueryScores::text` and `QueryScores::duration_nanos`,
 `MetricRow::direction`, `PipelineSummary::modified_ms`, `Location::node` and
 `Location::edge` carry a `transform` that lists every property as required,
 since `schemars` would otherwise leave an `Option` out and a generated client

@@ -499,6 +499,7 @@ async fn three_runs_give_the_metric_table_with_best_and_deltas_and_the_differing
     // best (`compare_marks_no_best_value_for_an_unknown_metric`).
     let latency = metric("latency_p50_ms");
     assert_eq!(latency["direction"], Value::Null);
+    assert_eq!(latency["best"], json!([]));
     let recall = metric("recall@10");
     assert_eq!(recall["values"], json!([null, null, 0.9]));
     assert_eq!(recall["deltas"], json!([null, null, null]));

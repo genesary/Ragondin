@@ -114,6 +114,7 @@ pub struct RunListing {
     /// as it always has. The listing is complete either way: the cache is
     /// never a truth, so its failure fails nothing.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "String", default)]
     pub cache_error: Option<String>,
 }
 

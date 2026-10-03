@@ -826,7 +826,7 @@ export type RunListing = {
    * as it always has. The listing is complete either way: the cache is
    * never a truth, so its failure fails nothing.
    */
-  cache_error?: string | null;
+  cache_error?: string;
   /** The readable runs, in the store's listing order. */
   runs: RunSummary[];
   /**

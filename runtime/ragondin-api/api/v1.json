@@ -1971,7 +1971,6 @@
         "properties": {
           "cache_error": {
             "description": "Why a run's median query latency could not be read from or written\nto the workspace's `cache/`, the first such reason; absent when the\ncache served or took every run, so a listing whose cache works reads\nas it always has. The listing is complete either way: the cache is\nnever a truth, so its failure fails nothing.",
-            "nullable": true,
             "type": "string"
           },
           "runs": {
