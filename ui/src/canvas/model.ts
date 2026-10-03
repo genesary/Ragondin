@@ -1,5 +1,5 @@
 import type { EdgeKind, Graph, ParameterValue } from '../api/types.ts';
-import { familyOfComponent, type Family } from '../../design/index.ts';
+import { familyOfComponent, rankSentence, type Family } from '../../design/index.ts';
 
 /** What a port carries: the API's edge kind, drawn by shape (Port.tsx). */
 export type PortKind = EdgeKind;
@@ -39,9 +39,36 @@ export type NodeOverlay = {
   error?: string;
   /** The node is absent from the run beside this one: the tag the card wears, e.g. "only in B". */
   onlyHere?: string;
+  /** The node never ran for this query: an earlier node failed. */
+  notRun?: true;
 };
 
-export type CanvasEdge ={ id: string; from: string; to: string; port: number; kind: PortKind };
+/** A share of the query's time, in words: a sliver is "under 1%", never "0%". */
+export const percent = (share: number) => (share > 0 && share < 0.005 ? 'under 1%' : `${Math.round(share * 100)}%`);
+
+/**
+ * What a replayed card shows, in words: its accessible description. Inside
+ * the canvas's `application` role a screen reader hears a node's name and
+ * description and never the card's text, so every figure the card draws is
+ * said here too — in the order the card draws them.
+ */
+export function describeOverlay(overlay: NodeOverlay): string {
+  const { metric, ranks, discarded, durationMs, share, error, notRun } = overlay;
+  const time = [durationMs === undefined ? null : `${durationMs} ms`, share === undefined ? null : `${percent(share)} of this query's time`].filter((t) => t !== null).join(', ');
+  return [
+    notRun === true ? 'Not run' : null,
+    error === undefined ? null : `Failed: ${error}`,
+    metric === undefined ? null : `${metric.name} ${metric.value}`,
+    ranks === undefined ? null : rankSentence(ranks),
+    discarded === undefined ? null : `${discarded} discarded`,
+    time === '' ? null : time,
+  ]
+    .filter((part) => part !== null)
+    .map((part) => `${part}.`)
+    .join(' ');
+}
+
+export type CanvasEdge = { id: string; from: string; to: string; port: number; kind: PortKind };
 
 export type CanvasModel = {
   /** In topological order — the order Tab walks. */

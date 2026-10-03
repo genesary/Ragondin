@@ -7,6 +7,7 @@ import { FakeEventSource, installFakeEventSource, mockApi } from './api/testing.
 import type { Workspace } from './api/types.ts';
 import { App } from './App.tsx';
 import { COMPARISON, DENSE, HYBRID, RERANK } from './compare/fixtures.ts';
+import * as replay from './replay/fixtures.ts';
 
 const BUILD = '0.0.0+aaaaaaaaaaaa';
 
@@ -52,8 +53,6 @@ describe('the shell’s screens', () => {
     ['#compare', 'Compare', 'Choose at least two runs'],
     ['#compare/aaa', 'Compare', 'Choose at least two runs'],
     ['#replay', 'Replay', 'No query chosen'],
-    [`#replay/${'a1b2c3d4e5f6'.padEnd(64, '0')}`, 'Replay', 'No query chosen for run a1b2c3d4e5f6'],
-    ['#replay/aaa/q/1395?with=bbb', 'Replay', 'Nothing to show for query 1395 yet'],
     ['#editor', 'Editor', 'No pipeline open'],
     ['#editor/hybrid-rrf', 'Editor', 'Nothing to show for hybrid-rrf yet'],
     ['#setup', 'Setup', 'No benchmarks or services shown yet'],
@@ -72,6 +71,27 @@ describe('the shell’s screens', () => {
     show(`#compare/${DENSE}+${HYBRID}+${RERANK}?baseline=${DENSE}`);
     expect(await within(main()).findByRole('heading', { name: 'Verdict' })).toBeTruthy();
     expect(api.bodies[api.requests.indexOf('POST /api/v1/compare')]).toEqual({ run_ids: [DENSE, HYBRID, RERANK], baseline: DENSE });
+  });
+
+  it('hands Replay the run, the query and the run beside that its address carries, so a reload restores the view', async () => {
+    const id = (path: string) => decodeURIComponent(path.split('/')[4] ?? '');
+    const details = { [replay.HYBRID]: replay.HYBRID_DETAIL, [replay.DENSE]: replay.DENSE_DETAIL };
+    const queries = { [replay.HYBRID]: replay.HYBRID_QUERIES, [replay.DENSE]: replay.DENSE_QUERIES };
+    const traces = { [replay.HYBRID]: replay.HYBRID_TRACE, [replay.DENSE]: replay.DENSE_TRACE };
+    mockApi(
+      {
+        'GET /workspace': { body: WORKSPACE },
+        'GET /runs': { body: replay.LISTING },
+        'GET /runs/{id}': (_q, path) => ({ body: details[id(path)]! }),
+        'GET /runs/{id}/queries': (_q, path) => ({ body: queries[id(path)]! }),
+        'GET /runs/{id}/trace/{query}': (_q, path) => ({ body: traces[id(path)]! }),
+      },
+      { build: BUILD },
+    );
+    show(`#replay/${replay.HYBRID}/q/q1?with=${replay.DENSE}`);
+    expect(await within(main()).findByRole('application', { name: 'Run A, hybrid-rerank-gen, query q1' })).toBeTruthy();
+    expect(await within(main()).findByRole('application', { name: 'Run B, dense-only, query q1' })).toBeTruthy();
+    expect(within(main()).getByRole('heading', { level: 1 }).textContent).toBe('Replay');
   });
 
   it('hands Runs the selection its address carries', async () => {

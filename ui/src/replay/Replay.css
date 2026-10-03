@@ -1,0 +1,111 @@
+/* The Replay screen's layout and its inspector's content. The canvas, the
+   node cards, the inspector's shell and the controls are drawn by their own
+   stylesheets; every value here is a token (ARCHITECTURE.md § The design
+   system). */
+
+/* The inspector's body: one column, or two side by side. */
+.rg-replay__columns { display: grid; gap: var(--space-4); min-width: 0; }
+.rg-replay__columns[data-columns="2"] { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.rg-replay__column { display: grid; align-content: start; gap: var(--space-3); min-width: 0; }
+.rg-replay__block { display: grid; gap: var(--space-2); min-width: 0; }
+.rg-replay__block h4,
+.rg-replay__final { margin: 0; font: var(--type-label); color: var(--ink-2); }
+.rg-replay__final { display: flex; align-items: center; gap: var(--space-2); color: var(--ink); }
+.rg-replay__final .rg-tile { transform: scale(0.75); }
+.rg-replay__meta,
+.rg-replay__absent { margin: 0; font: var(--type-caption); color: var(--ink-3); }
+.rg-replay__absent { font-style: italic; }
+.rg-replay__figure { display: grid; grid-template-columns: auto 1fr; gap: var(--space-1) var(--space-2); margin: 0; font: var(--type-dense); }
+.rg-replay__figure dt { color: var(--ink-3); }
+.rg-replay__figure dd { margin: 0; color: var(--ink); font-variant-numeric: tabular-nums; }
+.rg-replay__text { margin: 0; padding: var(--space-2) var(--space-3); border-radius: var(--radius-s); background: var(--surface-2); font: var(--type-dense); color: var(--ink); white-space: pre-wrap; overflow-wrap: anywhere; }
+.rg-replay__verdict { margin: 0; font: var(--type-verdict); letter-spacing: var(--type-verdict-tracking); color: var(--ink); }
+
+/* A node's list: rank, star, the passage, the move. Rows are separated by hairlines, never boxed. */
+.rg-replay__list { display: grid; margin: 0; padding: 0; list-style: none; }
+.rg-replay__item {
+  display: grid;
+  grid-template-columns: var(--space-6) var(--space-4) minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: var(--space-2);
+  padding: var(--space-2) 0;
+  border-top: 1px solid var(--line);
+  font: var(--type-dense);
+  color: var(--ink);
+}
+.rg-replay__rank { color: var(--ink-3); font-variant-numeric: tabular-nums; text-align: right; }
+.rg-replay__star { color: var(--ink); }
+.rg-replay__passage { display: grid; gap: var(--space-1); min-width: 0; overflow-wrap: anywhere; }
+.rg-replay__ids { display: inline-flex; flex-wrap: wrap; gap: var(--space-2); min-width: 0; }
+.rg-replay__chunk { font: var(--type-hash); letter-spacing: var(--type-hash-tracking); color: var(--ink); }
+.rg-replay__doc { font: var(--type-hash); letter-spacing: var(--type-hash-tracking); color: var(--ink-3); }
+.rg-replay__move { font: var(--type-caption); color: var(--ink-3); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.rg-replay__item[data-gold] .rg-replay__rank { color: var(--ink); font-weight: 600; }
+.rg-replay__item[data-discarded] { color: var(--ink-3); }
+.rg-replay__item[data-discarded] del { text-decoration: line-through; color: var(--ink-3); }
+
+/* The query selector: search, filter, count, then the listbox in a box of fixed height, ten rows of 48px. */
+.rg-replay__queries { display: grid; align-content: start; gap: var(--space-3); min-width: 0; }
+.rg-replay__filter { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.rg-replay__count { margin: 0; font: var(--type-caption); color: var(--ink-3); }
+.rg-replay__listbox { position: relative; height: 480px; overflow-y: auto; border: 1px solid var(--line); border-radius: var(--radius-s); background: var(--surface); }
+.rg-replay__listbox:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.rg-replay__option {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 48px;
+  box-sizing: border-box;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: 18px 16px;
+  align-content: center;
+  column-gap: var(--space-2);
+  padding: 0 var(--space-3);
+  border-bottom: 1px solid var(--line);
+  cursor: pointer;
+}
+.rg-replay__option:hover { background: var(--surface-2); }
+.rg-replay__option[aria-selected="true"] { background: var(--accent-wash); box-shadow: inset 3px 0 0 var(--accent); }
+.rg-replay__qid { font: var(--type-hash); letter-spacing: var(--type-hash-tracking); color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rg-replay__qscore { font: var(--type-caption); color: var(--ink-2); font-variant-numeric: tabular-nums; text-align: right; }
+.rg-replay__qtext { grid-column: 1 / -1; font: var(--type-caption); color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* The screen: the toolbar, a status line whose height is reserved, then three columns — the queries, the stage, the inspector — whose widths never depend on what is selected or read, so nothing moves under the pointer. */
+.rg-replay { display: grid; gap: var(--space-3); min-width: 0; }
+.rg-replay__bar { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--space-3) var(--space-4); }
+.rg-replay__status { min-height: var(--space-4); margin: 0; font: var(--type-caption); color: var(--ink-3); }
+.rg-replay__body { display: grid; grid-template-columns: 280px minmax(0, 1fr) var(--size-inspector); gap: var(--space-4); align-items: start; min-width: 0; }
+/* Side by side the stage keeps the width two stacked canvases need, and the inspector's two columns sit below them, across the same width, whatever is selected. */
+.rg-replay__body[data-columns="2"] { grid-template-columns: 280px minmax(0, 1fr); }
+.rg-replay__body[data-columns="2"] .rg-replay__panel { grid-column: 2; }
+.rg-replay__side,
+.rg-replay__stage { display: grid; align-content: start; gap: var(--space-3); min-width: 0; }
+.rg-replay__panel { display: flex; min-width: 0; min-height: 240px; }
+.rg-replay__panel .rg-inspector { width: 100%; border: 1px solid var(--line); border-radius: var(--radius-m); }
+.rg-replay__placeholder { margin: 0; padding: var(--space-4); width: 100%; border: 1px dashed var(--line); border-radius: var(--radius-m); font: var(--type-caption); color: var(--ink-3); }
+/* The query's text takes two lines whatever its length — clamped, the whole text in its title and its accessible name — so choosing another query moves nothing below it. */
+.rg-replay__query {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  height: 40px;
+  margin: 0;
+  font: var(--type-heading);
+  color: var(--ink);
+}
+.rg-replay__query code { margin-right: var(--space-2); font: var(--type-hash); letter-spacing: var(--type-hash-tracking); color: var(--ink-3); }
+.rg-replay__canvases { display: grid; gap: var(--space-3); }
+.rg-replay__canvas { display: grid; gap: var(--space-2); }
+.rg-replay__canvas .rg-canvas-frame { height: 520px; border: 1px solid var(--line); border-radius: var(--radius-m); overflow: hidden; }
+.rg-replay__canvases[data-columns="2"] .rg-canvas-frame,
+.rg-replay__waiting { height: 420px; }
+.rg-replay__waiting { display: grid; place-content: center; border: 1px dashed var(--line); border-radius: var(--radius-m); font: var(--type-caption); color: var(--ink-3); }
+
+/* A narrower screen stacks the three: queries, stage, inspector. Reading is made for a phone too; the canvas pans. */
+@media (max-width: 1100px) {
+  .rg-replay__body,
+  .rg-replay__body[data-columns="2"] { grid-template-columns: minmax(0, 1fr); }
+  .rg-replay__body[data-columns="2"] .rg-replay__panel { grid-column: auto; }
+}

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Graph } from '../api/types.ts';
 import { HYBRID_RERANK_GEN } from './fixtures.ts';
-import { toModel } from './model.ts';
+import { describeOverlay, toModel } from './model.ts';
 
 const byId = (graph: Graph, id: string) => {
   const node = toModel(graph).nodes.find((n) => n.id === id);
@@ -83,5 +83,26 @@ describe('toModel', () => {
       'prompt',
       'answer',
     ]);
+  });
+});
+
+describe('describeOverlay', () => {
+  it('says in words what the replay card draws: the metric, the rank strip, the discarded count and the time', () => {
+    expect(describeOverlay({ metric: { name: 'ndcg@10', value: '0.8610' }, ranks: [3, 1], discarded: 2, durationMs: 349, share: 0.85 })).toBe(
+      "ndcg@10 0.8610. 2 gold passages in the top 10, at rank 1, 3. 2 discarded. 349 ms, 85% of this query's time.",
+    );
+  });
+
+  it('says each field on its own, and nothing for an empty overlay', () => {
+    expect(describeOverlay({ durationMs: 4 })).toBe('4 ms.');
+    expect(describeOverlay({ share: 0.5 })).toBe("50% of this query's time.");
+    expect(describeOverlay({ share: 0.004 })).toBe("under 1% of this query's time.");
+    expect(describeOverlay({ ranks: [] })).toBe('0 gold passages in the top 10.');
+    expect(describeOverlay({})).toBe('');
+  });
+
+  it('says why a node shows no result: it failed, with the message, or it was not run', () => {
+    expect(describeOverlay({ error: 'the service did not answer', durationMs: 3 })).toBe('Failed: the service did not answer. 3 ms.');
+    expect(describeOverlay({ notRun: true })).toBe('Not run.');
   });
 });

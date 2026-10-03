@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { FamilyTile, Glyph, Progress, RankStrip, type Family } from '../../design/index.ts';
-import type { NodeOverlay, PortKind } from './model.ts';
+import { percent, type NodeOverlay, type PortKind } from './model.ts';
 import { PortMark, portTop, type PortProps } from './Port.tsx';
 import './NodeCard.css';
 
@@ -9,7 +9,8 @@ export type NodeStatus =
   | { kind: 'invalid'; message: string }
   | { kind: 'failed'; message: string }
   | { kind: 'running'; value: number; total: number; label: string }
-  | { kind: 'queued' };
+  | { kind: 'queued' }
+  | { kind: 'not-run' };
 
 export type NodeCardProps = {
   family: Family;
@@ -36,7 +37,6 @@ export type NodeCardProps = {
   previewState?: 'hover' | 'focus';
 };
 
-const pct = (share: number) => `${Math.round(share * 100)}%`;
 
 /**
  * A pipeline node: the family tile with its glyph, the name, the
@@ -60,7 +60,7 @@ export function NodeCard({
   renderPort = (p) => <PortMark key={`${p.side}-${p.index}`} {...p} />,
   previewState,
 }: NodeCardProps) {
-  const shown: NodeStatus | undefined = overlay?.error !== undefined ? { kind: 'failed', message: overlay.error } : status;
+  const shown: NodeStatus | undefined = overlay?.error !== undefined ? { kind: 'failed', message: overlay.error } : overlay?.notRun === true ? { kind: 'not-run' } : status;
   return (
     <div
       className="rg-node"
@@ -89,7 +89,7 @@ export function NodeCard({
             <span>{param.value}</span>
           </div>
         )
-      ) : (
+      ) : shown?.kind === 'not-run' ? null : (
         <Replay overlay={overlay} />
       )}
       {shown?.kind === 'running' ? (
@@ -111,11 +111,11 @@ export function NodeCard({
 
 function State({ status }: { status: NodeStatus | undefined }) {
   if (status === undefined) return null;
-  const glyph = status.kind === 'queued' ? 'clock' : status.kind === 'running' ? null : 'alert';
+  const glyph = status.kind === 'queued' ? 'clock' : status.kind === 'running' || status.kind === 'not-run' ? null : 'alert';
   return (
     <span className="rg-node__state">
       {glyph === null ? null : <Glyph name={glyph} />}
-      {status.kind}
+      {status.kind === 'not-run' ? 'not run' : status.kind}
     </span>
   );
 }
@@ -124,7 +124,7 @@ function Replay({ overlay }: { overlay: NodeOverlay }) {
   const { metric, ranks, discarded, durationMs, share } = overlay;
   const rows = [metric, ranks, discarded, durationMs, share].some((v) => v !== undefined);
   if (!rows) return null;
-  const title = durationMs !== undefined && share !== undefined ? `${durationMs} ms, ${pct(share)} of this query's time` : undefined;
+  const title = durationMs !== undefined && share !== undefined ? `${durationMs} ms, ${percent(share)} of this query's time` : undefined;
   return (
     <div className="rg-node__replay">
       {metric === undefined ? null : (

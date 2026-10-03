@@ -1,15 +1,21 @@
-// The six screens, widest to narrowest (the front-end design, § 3). Runs and
-// Compare are built (src/runs/, src/compare/); each other screen is its empty
-// state here: one sentence
+// The six screens, widest to narrowest (the front-end design, § 3). Runs,
+// Compare and Replay are built (src/runs/, src/compare/, src/replay/) — Replay
+// loaded as its own chunk, since it carries the canvas; each other screen is
+// its empty state here: one sentence
 // on the default path and the action that leads on. A screen's own issue
 // replaces its empty state with its content and keeps the route shape
 // src/routes.ts gives it.
-import { useEffect, useRef, type RefObject } from 'react';
+import { lazy, Suspense, useEffect, useRef, type RefObject } from 'react';
 import { ButtonLink, EmptyState, Sheet } from '../../design/index.ts';
 import type { ApiClient } from '../api/client.ts';
 import { CompareScreen } from '../compare/CompareScreen.tsx';
 import { formatHash, type Route, type ScreenName } from '../routes.ts';
 import { RunsScreen } from '../runs/RunsScreen.tsx';
+import { Loading } from './states.tsx';
+
+// The canvas and its two libraries come with Replay, in a chunk of their own,
+// so the shell and the other screens do not pay for them.
+const ReplayScreen = lazy(() => import('../replay/ReplayScreen.tsx').then((m) => ({ default: m.ReplayScreen })));
 
 export const SCREENS: readonly { screen: ScreenName; label: string; bare: Route }[] = [
   { screen: 'runs', label: 'Runs', bare: { screen: 'runs' } },
@@ -34,12 +40,7 @@ function emptyOf(route: Exclude<Route, { screen: 'runs' | 'compare' }>): Empty {
         ? { heading: 'No pipeline chosen', sentence: 'Choose a pipeline in Runs to see each of its nodes against every benchmark it ran on.', action: openRuns }
         : { heading: `Nothing to show for ${route.name} yet`, sentence: `Each node of ${route.name} against every benchmark it ran on appears here.`, action: openRuns };
     case 'replay':
-      if ('run' in route && route.query === undefined) {
-        return { heading: `No query chosen for run ${route.run.slice(0, 12)}`, sentence: 'A query of this run, node by node through the pipeline, appears here.', action: openCompare };
-      }
-      return 'run' in route
-        ? { heading: `Nothing to show for query ${route.query} yet`, sentence: 'This query, node by node through the pipeline, appears here.', action: openCompare }
-        : { heading: 'No query chosen', sentence: 'Open a query from Compare to follow it through the pipeline, node by node.', action: openCompare };
+      return { heading: 'No query chosen', sentence: 'Open a run from Runs, or a query from Compare, to follow it through the pipeline, node by node.', action: openCompare };
     case 'editor':
       return route.name === undefined
         ? { heading: 'No pipeline open', sentence: 'Open a pipeline from Runs to edit it on the canvas.', action: openRuns }
@@ -87,6 +88,16 @@ export function Screen({ route, heading, client }: { route: Route; heading: RefO
       <>
         {title}
         <CompareScreen client={client} ids={route.ids} baseline={route.baseline} />
+      </>
+    );
+  }
+  if (route.screen === 'replay' && 'run' in route) {
+    return (
+      <>
+        {title}
+        <Suspense fallback={<Loading label="Opening Replay" />}>
+          <ReplayScreen client={client} run={route.run} query={route.query} with={'with' in route ? route.with : undefined} />
+        </Suspense>
       </>
     );
   }
