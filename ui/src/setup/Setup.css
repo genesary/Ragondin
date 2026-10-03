@@ -46,8 +46,10 @@
 
 /* Every row's action cell is one small control high, a button in it or not:
    Download appearing, turning into Retry or going once the benchmark is
-   ready moves no row. */
-.rg-setup__action { display: inline-flex; align-items: center; min-height: var(--size-control-s); }
+   ready moves no row. A block box: an empty inline one would sit on the
+   text's baseline, and the line's descent below it would make a row without
+   a button taller than a row with one. */
+.rg-setup__action { display: flex; align-items: center; min-height: var(--size-control-s); }
 
 /* The details cell wraps: an adapter's error is a sentence, not a figure. */
 .rg-setup__detail { display: inline-block; min-width: 24ch; max-width: 56ch; white-space: normal; }

@@ -319,6 +319,9 @@ describe('the download', () => {
     const css = (await import('./Setup.css?raw')).default;
     const slot = parseRules(css).find((r) => r.selector === '.rg-setup__action');
     expect(slot?.declarations.get('min-height')).toBe('var(--size-control-s)');
+    // A block box, not an inline one: an empty inline box sits on the text's baseline and the
+    // line's descent below it makes a row without a button taller than one with (measured in Chrome).
+    expect(slot?.declarations.get('display')).toBe('flex');
   });
 
   it('closes the stream when the screen goes', async () => {
