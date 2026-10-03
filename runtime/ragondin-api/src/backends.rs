@@ -440,8 +440,10 @@ pub struct Settings {
 /// ran (ADR-C36 § 1).
 #[async_trait]
 pub trait Launcher: Send + Sync {
-    /// Per family, the local implementation names this build registers, and
-    /// whether it carries `remote`.
+    /// Per family, the local implementation names this build registers,
+    /// those it does not and why, and the family's ports
+    /// ([`family_ports`](crate::family_ports)); and whether it carries
+    /// `remote`.
     fn capabilities(&self) -> Capabilities;
 
     /// Whether the composition root would accept `family`/`name` bound to
