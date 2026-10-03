@@ -94,3 +94,57 @@
 .rg-menu button:hover,
 .rg-menu button:focus-visible { background: var(--accent-wash); outline: none; }
 .rg-menu button[aria-disabled="true"] { color: var(--ink-disabled); cursor: not-allowed; grid-template-columns: 1fr; }
+
+/* Write mode. The status line floats beside the toolbar and keeps its height
+   whether or not it speaks, so nothing moves under the pointer when it does. */
+.rg-canvas__status {
+  position: absolute;
+  top: var(--space-3);
+  left: 180px;
+  right: var(--space-3);
+  z-index: 5;
+  min-height: 20px;
+  margin: 0;
+  padding: 6px 0;
+  font: 500 12px/20px var(--font-sans);
+  color: var(--ink-2);
+  pointer-events: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* The node's `more` control: a pointer's way to the menu, at the card's top-right corner. */
+.rg-canvas__more {
+  position: absolute;
+  top: -10px;
+  right: -10px;
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-full);
+  background: var(--surface);
+  color: var(--ink-2);
+  cursor: pointer;
+  opacity: 0;
+}
+.rg-canvas__more .rg-glyph { width: 14px; height: 14px; }
+.react-flow__node:hover .rg-canvas__more,
+.react-flow__node:focus-within .rg-canvas__more { opacity: 1; }
+.rg-canvas[data-mode="write"] .react-flow__node { cursor: grab; }
+.rg-canvas[data-drawing="true"] .react-flow__node { cursor: crosshair; }
+/* The library's stylesheet gives a handle it cannot connect no pointer
+   events; write mode's edges are the canvas's own drag, so its ports take them. */
+.rg-canvas[data-mode="write"] .react-flow__handle.rg-port { pointer-events: all; }
+.rg-canvas[data-mode="write"] .rg-port[data-side="out"] { cursor: crosshair; }
+/* An edge the validation named: dashed, so it reads without colour. */
+.rg-edge[data-invalid="true"] { stroke: var(--critical); stroke-dasharray: 4 3; }
+/* The edge being drawn, to the pointer. */
+.rg-canvas__drawing { position: absolute; overflow: visible; width: 1px; height: 1px; pointer-events: none; }
+.rg-edge[data-drawing="true"] { stroke: var(--accent); stroke-dasharray: 4 3; }
+/* Narrow: the line moves below the toolbar and wraps, so a reason is never cut off. */
+@media (max-width: 640px) {
+  .rg-canvas__status { top: 56px; left: var(--space-3); white-space: normal; background: var(--canvas); }
+}

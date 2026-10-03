@@ -142,6 +142,22 @@ describe('#editor/<name>', () => {
   });
 });
 
+describe('#editor/<name>/node/<id>', () => {
+  it('carries the selected node, encoded, and restores it from the hash on load', () => {
+    const route: Route = { screen: 'editor', name: 'hybrid-rrf', node: 'fused/2' };
+    expect(formatHash(route)).toBe('#editor/hybrid-rrf/node/fused%2F2');
+    expect(load('#editor/hybrid-rrf/node/fused%2F2')).toEqual(route);
+  });
+
+  it('is one view with the pipeline: choosing a node moves no focus', () => {
+    expect(viewOf({ screen: 'editor', name: 'hybrid-rrf', node: 'fused' })).toBe('#editor/hybrid-rrf');
+  });
+
+  it('is no route when malformed', () => {
+    for (const hash of ['#editor/hybrid-rrf/node', '#editor/hybrid-rrf/node/', '#editor/hybrid-rrf/nodes/fused', '#editor/hybrid-rrf/node/..', '#editor/hybrid-rrf/node/a/b']) expect(parseHash(hash), hash).toBeNull();
+  });
+});
+
 describe('#setup', () => {
   it('has no state, and restores from the hash on load', () => {
     expect(formatHash({ screen: 'setup' })).toBe('#setup');

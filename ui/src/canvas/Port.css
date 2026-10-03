@@ -23,3 +23,16 @@
 /* In flow, as the legend draws it. */
 .rg-port[data-swatch="true"] { position: relative; display: inline-block; flex: none; }
 .rg-port[data-swatch="true"]::after { content: none; }
+
+/* While an edge is drawn (write mode): an open port wears a halo, a refused
+   one a strike through its mark — a shape, so the refusal reads without
+   colour; its reason is its title and the canvas's status line. */
+.rg-port[data-drop="open"] { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-wash); }
+.rg-port[data-drop="refused"] { border-color: var(--critical); }
+.rg-port[data-drop="refused"]::before {
+  content: "";
+  position: absolute;
+  inset: -4px;
+  background: linear-gradient(45deg, transparent calc(50% - 1px), var(--critical) calc(50% - 1px) calc(50% + 1px), transparent calc(50% + 1px));
+  pointer-events: none;
+}

@@ -51,7 +51,8 @@ export function NodeMenu({ node, onClose, children }: NodeMenuProps) {
   };
 
   return (
-    <div ref={ref} className="rg-menu nodrag nopan" role="menu" aria-label={`Node ${node}`} tabIndex={-1} onKeyDown={onKeyDown} onBlur={onBlur}>
+    // A click inside is the entry's to act on: it must not reach the node, whose click selects it and closes this menu.
+    <div ref={ref} className="rg-menu nodrag nopan" role="menu" aria-label={`Node ${node}`} tabIndex={-1} onKeyDown={onKeyDown} onBlur={onBlur} onClick={(event) => event.stopPropagation()}>
       {children ?? (
         <button type="button" role="menuitem" aria-disabled="true">
           No actions here

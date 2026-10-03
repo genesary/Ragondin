@@ -22,8 +22,8 @@ export type NodeCardProps = {
   /** One input port per entry, in port order. */
   inputs?: readonly PortKind[];
   output?: PortKind | null;
-  /** Which ports an edge meets: drawn filled. Neither, by default. */
-  connected?: { inputs: boolean; output: boolean };
+  /** Which ports an edge meets: drawn filled — every input, or each by port. Neither, by default. */
+  connected?: { inputs: boolean | readonly boolean[]; output: boolean };
   selected?: boolean;
   status?: NodeStatus | undefined;
   /** A drop target that is not a node yet, or a node this build cannot run. */
@@ -103,7 +103,7 @@ export function NodeCard({
           <span>{shown.message}</span>
         </div>
       ) : null}
-      {inputs.map((kind, index) => renderPort({ side: 'in', kind, index, top: portTop(index), connected: connected.inputs }))}
+      {inputs.map((kind, index) => renderPort({ side: 'in', kind, index, top: portTop(index), connected: typeof connected.inputs === 'boolean' ? connected.inputs : (connected.inputs[index] ?? false) }))}
       {output === null ? null : renderPort({ side: 'out', kind: output, index: 0, top: portTop(0), connected: connected.output })}
     </div>
   );
