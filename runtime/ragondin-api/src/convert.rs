@@ -15,7 +15,8 @@ use ragondin_experiments::{
 };
 use ragondin_metrics::{Family, Metric};
 use ragondin_pipeline::{
-    produced_kind, LogicalNode, LogicalPipeline, NodeId, ParamValue, ValueKind,
+    consumed_kinds, produced_kind, ContextBuilderNode, FusionNode, GeneratorNode, LogicalNode,
+    LogicalPipeline, NodeId, ParamValue, Params, PortSpec, RerankerNode, RetrieverNode, ValueKind,
 };
 use ragondin_types::DocId;
 
@@ -24,11 +25,11 @@ use crate::derived::NodeFigures;
 use crate::error::ApiError;
 use crate::lineage;
 use crate::response::{
-    BenchmarkEntry, BenchmarkState, ConfigurationMatrix, DatasetCheck, DatasetStatus,
-    DatasetVersions, EdgeKind, FoundVersions, Graph, GraphEdge, GraphInput, GraphNode, GroundTruth,
-    LaunchedAs, LaunchedPrefix, MetricDirection, MetricFamily, MetricRow, NameHeld, NodeMetrics,
-    ParameterName, ParameterRow, ParameterValue, RunDetail, RunInputs, RunSummary, ServiceBinding,
-    TraceNodeView, TracePassage, TraceValue,
+    BenchmarkEntry, BenchmarkState, ConfigurationMatrix, ConsumedPorts, DatasetCheck,
+    DatasetStatus, DatasetVersions, EdgeKind, FamilyPorts, FoundVersions, Graph, GraphEdge,
+    GraphInput, GraphNode, GroundTruth, LaunchedAs, LaunchedPrefix, MetricDirection, MetricFamily,
+    MetricRow, NameHeld, NodeMetrics, ParameterName, ParameterRow, ParameterValue, RunDetail,
+    RunInputs, RunSummary, ServiceBinding, TraceNodeView, TracePassage, TraceValue,
 };
 
 /// One run, as the listing shows it, with the names the request found for
@@ -240,6 +241,85 @@ pub(crate) fn launched_as(
 /// The kind of value a node produces, as an edge leaving it carries it.
 pub(crate) fn produces(node: &LogicalNode) -> EdgeKind {
     kind(produced_kind(node))
+}
+
+/// The ports a node of `family` declares — `family` spelled as a
+/// configuration's `component:` value — or `None` for a name that is no node
+/// family a configuration can name: `embedder`, which no node is.
+///
+/// Read from `ragondin-pipeline`'s `produced_kind` and `consumed_kinds`, the
+/// port grammar's one definition (ADR-C16), and never restated: the kinds
+/// derive from a node's variant alone, so one node of each family, empty but
+/// for its variant, is asked, and the family is matched by the graph's own
+/// spelling of it, the one a graph node's `family` carries. An extension
+/// node is not among them: its kind is
+/// not a family, and its ports are unknown to the core.
+pub fn family_ports(family: &str) -> Option<FamilyPorts> {
+    let node = one_node_per_family()
+        .into_iter()
+        .find(|node| self::family(node) == family)?;
+    let consumes = match consumed_kinds(&node) {
+        PortSpec::Fixed(kinds) => ConsumedPorts::Fixed {
+            kinds: kinds.into_iter().map(kind).collect(),
+        },
+        PortSpec::Variadic(of) => ConsumedPorts::Variadic { kind: kind(of) },
+        PortSpec::Unknown => return None,
+    };
+    Some(FamilyPorts {
+        produces: produces(&node),
+        consumes,
+    })
+}
+
+/// Fails to compile when `LogicalNode` gains a variant, so whoever adds one
+/// decides here whether [`one_node_per_family`] lists it.
+const _: fn(&LogicalNode) = |node| match node {
+    // Listed in `one_node_per_family`.
+    LogicalNode::Retriever(_)
+    | LogicalNode::Fusion(_)
+    | LogicalNode::Reranker(_)
+    | LogicalNode::ContextBuilder(_)
+    | LogicalNode::Generator(_) => {}
+    // Not listed: its ports are `PortSpec::Unknown`, declared by no family.
+    LogicalNode::Extension(_) => {}
+};
+
+/// One node of each family a configuration can name, every field empty: the
+/// variant is all the port derivation reads.
+fn one_node_per_family() -> [LogicalNode; 5] {
+    let id = || NodeId::new("");
+    [
+        LogicalNode::Retriever(RetrieverNode {
+            id: id(),
+            implementation: String::new(),
+            inputs: Vec::new(),
+            params: Params::new(),
+        }),
+        LogicalNode::Fusion(FusionNode {
+            id: id(),
+            implementation: String::new(),
+            inputs: Vec::new(),
+            params: Params::new(),
+        }),
+        LogicalNode::Reranker(RerankerNode {
+            id: id(),
+            implementation: String::new(),
+            inputs: Vec::new(),
+            params: Params::new(),
+        }),
+        LogicalNode::ContextBuilder(ContextBuilderNode {
+            id: id(),
+            implementation: String::new(),
+            inputs: Vec::new(),
+            params: Params::new(),
+        }),
+        LogicalNode::Generator(GeneratorNode {
+            id: id(),
+            implementation: String::new(),
+            inputs: Vec::new(),
+            params: Params::new(),
+        }),
+    ]
 }
 
 /// The metric table of a comparison, each row's best runs named by id.

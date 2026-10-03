@@ -19,12 +19,37 @@ const WORKSPACE: Workspace = {
   settings: { datasets: '/home/ada/ragondin-ws/datasets', services: [] },
   capabilities: {
     families: [
-      { family: 'retriever', local: ['bm25', 'dense'] },
-      { family: 'fusion', local: ['rrf'] },
-      { family: 'reranker', local: ['cross_encoder'] },
-      { family: 'context_builder', local: ['concat'] },
-      { family: 'generator', local: [] },
-      { family: 'embedder', local: ['onnx'] },
+      {
+        family: 'retriever',
+        local: ['bm25', 'dense'],
+        ports: { produces: 'chunks', consumes: { shape: 'fixed', kinds: ['query'] } },
+        not_carried: [],
+      },
+      {
+        family: 'fusion',
+        local: ['rrf'],
+        ports: { produces: 'chunks', consumes: { shape: 'variadic', kind: 'chunks' } },
+        not_carried: [],
+      },
+      {
+        family: 'reranker',
+        local: ['cross_encoder'],
+        ports: { produces: 'chunks', consumes: { shape: 'fixed', kinds: ['query', 'chunks'] } },
+        not_carried: [],
+      },
+      {
+        family: 'context_builder',
+        local: ['concat'],
+        ports: { produces: 'context', consumes: { shape: 'fixed', kinds: ['query', 'chunks'] } },
+        not_carried: [],
+      },
+      {
+        family: 'generator',
+        local: [],
+        ports: { produces: 'answer', consumes: { shape: 'fixed', kinds: ['query', 'context'] } },
+        not_carried: [{ name: 'stub_generator', reason: 'needs the `stub` feature' }],
+      },
+      { family: 'embedder', local: ['onnx'], ports: null, not_carried: [] },
     ],
     remote: true,
   },

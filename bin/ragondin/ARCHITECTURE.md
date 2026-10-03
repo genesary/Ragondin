@@ -635,10 +635,26 @@ API crate holds it as an `Arc<dyn Launcher>` and names no component.
   — `retriever`, `fusion`, `reranker`, `context_builder`, `generator`,
   `embedder` — each with the `Local` names this build carries
   (`wiring::carried`, the `LOCAL` table filtered by the features that compile
-  each one), and whether `remote` is on. `embedder` is listed though it is
-  not a `component:` value, because `onnx` is a `Local` implementation a
-  `dense` node names. A family whose every implementation is gated off is
-  listed with none.
+  each one), the names it does not carry with the reason in words
+  (`wiring::not_carried`, the complement over the same table: "needs the
+  `onnx` feature", "needs the `onnx` or the `remote` feature"), the family's
+  ports (`ragondin_api::family_ports`, which reads `ragondin-pipeline`'s
+  `produced_kind` and `consumed_kinds`; `null` for `embedder`), and whether
+  `remote` is on. `embedder` is listed though it is not a `component:` value,
+  because `onnx` is a `Local` implementation a `dense` node names. A family
+  whose every implementation is gated off is listed with none carried.
+  **Each `LOCAL` entry carries its `Gate`** — the features any one of which
+  carries it — in the entry's own row: an entry cannot be added without
+  saying what carries it, and the carried list and the not-carried list are
+  one filter's two halves, so no entry is in neither. A row names each
+  feature once, as a string; whether the build has it is read from that name
+  by `wiring::feature_on`, a `const fn` that is the one place a feature's
+  name meets its `cfg!` (which takes a literal). Its fallback arm panics, and
+  `LOCAL` is a constant, so a name it does not know fails the build. What
+  guards the rest: a unit test that every name a gate uses is declared in
+  `Cargo.toml`'s `[features]`, and one that `feature_on` knows every feature
+  declared there; an arm of `feature_on` matched to the wrong `cfg!` is left
+  to review, one line per feature.
 - **`check_binding(family, name, uri)`**: `binding::check`, which runs the
   refusals `--remote` makes of one argument on its text — the form, the
   family, the URI, a `Local` name — and words them as `bench` does, naming

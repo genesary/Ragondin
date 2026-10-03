@@ -66,40 +66,98 @@ const ONNX_EMBEDDER: &str = "onnx";
 /// refuses to bind one (ADR-C32 § 2): the registry's last registration wins,
 /// so a binding would silently replace the `Local` component, and a list that
 /// followed this build's features would let one command line mean two things.
-const LOCAL: [(Family, &str); 7] = [
-    (Family::Retriever, BM25),
-    (Family::Retriever, DENSE),
-    (Family::Fusion, RRF),
-    (Family::Reranker, CROSS_ENCODER),
-    (Family::ContextBuilder, CONCAT),
-    (Family::Generator, STUB_GENERATOR),
-    (Family::Embedder, ONNX_EMBEDDER),
+///
+/// Each entry carries its [`Gate`], the features any one of which carries it,
+/// in its own row, so an entry cannot be added without saying what carries
+/// it. Each feature is named once there: whether this build has it is read
+/// from the name by [`feature_on`].
+const LOCAL: [(Family, &str, Gate); 7] = [
+    (Family::Retriever, BM25, Gate::any_of(&["bm25"])),
+    // Carried by a build that can construct an embedder for it, `onnx` or
+    // `remote`, which is when [`register`] can register it.
+    (Family::Retriever, DENSE, Gate::any_of(&["onnx", "remote"])),
+    // A normal dependency, in every build.
+    (Family::Fusion, RRF, Gate::ALWAYS),
+    (Family::Reranker, CROSS_ENCODER, Gate::any_of(&["onnx"])),
+    // A normal dependency, in every build.
+    (Family::ContextBuilder, CONCAT, Gate::ALWAYS),
+    (Family::Generator, STUB_GENERATOR, Gate::any_of(&["stub"])),
+    (Family::Embedder, ONNX_EMBEDDER, Gate::any_of(&["onnx"])),
 ];
+
+/// What carries a [`LOCAL`] entry: any one of `features`, and whether this
+/// build has one, derived from `features` by [`Gate::any_of`].
+// Read only by what `ragondin ui` reports.
+#[cfg_attr(not(feature = "ui"), allow(dead_code))]
+struct Gate {
+    features: &'static [&'static str],
+    on: bool,
+}
+
+impl Gate {
+    /// No feature: in every build.
+    const ALWAYS: Gate = Gate {
+        features: &[],
+        on: true,
+    };
+
+    /// Carried when any one of `features` is on. Evaluated in `LOCAL`'s
+    /// constant, so a name [`feature_on`] does not know fails the build.
+    const fn any_of(features: &'static [&'static str]) -> Gate {
+        let mut on = false;
+        let mut i = 0;
+        while i < features.len() {
+            on |= feature_on(features[i]);
+            i += 1;
+        }
+        Gate { features, on }
+    }
+}
+
+/// Whether this build has the feature `name`: the one place a feature's name
+/// is matched to its `cfg!`, since `cfg!` takes a literal. One arm per feature
+/// `Cargo.toml` declares but `default`; any other name panics, which in a
+/// constant is a compile error. Matched as bytes because a `str` pattern is
+/// not allowed in a `const fn` on stable Rust.
+const fn feature_on(name: &str) -> bool {
+    match name.as_bytes() {
+        b"bm25" => cfg!(feature = "bm25"),
+        b"onnx" => cfg!(feature = "onnx"),
+        b"stub" => cfg!(feature = "stub"),
+        b"remote" => cfg!(feature = "remote"),
+        b"ui" => cfg!(feature = "ui"),
+        _ => panic!("a LOCAL gate names a feature `feature_on` does not know"),
+    }
+}
 
 /// Whether this composition root gives `name` to a `Local` component of
 /// `family` in any build of it.
 pub fn is_local(family: Family, name: &str) -> bool {
-    LOCAL.contains(&(family, name))
+    LOCAL
+        .iter()
+        .any(|(of, local, _)| *of == family && *local == name)
 }
 
 /// The `Local` components **this** build carries, by family, in [`LOCAL`]'s
 /// order: its entries whose feature is on. What `ragondin ui` reports as the
-/// build's capabilities. `dense` is carried by a build that can construct an
-/// embedder for it, `onnx` or `remote`, which is when [`register`] can
-/// register it.
+/// build's capabilities.
 #[cfg(feature = "ui")]
 pub fn carried() -> impl Iterator<Item = (Family, &'static str)> {
-    LOCAL.into_iter().filter(|(_, name)| match *name {
-        BM25 => cfg!(feature = "bm25"),
-        DENSE => cfg!(any(feature = "onnx", feature = "remote")),
-        CROSS_ENCODER | ONNX_EMBEDDER => cfg!(feature = "onnx"),
-        STUB_GENERATOR => cfg!(feature = "stub"),
-        // Normal dependencies, in every build.
-        RRF | CONCAT => true,
-        // An entry added to `LOCAL` and not here is reported by no build;
-        // the `--all-features` capabilities test lists every entry.
-        _ => false,
-    })
+    LOCAL
+        .into_iter()
+        .filter(|(_, _, gate)| gate.on)
+        .map(|(family, name, _)| (family, name))
+}
+
+/// The `Local` components this build does **not** carry, by family, in
+/// [`LOCAL`]'s order, each with the features any one of which would carry
+/// it: [`carried`]'s complement over the same table.
+#[cfg(feature = "ui")]
+pub fn not_carried() -> impl Iterator<Item = (Family, &'static str, &'static [&'static str])> {
+    LOCAL
+        .into_iter()
+        .filter(|(_, _, gate)| !gate.on)
+        .map(|(family, name, gate)| (family, name, gate.features))
 }
 
 /// The keys every `dense` node may carry, whatever embedder it names
@@ -1097,6 +1155,67 @@ mod tests {
 
     fn wrap(nodes: &str) -> String {
         format!("pipeline:\n  inputs: [question]\n  nodes:\n{nodes}")
+    }
+
+    /// The feature names this crate's `Cargo.toml` declares under
+    /// `[features]`, read from the manifest itself rather than restated.
+    fn manifest_features() -> Vec<&'static str> {
+        include_str!("../Cargo.toml")
+            .lines()
+            .skip_while(|line| line.trim() != "[features]")
+            .skip(1)
+            .take_while(|line| !line.starts_with('['))
+            .filter_map(|line| line.split_once(" = ").map(|(key, _)| key))
+            .filter(|key| !key.starts_with('#') && !key.starts_with(' '))
+            .collect()
+    }
+
+    #[test]
+    fn the_manifest_reader_finds_the_features() {
+        let features = manifest_features();
+        for name in ["bm25", "onnx", "stub", "remote", "ui"] {
+            assert!(features.contains(&name), "{name} in {features:?}");
+        }
+    }
+
+    /// A gate cannot name a feature the manifest does not declare: `cfg!` of
+    /// an undeclared feature would be `false` in every build, so the entry
+    /// would be reported not carried by a build that carries it.
+    #[test]
+    fn every_feature_a_local_gate_names_is_declared_in_the_manifest() {
+        let declared = manifest_features();
+        for (family, name, gate) in LOCAL {
+            for feature in gate.features {
+                assert!(
+                    declared.contains(feature),
+                    "{family:?}/{name} names `{feature}`, which Cargo.toml does not declare"
+                );
+            }
+        }
+    }
+
+    /// `feature_on` knows every feature the manifest declares, so no gate is
+    /// refused for naming a real one. `default` names no backend.
+    #[test]
+    fn feature_on_knows_every_feature_the_manifest_declares() {
+        for feature in manifest_features() {
+            if feature != "default" {
+                let _ = feature_on(feature);
+            }
+        }
+    }
+
+    /// Each gate is on exactly when one of the features it names is on.
+    #[test]
+    fn a_gate_is_on_when_any_feature_it_names_is() {
+        for (family, name, gate) in LOCAL {
+            let any = gate.features.iter().any(|feature| feature_on(feature));
+            assert_eq!(
+                gate.on,
+                any || gate.features.is_empty(),
+                "{family:?}/{name}"
+            );
+        }
     }
 
     #[test]

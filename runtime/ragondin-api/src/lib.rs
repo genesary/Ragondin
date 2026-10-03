@@ -94,11 +94,13 @@ pub use backends::{
     Registry, Revision, RunDataset, RunObserver, ServiceIdentity, Settings, Submission,
     WorkspaceSettings,
 };
+pub use convert::family_ports;
 pub use error::ApiError;
 pub use layers::BUILD_HEADER;
 pub use response::{
-    BenchmarkEntry, BenchmarkState, Capabilities, EdgeLocation, FamilyCapabilities, GroundTruth,
-    Layout, Location, NodePair, Pairing, Position, Problem, ServiceBinding,
+    BenchmarkEntry, BenchmarkState, Capabilities, ConsumedPorts, EdgeKind, EdgeLocation,
+    FamilyCapabilities, FamilyPorts, GroundTruth, Layout, Location, NodePair, NotCarried, Pairing,
+    Position, Problem, ServiceBinding,
 };
 
 /// What the binary fixes when it builds the router.

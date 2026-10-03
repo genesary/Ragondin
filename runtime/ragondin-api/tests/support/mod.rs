@@ -133,10 +133,14 @@ impl Default for FakeLauncher {
                     FamilyCapabilities {
                         family: "generator".to_owned(),
                         local: vec!["stub_generator".to_owned()],
+                        ports: ragondin_api::family_ports("generator"),
+                        not_carried: Vec::new(),
                     },
                     FamilyCapabilities {
                         family: "retriever".to_owned(),
                         local: vec!["bm25".to_owned(), "stub_retriever".to_owned()],
+                        ports: ragondin_api::family_ports("retriever"),
+                        not_carried: Vec::new(),
                     },
                 ],
                 remote: true,

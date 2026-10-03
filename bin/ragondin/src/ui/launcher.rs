@@ -3,7 +3,9 @@
 //! The one path from the UI to the data plane (INV-12): `ragondin-api` holds
 //! an `Arc<dyn Launcher>` and never names a component; this module, in the
 //! only crate that knows them, answers for it. Everything here reuses what
-//! `bench` already runs: the capabilities are [`wiring::carried`], a binding's
+//! `bench` already runs: the capabilities are [`wiring::carried`] and
+//! [`wiring::not_carried`], with each family's ports as
+//! [`ragondin_api::family_ports`] reads them off the pipeline grammar, a binding's
 //! check is [`binding::check`] — `--remote`'s refusals, in its words — and the
 //! probe is [`wiring::service_identity`], the read `bench` makes before a run.
 //!
@@ -16,7 +18,7 @@ use std::sync::Arc;
 
 use ragondin_api::{
     ApiError, Cancellation, Capabilities, FamilyCapabilities, Launcher, LauncherError, Location,
-    RunObserver, ServiceBinding, ServiceIdentity, Submission,
+    NotCarried, RunObserver, ServiceBinding, ServiceIdentity, Submission,
 };
 use ragondin_experiments::{Run, RunId};
 use ragondin_pipeline::LogicalPipeline;
@@ -42,7 +44,9 @@ pub struct BinaryLauncher;
 impl Launcher for BinaryLauncher {
     /// Every family `--remote` names, in [`Family::ALL`]'s order, with the
     /// `Local` names this build carries in it — none, for a family whose every
-    /// implementation is feature-gated off — and whether it carries `remote`.
+    /// implementation is feature-gated off — those it does not carry with the
+    /// features that would, the family's ports, and whether it carries
+    /// `remote`.
     fn capabilities(&self) -> Capabilities {
         Capabilities {
             families: Family::ALL
@@ -52,6 +56,14 @@ impl Launcher for BinaryLauncher {
                     local: wiring::carried()
                         .filter(|(of, _)| *of == family)
                         .map(|(_, name)| name.to_owned())
+                        .collect(),
+                    ports: ragondin_api::family_ports(family.name()),
+                    not_carried: wiring::not_carried()
+                        .filter(|(of, _, _)| *of == family)
+                        .map(|(_, name, features)| NotCarried {
+                            name: name.to_owned(),
+                            reason: needs(features),
+                        })
                         .collect(),
                 })
                 .collect(),
@@ -134,6 +146,17 @@ fn not_yet() -> LauncherError {
     }
 }
 
+/// Why a build does not carry a component, from the features any one of
+/// which would: "needs the `onnx` feature", "needs the `onnx` or the
+/// `remote` feature".
+fn needs(features: &[&str]) -> String {
+    let named: Vec<String> = features
+        .iter()
+        .map(|feature| format!("the `{feature}`"))
+        .collect();
+    format!("needs {} feature", named.join(" or "))
+}
+
 fn refused(error: anyhow::Error) -> ApiError {
     ApiError::BindingRefused {
         detail: format!("{error:#}"),
@@ -213,8 +236,25 @@ mod tests {
         capabilities
             .families
             .iter()
-            .map(|FamilyCapabilities { family, local }| {
+            .map(|FamilyCapabilities { family, local, .. }| {
                 (family.as_str(), local.iter().map(String::as_str).collect())
+            })
+            .collect()
+    }
+
+    fn not_carried(capabilities: &Capabilities) -> Vec<(&str, Vec<(&str, &str)>)> {
+        capabilities
+            .families
+            .iter()
+            .map(|entry| {
+                (
+                    entry.family.as_str(),
+                    entry
+                        .not_carried
+                        .iter()
+                        .map(|missing| (missing.name.as_str(), missing.reason.as_str()))
+                        .collect(),
+                )
             })
             .collect()
     }
@@ -238,6 +278,88 @@ mod tests {
                 "embedder"
             ]
         );
+    }
+
+    /// The ports each node family serves, read back against what
+    /// `ragondin-pipeline` declares for a node of that family: one node per
+    /// family a configuration can name, lowered from a document, so the
+    /// family's spelling is the configuration's own.
+    #[test]
+    fn every_node_family_serves_the_ports_ragondin_pipeline_declares() {
+        let document = pipeline(
+            "    - { id: r, component: retriever, impl: bm25, inputs: [question] }\n\
+             \x20   - { id: f, component: fusion, impl: rrf, inputs: [r, r] }\n\
+             \x20   - { id: k, component: reranker, impl: x, inputs: [question, f] }\n\
+             \x20   - { id: c, component: context_builder, impl: concat, inputs: [question, k] }\n\
+             \x20   - { id: g, component: generator, impl: x, inputs: [question, c] }\n",
+        );
+        let capabilities = BinaryLauncher.capabilities();
+        let ports = |family: &str| {
+            let entry = capabilities
+                .families
+                .iter()
+                .find(|entry| entry.family == family)
+                .unwrap_or_else(|| panic!("`{family}` is listed"));
+            serde_json::to_value(&entry.ports).expect("serializes")
+        };
+
+        let mut seen = Vec::new();
+        for node in document.nodes() {
+            let family = match node.id().as_str() {
+                "r" => "retriever",
+                "f" => "fusion",
+                "k" => "reranker",
+                "c" => "context_builder",
+                "g" => "generator",
+                other => panic!("no node `{other}` in the fixture"),
+            };
+            let consumes = match ragondin_pipeline::consumed_kinds(node) {
+                ragondin_pipeline::PortSpec::Fixed(kinds) => serde_json::json!({
+                    "shape": "fixed",
+                    "kinds": kinds.iter().map(ToString::to_string).collect::<Vec<_>>(),
+                }),
+                ragondin_pipeline::PortSpec::Variadic(kind) => {
+                    serde_json::json!({ "shape": "variadic", "kind": kind.to_string() })
+                }
+                ragondin_pipeline::PortSpec::Unknown => panic!("no configured family is unknown"),
+            };
+            assert_eq!(
+                ports(family),
+                serde_json::json!({
+                    "produces": ragondin_pipeline::produced_kind(node).to_string(),
+                    "consumes": consumes,
+                }),
+                "{family}"
+            );
+            seen.push(family);
+        }
+        seen.sort_unstable();
+        assert_eq!(
+            seen,
+            [
+                "context_builder",
+                "fusion",
+                "generator",
+                "reranker",
+                "retriever"
+            ]
+        );
+        // No node is an embedder: it has no ports.
+        assert_eq!(ports("embedder"), serde_json::Value::Null);
+        // Every other family has, including one added to `Family::ALL` that
+        // the fixture above does not name yet.
+        for family in Family::ALL {
+            let entry = capabilities
+                .families
+                .iter()
+                .find(|entry| entry.family == family.name())
+                .unwrap_or_else(|| panic!("`{family}` is listed"));
+            assert_eq!(
+                entry.ports.is_some(),
+                family != Family::Embedder,
+                "`{family}`'s ports"
+            );
+        }
     }
 
     /// `ui` alone: the build CI's per-feature clippy step and the `ui` job's
@@ -264,6 +386,29 @@ mod tests {
             ]
         );
         assert!(!capabilities.remote);
+        assert_eq!(
+            not_carried(&capabilities),
+            [
+                (
+                    "retriever",
+                    vec![
+                        ("bm25", "needs the `bm25` feature"),
+                        ("dense", "needs the `onnx` or the `remote` feature"),
+                    ]
+                ),
+                ("fusion", vec![]),
+                (
+                    "reranker",
+                    vec![("cross_encoder", "needs the `onnx` feature")]
+                ),
+                ("context_builder", vec![]),
+                (
+                    "generator",
+                    vec![("stub_generator", "needs the `stub` feature")]
+                ),
+                ("embedder", vec![("onnx", "needs the `onnx` feature")]),
+            ]
+        );
     }
 
     /// `--all-features`: the build CI's feature-gated test step compiles.
@@ -289,6 +434,12 @@ mod tests {
             ]
         );
         assert!(capabilities.remote);
+        assert!(
+            not_carried(&capabilities)
+                .iter()
+                .all(|(_, names)| names.is_empty()),
+            "{capabilities:?}"
+        );
     }
 
     fn submission() -> Submission {
