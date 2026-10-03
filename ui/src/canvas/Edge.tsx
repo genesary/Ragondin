@@ -15,9 +15,11 @@ export type EdgeLineProps = {
   to: string;
   port: number;
   kind: PortKind;
+  /** The validation named this edge: drawn dashed, so it reads without colour. */
+  invalid?: boolean;
 };
 
 /** One edge, at rest: which ends it joins and what it carries are on the element, for a test or a stylesheet to read. */
-export function EdgeLine({ x1, y1, x2, y2, from, to, port, kind }: EdgeLineProps) {
-  return <path className="rg-edge" d={edgePath(x1, y1, x2, y2)} data-from={from} data-to={to} data-port={port} data-kind={kind} />;
+export function EdgeLine({ x1, y1, x2, y2, from, to, port, kind, invalid = false }: EdgeLineProps) {
+  return <path className="rg-edge" d={edgePath(x1, y1, x2, y2)} data-from={from} data-to={to} data-port={port} data-kind={kind} data-invalid={invalid || undefined} />;
 }

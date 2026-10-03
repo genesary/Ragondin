@@ -25,8 +25,10 @@ export type Route =
   | { screen: 'replay'; run: string; query?: never }
   /** `#replay/<run>/q/<query>?with=<run>`: one query of one run, node by node, optionally beside another run. */
   | { screen: 'replay'; run: string; query: string; with?: string }
-  /** `#editor/<name>`: one pipeline, edited on the canvas; `#editor` before one is opened. */
-  | { screen: 'editor'; name?: string }
+  /** `#editor`: before a pipeline is opened. */
+  | { screen: 'editor'; name?: never; node?: never }
+  /** `#editor/<name>/node/<id>`: one pipeline, edited on the canvas, and the node selected on it; `#editor/<name>` with none. */
+  | { screen: 'editor'; name: string; node?: string }
   /**
    * `#setup/<section>`: the workspace, its benchmarks and services, and this
    * build, scrolled to and focusing one section; `#setup` at the top.
@@ -49,8 +51,10 @@ export function formatHash(route: Route): string {
     case 'setup':
       return route.section === undefined ? '#setup' : `#setup/${route.section}`;
     case 'pipeline':
+      return route.name === undefined ? '#pipeline' : `#pipeline/${enc(route.name)}`;
     case 'editor':
-      return route.name === undefined ? `#${route.screen}` : `#${route.screen}/${enc(route.name)}`;
+      if (route.name === undefined) return '#editor';
+      return route.node === undefined ? `#editor/${enc(route.name)}` : `#editor/${enc(route.name)}/node/${enc(route.node)}`;
     case 'compare': {
       if (route.ids.length === 0) return '#compare';
       const query = route.baseline === undefined ? '' : `?baseline=${enc(route.baseline)}`;
@@ -77,6 +81,8 @@ export function viewOf(route: Route): string {
   // Setup's section is a place on one page, not another view: moving to it
   // focuses the section, and the shell must not take focus to the heading.
   if (route.screen === 'setup') return '#setup';
+  // The node selected is state within the pipeline's view, as Replay's query is.
+  if (route.screen === 'editor' && route.name !== undefined) return formatHash({ screen: 'editor', name: route.name });
   return formatHash(route).split('?')[0] as string;
 }
 
@@ -127,9 +133,13 @@ export function parseHash(hash: string): Route | null {
       return rest.length === 1 && section !== undefined ? { screen, section } : null;
     }
     case 'pipeline':
-    case 'editor':
       if (rest.length === 0) return { screen };
       return rest.length === 1 && nonEmpty ? { screen, name: rest[0] as string } : null;
+    case 'editor':
+      if (rest.length === 0) return { screen };
+      if (!nonEmpty) return null;
+      if (rest.length === 1) return { screen, name: rest[0] as string };
+      return rest.length === 3 && rest[1] === 'node' ? { screen, name: rest[0] as string, node: rest[2] as string } : null;
     case 'compare': {
       const baseline = query.get('baseline');
       if (rest.length === 0) return baseline === null ? { screen, ids: [] } : null;

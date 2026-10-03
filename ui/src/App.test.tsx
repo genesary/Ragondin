@@ -54,9 +54,10 @@ describe('the shell’s screens', () => {
     ['#compare/aaa', 'Compare', 'Choose at least two runs'],
     ['#replay', 'Replay', 'No query chosen'],
     ['#editor', 'Editor', 'No pipeline open'],
-    ['#editor/hybrid-rrf', 'Editor', 'Nothing to show for hybrid-rrf yet'],
+    ['#editor/hybrid-rrf', 'Editor', 'hybrid-rrf cannot be opened on the canvas yet'],
   ])('%s renders the %s screen, restored from the hash, in its empty state', async (hash, tab, heading) => {
-    mockApi({ 'GET /workspace': { body: WORKSPACE }, 'GET /runs': { body: { runs: [], unreadable: [], shapes: {} } } }, { build: BUILD });
+    const pipeline = { name: 'hybrid-rrf', document: 'pipeline: {}\n', etag: 'e'.repeat(64), hash: null, error: null };
+    mockApi({ 'GET /workspace': { body: WORKSPACE }, 'GET /runs': { body: { runs: [], unreadable: [], shapes: {} } }, 'GET /pipelines/{name}': { body: pipeline } }, { build: BUILD });
     show(hash);
     expect(within(main()).getByRole('heading', { level: 1 }).textContent).toBe(tab);
     expect((await within(main()).findByRole('heading', { level: 3 })).textContent).toBe(heading);
@@ -160,7 +161,7 @@ describe('the shell’s screens', () => {
 
   it('moves no focus on load under StrictMode either, whose effects run twice on mount', async () => {
     mockApi({ 'GET /workspace': { body: WORKSPACE } }, { build: BUILD });
-    window.history.replaceState(null, '', '/#editor/hybrid-rrf');
+    window.history.replaceState(null, '', '/#editor');
     render(
       <StrictMode>
         <App client={createApiClient()} build={BUILD} reload={vi.fn()} />

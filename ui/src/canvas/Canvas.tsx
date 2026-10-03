@@ -5,33 +5,45 @@ import {
   Position as Side,
   ReactFlow,
   ReactFlowProvider,
+  ViewportPortal,
   useReactFlow,
+  useStore,
   useViewport,
   type Edge,
   type EdgeProps,
   type Node,
+  type NodeChange,
   type NodeHandle,
   type NodeProps,
 } from '@xyflow/react';
 import '@xyflow/react/dist/base.css';
-import { memo, useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { memo, useCallback, useEffect, useId, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react';
 import type { Graph } from '../api/types.ts';
-import { Button, FAMILY_LABEL } from '../../design/index.ts';
-import { EdgeLine } from './Edge.tsx';
-import { NODE_WIDTH, nodeSize, resolveLayout, type Position, type StoredLayout } from './layout.ts';
+import { Button, FAMILY_LABEL, Glyph } from '../../design/index.ts';
+import { EdgeLine, edgePath } from './Edge.tsx';
+import { GRID, NODE_WIDTH, nodeSize, resolveLayout, type Position, type StoredLayout } from './layout.ts';
 import { Legend } from './Legend.tsx';
 import { describeOverlay, toModel, type CanvasNode, type NodeOverlay, type PortKind } from './model.ts';
-import { NodeCard } from './NodeCard.tsx';
+import { NodeCard, type NodeStatus } from './NodeCard.tsx';
 import { NodeMenu } from './NodeMenu.tsx';
 import { PortDot, portTitle, portTop, type PortProps } from './Port.tsx';
 import './Canvas.css';
 
-/** What the canvas lets a person do. Read is its only mode today. */
-export type CanvasMode = 'read';
+/** What the canvas lets a person do: read (pan, zoom, select, the menu), or write — move nodes and draw edges too. */
+export type CanvasMode = 'read' | 'write';
 
 // What each mode allows. Read: pan, zoom, select, open the menu; nothing
-// that moves a node or makes an edge.
-const EDITABLE: Record<CanvasMode, boolean> = { read: false };
+// that moves a node or makes an edge. Write: nodes move, by drag and by the
+// arrow keys, and an edge is drawn from an output port to an input port. The
+// library's own connection mechanism stays off in both: write mode draws its
+// edges itself, so every port can say during the drag why it refuses one.
+const EDITABLE: Record<CanvasMode, boolean> = { read: false, write: true };
+
+/** The ports a node draws in write mode: its input slots in port order, and its output. */
+export type CanvasPorts = { inputs: readonly PortKind[]; output: PortKind | null };
+
+/** The type a dragged palette entry carries, so the canvas takes a drop of nothing else. */
+export const DROP_TYPE = 'application/x-ragondin-node';
 
 export type CanvasProps = {
   /** The lowered graph, as `GET /runs/{id}` serves it. */
@@ -50,33 +62,70 @@ export type CanvasProps = {
   onAutoPlaced?: (placed: Record<string, Position>) => void;
   /** What sits beside the canvas while a node is selected. */
   inspector?: (id: string) => ReactNode;
-  /** The node menu's entries. */
-  menu?: (id: string) => ReactNode;
+  /** The node menu's entries, and a way for an entry to close the menu once it has acted. */
+  menu?: (id: string, close: () => void) => ReactNode;
+  // Write mode. Each is read only there.
+  /** Per node, the ports it draws, in place of those its edges imply — so an empty slot shows. */
+  ports?: Readonly<Record<string, CanvasPorts>> | undefined;
+  /** Why an edge from `from` into port `port` of `to` cannot be made, or null. Asked of every port while an edge is drawn. */
+  refuse?: (from: string, to: string, port: number) => string | null;
+  /** An edge was dropped on a port that took it. */
+  onConnect?: (from: string, to: string, port: number) => void;
+  /** A node was moved, by drag or by key, to this grid-snapped position. */
+  onMove?: (id: string, position: Position) => void;
+  /** `/` was pressed in the canvas: the caller opens its insert list. */
+  onInsert?: () => void;
+  /** A palette entry was dropped: its `DROP_TYPE` data, and where it landed, grid-snapped. */
+  onDropItem?: (item: string, position: Position) => void;
+  /** Per node, the validation's words, drawn as the invalid state. */
+  issues?: Readonly<Record<string, string>> | undefined;
+  /** The edges the validation named, by `edgeId`. */
+  invalidEdges?: readonly string[] | undefined;
+};
+
+/** Where a port stands while an edge is drawn: open to it, or refusing it with a reason. */
+type Drop = { state: 'open' } | { state: 'refused'; reason: string };
+
+type WriteHandlers = {
+  start: (node: string) => void;
+  enter: (node: string, port: number) => void;
+  leave: () => void;
+  drop: (node: string, port: number) => void;
+  more: (node: string) => void;
 };
 
 type CardData = {
   node: CanvasNode;
   overlay: NodeOverlay | undefined;
   selected: boolean;
+  /** Which input ports an edge meets, in port order: drawn filled. */
+  connectedInputs: readonly boolean[];
   /** Whether an edge leaves the node: its output port is drawn filled. */
   downstream: boolean;
-  editable: boolean;
+  status: NodeStatus | undefined;
+  /** While an edge is drawn, each input port's stance. */
+  drops: readonly (Drop | null)[] | null;
+  write: WriteHandlers | null;
   menu: ReactNode | null;
 };
 type CardNode = Node<CardData, 'card'>;
-type LineEdge = Edge<{ port: number; kind: PortKind }, 'line'>;
+type LineEdge = Edge<{ port: number; kind: PortKind; invalid: boolean }, 'line'>;
 
-// The description every node points at: the keys that work here, and no
-// other. The library's default names Space, the arrow keys and Delete, which
-// read mode does not bind.
-const NODE_DESCRIPTION = 'Enter selects, Shift+F10 opens the menu, Escape clears.';
+// The description every node points at: the keys that work in its mode, and
+// no other. The library's default names Space, the arrow keys and Delete,
+// which the canvas does not bind as the library would.
+const NODE_DESCRIPTION: Record<CanvasMode, string> = {
+  read: 'Enter selects, Shift+F10 opens the menu, Escape clears.',
+  write: 'Enter selects, Shift+F10 opens the menu, the arrow keys move it, Escape clears.',
+};
 // The id the library gives that description, suffixed with the flow's id.
 const KEYS_DESCRIPTION = 'react-flow__node-desc';
-const ARIA_LABELS = {
-  'node.a11yDescription.default': NODE_DESCRIPTION,
-  'node.a11yDescription.keyboardDisabled': NODE_DESCRIPTION,
+const ariaLabels = (mode: CanvasMode) => ({
+  'node.a11yDescription.default': NODE_DESCRIPTION[mode],
+  'node.a11yDescription.keyboardDisabled': NODE_DESCRIPTION[mode],
   'edge.a11yDescription.default': '',
-};
+});
+const ARIA_LABELS: Record<CanvasMode, ReturnType<typeof ariaLabels>> = { read: ariaLabels('read'), write: ariaLabels('write') };
 
 // Where a port's edge attaches: the port's outer side, at its centre. The
 // canvas library reads these before it has measured a card, so an edge is
@@ -88,10 +137,16 @@ const handles = (node: CanvasNode): NodeHandle[] => [
   ...(node.output === null ? [] : [{ id: 'out', type: 'source' as const, position: Side.Right, x: NODE_WIDTH + PORT_OVERHANG - PORT, y: portTop(0), width: PORT, height: PORT }]),
 ];
 
-function accessibleName(node: CanvasNode, selected: boolean, overlay: NodeOverlay | undefined): string {
+// A key's move, in grid steps: one, or four with Shift.
+const ARROWS: Record<string, [number, number]> = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
+const snap = (v: number) => Math.round(v / GRID) * GRID;
+const WRITE_FIT = { maxZoom: 1 };
+
+function accessibleName(node: CanvasNode, selected: boolean, overlay: NodeOverlay | undefined, issue: string | undefined): string {
   return [
     `${FAMILY_LABEL[node.family]} ${node.id}, ${node.impl}`,
     selected ? 'selected' : null,
+    issue === undefined ? null : 'invalid',
     overlay?.error !== undefined ? 'failed' : null,
     overlay?.notRun === true ? 'not run' : null,
     overlay?.onlyHere ?? null,
@@ -100,31 +155,48 @@ function accessibleName(node: CanvasNode, selected: boolean, overlay: NodeOverla
     .join(', ');
 }
 
-/** A port drawn as a library handle, so an edge attaches to it. */
+/** A port drawn as a library handle, so an edge attaches to it; in write mode, an end an edge is drawn from or dropped on. */
 const handlePort =
-  (editable: boolean) =>
-  ({ side, kind, index, top, connected }: PortProps) => (
-    <Handle
-      key={`${side}-${index}`}
-      id={side === 'in' ? `in-${index}` : 'out'}
-      type={side === 'in' ? 'target' : 'source'}
-      position={side === 'in' ? Side.Left : Side.Right}
-      isConnectable={editable}
-      isConnectableStart={editable}
-      isConnectableEnd={editable}
-      className="rg-port"
-      data-side={side}
-      data-kind={kind}
-      data-connected={connected || undefined}
-      style={{ top }}
-      title={portTitle(side, kind)}
-    >
-      <PortDot kind={kind} />
-    </Handle>
-  );
+  (id: string, drops: readonly (Drop | null)[] | null, write: WriteHandlers | null) =>
+  ({ side, kind, index, top, connected }: PortProps) => {
+    const drop = side === 'in' ? (drops?.[index] ?? null) : null;
+    const events =
+      write === null
+        ? {}
+        : side === 'out'
+          ? {
+              onPointerDown: (event: PointerEvent) => {
+                if (event.button !== 0) return;
+                event.stopPropagation();
+                write.start(id);
+              },
+            }
+          : { onPointerEnter: () => write.enter(id, index), onPointerLeave: write.leave, onPointerUp: () => write.drop(id, index) };
+    return (
+      <Handle
+        key={`${side}-${index}`}
+        id={side === 'in' ? `in-${index}` : 'out'}
+        type={side === 'in' ? 'target' : 'source'}
+        position={side === 'in' ? Side.Left : Side.Right}
+        isConnectable={false}
+        isConnectableStart={false}
+        isConnectableEnd={false}
+        className={write === null ? 'rg-port' : 'rg-port nodrag'}
+        data-side={side}
+        data-kind={kind}
+        data-connected={connected || undefined}
+        data-drop={drop?.state}
+        style={{ top }}
+        title={drop?.state === 'refused' ? drop.reason : portTitle(side, kind)}
+        {...events}
+      >
+        <PortDot kind={kind} />
+      </Handle>
+    );
+  };
 
 const Card = memo(function Card({ data }: NodeProps<CardNode>) {
-  const { node, overlay, selected, downstream, editable, menu } = data;
+  const { node, overlay, selected, connectedInputs, downstream, status, drops, write, menu } = data;
   return (
     <>
       <NodeCard
@@ -134,18 +206,30 @@ const Card = memo(function Card({ data }: NodeProps<CardNode>) {
         param={node.param}
         inputs={node.inputs}
         output={node.output}
-        connected={{ inputs: true, output: downstream }}
+        connected={{ inputs: connectedInputs, output: downstream }}
         selected={selected}
+        status={status}
         overlay={overlay}
-        renderPort={handlePort(editable)}
+        renderPort={handlePort(node.id, drops, write)}
       />
+      {write === null ? null : (
+        // A pointer's way to the menu Shift+F10 opens: the keyboard has that key, so this is no tab stop.
+        <button type="button" className="rg-canvas__more nodrag" tabIndex={-1} aria-label={`More actions for ${node.id}`} onClick={(event) => {
+            // The node's own click would close the menu this opens.
+            event.stopPropagation();
+            write.more(node.id);
+          }}
+        >
+          <Glyph name="more" />
+        </button>
+      )}
       {menu}
     </>
   );
 });
 
 function Line({ sourceX, sourceY, targetX, targetY, source, target, data }: EdgeProps<LineEdge>) {
-  return <EdgeLine x1={sourceX} y1={sourceY} x2={targetX} y2={targetY} from={source} to={target} port={data?.port ?? 0} kind={data?.kind ?? 'opaque'} />;
+  return <EdgeLine x1={sourceX} y1={sourceY} x2={targetX} y2={targetY} from={source} to={target} port={data?.port ?? 0} kind={data?.kind ?? 'opaque'} invalid={data?.invalid ?? false} />;
 }
 
 // Stable across renders, as the canvas library requires.
@@ -174,20 +258,54 @@ function Toolbar() {
 }
 
 const NO_OVERLAY: Readonly<Record<string, NodeOverlay>> = {};
+const NO_ISSUES: Readonly<Record<string, string>> = {};
 
-function Surface({ graph, label, mode = 'read', layout, overlay = NO_OVERLAY, selected: controlled, onSelect, onAutoPlaced, inspector, menu: entries }: CanvasProps) {
+/** An edge being drawn: from which node, and the port under the pointer, if any. */
+type Drawing = { from: string; over: { node: string; port: number } | null; pointer: Position | null };
+
+function Surface({
+  graph,
+  label,
+  mode = 'read',
+  layout,
+  overlay = NO_OVERLAY,
+  selected: controlled,
+  onSelect,
+  onAutoPlaced,
+  inspector,
+  menu: entries,
+  ports,
+  refuse,
+  onConnect,
+  onMove,
+  onInsert,
+  onDropItem,
+  issues = NO_ISSUES,
+  invalidEdges,
+}: CanvasProps) {
   const editable = EDITABLE[mode];
   const flowId = useId();
+  const flow = useReactFlow();
   const root = useRef<HTMLDivElement>(null);
   const [own, setOwn] = useState<string | null>(null);
   const [menu, setMenu] = useState<string | null>(null);
+  const [drawing, setDrawing] = useState<Drawing | null>(null);
+  // Where a node is while the library drags it; handed to `onMove` on release.
+  const [dragged, setDragged] = useState<Record<string, Position>>({});
+  // Each card's measured size, handed back to the library on its node (below).
+  const [measured, setMeasured] = useState<Record<string, { width: number; height: number }>>({});
+  const [tick, setTick] = useState(0);
   const selected = controlled === undefined ? own : controlled;
   const select = (id: string | null) => {
     if (controlled === undefined) setOwn(id);
     onSelect?.(id);
   };
 
-  const model = useMemo(() => toModel(graph), [graph]);
+  const model = useMemo(() => {
+    const drawn = toModel(graph);
+    if (!editable || ports === undefined) return drawn;
+    return { ...drawn, nodes: drawn.nodes.map((n) => (ports[n.id] === undefined ? n : { ...n, inputs: [...ports[n.id]!.inputs], output: ports[n.id]!.output })) };
+  }, [graph, editable, ports]);
   // The graph and the stored positions only: replay data never moves a node.
   const resolved = useMemo(() => resolveLayout(model, layout), [model, layout]);
 
@@ -208,6 +326,48 @@ function Surface({ graph, label, mode = 'read', layout, overlay = NO_OVERLAY, se
     if (refocus) root.current?.querySelector<HTMLElement>(`.react-flow__node[data-id="${CSS.escape(id)}"]`)?.focus();
   }, []);
 
+  // The write handlers read the latest props through a ref, so the object the
+  // cards hold is made once and a card re-renders only for its own data.
+  const latest = useRef({ refuse, onConnect });
+  const drawingNow = useRef<Drawing | null>(null);
+  drawingNow.current = drawing;
+  useEffect(() => {
+    latest.current = { refuse, onConnect };
+  });
+  const write: WriteHandlers | null = useMemo(
+    () =>
+      editable
+        ? {
+            start: (node) => setDrawing({ from: node, over: null, pointer: null }),
+            enter: (node, port) => setDrawing((d) => (d === null ? d : { ...d, over: { node, port } })),
+            leave: () => setDrawing((d) => (d === null ? d : { ...d, over: null })),
+            // Read from the ref, never inside a state update, which StrictMode runs twice.
+            drop: (node, port) => {
+              const d = drawingNow.current;
+              setDrawing(null);
+              if (d !== null && latest.current.refuse?.(d.from, node, port) == null) latest.current.onConnect?.(d.from, node, port);
+            },
+            more: (node) => setMenu(node),
+          }
+        : null,
+    [editable],
+  );
+
+  // A release anywhere but a port ends the drawing with nothing made; the
+  // pointer is followed so the edge being drawn reaches it.
+  const isDrawing = drawing !== null;
+  useEffect(() => {
+    if (!isDrawing) return;
+    const end = () => setDrawing(null);
+    const follow = (event: globalThis.PointerEvent) => setDrawing((d) => (d === null ? d : { ...d, pointer: flow.screenToFlowPosition({ x: event.clientX, y: event.clientY }) }));
+    window.addEventListener('pointerup', end);
+    window.addEventListener('pointermove', follow);
+    return () => {
+      window.removeEventListener('pointerup', end);
+      window.removeEventListener('pointermove', follow);
+    };
+  }, [isDrawing, flow]);
+
   // Each replayed node's figures, said: the element its description points
   // at before the keys' description, which the library renders and names.
   const descriptions = useMemo(
@@ -218,22 +378,48 @@ function Surface({ graph, label, mode = 'read', layout, overlay = NO_OVERLAY, se
     [model, overlay, flowId],
   );
 
+  // In write mode the graph grows under the reader: each time a node comes
+  // or goes the view is fitted again, at once, never above 100% — a fit of
+  // one node would otherwise fill the canvas and leave the next off screen.
+  // The library queues the fit until the new card is measured. The pane
+  // resizing — the inspector opening beside it — fits again too, or the fit
+  // would frame the graph in the width the pane had before.
+  const count = model.nodes.length;
+  const paneWidth = useStore((s) => s.width);
+  const paneHeight = useStore((s) => s.height);
+  useEffect(() => {
+    if (editable) void flow.fitView(WRITE_FIT);
+  }, [editable, count, paneWidth, paneHeight, flow]);
+
+  const positionOf = useCallback((id: string) => dragged[id] ?? resolved.positions[id]!, [dragged, resolved]);
+
   const nodes: CardNode[] = useMemo(() => {
     const downstream = new Set(model.edges.map((e) => e.from));
     const described = new Map(descriptions.map((d) => [d.node, d.id]));
     const size = nodeSize();
+    const from = drawing?.from;
     return model.nodes.map((node) => {
       const isSelected = node.id === selected;
+      const issue = editable ? issues[node.id] : undefined;
+      const filled = new Set(model.edges.filter((e) => e.to === node.id).map((e) => e.port));
+      const drops =
+        from === undefined
+          ? null
+          : node.inputs.map((_, port): Drop => {
+              const reason = refuse?.(from, node.id, port) ?? null;
+              return reason === null ? { state: 'open' } : { state: 'refused', reason };
+            });
       return {
         id: node.id,
         type: 'card',
-        position: resolved.positions[node.id]!,
+        position: positionOf(node.id),
+        ...(measured[node.id] === undefined ? {} : { measured: measured[node.id] }),
         initialWidth: size.width,
         initialHeight: size.height,
         handles: handles(node),
         draggable: editable,
-        connectable: editable,
-        ariaLabel: accessibleName(node, isSelected, overlay[node.id]),
+        connectable: false,
+        ariaLabel: accessibleName(node, isSelected, overlay[node.id], issue),
         ...(described.has(node.id) ? { domAttributes: { 'aria-describedby': `${described.get(node.id)!} ${KEYS_DESCRIPTION}-${flowId}` } } : {}),
         // The node whose menu is open is lifted above the others, so its menu is too.
         ...(menu === node.id ? { zIndex: 1 } : {}),
@@ -241,38 +427,61 @@ function Surface({ graph, label, mode = 'read', layout, overlay = NO_OVERLAY, se
           node,
           overlay: overlay[node.id],
           selected: isSelected,
+          connectedInputs: node.inputs.map((_, port) => filled.has(port)),
           downstream: downstream.has(node.id),
-          editable,
+          status: issue === undefined ? undefined : { kind: 'invalid', message: issue },
+          drops,
+          write,
           menu:
             menu === node.id ? (
               <NodeMenu node={node.id} onClose={(refocus) => closeMenu(node.id, refocus)}>
-                {entries?.(node.id)}
+                {entries?.(node.id, () => closeMenu(node.id, true))}
               </NodeMenu>
             ) : null,
         },
       };
     });
-  }, [model, resolved, selected, overlay, menu, entries, editable, closeMenu, descriptions, flowId]);
+    // `tick` hands the library fresh nodes when it asked for them (below).
+  }, [tick, model, positionOf, measured, selected, overlay, menu, entries, editable, closeMenu, descriptions, flowId, issues, drawing?.from, refuse, write]);
 
-  const edges: LineEdge[] = useMemo(
-    () =>
-      model.edges.map((e) => ({
-        id: e.id,
-        type: 'line',
-        source: e.from,
-        target: e.to,
-        sourceHandle: 'out',
-        targetHandle: `in-${e.port}`,
-        data: { port: e.port, kind: e.kind },
-      })),
-    [model],
-  );
+  const edges: LineEdge[] = useMemo(() => {
+    const flagged = new Set(editable ? (invalidEdges ?? []) : []);
+    return model.edges.map((e) => ({
+      id: e.id,
+      type: 'line',
+      source: e.from,
+      target: e.to,
+      sourceHandle: 'out',
+      targetHandle: `in-${e.port}`,
+      data: { port: e.port, kind: e.kind, invalid: flagged.has(e.id) },
+    }));
+  }, [model, editable, invalidEdges]);
+
+  // The nodes are controlled: what the library changes comes back here. A
+  // drag's positions and each card's measured size are kept — a size not
+  // handed back on its node is forgotten when the node is next handed over,
+  // and a fit then frames only the cards measured since — and anything else
+  // (a fit's request for the nodes again) is answered with fresh nodes, which
+  // is what lets the library run a queued fit.
+  const onNodesChange = (changes: NodeChange<CardNode>[]) => {
+    const moved = changes.flatMap((c) => (c.type === 'position' && c.position !== undefined ? [[c.id, c.position] as const] : []));
+    if (editable && moved.length > 0) setDragged((d) => ({ ...d, ...Object.fromEntries(moved) }));
+    const sized = changes.flatMap((c) => (c.type === 'dimensions' && c.dimensions !== undefined ? [[c.id, c.dimensions] as const] : []));
+    if (sized.length > 0) setMeasured((m) => ({ ...m, ...Object.fromEntries(sized) }));
+    if (changes.some((c) => c.type !== 'position' && c.type !== 'dimensions')) setTick((t) => t + 1);
+  };
 
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     const target = event.target as HTMLElement;
     // The open menu handles its own keys, Escape included.
     if (event.key === 'Escape') {
+      setDrawing(null);
       select(null);
+      return;
+    }
+    if (editable && event.key === '/' && target.closest('[role="menu"]') === null) {
+      event.preventDefault();
+      onInsert?.();
       return;
     }
     const id = target.closest('.react-flow__node')?.getAttribute('data-id');
@@ -284,15 +493,47 @@ function Surface({ graph, label, mode = 'read', layout, overlay = NO_OVERLAY, se
     } else if ((event.key === 'F10' && event.shiftKey) || event.key === 'ContextMenu') {
       event.preventDefault();
       setMenu(id);
+    } else if (editable && ARROWS[event.key] !== undefined) {
+      event.preventDefault();
+      const [dx, dy] = ARROWS[event.key]!;
+      const step = (event.shiftKey ? 4 : 1) * GRID;
+      const at = positionOf(id);
+      onMove?.(id, { x: snap(at.x) + dx * step, y: snap(at.y) + dy * step });
     }
   };
+
+  const onDragOver = (event: DragEvent<HTMLDivElement>) => {
+    if (!editable || !event.dataTransfer.types.includes(DROP_TYPE)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'copy';
+  };
+  const onDrop = (event: DragEvent<HTMLDivElement>) => {
+    if (!editable || !event.dataTransfer.types.includes(DROP_TYPE)) return;
+    event.preventDefault();
+    const at = flow.screenToFlowPosition({ x: event.clientX, y: event.clientY });
+    onDropItem?.(event.dataTransfer.getData(DROP_TYPE), { x: snap(at.x), y: snap(at.y) });
+  };
+
+  // What the status line says while an edge is drawn: the reason of the port under the pointer, or how to finish.
+  const status = (() => {
+    if (drawing === null) return '';
+    const over = drawing.over === null ? null : (refuse?.(drawing.from, drawing.over.node, drawing.over.port) ?? null);
+    return over ?? `Connecting from ${drawing.from}. Drop on an open port; Escape cancels.`;
+  })();
+  const source = drawing === null ? null : positionOf(drawing.from);
 
   const panel = selected !== null && inspector !== undefined ? inspector(selected) : null;
   return (
     <div className="rg-canvas-frame">
-      <div ref={root} className="rg-canvas" onKeyDown={onKeyDown}>
+      <div ref={root} className="rg-canvas" data-mode={mode} data-drawing={drawing === null ? undefined : true} onKeyDown={onKeyDown} onDragOver={onDragOver} onDrop={onDrop}>
         {/* First in the tab order, before the nodes. */}
         <Toolbar />
+        {/* Its height is kept whether or not it speaks, so nothing moves when it does. */}
+        {editable ? (
+          <p className="rg-canvas__status" role="status">
+            {status}
+          </p>
+        ) : null}
         <ReactFlow<CardNode, LineEdge>
           id={flowId}
           aria-label={label}
@@ -301,14 +542,22 @@ function Surface({ graph, label, mode = 'read', layout, overlay = NO_OVERLAY, se
           nodeTypes={NODE_TYPES}
           edgeTypes={EDGE_TYPES}
           nodesDraggable={editable}
-          nodesConnectable={editable}
+          nodesConnectable={false}
           elementsSelectable={false}
           edgesFocusable={false}
           deleteKeyCode={null}
           selectionKeyCode={null}
           multiSelectionKeyCode={null}
-          ariaLabelConfig={ARIA_LABELS}
+          ariaLabelConfig={ARIA_LABELS[mode]}
+          snapToGrid={editable}
+          snapGrid={[GRID, GRID]}
+          onNodesChange={onNodesChange}
+          onNodeDragStop={(_, node) => {
+            setDragged((d) => Object.fromEntries(Object.entries(d).filter(([k]) => k !== node.id)));
+            onMove?.(node.id, { x: snap(node.position.x), y: snap(node.position.y) });
+          }}
           fitView
+          {...(editable ? { fitViewOptions: WRITE_FIT } : {})}
           // The library's floor of 0.5 cannot fit a seven-column graph into a
           // half-width pane, the side-by-side case.
           minZoom={0.2}
@@ -328,6 +577,13 @@ function Surface({ graph, label, mode = 'read', layout, overlay = NO_OVERLAY, se
         >
           <Background id="minor" className="rg-canvas__grid" variant={BackgroundVariant.Dots} gap={16} size={1} />
           <Background id="major" className="rg-canvas__grid-major" variant={BackgroundVariant.Dots} gap={128} size={1.5} />
+          {source === null || drawing?.pointer == null ? null : (
+            <ViewportPortal>
+              <svg className="rg-canvas__drawing" aria-hidden="true">
+                <path className="rg-edge" data-drawing="true" d={edgePath(source.x + NODE_WIDTH + PORT_OVERHANG, source.y + portTop(0) + PORT / 2, drawing.pointer.x, drawing.pointer.y)} />
+              </svg>
+            </ViewportPortal>
+          )}
         </ReactFlow>
         <Legend model={model} autoPlaced={resolved.autoPlaced.length} />
         <div hidden>
@@ -347,10 +603,12 @@ function Surface({ graph, label, mode = 'read', layout, overlay = NO_OVERLAY, se
  * The pipeline canvas: the lowered graph as node cards and typed edges, laid
  * out automatically or at stored positions, with pan, zoom, one selection and
  * a keyboard model — Tab walks the toolbar, then the nodes in topological
- * order; Enter selects, Shift+F10 opens the node menu, Escape clears. It
- * receives everything through its props and makes no request; it knows no
- * screen. Each canvas holds its own viewport and selection, so two side by
- * side share nothing.
+ * order; Enter selects, Shift+F10 opens the node menu, Escape clears. In
+ * write mode nodes move, by drag or by the arrow keys, an edge is drawn from
+ * an output port onto an input port that every port judges during the drag,
+ * and `/` asks for the caller's insert list. It receives everything through
+ * its props and makes no request; it knows no screen. Each canvas holds its
+ * own viewport and selection, so two side by side share nothing.
  */
 export function Canvas(props: CanvasProps) {
   return (

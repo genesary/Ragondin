@@ -1,7 +1,8 @@
 // The six screens, widest to narrowest (the front-end design, § 3). Runs,
-// Pipeline, Compare, Replay and Setup are built (src/runs/, src/pipeline/,
-// src/compare/, src/replay/, src/setup/) — Replay loaded as its own chunk,
-// since it carries the canvas; each other screen is its empty state here: one sentence
+// Pipeline, Compare, Replay, Editor and Setup are built (src/runs/,
+// src/pipeline/, src/compare/, src/replay/, src/editor/, src/setup/) — Replay
+// and the editor's canvas loaded as chunks of their own, since they carry the
+// canvas; Replay before a run is chosen is its empty state here: one sentence
 // on the default path and the action that leads on. A screen's own issue
 // replaces its empty state with its content and keeps the route shape
 // src/routes.ts gives it.
@@ -10,6 +11,7 @@ import { ButtonLink, EmptyState, Sheet } from '../../design/index.ts';
 import type { ApiClient } from '../api/client.ts';
 import type { Workspace } from '../api/types.ts';
 import { CompareScreen } from '../compare/CompareScreen.tsx';
+import { EditorScreen } from '../editor/EditorScreen.tsx';
 import { PipelineScreen } from '../pipeline/PipelineScreen.tsx';
 import { formatHash, type Route, type ScreenName } from '../routes.ts';
 import { RunsScreen } from '../runs/RunsScreen.tsx';
@@ -32,20 +34,10 @@ export const SCREENS: readonly { screen: ScreenName; label: string; bare: Route 
 type Action = { label: string; to: Route };
 type Empty = { heading: string; sentence: string; action?: Action };
 
-const openRuns: Action = { label: 'Open Runs', to: { screen: 'runs' } };
 const openCompare: Action = { label: 'Open Compare', to: { screen: 'compare', ids: [] } };
 
-/** What a screen shows before it has data, given the state its route carries. */
-function emptyOf(route: Exclude<Route, { screen: 'runs' | 'pipeline' | 'compare' | 'setup' }>): Empty {
-  switch (route.screen) {
-    case 'replay':
-      return { heading: 'No query chosen', sentence: 'Open a run from Runs, or a query from Compare, to follow it through the pipeline, node by node.', action: openCompare };
-    case 'editor':
-      return route.name === undefined
-        ? { heading: 'No pipeline open', sentence: 'Open a pipeline from Runs to edit it on the canvas.', action: openRuns }
-        : { heading: `Nothing to show for ${route.name} yet`, sentence: `The nodes and edges of ${route.name} appear here, on the canvas.`, action: openRuns };
-  }
-}
+/** What Replay shows before a run is chosen. */
+const REPLAY_EMPTY: Empty = { heading: 'No query chosen', sentence: 'Open a run from Runs, or a query from Compare, to follow it through the pipeline, node by node.', action: openCompare };
 
 /**
  * Moves focus to `heading` whenever `address` changes from the one the page
@@ -119,6 +111,14 @@ export function Screen({ route, heading, client, workspace, refreshWorkspace, re
       </>
     );
   }
+  if (route.screen === 'editor') {
+    return (
+      <>
+        {title}
+        <EditorScreen client={client} name={route.name} workspace={workspace} />
+      </>
+    );
+  }
   if (route.screen === 'setup') {
     return (
       <>
@@ -127,7 +127,7 @@ export function Screen({ route, heading, client, workspace, refreshWorkspace, re
       </>
     );
   }
-  const empty = emptyOf(route);
+  const empty = REPLAY_EMPTY;
   return (
     <>
       {title}

@@ -1,0 +1,469 @@
+/** @vitest-environment happy-dom */
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { useState } from 'react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createApiClient } from '../api/client.ts';
+import { mockApi, type MockRoutes } from '../api/testing.ts';
+import type { Problem } from '../api/types.ts';
+import type { WireDocument } from './document.ts';
+import { parseRules } from '../../design/testing/css.ts';
+import editorCss from './Editor.css?raw';
+import { Editor } from './Editor.tsx';
+import { GRAMMAR, HYBRID, SERVICES, WORKSPACE } from './fixtures.ts';
+import type { PortGrammar } from './ports.ts';
+
+const HASH = 'b'.repeat(64);
+// The hybrid, and a reranker with nothing wired yet.
+const DRAFT: WireDocument = {
+  pipeline: { inputs: HYBRID.pipeline.inputs, nodes: [...HYBRID.pipeline.nodes, { id: 'second', component: 'reranker', impl: 'cross_encoder', inputs: [], params: {} }] },
+};
+
+const invalid = (detail: string, location: NonNullable<Problem['location']>): { problem: Problem } => ({
+  problem: { type: 'urn:ragondin:problem:pipeline_invalid', title: 'Pipeline invalid', status: 422, detail, code: 'pipeline_invalid', hint: 'Correct the pipeline, then validate it again.', location },
+});
+const KIND_MISMATCH =
+  'the configuration wires two nodes incompatibly\n  edge: `lexical` feeds `reranked` at port 1\n  expected: chunks\n  found: query';
+
+function Harness({ initial = DRAFT, grammar = GRAMMAR, start = null }: { initial?: WireDocument; grammar?: PortGrammar | null; start?: string | null }) {
+  const [client] = useState(() => createApiClient());
+  const [selected, setSelected] = useState<string | null>(start);
+  return (
+    <div style={{ width: 1400, height: 800 }}>
+      <Editor client={client} title="Draft" initial={initial} capabilities={WORKSPACE.capabilities} services={SERVICES.services} grammar={grammar} selected={selected} onSelect={setSelected} />
+      <output data-testid="selected">{selected ?? ''}</output>
+    </div>
+  );
+}
+
+function setup(routes: MockRoutes = { 'POST /pipelines/validate': { body: { hash: HASH } } }, props: Parameters<typeof Harness>[0] = {}) {
+  const api = mockApi(routes);
+  const view = render(<Harness {...props} />);
+  return { ...view, api };
+}
+
+const nodeEl = (root: HTMLElement, id: string) => root.querySelector(`.react-flow__node[data-id="${id}"]`) as HTMLElement | null;
+const inPort = (root: HTMLElement, id: string, port: number) => nodeEl(root, id)!.querySelectorAll<HTMLElement>('.rg-port[data-side="in"]')[port]!;
+const outPort = (root: HTMLElement, id: string) => nodeEl(root, id)!.querySelector<HTMLElement>('.rg-port[data-side="out"]')!;
+const validations = (api: ReturnType<typeof mockApi>) => api.requests.flatMap((r, i) => (r === 'POST /api/v1/pipelines/validate' ? [api.bodies[i] as { document: string }] : []));
+const nodesOf = (body: { document: string }) => (JSON.parse(body.document) as WireDocument).pipeline.nodes;
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
+describe('live validation', () => {
+  it('sends the current wire-schema document after a mutation, and nothing else, and shows the server’s hash', async () => {
+    const { api, container } = setup();
+    await waitFor(() => expect(validations(api)).toHaveLength(1));
+    fireEvent.click(within(screen.getByRole('region', { name: 'Palette' })).getByRole('button', { name: /^rrf/ }));
+    await waitFor(() => expect(validations(api)).toHaveLength(2));
+    const sent = validations(api)[1]!;
+    expect(Object.keys(sent)).toEqual(['document']);
+    const doc = JSON.parse(sent.document) as WireDocument;
+    expect(Object.keys(doc)).toEqual(['pipeline']);
+    expect(nodesOf(sent).at(-1)).toEqual({ id: 'rrf', component: 'fusion', impl: 'rrf', inputs: [], params: {} });
+    expect(sent.document).not.toMatch(/"x"|"y"|position/);
+    expect(await within(container).findByText(HASH)).toBeTruthy();
+  });
+
+  it('places a located error on the node and the edge it names, and in the inspector, in the server’s words, and announces it', async () => {
+    const { container } = setup({ 'POST /pipelines/validate': invalid(KIND_MISMATCH, { node: 'reranked', edge: { from: 'fused', to: 'reranked', port: 1 } }) }, { start: 'reranked' });
+    await waitFor(() => expect(nodeEl(container, 'reranked')!.querySelector('.rg-node')?.getAttribute('data-status')).toBe('invalid'));
+    expect(within(nodeEl(container, 'reranked')!).getByText(/wires two nodes incompatibly/)).toBeTruthy();
+    expect(container.querySelector('path.rg-edge[data-from="fused"][data-to="reranked"]')?.getAttribute('data-invalid')).toBe('true');
+    const inspector = screen.getByRole('complementary', { name: 'reranked' });
+    expect(within(inspector).getAllByText(/wires two nodes incompatibly/).length).toBeGreaterThan(0);
+    const row = within(inspector).getByRole('listitem', { name: /port 1/ });
+    expect(row.getAttribute('data-invalid')).toBe('true');
+    expect(row.querySelector('small')?.textContent).toBe('The server names this edge.');
+    expect(screen.getAllByRole('status').map((s) => s.textContent).find((t) => t?.startsWith('Not valid:'))).toContain('wires two nodes incompatibly');
+    expect(within(container).queryByText(HASH)).toBeNull();
+  });
+
+  it('never shows a hash of its own: the header waits for the server', async () => {
+    let answer: (v: { body: { hash: string } }) => void = () => {};
+    const { container, api } = setup({ 'POST /pipelines/validate': () => new Promise((resolve) => (answer = resolve)) });
+    expect(await within(container).findByText('Checking with the server…')).toBeTruthy();
+    await waitFor(() => expect(validations(api)).toHaveLength(1));
+    expect(within(container).getByText('Checking with the server…')).toBeTruthy();
+    await act(async () => answer({ body: { hash: HASH } }));
+    expect(await within(container).findByText(HASH)).toBeTruthy();
+  });
+});
+
+describe('the inspector\'s verdict slot when the server names no problem here', () => {
+  const slot = () => screen.getByRole('complementary', { name: 'lexical' }).querySelector('.rg-editor-inspector__verdict')!.textContent;
+
+  it('says it is checking while a request is out, and that the node is clear once the document validates', async () => {
+    setup(undefined, { start: 'lexical' });
+    expect(slot()).toBe('Checking with the server…');
+    await waitFor(() => expect(slot()).toBe('The server names no problem with this node.'));
+  });
+
+  it('says validation stopped at another problem, since the server names only the first', async () => {
+    setup({ 'POST /pipelines/validate': invalid(KIND_MISMATCH, { node: 'reranked', edge: null }) }, { start: 'lexical' });
+    await waitFor(() => expect(slot()).toBe('The server stopped at a problem elsewhere; it has not judged this node past it.'));
+  });
+
+  it('says there is no verdict when the request failed', async () => {
+    setup({ 'POST /pipelines/validate': { network: 'down' } }, { start: 'lexical' });
+    await waitFor(() => expect(slot()).toBe('No verdict: the request to the server failed.'));
+  });
+});
+
+describe('edges drawn by drag, judged by the grammar', () => {
+  it('refuses a chunks-producing port onto a port expecting a query, naming both kinds, and creates no edge', async () => {
+    const { api, container } = setup();
+    await waitFor(() => expect(validations(api)).toHaveLength(1));
+    fireEvent.pointerDown(outPort(container, 'lexical'), { button: 0 });
+    const query = inPort(container, 'second', 0);
+    expect(query.getAttribute('data-drop')).toBe('refused');
+    expect(query.getAttribute('title')).toBe('`lexical` feeds `second` at port 0: expected query, found chunks.');
+    fireEvent.pointerUp(query);
+    await new Promise((r) => setTimeout(r, 450));
+    expect(validations(api)).toHaveLength(1);
+  });
+
+  it('creates the edge on a compatible port, as one undoable step', async () => {
+    const { api, container } = setup();
+    fireEvent.pointerDown(outPort(container, 'question'), { button: 0 });
+    fireEvent.pointerUp(inPort(container, 'second', 0));
+    await waitFor(() => expect(nodesOf(validations(api).at(-1)!).find((n) => n.id === 'second')?.inputs).toEqual(['question']));
+    expect(container.querySelector('path.rg-edge[data-from="question"][data-to="second"]')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    expect(container.querySelector('path.rg-edge[data-from="question"][data-to="second"]')).toBeNull();
+    expect(nodeEl(container, 'second')).toBeTruthy();
+    await waitFor(() => expect(nodesOf(validations(api).at(-1)!).find((n) => n.id === 'second')?.inputs).toEqual([]));
+  });
+
+  it('refuses an edge that would close a cycle, as such, during the drag', () => {
+    const { container } = setup();
+    fireEvent.pointerDown(outPort(container, 'reranked'), { button: 0 });
+    expect(inPort(container, 'fused', 2).getAttribute('title')).toBe('`reranked` feeding `fused` would close a cycle: `fused` already feeds `reranked`.');
+  });
+
+  it('refuses an occupied port with what it holds', () => {
+    const { container } = setup();
+    fireEvent.pointerDown(outPort(container, 'vectors'), { button: 0 });
+    expect(inPort(container, 'reranked', 1).getAttribute('title')).toBe('Port 1 of `reranked` already holds `fused`.');
+  });
+});
+
+describe('the node menu', () => {
+  const openMenu = (container: HTMLElement, id: string) => {
+    fireEvent.keyDown(nodeEl(container, id)!, { key: 'F10', shiftKey: true });
+    return screen.getByRole('menu', { name: `Node ${id}` });
+  };
+
+  it('opens on Shift+F10 with its entries, "Run up to this node" disabled and saying which issue enables it', () => {
+    const { container } = setup();
+    const menu = openMenu(container, 'fused');
+    expect(within(menu).getAllByRole('menuitem').map((m) => m.querySelector('b')?.textContent)).toEqual(['Open parameters', 'Duplicate', 'Connect output to…', 'Run up to this node', 'Delete node']);
+    const run = within(menu).getByRole('menuitem', { name: /Run up to this node/ });
+    expect(run.getAttribute('aria-disabled')).toBe('true');
+    expect(within(run).getByText('Arrives with #357.')).toBeTruthy();
+    expect(document.activeElement).toBe(within(menu).getAllByRole('menuitem')[0]);
+  });
+
+  it('deletes a node, leaving its consumers marked invalid and no edge to the missing node', async () => {
+    const { api, container } = setup();
+    fireEvent.click(within(openMenu(container, 'fused')).getByRole('menuitem', { name: /Delete node/ }));
+    expect(nodeEl(container, 'fused')).toBeNull();
+    expect(container.querySelector('path.rg-edge[data-from="fused"]')).toBeNull();
+    expect(nodeEl(container, 'reranked')!.querySelector('.rg-node')?.getAttribute('data-status')).toBe('invalid');
+    expect(within(nodeEl(container, 'reranked')!).getByText('Port 1 names `fused`, which is not a node or an input.')).toBeTruthy();
+    await waitFor(() => expect(nodesOf(validations(api).at(-1)!).find((n) => n.id === 'reranked')?.inputs).toEqual(['question', 'fused']));
+  });
+
+  it('duplicates a node and selects the copy', () => {
+    const { container } = setup();
+    fireEvent.click(within(openMenu(container, 'lexical')).getByRole('menuitem', { name: /Duplicate/ }));
+    expect(nodeEl(container, 'bm25')).toBeTruthy();
+    expect(screen.getByRole('complementary', { name: 'bm25' })).toBeTruthy();
+  });
+
+  it('connects by keyboard: "Connect output to…" lists every port, each open or refused with its reason', () => {
+    const { container } = setup();
+    fireEvent.click(within(openMenu(container, 'lexical')).getByRole('menuitem', { name: /Connect output to/ }));
+    const menu = screen.getByRole('menu', { name: 'Node lexical' });
+    const refused = within(menu).getByRole('menuitem', { name: /^second, port 0/ });
+    expect(refused.getAttribute('aria-disabled')).toBe('true');
+    expect(within(refused).getByText('`lexical` feeds `second` at port 0: expected query, found chunks.')).toBeTruthy();
+    expect(document.activeElement).toBe(within(menu).getAllByRole('menuitem')[0]);
+    fireEvent.click(within(menu).getByRole('menuitem', { name: /^fused, port 2/ }));
+    expect(container.querySelector('path.rg-edge[data-from="lexical"][data-to="fused"][data-port="2"]')).toBeTruthy();
+  });
+
+  it('gives a declared input a menu too, whose one entry connects it by keyboard', () => {
+    const { container } = setup();
+    const menu = openMenu(container, 'question');
+    expect(within(menu).getAllByRole('menuitem').map((m) => m.querySelector('b')?.textContent)).toEqual(['Connect output to…']);
+    fireEvent.click(within(menu).getByRole('menuitem', { name: /Connect output to/ }));
+    fireEvent.click(within(screen.getByRole('menu', { name: 'Node question' })).getByRole('menuitem', { name: /^second, port 0/ }));
+    expect(container.querySelector('path.rg-edge[data-from="question"][data-to="second"][data-port="0"]')).toBeTruthy();
+  });
+
+  it('after a delete, gives focus to the node that fed it, so the next undo is heard and brings the node back', () => {
+    const { container } = setup();
+    fireEvent.click(within(openMenu(container, 'fused')).getByRole('menuitem', { name: /Delete node/ }));
+    expect(document.activeElement).toBe(nodeEl(container, 'lexical'));
+    fireEvent.keyDown(document.activeElement!, { key: 'z', metaKey: true });
+    expect(nodeEl(container, 'fused')).toBeTruthy();
+  });
+
+  it('hears undo with focus on the page itself', () => {
+    const { container } = setup();
+    fireEvent.click(within(screen.getByRole('region', { name: 'Palette' })).getByRole('button', { name: /^rrf/ }));
+    act(() => (document.activeElement as HTMLElement | null)?.blur());
+    expect(document.activeElement).toBe(document.body);
+    fireEvent.keyDown(document.body, { key: 'z', ctrlKey: true });
+    expect(nodeEl(container, 'rrf')).toBeNull();
+  });
+
+  it('only offers to remove the last edge into a node, so no input slides into another port', () => {
+    setup(undefined, { start: 'reranked' });
+    const inspector = screen.getByRole('complementary', { name: 'reranked' });
+    expect(within(inspector).queryByRole('button', { name: 'Remove the edge into port 0' })).toBeNull();
+    expect(within(inspector).getByRole('button', { name: 'Remove the edge into port 1' })).toBeTruthy();
+  });
+
+  it('opens the parameters: selects the node and moves focus into the inspector', () => {
+    const { container } = setup();
+    fireEvent.click(within(openMenu(container, 'lexical')).getByRole('menuitem', { name: /Open parameters/ }));
+    const inspector = screen.getByRole('complementary', { name: 'lexical' });
+    expect(inspector.contains(document.activeElement)).toBe(true);
+  });
+});
+
+describe('a selection undo or redo takes away', () => {
+  const palette = () => within(screen.getByRole('region', { name: 'Palette' }));
+  const noInspector = (id: string) => {
+    expect(screen.getByTestId('selected').textContent).toBe('');
+    expect(screen.queryByRole('complementary', { name: id })).toBeNull();
+    expect(screen.queryByText('pipeline input', { selector: '.rg-canvas__inspector *' })).toBeNull();
+  };
+
+  it('is cleared when undo takes away a node just placed, never shown as a declared input', () => {
+    const { container } = setup();
+    fireEvent.click(palette().getByRole('button', { name: /^rrf/ }));
+    expect(screen.getByRole('complementary', { name: 'rrf' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    expect(nodeEl(container, 'rrf')).toBeNull();
+    noInspector('rrf');
+  });
+
+  it('is cleared when undo takes back a rename', () => {
+    const { container } = setup(undefined, { start: 'fused' });
+    const id = screen.getByLabelText('Node id');
+    fireEvent.change(id, { target: { value: 'rrf' } });
+    fireEvent.keyDown(id, { key: 'Enter' });
+    expect(screen.getByRole('complementary', { name: 'rrf' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    expect(nodeEl(container, 'fused')).toBeTruthy();
+    noInspector('rrf');
+  });
+
+  it('is cleared when undo takes away a duplicate', () => {
+    const { container } = setup();
+    fireEvent.keyDown(nodeEl(container, 'lexical')!, { key: 'F10', shiftKey: true });
+    fireEvent.click(within(screen.getByRole('menu', { name: 'Node lexical' })).getByRole('menuitem', { name: /Duplicate/ }));
+    expect(screen.getByRole('complementary', { name: 'bm25' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    expect(nodeEl(container, 'bm25')).toBeNull();
+    noInspector('bm25');
+  });
+
+  it('still shows a declared input as one', () => {
+    setup(undefined, { start: 'question' });
+    expect(within(screen.getByRole('complementary', { name: 'question' })).getByText('pipeline input')).toBeTruthy();
+  });
+
+  it('lets a request to enter the inspector expire once another node is selected, so focus is not taken into it', () => {
+    const { container } = setup();
+    fireEvent.keyDown(nodeEl(container, 'lexical')!, { key: 'F10', shiftKey: true });
+    const open = within(screen.getByRole('menu', { name: 'Node lexical' })).getByRole('menuitem', { name: /Open parameters/ });
+    act(() => {
+      open.click();
+      nodeEl(container, 'vectors')!.click();
+    });
+    expect(screen.getByTestId('selected').textContent).toBe('vectors');
+    expect(screen.getByRole('complementary', { name: 'vectors' }).contains(document.activeElement)).toBe(false);
+  });
+
+  it('lets a focus request for a node that went away expire, so a redo later does not take focus', () => {
+    const { container } = setup();
+    act(() => {
+      palette().getByRole('button', { name: /^rrf/ }).click();
+      container.querySelector<HTMLElement>('.rg-editor')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true }));
+    });
+    expect(nodeEl(container, 'rrf')).toBeNull();
+    const concat = palette().getByRole('button', { name: /^concat/ });
+    act(() => concat.focus());
+    fireEvent.keyDown(concat, { key: 'z', ctrlKey: true, shiftKey: true });
+    expect(nodeEl(container, 'rrf')).toBeTruthy();
+    expect(document.activeElement).toBe(concat);
+  });
+});
+
+describe('the keyboard', () => {
+  it('opens the insert list on `/` and places the chosen entry, then focuses it', () => {
+    const { container } = setup();
+    fireEvent.keyDown(container.querySelector('.react-flow')!, { key: '/' });
+    const list = screen.getByRole('menu', { name: 'Insert a node' });
+    expect(document.activeElement).toBe(within(list).getAllByRole('menuitem')[0]);
+    fireEvent.keyDown(document.activeElement!, { key: 'ArrowDown' });
+    expect(document.activeElement?.textContent).toMatch(/^dense/);
+    fireEvent.keyDown(document.activeElement!, { key: 'Enter' });
+    expect(screen.queryByRole('menu', { name: 'Insert a node' })).toBeNull();
+    expect(nodeEl(container, 'dense')).toBeTruthy();
+    expect(document.activeElement).toBe(nodeEl(container, 'dense'));
+  });
+
+  it('closes the insert list on Escape, placing nothing', () => {
+    const { container } = setup();
+    fireEvent.keyDown(container.querySelector('.react-flow')!, { key: '/' });
+    fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
+    expect(screen.queryByRole('menu', { name: 'Insert a node' })).toBeNull();
+    expect(container.querySelectorAll('.react-flow__node')).toHaveLength(6);
+  });
+
+  it('undoes and redoes from the keyboard, and from the two buttons', () => {
+    const { container } = setup();
+    fireEvent.click(within(screen.getByRole('region', { name: 'Palette' })).getByRole('button', { name: /^rrf/ }));
+    expect(nodeEl(container, 'rrf')).toBeTruthy();
+    fireEvent.keyDown(container.querySelector('.rg-editor')!, { key: 'z', ctrlKey: true });
+    expect(nodeEl(container, 'rrf')).toBeNull();
+    fireEvent.keyDown(container.querySelector('.rg-editor')!, { key: 'z', metaKey: true, shiftKey: true });
+    expect(nodeEl(container, 'rrf')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    expect(nodeEl(container, 'rrf')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Redo' }));
+    expect(nodeEl(container, 'rrf')).toBeTruthy();
+  });
+
+  it('undoes with focus on a checkbox, which has no undo of its own', async () => {
+    const { api } = setup(undefined, { start: 'fused' });
+    fireEvent.change(screen.getByLabelText('New parameter'), { target: { value: 'normalize' } });
+    fireEvent.change(screen.getByLabelText('Value'), { target: { value: 'true' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add parameter' }));
+    const box = screen.getByRole('checkbox', { name: 'normalize' });
+    fireEvent.keyDown(box, { key: 'z', ctrlKey: true });
+    expect(screen.queryByRole('checkbox', { name: 'normalize' })).toBeNull();
+    await waitFor(() => expect(nodesOf(validations(api).at(-1)!).find((n) => n.id === 'fused')?.params).toEqual({ k: 60 }));
+  });
+
+  it('leaves Ctrl+Z inside a text field to the field', () => {
+    const { container } = setup(undefined, { start: 'lexical' });
+    fireEvent.click(within(screen.getByRole('region', { name: 'Palette' })).getByRole('button', { name: /^rrf/ }));
+    fireEvent.keyDown(screen.getByLabelText('New parameter'), { key: 'z', ctrlKey: true });
+    expect(nodeEl(container, 'rrf')).toBeTruthy();
+  });
+});
+
+describe('the inspector in write mode', () => {
+  it('shows the family, the implementation and the id, and every parameter as a field in key order', () => {
+    setup(undefined, { start: 'vectors' });
+    const inspector = screen.getByRole('complementary', { name: 'vectors' });
+    expect(within(inspector).getByText('retriever/dense')).toBeTruthy();
+    expect((within(inspector).getByLabelText('Node id') as HTMLInputElement).value).toBe('vectors');
+    expect(within(inspector).getAllByRole('textbox').map((f) => f.getAttribute('id')?.split('-').at(-1))).toEqual(['id', 'embedder', 'top_k', 'key', 'value']);
+  });
+
+  it('sets a parameter, keeping its type', async () => {
+    const { api } = setup(undefined, { start: 'lexical' });
+    const field = screen.getByLabelText('top_k');
+    fireEvent.change(field, { target: { value: '50' } });
+    fireEvent.blur(field);
+    await waitFor(() => expect(nodesOf(validations(api).at(-1)!).find((n) => n.id === 'lexical')?.params).toEqual({ top_k: 50 }));
+  });
+
+  it('refuses an id another node has, before the server does, and renames on a free one', () => {
+    const { container } = setup(undefined, { start: 'fused' });
+    const id = screen.getByLabelText('Node id');
+    fireEvent.change(id, { target: { value: 'lexical' } });
+    fireEvent.keyDown(id, { key: 'Enter' });
+    expect(screen.getByText('`lexical` is taken: a node, an input or an edge already names it.')).toBeTruthy();
+    expect(nodeEl(container, 'fused')).toBeTruthy();
+    fireEvent.change(id, { target: { value: 'rrf' } });
+    fireEvent.keyDown(id, { key: 'Enter' });
+    expect(nodeEl(container, 'rrf')).toBeTruthy();
+    expect(screen.getByRole('complementary', { name: 'rrf' })).toBeTruthy();
+  });
+
+  it.each([
+    ['.5', 0.5],
+    ['1.', 1],
+    ['1e3', 1000],
+    ['-2.5e-1', -0.25],
+  ])('reads a new value %s as the number %s', async (text, number) => {
+    const { api } = setup(undefined, { start: 'fused' });
+    fireEvent.change(screen.getByLabelText('New parameter'), { target: { value: 'w' } });
+    fireEvent.change(screen.getByLabelText('Value'), { target: { value: text } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add parameter' }));
+    await waitFor(() => expect(nodesOf(validations(api).at(-1)!).find((n) => n.id === 'fused')?.params['w']).toBe(number));
+  });
+
+  it('refuses a rename to an id a dangling input still names, which would silently take its edge back', () => {
+    const { container } = setup();
+    fireEvent.keyDown(nodeEl(container, 'fused')!, { key: 'F10', shiftKey: true });
+    fireEvent.click(within(screen.getByRole('menu', { name: 'Node fused' })).getByRole('menuitem', { name: /Delete node/ }));
+    fireEvent.click(nodeEl(container, 'vectors')!);
+    const id = screen.getByLabelText('Node id');
+    fireEvent.change(id, { target: { value: 'fused' } });
+    fireEvent.keyDown(id, { key: 'Enter' });
+    expect(screen.getByText('`fused` is taken: a node, an input or an edge already names it.')).toBeTruthy();
+    expect(nodeEl(container, 'vectors')).toBeTruthy();
+    expect(nodeEl(container, 'fused')).toBeNull();
+  });
+
+  it('adds and removes a parameter', async () => {
+    const { api } = setup(undefined, { start: 'fused' });
+    fireEvent.change(screen.getByLabelText('New parameter'), { target: { value: 'weights' } });
+    fireEvent.change(screen.getByLabelText('Value'), { target: { value: '0.7, 0.3' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add parameter' }));
+    await waitFor(() => expect(nodesOf(validations(api).at(-1)!).find((n) => n.id === 'fused')?.params).toEqual({ k: 60, weights: [0.7, 0.3] }));
+    fireEvent.click(screen.getByRole('button', { name: 'Remove k' }));
+    await waitFor(() => expect(nodesOf(validations(api).at(-1)!).find((n) => n.id === 'fused')?.params).toEqual({ weights: [0.7, 0.3] }));
+  });
+});
+
+describe('nothing moves under the pointer when a verdict lands', () => {
+  const rule = (selector: string) => parseRules(editorCss).find((r) => r.selector === selector);
+  it('gives the inspector\'s verdict slot a fixed height, its overflow scrolling inside', () => {
+    const slot = rule('.rg-editor-inspector__verdict');
+    expect(slot?.declarations.get('height')).toBe('96px');
+    expect(slot?.declarations.has('min-height')).toBe(false);
+    expect(slot?.declarations.get('overflow-y')).toBe('auto');
+  });
+
+  it('gives the header\'s verdict a fixed height that scrolls, so a long report is never cut off and moves nothing', () => {
+    const line = rule('.rg-editor__verdict');
+    expect(line?.declarations.get('height')).toBe('40px');
+    expect(line?.declarations.get('overflow-y')).toBe('auto');
+    expect(line?.declarations.has('-webkit-line-clamp')).toBe(false);
+  });
+
+  it('gives the verdict a row of its own on a narrow screen', () => {
+    const narrow = parseRules(editorCss).find((r) => r.selector === '.rg-editor__verdict' && r.atRule?.includes('max-width: 900px'));
+    expect(narrow?.declarations.get('grid-column')).toBe('1 / -1');
+  });
+
+  it('stacks the inspector under the canvas on a narrow screen, so the canvas keeps a width', () => {
+    const narrow = parseRules(editorCss).find((r) => r.selector === '.rg-editor__stage .rg-canvas-frame' && r.atRule?.includes('max-width: 900px'));
+    expect(narrow?.declarations.get('flex-direction')).toBe('column');
+  });
+
+  it('keeps a port row\'s marker to one line of fixed height, present or not', () => {
+    const marker = rule('.rg-editor-inspector__inputs li small');
+    expect(marker?.declarations.get('white-space')).toBe('nowrap');
+    expect(marker?.declarations.get('height')).toBe('16px');
+  });
+});
+
+describe('with no grammar from the API', () => {
+  it('refuses no kind during the drag, and leaves the verdict to the server', () => {
+    const { container } = setup(undefined, { grammar: null });
+    fireEvent.pointerDown(outPort(container, 'lexical'), { button: 0 });
+    expect(inPort(container, 'second', 0).getAttribute('data-drop')).toBe('open');
+  });
+});
