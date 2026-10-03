@@ -385,8 +385,28 @@ pub trait WorkspaceSettings: Send + Sync {
     /// The current settings.
     async fn read(&self) -> Result<Settings, ApiError>;
 
-    /// Replaces the settings.
-    async fn write(&self, settings: Settings) -> Result<(), ApiError>;
+    /// Binds `binding.family`/`binding.name` to `binding.uri`: the address
+    /// replaced when the name is bound, the binding added after the others
+    /// when it is not. Every other binding, and the datasets directory, are
+    /// left as they are. Returns the settings it leaves.
+    ///
+    /// # Errors
+    ///
+    /// [`ApiError::BindingRefused`] when the backend cannot store the binding
+    /// so that it reads back as the same family and name.
+    async fn bind(&self, binding: ServiceBinding) -> Result<Settings, ApiError>;
+
+    /// Removes the binding of `family`/`name`, leaving every other binding
+    /// and the datasets directory as they are. Returns the settings it
+    /// leaves, or `None` when the name was not bound — and then nothing
+    /// changed.
+    async fn unbind(&self, family: &str, name: &str) -> Result<Option<Settings>, ApiError>;
+
+    /// Sets the datasets directory — a relative one is read against the
+    /// workspace — or, with `None`, clears it so that the backend's default
+    /// applies. The bindings are left as they are. Returns the settings it
+    /// leaves.
+    async fn set_datasets(&self, datasets: Option<PathBuf>) -> Result<Settings, ApiError>;
 }
 
 /// The workspace's settings.

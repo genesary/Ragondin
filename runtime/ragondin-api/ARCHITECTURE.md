@@ -364,17 +364,15 @@ directory and a missing `workspace.toml`, with nothing set; an existing
 workspace is left as it is. `open_with_store` takes the store's directory
 when it is not `<root>/runs` (the binary's `--store`).
 
-### `workspace.toml`, and why it is read by hand
-
-**ADR-C38 decides this reader's replacement**: the file parsed and edited in
-place with `toml_edit`, its schema checked by meaning, and per-key writes that
-keep a person's comments. The code below still predates it, and this section
-describes the code as it is until the implementation lands.
+### `workspace.toml`, read and edited in place
 
 The settings are deployment data (ADR-C32 § 2): an address here stays out of
 every pipeline document and every run identity, which is what lets a
 workspace be shared or committed without carrying anyone's addresses into an
-experiment. The file:
+experiment. It is therefore a file people edit as well as the API, and
+ADR-C38 decides how it is read and written: with `toml_edit`, its schema
+checked by meaning, and per-key writes that keep a person's comments. The
+file:
 
 ```toml
 datasets = "/data/benchmarks"   # optional; relative to the workspace
@@ -383,33 +381,94 @@ datasets = "/data/benchmarks"   # optional; relative to the workspace
 "generator/qwen" = "http://127.0.0.1:8080"
 ```
 
-**A choice made here** (`AGENTS.md` § Rules of engagement): the file is read
-and written by `fs/settings_file.rs`, a reader of exactly that subset of TOML,
-because a TOML parser is not among the dependencies ADR-C36 § 6 admits, and
-that section makes any other entry a new decision — opened as #374, and
-decided by ADR-C38, which replaces this reader. It reads blank lines and
-`#` comments, `datasets` before any table, one `[services]` table of
-`"<family>/<name>" = <string>`, basic strings with TOML's escapes and literal
-strings, and a comment after a value; it refuses everything else — another
-key or table, a duplicate, a value that is not a one-line string, a service
-key without its `/`, anything after a value, a control character other than
-a tab in a string or a comment, whitespace other than a space or a tab
-(named by its code point — a no-break space is `U+00A0`), an
-escape TOML does not define (a `\u` takes four hex digits, a `+` not one of
-them), and a byte-order mark, named as one — naming the line. Everything it
-accepts is valid TOML, so another reader agrees with it; a person who writes
-TOML it does not read is told where, rather than misread. Admitting a TOML
-crate later replaces one module.
+**Reading** (`fs/settings_file.rs`). The text is parsed into a
+`toml_edit::Document`, which keeps every item's span, and checked against
+the schema: a top-level `datasets` string and one standard `[services]` table
+of `"<family>/<name>" = <string>`. It refuses another key or table, a
+sub-table, an array of tables, an inline table, a dotted key, a value that is
+not a string, and a service key without a `/` or with an empty family or
+name, each naming the line its key starts on; a parse error — a duplicate
+key among them — is reported the same way, from `toml_edit`'s span, as
+`file:line: message`. **It refuses by meaning, never by spelling**: a basic,
+literal or multi-line string is the same string, however its key or value is
+quoted, so the forms `toml_edit` itself writes (`'…'`, `"""…"""`) are read
+back. `Workspace::open` runs this check before it creates anything; a fresh
+workspace's file is `settings_file::empty()`, the comment header and nothing
+set, byte for byte the file every workspace has started with
+(`tests/fixtures/empty-workspace.toml` holds a copy, so an edit to it is
+seen).
 
-`FsSettings` reads the file on every call, so a hand edit is seen at once.
-The datasets directory is `<root>/datasets` when the file names none, and a
-relative one is read against the root; a write leaves the default unstated
-and writes a directory under the root relative to it. **A write replaces the
-file whole** — rendered, written beside as a `.`-named file, flushed, renamed
-over — so a reader sees the old file or the new one; it does not keep a
-comment a person added. `FsSettings` stores what it is given: whether a
-binding is acceptable is `Launcher::check_binding`'s to say, before the
-handler writes it.
+**Writing** (`fs/settings.rs`). `WorkspaceSettings` has no whole-file write:
+it has `bind` (bind a name or replace its address), `unbind`, and
+`set_datasets` (set, or with `None` clear). `FsSettings` applies each one
+under its lock to the file as it is on disk at that moment: it reads and
+checks the file, decides **on the settings** whether the operation changes
+any — a name bound to the address it already has, a datasets directory that
+resolves to the one in force, an unbound name unbound — and, only when one
+does, edits that one key in the document, reads the result back, and
+replaces the file (written beside as a `.`-named file, flushed, renamed
+over), so a reader sees the old file or the new one. **An operation that
+changes no setting writes nothing**, so the file keeps its bytes; that is
+decided on the settings rather than by comparing rendered text, so a file
+with CRLF line endings or a byte-order mark is left alone (confirmed by the
+owner on #374). A changing write keeps every comment, the key order and the
+blank lines, and changes `datasets` only when the operation is about it: a
+service write leaves its line byte for byte. Because every operation starts
+from the file on disk, a binding a person adds by hand between two API
+writes survives the second. The window is not gone — a hand edit is not
+under the lock, and one saved between an operation's read and its rename is
+replaced — but it is inside one call rather than across a handler's read
+and write. `FsSettings` stores what it is given: whether a binding is
+acceptable is `Launcher::check_binding`'s to say, before the handler binds
+it.
+
+**Accepted consequences** (ADR-C38 § Consequences): a changing write ends
+every line with LF and drops a byte-order mark; TOML 1.1 forms, among them
+the escapes `\e` and `\xHH`, are read; and `toml_edit` is on a 0.x line,
+so every bump is a deliberate, reviewed one.
+
+**Choices made here** (`AGENTS.md` § Rules of engagement), each with its test
+in `tests/workspace_toml.rs`:
+
+- **No removal drops a comment, whichever key it removes.** ADR-C38 requires
+  that a removed *first* key's prefix move onto what follows, so that the
+  file's header is not deleted with it. "First" could mean the document's
+  first key (`datasets`, which carries the header) or `[services]`' first
+  (which carries the comments above the bindings); the rule here covers
+  both and every other key: the comments above a removed key, and its
+  trailing comment as a line of its own, go above whatever followed it —
+  the next binding, or `[services]`' header after `datasets`. A comment that
+  described the removed binding is then the person's to delete, which beats
+  deleting one they meant to keep.
+- **A removed key that nothing follows** leaves those comments at the end of
+  the file — `[services]` is always the document's last table, so the end of
+  the table is the end of the file.
+- **The last unbind keeps an empty `[services]`**, with its header and its
+  comments: the section a person commented stays where they put it, and the
+  next binding lands in it.
+- **Clearing `datasets` removes the key**, its comments moved as any removed
+  key's are, and the default `<root>/datasets` applies. A file that states
+  the default (`datasets = "datasets"`) and is cleared changes no setting,
+  so nothing is written and its explicit line stays.
+- **A service key splits at its first `/`**, as ADR-C32 § 2 splits a binding:
+  `"a//b"` is family `a`, name `/b`, and a name holding a `/` round-trips.
+  A family cannot hold one — nor can a family or a name be empty — since the
+  key would read back as another binding, so `bind` refuses such a binding
+  with `binding_refused` rather than write it.
+- **Datasets paths are compared lexically, after joining a relative one to
+  the root**: `Path`'s own equality, so a `.` component and a trailing
+  separator are no change, while `..` is not resolved and nothing is
+  canonicalised — no disk access, so a directory not yet created compares,
+  and a symlink is not followed. A directory under the root is written
+  relative to it, so a workspace moved whole keeps its datasets; any other is
+  written absolute. Setting the default explicitly writes it.
+- **Where a created item goes.** A binding is appended to `[services]`;
+  `[services]` is the document's last table, so the comments that ended the
+  file stay above the new binding and the file's bytes so far are unchanged.
+  The comments of a file holding only comments — `empty()`, on the first
+  `PUT` of a fresh workspace — go above the first item created, a blank line
+  between them; a `datasets` created in a file that has a `[services]` table
+  takes the comments that opened the file, so the header stays on top.
 
 ### The pipelines
 
@@ -540,11 +599,13 @@ whole problem body.
 
 The bindings are `WorkspaceSettings`' services. A `PUT` asks
 `Launcher::check_binding` first — the composition root's refusals, in
-`--remote`'s words — then replaces the name's address or appends the binding;
-a `DELETE` removes it, or answers `service_not_found`. A service write holds
-a lock across its read and write of the settings, so two writes do not each
-start from what the other replaces. Neither touches a pipeline document or a
-run: an address is not in either.
+`--remote`'s words — then calls `WorkspaceSettings::bind`, which replaces the name's address or
+appends the binding; a `DELETE` calls `unbind`, and answers
+`service_not_found` when the name was not bound. No handler reads the
+settings to write them back: each operation is applied whole by the backend,
+under its lock (§ `workspace.toml`, read and edited in place), and the
+listing a write answers is built from the settings the operation left.
+Neither touches a pipeline document or a run: an address is not in either.
 
 `POST /services/{family}/{name}/probe` reads the address the workspace binds
 the name to (`service_not_found` when there is none) and asks the launcher to
@@ -1498,7 +1559,8 @@ beside it: the two cannot drift silently.
 
 ## Dependencies
 
-All admitted by ADR-C36 § 6, each argued in its root `Cargo.toml` comment:
+Admitted by ADR-C36 § 6, or added to that list by a later decision, each
+argued in its root `Cargo.toml` comment:
 `axum` on the 0.7 line `tonic` 0.12 already resolves (`default-features =
 false`; `json` for the endpoints, and `tokio` and `http1` for `axum::serve`,
 inside `serve`,
@@ -1528,6 +1590,14 @@ in `Cargo.lock` — § *`reqwest`, the transport* says why it is here and not in
 `ragondin-benchmarks`. `sha2` is a normal dependency, for a pipeline
 document's etag, and the tests use it for the digests of what a local server
 serves. `serde_yaml` is not a dependency: a pipeline document is parsed by
-`ragondin-config`. None is a new `[workspace.dependencies]` entry, and none
-has a feature appended. No
-TOML crate is a dependency (§ `workspace.toml`, and why it is read by hand).
+`ragondin-config`. None of these is a new `[workspace.dependencies]` entry, and none
+has a feature appended.
+
+`toml_edit` is the one entry added since ADR-C36 § 6, by ADR-C38, which adds
+to that list rather than superseding it: `default-features = false` with
+`parse` and `display`, no other feature and no `serde`, for
+`workspace.toml` (§ `workspace.toml`, read and edited in place). It brings
+`toml_parser`, `toml_datetime`, `toml_writer` and `winnow`, each MIT and/or
+Apache-2.0, and duplicates no package already in `Cargo.lock`. This crate is
+its only dependent in the workspace, so it is reached only under the binary's
+`ui` feature, and neither the default build nor the core sees it.

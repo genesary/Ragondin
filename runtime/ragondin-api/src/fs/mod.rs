@@ -5,7 +5,9 @@
 //! - [`Workspace`], the workspace's layout: its root and every path derived
 //!   from it, created when missing, its `workspace.toml` read before
 //!   anything is created;
-//! - [`FsSettings`], the `WorkspaceSettings` over `workspace.toml`;
+//! - [`FsSettings`], the `WorkspaceSettings` over `workspace.toml`, read on
+//!   every call and changed in place, one key per operation, with the
+//!   comments a person wrote kept (ADR-C38);
 //! - [`FsPipelines`], the `PipelineSource` over `pipelines/<name>.yaml` and
 //!   its layout;
 //! - [`FsRegistry`], the `Registry` over the benchmark manifest and the

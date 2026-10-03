@@ -36,9 +36,6 @@ pub(crate) struct AppState {
     pub(crate) config: Arc<ServerConfig>,
     /// What each service's last probe learnt.
     pub(crate) probes: Probes,
-    /// Held across a service write's read and write of the settings, so two
-    /// writes do not each start from what the other is replacing.
-    pub(crate) services_writing: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl AppState {
@@ -47,7 +44,6 @@ impl AppState {
             backends,
             config: Arc::new(config),
             probes: Probes::default(),
-            services_writing: Arc::default(),
         }
     }
 }
