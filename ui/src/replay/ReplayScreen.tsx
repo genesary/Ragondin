@@ -143,11 +143,20 @@ export function ReplayScreen({ client, run, query, with: other }: ReplayScreenPr
   // The B last drawn is remembered, so that while B reads a newer query its
   // canvas stays where it was — the same canvas, its pan and zoom kept —
   // muted and labelled stale, rather than unmounted and rebuilt.
-  const kept = useRef<Kept | null>(null);
+  const [kept, setKept] = useState<Kept | null>(null);
   const drawnB = sides[1];
-  if (drawnB !== undefined && beside !== null) kept.current = { run: beside, graph: drawnB.graph, trace: drawnB.trace };
+  const drawnGraph = drawnB?.graph;
+  const drawnTrace = drawnB?.trace;
+  useEffect(() => {
+    if (beside !== null && drawnGraph !== undefined && drawnTrace !== undefined) setKept({ run: beside, graph: drawnGraph, trace: drawnTrace });
+  }, [beside, drawnGraph, drawnTrace]);
+  // B put away, or switched to another run, forgets it: B's next first read
+  // shows its loading line, never a canvas of another run or an older visit.
+  useEffect(() => {
+    setKept((k) => (k !== null && k.run === beside ? k : null));
+  }, [beside]);
   // Only the same run's canvas is kept, and never over a failure, which is said in its place.
-  const stale = sides.length === 1 && beside !== null && otherFailure === undefined && kept.current?.run === beside ? kept.current : null;
+  const stale = sides.length === 1 && beside !== null && otherFailure === undefined && kept?.run === beside ? kept : null;
   const graphB = drawnB?.graph ?? stale?.graph ?? null;
 
   // A node selected in B goes with B: in A it would read as "not run".
@@ -257,7 +266,7 @@ export function ReplayScreen({ client, run, query, with: other }: ReplayScreenPr
           {shownTrace === null ? (
             trace.state.status === 'error' ? <ErrorState problem={trace.state.problem} onRetry={trace.retry} /> : <Loading label={`Reading query ${query}…`} />
           ) : (
-            <Stage sides={drawn} stale={stale === null ? null : query} held={held} trace={trace.state.status === 'error' ? trace.state : null} onRetry={trace.retry} metric={metric} selected={selected} onSelect={setSelected} />
+            <Stage sides={drawn} stale={stale === null ? null : { asked: query, reading: otherTrace.state.status === 'loading' }} held={held} trace={trace.state.status === 'error' ? trace.state : null} onRetry={trace.retry} metric={metric} selected={selected} onSelect={setSelected} />
           )}
         </div>
         <div className="rg-replay__panel">
@@ -281,8 +290,11 @@ type Held = { name: string; failure: { problem: ApiProblem; retry: () => void } 
 type StageProps = {
   /** A, then B: drawn current, or kept from an earlier query while `stale`. */
   sides: readonly Side[];
-  /** The query asked while B's canvas is kept from an earlier one: B is muted and labelled stale. */
-  stale: string | null;
+  /**
+   * B's canvas is kept from an earlier query: B is muted and labelled stale,
+   * with the query asked when B's answer for it is being read.
+   */
+  stale: { asked: string; reading: boolean } | null;
   /** The run beside while it has no canvas, current or kept: its place is held, so its canvas arriving moves nothing. */
   held: Held | null;
   /** The newer query's failure, shown above the one still on screen. */
@@ -338,7 +350,8 @@ function Stage({ sides, stale, held, trace, onRetry, metric, selected, onSelect 
               />
               {old ? (
                 <p className="rg-replay__stale">
-                  Stale: query {side.trace.query}, reading {stale}…
+                  Stale: query {side.trace.query}
+                  {stale?.reading === true ? `, reading ${stale.asked}…` : null}
                 </p>
               ) : null}
             </div>
