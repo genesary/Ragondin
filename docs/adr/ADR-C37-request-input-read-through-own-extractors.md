@@ -2,7 +2,7 @@
 id: ADR-C37
 title: Request input reaches `ragondin-api`'s `/api` handlers only through the crate's own extractors, over axum's `query` feature; every query parameter and every request header a handler reads is typed and declared in the API description
 status: amended
-invariants: [INV-1, INV-11, INV-12]
+invariants: [INV-1, INV-4, INV-11, INV-12]
 supersedes: []
 superseded_by: null
 ---
