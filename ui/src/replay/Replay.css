@@ -70,3 +70,28 @@
 .rg-replay__qid { font: var(--type-hash); letter-spacing: var(--type-hash-tracking); color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rg-replay__qscore { font: var(--type-caption); color: var(--ink-2); font-variant-numeric: tabular-nums; text-align: right; }
 .rg-replay__qtext { grid-column: 1 / -1; font: var(--type-caption); color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* The screen: the toolbar, a status line whose height is reserved, then three columns — the queries, the stage, the inspector — whose widths never depend on what is selected or read, so nothing moves under the pointer. */
+.rg-replay { display: grid; gap: var(--space-3); min-width: 0; }
+.rg-replay__bar { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--space-3) var(--space-4); }
+.rg-replay__status { min-height: var(--space-4); margin: 0; font: var(--type-caption); color: var(--ink-3); }
+.rg-replay__body { display: grid; grid-template-columns: 280px minmax(0, 1fr) var(--size-inspector); gap: var(--space-4); align-items: start; min-width: 0; }
+/* Side by side the inspector holds two columns: it takes twice the room, from the stage, whatever is selected. */
+.rg-replay__body[data-columns="2"] { grid-template-columns: 280px minmax(0, 1fr) calc(var(--size-inspector) * 1.6); }
+.rg-replay__side,
+.rg-replay__stage { display: grid; align-content: start; gap: var(--space-3); min-width: 0; }
+.rg-replay__panel { display: flex; min-width: 0; min-height: 240px; }
+.rg-replay__panel .rg-inspector { width: 100%; border: 1px solid var(--line); border-radius: var(--radius-m); }
+.rg-replay__placeholder { margin: 0; padding: var(--space-4); width: 100%; border: 1px dashed var(--line); border-radius: var(--radius-m); font: var(--type-caption); color: var(--ink-3); }
+.rg-replay__query { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2); margin: 0; font: var(--type-heading); color: var(--ink); }
+.rg-replay__query code { font: var(--type-hash); letter-spacing: var(--type-hash-tracking); color: var(--ink-3); }
+.rg-replay__canvases { display: grid; gap: var(--space-3); }
+.rg-replay__canvas { display: grid; gap: var(--space-2); }
+.rg-replay__canvas .rg-canvas-frame { height: 520px; border: 1px solid var(--line); border-radius: var(--radius-m); overflow: hidden; }
+.rg-replay__canvases[data-columns="2"] .rg-canvas-frame { height: 340px; }
+
+/* A narrower screen stacks the three: queries, stage, inspector. Reading is made for a phone too; the canvas pans. */
+@media (max-width: 1100px) {
+  .rg-replay__body,
+  .rg-replay__body[data-columns="2"] { grid-template-columns: minmax(0, 1fr); }
+}
