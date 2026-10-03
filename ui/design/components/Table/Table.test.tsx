@@ -196,3 +196,52 @@ describe('Table groups and selection', () => {
     expect(declared(css, '.rg-table tr[aria-current="true"] > :first-child', 'box-shadow')).toBe('inset 2px 0 0 var(--accent)');
   });
 });
+
+describe('Table row headers', () => {
+  const matrix: TableRow[] = [
+    { id: 'rrf', cells: ['rrf', '0.6100', '0.3300'] },
+    { id: 'concat', span: true, cells: ['concat', 'Not scored: no metric reads this node.'] },
+  ];
+
+  it('makes each row’s first cell its row header, so a cell is announced with its row and its column', () => {
+    render(<Table caption="m" columns={columns} rows={matrix} rowHeaders />);
+    const header = screen.getByRole('rowheader', { name: 'rrf' });
+    expect(header.tagName).toBe('TH');
+    expect(header.getAttribute('scope')).toBe('row');
+    expect(screen.getAllByRole('cell').map((c) => c.textContent)).toEqual(['0.6100', '0.3300', 'Not scored: no metric reads this node.']);
+  });
+
+  it('keeps the row headers in view while the table scrolls sideways, the corner above every other header', () => {
+    expect(declared(css, '.rg-table th[scope="row"]', 'position')).toBe('sticky');
+    expect(declared(css, '.rg-table th[scope="row"]', 'left')).toBe('0');
+    expect(declared(css, '.rg-table th[scope="row"]', 'top')).toBe('auto');
+    expect(declared(css, '.rg-table[data-row-headers] thead th:first-child', 'left')).toBe('0');
+    expect(declared(css, '.rg-table[data-row-headers] thead th:first-child', 'z-index')).toBe('2');
+  });
+
+  it('leaves the first cell a data cell without the option', () => {
+    render(<Table caption="m" columns={columns} rows={matrix} />);
+    expect(screen.queryByRole('rowheader', { name: 'rrf' })).toBeNull();
+  });
+
+  it('spans a row’s one sentence across every column after its label', () => {
+    render(<Table caption="m" columns={columns} rows={matrix} rowHeaders />);
+    const sentence = screen.getByRole('cell', { name: 'Not scored: no metric reads this node.' });
+    expect(sentence.getAttribute('colspan')).toBe('2');
+  });
+});
+
+describe('Table as a scroll region', () => {
+  it('names its scroll box and puts it in the tab order, so a keyboard can scroll a table wider than the screen', () => {
+    render(<Table caption="Matrix" columns={columns} rows={rows} region />);
+    const region = screen.getByRole('region', { name: 'Matrix' });
+    expect(region.classList.contains('rg-tablewrap')).toBe(true);
+    expect(region.getAttribute('tabindex')).toBe('0');
+  });
+
+  it('is no region and no tab stop without the option', () => {
+    const { container } = render(<Table caption="Matrix" columns={columns} rows={rows} />);
+    expect(screen.queryByRole('region')).toBeNull();
+    expect(container.querySelector('.rg-tablewrap')?.hasAttribute('tabindex')).toBe(false);
+  });
+});

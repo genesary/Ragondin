@@ -290,6 +290,20 @@ function Column({ theme }: { theme: 'light' | 'dark' }) {
             { id: 'r2', label: 'Run 4a01c9e7d2b3 on beir/fiqa', cells: [<Checkbox key="c" label="beir/fiqa" checked={false} onChange={() => {}} tabIndex={-1} disabled disabledReason="Other benchmark" />, '4a01c9e7d2b3', <StatusChip key="s" state="cancelled" />] },
           ]}
         />
+        <Table
+          caption="Nodes on two benchmarks"
+          rowHeaders
+          region
+          columns={[
+            { id: 'node', label: 'Node' },
+            { id: 'scifact', label: 'beir/scifact' },
+            { id: 'nfcorpus', label: 'beir/nfcorpus' },
+          ]}
+          rows={[
+            { id: 'rrf', cells: [<span key="h"><FamilyTile family="fusion" labelled /> rrf</span>, '0.7001', '0.3398'] },
+            { id: 'concat', span: true, cells: [<span key="h"><FamilyTile family="context" labelled /> concat</span>, 'Not scored on any benchmark: no metric reads a context builder’s output.'] },
+          ]}
+        />
       </Block>
 
       <Block name="Sheet">

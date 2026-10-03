@@ -1,7 +1,7 @@
 // The six screens, widest to narrowest (the front-end design, § 3). Runs,
-// Compare and Replay are built (src/runs/, src/compare/, src/replay/) — Replay
-// loaded as its own chunk, since it carries the canvas; each other screen is
-// its empty state here: one sentence
+// Pipeline, Compare and Replay are built (src/runs/, src/pipeline/,
+// src/compare/, src/replay/) — Replay loaded as its own chunk, since it
+// carries the canvas; each other screen is its empty state here: one sentence
 // on the default path and the action that leads on. A screen's own issue
 // replaces its empty state with its content and keeps the route shape
 // src/routes.ts gives it.
@@ -9,6 +9,7 @@ import { lazy, Suspense, useEffect, useRef, type RefObject } from 'react';
 import { ButtonLink, EmptyState, Sheet } from '../../design/index.ts';
 import type { ApiClient } from '../api/client.ts';
 import { CompareScreen } from '../compare/CompareScreen.tsx';
+import { PipelineScreen } from '../pipeline/PipelineScreen.tsx';
 import { formatHash, type Route, type ScreenName } from '../routes.ts';
 import { RunsScreen } from '../runs/RunsScreen.tsx';
 import { Loading } from './states.tsx';
@@ -33,12 +34,8 @@ const openRuns: Action = { label: 'Open Runs', to: { screen: 'runs' } };
 const openCompare: Action = { label: 'Open Compare', to: { screen: 'compare', ids: [] } };
 
 /** What a screen shows before it has data, given the state its route carries. */
-function emptyOf(route: Exclude<Route, { screen: 'runs' | 'compare' }>): Empty {
+function emptyOf(route: Exclude<Route, { screen: 'runs' | 'pipeline' | 'compare' }>): Empty {
   switch (route.screen) {
-    case 'pipeline':
-      return route.name === undefined
-        ? { heading: 'No pipeline chosen', sentence: 'Choose a pipeline in Runs to see each of its nodes against every benchmark it ran on.', action: openRuns }
-        : { heading: `Nothing to show for ${route.name} yet`, sentence: `Each node of ${route.name} against every benchmark it ran on appears here.`, action: openRuns };
     case 'replay':
       return { heading: 'No query chosen', sentence: 'Open a run from Runs, or a query from Compare, to follow it through the pipeline, node by node.', action: openCompare };
     case 'editor':
@@ -80,6 +77,14 @@ export function Screen({ route, heading, client }: { route: Route; heading: RefO
       <>
         {title}
         <RunsScreen client={client} sel={route.sel ?? []} />
+      </>
+    );
+  }
+  if (route.screen === 'pipeline') {
+    return (
+      <>
+        {title}
+        <PipelineScreen client={client} name={route.name} />
       </>
     );
   }
