@@ -1,7 +1,7 @@
 ---
 id: ADR-C37
 title: Request input reaches `ragondin-api`'s `/api` handlers only through the crate's own extractors, over axum's `query` feature; every query parameter and every request header a handler reads is typed and declared in the API description
-status: accepted
+status: amended
 invariants: [INV-1, INV-11, INV-12]
 supersedes: []
 superseded_by: null
@@ -46,7 +46,9 @@ Every claim below was checked against the crates `Cargo.lock` resolves.
   `query = ["dep:serde_urlencoded"]`. `serde_urlencoded` 0.7.1, and
   `form_urlencoded` beneath it, are already in `ragondin-api`'s closure through
   `reqwest` 0.12, the `Registry` file backend's transport. Turning the feature
-  on changes no closure and leaves `Cargo.lock` byte-identical.
+  on changes no closure: `Cargo.lock` keeps the same packages at the same
+  versions, and gains one line, the `axum → serde_urlencoded` edge in
+  `axum`'s dependency list (see Amendments).
 - **axum's own rejections are `text/plain`.** ADR-C36 § 2 requires every error
   to be rendered as `application/problem+json`, with a stable code. A raw
   `Query<T>` rejection would break that. The hole already exists for `Path`:
@@ -252,9 +254,11 @@ bodies, with codes the crate records in `runtime/ragondin-api/ARCHITECTURE.md`
 
 ## Consequences
 
-- **`Cargo.lock` is unchanged.** The `cargo metadata` graph gains an
-  `axum → serde_urlencoded` edge, which no invariant checks, since
-  `serde_urlencoded` is on no deny-list.
+- **`Cargo.lock` gains no package and no version change, only one edge.**
+  It records the activated `axum → serde_urlencoded` dependency as one line
+  in `axum`'s dependency list (see Amendments). The `cargo metadata` graph
+  gains the same edge, which no invariant checks, since `serde_urlencoded`
+  is on no deny-list.
 - **The `Path` hole closes.** `GET /api/v1/runs/%FF`, and every invalid path
   value, answers a `parameter_invalid` problem body.
 - **#343's `parameters()` is replaced by `ApiQuery<…>`**, and its tests stay
@@ -292,6 +296,42 @@ bodies, with codes the crate records in `runtime/ragondin-api/ARCHITECTURE.md`
 - **Not decided here.** No entry in `docs/OPEN_QUESTIONS.md` is opened, closed
   or changed, and no frozen decision is reopened.
 
+## Amendments
+
+### 2026-10-01 — `Cargo.lock` is not byte-identical
+
+**Retracted.** This ADR originally claimed, verbatim, in its Context:
+
+> Turning the feature on changes no closure and leaves `Cargo.lock` byte-identical.
+
+and in its Consequences:
+
+> - **`Cargo.lock` is unchanged.** The `cargo metadata` graph gains an
+>   `axum → serde_urlencoded` edge, which no invariant checks, since
+>   `serde_urlencoded` is on no deny-list.
+
+**Why it is false.** Cargo writes every activated dependency edge into the
+lockfile, not only the packages it resolves. With `query` on, `axum`'s entry
+in `Cargo.lock` lists `serde_urlencoded` among its dependencies: one added
+line, and nothing else. No package is added or removed and no version
+changes — 383 `[[package]]` entries before and after, `serde_urlencoded`
+still at 0.7.1. The implementation found it: #382's criterion
+`git diff --exit-code main -- Cargo.lock` cannot pass with the feature on,
+and PR #395 shows the one-line diff. The two passages above now state what
+the lockfile does.
+
+**Why the decision still stands.** The claim was about cost, not a ground.
+What the grant rests on is that the `query` feature adds no crate to
+`ragondin-api`'s closure — so no new dependency, no new licence or advisory
+surface, and nothing for INV-4 or INV-12 to see — and that holds: the added
+line names a package the closure already held. Since the retraction removes
+no ground the decision rested on, this is an amendment rather than a
+supersession.
+
+**On whose authority.** The repository owner, accepting on 2026-10-01 the
+deviation PR #395 reported.
+The Decision section is untouched, as process rule 2 requires.
+
 ## Status
 
-Accepted.
+Accepted (amended 2026-10-01).
