@@ -4,7 +4,7 @@
 import { Section } from '../../design/index.ts';
 import type { ApiProblem } from '../api/client.ts';
 import type { BenchmarkEntry, Capabilities } from '../api/types.ts';
-import { DOWNLOAD_REFUSED, DownloadButton, Licence } from './Benchmarks.tsx';
+import { ActionSlot, DownloadButton, downloadWords, Licence, type Downloads } from './Benchmarks.tsx';
 import { ConnectForm, ImportForm, type ConnectFormProps } from './forms.tsx';
 import { formatSize, smallestAvailable } from './model.ts';
 
@@ -24,18 +24,20 @@ export type FirstLaunchProps = {
   benchmarks: readonly BenchmarkEntry[];
   capabilities: Capabilities | null;
   onImport: (path: string, name: string) => Promise<ApiProblem | null>;
+  downloads: Downloads;
   connect: ConnectFormProps;
 };
 
-export function FirstLaunch({ benchmarks, capabilities, onImport, connect }: FirstLaunchProps) {
+export function FirstLaunch({ benchmarks, capabilities, onImport, downloads, connect }: FirstLaunchProps) {
   const first = smallestAvailable(benchmarks);
+  const view = first === null ? null : downloads.view(first.name);
   const builtIn = builtInSentence(capabilities);
   return (
     <Section heading="Get started" caption="This workspace holds no benchmark and binds no service yet.">
       <ol className="rg-setup__steps">
         <li className="rg-setup__step">
           <h3 className="rg-setup__subheading">Add a benchmark</h3>
-          {first === null ? null : (
+          {first === null || view === null ? null : (
             <>
               <p className="rg-setup__lead">
                 <span className="rg-setup__name">{first.name}</span>, {formatSize(first.state.size_bytes)}
@@ -47,8 +49,11 @@ export function FirstLaunch({ benchmarks, capabilities, onImport, connect }: Fir
                 — the smallest, a good first run.
               </p>
               <div className="rg-setup__submit">
-                <DownloadButton />
-                <span className="rg-setup__said">{DOWNLOAD_REFUSED}</span>
+                <ActionSlot benchmark={first.name}>
+                  <DownloadButton view={view} onStart={() => downloads.start(first.name)} />
+                </ActionSlot>
+                {/* The lead above already gives the size: an idle line says nothing. */}
+                <span className="rg-setup__said">{view.kind === 'idle' ? null : downloadWords(view, first.state.size_bytes)}</span>
               </div>
               <p className="rg-setup__lead">Or import a corpus you hold:</p>
             </>

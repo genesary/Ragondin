@@ -46,6 +46,8 @@ export type PathWith<M extends Method> = { [P in keyof Paths]: M extends keyof P
 type Operation<P extends keyof Paths, M extends Method> = Paths[P] extends Record<M, infer O> ? O : never;
 export type Answer<P extends keyof Paths, M extends Method> = Operation<P, M> extends { response: infer R } ? R : never;
 export type Body<P extends keyof Paths, M extends Method> = Operation<P, M> extends { body: infer B } ? B : never;
+/** The request body a write sends: `undefined` for an operation that declares none, which is then sent without one. */
+type BodyArg<P extends keyof Paths, M extends Method> = [Body<P, M>] extends [never] ? undefined : Body<P, M>;
 /** No argument for a path without parameters; the parameters otherwise. */
 type ParamsArg<P extends keyof Paths, M extends Method> = Operation<P, M> extends { params: infer Q }
   ? Q extends Record<string, never>
@@ -71,9 +73,9 @@ type Args<P extends keyof Paths, M extends Method> = [...ParamsArg<P, M>, ...Opt
 
 export type ApiClient = {
   get<P extends PathWith<'get'>>(path: P, ...args: Args<P, 'get'>): Promise<ApiResult<Answer<P, 'get'>>>;
-  post<P extends PathWith<'post'>>(path: P, body: Body<P, 'post'>, ...args: Args<P, 'post'>): Promise<ApiResult<Answer<P, 'post'>>>;
-  put<P extends PathWith<'put'>>(path: P, body: Body<P, 'put'>, ...args: Args<P, 'put'>): Promise<ApiResult<Answer<P, 'put'>>>;
-  patch<P extends PathWith<'patch'>>(path: P, body: Body<P, 'patch'>, ...args: Args<P, 'patch'>): Promise<ApiResult<Answer<P, 'patch'>>>;
+  post<P extends PathWith<'post'>>(path: P, body: BodyArg<P, 'post'>, ...args: Args<P, 'post'>): Promise<ApiResult<Answer<P, 'post'>>>;
+  put<P extends PathWith<'put'>>(path: P, body: BodyArg<P, 'put'>, ...args: Args<P, 'put'>): Promise<ApiResult<Answer<P, 'put'>>>;
+  patch<P extends PathWith<'patch'>>(path: P, body: BodyArg<P, 'patch'>, ...args: Args<P, 'patch'>): Promise<ApiResult<Answer<P, 'patch'>>>;
   del<P extends PathWith<'delete'>>(path: P, ...args: Args<P, 'delete'>): Promise<ApiResult<Answer<P, 'delete'>>>;
 };
 

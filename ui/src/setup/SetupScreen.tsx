@@ -6,12 +6,13 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { Sheet } from '../../design/index.ts';
 import type { ApiClient, ApiProblem } from '../api/client.ts';
+import { applyJobEvent, openJobStream, type Jobs } from '../api/jobs.ts';
 import type { BenchmarkEntry, ServiceBinding, ServiceStatus, Workspace } from '../api/types.ts';
 import type { SetupSection } from '../routes.ts';
 import { Loading, type RequestState } from '../shell/states.tsx';
-import { Benchmarks } from './Benchmarks.tsx';
+import { Benchmarks, type Downloads } from './Benchmarks.tsx';
 import { FirstLaunch } from './FirstLaunch.tsx';
-import { isFirstLaunch, serviceKey } from './model.ts';
+import { downloadView, finishedDownloads, isFirstLaunch, serviceKey, type Submission } from './model.ts';
 import { displayed, Services, type RemovedSlot, type SessionProbe } from './Services.tsx';
 import './Setup.css';
 import { BuildSection, WorkspaceSection } from './Workspace.tsx';
@@ -38,8 +39,8 @@ type Mode = 'first' | 'sections';
 export const UNDO_WINDOW_MS = 10_000;
 
 /**
- * Reads a listing, keeping only the answer to the last read asked for, and
- * lets a write replace it in place.
+ * Reads a listing, keeping only the answer to the last read asked for; lets
+ * a write replace it in place, and a change elsewhere read it again in place.
  */
 function useListing<T>(read: () => Promise<{ ok: true; value: T } | { ok: false; problem: ApiProblem }>) {
   const [state, setState] = useState<RequestState<T>>({ status: 'loading' });
@@ -65,7 +66,7 @@ function useListing<T>(read: () => Promise<{ ok: true; value: T } | { ok: false;
       return prev.status === 'loaded' ? { status: 'loaded', value: (value as (prev: T) => T)(prev.value) } : prev;
     });
   }, []);
-  return { state, retry, replace };
+  return { state, retry, replace, reload: load };
 }
 
 export function SetupScreen({ client, workspace, refreshWorkspace, retryWorkspace, section }: SetupScreenProps) {
@@ -288,6 +289,72 @@ export function SetupScreen({ client, workspace, refreshWorkspace, retryWorkspac
     return null;
   };
 
+  // The downloads: the job stream, followed while the screen is open — its
+  // first event is the whole queue, so a download already under way is shown
+  // — and this page's own submissions, by benchmark.
+  const [jobs, setJobs] = useState<Jobs>(new Map());
+  const jobsNow = useRef<Jobs>(jobs);
+  const [submissions, setSubmissions] = useState<ReadonlyMap<string, Submission>>(new Map());
+  const submitted = useRef(new Set<string>());
+  const reloadBenchmarks = benchmarks.reload;
+
+  /**
+   * Downloads that ended done: the listing is read again, which says them
+   * ready with their digests, and the workspace's counts with it. Focus on a
+   * Download that goes with its row's button moves to the section.
+   */
+  const finish = useCallback(
+    async (names: readonly string[]) => {
+      if (names.length === 0) return;
+      const focused = document.activeElement?.closest('.rg-setup__action')?.getAttribute('data-benchmark');
+      await reloadBenchmarks();
+      refresh.current();
+      setSubmissions((all) => {
+        const next = new Map(all);
+        for (const name of names) next.delete(name);
+        return next;
+      });
+      if (focused !== undefined && focused !== null && names.includes(focused)) setPendingFocus({ benchmarks: true });
+    },
+    [reloadBenchmarks],
+  );
+  const finishNow = useRef(finish);
+  useEffect(() => {
+    finishNow.current = finish;
+  });
+
+  useEffect(() => {
+    const stream = openJobStream({
+      onEvent: (event) => {
+        const before = jobsNow.current;
+        const after = applyJobEvent(before, event);
+        jobsNow.current = after;
+        setJobs(after);
+        void finishNow.current(finishedDownloads(before, after, submitted.current));
+      },
+    });
+    return () => stream.close();
+  }, []);
+
+  const startDownload = async (name: string) => {
+    setSubmissions((all) => new Map(all).set(name, { kind: 'submitting' }));
+    const result = await client.post('/benchmarks/{name}/download', undefined, { name });
+    if (!result.ok) {
+      setSubmissions((all) => new Map(all).set(name, { kind: 'refused', problem: result.problem }));
+      return;
+    }
+    const jobId = result.value.job_id;
+    submitted.current.add(jobId);
+    setSubmissions((all) => new Map(all).set(name, { kind: 'accepted', jobId }));
+    // The stream may have carried the job to its end before this answer came.
+    if (jobsNow.current.get(jobId)?.state.kind === 'done') void finish([name]);
+  };
+
+  const downloads: Downloads = {
+    view: (name) => downloadView(name, submissions.get(name), jobs),
+    start: (name) => void startDownload(name),
+  };
+
   const onImport = async (path: string, name: string) => {
     const result = await client.post('/benchmarks/import', { path, name });
     if (!result.ok) return result.problem;
@@ -313,10 +380,10 @@ export function SetupScreen({ client, workspace, refreshWorkspace, retryWorkspac
           <Loading label="Reading benchmarks and services" />
         </div>
       ) : mode === 'first' && benchmarks.state.status === 'loaded' ? (
-        <FirstLaunch benchmarks={benchmarks.state.value} capabilities={loaded?.capabilities ?? null} onImport={onImport} connect={{ ...connect, initialFamily: 'generator' }} />
+        <FirstLaunch benchmarks={benchmarks.state.value} capabilities={loaded?.capabilities ?? null} onImport={onImport} downloads={downloads} connect={{ ...connect, initialFamily: 'generator' }} />
       ) : (
         <>
-          <Benchmarks state={benchmarks.state} onRetry={benchmarks.retry} onImport={onImport} anchor={benchmarksAnchor} />
+          <Benchmarks state={benchmarks.state} onRetry={benchmarks.retry} onImport={onImport} downloads={downloads} anchor={benchmarksAnchor} />
           <Services
             state={services.state}
             onRetry={services.retry}

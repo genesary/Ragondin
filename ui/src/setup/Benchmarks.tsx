@@ -1,6 +1,7 @@
 // The Benchmarks section: one row per registry entry, in the listing's order,
 // with its state, what that state means in digests, its ground truth and its
-// licence; and the import of a local corpus. A benchmark is a pinned snapshot
+// licence; an available one's download, followed on the job stream; and the
+// import of a local corpus. A benchmark is a pinned snapshot
 // (docs/system-architecture.md § 9.1): there is no address field here.
 import type { ReactNode, Ref } from 'react';
 import { Button, Section, StatusChip, Table, type Status, type TableRow } from '../../design/index.ts';
@@ -8,10 +9,13 @@ import type { ApiProblem } from '../api/client.ts';
 import type { BenchmarkEntry } from '../api/types.ts';
 import { ErrorState, Resource, type RequestState } from '../shell/states.tsx';
 import { ImportForm } from './forms.tsx';
-import { formatSize, groundTruthLabel, shortDigest } from './model.ts';
+import { formatSize, groundTruthLabel, shortDigest, type DownloadView } from './model.ts';
 
-/** Why Download is refused in this build: no route downloads a benchmark until the job queue brings one. */
-export const DOWNLOAD_REFUSED = 'Downloads arrive with the job queue.';
+/** The downloads the screen follows: where each benchmark's stands, and how to ask for one. */
+export type Downloads = {
+  view: (name: string) => DownloadView;
+  start: (name: string) => void;
+};
 
 const CHIP: Record<BenchmarkEntry['state']['kind'], Exclude<Status, 'running'>> = {
   ready: 'done',
@@ -30,8 +34,71 @@ export function Digest({ value }: { value: string }) {
   );
 }
 
+/**
+ * What a download says, in the row's words. A failure is the API's own words
+ * in an alert, announced as it appears; progress is not a live region, so a
+ * tick every hundredth of the snapshot is not read aloud.
+ */
+export function downloadWords(view: DownloadView, size: number): ReactNode {
+  switch (view.kind) {
+    case 'idle':
+      return <>{formatSize(size)} to download</>;
+    case 'submitting':
+      return <>Asking for the download…</>;
+    case 'queued':
+      return <>Queued, {formatSize(size)} to download</>;
+    case 'running':
+      // Before the first tick the job knows no total: the manifest's size is the snapshot's.
+      return (
+        <>
+          Downloading… {formatSize(view.done)} of {formatSize(view.total ?? size)}
+        </>
+      );
+    case 'verifying':
+      return <>Downloaded; reading its digest…</>;
+    case 'failed':
+      return <span role="alert">Download failed: {view.error}</span>;
+    case 'refused':
+      return (
+        <span role="alert">
+          {view.problem.message} {view.problem.hint} <code>{view.problem.code}</code>
+        </span>
+      );
+    case 'cancelled':
+      return <>Download cancelled.</>;
+  }
+}
+
+/** The state chip of an available benchmark, as its download moves it. */
+function downloadChip(view: DownloadView, size: number): ReactNode {
+  switch (view.kind) {
+    case 'idle':
+      return <StatusChip state={CHIP.available}>available</StatusChip>;
+    case 'submitting':
+    case 'queued':
+      return <StatusChip state="queued">queued</StatusChip>;
+    case 'running':
+      return (
+        <StatusChip state="running" fraction={view.done / (view.total ?? size)}>
+          downloading
+        </StatusChip>
+      );
+    case 'verifying':
+      return (
+        <StatusChip state="running" fraction={1}>
+          verifying
+        </StatusChip>
+      );
+    case 'failed':
+    case 'refused':
+      return <StatusChip state="failed">failed</StatusChip>;
+    case 'cancelled':
+      return <StatusChip state="cancelled">cancelled</StatusChip>;
+  }
+}
+
 /** What a state means, in digests and words. */
-function detail(entry: BenchmarkEntry): ReactNode {
+function detail(entry: BenchmarkEntry, downloads: Downloads): ReactNode {
   const state = entry.state;
   switch (state.kind) {
     case 'ready':
@@ -47,7 +114,7 @@ function detail(entry: BenchmarkEntry): ReactNode {
         </>
       );
     case 'available':
-      return <>{formatSize(state.size_bytes)} to download</>;
+      return downloadWords(downloads.view(entry.name), state.size_bytes);
     case 'differs':
       return (
         <>
@@ -72,12 +139,45 @@ export function Licence({ entry }: { entry: BenchmarkEntry }) {
   );
 }
 
-/** Download, refused with its reason until a route downloads a benchmark. */
-export function DownloadButton() {
+/**
+ * A benchmark's one download control: Download, then Downloading while its
+ * job is under way, then Retry when it was refused, failed or cancelled. One
+ * button whose label changes, so focus stays on it throughout.
+ */
+export function DownloadButton({ view, onStart }: { view: DownloadView; onStart: () => void }) {
+  switch (view.kind) {
+    case 'idle':
+    case 'submitting':
+      return (
+        <Button size="s" icon="download" busy={view.kind === 'submitting'} busyLabel="Downloading" onClick={onStart}>
+          Download
+        </Button>
+      );
+    case 'queued':
+    case 'running':
+    case 'verifying':
+      return (
+        <Button size="s" icon="download" disabled disabledReason="The download is under way; its progress is beside it.">
+          Downloading
+        </Button>
+      );
+    case 'failed':
+    case 'refused':
+    case 'cancelled':
+      return (
+        <Button size="s" icon="download" onClick={onStart}>
+          Retry
+        </Button>
+      );
+  }
+}
+
+/** The action cell of every row, one control high whether it holds a button or not, so a button coming or going moves nothing. */
+export function ActionSlot({ benchmark, children }: { benchmark: string; children?: ReactNode }) {
   return (
-    <Button size="s" icon="download" disabled disabledReason={DOWNLOAD_REFUSED}>
-      Download
-    </Button>
+    <span className="rg-setup__action" data-benchmark={benchmark}>
+      {children}
+    </span>
   );
 }
 
@@ -90,28 +190,32 @@ const COLUMNS = [
   { id: 'action', label: <span className="rg-visually-hidden">Action</span> },
 ];
 
-function rows(benchmarks: readonly BenchmarkEntry[]): TableRow[] {
-  return benchmarks.map((b) => ({
-    id: b.name,
-    cells: [
-      <span className="rg-setup__name">{b.name}</span>,
-      <StatusChip state={CHIP[b.state.kind]}>{b.state.kind}</StatusChip>,
-      <span className="rg-setup__detail">{detail(b)}</span>,
-      b.ground_truth === null ? null : groundTruthLabel(b.ground_truth),
-      <Licence entry={b} />,
-      b.state.kind === 'available' ? <DownloadButton /> : null,
-    ],
-  }));
+function rows(benchmarks: readonly BenchmarkEntry[], downloads: Downloads): TableRow[] {
+  return benchmarks.map((b) => {
+    const view = b.state.kind === 'available' ? downloads.view(b.name) : null;
+    return {
+      id: b.name,
+      cells: [
+        <span className="rg-setup__name">{b.name}</span>,
+        b.state.kind === 'available' && view !== null ? downloadChip(view, b.state.size_bytes) : <StatusChip state={CHIP[b.state.kind]}>{b.state.kind}</StatusChip>,
+        <span className="rg-setup__detail">{detail(b, downloads)}</span>,
+        b.ground_truth === null ? null : groundTruthLabel(b.ground_truth),
+        <Licence entry={b} />,
+        <ActionSlot benchmark={b.name}>{view === null ? null : <DownloadButton view={view} onStart={() => downloads.start(b.name)} />}</ActionSlot>,
+      ],
+    };
+  });
 }
 
 export type BenchmarksProps = {
   state: RequestState<readonly BenchmarkEntry[]>;
   onRetry: () => void;
   onImport: (path: string, name: string) => Promise<ApiProblem | null>;
+  downloads: Downloads;
   anchor: Ref<HTMLElement>;
 };
 
-export function Benchmarks({ state, onRetry, onImport, anchor }: BenchmarksProps) {
+export function Benchmarks({ state, onRetry, onImport, downloads, anchor }: BenchmarksProps) {
   return (
     <Section heading="Benchmarks" caption="Pinned snapshots: a benchmark is ready when the dataset on disk digests to the version the manifest pins." anchor={anchor}>
       <Resource state={state} loading="Reading benchmarks" error={(problem) => <ErrorState problem={problem} onRetry={onRetry} />}>
@@ -119,10 +223,7 @@ export function Benchmarks({ state, onRetry, onImport, anchor }: BenchmarksProps
           benchmarks.length === 0 ? (
             <p className="rg-setup__note">The registry lists no benchmark: this build’s manifest pins none, and nothing was imported.</p>
           ) : (
-            <>
-              <Table caption="Benchmarks the registry knows" columns={COLUMNS} rows={rows(benchmarks)} />
-              {benchmarks.some((b) => b.state.kind === 'available') ? <p className="rg-setup__note">Download is refused for now: {DOWNLOAD_REFUSED.toLowerCase()}</p> : null}
-            </>
+            <Table caption="Benchmarks the registry knows" columns={COLUMNS} rows={rows(benchmarks, downloads)} />
           )
         }
       </Resource>

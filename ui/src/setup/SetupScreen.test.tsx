@@ -4,10 +4,11 @@ import { useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from '../App.tsx';
 import { createApiClient } from '../api/client.ts';
-import { mockApi, type MockRoutes } from '../api/testing.ts';
-import type { BenchmarkEntry, Problem, ServiceListing, ServiceStatus, Workspace } from '../api/types.ts';
+import { FakeEventSource, installFakeEventSource, mockApi, type MockRoutes } from '../api/testing.ts';
+import type { BenchmarkEntry, JobEvent, JobSummary, Problem, ServiceListing, ServiceStatus, Workspace } from '../api/types.ts';
 import type { SetupSection } from '../routes.ts';
 import type { RequestState } from '../shell/states.tsx';
+import { parseRules } from '../../design/testing/css.ts';
 import { SetupScreen, UNDO_WINDOW_MS } from './SetupScreen.tsx';
 
 const hex = (c: string) => c.repeat(64);
@@ -102,6 +103,7 @@ const row = (name: string) => {
 
 beforeEach(() => {
   window.history.replaceState(null, '', '/#setup');
+  installFakeEventSource();
 });
 
 afterEach(() => {
@@ -126,8 +128,7 @@ describe('the benchmarks', () => {
     expect(available.textContent).toContain('17.1 MB');
     expect(available.textContent).toContain('CC-BY-SA-4.0');
     const download = within(available).getByRole('button', { name: 'Download' });
-    expect(download.getAttribute('aria-disabled')).toBe('true');
-    expect(available.textContent).toContain('Downloads arrive with the job queue');
+    expect(download.getAttribute('aria-disabled')).toBeNull();
 
     const unreadable = row('squad/squad');
     expect(within(unreadable).getByText('unreadable').closest('.rg-status')?.getAttribute('data-state')).toBe('failed');
@@ -197,6 +198,160 @@ describe('the benchmarks', () => {
   });
 });
 
+/** A download job of `benchmark`, as the stream carries it. */
+const download = (id: string, state: JobSummary['state'], benchmark = 'beir/fiqa'): JobSummary => ({ id, created_at_ms: 1, position: 0, state, work: { kind: 'download', benchmark } });
+const running = (done: number, total: number | null): JobSummary['state'] => ({ kind: 'running', done, total, started_at_ms: 2, median_latency_nanos: null });
+/** The job stream sends one event; the stream is opened first if it is not yet. */
+const send = (event: JobEvent) =>
+  act(() => {
+    const source = FakeEventSource.latest();
+    if (source.readyState !== FakeEventSource.OPEN) source.open();
+    source.emit(JSON.stringify(event.data), event.event);
+  });
+const FIQA_READY = entry('beir/fiqa', { kind: 'ready', dataset_version: hex('f') }, { licence_url: 'https://example.org/fiqa-terms' });
+const AFTER_DOWNLOAD = [READY, FIQA_READY, DIFFERS, UNREADABLE, LOCAL];
+
+describe('the download', () => {
+  it('Download submits the job, and the row follows it: queued, downloading with its progress, then ready with its digest', async () => {
+    const api = mockApi(routes({ 'GET /benchmarks': [{ body: { benchmarks: EVERY_STATE } }, { body: { benchmarks: AFTER_DOWNLOAD } }], 'POST /benchmarks/{name}/download': { body: { job_id: '7-0' } } }));
+    const refresh = vi.fn();
+    render(<Harness refresh={refresh} />);
+    await within(await screen.findByRole('region', { name: 'Benchmarks' })).findByText('beir/fiqa');
+    send({ event: 'resync', data: { jobs: [], faults: [] } });
+
+    fireEvent.click(within(row('beir/fiqa')).getByRole('button', { name: 'Download' }));
+    await waitFor(() => expect(row('beir/fiqa').textContent).toContain('Queued'));
+    // The name is one path segment, percent-encoded.
+    expect(api.requests).toContain('POST /api/v1/benchmarks/beir%2Ffiqa/download');
+    expect(api.bodies[api.requests.indexOf('POST /api/v1/benchmarks/beir%2Ffiqa/download')]).toBeUndefined();
+
+    send({ event: 'queued', data: download('7-0', { kind: 'queued' }) });
+    send({ event: 'running', data: download('7-0', running(0, null)) });
+    // Before the first tick the snapshot's size is the manifest's.
+    expect(row('beir/fiqa').textContent).toContain('Downloading… 0 B of 17.1 MB');
+    send({ event: 'running', data: download('7-0', running(6_840_000, 17_100_000)) });
+    expect(row('beir/fiqa').textContent).toContain('Downloading… 6.8 MB of 17.1 MB');
+    expect(within(row('beir/fiqa')).getByText('downloading').closest('.rg-status')?.getAttribute('data-state')).toBe('running');
+
+    send({ event: 'done', data: download('7-0', { kind: 'done', run_id: null, id_mismatch: null, finished_at_ms: 3 }) });
+    await waitFor(() => expect(within(row('beir/fiqa')).getByText('ready')).toBeTruthy());
+    expect(within(row('beir/fiqa')).getByText(hex('f').slice(0, 12)).getAttribute('title')).toBe(hex('f'));
+    expect(within(row('beir/fiqa')).queryByRole('button')).toBeNull();
+    expect(api.requests.filter((r) => r === 'GET /api/v1/benchmarks')).toHaveLength(2);
+    expect(refresh).toHaveBeenCalled();
+  });
+
+  it('a failed download is announced in the API’s words, and Retry submits it again', async () => {
+    const api = mockApi(routes({ 'POST /benchmarks/{name}/download': [{ body: { job_id: '7-0' } }, { body: { job_id: '8-0' } }] }));
+    render(<Harness />);
+    await within(await screen.findByRole('region', { name: 'Benchmarks' })).findByText('beir/fiqa');
+    send({ event: 'resync', data: { jobs: [], faults: [] } });
+    fireEvent.click(within(row('beir/fiqa')).getByRole('button', { name: 'Download' }));
+    await waitFor(() => expect(row('beir/fiqa').textContent).toContain('Queued'));
+
+    send({ event: 'failed', data: download('7-0', { kind: 'failed', error: 'corpus.jsonl: digest differs from the manifest', at_node: null, finished_at_ms: 3 }) });
+    const alert = within(row('beir/fiqa')).getByRole('alert');
+    expect(alert.textContent).toContain('corpus.jsonl: digest differs from the manifest');
+    expect(within(row('beir/fiqa')).getByText('failed').closest('.rg-status')?.getAttribute('data-state')).toBe('failed');
+
+    fireEvent.click(within(row('beir/fiqa')).getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(api.requests.filter((r) => r === 'POST /api/v1/benchmarks/beir%2Ffiqa/download')).toHaveLength(2));
+    await waitFor(() => expect(row('beir/fiqa').textContent).toContain('Queued'));
+    expect(within(row('beir/fiqa')).queryByRole('alert')).toBeNull();
+  });
+
+  it('a refused submission is the API’s detail and hint, announced, with Retry', async () => {
+    mockApi(routes({ 'POST /benchmarks/{name}/download': problem('backend_failed', 500, 'jobs/7-0.json: disk full', 'Free some space, then retry.') }));
+    render(<Harness />);
+    await within(await screen.findByRole('region', { name: 'Benchmarks' })).findByText('beir/fiqa');
+    fireEvent.click(within(row('beir/fiqa')).getByRole('button', { name: 'Download' }));
+    const alert = await within(row('beir/fiqa')).findByRole('alert');
+    expect(alert.textContent).toContain('jobs/7-0.json: disk full');
+    expect(alert.textContent).toContain('Free some space, then retry.');
+    expect(within(row('beir/fiqa')).getByRole('button', { name: 'Retry' })).toBeTruthy();
+  });
+
+  it('keeps focus on the row’s button while its label changes, so the keyboard never loses its place', async () => {
+    mockApi(routes({ 'POST /benchmarks/{name}/download': { body: { job_id: '7-0' } } }));
+    render(<Harness />);
+    await within(await screen.findByRole('region', { name: 'Benchmarks' })).findByText('beir/fiqa');
+    const button = within(row('beir/fiqa')).getByRole('button', { name: 'Download' });
+    button.focus();
+    fireEvent.click(button);
+    await waitFor(() => expect(row('beir/fiqa').textContent).toContain('Queued'));
+    send({ event: 'running', data: download('7-0', running(1_000_000, 17_100_000)) });
+    expect(row('beir/fiqa').textContent).toContain('Downloading… 1 MB of 17.1 MB');
+    expect(document.activeElement).toBe(button);
+    expect(button.getAttribute('aria-disabled')).toBe('true');
+    send({ event: 'failed', data: download('7-0', { kind: 'failed', error: 'connection reset', at_node: null, finished_at_ms: 3 }) });
+    expect(document.activeElement).toBe(button);
+    expect(button.textContent).toBe('Retry');
+  });
+
+  it('moves focus to the section when the button that had it goes with the benchmark ready', async () => {
+    mockApi(routes({ 'GET /benchmarks': [{ body: { benchmarks: EVERY_STATE } }, { body: { benchmarks: AFTER_DOWNLOAD } }], 'POST /benchmarks/{name}/download': { body: { job_id: '7-0' } } }));
+    render(<Harness />);
+    await within(await screen.findByRole('region', { name: 'Benchmarks' })).findByText('beir/fiqa');
+    const button = within(row('beir/fiqa')).getByRole('button', { name: 'Download' });
+    button.focus();
+    fireEvent.click(button);
+    await waitFor(() => expect(row('beir/fiqa').textContent).toContain('Queued'));
+    send({ event: 'running', data: download('7-0', running(1, 17_100_000)) });
+    send({ event: 'done', data: download('7-0', { kind: 'done', run_id: null, id_mismatch: null, finished_at_ms: 3 }) });
+    await waitFor(() => expect(within(row('beir/fiqa')).getByText('ready')).toBeTruthy());
+    await waitFor(() => expect(document.activeElement).toBe(region('Benchmarks')));
+  });
+
+  it('shows a download already under way when the page opens, from the stream’s resync', async () => {
+    mockApi(routes());
+    render(<Harness />);
+    await within(await screen.findByRole('region', { name: 'Benchmarks' })).findByText('beir/fiqa');
+    send({ event: 'resync', data: { jobs: [download('5-0', running(3_420_000, 17_100_000))], faults: [] } });
+    expect(row('beir/fiqa').textContent).toContain('Downloading… 3.4 MB of 17.1 MB');
+    expect(FakeEventSource.latest().url).toBe('/api/v1/jobs/events');
+  });
+
+  it('every row holds an action slot of one height, so a button appearing or going moves nothing', async () => {
+    mockApi(routes());
+    render(<Harness />);
+    await within(await screen.findByRole('region', { name: 'Benchmarks' })).findByText('beir/fiqa');
+    for (const name of ['beir/scifact', 'beir/fiqa', 'beir/nfcorpus', 'squad/squad', 'mine']) expect(row(name).querySelector('.rg-setup__action'), name).not.toBeNull();
+    const css = (await import('./Setup.css?raw')).default;
+    const slot = parseRules(css).find((r) => r.selector === '.rg-setup__action');
+    expect(slot?.declarations.get('min-height')).toBe('var(--size-control-s)');
+  });
+
+  it('closes the stream when the screen goes', async () => {
+    mockApi(routes());
+    const { unmount } = render(<Harness />);
+    await within(await screen.findByRole('region', { name: 'Benchmarks' })).findByText('beir/fiqa');
+    unmount();
+    expect(FakeEventSource.instances.length).toBeGreaterThan(0);
+    expect(FakeEventSource.instances.every((s) => s.closed)).toBe(true);
+  });
+
+  it('the first launch’s Download follows its job too, and its end opens the sections', async () => {
+    const small = entry('beir/scifact', { kind: 'available', size_bytes: 5_200_000 });
+    const done = entry('beir/scifact', { kind: 'ready', dataset_version: hex('e') });
+    mockApi(
+      routes({
+        'GET /benchmarks': [{ body: { benchmarks: [small] } }, { body: { benchmarks: [done] } }],
+        'GET /services': { body: { services: [] } },
+        'POST /benchmarks/{name}/download': { body: { job_id: '7-0' } },
+      }),
+    );
+    render(<Harness />);
+    const start = await screen.findByRole('region', { name: 'Get started' });
+    fireEvent.click(within(start).getByRole('button', { name: 'Download' }));
+    await waitFor(() => expect(start.textContent).toContain('Queued'));
+    send({ event: 'running', data: download('7-0', running(2_600_000, 5_200_000), 'beir/scifact') });
+    expect(start.textContent).toContain('Downloading… 2.6 MB of 5.2 MB');
+    send({ event: 'done', data: download('7-0', { kind: 'done', run_id: null, id_mismatch: null, finished_at_ms: 3 }, 'beir/scifact') });
+    await screen.findByRole('region', { name: 'Benchmarks' });
+    expect(within(row('beir/scifact')).getByText('ready')).toBeTruthy();
+  });
+});
+
 describe('the first launch', () => {
   const empty = routes({ 'GET /benchmarks': { body: { benchmarks: [] } }, 'GET /services': { body: { services: [] } } });
 
@@ -225,7 +380,7 @@ describe('the first launch', () => {
     expect(first.textContent).toContain('5.2 MB');
     expect(first.textContent).toContain('the smallest, a good first run');
     expect(first.textContent).not.toContain('beir/trec-covid');
-    expect(within(first).getByRole('button', { name: 'Download' }).getAttribute('aria-disabled')).toBe('true');
+    expect(within(first).getByRole('button', { name: 'Download' }).getAttribute('aria-disabled')).toBeNull();
   });
 
   it('adding a benchmark leaves the first launch state', async () => {
