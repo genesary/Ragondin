@@ -12,7 +12,7 @@ import { Loading, type RequestState } from '../shell/states.tsx';
 import { Benchmarks } from './Benchmarks.tsx';
 import { FirstLaunch } from './FirstLaunch.tsx';
 import { isFirstLaunch, serviceKey } from './model.ts';
-import { Services, type Removal, type SessionProbe } from './Services.tsx';
+import { displayed, Services, type RemovedSlot, type SessionProbe } from './Services.tsx';
 import './Setup.css';
 import { BuildSection, WorkspaceSection } from './Workspace.tsx';
 
@@ -29,6 +29,13 @@ export type SetupScreenProps = {
 };
 
 type Mode = 'first' | 'sections';
+
+/**
+ * How long a removed binding can be brought back by Undo before the removal
+ * is written. Nothing is written meanwhile, so Undo restores the binding, its
+ * place in `workspace.toml` and its comments exactly.
+ */
+export const UNDO_WINDOW_MS = 10_000;
 
 /**
  * Reads a listing, keeping only the answer to the last read asked for, and
@@ -76,7 +83,9 @@ export function SetupScreen({ client, workspace, refreshWorkspace, retryWorkspac
   const [probes, setProbes] = useState<ReadonlyMap<string, SessionProbe>>(new Map());
   const [testing, setTesting] = useState<ReadonlySet<string>>(new Set());
   const [models, setModels] = useState<ReadonlyMap<string, string>>(new Map());
-  const [removal, setRemoval] = useState<Removal | null>(null);
+  const [connecting, setConnecting] = useState<ServiceStatus | null>(null);
+  const [slots, setSlots] = useState<readonly RemovedSlot[]>([]);
+  const [refusal, setRefusal] = useState<ApiProblem | null>(null);
   const undoId = useId();
   const rows = useRef(new Map<string, HTMLLIElement>());
   const benchmarksAnchor = useRef<HTMLElement>(null);
@@ -84,13 +93,18 @@ export function SetupScreen({ client, workspace, refreshWorkspace, retryWorkspac
 
   // First launch or the four sections, decided once both listings are read;
   // kept while one is read again, so a Retry never collapses the page.
-  const decided = useRef<Mode | null>(null);
-  if (benchmarks.state.status === 'loaded' && services.state.status === 'loaded') {
-    decided.current = isFirstLaunch(benchmarks.state.value, services.state.value) ? 'first' : 'sections';
-  } else if (decided.current === null && (benchmarks.state.status === 'error' || services.state.status === 'error')) {
-    decided.current = 'sections';
-  }
-  const mode = decided.current;
+  // Derived during render from the previous decision (React's pattern for
+  // state that follows other state), never written to a ref.
+  const [mode, setMode] = useState<Mode | null>(null);
+  const next: Mode | null =
+    benchmarks.state.status === 'loaded' && services.state.status === 'loaded'
+      ? isFirstLaunch(benchmarks.state.value, services.state.value)
+        ? 'first'
+        : 'sections'
+      : mode === null && (benchmarks.state.status === 'error' || services.state.status === 'error')
+        ? 'sections'
+        : mode;
+  if (next !== mode) setMode(next);
 
   // The address's section is scrolled to and focused once it is on the page:
   // on load, and on every move to another section.
@@ -108,8 +122,8 @@ export function SetupScreen({ client, workspace, refreshWorkspace, retryWorkspac
   }, [section, mode]);
 
   // Where focus goes once the render that puts it on the page has committed:
-  // a row after its probe, or Undo after the row it replaces is gone.
-  // Or the Benchmarks section, after an import ends the first launch and takes
+  // a row after its probe or its Undo, Undo after the row it replaces is gone,
+  // or the Benchmarks section after an import ends the first launch and takes
   // the form that had focus with it.
   const [pendingFocus, setPendingFocus] = useState<{ row: string } | { undo: true } | { benchmarks: true } | null>(null);
   useEffect(() => {
@@ -137,54 +151,111 @@ export function SetupScreen({ client, workspace, refreshWorkspace, retryWorkspac
     refreshWorkspace();
   };
 
+  // The removal whose Undo window is open: nothing is written until it closes.
+  const open = useRef<{ binding: ServiceBinding; timer: ReturnType<typeof setTimeout> } | null>(null);
+
+  // The shell's refresh is a new function on each of its renders; a write that
+  // lands after this screen re-rendered, or left, calls the latest.
+  const refresh = useRef(refreshWorkspace);
+  useEffect(() => {
+    refresh.current = refreshWorkspace;
+  });
+  const replaceServices = services.replace;
+
+  const write = useCallback(
+    async (binding: ServiceBinding) => {
+      const key = serviceKey(binding);
+      const mark = (state: RemovedSlot['state']) => setSlots((all) => all.map((s) => (serviceKey(s.binding) === key ? { ...s, state } : s)));
+      mark('writing');
+      const result = await client.del('/services/{family}/{name}', { family: binding.family, name: binding.name });
+      if (!result.ok) {
+        // The binding is still there: its row comes back, and the refusal says why.
+        setSlots((all) => all.filter((s) => serviceKey(s.binding) !== key));
+        setRefusal(result.problem);
+        return;
+      }
+      replaceServices(result.value.services);
+      mark('removed');
+      refresh.current();
+    },
+    [client, replaceServices],
+  );
+
+  /** Closes the open Undo window, writing its removal now. */
+  const closeWindow = useCallback(() => {
+    const pending = open.current;
+    if (pending === null) return;
+    clearTimeout(pending.timer);
+    open.current = null;
+    void write(pending.binding);
+  }, [write]);
+
+  // Leaving the screen, or the page, writes a pending removal rather than
+  // dropping it: the person asked for it, and Undo is no longer on screen.
+  useEffect(() => {
+    window.addEventListener('pagehide', closeWindow);
+    return () => {
+      window.removeEventListener('pagehide', closeWindow);
+      closeWindow();
+    };
+  }, [closeWindow]);
+
+  const onRemove = (service: ServiceStatus) => {
+    // One window at a time: removing another binding writes the pending one now.
+    closeWindow();
+    const binding: ServiceBinding = { family: service.family, name: service.name, uri: service.uri };
+    const key = serviceKey(service);
+    // Measured before the row goes, so its slot holds its place.
+    const height = rows.current.get(key)?.getBoundingClientRect().height ?? 0;
+    const list = services.state.status === 'loaded' ? services.state.value : [];
+    const index = Math.max(
+      displayed(list, slots).findIndex((row) => !('binding' in row) && serviceKey(row) === key),
+      0,
+    );
+    setSlots((all) => [...all.filter((s) => serviceKey(s.binding) !== key), { binding, index, height, state: 'pending' }]);
+    setRefusal(null);
+    open.current = { binding, timer: setTimeout(closeWindow, UNDO_WINDOW_MS) };
+    setPendingFocus({ undo: true });
+  };
+
+  const onUndo = (slot: RemovedSlot) => {
+    const key = serviceKey(slot.binding);
+    if (open.current === null || serviceKey(open.current.binding) !== key) return;
+    clearTimeout(open.current.timer);
+    open.current = null;
+    setSlots((all) => all.filter((s) => serviceKey(s.binding) !== key));
+    focusRow(key);
+  };
+
   const onConnect = async ({ family, name, uri, servedModel }: { family: string; name: string; uri: string; servedModel: string }) => {
-    const put = await client.put('/services/{family}/{name}', { uri }, { family, name });
-    if (!put.ok) return put.problem;
     const key = serviceKey({ family, name });
-    services.replace(put.value.services);
+    // Binding a name whose removal is pending cancels that removal: the write below replaces its address.
+    if (open.current !== null && serviceKey(open.current.binding) === key) {
+      clearTimeout(open.current.timer);
+      open.current = null;
+    }
+    // Drawn as its row from the click, so the answer moves nothing.
+    setConnecting({ family, name, uri, connected: false, identity: null });
     setModels((m) => new Map(m).set(key, servedModel));
-    // A removed binding bound again needs no Undo; any other removal keeps its slot.
-    setRemoval((r) => (r !== null && serviceKey(r.binding) === key ? null : r));
+    const put = await client.put('/services/{family}/{name}', { uri }, { family, name });
+    if (!put.ok) {
+      setConnecting(null);
+      return put.problem;
+    }
+    services.replace(put.value.services);
+    setSlots((all) => all.filter((s) => serviceKey(s.binding) !== key));
+    setConnecting(null);
     refreshWorkspace();
     await probe(family, name, uri, servedModel);
     focusRow(key);
     return null;
   };
 
-  const onRemove = async (service: ServiceStatus) => {
-    const binding: ServiceBinding = { family: service.family, name: service.name, uri: service.uri };
-    const key = serviceKey(service);
-    // Measured before the row goes, so its slot can hold its place.
-    const height = rows.current.get(key)?.getBoundingClientRect().height ?? 0;
-    const index = services.state.status === 'loaded' ? services.state.value.findIndex((s) => serviceKey(s) === key) : 0;
-    const result = await client.del('/services/{family}/{name}', { family: service.family, name: service.name });
-    if (!result.ok) {
-      setRemoval({ binding, slot: null, problem: result.problem });
-      return;
-    }
-    services.replace(result.value.services);
-    setRemoval({ binding, slot: { index: Math.max(index, 0), height }, problem: null });
-    refreshWorkspace();
-    setPendingFocus({ undo: true });
-  };
-
-  const onUndo = async (binding: ServiceBinding) => {
-    const result = await client.put('/services/{family}/{name}', { uri: binding.uri }, { family: binding.family, name: binding.name });
-    if (!result.ok) {
-      setRemoval((r) => (r === null ? null : { ...r, problem: result.problem }));
-      return;
-    }
-    services.replace(result.value.services);
-    setRemoval(null);
-    refreshWorkspace();
-    focusRow(serviceKey(binding));
-  };
-
   const onImport = async (path: string, name: string) => {
     const result = await client.post('/benchmarks/import', { path, name });
     if (!result.ok) return result.problem;
     benchmarks.replace((list) => [...list.filter((b) => b.name !== result.value.name), result.value]);
-    if (decided.current === 'first') setPendingFocus({ benchmarks: true });
+    if (mode === 'first') setPendingFocus({ benchmarks: true });
     refreshWorkspace();
     return null;
   };
@@ -212,14 +283,16 @@ export function SetupScreen({ client, workspace, refreshWorkspace, retryWorkspac
           <Services
             state={services.state}
             onRetry={services.retry}
+            connecting={connecting}
             probes={probes}
             testing={testing}
             models={models}
             onServedModel={(key, value) => setModels((m) => new Map(m).set(key, value))}
             onTest={(s) => void probe(s.family, s.name, s.uri, models.get(serviceKey(s)) ?? '')}
-            onRemove={(s) => void onRemove(s)}
-            removal={removal}
-            onUndo={(b) => void onUndo(b)}
+            onRemove={onRemove}
+            slots={slots}
+            refusal={refusal}
+            onUndo={onUndo}
             undoId={undoId}
             rowRef={(key) => (el) => {
               if (el === null) rows.current.delete(key);

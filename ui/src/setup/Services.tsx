@@ -2,7 +2,7 @@
 // and name, the address, what the last probe read and its status — with Test
 // (the probe `bench` runs before a run, ADR-C32 § 4) and Remove; ADR-C32's
 // rule under the list; and the Connect form.
-import type { Ref } from 'react';
+import { useId, type Ref } from 'react';
 import { Button, InlineMessage, Input, Section, StatusChip, type Status } from '../../design/index.ts';
 import type { ApiProblem } from '../api/client.ts';
 import type { ServiceBinding, ServiceStatus } from '../api/types.ts';
@@ -10,7 +10,7 @@ import { ErrorState, Resource, type RequestState } from '../shell/states.tsx';
 import { ConnectForm, type ConnectFormProps } from './forms.tsx';
 import { serviceKey } from './model.ts';
 
-/** ADR-C32's rule, verbatim from the front-end design, § 3. */
+/** ADR-C32's rule in one sentence, as issue #345 words it for this screen. */
 export const ADDRESS_RULE = 'The address never enters a pipeline. A run records which address answered, as provenance — two runs with different addresses and the same identity are one experiment run twice.';
 
 /** A probe this page ran: at which address, when, and what came back. */
@@ -42,11 +42,9 @@ const clock = (at: Date) => (
 );
 
 /**
- * The outcome of a probe this page ran, in one slot of about one message's
- * height whatever it holds — testing, connected, or the refusal — so the
- * answer, which arrives long after the click, replaces the testing message
- * rather than pushing the rows below it down. A row this page has not tested
- * has no slot.
+ * What a probe this page ran says while it runs and once it read an identity,
+ * in the row's status line, which is always present so a screen reader
+ * announces both. A refusal is the row's `ErrorState` instead, beside it.
  */
 function Outcome({ testing, status, uri }: { testing: boolean; status: RowStatus; uri: string }) {
   if (testing) {
@@ -56,7 +54,6 @@ function Outcome({ testing, status, uri }: { testing: boolean; status: RowStatus
       </InlineMessage>
     );
   }
-  if (status.kind === 'unreachable' || status.kind === 'refused') return <ErrorState problem={status.problem} />;
   if (status.kind === 'connected' && status.at !== null) {
     return (
       <InlineMessage tone="info" title={`Connected · ${status.identity ?? 'no identity reported'}`}>
@@ -82,6 +79,7 @@ function ServiceRow({ service, probe, testing, servedModel, onServedModel, onTes
   const key = serviceKey(service);
   const status = rowStatus(service, probe);
   const field = `service-model-${key.replace(/[^A-Za-z0-9_-]/g, '_')}`;
+  const refused = !testing && (status.kind === 'unreachable' || status.kind === 'refused') ? status.problem : null;
   return (
     <li className="rg-setup__service" aria-label={key} tabIndex={-1} ref={rowRef} aria-busy={testing || undefined}>
       <div className="rg-setup__service-head">
@@ -103,13 +101,16 @@ function ServiceRow({ service, probe, testing, servedModel, onServedModel, onTes
           <>Tested at {clock(status.at)}.</>
         )}
       </p>
-      <Outcome testing={testing} status={status} uri={service.uri} />
+      <div role="status" className="rg-setup__outcome">
+        <Outcome testing={testing} status={status} uri={service.uri} />
+      </div>
+      {refused === null ? null : <ErrorState problem={refused} />}
       <div className="rg-setup__service-actions">
-        <Input id={field} label="Served model" mono value={servedModel} onChange={(e) => onServedModel(e.target.value)} />
-        <Button size="s" busy={testing} onClick={onTest}>
+        <Input id={field} label="Served model" aria-label={`Served model for ${key}`} mono value={servedModel} onChange={(e) => onServedModel(e.target.value)} />
+        <Button size="s" busy={testing} onClick={onTest} aria-label={`Test ${key}`}>
           Test
         </Button>
-        <Button size="s" kind="destructive" onClick={onRemove}>
+        <Button size="s" kind="destructive" onClick={onRemove} aria-label={`Remove ${key}`}>
           Remove
         </Button>
       </div>
@@ -118,93 +119,109 @@ function ServiceRow({ service, probe, testing, servedModel, onServedModel, onTes
 }
 
 /**
- * The last removal this page made. Once the binding is gone, `slot` holds
- * its place in the list — where its row was, as tall as the row was — for the
- * message that offers Undo, so the rows below never move when the answer
- * arrives. A refused removal has no slot; its refusal is said below the list.
+ * A binding removed from the list in this page, holding its row's place —
+ * where the row was, as tall as it was — so the rows below never move.
+ * `pending` while Undo can still bring it back and nothing is written;
+ * `writing` once the window closed and `DELETE` is in flight; `removed` once
+ * the server unbound it.
  */
-export type Removal = { binding: ServiceBinding; slot: { index: number; height: number } | null; problem: ApiProblem | null };
+export type RemovedSlot = { binding: ServiceBinding; index: number; height: number; state: 'pending' | 'writing' | 'removed' };
 
-function RemovedSlot({ removal, undoId, onUndo, height }: { removal: Removal; undoId: string; onUndo: () => void; height: number }) {
+function Removed({ slot, undoId, onUndo }: { slot: RemovedSlot; undoId: string; onUndo: () => void }) {
+  const messageId = useId();
+  const key = serviceKey(slot.binding);
   return (
     // Height from the row it replaces, set through the DOM's style object, which the page's content security policy allows.
-    <li className="rg-setup__service" aria-label={`${serviceKey(removal.binding)}, removed`} style={{ minHeight: height }}>
-      <InlineMessage
-        tone="info"
-        title={`Removed ${serviceKey(removal.binding)}.`}
-        action={
-          <Button size="s" id={undoId} onClick={onUndo}>
-            Undo
-          </Button>
-        }
-      >
-        It was bound to <code>{removal.binding.uri}</code>.
-      </InlineMessage>
-      {removal.problem === null ? null : <ErrorState problem={removal.problem} />}
+    <li className="rg-setup__service" aria-label={`${key}, removed`} style={{ minHeight: slot.height }}>
+      <div id={messageId}>
+        <InlineMessage
+          tone="info"
+          title={`Removed ${key}.`}
+          action={
+            slot.state === 'pending' ? (
+              <Button size="s" id={undoId} onClick={onUndo} aria-describedby={messageId}>
+                Undo
+              </Button>
+            ) : undefined
+          }
+        >
+          It was bound to <code>{slot.binding.uri}</code>.
+        </InlineMessage>
+      </div>
     </li>
   );
 }
 
-/** The rows, with the removed binding's slot where its row was. */
-function withSlot(services: readonly ServiceStatus[], removal: Removal | null): (ServiceStatus | 'removed')[] {
-  const rows: (ServiceStatus | 'removed')[] = [...services];
-  if (removal?.slot != null) rows.splice(Math.min(removal.slot.index, rows.length), 0, 'removed');
+/** The list as drawn: the rows, minus every binding a slot stands for, with each slot at its place. */
+export function displayed(services: readonly ServiceStatus[], slots: readonly RemovedSlot[]): (ServiceStatus | RemovedSlot)[] {
+  const taken = new Set(slots.map((s) => serviceKey(s.binding)));
+  const rows: (ServiceStatus | RemovedSlot)[] = services.filter((s) => !taken.has(serviceKey(s)));
+  for (const slot of slots) rows.splice(Math.min(slot.index, rows.length), 0, slot);
   return rows;
 }
+
+const isSlot = (row: ServiceStatus | RemovedSlot): row is RemovedSlot => 'binding' in row;
 
 export type ServicesProps = {
   state: RequestState<readonly ServiceStatus[]>;
   onRetry: () => void;
+  /** A binding being connected, drawn as its row from the click until the server lists it. */
+  connecting: ServiceStatus | null;
   probes: ReadonlyMap<string, SessionProbe>;
   testing: ReadonlySet<string>;
   models: ReadonlyMap<string, string>;
   onServedModel: (key: string, value: string) => void;
   onTest: (service: ServiceStatus) => void;
   onRemove: (service: ServiceStatus) => void;
-  removal: Removal | null;
-  onUndo: (binding: ServiceBinding) => void;
-  /** The Undo button's id, so focus can land on it once the row it replaces is gone. */
+  slots: readonly RemovedSlot[];
+  /** A removal the server refused once its window closed; the row is back. */
+  refusal: ApiProblem | null;
+  onUndo: (slot: RemovedSlot) => void;
+  /** The pending Undo's id, so focus can land on it once the row it replaces is gone. */
   undoId: string;
   rowRef: (key: string) => (el: HTMLLIElement | null) => void;
   connect: ConnectFormProps;
   anchor: Ref<HTMLElement>;
 };
 
-export function Services({ state, onRetry, probes, testing, models, onServedModel, onTest, onRemove, removal, onUndo, undoId, rowRef, connect, anchor }: ServicesProps) {
+export function Services({ state, onRetry, connecting, probes, testing, models, onServedModel, onTest, onRemove, slots, refusal, onUndo, undoId, rowRef, connect, anchor }: ServicesProps) {
   return (
     <Section heading="Services" caption="A service is connected when its identity was read, not when a port answered." anchor={anchor}>
       <Resource state={state} loading="Reading services" error={(problem) => <ErrorState problem={problem} onRetry={onRetry} />}>
-        {(services) =>
-          services.length === 0 && removal?.slot == null ? (
-            <p className="rg-setup__note">No service is bound: a pipeline here runs on this build’s own components.</p>
+        {(listed) => {
+          const services = connecting !== null && !listed.some((s) => serviceKey(s) === serviceKey(connecting)) ? [...listed, connecting] : listed;
+          const rows = displayed(services, slots);
+          return rows.length === 0 ? (
+            <p className="rg-setup__note">No service is bound: a pipeline runs only on the components this build carries until one is.</p>
           ) : (
             <ul className="rg-setup__services">
-              {withSlot(services, removal).map((s) => {
-                if (s === 'removed') {
-                  return removal?.slot == null ? null : <RemovedSlot key="removed" removal={removal} undoId={undoId} height={removal.slot.height} onUndo={() => onUndo(removal.binding)} />;
+              {rows.map((row) => {
+                if (isSlot(row)) {
+                  return <Removed key={`removed:${serviceKey(row.binding)}`} slot={row} undoId={undoId} onUndo={() => onUndo(row)} />;
                 }
-                const key = serviceKey(s);
+                const key = serviceKey(row);
+                const busy = connecting !== null && serviceKey(connecting) === key;
                 return (
                   <ServiceRow
                     key={key}
-                    service={s}
+                    service={row}
                     probe={probes.get(key)}
-                    testing={testing.has(key)}
+                    testing={busy || testing.has(key)}
                     servedModel={models.get(key) ?? ''}
                     onServedModel={(value) => onServedModel(key, value)}
-                    onTest={() => onTest(s)}
-                    onRemove={() => onRemove(s)}
+                    onTest={() => (busy ? undefined : onTest(row))}
+                    onRemove={() => (busy ? undefined : onRemove(row))}
                     rowRef={rowRef(key)}
                   />
                 );
               })}
             </ul>
-          )
-        }
+          );
+        }}
       </Resource>
+      {refusal === null ? null : <ErrorState problem={refusal} />}
       <p className="rg-setup__note">{ADDRESS_RULE}</p>
-      <p className="rg-setup__note">The times shown are those of probes run since this page was opened; the server keeps none.</p>
-      {removal !== null && removal.slot === null && removal.problem !== null ? <ErrorState problem={removal.problem} /> : null}
+      <p className="rg-setup__note">The times shown are those of probes run since this page was opened; the server keeps none. A served model typed on a row is kept for this page only.</p>
       <h3 className="rg-setup__subheading">Connect a service</h3>
       <ConnectForm {...connect} />
     </Section>

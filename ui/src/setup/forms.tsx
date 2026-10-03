@@ -2,12 +2,22 @@
 // service. Each submits through a callback that answers with the API's
 // refusal or null, and shows a refusal under its field in the API's own
 // words — inline, where it is corrected (the front-end design, § 8).
-import { useId, useState, type FormEvent } from 'react';
+import { useEffect, useId, useState, type FormEvent } from 'react';
 import { Button, InlineMessage, Input, Select } from '../../design/index.ts';
 import type { ApiProblem } from '../api/client.ts';
 
 /** A refusal as the line under a field: the API's detail, then its hint. */
 const words = (problem: ApiProblem) => `${problem.message} ${problem.hint}`;
+
+/**
+ * Moves focus to the field a refusal is shown under, each time one arrives,
+ * so a screen reader reads its description — the API's words.
+ */
+function useFocusOnRefusal(refused: ApiProblem | null, field: string) {
+  useEffect(() => {
+    if (refused !== null) document.getElementById(field)?.focus();
+  }, [refused, field]);
+}
 
 export type ImportFormProps = {
   /** Imports `path` as `name`; resolves to the refusal, or null once the benchmark is listed. */
@@ -22,6 +32,7 @@ export function ImportForm({ onImport }: ImportFormProps) {
   const [busy, setBusy] = useState(false);
   const [refused, setRefused] = useState<ApiProblem | null>(null);
   const [done, setDone] = useState<string | null>(null);
+  useFocusOnRefusal(refused, `${id}-path`);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -80,13 +91,18 @@ export type ConnectFormProps = {
 /** "Connect": a family, a name and an address, and the served model the identity read needs. */
 export function ConnectForm({ families, initialFamily, remote, onConnect }: ConnectFormProps) {
   const id = useId();
-  const [family, setFamily] = useState(initialFamily ?? families[0] ?? '');
+  // What the person chose, if anything. The family sent is derived from the
+  // families known now, since `GET /workspace` may answer after the form is drawn.
+  const [chosen, setChosen] = useState('');
+  const family = families.length === 0 ? chosen : families.includes(chosen) ? chosen : initialFamily !== undefined && families.includes(initialFamily) ? initialFamily : (families[0] as string);
+  const setFamily = setChosen;
   const [name, setName] = useState('');
   const [uri, setUri] = useState('');
   const [servedModel, setServedModel] = useState('');
   const [busy, setBusy] = useState(false);
   const [refused, setRefused] = useState<ApiProblem | null>(null);
   const [said, setSaid] = useState<string | null>(null);
+  useFocusOnRefusal(refused, `${id}-uri`);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();

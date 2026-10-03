@@ -8,7 +8,7 @@ import { mockApi, type MockRoutes } from '../api/testing.ts';
 import type { BenchmarkEntry, Problem, ServiceListing, ServiceStatus, Workspace } from '../api/types.ts';
 import type { SetupSection } from '../routes.ts';
 import type { RequestState } from '../shell/states.tsx';
-import { SetupScreen } from './SetupScreen.tsx';
+import { SetupScreen, UNDO_WINDOW_MS } from './SetupScreen.tsx';
 
 const hex = (c: string) => c.repeat(64);
 const BUILD = '0.1.0+aaaaaaaaaaaa';
@@ -158,6 +158,9 @@ describe('the benchmarks', () => {
     await waitFor(() => expect(path.getAttribute('aria-invalid')).toBe('true'));
     const help = document.getElementById(path.getAttribute('aria-describedby') ?? '');
     expect(help?.textContent).toContain('qrels/test.tsv: no such file in /data/notes');
+    expect(help?.textContent).toContain('Correct it, then try again.');
+    // Focus moves to the field the refusal describes, so its words are read.
+    expect(document.activeElement).toBe(path);
     expect(benchmarks.queryByText('notes', { selector: 'td, td *' })).toBeNull();
 
     fireEvent.click(benchmarks.getByRole('button', { name: 'Import' }));
@@ -261,7 +264,7 @@ describe('the services', () => {
     );
     render(<Harness />);
     const qwen = await within(await screen.findByRole('region', { name: 'Services' })).findByRole('listitem', { name: 'generator/qwen' });
-    const test = within(qwen).getByRole('button', { name: 'Test' });
+    const test = within(qwen).getByRole('button', { name: 'Test generator/qwen' });
     test.focus();
     fireEvent.click(test);
 
@@ -288,7 +291,42 @@ describe('the services', () => {
 
     const address = form.getByLabelText('Address');
     await waitFor(() => expect(address.getAttribute('aria-invalid')).toBe('true'));
-    expect(document.getElementById(address.getAttribute('aria-describedby') ?? '')?.textContent).toContain(words);
+    const help = document.getElementById(address.getAttribute('aria-describedby') ?? '');
+    expect(help?.textContent).toContain(words);
+    expect(help?.textContent).toContain('Correct it, then try again.');
+    expect(document.activeElement).toBe(address);
+  });
+
+  it('sends the family the form shows, though the workspace answered after the form was drawn', async () => {
+    const api = mockApi(routes({ 'PUT /services/{family}/{name}': { body: { services: [QWEN] } }, 'POST /services/{family}/{name}/probe': { body: { identity: 'x' } } }));
+    const view = render(<Harness workspace={{ status: 'loading' }} />);
+    const services = within(await screen.findByRole('region', { name: 'Services' }));
+    await services.findByRole('listitem', { name: 'generator/qwen' });
+    view.rerender(<Harness workspace={{ status: 'loaded', value: WORKSPACE }} />);
+    const form = within(services.getByRole('form', { name: 'Connect a service' }));
+    expect((form.getByLabelText('Family') as HTMLSelectElement).value).toBe('retriever');
+    fireEvent.change(form.getByLabelText('Name'), { target: { value: 'q2' } });
+    fireEvent.change(form.getByLabelText('Address'), { target: { value: 'http://127.0.0.1:7070' } });
+    fireEvent.click(form.getByRole('button', { name: 'Connect' }));
+    await waitFor(() => expect(api.requests).toContain('PUT /api/v1/services/retriever/q2'));
+  });
+
+  it('shows the binding as its row at once, while it is stored and tested', async () => {
+    let release: (reply: { body: ServiceListing }) => void = () => {};
+    mockApi(routes({ 'PUT /services/{family}/{name}': () => new Promise((resolve) => (release = resolve)), 'POST /services/{family}/{name}/probe': { body: { identity: 'bge@1' } } }));
+    render(<Harness />);
+    const services = within(await screen.findByRole('region', { name: 'Services' }));
+    await services.findByRole('listitem', { name: 'generator/qwen' });
+    const form = within(services.getByRole('form', { name: 'Connect a service' }));
+    fireEvent.change(form.getByLabelText('Family'), { target: { value: 'reranker' } });
+    fireEvent.change(form.getByLabelText('Name'), { target: { value: 'bge' } });
+    fireEvent.change(form.getByLabelText('Address'), { target: { value: 'http://127.0.0.1:9090' } });
+    fireEvent.click(form.getByRole('button', { name: 'Connect' }));
+    // Drawn with the click, so the answer arriving later moves nothing.
+    const pending = await services.findByRole('listitem', { name: 'reranker/bge' });
+    expect(within(pending).getByRole('status').textContent).toContain('Testing…');
+    await act(async () => release({ body: { services: [QWEN, service('reranker', 'bge', 'http://127.0.0.1:9090')] } }));
+    await waitFor(() => expect(within(services.getByRole('listitem', { name: 'reranker/bge' })).getByRole('status').textContent).toContain('Connected · bge@1'));
   });
 
   it('marks a binding the server has read before as connected, and says the time is this page’s only', async () => {
@@ -303,25 +341,101 @@ describe('the services', () => {
     expect(services.textContent).toContain('since this page was opened');
   });
 
-  it('removes a binding at once, and offers to undo it', async () => {
-    const api = mockApi(
-      routes({
-        'DELETE /services/{family}/{name}': { body: { services: [] } },
-        'PUT /services/{family}/{name}': (body) => ({ body: { services: [service('generator', 'qwen', body.uri)] } }),
-      }),
-    );
+  it('removes a binding from the list at once, and Undo puts it back where it was, having written nothing', async () => {
+    const BGE = service('reranker', 'bge', 'http://127.0.0.1:9090');
+    const api = mockApi(routes({ 'GET /services': { body: { services: [QWEN, BGE] } } }));
     render(<Harness />);
     const services = within(await screen.findByRole('region', { name: 'Services' }));
     const qwen = await services.findByRole('listitem', { name: 'generator/qwen' });
-    fireEvent.click(within(qwen).getByRole('button', { name: 'Remove' }));
-    await waitFor(() => expect(services.queryByRole('listitem', { name: 'generator/qwen' })).toBeNull());
+    fireEvent.click(within(qwen).getByRole('button', { name: 'Remove generator/qwen' }));
     // The message that offers Undo takes the row's place in the list, so nothing below it moves.
     const slot = services.getByRole('listitem', { name: 'generator/qwen, removed' });
+    expect(services.getAllByRole('listitem').map((li) => li.getAttribute('aria-label'))).toEqual(['generator/qwen, removed', 'reranker/bge']);
     const undo = within(slot).getByRole('button', { name: 'Undo' });
     await waitFor(() => expect(document.activeElement).toBe(undo));
+    expect(document.getElementById(undo.getAttribute('aria-describedby') ?? '')?.textContent).toContain('Removed generator/qwen.');
     fireEvent.click(undo);
-    await services.findByRole('listitem', { name: 'generator/qwen' });
-    expect(api.bodies[api.requests.lastIndexOf('PUT /api/v1/services/generator/qwen')]).toEqual({ uri: 'http://127.0.0.1:8080' });
+    expect(services.getAllByRole('listitem').map((li) => li.getAttribute('aria-label'))).toEqual(['generator/qwen', 'reranker/bge']);
+    expect(api.requests.filter((r) => !r.startsWith('GET'))).toEqual([]);
+  });
+
+  describe('the undo window', () => {
+    beforeEach(() => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('writes the removal once the window closes, and keeps the row’s place saying so', async () => {
+      const api = mockApi(routes({ 'DELETE /services/{family}/{name}': { body: { services: [] } } }));
+      render(<Harness />);
+      const services = within(await screen.findByRole('region', { name: 'Services' }));
+      fireEvent.click(within(await services.findByRole('listitem', { name: 'generator/qwen' })).getByRole('button', { name: 'Remove generator/qwen' }));
+      expect(api.requests).not.toContain('DELETE /api/v1/services/generator/qwen');
+      await act(async () => {
+        vi.advanceTimersByTime(UNDO_WINDOW_MS);
+      });
+      await waitFor(() => expect(api.requests).toContain('DELETE /api/v1/services/generator/qwen'));
+      const slot = services.getByRole('listitem', { name: 'generator/qwen, removed' });
+      await waitFor(() => expect(within(slot).queryByRole('button', { name: 'Undo' })).toBeNull());
+      expect(slot.textContent).toContain('Removed generator/qwen.');
+    });
+
+    it('writes a pending removal at once when another binding is removed, each keeping its own place', async () => {
+      const BGE = service('reranker', 'bge', 'http://127.0.0.1:9090');
+      const api = mockApi(routes({ 'GET /services': { body: { services: [QWEN, BGE] } }, 'DELETE /services/{family}/{name}': { body: { services: [BGE] } } }));
+      render(<Harness />);
+      const services = within(await screen.findByRole('region', { name: 'Services' }));
+      fireEvent.click(within(await services.findByRole('listitem', { name: 'generator/qwen' })).getByRole('button', { name: 'Remove generator/qwen' }));
+      fireEvent.click(within(services.getByRole('listitem', { name: 'reranker/bge' })).getByRole('button', { name: 'Remove reranker/bge' }));
+      await waitFor(() => expect(api.requests).toContain('DELETE /api/v1/services/generator/qwen'));
+      expect(api.requests).not.toContain('DELETE /api/v1/services/reranker/bge');
+      await waitFor(() => expect(services.getAllByRole('listitem').map((li) => li.getAttribute('aria-label'))).toEqual(['generator/qwen, removed', 'reranker/bge, removed']));
+      expect(within(services.getByRole('listitem', { name: 'reranker/bge, removed' })).getByRole('button', { name: 'Undo' })).toBeTruthy();
+    });
+
+    it('writes a pending removal when the page is left', async () => {
+      const api = mockApi(routes({ 'DELETE /services/{family}/{name}': { body: { services: [] } } }));
+      const view = render(<Harness />);
+      const services = within(await screen.findByRole('region', { name: 'Services' }));
+      fireEvent.click(within(await services.findByRole('listitem', { name: 'generator/qwen' })).getByRole('button', { name: 'Remove generator/qwen' }));
+      view.unmount();
+      await waitFor(() => expect(api.requests).toContain('DELETE /api/v1/services/generator/qwen'));
+    });
+
+    it('brings the row back and says why when the removal is refused', async () => {
+      mockApi(routes({ 'DELETE /services/{family}/{name}': problem('service_not_found', 404, 'No service generator/qwen is bound.', 'Reload the list of services.') }));
+      render(<Harness />);
+      const services = within(await screen.findByRole('region', { name: 'Services' }));
+      fireEvent.click(within(await services.findByRole('listitem', { name: 'generator/qwen' })).getByRole('button', { name: 'Remove generator/qwen' }));
+      await act(async () => {
+        vi.advanceTimersByTime(UNDO_WINDOW_MS);
+      });
+      const alert = await services.findByRole('alert');
+      expect(alert.textContent).toContain('No service generator/qwen is bound.');
+      expect(alert.textContent).toContain('Reload the list of services.');
+      expect(services.getByRole('listitem', { name: 'generator/qwen' })).toBeTruthy();
+    });
+  });
+
+  it('marks a probe refused for another reason as refused, in the API’s words, and announces a success in the row’s status line', async () => {
+    mockApi(
+      routes({
+        'POST /services/{family}/{name}/probe': [problem('request_invalid', 400, 'generator/qwen reports an identity only for a served model; none was given', 'Give the served model the node uses.'), { body: { identity: 'qwen2.5-7b-instruct' } }],
+      }),
+    );
+    render(<Harness />);
+    const qwen = await within(await screen.findByRole('region', { name: 'Services' })).findByRole('listitem', { name: 'generator/qwen' });
+    fireEvent.click(within(qwen).getByRole('button', { name: 'Test generator/qwen' }));
+    const alert = await within(qwen).findByRole('alert');
+    expect(alert.textContent).toContain('none was given');
+    expect(alert.textContent).toContain('Give the served model the node uses.');
+    expect(within(qwen).getByText('refused').closest('.rg-status')?.getAttribute('data-state')).toBe('warning');
+
+    fireEvent.change(within(qwen).getByRole('textbox', { name: 'Served model for generator/qwen' }), { target: { value: 'qwen2.5-7b-instruct' } });
+    fireEvent.click(within(qwen).getByRole('button', { name: 'Test generator/qwen' }));
+    await waitFor(() => expect(within(qwen).getByRole('status').textContent).toContain('Connected · qwen2.5-7b-instruct'));
   });
 
   it('says, beside the Connect form, that a build without remote stores a binding and refuses to test it', async () => {
@@ -329,6 +443,17 @@ describe('the services', () => {
     render(<Harness workspace={{ status: 'loaded', value: { ...WORKSPACE, capabilities: { ...WORKSPACE.capabilities, remote: false } } }} />);
     const services = await screen.findByRole('region', { name: 'Services' });
     expect(services.textContent).toContain('This build has no remote feature');
+  });
+
+  it('shows the server’s impl_not_in_build on the row when a build without remote is asked to test', async () => {
+    mockApi(routes({ 'POST /services/{family}/{name}/probe': problem('impl_not_in_build', 422, 'generator/qwen is a Remote component, and this build lacks the remote feature', 'Rebuild with the remote feature.') }));
+    render(<Harness workspace={{ status: 'loaded', value: { ...WORKSPACE, capabilities: { ...WORKSPACE.capabilities, remote: false } } }} />);
+    const qwen = await within(await screen.findByRole('region', { name: 'Services' })).findByRole('listitem', { name: 'generator/qwen' });
+    fireEvent.click(within(qwen).getByRole('button', { name: 'Test generator/qwen' }));
+    const alert = await within(qwen).findByRole('alert');
+    expect(alert.textContent).toContain('this build lacks the remote feature');
+    expect(alert.textContent).toContain('impl_not_in_build');
+    expect(within(qwen).getByText('refused')).toBeTruthy();
   });
 });
 
