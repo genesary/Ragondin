@@ -346,6 +346,20 @@ mod tests {
         );
         // No node is an embedder: it has no ports.
         assert_eq!(ports("embedder"), serde_json::Value::Null);
+        // Every other family has, including one added to `Family::ALL` that
+        // the fixture above does not name yet.
+        for family in Family::ALL {
+            let entry = capabilities
+                .families
+                .iter()
+                .find(|entry| entry.family == family.name())
+                .unwrap_or_else(|| panic!("`{family}` is listed"));
+            assert_eq!(
+                entry.ports.is_some(),
+                family != Family::Embedder,
+                "`{family}`'s ports"
+            );
+        }
     }
 
     /// `ui` alone: the build CI's per-feature clippy step and the `ui` job's

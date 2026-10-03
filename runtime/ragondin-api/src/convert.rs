@@ -271,6 +271,19 @@ pub fn family_ports(family: &str) -> Option<FamilyPorts> {
     })
 }
 
+/// Fails to compile when `LogicalNode` gains a variant, so whoever adds one
+/// decides here whether [`one_node_per_family`] lists it.
+const _: fn(&LogicalNode) = |node| match node {
+    // Listed in `one_node_per_family`.
+    LogicalNode::Retriever(_)
+    | LogicalNode::Fusion(_)
+    | LogicalNode::Reranker(_)
+    | LogicalNode::ContextBuilder(_)
+    | LogicalNode::Generator(_) => {}
+    // Not listed: its ports are `PortSpec::Unknown`, declared by no family.
+    LogicalNode::Extension(_) => {}
+};
+
 /// One node of each family a configuration can name, every field empty: the
 /// variant is all the port derivation reads.
 fn one_node_per_family() -> [LogicalNode; 5] {

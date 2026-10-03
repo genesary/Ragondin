@@ -34,18 +34,18 @@ async fn the_workspace_reports_the_capabilities_the_launcher_returns() {
             families: vec![
                 FamilyCapabilities {
                     family: "reranker".to_owned(),
-                    local: vec!["cross_encoder".to_owned()],
+                    local: vec![],
                     ports: family_ports("reranker"),
-                    not_carried: Vec::new(),
+                    not_carried: vec![NotCarried {
+                        name: "cross_encoder".to_owned(),
+                        reason: "needs the `onnx` feature".to_owned(),
+                    }],
                 },
                 FamilyCapabilities {
                     family: "fusion".to_owned(),
-                    local: vec![],
+                    local: vec!["rrf".to_owned()],
                     ports: family_ports("fusion"),
-                    not_carried: vec![NotCarried {
-                        name: "rrf".to_owned(),
-                        reason: "needs the `fusion` feature".to_owned(),
-                    }],
+                    not_carried: Vec::new(),
                 },
                 FamilyCapabilities {
                     family: "embedder".to_owned(),
@@ -72,21 +72,23 @@ async fn the_workspace_reports_the_capabilities_the_launcher_returns() {
             "families": [
                 {
                     "family": "reranker",
-                    "local": ["cross_encoder"],
+                    "local": [],
                     "ports": {
                         "produces": "chunks",
                         "consumes": { "shape": "fixed", "kinds": ["query", "chunks"] },
                     },
-                    "not_carried": [],
+                    "not_carried": [
+                        { "name": "cross_encoder", "reason": "needs the `onnx` feature" },
+                    ],
                 },
                 {
                     "family": "fusion",
-                    "local": [],
+                    "local": ["rrf"],
                     "ports": {
                         "produces": "chunks",
                         "consumes": { "shape": "variadic", "kind": "chunks" },
                     },
-                    "not_carried": [{ "name": "rrf", "reason": "needs the `fusion` feature" }],
+                    "not_carried": [],
                 },
                 { "family": "embedder", "local": [], "ports": null, "not_carried": [] },
             ],
