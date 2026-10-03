@@ -431,10 +431,48 @@ describe('answers that arrive out of order', () => {
     baselineTo(RERANK);
     const third = await h.call(2);
     expect(compares()[1]?.aborted).toBe(true);
+    // While the third is still held, the aborted second has settled: it must show nothing.
+    await act(async () => new Promise((r) => setTimeout(r, 0)));
+    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+    expect(screen.queryByText('request_aborted')).toBeNull();
+    expect(screen.getByText('first')).toBeTruthy();
     await third.release('third');
     expect(screen.getByText('third')).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
-    expect(screen.queryByText('request_aborted')).toBeNull();
+  });
+
+  it('compares the address again when a pairing that overtook a comparison in flight is refused, rather than staying busy', async () => {
+    const calls: { body: CompareRequest; resolve: (reply: MockReply<Comparison>) => void }[] = [];
+    const route = (body: CompareRequest) => new Promise<MockReply<Comparison>>((resolve) => calls.push({ body, resolve }));
+    const call = async (n: number) => {
+      await waitFor(() => expect(calls.length).toBeGreaterThan(n));
+      return calls[n]!;
+    };
+    const named = (body: CompareRequest, benchmark: string): MockReply<Comparison> => {
+      const reply = answer(body);
+      return 'body' in reply ? { body: { ...reply.body, ground_truth: { ...reply.body.ground_truth, benchmark } } } : reply;
+    };
+    show(THREE, routes(route));
+    const first = await call(0);
+    await act(async () => first.resolve(named(first.body, 'first')));
+    await screen.findByText('first');
+    baselineTo(HYBRID);
+    await call(1);
+    expect(busyNote().textContent).toBe('Comparing again…');
+    fireEvent.click(screen.getByRole('button', { name: 'Pair nodes…' }));
+    const panel = screen.getByRole('region', { name: 'Pair nodes' });
+    fireEvent.change(within(panel).getByLabelText('Pair the baseline with'), { target: { value: RERANK } });
+    fireEvent.click(within(panel).getByRole('button', { name: 'dense, baseline' }));
+    fireEvent.click(within(panel).getByRole('button', { name: 'rerank, B' }));
+    const pairing = await call(2);
+    expect(pairing.body.pairing).toBeTruthy();
+    await act(async () => pairing.resolve({ problem: problem('request_invalid', 'node dense is paired twice', 'Pair retrievers.', 400) }));
+    // The comparison the pairing overtook is asked for again, for the address as it stands.
+    const again = await call(3);
+    expect(again.body).toEqual({ run_ids: [DENSE, HYBRID, RERANK], baseline: HYBRID });
+    await act(async () => again.resolve(named(again.body, 'again')));
+    expect(await screen.findByText('again')).toBeTruthy();
+    expect(busyNote().textContent).toBe('');
   });
 
   it('never cancels a pairing a newer comparison overtakes: the API may have kept it', async () => {

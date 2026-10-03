@@ -2,7 +2,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createApiClient, type ApiClient, type ApiResult } from '../api/client.ts';
-import { mockApi, type MockRoutes } from '../api/testing.ts';
+import { mockApi, type MockReply, type MockRoutes } from '../api/testing.ts';
 import type { Graph, Problem, RunListing, RunSummary } from '../api/types.ts';
 import { navigate, useRoute } from '../routes.ts';
 import { RunsScreen } from './RunsScreen.tsx';
@@ -389,16 +389,23 @@ describe('the selection', () => {
 
   it('cancels a re-read a newer one overtakes, and shows no error for it', async () => {
     let asked = 0;
+    let release: (reply: MockReply<RunListing>) => void = () => {};
     const both: RunListing = { ...LATER, runs: [...LATER.runs, summary(hex('7'), DENSE, SCIFACT)] };
-    // The first listing answers; the re-read for R5 is held; the one for R5 and the seventh run answers both.
-    const api = show('#runs', routes(() => (++asked === 1 ? { body: LISTING } : asked === 2 ? new Promise(() => {}) : { body: both })));
+    // The first listing answers; the re-read for R5 is held; so is the one for R5 and the seventh run, until released.
+    const api = show('#runs', routes(() => (++asked === 1 ? { body: LISTING } : asked === 2 ? new Promise(() => {}) : new Promise((r) => (release = r)))));
     await loaded();
     act(() => navigate({ screen: 'runs', sel: [R5] }, { replace: true }));
     await waitFor(() => expect(api.signals).toHaveLength(2));
     expect(api.signals[1]?.aborted).toBe(false);
     act(() => navigate({ screen: 'runs', sel: [R5, hex('7')] }, { replace: true }));
-    await waitFor(() => expect(box(hex('7')).checked).toBe(true));
+    await waitFor(() => expect(api.signals).toHaveLength(3));
     expect(api.signals[1]?.aborted).toBe(true);
+    // While the newer re-read is still held, the aborted one has settled: it must show nothing.
+    await act(async () => new Promise((r) => setTimeout(r, 0)));
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.queryByText('request_aborted')).toBeNull();
+    await act(async () => release({ body: both }));
+    await waitFor(() => expect(box(hex('7')).checked).toBe(true));
     expect(screen.queryByRole('alert')).toBeNull();
   });
 

@@ -65,9 +65,9 @@ function Comparing({ client, ids, baseline }: { client: ApiClient; ids: readonly
   // compared before the address moved, and is not asked for twice.
   const answered = useRef(new Map<string, Comparison>());
   const latest = useRef(0);
-  // The comparison read in flight, cancelled once a newer one overtakes it.
-  // A pairing's post is never held here: it writes, and the API may have
-  // kept it whether or not its answer still lands.
+  // The comparison read in flight — null once it settles — cancelled once a
+  // newer one overtakes it. A pairing's post is never held here: it writes,
+  // and the API may have kept it whether or not its answer still lands.
   const reading = useRef<AbortController | null>(null);
   const supersede = () => {
     reading.current?.abort();
@@ -92,8 +92,10 @@ function Comparing({ client, ids, baseline }: { client: ApiClient; ids: readonly
     const controller = new AbortController();
     reading.current = controller;
     const result = await client.post('/compare', body, { signal: controller.signal });
-    // Only the answer to the last comparison asked for lands; the
-    // cancellation saves the server's work, this count is the guarantee.
+    if (reading.current === controller) reading.current = null;
+    // Only the answer to the last comparison asked for lands. Both checks
+    // drop an overtaken one: whatever cancels a read also moves the count,
+    // and the signal alone covers the screen going, which moves nothing.
     if (mine !== latest.current || controller.signal.aborted) return;
     if (result.ok) answered.current.set(asked, result.value);
     setRead((prev) => ({ state: result.ok ? { status: 'loaded', value: result.value } : { status: 'error', problem: result.problem }, key: asked, shown: result.ok ? result.value : prev.shown }));
@@ -131,6 +133,9 @@ function Comparing({ client, ids, baseline }: { client: ApiClient; ids: readonly
     // A pairing's answer is a comparison like any other: it lands only if
     // nothing newer was asked for meanwhile.
     const mine = ++latest.current;
+    // A comparison read this pairing overtakes is cancelled; should the
+    // pairing then be refused, nothing would land, so it is asked again.
+    const overtook = reading.current !== null;
     supersede();
     const body = { ...request.current, pairing };
     const asked = keyOf(body.run_ids, body.baseline);
@@ -144,7 +149,10 @@ function Comparing({ client, ids, baseline }: { client: ApiClient; ids: readonly
       if (result.ok) void compare();
       return { kind: 'superseded', kept: result.ok };
     }
-    if (!result.ok) return { kind: 'refused', problem: result.problem };
+    if (!result.ok) {
+      if (overtook) void compare();
+      return { kind: 'refused', problem: result.problem };
+    }
     answered.current.set(asked, result.value);
     setRead({ state: { status: 'loaded', value: result.value }, key: asked, shown: result.value });
     return { kind: 'kept' };

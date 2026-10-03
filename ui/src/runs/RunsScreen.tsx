@@ -44,7 +44,9 @@ export function RunsScreen({ client, sel }: RunsScreenProps) {
   /**
    * Reads the listing; only the answer to the last request asked lands,
    * whatever order they arrive in. The read it overtakes is cancelled, which
-   * saves the server's work; the count, not the cancellation, is the guarantee.
+   * saves the server's work. Two checks drop an overtaken answer: the count,
+   * which a newer read moves before it cancels, and the signal, which alone
+   * covers the screen going.
    */
   const fetchListing = useCallback(async () => {
     const mine = ++latest.current;

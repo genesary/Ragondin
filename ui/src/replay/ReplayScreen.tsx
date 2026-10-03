@@ -36,8 +36,9 @@ type Read<T> = { key: string | null; state: RequestState<T>; shown: T | null; re
  * answer to the last one asked lands. The request a newer one supersedes —
  * by a new key, a retry, or the screen going — is cancelled through its
  * signal, so thirty quick arrow presses leave one request running, not
- * thirty; the cancellation is an economy, never the guarantee, which stays
- * the count of the last one asked. `shown` keeps the last value that loaded
+ * thirty. Two checks drop a superseded answer, either one sufficient: the
+ * count of the last one asked, which every cancellation here also moves, and
+ * the signal. `shown` keeps the last value that loaded
  * while a newer one is read, so a view need not collapse and come back. A
  * null key asks nothing.
  */
