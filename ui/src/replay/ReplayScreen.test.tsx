@@ -173,6 +173,14 @@ describe('Replay side by side', () => {
     expect(within(columnB).getByRole('heading', { name: "B's final output: dense" })).toBeTruthy();
   });
 
+  it('holds the place of the run beside while it is read, labelled, so its canvas arriving moves nothing', async () => {
+    api({ trace: (run, q) => (run === DENSE ? new Promise(() => {}) : { body: { ...HYBRID_TRACE, query: q } }) });
+    show({ query: 'q1', with: DENSE });
+    expect(await screen.findByText('Reading dense-only')).toBeTruthy();
+    expect(screen.getByRole('application', { name: /^Run A/ })).toBeTruthy();
+    expect(document.querySelector('.rg-replay__canvases')?.getAttribute('data-columns')).toBe('2');
+  });
+
   it('offers beside the run only the runs on its benchmark', async () => {
     api();
     show({ query: 'q1', with: DENSE });

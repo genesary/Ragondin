@@ -172,7 +172,7 @@ export function ReplayScreen({ client, run, query, with: other }: ReplayScreenPr
         {reading}
       </p>
       {refused ? <InlineMessage tone="info" title={`Run ${short(other)} is not on this run’s benchmark, so it cannot stand beside it.`}>Choose a run beside it from the runs on the same benchmark.</InlineMessage> : null}
-      <div className="rg-replay__body" data-columns={sides.length === 2 ? 2 : 1}>
+      <div className="rg-replay__body" data-columns={beside === null ? 1 : 2}>
         <aside className="rg-replay__side" aria-label="Queries of this run">
           {missing && missed.state.status === 'error' ? <ErrorState problem={missed.state.problem} onRetry={missed.retry} /> : null}
           <QueryList
@@ -191,7 +191,7 @@ export function ReplayScreen({ client, run, query, with: other }: ReplayScreenPr
           {shownTrace === null ? (
             trace.state.status === 'error' ? <ErrorState problem={trace.state.problem} onRetry={trace.retry} /> : <Loading label={`Reading query ${query}…`} />
           ) : (
-            <Stage sides={sides} trace={trace.state.status === 'error' ? trace.state : null} onRetry={trace.retry} metric={metric} selected={selected} onSelect={setSelected} />
+            <Stage sides={sides} waiting={beside !== null && sides.length === 1 ? nameOf(runs, beside) : null} trace={trace.state.status === 'error' ? trace.state : null} onRetry={trace.retry} metric={metric} selected={selected} onSelect={setSelected} />
           )}
         </div>
         <div className="rg-replay__panel">
@@ -208,6 +208,8 @@ export function ReplayScreen({ client, run, query, with: other }: ReplayScreenPr
 
 type StageProps = {
   sides: readonly Side[];
+  /** The run beside while it is read: its place is held, so its canvas arriving moves nothing. */
+  waiting: string | null;
   /** The newer query's failure, shown above the one still on screen. */
   trace: Extract<RequestState<QueryTrace>, { status: 'error' }> | null;
   onRetry: () => void;
@@ -217,7 +219,7 @@ type StageProps = {
 };
 
 /** The query's head, the banner, and the canvas — or two, stacked, with their run labels. */
-function Stage({ sides, trace, onRetry, metric, selected, onSelect }: StageProps) {
+function Stage({ sides, waiting, trace, onRetry, metric, selected, onSelect }: StageProps) {
   const a = sides[0]!;
   const b = sides[1];
   const overlays = useMemo(
@@ -240,12 +242,12 @@ function Stage({ sides, trace, onRetry, metric, selected, onSelect }: StageProps
         </InlineMessage>
       )}
       {failed === undefined ? null : <InlineMessage tone="warning" title={`This query failed at ${failed.node}; the nodes after it did not run.`} />}
-      <div className="rg-replay__canvases" data-columns={sides.length}>
+      <div className="rg-replay__canvases" data-columns={waiting === null ? sides.length : 2}>
         {sides.map((side, i) => {
           const mine = selected === null ? null : selected.from === side.letter || has(side, selected.node) ? selected.node : null;
           return (
             <div key={side.letter} className="rg-replay__canvas">
-              {b === undefined ? null : <RunSwatch slot={side.letter === 'A' ? 'a' : 'b'} name={side.name} />}
+              {b === undefined && waiting === null ? null : <RunSwatch slot={side.letter === 'A' ? 'a' : 'b'} name={side.name} />}
               <Canvas
                 graph={side.graph}
                 label={`Run ${side.letter}, ${side.name}, query ${side.trace.query}`}
@@ -256,6 +258,14 @@ function Stage({ sides, trace, onRetry, metric, selected, onSelect }: StageProps
             </div>
           );
         })}
+        {waiting === null ? null : (
+          <div className="rg-replay__canvas">
+            <RunSwatch slot="b" name={waiting} />
+            <div className="rg-replay__waiting">
+              <Loading label={`Reading ${waiting}`} />
+            </div>
+          </div>
+        )}
       </div>
     </>
   );
