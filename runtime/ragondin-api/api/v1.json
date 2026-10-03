@@ -1,6 +1,32 @@
 {
   "components": {
     "schemas": {
+      "AbsentFrom": {
+        "description": "Which run of a comparison lacks a node a pair drawn by hand names.",
+        "oneOf": [
+          {
+            "description": "The baseline lacks the pair's `node`.",
+            "enum": [
+              "baseline"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "The run lacks the pair's `other`.",
+            "enum": [
+              "run"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "Each lacks its node.",
+            "enum": [
+              "both"
+            ],
+            "type": "string"
+          }
+        ]
+      },
       "BenchmarkEntry": {
         "description": "One benchmark the registry knows: named by the manifest, or imported.",
         "properties": {
@@ -248,7 +274,7 @@
             "type": "string"
           },
           "pipeline": {
-            "description": "The workspace pipeline it is a run of: the one pipeline document\nwhose canonical hash is the run's. `null` when none is — the\ndocument was edited since, or removed — or when several are; such a\nrun is paired automatically only.",
+            "description": "The workspace pipeline whose manual pairings apply to it (decided in #402): the\nname its launch record gives when it has one, whether or not that\npipeline's content has changed since; otherwise the one pipeline\ndocument whose canonical hash is the run's. `null` when it has no\nrecord naming one and no document, or several, holds its hash; such a\nrun is paired automatically only. The lookup's answer, not a claim\nabout which version the run is: a run of earlier content gets the\npairs whose nodes it still has, and the rest are in\n[`Comparison::unplaced_pairs`].",
             "nullable": true,
             "type": "string"
           },
@@ -335,6 +361,13 @@
               "$ref": "#/components/schemas/StageRow"
             },
             "type": "array"
+          },
+          "unplaced_pairs": {
+            "description": "Every pair of [`pairings`](Self::pairings) a run could not place,\nwith the run and the side lacking its node, in the runs' order; empty\nwhen every pair was placed.",
+            "items": {
+              "$ref": "#/components/schemas/UnplacedPair"
+            },
+            "type": "array"
           }
         },
         "required": [
@@ -345,6 +378,7 @@
           "configuration",
           "stages",
           "pairings",
+          "unplaced_pairs",
           "query_deltas",
           "latency",
           "cache_errors"
@@ -2504,6 +2538,20 @@
             ],
             "description": "The components its identity digests."
           },
+          "launched_as": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LaunchedAs"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "The run's launch record, as [`RunSummary::launched_as`] serves it;\n`null` for a run stored without one. A prefix run says what it was\ncut from here, in the record's `prefix_of`: the parent's name, the\nnode it stops at and the parent's canonical hash."
+          },
           "metrics": {
             "additionalProperties": {
               "format": "double",
@@ -2511,11 +2559,6 @@
             },
             "description": "What it scored, by metric name.",
             "type": "object"
-          },
-          "prefix_of": {
-            "description": "The run this one is a prefix of. Always absent today: no run is\nrecorded as a prefix yet.",
-            "nullable": true,
-            "type": "string"
           },
           "started_at_ms": {
             "description": "When it started, in milliseconds since the Unix epoch, outside its\nidentity; `null` when unknown.",
@@ -2532,8 +2575,8 @@
           "graph",
           "id",
           "inputs",
+          "launched_as",
           "metrics",
-          "prefix_of",
           "started_at_ms"
         ],
         "type": "object"
@@ -2728,6 +2771,20 @@
             "description": "The index's version.",
             "type": "string"
           },
+          "launched_as": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LaunchedAs"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "The run's launch record, as it was written once with the run, read\nand never computed or inferred; `null` for a run stored without one.\nRecorded at launch, so its name may be a pipeline whose content has\nsince changed, or that no longer exists. ADR-C39 § 4's other fact,\nnever resolved with [`pipeline_names`](Self::pipeline_names) into one\nname."
+          },
           "median_query_latency_nanos": {
             "description": "The lower median, over the run's queries, of each query's latency —\nthe sum of its trace's node durations — in nanoseconds.\nDerived, never stored in the run: read from the traces alone, so a\nrun whose dataset is not on disk has it too, and cached under the\nworkspace's `cache/`. Not the run's wall time, which\n`finished_at_ms − started_at_ms` gives, preparation included. `null`\nwhen no trace of the run reads.",
             "format": "uint64",
@@ -2755,7 +2812,7 @@
             "type": "string"
           },
           "pipeline_names": {
-            "description": "Every workspace pipeline document whose canonical hash is the run's,\nsorted; empty when none is. Found by content, so a document edited\nsince the run no longer names it. Of the two facts ADR-C39 § 4 exposes\nabout a run's pipeline, this is the content one; the launch record it\nsits beside is not served yet, and the two are never resolved into one\nname.",
+            "description": "Every workspace pipeline document whose canonical hash is the run's,\nsorted; empty when none is. The current hash match, found by content\nwhen the listing is asked for, so a document edited since the run no\nlonger names it. Of the two facts ADR-C39 § 4 exposes about a run's\npipeline, this is the content one; it is not a resolution of\n[`launched_as`](Self::launched_as), nor that of this.",
             "items": {
               "type": "string"
             },
@@ -2776,6 +2833,7 @@
           "finished_at_ms",
           "id",
           "index_version",
+          "launched_as",
           "median_query_latency_nanos",
           "metric_families",
           "metrics",
@@ -3377,6 +3435,37 @@
           }
         ]
       },
+      "UnplacedPair": {
+        "description": "A pair drawn by hand that a comparison could not apply to one of its\nruns: a node it names is not a retriever, fusion or reranker of the run\nit would be read in. A pairing is kept against two pipelines' current\ndocuments, and applies to a run launched under a pipeline's name whose\ncontent has since changed for the nodes that run still has (decided in #402); every\nother pair is reported here, never skipped and never guessed onto\nanother node.",
+        "properties": {
+          "absent_from": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/AbsentFrom"
+              }
+            ],
+            "description": "Which run lacks its node."
+          },
+          "pair": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/NodePair"
+              }
+            ],
+            "description": "The pair, oriented from the baseline's pipeline as\n[`Comparison::pairings`] holds it."
+          },
+          "run": {
+            "description": "The compared run, other than the baseline, the pair was not applied\nto.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run",
+          "pair",
+          "absent_from"
+        ],
+        "type": "object"
+      },
       "UnreadableRun": {
         "description": "A run the store lists but cannot load, and why.",
         "properties": {
@@ -3553,7 +3642,7 @@
     },
     "/compare": {
       "post": {
-        "description": "Two to five runs, each once, the baseline among them. More than five, or runs whose dataset_version differs, is runs_not_comparable (409), naming the ceiling or both versions; there is no comparison across benchmarks. A body's `pairing` — between the baseline's pipeline and another compared run's — is checked first and applied to this comparison, and kept under `pipelines/<pipeline>.pairing/<other>.json` only once the response is built, so a refused request keeps nothing; it is read in both directions after. With no pairs it is removed (\"Reset to automatic\"). A pairing of other pipelines, or a pair naming a node that is not a retriever, fusion or reranker of its pipeline, is request_invalid.",
+        "description": "Two to five runs, each once, the baseline among them. More than five, or runs whose dataset_version differs, is runs_not_comparable (409), naming the ceiling or both versions; there is no comparison across benchmarks. A body's `pairing` — between the baseline's pipeline and another compared run's — is checked first and applied to this comparison, and kept under `pipelines/<pipeline>.pairing/<other>.json` only once the response is built, so a refused request keeps nothing; it is read in both directions after. With no pairs it is removed (\"Reset to automatic\"). A pairing of other pipelines, or a pair naming a node that is not a retriever, fusion or reranker of its pipeline, is request_invalid. A run's pipeline, for its pairings, is the name its launch record gives, whatever that pipeline's content has become, else the one document holding its hash. A pairing applies to the nodes each run has; every pair a run cannot place is listed in unplaced_pairs with the side lacking its node, never skipped and never moved onto another node.",
         "parameters": [],
         "requestBody": {
           "content": {

@@ -13,7 +13,7 @@ use axum::http::StatusCode;
 use ragondin_api::fs::{FsPipelines, Workspace};
 use ragondin_api::{router, Backends, NoAssets, Server, ServerConfig};
 use ragondin_benchmarks::{Benchmark, Qrels};
-use ragondin_experiments::{Run, Trace, TraceChunk};
+use ragondin_experiments::{Run, RunProvenance, Trace, TraceChunk};
 use ragondin_types::{DocId, Document, Query, QueryId};
 use serde_json::{json, Value};
 use support::datasets::scratch;
@@ -1164,4 +1164,178 @@ async fn a_pairing_of_pipelines_the_comparison_does_not_set_side_by_side_is_refu
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
     assert_eq!(body["code"], "request_invalid");
     assert!(!workspace.pipelines().join("hybrid-rerank.pairing").exists());
+}
+
+/// [`COLBERT_RERANK`] as its document holds it now: a second leg, `splade`,
+/// fused with `colbert` ahead of the reranker. A run of [`COLBERT_RERANK`]
+/// is a run of earlier content.
+const COLBERT_SPLADE_RERANK: &str = "\
+pipeline:
+  inputs: [question]
+  nodes:
+    - id: colbert
+      component: retriever
+      impl: colbert
+      inputs: [question]
+    - id: splade
+      component: retriever
+      impl: splade
+      inputs: [question]
+    - id: fuse
+      component: fusion
+      impl: rrf
+      inputs: [colbert, splade]
+    - id: rerank
+      component: reranker
+      impl: cross_encoder
+      inputs: [question, fuse]
+";
+
+/// Writes the pairing kept between `hybrid-rerank` and `colbert-rerank` as
+/// `pairs`, a JSON array, by hand.
+fn keep_pairs(workspace: &Workspace, pairs: &str) {
+    let path = pairing_file(workspace, "hybrid-rerank", "colbert-rerank");
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(
+        &path,
+        format!(
+            r#"{{"version":1,"pipeline":"hybrid-rerank","other":"colbert-rerank","pairs":{pairs}}}"#
+        ),
+    )
+    .unwrap();
+}
+
+/// A workspace whose `colbert-rerank` has gained `splade` since `colbert`
+/// ran, with a pairing kept against `hybrid-rerank` that pairs `rrf` with
+/// `colbert` — a node the earlier run has — and `bm25` with `splade` — one
+/// it lacks.
+fn edited_pairing_workspace(test: &str) -> (std::path::PathBuf, Workspace) {
+    let (root, workspace) = paired_workspace(test);
+    fs::write(
+        workspace.pipelines().join("colbert-rerank.yaml"),
+        COLBERT_SPLADE_RERANK,
+    )
+    .unwrap();
+    keep_pairs(
+        &workspace,
+        r#"[{"node":"rrf","other":"colbert","label":"candidates before rerank"},
+            {"node":"bm25","other":"splade"}]"#,
+    );
+    (root, workspace)
+}
+
+/// The colbert run, launched as `colbert-rerank`.
+fn launched_colbert() -> Run {
+    let mut colbert = colbert_rerank_run(0x02);
+    colbert.provenance = Some(RunProvenance::named("colbert-rerank"));
+    colbert
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_recorded_name_s_pairing_applies_to_the_nodes_an_earlier_content_run_still_has() {
+    let hybrid = hybrid_rerank_run(0x01);
+    // Launched as `colbert-rerank`, whose document has changed since: no
+    // current document holds its hash, so only its record names it.
+    let colbert = launched_colbert();
+    let (root, workspace) = edited_pairing_workspace("compare_pairing_earlier_content");
+
+    let (status, body) = post_compare(
+        app(
+            vec![hybrid.clone(), colbert.clone()],
+            &root,
+            Some(FsPipelines::new(&workspace)),
+        ),
+        json!({ "run_ids": ids(&[&hybrid, &colbert]), "baseline": hybrid.id.to_string() }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["runs"][1]["pipeline"], "colbert-rerank");
+    // The pair whose nodes the run still has is applied.
+    let fusion = row(&body, "after_fusion");
+    assert_eq!(fusion["source"], "manual");
+    assert_eq!(cell(fusion, 1), strings(&["colbert"]));
+    // The pair whose node it lacks is reported, never guessed onto another
+    // node: `bm25`'s row stays automatic, and nothing of the run joins it.
+    let legs = row(&body, "retrieval_legs");
+    assert_eq!(legs["source"], "automatic");
+    assert_eq!(cell(legs, 1), None);
+    assert_eq!(
+        body["unplaced_pairs"],
+        json!([{
+            "run": colbert.id.to_string(),
+            "pair": { "node": "bm25", "other": "splade" },
+            "absent_from": "run",
+        }])
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_pair_whose_node_the_baseline_lacks_is_reported_from_its_side() {
+    // The baseline is the earlier-content run this time: the pairing is
+    // oriented from its recorded name, so `splade` is its node to lack.
+    let hybrid = hybrid_rerank_run(0x01);
+    let colbert = launched_colbert();
+    let (root, workspace) = edited_pairing_workspace("compare_pairing_earlier_baseline");
+
+    let (status, body) = post_compare(
+        app(
+            vec![hybrid.clone(), colbert.clone()],
+            &root,
+            Some(FsPipelines::new(&workspace)),
+        ),
+        json!({ "run_ids": ids(&[&colbert, &hybrid]), "baseline": colbert.id.to_string() }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        body["unplaced_pairs"],
+        json!([{
+            "run": hybrid.id.to_string(),
+            "pair": { "node": "splade", "other": "bm25" },
+            "absent_from": "baseline",
+        }])
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn every_pair_of_a_run_of_the_current_content_is_placed() {
+    let (status, body) = compare_over_a_kept_file(
+        "compare_pairing_all_placed",
+        r#"{"version":1,"pipeline":"hybrid-rerank","other":"colbert-rerank","pairs":[
+            {"node":"rrf","other":"colbert"}]}"#,
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(row(&body, "after_fusion")["source"], "manual");
+    assert_eq!(body["unplaced_pairs"], json!([]));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_run_s_record_names_its_pairing_before_the_documents_sharing_its_hash() {
+    // `colbert` holds `colbert-rerank`'s current content, but its record
+    // says it was launched as `colbert-v0`: the record, not the hash match,
+    // names the pipeline whose pairing applies, and none is kept for it.
+    let hybrid = hybrid_rerank_run(0x01);
+    let mut colbert = colbert_rerank_run(0x02);
+    colbert.provenance = Some(RunProvenance::named("colbert-v0"));
+    let (root, workspace) = paired_workspace("compare_pairing_record_first");
+    keep_pairs(&workspace, r#"[{"node":"rrf","other":"colbert"}]"#);
+
+    let (status, body) = post_compare(
+        app(
+            vec![hybrid.clone(), colbert.clone()],
+            &root,
+            Some(FsPipelines::new(&workspace)),
+        ),
+        json!({ "run_ids": ids(&[&hybrid, &colbert]), "baseline": hybrid.id.to_string() }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["runs"][1]["pipeline"], "colbert-v0");
+    assert_eq!(body["pairings"], json!([]));
+    assert_eq!(row(&body, "after_fusion")["source"], "automatic");
 }

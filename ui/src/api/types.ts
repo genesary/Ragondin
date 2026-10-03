@@ -3,6 +3,9 @@
 // file is not what the description generates (ui/ARCHITECTURE.md § The
 // generated types).
 
+/** Which run of a comparison lacks a node a pair drawn by hand names. */
+export type AbsentFrom = "baseline" | "run" | "both";
+
 /** One benchmark the registry knows: named by the manifest, or imported. */
 export type BenchmarkEntry = {
   /**
@@ -106,10 +109,15 @@ export type ComparedRun = {
   /** The run's id. */
   id: string;
   /**
-   * The workspace pipeline it is a run of: the one pipeline document
-   * whose canonical hash is the run's. `null` when none is — the
-   * document was edited since, or removed — or when several are; such a
-   * run is paired automatically only.
+   * The workspace pipeline whose manual pairings apply to it (decided in #402): the
+   * name its launch record gives when it has one, whether or not that
+   * pipeline's content has changed since; otherwise the one pipeline
+   * document whose canonical hash is the run's. `null` when it has no
+   * record naming one and no document, or several, holds its hash; such a
+   * run is paired automatically only. The lookup's answer, not a claim
+   * about which version the run is: a run of earlier content gets the
+   * pairs whose nodes it still has, and the rest are in
+   * [`Comparison::unplaced_pairs`].
    */
   pipeline: string | null;
   /** The content hash of the canonical logical pipeline it ran. */
@@ -164,6 +172,12 @@ export type Comparison = {
    * one run has.
    */
   stages: StageRow[];
+  /**
+   * Every pair of [`pairings`](Self::pairings) a run could not place,
+   * with the run and the side lacking its node, in the runs' order; empty
+   * when every pair was placed.
+   */
+  unplaced_pairs: UnplacedPair[];
 };
 
 /** How sure an automatic pairing is. */
@@ -1026,13 +1040,15 @@ export type RunDetail = {
   id: string;
   /** The components its identity digests. */
   inputs: RunInputs;
+  /**
+   * The run's launch record, as [`RunSummary::launched_as`] serves it;
+   * `null` for a run stored without one. A prefix run says what it was
+   * cut from here, in the record's `prefix_of`: the parent's name, the
+   * node it stops at and the parent's canonical hash.
+   */
+  launched_as: LaunchedAs | null;
   /** What it scored, by metric name. */
   metrics: Record<string, number>;
-  /**
-   * The run this one is a prefix of. Always absent today: no run is
-   * recorded as a prefix yet.
-   */
-  prefix_of: string | null;
   /**
    * When it started, in milliseconds since the Unix epoch, outside its
    * identity; `null` when unknown.
@@ -1168,6 +1184,15 @@ export type RunSummary = {
   /** The index's version. */
   index_version: string;
   /**
+   * The run's launch record, as it was written once with the run, read
+   * and never computed or inferred; `null` for a run stored without one.
+   * Recorded at launch, so its name may be a pipeline whose content has
+   * since changed, or that no longer exists. ADR-C39 § 4's other fact,
+   * never resolved with [`pipeline_names`](Self::pipeline_names) into one
+   * name.
+   */
+  launched_as: LaunchedAs | null;
+  /**
    * The lower median, over the run's queries, of each query's latency —
    * the sum of its trace's node durations — in nanoseconds.
    * Derived, never stored in the run: read from the traces alone, so a
@@ -1189,11 +1214,11 @@ export type RunSummary = {
   pipeline: string;
   /**
    * Every workspace pipeline document whose canonical hash is the run's,
-   * sorted; empty when none is. Found by content, so a document edited
-   * since the run no longer names it. Of the two facts ADR-C39 § 4 exposes
-   * about a run's pipeline, this is the content one; the launch record it
-   * sits beside is not served yet, and the two are never resolved into one
-   * name.
+   * sorted; empty when none is. The current hash match, found by content
+   * when the listing is asked for, so a document edited since the run no
+   * longer names it. Of the two facts ADR-C39 § 4 exposes about a run's
+   * pipeline, this is the content one; it is not a resolution of
+   * [`launched_as`](Self::launched_as), nor that of this.
    */
   pipeline_names: string[];
   /**
@@ -1411,6 +1436,30 @@ export type TraceValue = {
   kind: "answer";
   /** Its text, as the generator returned it. */
   text: string;
+};
+
+/**
+ * A pair drawn by hand that a comparison could not apply to one of its
+ * runs: a node it names is not a retriever, fusion or reranker of the run
+ * it would be read in. A pairing is kept against two pipelines' current
+ * documents, and applies to a run launched under a pipeline's name whose
+ * content has since changed for the nodes that run still has (decided in #402); every
+ * other pair is reported here, never skipped and never guessed onto
+ * another node.
+ */
+export type UnplacedPair = {
+  /** Which run lacks its node. */
+  absent_from: AbsentFrom;
+  /**
+   * The pair, oriented from the baseline's pipeline as
+   * [`Comparison::pairings`] holds it.
+   */
+  pair: NodePair;
+  /**
+   * The compared run, other than the baseline, the pair was not applied
+   * to.
+   */
+  run: string;
 };
 
 /** A run the store lists but cannot load, and why. */

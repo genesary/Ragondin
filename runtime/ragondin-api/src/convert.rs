@@ -47,6 +47,7 @@ pub(crate) fn summary(
         id: run.id.to_string(),
         pipeline: run.inputs.pipeline.to_string(),
         pipeline_names,
+        launched_as: run.provenance.as_ref().map(launched_as),
         dataset_version: run.inputs.dataset_version.clone(),
         benchmark_names,
         index_version: run.inputs.index_version.clone(),
@@ -108,7 +109,7 @@ pub(crate) fn detail(run: &Run) -> Result<RunDetail, ApiError> {
         started_at_ms,
         finished_at_ms,
         graph: graph(&pipeline),
-        prefix_of: None,
+        launched_as: run.provenance.as_ref().map(launched_as),
     })
 }
 

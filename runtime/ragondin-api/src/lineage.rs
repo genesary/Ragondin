@@ -5,14 +5,14 @@
 //! module holds the other fact ADR-C39 § 4 keeps beside it, the content one:
 //! the documents under `pipelines/` whose canonical hash is the run's (INV-8:
 //! the canonical form, never the text). The two are never resolved into one
-//! name. The pipeline matrix reads both; `GET /runs` serves only this one
-//! until it serves the record too (#392). [`pipeline_of`] names the one
-//! document a run's hash maps to — none, or several, names none, and a
-//! document edited since a run no longer names it — and `POST /compare`
-//! reads it to find the pairing of two runs' pipelines.
-//! `GET /runs` and the pipeline matrix's feeding runs read the index itself
-//! rather than [`pipeline_of`]: they name *every* document sharing a run's
-//! hash, as a list, where a pairing needs exactly one.
+//! name: the pipeline matrix and `GET /runs` serve both, side by side.
+//! [`pipeline_of`] names the one document a run's hash maps to — none, or
+//! several, names none, and a document edited since a run no longer names
+//! it — and `POST /compare` reads it to find a run's pairings when the run's
+//! record names no pipeline (decided in #402). `GET /runs` and the pipeline matrix's
+//! feeding runs read the index itself rather than [`pipeline_of`]: they name
+//! *every* document sharing a run's hash, as a list, where a pairing needs
+//! exactly one.
 //!
 //! The structural prefix test, [`is_prefix`], is here too: the other content
 //! fact ADR-C39 § 5 asks of every run, by which the pipeline matrix counts a

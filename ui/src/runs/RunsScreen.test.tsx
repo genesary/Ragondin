@@ -20,6 +20,7 @@ const summary = (id: string, pipeline: string, dataset: string, metrics: Record<
   id,
   pipeline,
   pipeline_names: [],
+  launched_as: null,
   dataset_version: dataset,
   benchmark_names: [],
   index_version: hex('0'),

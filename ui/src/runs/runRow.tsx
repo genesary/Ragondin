@@ -7,7 +7,7 @@
 import type { ReactNode } from 'react';
 import { Checkbox, Glyph, MetricChip, StatusChip, type TableRow } from '../../design/index.ts';
 import { formatHash } from '../routes.ts';
-import { benchmarkLabel, formatLatency, formatMetric, metricLabel, openRoute, rowKey, runningLabel, shortHash, type RunRow } from './model.ts';
+import { benchmarkLabel, formatLatency, formatMetric, metricLabel, openRoute, otherFact, rowKey, runningLabel, shortHash, type RunRow } from './model.ts';
 import type { Refusal } from './selection.ts';
 
 /** The optional columns, drawn only when some row of the table has their data. */
@@ -108,6 +108,8 @@ export function runRow(row: RunRow, { selected, refusal, columns, onToggle }: Ru
           {row.prefix.upTo === null ? 'prefix' : `prefix up to ${row.prefix.upTo}`}
         </span>
       )}
+      {/* The fact the group is not headed by: text from the first draw, so nothing moves in later. */}
+      <span className="rg-runs__fact">{otherFact(row)}</span>
     </>
   );
 

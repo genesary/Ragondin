@@ -12,6 +12,7 @@ const done = (over: Partial<RunRow> = {}): RunRow => ({
   source: { kind: 'run', id: ID },
   pipeline: 'p'.repeat(64),
   pipelineNames: ['hybrid'],
+  launchedAs: null,
   benchmark: 'd'.repeat(64),
   benchmarkNames: ['beir/scifact'],
   status: { state: 'done' },
@@ -151,8 +152,19 @@ describe('a done run', () => {
   });
 
   it('labels a prefix run with the node it stops at', () => {
-    show(done({ prefix: { parent: 'hybrid', upTo: 'rerank' } }));
+    show(done({ launchedAs: 'hybrid', prefix: { parent: 'hybrid', upTo: 'rerank' } }));
     expect(screen.getByText('prefix up to rerank')).toBeTruthy();
+  });
+
+  it('writes the fact its group is not headed by beside its hash, in words', () => {
+    const { tr } = show(done({ launchedAs: 'hybrid', pipelineNames: ['hybrid-fork'] }));
+    const run = within(tr).getAllByRole('cell')[1] as HTMLElement;
+    expect(run.textContent).toContain('content held by hybrid-fork');
+  });
+
+  it('says a run without a record has none, rather than nothing', () => {
+    const { tr } = show(done());
+    expect((within(tr).getAllByRole('cell')[1] as HTMLElement).textContent).toContain('launch not recorded');
   });
 });
 

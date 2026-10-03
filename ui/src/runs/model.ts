@@ -50,6 +50,14 @@ export type RunRow = {
    * never a pick: several documents can be one pipeline.
    */
   pipelineNames: string[];
+  /**
+   * The workspace pipeline name the run's launch record says it was launched
+   * as — a prefix run's parent's — or null when it has no record naming one.
+   * Recorded at launch, so it may name a pipeline whose content has changed
+   * since, or that is gone. A fact beside `pipelineNames`, never resolved
+   * with it into one name (ADR-C39 § 4).
+   */
+  launchedAs: string | null;
   /** The benchmark's identity: its dataset version, what "one benchmark" compares. */
   benchmark: string;
   /** Every registry entry pinned to `benchmark`, sorted; empty when the source knows none. */
@@ -66,22 +74,21 @@ export type RunRow = {
   /** When the run started, as an ISO 8601 instant, when the source reports one. */
   startedAt: string | null;
   /**
-   * The pipeline this run is a prefix of — as the prefix relation names it:
-   * a pipeline's name, a pipeline's hash or a run's id — and the node it
-   * stops at.
+   * The pipeline this run is a prefix of, by the name its launch record
+   * gives the parent, and the node it stops at.
    */
   prefix: { parent: string; upTo: string | null } | null;
 };
 
 /** A pipeline's runs, under one heading. */
 export type RunGroup = {
-  /** The pipeline's canonical hash — or, for a prefix run's parent with no row of its own here, the name the prefix relation gives it. */
+  /** The group's identity among the groups: its recorded name, its runs' hash matches, or its canonical hash, each kept apart from the others. */
   key: string;
-  /** Every name the group's own pipeline goes by, each linked; empty when it has none, and the group is then named by its hash. */
+  /** The name or names the group is headed by, each linked: a recorded name, or every hash match; empty when the group is its canonical hash. */
   names: string[];
-  /** The canonical hash of the group's own pipeline. */
+  /** The canonical hash of the group's most recent run of its own — not a prefix — or, with none, of its first run. */
   pipeline: string;
-  /** The key of the listing's `shapes` that draws the group: its own pipeline's hash; null when it has no row of its own. */
+  /** The key of the listing's `shapes` that draws the group: `pipeline`; null when it has no row of its own. */
   shapeKey: string | null;
   rows: RunRow[];
 };
@@ -135,10 +142,11 @@ function metricGroups(run: RunSummary): MetricGroup[] {
 /**
  * The listing's runs as rows, most recent first (`byMostRecent`). Every run
  * the store holds is finished, so each is `done`. The names are every one the
- * listing gives; the start time is the run's own record, or null; the metrics
- * are grouped by the family the listing gives each; the latency is the
- * listing's median query latency, or null. The listing carries no prefix
- * relation (#357), so that is null.
+ * listing gives; the recorded name is the launch record's, or null; the start
+ * time is the run's own record, or null; the metrics are grouped by the
+ * family the listing gives each; the latency is the listing's median query
+ * latency, or null. A run is a prefix when its launch record says so and
+ * names the parent; nothing else makes it one.
  */
 export function rowsFromListing(listing: RunListing): RunRow[] {
   return [...listing.runs].sort(byMostRecent).map((run) => {
@@ -146,47 +154,72 @@ export function rowsFromListing(listing: RunListing): RunRow[] {
       source: { kind: 'run', id: run.id },
       pipeline: run.pipeline,
       pipelineNames: run.pipeline_names,
+      launchedAs: run.launched_as?.name ?? null,
       benchmark: run.dataset_version,
       benchmarkNames: run.benchmark_names,
       status: { state: 'done' },
       metrics: metricGroups(run),
       latencyMs: run.median_query_latency_nanos === null ? null : run.median_query_latency_nanos / 1e6,
       startedAt: run.started_at_ms === null ? null : new Date(run.started_at_ms).toISOString(),
-      prefix: null,
+      prefix: prefixOf(run),
     };
   });
 }
 
+/** A recorded prefix: the parent its launch record names, and the node it stops at; null for any other run. */
+function prefixOf(run: RunSummary): RunRow['prefix'] {
+  const record = run.launched_as;
+  if (record?.name == null || record.prefix_of === null) return null;
+  return { parent: record.name, upTo: record.prefix_of.up_to };
+}
+
 /**
- * Rows grouped by pipeline — by canonical hash, the pipeline's identity
- * whatever names it goes by — each group in the order its first row appears,
- * each row in the order given. A prefix run joins its parent's group, the
- * parent named by one of the group's names, its pipeline's hash or one of its
- * runs' ids; a parent with no run here gets a group of its own, so the prefix
- * run is still shown.
+ * Where a row is grouped (ADR-C39 § 4): under the name its launch record
+ * gives, when it has one; otherwise under its hash matches, every one; and
+ * otherwise under its canonical hash. One name is one group whichever fact
+ * gave it, so a run without a record whose one match is `hybrid` sits with
+ * the runs launched as `hybrid`. A prefix run's record names its parent, so
+ * it sits in the parent's group. The kinds are kept apart in the key, so a
+ * document named like a hash is never that hash.
+ */
+function groupOf(row: RunRow): { key: string; names: string[] } {
+  if (row.launchedAs !== null) return { key: `name:${row.launchedAs}`, names: [row.launchedAs] };
+  if (row.pipelineNames.length === 1) return { key: `name:${row.pipelineNames[0]}`, names: row.pipelineNames };
+  if (row.pipelineNames.length > 1) return { key: `names:${JSON.stringify(row.pipelineNames)}`, names: row.pipelineNames };
+  return { key: `hash:${row.pipeline}`, names: [] };
+}
+
+/**
+ * Rows grouped by pipeline, as `groupOf` places each, each group in the order
+ * its first row appears, each row in the order given. A group with no run of
+ * its own — only prefix runs of a parent with no run here — is still shown,
+ * so the prefix run is, and draws no shape.
  */
 export function groupRows(rows: readonly RunRow[]): RunGroup[] {
-  const groups = new Map<string, RunRow[]>();
-  for (const row of rows) if (row.prefix === null) groups.set(row.pipeline, [...(groups.get(row.pipeline) ?? []), row]);
-  const parentOf = (parent: string) =>
-    [...groups].find(([key, members]) => key === parent || members.some((m) => m.pipelineNames.includes(parent) || m.source.id === parent))?.[0] ?? parent;
-  // Keep the listing's order: place every row, prefix runs included, in turn.
-  const ordered = new Map<string, RunRow[]>();
+  const ordered = new Map<string, { names: string[]; rows: RunRow[] }>();
   for (const row of rows) {
-    const key = row.prefix === null ? row.pipeline : parentOf(row.prefix.parent);
-    ordered.set(key, [...(ordered.get(key) ?? []), row]);
+    const { key, names } = groupOf(row);
+    const group = ordered.get(key) ?? { names, rows: [] };
+    group.rows.push(row);
+    ordered.set(key, group);
   }
-  return [...ordered].map(([key, members]) => {
+  return [...ordered].map(([key, { names, rows: members }]) => {
     const own = members.filter((r) => r.prefix === null);
     const head = own[0] ?? (members[0] as RunRow);
-    return {
-      key,
-      names: own.length === 0 ? [] : head.pipelineNames,
-      pipeline: head.pipeline,
-      shapeKey: own.length === 0 ? null : head.pipeline,
-      rows: members,
-    };
+    return { key, names, pipeline: head.pipeline, shapeKey: own.length === 0 ? null : head.pipeline, rows: members };
   });
+}
+
+/**
+ * The fact a row's group is not headed by, as its secondary label: under a
+ * recorded name, the current documents holding the run's content, or that
+ * none does; under the hash matches or the hash, that no launch was
+ * recorded. Facts only: nothing here says a run is an earlier version of
+ * anything (ADR-C39 § 7).
+ */
+export function otherFact(row: Pick<RunRow, 'launchedAs' | 'pipelineNames'>): string {
+  if (row.launchedAs === null) return 'launch not recorded';
+  return row.pipelineNames.length === 0 ? 'no current document has this content' : `content held by ${row.pipelineNames.join(', ')}`;
 }
 
 /** A hash as the screen prints it: its first twelve digits. */

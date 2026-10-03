@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Graph, RunListing, RunSummary } from '../api/types.ts';
-import { benchmarkLabel, formatLatency, formatMetric, groupRows, metricLabel, openRoute, rowKey, rowsFromListing, runningLabel, shapeOf, shortHash, type RunRow } from './model.ts';
+import { benchmarkLabel, formatLatency, formatMetric, groupRows, metricLabel, openRoute, otherFact, rowKey, rowsFromListing, runningLabel, shapeOf, shortHash, type RunRow } from './model.ts';
 
 const hex = (c: string) => c.repeat(64);
 
@@ -8,6 +8,7 @@ const row = (id: string, over: Partial<RunRow> = {}): RunRow => ({
   source: { kind: 'run', id },
   pipeline: hex('p'),
   pipelineNames: [],
+  launchedAs: null,
   benchmark: hex('b'),
   benchmarkNames: [],
   status: { state: 'done' },
@@ -24,6 +25,7 @@ const summary = (id: string, over: Partial<RunSummary> = {}): RunSummary => ({
   id,
   pipeline: hex('a'),
   pipeline_names: [],
+  launched_as: null,
   dataset_version: hex('d'),
   benchmark_names: [],
   index_version: hex('i'),
@@ -76,7 +78,18 @@ describe('rowsFromListing', () => {
   });
 
   it('leaves what the listing does not carry empty rather than invented', () => {
-    expect(rowsFromListing(listingOf(summary(hex('1'))))[0]).toMatchObject({ pipelineNames: [], benchmarkNames: [], latencyMs: null, startedAt: null, prefix: null });
+    expect(rowsFromListing(listingOf(summary(hex('1'))))[0]).toMatchObject({ pipelineNames: [], launchedAs: null, benchmarkNames: [], latencyMs: null, startedAt: null, prefix: null });
+  });
+
+  it('reads the launch record’s name beside the hash matches, never one in place of the other', () => {
+    const [read] = rowsFromListing(listingOf(summary(hex('1'), { launched_as: { name: 'hybrid', prefix_of: null }, pipeline_names: ['hybrid-fork'] })));
+    expect(read).toMatchObject({ launchedAs: 'hybrid', pipelineNames: ['hybrid-fork'], prefix: null });
+  });
+
+  it('reads a recorded prefix as a prefix of the parent its record names, up to its node', () => {
+    const record = { name: 'hybrid', prefix_of: { up_to: 'rerank', parent_pipeline_hash: hex('a') } };
+    const [read] = rowsFromListing(listingOf(summary(hex('1'), { launched_as: record })));
+    expect(read).toMatchObject({ launchedAs: 'hybrid', prefix: { parent: 'hybrid', upTo: 'rerank' } });
   });
 
   it('carries every pipeline and benchmark name the listing gives, and the start time as an instant', () => {
@@ -123,53 +136,86 @@ describe('the running state', () => {
 });
 
 describe('groupRows', () => {
-  it('groups by canonical hash, keeping the order each group first appears in, with every name the pipeline has', () => {
+  it('runs group by the recorded name, then the hash matches, then the short hash', () => {
+    const groups = groupRows([
+      row('1', { pipeline: hex('a'), launchedAs: 'hybrid', pipelineNames: ['hybrid-fork'] }),
+      row('2', { pipeline: hex('c'), pipelineNames: ['dense', 'dense-copy'] }),
+      row('3', { pipeline: hex('e') }),
+      // Launched as `hybrid` too, of content no current document holds: the
+      // recorded name groups it, whatever its hash.
+      row('4', { pipeline: hex('f'), launchedAs: 'hybrid' }),
+    ]);
+    expect(groups.map((g) => [g.names, ids(g.rows)])).toEqual([
+      [['hybrid'], ['1', '4']],
+      [['dense', 'dense-copy'], ['2']],
+      [[], ['3']],
+    ]);
+    expect(groups[2]).toMatchObject({ pipeline: hex('e'), shapeKey: hex('e') });
+  });
+
+  it('puts a run without a record whose one hash match is a recorded name in that name’s group', () => {
+    const groups = groupRows([row('1', { pipeline: hex('a'), launchedAs: 'hybrid' }), row('2', { pipeline: hex('a'), pipelineNames: ['hybrid'] })]);
+    expect(groups.map((g) => [g.names, ids(g.rows)])).toEqual([[['hybrid'], ['1', '2']]]);
+  });
+
+  it('keeps the order each group first appears in, every run in its order', () => {
     const groups = groupRows([
       row('1', { pipeline: hex('a'), pipelineNames: ['hybrid', 'hybrid-copy'] }),
       row('2', { pipeline: hex('c'), pipelineNames: ['dense'] }),
       row('3', { pipeline: hex('a'), pipelineNames: ['hybrid', 'hybrid-copy'] }),
     ]);
-    expect(groups.map((g) => [g.key, g.names, ids(g.rows)])).toEqual([
-      [hex('a'), ['hybrid', 'hybrid-copy'], ['1', '3']],
-      [hex('c'), ['dense'], ['2']],
+    expect(groups.map((g) => [g.names, ids(g.rows)])).toEqual([
+      [['hybrid', 'hybrid-copy'], ['1', '3']],
+      [['dense'], ['2']],
     ]);
   });
 
-  it('names no pipeline when no workspace document has the hash', () => {
+  it('groups runs no name reaches by canonical hash, naming no pipeline', () => {
     const groups = groupRows([row('1', { pipeline: hex('a') }), row('2', { pipeline: hex('a') }), row('3', { pipeline: hex('c') })]);
-    expect(groups.map((g) => [g.key, g.names, g.rows.length])).toEqual([
+    expect(groups.map((g) => [g.pipeline, g.names, g.rows.length])).toEqual([
       [hex('a'), [], 2],
       [hex('c'), [], 1],
     ]);
   });
 
-  it('puts a prefix run inside its parent pipeline’s group when the parent is named by one of its names', () => {
-    const groups = groupRows([row('1', { pipeline: hex('a'), pipelineNames: ['hybrid', 'other'] }), row('2', { pipeline: hex('f'), prefix: { parent: 'other', upTo: 'rerank' } })]);
-    expect(groups).toHaveLength(1);
-    expect(ids(groups[0]?.rows ?? [])).toEqual(['1', '2']);
-  });
-
-  it('puts a prefix run inside its parent pipeline’s group when the parent is named by its hash', () => {
-    const groups = groupRows([row('1', { pipeline: hex('a'), pipelineNames: ['hybrid'] }), row('2', { pipeline: hex('f'), prefix: { parent: hex('a'), upTo: 'rerank' } })]);
-    expect(groups.map((g) => [g.key, ids(g.rows)])).toEqual([[hex('a'), ['1', '2']]]);
-  });
-
-  it('puts a prefix run inside the group of the run its parent is named by', () => {
-    const groups = groupRows([row('r1', { pipeline: hex('a') }), row('2', { pipeline: hex('f'), prefix: { parent: 'r1', upTo: null } })]);
-    expect(groups.map((g) => ids(g.rows))).toEqual([['r1', '2']]);
-  });
-
-  it('gives a prefix run whose parent has no run here a group of the parent’s own, so it is still shown, with no shape', () => {
-    const groups = groupRows([row('2', { pipeline: hex('f'), prefix: { parent: 'hybrid', upTo: 'rerank' } })]);
-    expect(groups.map((g) => [g.key, g.names, ids(g.rows), g.shapeKey])).toEqual([['hybrid', [], ['2'], null]]);
-  });
-
-  it('takes a group’s pipeline — for its shape and its link — from a row of its own, not a prefix', () => {
+  it('a prefix run sits in its parent’s group', () => {
     const groups = groupRows([
-      row('2', { pipeline: hex('f'), prefix: { parent: hex('a'), upTo: 'rerank' } }),
-      row('1', { pipeline: hex('a'), pipelineNames: ['hybrid'] }),
+      row('1', { pipeline: hex('a'), launchedAs: 'hybrid' }),
+      row('2', { pipeline: hex('f'), launchedAs: 'hybrid', prefix: { parent: 'hybrid', upTo: 'rerank' } }),
     ]);
-    expect(groups[0]).toMatchObject({ key: hex('a'), names: ['hybrid'], pipeline: hex('a'), shapeKey: hex('a') });
+    expect(groups.map((g) => [g.names, ids(g.rows)])).toEqual([[['hybrid'], ['1', '2']]]);
+  });
+
+  it('gives a prefix run whose parent has no run here a group under the parent’s name, so it is still shown, with no shape', () => {
+    const groups = groupRows([row('2', { pipeline: hex('f'), launchedAs: 'hybrid', prefix: { parent: 'hybrid', upTo: 'rerank' } })]);
+    expect(groups.map((g) => [g.names, ids(g.rows), g.shapeKey])).toEqual([[['hybrid'], ['2'], null]]);
+  });
+
+  it('takes a group’s pipeline — for its shape and its link — from its most recent run of its own, not a prefix', () => {
+    const groups = groupRows([
+      row('2', { pipeline: hex('f'), launchedAs: 'hybrid', prefix: { parent: 'hybrid', upTo: 'rerank' } }),
+      row('1', { pipeline: hex('a'), launchedAs: 'hybrid' }),
+      row('3', { pipeline: hex('c'), launchedAs: 'hybrid' }),
+    ]);
+    expect(groups[0]).toMatchObject({ names: ['hybrid'], pipeline: hex('a'), shapeKey: hex('a') });
+  });
+
+  it('keys groups apart that a name and a hash could otherwise share', () => {
+    // A document named like a hash is a name, never that hash.
+    const groups = groupRows([row('1', { pipeline: hex('a'), launchedAs: hex('a') }), row('2', { pipeline: hex('a') })]);
+    expect(groups).toHaveLength(2);
+    expect(new Set(groups.map((g) => g.key)).size).toBe(2);
+  });
+});
+
+describe('the other fact', () => {
+  it('the other fact is a secondary label', () => {
+    // Under a recorded name: the current documents holding the run's content.
+    expect(otherFact(row('1', { launchedAs: 'hybrid', pipelineNames: ['hybrid', 'hybrid-fork'] }))).toBe('content held by hybrid, hybrid-fork');
+    expect(otherFact(row('1', { launchedAs: 'hybrid' }))).toBe('no current document has this content');
+    // Under the hash matches, or the hash: that no launch was recorded.
+    expect(otherFact(row('1', { pipelineNames: ['hybrid'] }))).toBe('launch not recorded');
+    expect(otherFact(row('1'))).toBe('launch not recorded');
   });
 });
 

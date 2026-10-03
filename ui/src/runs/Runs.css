@@ -55,6 +55,12 @@
 .rg-runs__count { font: var(--type-caption); color: var(--ink-3); }
 
 .rg-runs__hash { color: var(--ink); }
+/* The fact a run's group is not headed by, after its hash and any prefix label. */
+.rg-runs__fact {
+  margin-left: var(--space-2);
+  font: var(--type-caption);
+  color: var(--ink-3);
+}
 .rg-runs__prefix {
   display: inline-flex;
   align-items: center;

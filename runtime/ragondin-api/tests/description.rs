@@ -66,9 +66,19 @@ fn required(schema: &serde_json::Value) -> Vec<&str> {
 #[test]
 fn a_field_always_serialized_is_required_even_when_nullable() {
     let schemas = schemas();
-    assert!(required(&schemas["RunDetail"]).contains(&"prefix_of"));
+    for schema in ["RunDetail", "RunSummary"] {
+        assert!(
+            required(&schemas[schema]).contains(&"launched_as"),
+            "{schema}"
+        );
+        assert_eq!(
+            schemas[schema]["properties"]["launched_as"]["anyOf"][1]["nullable"], true,
+            "{schema}"
+        );
+    }
+    assert!(required(&schemas["RunDetail"]).contains(&"started_at_ms"));
     assert_eq!(
-        schemas["RunDetail"]["properties"]["prefix_of"]["nullable"],
+        schemas["RunDetail"]["properties"]["started_at_ms"]["nullable"],
         true
     );
     for field in ["node", "edge"] {
