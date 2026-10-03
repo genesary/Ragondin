@@ -191,8 +191,10 @@ export function NodeInspector({ node, from, sides, metric, onClose }: NodeInspec
     return { side, node: other?.node ?? null, final: other?.kind === 'final' };
   });
   const atEnd = columns.some((c) => c.node !== null && c.node === terminalOf(c.side.graph));
+  // The verdict reads each run's ranking node from its query listing: until
+  // every listing has loaded it is left out, never said with a run's gold missing.
   const said =
-    metric === null || !atEnd
+    metric === null || !atEnd || sides.some((side) => side.queries === null)
       ? null
       : verdict(sides.length === 2 ? { metric, a: readingOf(sides[0]!, metric), b: readingOf(sides[1]!, metric) } : { metric, a: readingOf(home, metric) });
   const twoUp = sides.length === 2;

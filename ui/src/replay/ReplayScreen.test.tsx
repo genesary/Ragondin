@@ -33,12 +33,20 @@ const QUERIES: Record<string, RunQueries> = { [HYBRID]: HYBRID_QUERIES, [DENSE]:
 const TRACES: Record<string, QueryTrace> = { [HYBRID]: HYBRID_TRACE, [DENSE]: DENSE_TRACE, [FAILED]: FAILED_TRACE };
 
 /** The API over the fixtures: each run's detail, queries and q1's trace; another query's trace is q1's renamed. */
-function api({ traces = TRACES, trace }: { traces?: Record<string, QueryTrace>; trace?: (run: string, query: string) => MockReply<QueryTrace> | Promise<MockReply<QueryTrace>> } = {}) {
+type Override<T> = (run: string) => MockReply<T> | Promise<MockReply<T>> | undefined;
+function api({
+  traces = TRACES,
+  trace,
+  queries,
+  detail,
+}: { traces?: Record<string, QueryTrace>; trace?: (run: string, query: string) => MockReply<QueryTrace> | Promise<MockReply<QueryTrace>>; queries?: Override<RunQueries>; detail?: Override<RunDetail> } = {}) {
   return mockApi({
     'GET /runs': { body: LISTING },
-    'GET /runs/{id}': (_q, path) => (DETAILS[segment(path, 4)] === undefined ? { problem: problem('run_not_found', 404, 'no such run') } : { body: DETAILS[segment(path, 4)]! }),
+    'GET /runs/{id}': (_q, path) => detail?.(segment(path, 4)) ?? (DETAILS[segment(path, 4)] === undefined ? { problem: problem('run_not_found', 404, 'no such run') } : { body: DETAILS[segment(path, 4)]! }),
     'GET /runs/{id}/queries': (query, path) => {
       const run = segment(path, 4);
+      const replaced = queries?.(run);
+      if (replaced !== undefined) return replaced;
       if (query.get('missing_gold_at') === '10') return { body: HYBRID_MISSING };
       return { body: QUERIES[run]! };
     },
@@ -281,5 +289,84 @@ describe('Replay’s states', () => {
     api({ trace: () => new Promise(() => {}) });
     show({ query: 'q1' });
     expect(screen.getByText(/^Reading run/)).toBeTruthy();
+  });
+});
+
+const rerender = (view: ReturnType<typeof show>, props: { query: string; with?: string }) =>
+  view.rerender(
+    <div style={{ width: 1400 }}>
+      <ReplayScreen client={createApiClient()} run={HYBRID} query={props.query} with={props.with} />
+    </div>,
+  );
+const traceOf = (base: QueryTrace, q: string): MockReply<QueryTrace> => ({ body: { ...base, query: q } });
+
+describe('side by side, never two queries at once', () => {
+  it("holds B's place while B reads the new query, rather than drawing B's old query beside A's new one", async () => {
+    let releaseB: (reply: MockReply<QueryTrace>) => void = () => {};
+    api({ trace: (run, q) => (run === DENSE && q === 'q2' ? new Promise((r) => (releaseB = r)) : traceOf(run === DENSE ? DENSE_TRACE : HYBRID_TRACE, q)) });
+    const view = show({ query: 'q1', with: DENSE });
+    await screen.findByRole('application', { name: 'Run B, dense-only, query q1' });
+    rerender(view, { query: 'q2', with: DENSE });
+    expect(await screen.findByRole('application', { name: 'Run A, hybrid-rerank-gen, query q2' })).toBeTruthy();
+    expect(screen.queryByRole('application', { name: /^Run B/ })).toBeNull();
+    expect(screen.getByText('Reading dense-only')).toBeTruthy();
+    await act(async () => releaseB(traceOf(DENSE_TRACE, 'q2')));
+    expect(await screen.findByRole('application', { name: 'Run B, dense-only, query q2' })).toBeTruthy();
+  });
+
+  it("says in B's place, with Retry, that B's trace failed — and draws no B", async () => {
+    api({ trace: (run, q) => (run === DENSE ? { problem: problem('query_not_found', 404, 'Run B holds no query q1.') } : traceOf(HYBRID_TRACE, q)) });
+    show({ query: 'q1', with: DENSE });
+    expect(await screen.findByText('Run B holds no query q1.')).toBeTruthy();
+    expect(screen.queryByRole('application', { name: /^Run B/ })).toBeNull();
+    expect(within(document.querySelector('.rg-replay__canvases') as HTMLElement).getByRole('button', { name: 'Retry' })).toBeTruthy();
+  });
+
+  it.each([
+    ['detail', { detail: (run: string) => (run === DENSE ? { problem: problem('run_unreadable', 500, 'Run B does not load.') } : undefined) }],
+    ['queries', { queries: (run: string) => (run === DENSE ? { problem: problem('dataset_differs', 409, 'Run B’s dataset differs.') } : undefined) }],
+  ] as const)("says in B's place that B's %s failed", async (_what, options) => {
+    api(options);
+    show({ query: 'q1', with: DENSE });
+    expect(await screen.findByText(/^Run B/, { selector: '.rg-inline b' })).toBeTruthy();
+    expect(screen.queryByRole('application', { name: /^Run B/ })).toBeNull();
+  });
+
+  it("leaves the verdict out while B's queries are read, rather than saying B ranks none", async () => {
+    api({ queries: (run) => (run === DENSE ? new Promise(() => {}) : undefined) });
+    show({ query: 'q1', with: DENSE });
+    const a = await screen.findByRole('application', { name: /^Run A/ });
+    await screen.findByRole('application', { name: /^Run B/ });
+    fireEvent.click(nodeOf(a.parentElement!, 'rerank'));
+    await screen.findByRole('region', { name: 'B, dense-only' });
+    expect(screen.queryByRole('heading', { name: 'Verdict' })).toBeNull();
+    expect(screen.queryByText(/ranks none/)).toBeNull();
+  });
+});
+
+describe('only the last query asked lands', () => {
+  it('keeps q3 on screen when the answer for q2, asked before it, arrives after', async () => {
+    let releaseQ2: (reply: MockReply<QueryTrace>) => void = () => {};
+    api({ trace: (_run, q) => (q === 'q2' ? new Promise((r) => (releaseQ2 = r)) : traceOf(HYBRID_TRACE, q)) });
+    const view = show({ query: 'q1' });
+    await screen.findByRole('application', { name: /query q1$/ });
+    rerender(view, { query: 'q2' });
+    rerender(view, { query: 'q3' });
+    expect(await screen.findByRole('application', { name: /query q3$/ })).toBeTruthy();
+    await act(async () => releaseQ2(traceOf(HYBRID_TRACE, 'q2')));
+    expect(screen.getByRole('application', { name: /query q3$/ })).toBeTruthy();
+    expect(screen.queryByRole('application', { name: /query q2$/ })).toBeNull();
+  });
+});
+
+describe('what is busy', () => {
+  it('marks only the stage busy while a query is read, so the status line and the list still announce', async () => {
+    api({ trace: (_run, q) => (q === 'q1' ? traceOf(HYBRID_TRACE, q) : new Promise(() => {})) });
+    const view = show({ query: 'q1' });
+    await screen.findByRole('application', { name: /query q1$/ });
+    rerender(view, { query: 'q2' });
+    await screen.findByText('Reading query q2…');
+    expect(document.querySelector('.rg-replay')?.getAttribute('aria-busy')).toBeNull();
+    expect(document.querySelector('.rg-replay__stage')?.getAttribute('aria-busy')).toBe('true');
   });
 });

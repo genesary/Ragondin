@@ -5,7 +5,7 @@
 // ARCHITECTURE.md § The Replay screen.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { EmptyState, InlineMessage, RunSwatch, SegmentedControl, Select, Sheet } from '../../design/index.ts';
-import type { ApiClient, ApiResult } from '../api/client.ts';
+import type { ApiClient, ApiProblem, ApiResult } from '../api/client.ts';
 import type { QueryTrace, RunDetail, RunListing, RunQueries } from '../api/types.ts';
 import { Canvas } from '../canvas/index.ts';
 import { navigate } from '../routes.ts';
@@ -128,14 +128,23 @@ export function ReplayScreen({ client, run, query, with: other }: ReplayScreenPr
   const nameA = nameOf(runs, run);
   const shownTrace = trace.state.status === 'loaded' ? trace.state.value : trace.shown?.run === run ? trace.shown : null;
   const otherGraph = loaded(otherDetail)?.graph;
-  const shownOther = beside === null ? null : otherTrace.state.status === 'loaded' ? otherTrace.state.value : otherTrace.shown?.run === beside ? otherTrace.shown : null;
+  // B stands beside A only on the query A shows: an older answer of B's is
+  // never drawn beside a newer query of A's, and B's place is held instead.
+  const otherAnswer = otherTrace.state.status === 'loaded' ? otherTrace.state.value : null;
+  const shownOther = beside !== null && shownTrace !== null && otherAnswer !== null && otherAnswer.run === beside && otherAnswer.query === shownTrace.query ? otherAnswer : null;
+  // What keeps B from standing there, said in its place: the first of its reads that failed.
+  const otherFailure = [otherDetail, otherQueries, otherTrace].find((r) => r.state.status === 'error');
   const sides: Side[] =
     shownTrace === null
       ? []
       : [
           { letter: 'A', name: nameA, graph, trace: shownTrace, queries: listed },
-          ...(beside !== null && otherGraph !== undefined && shownOther !== null ? [{ letter: 'B' as const, name: nameOf(runs, beside), graph: otherGraph, trace: shownOther, queries: loaded(otherQueries) }] : []),
+          ...(beside !== null && otherFailure === undefined && otherGraph !== undefined && shownOther !== null ? [{ letter: 'B' as const, name: nameOf(runs, beside), graph: otherGraph, trace: shownOther, queries: loaded(otherQueries) }] : []),
         ];
+  const held: Held | null =
+    beside === null || sides.length === 2
+      ? null
+      : { name: nameOf(runs, beside), failure: otherFailure !== undefined && otherFailure.state.status === 'error' ? { problem: otherFailure.state.problem, retry: otherFailure.retry } : null };
   const filtering = missing && missed.state.status === 'loading';
   const reading =
     trace.state.status === 'loading' && shownTrace !== null
@@ -150,7 +159,7 @@ export function ReplayScreen({ client, run, query, with: other }: ReplayScreenPr
   const verified = listed.ground_truth.status === 'verified';
 
   return (
-    <div className="rg-replay" aria-busy={reading !== '' || undefined}>
+    <div className="rg-replay">
       <div className="rg-replay__bar">
         <RunSwatch slot="a" name={nameA} hash={run} onCopyHash={copy} copyLabel="run A" />
         <SegmentedControl
@@ -188,11 +197,11 @@ export function ReplayScreen({ client, run, query, with: other }: ReplayScreenPr
               }
             />
         </aside>
-        <div className="rg-replay__stage">
+        <div className="rg-replay__stage" aria-busy={reading !== '' || undefined}>
           {shownTrace === null ? (
             trace.state.status === 'error' ? <ErrorState problem={trace.state.problem} onRetry={trace.retry} /> : <Loading label={`Reading query ${query}…`} />
           ) : (
-            <Stage sides={sides} waiting={beside !== null && sides.length === 1 ? nameOf(runs, beside) : null} trace={trace.state.status === 'error' ? trace.state : null} onRetry={trace.retry} metric={metric} selected={selected} onSelect={setSelected} />
+            <Stage sides={sides} held={held} trace={trace.state.status === 'error' ? trace.state : null} onRetry={trace.retry} metric={metric} selected={selected} onSelect={setSelected} />
           )}
         </div>
         <div className="rg-replay__panel">
@@ -207,10 +216,13 @@ export function ReplayScreen({ client, run, query, with: other }: ReplayScreenPr
   );
 }
 
+/** B's place while B cannot stand beside A: being read, or failed with what failed. */
+type Held = { name: string; failure: { problem: ApiProblem; retry: () => void } | null };
+
 type StageProps = {
   sides: readonly Side[];
-  /** The run beside while it is read: its place is held, so its canvas arriving moves nothing. */
-  waiting: string | null;
+  /** The run beside while it cannot be drawn: its place is held, so its canvas arriving moves nothing. */
+  held: Held | null;
   /** The newer query's failure, shown above the one still on screen. */
   trace: Extract<RequestState<QueryTrace>, { status: 'error' }> | null;
   onRetry: () => void;
@@ -220,7 +232,7 @@ type StageProps = {
 };
 
 /** The query's head, the banner, and the canvas — or two, stacked, with their run labels. */
-function Stage({ sides, waiting, trace, onRetry, metric, selected, onSelect }: StageProps) {
+function Stage({ sides, held, trace, onRetry, metric, selected, onSelect }: StageProps) {
   const a = sides[0]!;
   const b = sides[1];
   const overlays = useMemo(
@@ -243,12 +255,12 @@ function Stage({ sides, waiting, trace, onRetry, metric, selected, onSelect }: S
         </InlineMessage>
       )}
       {failed === undefined ? null : <InlineMessage tone="warning" title={`This query failed at ${failed.node}; the nodes after it did not run.`} />}
-      <div className="rg-replay__canvases" data-columns={waiting === null ? sides.length : 2}>
+      <div className="rg-replay__canvases" data-columns={held === null ? sides.length : 2}>
         {sides.map((side, i) => {
           const mine = selected === null ? null : selected.from === side.letter || has(side, selected.node) ? selected.node : null;
           return (
             <div key={side.letter} className="rg-replay__canvas">
-              {b === undefined && waiting === null ? null : <RunSwatch slot={side.letter === 'A' ? 'a' : 'b'} name={side.name} />}
+              {b === undefined && held === null ? null : <RunSwatch slot={side.letter === 'A' ? 'a' : 'b'} name={side.name} />}
               <Canvas
                 graph={side.graph}
                 label={`Run ${side.letter}, ${side.name}, query ${side.trace.query}`}
@@ -259,12 +271,10 @@ function Stage({ sides, waiting, trace, onRetry, metric, selected, onSelect }: S
             </div>
           );
         })}
-        {waiting === null ? null : (
+        {held === null ? null : (
           <div className="rg-replay__canvas">
-            <RunSwatch slot="b" name={waiting} />
-            <div className="rg-replay__waiting">
-              <Loading label={`Reading ${waiting}`} />
-            </div>
+            <RunSwatch slot="b" name={held.name} />
+            <div className="rg-replay__waiting">{held.failure === null ? <Loading label={`Reading ${held.name}`} /> : <ErrorState problem={held.failure.problem} onRetry={held.failure.retry} />}</div>
           </div>
         )}
       </div>
