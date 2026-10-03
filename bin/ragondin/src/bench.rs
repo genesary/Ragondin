@@ -47,6 +47,32 @@
 //!
 //! The record is outside the run's identity (INV-8), and the summary `bench`
 //! prints does not show it, so neither the run id nor the output changes.
+//!
+//! # A run already stored
+//!
+//! One run, one record, and the first launch's record wins (ADR-C39 § 8).
+//! After the evaluation, `bench` asks the store for the run id the harness
+//! computed. When the store holds it, nothing is saved, the stored run is left
+//! byte for byte as it was, and instead of the summary `bench` prints the id
+//! and then the two facts in this order:
+//!
+//! ```text
+//! run <id>
+//!   already stored, launched as <name>; this execution was not kept
+//! ```
+//!
+//! `<name>` is the stored record's name. When the stored run has no record,
+//! or a record with no name, the line is
+//! `already stored; this execution was not kept`. It exits `0`: nothing
+//! failed, and a script that re-runs a benchmark keeps working. A run the
+//! store holds but cannot read is an error that names the run, and nothing is
+//! saved over it; before this rule it exited `0` with the usual summary. When the store does not hold the id, `bench` saves the run
+//! and prints exactly what it always has.
+//!
+//! The whole evaluation still runs before the store is asked, because the run
+//! id is known only once `evaluate` returns. Refusing before the corpus is
+//! embedded, as the UI's `409 run_exists` does, waits for a preparation that
+//! knows the identity before execution.
 
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
@@ -57,7 +83,7 @@ use ragondin_config::{ConfigSource, LocalFile};
 use ragondin_contracts::EmbeddedChunk;
 use ragondin_engine::EngineContext;
 use ragondin_experiments::{
-    ConfigDocument, FileSystemRunStore, Run, RunProvenance, RunTimes, UnixMillis,
+    ConfigDocument, FileSystemRunStore, Run, RunProvenance, RunStoreError, RunTimes, UnixMillis,
 };
 use ragondin_harness::{evaluate, CorpusIndex, Evaluation};
 use ragondin_pipeline::LogicalPipeline;
@@ -219,10 +245,48 @@ pub async fn run(request: &Request<'_>) -> Result<()> {
         ..run
     };
 
-    FileSystemRunStore::new(request.store).save(&run)?;
+    // One run, one record (ADR-C39 § 8): a run already stored is kept as it
+    // is, its launch record included, and this execution is dropped and said
+    // to be — `save` is not called, and the run is never reported as filed.
+    // Looked up through the store's own read, so "stored" means what the
+    // store says, and the record is read as the store reads it.
+    let store = FileSystemRunStore::new(request.store);
+    match store.load(&run.id) {
+        Ok(stored) => {
+            print!("{}", render_already_stored(&stored));
+            return Ok(());
+        }
+        Err(RunStoreError::NotFound { .. }) => {}
+        Err(error) => {
+            return Err(error).with_context(|| {
+                format!(
+                    "run {} is already in the store and does not read; this execution was not kept",
+                    run.id
+                )
+            })
+        }
+    }
+    store.save(&run)?;
     print!("{}", render(&run));
 
     Ok(())
+}
+
+/// What `bench` prints for a run the store already holds: its id, then that
+/// it was kept and this execution was not — naming the workspace pipeline it
+/// was first launched as when its record has a name, and naming none when it
+/// has no record or a record without one.
+fn render_already_stored(stored: &Run) -> String {
+    match stored.provenance.as_ref().and_then(RunProvenance::name) {
+        Some(name) => format!(
+            "run {}\n  already stored, launched as {name}; this execution was not kept\n",
+            stored.id
+        ),
+        None => format!(
+            "run {}\n  already stored; this execution was not kept\n",
+            stored.id
+        ),
+    }
 }
 
 /// The workspace pipeline name `bench` records for a run of `config` stored
