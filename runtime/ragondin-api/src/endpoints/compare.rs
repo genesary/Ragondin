@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use axum::extract::State;
 use axum::Json;
-use ragondin_experiments::{compare_runs, lower_median, Direction, Run, Trace};
+use ragondin_experiments::{compare_runs, lower_median, Run, Trace};
 use ragondin_pipeline::LogicalPipeline;
 use ragondin_types::QueryId;
 
@@ -446,29 +446,22 @@ fn stage_cell(
             paired_by_hand,
         })
         .collect();
-    let mut best: BTreeMap<String, StageValue> = BTreeMap::new();
-    for node in &nodes {
-        for (metric, value) in node.metrics.iter().flatten() {
-            // One rule for which way a metric improves: the metric table's,
-            // the catalogue's.
-            let direction = Direction::of(metric).expect(
-                "a node's metrics are catalogue names only: `derived::Metrics::of` keeps no other",
-            );
-            let better = best.get(metric).is_none_or(|held| match direction {
-                Direction::HigherIsBetter => *value > held.value,
-                Direction::LowerIsBetter => *value < held.value,
-            });
-            if better {
-                best.insert(
-                    metric.clone(),
-                    StageValue {
-                        node: node.node.clone(),
-                        value: *value,
-                    },
-                );
-            }
-        }
-    }
+    let best = comparison::best(nodes.iter().filter_map(|node| {
+        node.metrics
+            .as_ref()
+            .map(|metrics| (node.node.as_str(), metrics))
+    }))
+    .into_iter()
+    .map(|(metric, (node, value))| {
+        (
+            metric,
+            StageValue {
+                node: node.to_owned(),
+                value,
+            },
+        )
+    })
+    .collect();
     StageCell::Present { nodes, best }
 }
 

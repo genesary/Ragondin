@@ -1,19 +1,27 @@
-//! Which workspace pipeline a stored run is a run of.
+//! Which workspace documents a stored run's content belongs to.
 //!
-//! A run records no pipeline name: its identity is the canonical hash of
-//! what it ran. ADR-C39 decides run → pipeline identity; until the code
-//! follows it, a run's pipeline is found by content — **interim behaviour**:
-//! the one document under `pipelines/` whose canonical hash is the run's
-//! (INV-8: the canonical form, never the text). No document, or several,
-//! names no pipeline; a document edited since a run no longer names it.
-//! `POST /compare` reads it to find the pairing of two runs' pipelines, and
-//! the pipeline matrix needs the same index. `GET /runs` reads the index
-//! itself rather than [`pipeline_of`]: it names *every* document sharing a
-//! run's hash, as a list, where a pairing needs exactly one.
+//! A run's identity is the canonical hash of what it ran. Its launch record
+//! (`Run::provenance`, ADR-C39 § 1) says what it was launched as; this
+//! module holds the other fact ADR-C39 § 4 keeps beside it, the content one:
+//! the documents under `pipelines/` whose canonical hash is the run's (INV-8:
+//! the canonical form, never the text). The two are never resolved into one
+//! name. The pipeline matrix reads both; `GET /runs` serves only this one
+//! until it serves the record too (#392). [`pipeline_of`] names the one
+//! document a run's hash maps to — none, or several, names none, and a
+//! document edited since a run no longer names it — and `POST /compare`
+//! reads it to find the pairing of two runs' pipelines.
+//! `GET /runs` and the pipeline matrix's feeding runs read the index itself
+//! rather than [`pipeline_of`]: they name *every* document sharing a run's
+//! hash, as a list, where a pairing needs exactly one.
+//!
+//! The structural prefix test, [`is_prefix`], is here too: the other content
+//! fact ADR-C39 § 5 asks of every run, by which the pipeline matrix counts a
+//! run cut from a pipeline among that pipeline's runs.
 
 use std::collections::BTreeMap;
 
 use ragondin_experiments::Run;
+use ragondin_pipeline::LogicalPipeline;
 
 use crate::backends::PipelineSource;
 use crate::error::ApiError;
@@ -42,5 +50,65 @@ pub(crate) fn pipeline_of(index: &BTreeMap<String, Vec<String>>, run: &Run) -> O
     match index.get(&run.inputs.pipeline.to_string()) {
         Some(names) if names.len() == 1 => Some(names[0].clone()),
         _ => None,
+    }
+}
+
+/// Whether `run` is a prefix of `of` — the structural prefix test ADR-C39
+/// § 5 and § 6 keep: `run` declares the same inputs as `of`, and every node
+/// of `run` is a node of `of`, equal in its canonical logical form — family,
+/// `impl:`, parameters, and its inputs in port order, so its edges too — and
+/// `run` has fewer nodes. Its output node is then a node of `of`, and every
+/// node it reads is kept, since `run` validated. The whole pipeline is not
+/// its own prefix: that is hash equality.
+///
+/// It compares canonical forms, never text (INV-8), and it says nothing of
+/// how `run` was launched: a pipeline written by hand that matches is a
+/// prefix as much as one cut by "Run up to this node".
+pub(crate) fn is_prefix(run: &LogicalPipeline, of: &LogicalPipeline) -> bool {
+    run.inputs() == of.inputs()
+        && run.nodes().len() < of.nodes().len()
+        && run
+            .nodes()
+            .iter()
+            .all(|node| of.nodes().iter().any(|kept| kept == node))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::stages::tests::{lowered, HYBRID, HYBRID_RERANK, HYBRID_RERANK_GEN};
+
+    #[test]
+    fn the_pipeline_cut_at_a_node_is_a_prefix_of_it() {
+        assert!(is_prefix(
+            &lowered(HYBRID_RERANK),
+            &lowered(HYBRID_RERANK_GEN)
+        ));
+        assert!(is_prefix(&lowered(HYBRID), &lowered(HYBRID_RERANK_GEN)));
+    }
+
+    #[test]
+    fn a_pipeline_is_not_a_prefix_of_itself_nor_of_a_shorter_one() {
+        let full = lowered(HYBRID_RERANK_GEN);
+        assert!(!is_prefix(&full, &full));
+        assert!(!is_prefix(&full, &lowered(HYBRID_RERANK)));
+    }
+
+    #[test]
+    fn a_subset_with_one_changed_parameter_is_not_a_prefix() {
+        let changed = HYBRID_RERANK.replace(
+            "      impl: dense\n      inputs: [question]\n",
+            "      impl: dense\n      inputs: [question]\n      params: { top_k: 7 }\n",
+        );
+        assert_ne!(changed, HYBRID_RERANK, "the parameter was added");
+        assert!(!is_prefix(&lowered(&changed), &lowered(HYBRID_RERANK_GEN)));
+    }
+
+    #[test]
+    fn a_subset_with_an_extra_edge_is_not_a_prefix() {
+        // The fusion reads the dense leg twice: an edge the parent lacks.
+        let extra = HYBRID_RERANK.replace("inputs: [bm25, dense]", "inputs: [bm25, dense, dense]");
+        assert_ne!(extra, HYBRID_RERANK, "the edge was added");
+        assert!(!is_prefix(&lowered(&extra), &lowered(HYBRID_RERANK_GEN)));
     }
 }

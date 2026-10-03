@@ -82,6 +82,61 @@ impl JsonSchema for MissingGoldAt {
     }
 }
 
+/// `GET /pipelines/{name}/matrix`: its query parameters.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PipelineMatrixParameters {
+    /// Also give a column to every benchmark the registry knows that no
+    /// counted run ran on, each of its cells not_run_yet. Absent is false.
+    pub include_available: Option<IncludeAvailable>,
+}
+
+/// `include_available`'s value: `true` or `false`, as text. Its refusal
+/// names the parameter, since serde's reason does not.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct IncludeAvailable(pub bool);
+
+impl<'de> Deserialize<'de> for IncludeAvailable {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Flag;
+
+        impl Visitor<'_> for Flag {
+            type Value = IncludeAvailable;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("`include_available` as `true` or `false`")
+            }
+
+            fn visit_str<E: de::Error>(self, value: &str) -> Result<IncludeAvailable, E> {
+                match value {
+                    "true" => Ok(IncludeAvailable(true)),
+                    "false" => Ok(IncludeAvailable(false)),
+                    other => Err(E::custom(format!(
+                        "`include_available` is `true` or `false`, not `{other}`"
+                    ))),
+                }
+            }
+        }
+
+        // A query string's values are text: the parse is this type's own.
+        deserializer.deserialize_str(Flag)
+    }
+}
+
+impl JsonSchema for IncludeAvailable {
+    fn inline_schema() -> bool {
+        true
+    }
+
+    fn schema_name() -> Cow<'static, str> {
+        "IncludeAvailable".into()
+    }
+
+    fn json_schema(_: &mut SchemaGenerator) -> Schema {
+        schemars::json_schema!({ "type": "boolean" })
+    }
+}
+
 /// `PUT /pipelines/{name}`: the precondition headers a write reads. Each is
 /// optional on the wire; the handler says what a write that states neither,
 /// or both, is.

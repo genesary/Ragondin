@@ -362,7 +362,7 @@ impl Registry for FakeRegistry {
 }
 
 /// A workspace holding the given documents, by name, in memory: what
-/// `list` answers. Reads and writes nothing else.
+/// `list` and `read` answer. Writes nothing.
 #[derive(Default)]
 pub struct HeldPipelines {
     pub files: Vec<(String, String)>,
@@ -384,7 +384,15 @@ impl PipelineSource for HeldPipelines {
     }
 
     async fn read(&self, name: &str) -> Result<PipelineFile, ApiError> {
-        FakePipelines.read(name).await
+        match self
+            .list()
+            .await?
+            .into_iter()
+            .find(|file| file.name == name)
+        {
+            Some(file) => Ok(file),
+            None => FakePipelines.read(name).await,
+        }
     }
 
     async fn write(
@@ -602,6 +610,20 @@ pub fn fakes(store: FakeRunStore) -> Backends {
         settings: Arc::new(FakeSettings::default()),
         launcher: Arc::new(FakeLauncher::default()),
     }
+}
+
+/// The router over `backends`, working in `workspace` — where the derived
+/// data it computes is cached, under `cache/`.
+pub fn router_over(backends: Backends, workspace: &Path) -> Server {
+    router(
+        backends,
+        ServerConfig {
+            served: SERVED.to_owned(),
+            build: BUILD.to_owned(),
+            workspace: workspace.to_path_buf(),
+        },
+        Arc::new(ragondin_api::NoAssets),
+    )
 }
 
 /// The router over `backends`, with no assets.

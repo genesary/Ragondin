@@ -78,6 +78,7 @@ mod extract;
 mod handlers;
 mod layers;
 mod lineage;
+mod matrix;
 mod routes;
 mod stages;
 mod validation;

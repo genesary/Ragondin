@@ -132,48 +132,62 @@ pub(crate) async fn runs(
             .or_default()
             .push(pinned.name);
     }
+    let (runs, unreadable) = load_all(&state).await?;
     let (workspace, build) = (state.config.workspace.clone(), state.config.build.clone());
-    let listing = blocking(state.backends.runs, move |store| {
-        let ids = store.ids().map_err(|error| ApiError::BackendFailed {
-            detail: format!("the run store cannot be listed: {error}"),
-        })?;
+    let listing = work(move || {
         let mut listing = RunListing {
-            runs: Vec::with_capacity(ids.len()),
-            unreadable: Vec::new(),
+            runs: Vec::with_capacity(runs.len()),
+            unreadable,
             shapes: BTreeMap::new(),
             cache_error: None,
         };
-        for id in ids {
-            match store.load(&id) {
-                Ok(run) => {
-                    let hash = run.inputs.pipeline.to_string();
-                    if !listing.shapes.contains_key(&hash) {
-                        if let Some(shape) = convert::shape(&run) {
-                            listing.shapes.insert(hash.clone(), shape);
-                        }
-                    }
-                    let (latency, failure) = latency(&workspace, &build, &run);
-                    listing.cache_error = listing.cache_error.or(failure);
-                    listing.runs.push(convert::summary(
-                        &run,
-                        pipelines.get(&hash).cloned().unwrap_or_default(),
-                        benchmarks
-                            .get(&run.inputs.dataset_version)
-                            .cloned()
-                            .unwrap_or_default(),
-                        latency,
-                    ));
+        for run in runs {
+            let hash = run.inputs.pipeline.to_string();
+            if !listing.shapes.contains_key(&hash) {
+                if let Some(shape) = convert::shape(&run) {
+                    listing.shapes.insert(hash.clone(), shape);
                 }
-                Err(error) => listing.unreadable.push(UnreadableRun {
-                    id: id.to_string(),
-                    reason: error.to_string(),
-                }),
             }
+            let (latency, failure) = latency(&workspace, &build, &run);
+            listing.cache_error = listing.cache_error.or(failure);
+            listing.runs.push(convert::summary(
+                &run,
+                pipelines.get(&hash).cloned().unwrap_or_default(),
+                benchmarks
+                    .get(&run.inputs.dataset_version)
+                    .cloned()
+                    .unwrap_or_default(),
+                latency,
+            ));
         }
         Ok(listing)
     })
     .await?;
     Ok(Json(listing))
+}
+
+/// Every run the store lists, loaded, in the store's order, and every one it
+/// lists and cannot load, with the store's reason — reported, never dropped
+/// or repaired. A store that cannot be listed fails the call.
+pub(crate) async fn load_all(state: &AppState) -> Result<(Vec<Run>, Vec<UnreadableRun>), ApiError> {
+    blocking(Arc::clone(&state.backends.runs), move |store| {
+        let ids = store.ids().map_err(|error| ApiError::BackendFailed {
+            detail: format!("the run store cannot be listed: {error}"),
+        })?;
+        let mut runs = Vec::with_capacity(ids.len());
+        let mut unreadable = Vec::new();
+        for id in ids {
+            match store.load(&id) {
+                Ok(run) => runs.push(run),
+                Err(error) => unreadable.push(UnreadableRun {
+                    id: id.to_string(),
+                    reason: error.to_string(),
+                }),
+            }
+        }
+        Ok((runs, unreadable))
+    })
+    .await
 }
 
 /// `GET /runs/{id}`. An id that is not a run id names no run, so it is
