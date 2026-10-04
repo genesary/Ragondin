@@ -251,7 +251,7 @@ describe('the queue’s rows', () => {
     expect(job.querySelector('.rg-status')?.textContent).toBe('failed at rerank');
     expect(within(job).getByText('rerank failed: the reranker answered 503')).toBeTruthy();
     // The count, said as what it is: the traces the job kept, not a run in the store — and the way to Replay them.
-    expect(within(job).getByText('It kept the traces of the 2 queries it completed before it failed, under jobs/j2/partial/ in the workspace, never in the store.')).toBeTruthy();
+    expect(within(job).getByText('It kept the traces of the 2 queries it executed before it failed, under jobs/j2/partial/ in the workspace, never in the store.')).toBeTruthy();
     expect(within(job).queryByText(/does not serve/)).toBeNull();
     expect(within(job).getByRole('link', { name: 'Replay the partial traces' }).getAttribute('href')).toBe('#replay/job/j2');
     expect(within(job).getByText(short(hex('b')))).toBeTruthy();
@@ -259,7 +259,7 @@ describe('the queue’s rows', () => {
 
     // A job that kept none says so, and offers nothing to replay.
     send(stream, { event: 'failed', data: runJob('j2', failedAt(null, 'interrupted', 0), { runId: hex('b') }) });
-    expect(within(job).getByText('It kept no trace: a run keeps the traces of the queries it completed when it fails or is cancelled, and a crash keeps none.')).toBeTruthy();
+    expect(within(job).getByText('It kept no trace: a run keeps the traces of the queries it executed when it fails or is cancelled, and a crash keeps none it can vouch for.')).toBeTruthy();
     expect(within(job).queryByRole('link', { name: 'Replay the partial traces' })).toBeNull();
   });
 

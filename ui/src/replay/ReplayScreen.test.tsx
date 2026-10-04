@@ -316,14 +316,28 @@ describe('Replay over a job’s partial traces', () => {
     // Labelled as what it is: a job's partial traces, never a stored run.
     const banner = screen.getByText(`Partial traces of job ${JOB}`).closest('.rg-inline') as HTMLElement;
     expect(banner.textContent).toContain('failed at rerank: the reranker answered 503');
-    expect(banner.textContent).toContain('2 queries it completed before it stopped');
-    expect(banner.textContent).toContain('No run was stored');
-    expect(banner.textContent).toContain('the query it stopped on left no trace');
+    expect(banner.textContent).toContain('These are the traces of the 2 queries it executed before it stopped. No run was stored');
+    // The failing query's trace is among them: nothing claims it left none.
+    expect(banner.textContent).not.toContain('left no trace');
     expect(within(banner).getByRole('link', { name: 'Open the job' }).getAttribute('href')).toBe(`#runs/job/${JOB}`);
     expect(calls.requests.filter((r) => r.startsWith('GET /api/v1/runs'))).toEqual([]);
-    // One job, alone: nothing stands beside it, and nothing is scored to filter on.
-    expect((screen.getByRole('radio', { name: 'Side by side' }) as HTMLInputElement).disabled).toBe(true);
+    // Its source named in words where a run's swatch stands.
+    expect(document.querySelector('.rg-replay__source')?.textContent).toBe(`Partial traces ${JOB}`);
+    // One job, alone: nothing stands beside it, and nothing is scored to filter on — each refusal with its reason.
+    expect(screen.getByRole('radio', { name: 'Alone' }).getAttribute('aria-checked')).toBe('true');
+    expect(screen.queryByRole('radio', { name: 'One run' })).toBeNull();
+    const side = screen.getByRole('radio', { name: 'Side by side' }) as HTMLButtonElement;
+    expect(side.disabled).toBe(true);
+    expect(side.getAttribute('title')).toBe('A job’s partial traces are replayed alone');
     expect((screen.getByRole('button', { name: /No gold in the top 10/ }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText('Partial traces are not scored')).toBeTruthy();
+    // The inspector reads a kept trace as a run's: what the node produced, by id, with no text and no metric.
+    fireEvent.click(await drawn(graph.parentElement!, 'rerank'));
+    const panel = document.querySelector('.rg-replay__panel') as HTMLElement;
+    await waitFor(() => expect(within(panel).getByText('rerank')).toBeTruthy());
+    expect(panel.textContent).toContain('349');
+    expect(panel.querySelector('[data-text="none"]')).not.toBeNull();
+    expect(panel.textContent).not.toMatch(/judged quer/);
     // Query by query, the address following.
     const list = screen.getByRole('listbox', { name: 'Queries' });
     expect(within(list).getAllByRole('option').map((o) => o.id.split('-').at(-1))).toHaveLength(2);
@@ -331,16 +345,32 @@ describe('Replay over a job’s partial traces', () => {
     expect(route()).toEqual({ screen: 'replay', job: JOB, query: 'q2' });
   });
 
-  it('opens a job on its first kept query when none is chosen', async () => {
+  it('opens a failed job on the query it failed on when none is chosen', async () => {
     jobApi();
+    showJob();
+    await waitFor(() => expect(route()).toEqual({ screen: 'replay', job: JOB, query: 'q2' }));
+  });
+
+  it('opens on the first kept query when no trace failed', async () => {
+    jobApi({ body: { ...PARTIAL_QUERIES, failed_query: null } });
     showJob();
     await waitFor(() => expect(route()).toEqual({ screen: 'replay', job: JOB, query: 'q1' }));
   });
 
-  it('says why a job has no partial traces, with the way on', async () => {
-    jobApi({ problem: problem('no_partial_traces', 404, `job ${JOB} kept no partial traces: it was interrupted by a crash, which leaves none`) });
+  it('says a cancelled job was cancelled, and claims nothing of the query it stopped on', async () => {
+    const cancelled: PartialQueries = { ...PARTIAL_QUERIES, failed_query: null, job: { ...PARTIAL_QUERIES.job, state: { kind: 'cancelled', finished_at_ms: 1_700_000_100_000, partial_traces: 2 } } };
+    jobApi({ body: cancelled });
     showJob('q1');
-    expect(await screen.findByText(/interrupted by a crash, which leaves none/)).toBeTruthy();
+    const title = await screen.findByText(`Partial traces of job ${JOB}`);
+    expect((title.closest('.rg-inline') as HTMLElement).textContent).toContain(
+      `Job ${JOB} was cancelled. These are the traces of the 2 queries it executed before it stopped. No run was stored, so nothing is scored and no passage text is shown`,
+    );
+  });
+
+  it('says why a job has no partial traces, with the way on', async () => {
+    jobApi({ problem: problem('no_partial_traces', 404, `job ${JOB} kept no partial traces: it was interrupted by a crash, which keeps no trace it can vouch for`) });
+    showJob('q1');
+    expect(await screen.findByText(/interrupted by a crash, which keeps no trace it can vouch for/)).toBeTruthy();
   });
 });
 

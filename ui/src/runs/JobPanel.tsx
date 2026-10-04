@@ -71,11 +71,11 @@ function Facts({ job }: { job: JobSummary }) {
       {state.kind === 'failed' ? <p className="rg-runs__failure">{state.at_node === null ? `The run failed: ${state.error}` : `${state.at_node} failed: ${state.error}`}</p> : null}
       {state.kind === 'failed' || state.kind === 'cancelled' ? (
         state.partial_traces === 0 ? (
-          <p className="rg-job__partial">It kept no trace: a run keeps the traces of the queries it completed when it fails or is cancelled, and a crash keeps none.</p>
+          <p className="rg-job__partial">It kept no trace: a run keeps the traces of the queries it executed when it fails or is cancelled, and a crash keeps none it can vouch for.</p>
         ) : (
           <p className="rg-job__partial">
             <span>
-              It kept the traces of the {state.partial_traces === 1 ? 'query' : `${state.partial_traces.toLocaleString('en-US')} queries`} it completed before it {state.kind === 'failed' ? 'failed' : 'was cancelled'}, under jobs/{job.id}/partial/ in the workspace, never in the store.
+              It kept the traces of the {state.partial_traces === 1 ? 'query' : `${state.partial_traces.toLocaleString('en-US')} queries`} it executed before it {state.kind === 'failed' ? 'failed' : 'was cancelled'}, under jobs/{job.id}/partial/ in the workspace, never in the store.
             </span>{' '}
             <ButtonLink size="s" href={formatHash({ screen: 'replay', job: job.id })}>
               Replay the partial traces

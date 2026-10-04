@@ -571,11 +571,12 @@ export type JobStatus = {
   finished_at_ms: number | null;
   kind: "failed";
   /**
-   * How many queries' traces a run kept when it stopped — those it
-   * completed, under `jobs/<id>/partial/`, which
-   * `GET /jobs/{id}/queries` serves. `0` for a download, a run that
-   * completed none, and a job interrupted by a crash, which leaves
-   * none.
+   * How many queries' traces a run kept when it stopped — every query
+   * it executed, the one it failed on included — under
+   * `jobs/<id>/partial/`, which `GET /jobs/{id}/queries` serves. `0`
+   * for a download, a run that executed none, traces that could not
+   * be written, and a job interrupted by a crash, which keeps none it
+   * can vouch for.
    */
   partial_traces: number;
 } | {
@@ -947,7 +948,8 @@ export type ParameterValue = boolean | number | string | ParameterValue[];
 
 /**
  * `GET /jobs/{id}/queries`: the queries a failed or cancelled run job
- * completed before it stopped, whose traces it kept under
+ * executed before it stopped — the one a failed run stopped on included,
+ * its failing node last — whose traces it kept under
  * `jobs/<id>/partial/` — never in the store, which holds a run complete or
  * not at all.
  *
@@ -957,6 +959,11 @@ export type ParameterValue = boolean | number | string | ParameterValue[];
  * (ADR-C36 § 4); a job's partial traces record none.
  */
 export type PartialQueries = {
+  /**
+   * The query whose trace holds a failed node — the one a failed run
+   * stopped on, its failing node last; `null` when no kept trace does.
+   */
+  failed_query: string | null;
   /**
    * The graph lowered from the pipeline document the job snapshotted at
    * submission.
@@ -1914,7 +1921,7 @@ export type Paths = {
     };
   };
   "/jobs/{id}/queries": {
-    /** A failed or cancelled run job's partial traces: the queries it completed before it stopped, and the graph of the pipeline it snapshotted. */
+    /** A failed or cancelled run job's partial traces: the queries it executed before it stopped, the one a failed run stopped on included, and the graph of the pipeline it snapshotted. */
     get: {
       params: {
         id: string;

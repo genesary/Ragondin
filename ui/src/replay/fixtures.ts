@@ -241,7 +241,7 @@ export const LISTING: RunListing = {
   unreadable: [],
 };
 
-/** A run job that failed at its reranker on its third query, keeping the traces of q1 and q2. */
+/** A run job that failed at its reranker on its second query, keeping the traces of q1 and q2, the failing one included. */
 export const JOB = '1700000000000-2';
 
 /** That job's partial traces, as `GET /jobs/{id}/queries` lists them: nothing scored, no text. */
@@ -258,6 +258,7 @@ export const PARTIAL_QUERIES: PartialQueries = {
     { id: 'q1', text: null, scores: {}, duration_nanos: ms(1000) },
     { id: 'q2', text: null, scores: {}, duration_nanos: ms(900) },
   ],
+  failed_query: 'q2',
 };
 
 /** One of its traces, as `GET /jobs/{id}/trace/{query}` serves it: the hybrid's nodes, nothing read against a dataset. */

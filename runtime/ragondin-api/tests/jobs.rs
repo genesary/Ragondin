@@ -77,6 +77,40 @@ fn trace(nanos: u64) -> TraceDocument {
     })
 }
 
+/// The trace of a query that failed at `rerank`, after `answer` took
+/// `nanos`: the failing node last, with its error, as the harness renders it.
+fn failing_trace(nanos: u64) -> TraceDocument {
+    TraceDocument::from(Trace {
+        nodes: vec![
+            TraceNode {
+                node: NodeId::new("answer"),
+                inputs: Vec::new(),
+                output: None,
+                duration_nanos: nanos,
+                error: None,
+            },
+            TraceNode {
+                node: NodeId::new("rerank"),
+                inputs: Vec::new(),
+                output: None,
+                duration_nanos: 7,
+                error: Some("the reranker failed".to_owned()),
+            },
+        ],
+    })
+}
+
+/// A file in place of every running job's own directory under `jobs/`, so
+/// that writing its partial traces fails.
+fn block_partial_traces(workspace: &Path) {
+    for job in job_files(workspace) {
+        if job["state"]["kind"] == "running" {
+            let id = job["id"].as_str().unwrap();
+            std::fs::write(workspace.join("jobs").join(id), b"not a directory").unwrap();
+        }
+    }
+}
+
 /// What a [`ScriptedLauncher`] does when it executes.
 #[derive(Clone, Default)]
 struct Script {
@@ -92,6 +126,10 @@ struct Script {
     hang_after: Option<u64>,
     /// Every trace reported is one whose shape does not read.
     malformed: bool,
+    /// Before failing, put a file where the running job's partial traces'
+    /// directory goes, so that their write fails. Needs the launcher's
+    /// `workspace`.
+    block_partial: bool,
 }
 
 /// A `Launcher` that announces [`announced`] and executes its [`Script`],
@@ -204,15 +242,12 @@ impl ScriptedLauncher {
         let mut traces = BTreeMap::new();
         for (index, nanos) in self.script.queries.iter().enumerate() {
             let position = index as u64 + 1;
-            if self.script.fail_at == Some(position) {
-                return Err(LauncherError::Execution {
-                    error: "the reranker failed".to_owned(),
-                    at_node: Some("rerank".to_owned()),
-                });
-            }
+            let fails = self.script.fail_at == Some(position);
             let query = QueryId::new(format!("q-{position}"));
             let trace = if self.script.malformed {
                 TraceDocument::new(json!({ "nodes": "not a list" }))
+            } else if fails {
+                failing_trace(*nanos)
             } else {
                 trace(*nanos)
             };
@@ -224,6 +259,19 @@ impl ScriptedLauncher {
                 elapsed: Duration::from_millis(position),
                 trace,
             });
+            // The harness reports the failing query's trace before it returns
+            // the error (`HarnessError::Execute`), and the launcher forwards it.
+            if fails {
+                if self.script.block_partial {
+                    if let Some(workspace) = &self.workspace {
+                        block_partial_traces(workspace);
+                    }
+                }
+                return Err(LauncherError::Execution {
+                    error: "the reranker failed".to_owned(),
+                    at_node: Some("rerank".to_owned()),
+                });
+            }
             if cancel.is_cancelled() {
                 return Err(LauncherError::Cancelled);
             }
@@ -266,6 +314,8 @@ fn job_file(workspace: &Path, id: &str) -> Value {
 #[derive(Default)]
 struct DownloadingRegistry {
     downloads: AtomicUsize,
+    /// Every download fails, as one whose digest differs does.
+    fail: bool,
 }
 
 #[async_trait]
@@ -287,6 +337,12 @@ impl Registry for DownloadingRegistry {
         cancel: Arc<AtomicBool>,
     ) -> Result<BenchmarkEntry, ApiError> {
         self.downloads.fetch_add(1, Ordering::SeqCst);
+        if self.fail {
+            return Err(ApiError::DownloadFailed {
+                name: name.to_owned(),
+                reason: "corpus.jsonl: digest differs from the manifest".to_owned(),
+            });
+        }
         for received in [100, 200, 300, 400] {
             if cancel.load(Ordering::SeqCst) {
                 return Err(ApiError::DownloadCancelled {
@@ -709,9 +765,12 @@ async fn a_failing_execution_keeps_the_error_the_node_and_the_partial_traces() {
         &std::fs::read(workspace.join("jobs").join(&id).join("partial/traces.json")).unwrap(),
     )
     .unwrap();
-    assert_eq!(partial.keys().collect::<Vec<_>>(), ["q-1"]);
-    assert_eq!(job["state"]["partial_traces"], 1, "{job}");
-    assert_eq!(file["state"]["partial_traces"], 1);
+    // The failing query's trace is kept too: the harness reports it before
+    // it returns the error, its failing node last.
+    assert_eq!(partial.keys().collect::<Vec<_>>(), ["q-1", "q-2"]);
+    assert_eq!(partial["q-2"]["nodes"][1]["error"], "the reranker failed");
+    assert_eq!(job["state"]["partial_traces"], 2, "{job}");
+    assert_eq!(file["state"]["partial_traces"], 2);
     assert_eq!(
         FileSystemRunStore::new(workspace.join("runs"))
             .ids()
@@ -1291,8 +1350,8 @@ fn every_transition_is_on_disk_before_the_next_one_starts() {
     });
 }
 
-/// A failed run job, its traces for queries 1 and 2 kept, and the server
-/// over it: the reranker fails on query 3.
+/// A failed run job and the server over it: the reranker fails on query 3,
+/// and the job keeps the traces of all three, the failing one included.
 async fn failed_at_the_third_query(name: &str) -> (PathBuf, Server, String) {
     let workspace = scratch(name);
     let launcher = Arc::new(ScriptedLauncher::new(Script {
@@ -1320,7 +1379,7 @@ async fn a_failed_job_s_partial_traces_are_listed_and_read_query_by_query() {
     assert_eq!(listed["job"]["id"], id.as_str());
     assert_eq!(listed["job"]["state"]["kind"], "failed");
     assert_eq!(listed["job"]["state"]["at_node"], "rerank");
-    assert_eq!(listed["job"]["state"]["partial_traces"], 2);
+    assert_eq!(listed["job"]["state"]["partial_traces"], 3);
     let nodes: Vec<&str> = listed["graph"]["nodes"]
         .as_array()
         .unwrap()
@@ -1335,7 +1394,26 @@ async fn a_failed_job_s_partial_traces_are_listed_and_read_query_by_query() {
         json!([
             { "id": "q-1", "text": null, "scores": {}, "duration_nanos": 100 },
             { "id": "q-2", "text": null, "scores": {}, "duration_nanos": 200 },
+            { "id": "q-3", "text": null, "scores": {}, "duration_nanos": 307 },
         ])
+    );
+    // The query the run failed on, which Replay opens on.
+    assert_eq!(listed["failed_query"], "q-3");
+
+    let response = send(app.clone(), get(&format!("/api/v1/jobs/{id}/trace/q-3"))).await;
+    let failing = json(response).await;
+    let nodes: Vec<(&str, &Value)> = failing["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|node| (node["node"].as_str().unwrap(), &node["error"]))
+        .collect();
+    assert_eq!(
+        nodes,
+        [
+            ("answer", &Value::Null),
+            ("rerank", &json!("the reranker failed"))
+        ]
     );
 
     let response = send(app.clone(), get(&format!("/api/v1/jobs/{id}/trace/q-2"))).await;
@@ -1369,7 +1447,7 @@ async fn a_job_without_partial_traces_answers_a_stable_code() {
     }
 
     let (_workspace, app, failed) = failed_at_the_third_query("jobs-partial-codes").await;
-    let (status, body) = problem(&app, &format!("/api/v1/jobs/{failed}/trace/q-3")).await;
+    let (status, body) = problem(&app, &format!("/api/v1/jobs/{failed}/trace/q-9")).await;
     assert_eq!(
         (status, &body["code"]),
         (StatusCode::NOT_FOUND, &json!("query_not_found"))
@@ -1478,5 +1556,184 @@ async fn a_job_file_without_the_count_reads_it_from_its_partial_traces() {
         listed["queries"].as_array().map(Vec::len),
         Some(2),
         "{listed}"
+    );
+}
+
+/// A kept trace that does not read is reported, never repaired: the listing
+/// and the trace both answer `backend_failed`, naming the query.
+#[tokio::test]
+async fn a_kept_trace_that_does_not_read_is_backend_failed() {
+    let workspace = scratch("jobs-partial-malformed");
+    let launcher = Arc::new(ScriptedLauncher::new(Script {
+        queries: vec![100, 200],
+        fail_at: Some(2),
+        malformed: true,
+        ..Script::default()
+    }));
+    let app = server(&workspace, launcher);
+    let id = accepted(&app, PIPELINE).await;
+    let job = job_until(&app, &id, finished).await;
+    assert_eq!(job["state"]["partial_traces"], 2, "{job}");
+    for path in [
+        format!("/api/v1/jobs/{id}/queries"),
+        format!("/api/v1/jobs/{id}/trace/q-1"),
+    ] {
+        let response = send(app.clone(), get(&path)).await;
+        assert_eq!(
+            response.status(),
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "{path}"
+        );
+        let body = json(response).await;
+        assert_eq!(body["code"], "backend_failed", "{path}");
+        assert!(
+            body["detail"].as_str().unwrap().contains("query q-1"),
+            "{body}"
+        );
+    }
+}
+
+/// A partial write that fails keeps nothing, and the job says so: none
+/// kept, and the fault reported.
+#[tokio::test]
+async fn a_partial_write_that_fails_records_none_and_is_reported() {
+    let workspace = scratch("jobs-partial-write-fails");
+    let mut launcher = ScriptedLauncher::new(Script {
+        queries: vec![100, 200],
+        fail_at: Some(2),
+        block_partial: true,
+        ..Script::default()
+    });
+    launcher.workspace = Some(workspace.clone());
+    let app = server(&workspace, Arc::new(launcher));
+    let id = accepted(&app, PIPELINE).await;
+    let job = job_until(&app, &id, finished).await;
+    assert_eq!(kind(&job), "failed", "{job}");
+    assert_eq!(job["state"]["partial_traces"], 0, "{job}");
+    let listing = json(send(app.clone(), get("/api/v1/jobs")).await).await;
+    assert!(
+        listing["faults"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|fault| fault["path"]
+                .as_str()
+                .unwrap()
+                .ends_with("partial/traces.json")),
+        "{listing}"
+    );
+}
+
+/// A store that refuses every run.
+struct RefusingStore;
+
+impl RunStore for RefusingStore {
+    fn save(&self, _: &Run) -> Result<(), ragondin_experiments::RunStoreError> {
+        Err(ragondin_experiments::RunStoreError::NotFinite {
+            metric: "ndcg@10".to_owned(),
+        })
+    }
+
+    fn load(&self, id: &RunId) -> Result<Run, ragondin_experiments::RunStoreError> {
+        Err(ragondin_experiments::RunStoreError::NotFound { id: *id })
+    }
+
+    fn ids(&self) -> Result<Vec<RunId>, ragondin_experiments::RunStoreError> {
+        Ok(Vec::new())
+    }
+}
+
+/// A run the store refuses fails, and keeps every trace it executed: the
+/// whole run, as partial traces.
+#[tokio::test]
+async fn a_run_the_store_refuses_keeps_every_trace() {
+    let workspace = scratch("jobs-partial-store-refuses");
+    let mut backends = fakes(FakeRunStore::default());
+    backends.runs = Arc::new(RefusingStore);
+    backends.pipelines = Arc::new(HeldPipelines {
+        files: vec![(PIPELINE.to_owned(), document())],
+    });
+    backends.launcher = Arc::new(ScriptedLauncher::new(Script {
+        queries: vec![100, 200, 300],
+        ..Script::default()
+    }));
+    let app = router_over(backends, &workspace);
+    let id = accepted(&app, PIPELINE).await;
+    let job = job_until(&app, &id, finished).await;
+    assert_eq!(kind(&job), "failed", "{job}");
+    assert_eq!(job["state"]["partial_traces"], 3, "{job}");
+}
+
+/// A download executes no query: it keeps none, and has none to serve.
+#[tokio::test]
+async fn a_download_that_fails_keeps_no_trace() {
+    let workspace = scratch("jobs-partial-download");
+    let app = server_with(
+        &workspace,
+        Arc::new(ScriptedLauncher::default()),
+        Arc::new(DownloadingRegistry {
+            fail: true,
+            ..DownloadingRegistry::default()
+        }),
+    );
+    let response = send(
+        app.clone(),
+        write_request(
+            "POST",
+            "/api/v1/benchmarks/beir%2Fmini/download",
+            &json!(null),
+            &[],
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+    let id = json(response).await["job_id"].as_str().unwrap().to_owned();
+    let job = job_until(&app, &id, finished).await;
+    assert_eq!(kind(&job), "failed", "{job}");
+    assert_eq!(job["state"]["partial_traces"], 0, "{job}");
+    let body = json(send(app.clone(), get(&format!("/api/v1/jobs/{id}/queries"))).await).await;
+    assert_eq!(body["code"], "no_partial_traces", "{body}");
+}
+
+/// An old job file whose kept traces do not read counts none, and the fault
+/// is reported; reading them answers `backend_failed` with the reason, never
+/// "kept none".
+#[tokio::test]
+async fn an_old_job_file_whose_traces_do_not_read_counts_none_and_says_why() {
+    let workspace = scratch("jobs-partial-count-unreadable");
+    let jobs = workspace.join("jobs");
+    std::fs::create_dir_all(jobs.join("torn/partial")).unwrap();
+    let job = stored_job(
+        "torn",
+        1,
+        json!({ "kind": "cancelled", "finished_at": null }),
+        &["queued", "running", "cancelled"],
+    );
+    std::fs::write(jobs.join("torn.json"), serde_json::to_vec(&job).unwrap()).unwrap();
+    std::fs::write(jobs.join("torn/partial/traces.json"), b"{ torn").unwrap();
+
+    let app = server(&workspace, Arc::new(ScriptedLauncher::default()));
+
+    let torn = json(send(app.clone(), get("/api/v1/jobs/torn")).await).await;
+    assert_eq!(torn["state"]["partial_traces"], 0, "{torn}");
+    let listing = json(send(app.clone(), get("/api/v1/jobs")).await).await;
+    assert!(
+        listing["faults"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|fault| fault["path"]
+                .as_str()
+                .unwrap()
+                .ends_with("torn/partial/traces.json")),
+        "{listing}"
+    );
+    let response = send(app.clone(), get("/api/v1/jobs/torn/queries")).await;
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    let body = json(response).await;
+    assert_eq!(body["code"], "backend_failed", "{body}");
+    assert!(
+        body["detail"].as_str().unwrap().contains("traces.json"),
+        "{body}"
     );
 }

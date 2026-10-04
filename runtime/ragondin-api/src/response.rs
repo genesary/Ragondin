@@ -479,7 +479,8 @@ pub struct QueryTrace {
 }
 
 /// `GET /jobs/{id}/queries`: the queries a failed or cancelled run job
-/// completed before it stopped, whose traces it kept under
+/// executed before it stopped — the one a failed run stopped on included,
+/// its failing node last — whose traces it kept under
 /// `jobs/<id>/partial/` — never in the store, which holds a run complete or
 /// not at all.
 ///
@@ -488,6 +489,7 @@ pub struct QueryTrace {
 /// truth and the text are read only against a dataset that digests to them
 /// (ADR-C36 § 4); a job's partial traces record none.
 #[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
+#[schemars(transform = every_property_required)]
 pub struct PartialQueries {
     /// The job, as `GET /jobs/{id}` answers it: what was submitted, the run
     /// id it announced — under which nothing is stored — and how it ended.
@@ -498,6 +500,9 @@ pub struct PartialQueries {
     /// The queries, by id, each with its latency; its `text` is `null` and
     /// its `scores` empty.
     pub queries: Vec<QueryScores>,
+    /// The query whose trace holds a failed node — the one a failed run
+    /// stopped on, its failing node last; `null` when no kept trace does.
+    pub failed_query: Option<String>,
 }
 
 /// `GET /jobs/{id}/trace/{query}`: one query's trace from a failed or
@@ -506,6 +511,7 @@ pub struct PartialQueries {
 /// `metrics` and `gold_ranks`, and each passage's `text` and `grade`,
 /// `null`, for the reason [`PartialQueries`] gives.
 #[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
+#[schemars(transform = every_property_required)]
 pub struct PartialTrace {
     /// The job's id.
     pub job: String,
@@ -1760,11 +1766,12 @@ pub enum JobStatus {
         at_node: Option<String>,
         /// When it failed.
         finished_at_ms: Option<u64>,
-        /// How many queries' traces a run kept when it stopped — those it
-        /// completed, under `jobs/<id>/partial/`, which
-        /// `GET /jobs/{id}/queries` serves. `0` for a download, a run that
-        /// completed none, and a job interrupted by a crash, which leaves
-        /// none.
+        /// How many queries' traces a run kept when it stopped — every query
+        /// it executed, the one it failed on included — under
+        /// `jobs/<id>/partial/`, which `GET /jobs/{id}/queries` serves. `0`
+        /// for a download, a run that executed none, traces that could not
+        /// be written, and a job interrupted by a crash, which keeps none it
+        /// can vouch for.
         partial_traces: u64,
     },
     /// Cancelled before it finished.

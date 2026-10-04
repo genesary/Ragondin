@@ -766,13 +766,18 @@ executed** in `jobs/<id>/partial/traces.json`, a map by query id — the shape
 the store gives a run's `traces.json`, so a reader reads the two alike — and
 nothing under `runs/`: the store holds a run complete or not at all. The
 traces are kept in memory as the observer delivers them and written when the
-run stops; a job interrupted by a crash has none. **How many it kept is on
+run stops. **How many it kept is on
 the job**: `partial_traces` on the `failed` and `cancelled` states, written
 into `jobs/<id>.json` with the state — the number of traces written, `0`
 when the write failed (the fault says so), for a run that completed no
 query, a job failed before it ran, a download, and a job interrupted by a
-crash. The query a run fails on leaves no trace: the launcher reports a
-query once it completes, and a failure ends the run inside one. A job file
+crash. The query a failed run stopped on is among them: the harness hands
+its trace to the observer before it returns the error
+(`HarnessError::Execute`, the failing node its last entry), and the queue
+tallies it before writing. **A crash keeps none it can vouch for**: the
+traces are written, then the job's end, so a crash between the two leaves a
+file beside a job the next start finds running and fails as interrupted,
+with a count of `0`; that file is never served as the job's. A job file
 written before the count was recorded has none; `Queue::open` counts the
 traces it kept when it reads it back, and reports a file of traces that
 does not read, never repairing it.
@@ -785,7 +790,9 @@ never from the store, for Replay over the job (#354's job view leads
 there). The first answers `PartialQueries`: the job as `GET /jobs/{id}`
 answers it, the graph lowered from the document it snapshotted at
 submission — by `lower_configuration`, the lowering a stored run's graph
-comes from — and each kept query with its latency (`Trace::latency_nanos`).
+comes from — each kept query with its latency (`Trace::latency_nanos`), and
+`failed_query`, the query whose trace holds a failed node: the one a failed run
+stopped on, which Replay opens on.
 The second answers `PartialTrace`: one query's nodes as `TraceNodeView`s,
 built by `convert::trace_view`, the conversion `GET /runs/{id}/trace/{query}`
 serves a stored run's trace through, so Replay reads the two alike. **Nothing
@@ -799,7 +806,9 @@ by something other than the run's own digests that section rules out. A job
 queued or running is `job_not_ended`; one done, a download, or a run that kept
 no trace is `no_partial_traces`, its detail saying which; a query the traces do
 not hold is `query_not_found`; a kept trace that does not read is
-`backend_failed`, naming the query — reported, never repaired.
+`backend_failed`, naming the query, and so is a traces file that does not
+read, whatever the count says — reported, never repaired, and never answered
+as "kept none".
 
 ### Progress, and the live median
 

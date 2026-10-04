@@ -291,11 +291,11 @@ pub const OPERATIONS: &[Operation] = &[
     Operation {
         method: "get",
         path: "/jobs/{id}/queries",
-        summary: "A failed or cancelled run job's partial traces: the queries it completed before it stopped, and the graph of the pipeline it snapshotted.",
+        summary: "A failed or cancelled run job's partial traces: the queries it executed before it stopped, the one a failed run stopped on included, and the graph of the pipeline it snapshotted.",
         response: Response::Json("PartialQueries"),
         request: None,
         description: Some(
-            "Read from jobs/<id>/partial/, never from the store. Nothing is scored and no text is read: the traces record no dataset digest. A job still queued or running is job_not_ended (409); one that is done, a download, or a run that kept no trace — a crash keeps none — is no_partial_traces (404).",
+            "Read from jobs/<id>/partial/, never from the store. Nothing is scored and no text is read: the traces record no dataset digest. A job still queued or running is job_not_ended (409); one that is done, a download, or a run that kept no trace — a crash keeps none it can vouch for — is no_partial_traces (404); traces that do not read are backend_failed. failed_query names the query a failed run stopped on.",
         ),
     },
     Operation {

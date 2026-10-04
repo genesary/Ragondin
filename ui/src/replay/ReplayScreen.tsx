@@ -322,10 +322,10 @@ function PartialReplay({ client, job, query }: JobSource) {
   const [selected, setSelected] = useState<Selected | null>(null);
   const listed = loaded(queries);
   const go = useCallback((q: string) => navigate({ screen: 'replay', job, query: q }, { replace: true }), [job]);
-  // No query chosen: the first kept one, filled in as a correction.
-  const first = listed?.queries[0] ?? null;
+  // No query chosen: the one a failed job stopped on, else the first kept one, filled in as a correction.
+  const first = listed === null ? null : (listed.failed_query ?? listed.queries[0]?.id ?? null);
   useEffect(() => {
-    if (query === undefined && first !== null) go(first.id);
+    if (query === undefined && first !== null) go(first);
   }, [query, first, go]);
 
   if (queries.state.status === 'error') return <ErrorState problem={queries.state.problem} onRetry={queries.retry} />;
@@ -339,7 +339,7 @@ function PartialReplay({ client, job, query }: JobSource) {
   if (query === undefined) {
     return (
       <Sheet>
-        <Loading label="Opening the first kept query" />
+        <Loading label="Opening the query it stopped on" />
       </Sheet>
     );
   }
@@ -359,7 +359,7 @@ function PartialReplay({ client, job, query }: JobSource) {
           value="single"
           onChange={() => {}}
           options={[
-            { value: 'single', label: 'One run' },
+            { value: 'single', label: 'Alone' },
             { value: 'side', label: 'Side by side', disabled: true, reason: 'A job’s partial traces are replayed alone' },
           ]}
         />
@@ -368,7 +368,7 @@ function PartialReplay({ client, job, query }: JobSource) {
         {reading}
       </p>
       <InlineMessage tone="info" title={`Partial traces of job ${job}`}>
-        {ending(listed.job)} These are the traces of the {kept === 1 ? 'query' : `${kept.toLocaleString('en-US')} queries`} it completed before it stopped; the query it stopped on left no trace. No run was stored, so nothing is scored and no passage text is shown: a run records the dataset it was evaluated on, and these traces record none.{' '}
+        {ending(listed.job)} These are the traces of the {kept === 1 ? 'query' : `${kept.toLocaleString('en-US')} queries`} it executed before it stopped. No run was stored, so nothing is scored and no passage text is shown: a run records the dataset it was evaluated on, and these traces record none.{' '}
         <ButtonLink size="s" href={formatHash({ screen: 'runs', job })}>
           Open the job
         </ButtonLink>

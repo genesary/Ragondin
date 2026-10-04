@@ -114,7 +114,7 @@ pub(crate) async fn read(
 }
 
 /// `GET /jobs/{id}/queries`: the queries a failed or cancelled run job
-/// completed, from the traces it kept under `jobs/<id>/partial/`, with the
+/// executed, from the traces it kept under `jobs/<id>/partial/`, with the
 /// graph its snapshotted document lowers to. Nothing is scored and no text is
 /// read: the traces record no dataset digest to check one against (ADR-C36
 /// § 4).
@@ -133,21 +133,25 @@ pub(crate) async fn queries(
             detail: format!("job {id}'s pipeline document no longer lowers: {reason}"),
         }
     })?;
-    let queries = traces
-        .iter()
-        .map(|(query, document)| {
-            Ok(QueryScores {
-                id: query.as_str().to_owned(),
-                text: None,
-                scores: BTreeMap::new(),
-                duration_nanos: read_partial_trace(&id, query, document)?.latency_nanos(),
-            })
-        })
-        .collect::<Result<_, ApiError>>()?;
+    let mut failed_query = None;
+    let mut queries = Vec::with_capacity(traces.len());
+    for (query, document) in &traces {
+        let trace = read_partial_trace(&id, query, document)?;
+        if failed_query.is_none() && trace.nodes.iter().any(|node| node.error.is_some()) {
+            failed_query = Some(query.as_str().to_owned());
+        }
+        queries.push(QueryScores {
+            id: query.as_str().to_owned(),
+            text: None,
+            scores: BTreeMap::new(),
+            duration_nanos: trace.latency_nanos(),
+        });
+    }
     Ok(Json(PartialQueries {
         job: summary(&job),
         graph: convert::graph(&lowered),
         queries,
+        failed_query,
     }))
 }
 

@@ -184,8 +184,9 @@ impl Queue {
                         id_mismatch: None,
                         finished_at: at,
                     },
-                    // A crash leaves no partial traces: they are written when
-                    // a run stops.
+                    // A crash keeps no partial traces it can vouch for: they
+                    // are written before the job's end, and a file a crash
+                    // left without that end is not counted.
                     None => JobState::Failed {
                         error: INTERRUPTED.to_owned(),
                         at_node: None,
@@ -280,28 +281,32 @@ impl Queue {
             return Err(none("it is a download, which executes no query"));
         };
         let pipeline = pipeline.clone();
-        if kept == 0 {
-            return Err(none(match &job.state {
-                JobState::Failed { error, .. } if error == INTERRUPTED => {
-                    "it was interrupted by a crash, which leaves none"
-                }
-                _ => "it completed no query before it stopped, or its traces could not be written",
-            }));
+        // A crash keeps none it can vouch for: a file written between the
+        // traces' write and the job's end is not read as the job's.
+        if matches!(&job.state, JobState::Failed { error, .. } if error == INTERRUPTED) {
+            return Err(none(
+                "it was interrupted by a crash, which keeps no trace it can vouch for",
+            ));
         }
         let (dir, job_id) = (self.dir.clone(), job.id.clone());
-        let traces = tokio::task::spawn_blocking(move || file::read_partial(&dir, &job_id))
+        // Read before the count is trusted: a file that does not read is the
+        // fault it is, never "kept none".
+        let read = tokio::task::spawn_blocking(move || file::read_partial(&dir, &job_id))
             .await
             .map_err(|error| format!("reading the partial traces did not complete: {error}"))
             .and_then(|read| read)
-            .and_then(|traces| {
-                traces.ok_or_else(|| {
-                    format!(
-                        "{} is not there, though the job recorded {kept} traces",
-                        file::partial_path(&self.dir, &job.id).display()
-                    )
-                })
-            })
             .map_err(|detail| ApiError::BackendFailed { detail })?;
+        if kept == 0 {
+            return Err(none(
+                "it executed no query before it stopped, or its traces could not be written — GET /jobs lists that fault",
+            ));
+        }
+        let traces = read.ok_or_else(|| ApiError::BackendFailed {
+            detail: format!(
+                "{} is not there, though the job recorded {kept} traces",
+                file::partial_path(&self.dir, &job.id).display()
+            ),
+        })?;
         Ok(Partial {
             job,
             pipeline,

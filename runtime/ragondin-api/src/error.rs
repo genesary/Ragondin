@@ -570,10 +570,10 @@ impl ApiError {
                 "Nothing to cancel: submit it again to run it again.".to_owned()
             }
             Self::JobNotEnded { .. } => {
-                "Wait for the job to end: a run that fails or is cancelled keeps the traces of the queries it completed.".to_owned()
+                "Wait for the job to end: a run that fails or is cancelled keeps the traces of the queries it executed.".to_owned()
             }
             Self::NoPartialTraces { .. } => {
-                "Nothing to replay from the job: a done run is replayed from the store, and a crash leaves no traces.".to_owned()
+                "Nothing to replay from the job: a done run is replayed from the store, and a crash keeps none it can vouch for.".to_owned()
             }
         }
     }
