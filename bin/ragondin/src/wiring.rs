@@ -15,9 +15,11 @@
 //! it reads *text* and needs no backend: a pipeline that names `dense` is
 //! inspected the same way whether or not this build can run one. Only the
 //! constructors are feature-gated (ADR-C14), so a lean build still refuses a
-//! configuration with a diagnosis rather than a mystery. For a node family the
-//! unknown `impl:` comes back from planning, naming the family and the name it
-//! looked up. An embedder is not a node family and no plan ever looks one up,
+//! configuration with a diagnosis rather than a mystery. For a node family,
+//! [`refuse_not_in_build`] refuses an `impl:` this build constructs nothing
+//! under before the benchmark loads — a name no build carries in planning's
+//! words, naming the family and the name, and a `Local` name this build's
+//! features leave out naming the feature to rebuild with. An embedder is not a node family and no plan ever looks one up,
 //! so [`check_nodes`] names what is missing itself: an `embedder:` name it
 //! does not know, or the feature that would have carried the one it does
 //! (ADR-C32 § 4).

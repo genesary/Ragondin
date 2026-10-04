@@ -462,6 +462,22 @@ mod tests {
             .collect()
     }
 
+    /// Read by the two capability tests below, which compile in `ui` alone
+    /// and in `--all-features` only.
+    #[cfg(any(
+        not(any(
+            feature = "bm25",
+            feature = "onnx",
+            feature = "remote",
+            feature = "stub"
+        )),
+        all(
+            feature = "bm25",
+            feature = "onnx",
+            feature = "remote",
+            feature = "stub"
+        )
+    ))]
     fn not_carried(capabilities: &Capabilities) -> Vec<(&str, Vec<(&str, &str)>)> {
         capabilities
             .families
@@ -930,6 +946,90 @@ mod tests {
             assert_eq!(filed.provenance, None);
         }
 
+        #[tokio::test]
+        async fn a_benchmark_that_does_not_resolve_or_load_is_an_execution_failure() {
+            // No other variant names a benchmark: `POST /runs` answers it as
+            // `backend_failed`, in the loader's words.
+            for (benchmark, words) in [
+                ("beir/absent", "loading the benchmark"),
+                ("trec/robust04", "is not a benchmark format"),
+            ] {
+                let error = launcher()
+                    .identity(&submission(
+                        &fixture_text("lexical-pipeline.yaml"),
+                        benchmark,
+                        Vec::new(),
+                    ))
+                    .await
+                    .expect_err("no such benchmark");
+
+                assert!(
+                    matches!(&error, LauncherError::Execution { error, at_node: None } if error.contains(words)),
+                    "{benchmark}: {error:?}"
+                );
+            }
+        }
+
+        /// Records when each query was observed, and lingers on the last one,
+        /// so the run's end is after it by a margin a millisecond clock sees.
+        struct Timing(Mutex<Vec<UnixMillis>>);
+
+        impl RunObserver for Timing {
+            fn query_done(&self, progress: QueryProgress) {
+                if progress.position == progress.total {
+                    std::thread::sleep(Duration::from_millis(30));
+                }
+                self.0.lock().expect("lock").push(now());
+            }
+        }
+
+        #[tokio::test]
+        async fn finished_is_read_once_the_last_query_has_run() {
+            let observer = Arc::new(Timing(Mutex::new(Vec::new())));
+
+            let run = launcher()
+                .execute(&lexical(), observer.clone(), Cancellation::new())
+                .await
+                .expect("the lexical fixture runs");
+
+            let last = *observer.0.lock().expect("lock").last().expect("observed");
+            let times = run.times.expect("a clock after the epoch gives times");
+            assert!(last <= times.finished(), "{last:?} {times:?}");
+        }
+
+        #[cfg(unix)]
+        #[tokio::test]
+        async fn started_is_read_before_the_benchmark_loads() {
+            // The corpus is a pipe, written only once the loader has opened
+            // it and some time has passed: a `started` read after the load
+            // would fall after `opened`.
+            let (datasets, corpus) = datasets_with_a_piped_corpus("started");
+            let text = std::fs::read(fixtures().join("beir-mini/corpus.jsonl")).expect("reads");
+            let writer = tokio::spawn(async move {
+                use tokio::io::AsyncWriteExt;
+                loop {
+                    match tokio::net::unix::pipe::OpenOptions::new().open_sender(&corpus) {
+                        Ok(mut sender) => {
+                            let opened = now();
+                            tokio::time::sleep(Duration::from_millis(50)).await;
+                            sender.write_all(&text).await.expect("the corpus writes");
+                            return opened;
+                        }
+                        Err(_) => tokio::time::sleep(Duration::from_millis(5)).await,
+                    }
+                }
+            });
+
+            let run = BinaryLauncher::new(&datasets)
+                .execute(&lexical(), Arc::new(Unobserved), Cancellation::new())
+                .await
+                .expect("the piped benchmark loads and runs");
+
+            let opened = writer.await.expect("the writer ran");
+            let times = run.times.expect("a clock after the epoch gives times");
+            assert!(times.started() <= opened, "{times:?} {opened:?}");
+        }
+
         /// `beir-mini` copied into a directory of this test's own, its corpus
         /// a named pipe: reading the benchmark blocks until something writes
         /// the corpus into it.
@@ -1227,16 +1327,18 @@ mod tests {
         async fn an_unreachable_service_is_refused_at_identity_naming_its_address() {
             // A bound retriever, which reports no identity, and a bound
             // context builder, whose identity is read before the benchmark
-            // loads; and a workspace binding no node uses, which a submission
-            // carries and the run ignores.
+            // loads — each at an address of its own, so the one named is the
+            // context builder's; and a workspace binding no node uses, which
+            // a submission carries and the run ignores.
             let uri = fakes::unreachable_uri();
+            let retriever_uri = "http://127.0.0.1:2";
             let document = "pipeline:\n  inputs: [question]\n  nodes:\n    \
                 - id: search\n      component: retriever\n      impl: far\n      \
                 inputs: [question]\n      params: { top_k: 3 }\n    \
                 - id: prompt\n      component: context_builder\n      impl: lines\n      \
                 inputs: [question, search]\n      params: { budget: 100 }\n";
             let bindings = vec![
-                binding("retriever", "far", &uri),
+                binding("retriever", "far", retriever_uri),
                 binding("context_builder", "lines", &uri),
                 binding("generator", "unused", "http://127.0.0.1:2"),
             ];

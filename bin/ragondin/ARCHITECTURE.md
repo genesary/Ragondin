@@ -99,9 +99,12 @@ release.
   stays lean — and it still loads, validates and
   hashes a configuration naming a component it does not carry. What refuses it
   depends on what the node names. A node family's name this build cannot
-  construct — `bm25`, `cross_encoder`, a generator nothing registers — reads no
-  identity and reaches planning, which reports the unknown `impl:` against the
-  family and the name. An embedder is not a node family, and no plan ever
+  construct — `bm25`, `cross_encoder`, a generator nothing registers — is
+  refused by `wiring::refuse_not_in_build` in the shared preparation, before
+  the benchmark loads: a name no build carries in planning's words for an
+  unknown `impl:`, naming the family and the name, and a `Local` name this
+  build's features leave out as `this build cannot construct the <family>
+  `<name>`: rebuild with the `<feature>` feature`. An embedder is not a node family, and no plan ever
   looks one up, so `wiring::check_nodes` names what is missing itself:
   `embedder: onnx` in a build without `onnx` is refused naming the feature
   (ADR-C32 § 4). `tests/bench.rs` asserts the `bm25` and the generator
@@ -285,7 +288,9 @@ release.
 - **The keys of the nodes this composition root reads — `dense`,
   `cross_encoder`, a reranker under a bound name, `concat`, `stub_generator` —
   are checked before the benchmark is loaded (ADR-C32 § 1)**; a node under any
-  other name is planning's to refuse.
+  other name has its parameters read by its constructor at planning, and a
+  name this build constructs nothing under is refused before that, by
+  `wiring::refuse_not_in_build`.
   A `dense` node names its embedder with `embedder:`, required and non-empty;
   the names this composition root knows are `onnx` and the names bound with
   `--remote embedder/<name>=<uri>`, and any other is refused naming the node
@@ -358,9 +363,14 @@ release.
   build gives a `Local` component is refused in planning's words (`no
   <family> implementation is registered under `<name>``), and a `Local`
   name this build's features leave out names the features that would carry
-  it. Planning made the first refusal before, after the benchmark loaded and
-  the corpus was embedded; `bench`'s message for it lost planning's `the
-  pipeline could not be planned:` prefix and nothing else.
+  it. Planning made both refusals before, after the benchmark loaded and the
+  corpus was embedded. `bench`'s stderr changed three ways, all on refusal
+  paths: planning's `the pipeline could not be planned:` prefix, and the
+  `caused by:` line that repeated the cause, are gone; a gated `Local` name
+  reads `this build cannot construct the <family> `<name>`: rebuild with the
+  `<feature>` feature` where planning said no implementation was registered;
+  and an unknown `impl:` is now reported before a dataset that does not load
+  and before a failing identity read, which used to be reported first.
 - **The shared path stamps when the run ran, and nothing else does.** The
   clock is read at the head of `execution::prepare` — after `bench`'s
   bindings are parsed on their text, before the configuration is read — so
@@ -369,7 +379,9 @@ release.
   `Ok`, before the run is handed back and so before `bench`'s save. Both
   readings go through `RunTimes::from_readings`, and a clock before the
   epoch leaves `Run::times` as `None` rather than recording a made-up time.
-  The launcher prepares at submission and again at execution, and only the
+  A cancellation set during the preparation or the embedding takes effect
+  before the first query: the harness reads the signal at the top of its
+  loop. The launcher prepares at submission and again at execution, and only the
   second stamps the run: the time a job spent queued is the job's. The
   harness assembles the run with no times, no bindings and no launch
   record, and the shared path sets all three — the record is the caller's

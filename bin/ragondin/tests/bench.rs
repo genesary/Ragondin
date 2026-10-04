@@ -469,7 +469,12 @@ mod with_remote_components {
 
         assert!(!output.status.success(), "{}", stdout(&output));
         let error = stderr(&output);
-        assert!(error.contains("reranked"), "{error}");
+        // The node's context reads exactly as it always has, whatever it
+        // carries for `ragondin ui`'s launcher.
+        assert!(
+            error.starts_with("error: node `reranked`\n  caused by: "),
+            "{error}"
+        );
         assert!(error.contains("unavailable"), "{error}");
         assert!(!store.exists(), "a refused run records nothing");
     }

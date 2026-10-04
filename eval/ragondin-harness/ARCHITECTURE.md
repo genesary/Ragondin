@@ -368,7 +368,11 @@ reader's agree.
 `tests/progress_and_cancellation.rs` drives `evaluate_observed` over the BEIR
 fixture, with a retriever that wraps the stub's and counts its calls — the
 proof that no query ran past a cancellation — and, for the signal set while a
-query is in flight, sets it from inside that query's first retrieval leg.
+query is in flight, sets it from inside that query's first retrieval leg. The
+same file holds `run_identity`'s two tests: the id it announces equals the
+id a completed `evaluate` over the same `Evaluation` carries, and it still
+answers for a run cancelled before its first query — the identity needs no
+query.
 
 The expected metrics in the first two files are derived by hand in a
 comment, from the fixture's qrels and from what the stub components fabricate;
