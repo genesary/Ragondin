@@ -57,7 +57,9 @@ Decision issue #462 put three options:
 - **C — allow a small, tested writer for the fixed wire schema only.**
 
 Decided in #462, by the repository owner on 2026-10-04: option C, as amended by
-an independent challenger.
+an independent challenger. Two precisions were confirmed by the repository
+owner on #462 on 2026-10-04: keys follow the same rules as values, and
+`AGENTS.md` cites this ADR.
 
 ## Decision
 
@@ -100,6 +102,10 @@ in the escalation itself, by the repository owner.
   same value.
 - **Integers and booleans.** An integer is written in decimal. A boolean is
   written `true` or `false`.
+- **Keys follow the same rules as values**, as the repository owner confirmed
+  on #462 on 2026-10-04. Parameter names, node ids, implementation names and
+  every other string the writer emits are written plain or quoted under the
+  one rule above.
 
 ### 2. What it refuses
 
@@ -163,7 +169,12 @@ A later case must meet **all** of these conditions:
   first canvas save of each one shows the ADR-016 § 5 warning.
 - **The prose saying a configuration states its version only to pin it
   deliberately is corrected.**
-- **ADR-C38 and ADR-C40 are not amended, and `AGENTS.md` is not changed.**
+- **ADR-C38 and ADR-C40 are not amended.**
+- **`AGENTS.md` only cites this ADR**, as the repository owner confirmed on
+  #462 on 2026-10-04. Beside the rule that a hand-written parser or encoder of
+  a standard format is not a way around an escalation (`AGENTS.md` § Rules of
+  engagement), it cites § 6 for the conditions a later case must meet. It adds
+  no exception clause.
 - **This ADR records the decision and lists the conditions that made it
   acceptable** (§ 6), so that a later case must meet all of them.
 
