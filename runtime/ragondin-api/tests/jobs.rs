@@ -1198,7 +1198,7 @@ async fn restart_marks_the_running_job_interrupted_and_resumes_the_queue() {
     assert_eq!(jobs[1].0, "was-queued");
     assert!(matches!(jobs[1].1, "queued" | "running"), "{listing}");
     assert_eq!(listing["jobs"][0]["state"]["error"], "interrupted");
-    // A crash leaves no partial traces: they are written when a run stops.
+    // A crash keeps no partial traces it can vouch for: the count is 0.
     assert_eq!(listing["jobs"][0]["state"]["partial_traces"], 0);
     let file = job_file(&workspace, "was-running");
     assert_eq!(file["state"]["kind"], "failed");
@@ -1510,6 +1510,59 @@ async fn a_job_without_partial_traces_answers_a_stable_code() {
         (status, &body["code"]),
         (StatusCode::NOT_FOUND, &json!("no_partial_traces"))
     );
+}
+
+/// A crash between the traces' write and the job's end leaves a traces file
+/// beside a job the next start fails as interrupted: a crash keeps none it
+/// can vouch for, so the file is never served as the job's.
+#[tokio::test]
+async fn a_traces_file_a_crash_left_beside_its_job_is_not_served() {
+    let workspace = scratch("jobs-partial-crash-window");
+    let jobs = workspace.join("jobs");
+    std::fs::create_dir_all(jobs.join("was-running/partial")).unwrap();
+    let crashed = stored_job(
+        "was-running",
+        1,
+        json!({ "kind": "running", "done": 2, "total": 3, "started_at": null, "median_latency_nanos": null }),
+        &["queued", "running"],
+    );
+    std::fs::write(
+        jobs.join("was-running.json"),
+        serde_json::to_vec(&crashed).unwrap(),
+    )
+    .unwrap();
+    let traces: BTreeMap<QueryId, TraceDocument> = [
+        (QueryId::new("q-1"), trace(100)),
+        (QueryId::new("q-2"), trace(200)),
+    ]
+    .into();
+    std::fs::write(
+        jobs.join("was-running/partial/traces.json"),
+        serde_json::to_vec(&traces).unwrap(),
+    )
+    .unwrap();
+
+    let app = server(&workspace, Arc::new(ScriptedLauncher::default()));
+
+    let job = json(send(app.clone(), get("/api/v1/jobs/was-running")).await).await;
+    assert_eq!(job["state"]["error"], "interrupted", "{job}");
+    assert_eq!(job["state"]["partial_traces"], 0, "{job}");
+    for path in [
+        "/api/v1/jobs/was-running/queries",
+        "/api/v1/jobs/was-running/trace/q-1",
+    ] {
+        let response = send(app.clone(), get(path)).await;
+        assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}");
+        let body = json(response).await;
+        assert_eq!(body["code"], "no_partial_traces", "{path}");
+        assert!(
+            body["detail"]
+                .as_str()
+                .unwrap()
+                .contains("interrupted by a crash"),
+            "{body}"
+        );
+    }
 }
 
 /// A job file written before the count was recorded: the count is read from
