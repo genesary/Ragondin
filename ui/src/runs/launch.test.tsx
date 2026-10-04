@@ -348,6 +348,23 @@ describe('the queue’s rows', () => {
     expect(order()).toEqual([short(B), short(C), short(A)]);
   });
 
+  it('follows a resync that arrives while a reorder is in flight, not the answer that comes after it', async () => {
+    const A = hex('a');
+    const B = hex('b');
+    const C = hex('e');
+    const q = (id: string, runId: string, position: number) => runJob(id, QUEUED, { runId, position });
+    let answer: (reply: { body: JobListing }) => void = () => {};
+    const { stream } = await show('#runs', routes({ 'PATCH /jobs/{id}': () => new Promise((resolve) => (answer = resolve)) }));
+    connect(stream, [q('ja', A, 0), q('jb', B, 1), q('jc', C, 2)]);
+    const order = () => screen.getAllByRole('row', { name: /, queued/ }).map((r) => r.getAttribute('aria-label')?.slice(4, 16));
+
+    fireEvent.click(within(jobRowOf(C)).getByRole('button', { name: `Move run ${short(C)} up` }));
+    // The stream starts again meanwhile, and its whole queue already has a later order than this move's.
+    send(stream, { event: 'resync', data: { faults: [], jobs: [q('jc', C, 0), q('ja', A, 1), q('jb', B, 2)] } });
+    await act(async () => answer({ body: { faults: [], jobs: [q('ja', A, 0), q('jc', C, 1), q('jb', B, 2)] } }));
+    expect(order()).toEqual([short(C), short(A), short(B)]);
+  });
+
   it('shows both ids on the run filed under another id than its job announced', async () => {
     const DECIDED = hex('d');
     const later: RunListing = { ...LISTING, runs: [run(DECIDED, { started_at_ms: 5 }), ...LISTING.runs] };

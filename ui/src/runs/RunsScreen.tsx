@@ -242,8 +242,10 @@ function Loaded({ client, listing, askedWith, refresh, sel, job, store, reread }
       return;
     }
     // The rows follow the API's answer, not the request — the queue may have placed it elsewhere — unless the
-    // stream has said the order since the request left: the queue publishes a reorder's events before it answers,
-    // so the stream is then at least as new as this answer, and an answer overtaken by another is never shown.
+    // stream has said an order since the request left; then the answer is dropped, so one overtaken by a later
+    // order is never shown. The server publishes a reorder's events before it answers, but the stream and the
+    // answer can reach the browser in either order: a dropped answer may leave the rows briefly without this
+    // move, until its own `reordered` events arrive and correct them.
     if (orderSaid.current === said) setPositions(new Map(result.value.jobs.map((j) => [j.id, j.position])));
     if (kept) focusNext.current = { want: { job: id, control }, from: { job: id, control } };
   };
