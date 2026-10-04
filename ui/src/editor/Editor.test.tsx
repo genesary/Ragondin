@@ -548,7 +548,20 @@ describe('the inspector in write mode', () => {
       await waitFor(() => expect(nodesOf(validations(api).at(-1)!)[0]!.params['mixed']).toEqual(list(int('1'), float(0.75))));
       fireEvent.change(field, { target: { value: '2, 3, 0.25' } });
       fireEvent.blur(field);
-      await waitFor(() => expect(nodesOf(validations(api).at(-1)!)[0]!.params['mixed']).toEqual(list(int('2'), float(3), float(0.25))));
+      await waitFor(() => expect(nodesOf(validations(api).at(-1)!)[0]!.params['mixed']).toEqual(list(int('2'), int('3'), float(0.25))));
+    });
+
+    it('matches the items by their text, not their place, when the list grows or shrinks', async () => {
+      const initial: WireDocument = { pipeline: { inputs: ['question'], nodes: [{ id: 'fused', component: 'fusion', impl: 'rrf', inputs: [], params: { w: list(int('1'), float(0.5), int('2')), t: list(str('10'), str('x')) } }] } };
+      const { api } = setup(undefined, { initial, start: 'fused' });
+      const w = screen.getByLabelText('w');
+      fireEvent.change(w, { target: { value: '1, 2' } });
+      fireEvent.blur(w);
+      await waitFor(() => expect(nodesOf(validations(api).at(-1)!)[0]!.params['w']).toEqual(list(int('1'), int('2'))));
+      const t = screen.getByLabelText('t');
+      fireEvent.change(t, { target: { value: 'y, x, 10' } });
+      fireEvent.blur(t);
+      await waitFor(() => expect(nodesOf(validations(api).at(-1)!)[0]!.params['t']).toEqual(list(str('y'), str('x'), str('10'))));
     });
 
     it('keeps the items a person did not touch as they were, a text item reading as a number included', async () => {

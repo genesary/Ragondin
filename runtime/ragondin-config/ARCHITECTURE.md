@@ -89,7 +89,9 @@ nothing here presupposes an answer to it.
   them all. No YAML writer is written here, and no second YAML library is
   taken on, which would escalate (`AGENTS.md` § Rules of engagement). **The
   renderer refuses what would not read back as itself** — a non-finite
-  float, a parameter name longer than the 1024 bytes YAML reads a key in —
+  float, a parameter name too long once rendered for YAML to read it as a
+  key (the limit counts its quotes and escapes: about 1022 plain characters,
+  about 511 `é` or newlines) —
   by reading its own rendering back through `read_document` and comparing,
   so the promise holds by construction, not by the cases a test thought of. The cost, for #356,
   which stores the rendering: a pipeline saved from the canvas is a JSON

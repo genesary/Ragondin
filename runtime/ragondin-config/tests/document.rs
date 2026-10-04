@@ -437,20 +437,29 @@ fn a_character_yaml_folds_or_refuses_is_written_as_its_escape() {
     }
 }
 
-/// YAML reads a key of at most 1024 bytes on its line; a parameter name
-/// longer than that would not read back, so it is refused.
+/// YAML reads a key only when it is short enough once rendered, its quotes
+/// and escapes included: about 1022 plain characters, about half as many `é`
+/// or newlines, which render as two bytes or as `\n`. A parameter name longer
+/// than that would not read back, so it is refused.
 #[test]
 fn a_parameter_name_too_long_for_a_yaml_key_is_refused() {
-    let short = document(vec![node(
-        "lexical",
-        vec![(&"k".repeat(1000), RawParamValue::Bool(true))],
-    )]);
-    assert!(render_document(&short).is_ok());
-    let long = document(vec![node(
-        "lexical",
-        vec![(&"k".repeat(1100), RawParamValue::Bool(true))],
-    )]);
-    assert_eq!(render_document(&long), Err(RenderError));
+    let renders = |key: String| {
+        render_document(&document(vec![node(
+            "lexical",
+            vec![(&key, RawParamValue::Bool(true))],
+        )]))
+    };
+    assert!(renders("k".repeat(1000)).is_ok());
+    assert!(renders("é".repeat(500)).is_ok());
+    assert!(renders("\n".repeat(500)).is_ok());
+    for key in ["k".repeat(1100), "é".repeat(600), "\n".repeat(600)] {
+        assert_eq!(
+            renders(key.clone()),
+            Err(RenderError),
+            "{} characters",
+            key.chars().count()
+        );
+    }
 }
 
 #[test]

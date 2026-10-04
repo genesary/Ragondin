@@ -62,9 +62,13 @@ type Read = { value: ParameterValue } | { error: string };
 
 /**
  * Text read as one kind. A list's items are read one by one against `was`,
- * the items the list held: an item whose text is unchanged is kept as it was,
- * a changed one keeps its item's kind when its text reads in it, and any
- * other is read from its text, so `[1, 0.5]` stays an integer and a float.
+ * the items the list held. While the count is the same, an item is matched
+ * to the one in its place: kept as it was when its text is unchanged, given
+ * that item's kind when its text reads in it, so `[1, 0.5]` edited to
+ * `1, 0.75` stays an integer and a float. When the count changes, places mean
+ * nothing: an item is kept only when an item not yet matched has exactly its
+ * text, and any other is read from its text, so `[1, 0.5, 2]` edited to
+ * `1, 2` is two integers.
  */
 function readAs(kind: Kind, text: string, was: readonly ParameterValue[] = []): Read {
   const t = text.trim();
@@ -90,7 +94,19 @@ function readAs(kind: Kind, text: string, was: readonly ParameterValue[] = []): 
     case 'list': {
       const read: ParameterValue[] = [];
       const items = text.split(',').map((i) => i.trim()).filter((i) => i !== '');
+      const unmatched = [...was];
       for (const [at, item] of items.entries()) {
+        if (items.length !== was.length) {
+          const same = unmatched.findIndex((before) => before.kind !== 'list' && textOf(before) === item);
+          if (same !== -1) {
+            read.push(unmatched.splice(same, 1)[0]!);
+            continue;
+          }
+          const one = infer(item);
+          if ('error' in one) return one;
+          read.push(one.value);
+          continue;
+        }
         const before = was[at];
         if (before !== undefined && before.kind !== 'list' && textOf(before) === item) {
           read.push(before);

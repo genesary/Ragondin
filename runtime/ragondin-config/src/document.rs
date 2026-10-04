@@ -96,8 +96,8 @@ pub fn render_document(document: &RawPipeline) -> Result<String, RenderError> {
     let json = serde_json::to_string_pretty(document).map_err(|_| RenderError)?;
     let text = escape_for_yaml(&json) + "\n";
     // The guard that makes the promise above hold by construction: a
-    // non-finite float, which JSON writes as `null`, or a key too long for
-    // YAML to read as one, is found here rather than by the next reader, and
+    // non-finite float, which JSON writes as `null`, or a key too long once
+    // rendered for YAML to read as one, is found here rather than by the next reader, and
     // so would anything else that did not read back.
     match read_document(&text) {
         Ok(read) if read == *document => Ok(text),
@@ -136,9 +136,11 @@ fn escape_for_yaml(json: &str) -> String {
 
 /// A wire-schema document whose rendering would not read back as itself: a
 /// non-finite float, which neither JSON nor the wire schema's reader carries,
-/// or a parameter name longer than the 1024 bytes YAML reads a key in.
+/// or a parameter name too long once rendered for YAML to read it as a key:
+/// the limit counts the key as written, its quotes and escapes included —
+/// about 1022 plain characters, about 511 `é` or newlines (`\n`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
-#[error("the document holds what the configuration format cannot carry: a number that is not finite, or a parameter name longer than 1024 bytes")]
+#[error("the document holds what the configuration format cannot carry: a number that is not finite, or a parameter name too long once rendered")]
 pub struct RenderError;
 
 /// Why a document's text is not a [`LogicalPipeline`]: the three halves of
