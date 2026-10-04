@@ -187,6 +187,21 @@ made by a hand-written editor for the format.
   editor did not write is replaced; § 7 above names what that warning says.
   ADR-016's Decision changes only by supersession (`docs/adr/README.md`
   process rules 1 and 2), and nothing here supersedes it.
+- **How this stands to ADR-C36 § 1**, confirmed by the repository owner on
+  #450 on 2026-10-04:
+
+  > **ADR-C36 § 1 is not superseded.** Read mode draws the graph the server
+  > lowers from a run's stored document. The server also lowers every edited
+  > document, through the single load, for the verdict and the hash, and the
+  > verdict names the document's own node ids and edges. The editor's canvas
+  > draws the typed document it holds, because a document being edited is
+  > often invalid and an invalid document has no lowered form (ADR-C23). The
+  > grammar has one implementation that decides, and it is Rust: the browser
+  > parses, lowers and hashes nothing, takes each family's ports from the
+  > server, and its checks while editing only anticipate the server's verdict.
+
+  The residual risk is accepted: C36 § 1's words stay contradicted for the
+  editor's drawing until C36 is next superseded.
 - **ADR-C22 is not amended.** The parameter grammar is unchanged; a kind it
   adds later gains its own tag here (§ 1).
 - **No format-preserving editor of the configuration format is adopted.**
