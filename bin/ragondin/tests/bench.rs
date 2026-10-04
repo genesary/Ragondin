@@ -119,8 +119,9 @@ fn a_configuration_holding_an_extension_node_is_refused_before_anything_runs() {
     assert!(!store.exists(), "a refused configuration records no run");
 }
 
-/// A generator no build registers is refused by planning's unknown `impl:`,
-/// naming the family and the name — in every build, lean included: a
+/// A generator no build registers is refused before the benchmark loads, in
+/// planning's words for an unknown `impl:`, naming the family and the name —
+/// in every build, lean included: a
 /// `Remote` generator is named by an ordinary `impl:` name, and until
 /// something binds it, it is a name this composition root does not know.
 #[test]
@@ -343,7 +344,7 @@ mod with_remote_components {
 
         // The adapter applies the prefixes, and the text on the wire is final
         // (ADR-C32 § 4): the service sees the passage prefix on the corpus,
-        // which `prepare` embedded, and the query prefix on every query the
+        // which the execution embedded, and the query prefix on every query the
         // dense retriever embedded. Every call named the served model, or the
         // fake would have refused it and the run failed.
         let texts = services.embedder.texts();
@@ -525,6 +526,69 @@ mod with_components {
             "bm25 reads no model, so the run records no model hash"
         );
     }
+
+    /// What `bench` printed over the M2 and M3 fixtures before its steps were
+    /// split into the preparation and the execution `ragondin ui`'s launcher
+    /// shares with it — recorded from the binary built before the split, and
+    /// pinned literally, run id included: the split moved code, not output.
+    #[test]
+    fn bench_prints_and_files_what_it_did_before_the_split() {
+        let cases = [
+            ("lexical-pipeline.yaml", "beir/beir-mini", LEXICAL_GOLDEN),
+            #[cfg(feature = "stub")]
+            (
+                "stub-generation-bench.yaml",
+                "squad/squad-mini",
+                GENERATION_GOLDEN,
+            ),
+        ];
+        for (config, benchmark, golden) in cases {
+            let store = store(&format!("golden-{config}"));
+
+            let output = ragondin(&[
+                "bench",
+                &fixture(config),
+                "--benchmark",
+                benchmark,
+                "--datasets",
+                path(&fixtures()),
+                "--store",
+                path(&store),
+            ]);
+
+            assert!(output.status.success(), "{}", stderr(&output));
+            assert_eq!(stdout(&output), golden, "{config}");
+            let id = reported_run_id(golden);
+            FileSystemRunStore::new(&store)
+                .load(&id)
+                .expect("the run is filed under the id it always had");
+        }
+    }
+
+    const LEXICAL_GOLDEN: &str = concat!(
+        "run 4f66078d4e4173c98c7769ff0114bd36fa88ba634fa9184df2018f377c8f78b8\n",
+        "  pipeline      26569fa152e509446c2b9bc6c4734d6a092e887e026183c0bcee861548517c8f\n",
+        "  dataset       6910c589cedaa5c024928381be132a210b39d7d8eaec02b442a4da8de9e6e51c\n",
+        "  index         4317ad07139072337d02d2d6a21554f318807ded3aec079eeb3c7016aa441168\n",
+        "mrr: 1.0000\n",
+        "ndcg@10: 1.0000\n",
+        "recall@10: 1.0000\n",
+    );
+
+    #[cfg(feature = "stub")]
+    const GENERATION_GOLDEN: &str = concat!(
+        "run b6d06eefc434f7f9716b62bd95c451ec5ea6e745d2598668e54dd8b8b8c199c5\n",
+        "  pipeline      4ae8cfcc6a0d048b839b83f53975e72cc0d1b95c18c4cf728517c4d3e4736de1\n",
+        "  dataset       cd5838b7d2755f91362604f5036b19723c76065f589bbda12ebe3fa564d5682c\n",
+        "  index         d1424378b3520bfb31b64e73ba4480e326842c56d028c884c55d2ba7b87aa54f\n",
+        "  model[context_builder]  sha256:2483887ed2fe9664ba2a2618f196184b7500f0cf0f0018be46ea1ce99a505112\n",
+        "  model[generator]  ragondin-stub/generator:first-line-of-context:v1\n",
+        "exact_match: 1.0000\n",
+        "mrr: 1.0000\n",
+        "ndcg@10: 1.0000\n",
+        "recall@10: 1.0000\n",
+        "token_f1: 1.0000\n",
+    );
 
     /// The hybrid configuration: a lexical leg and a dense one, fused.
     ///

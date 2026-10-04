@@ -13,8 +13,9 @@
 //! - [`address`] — the loopback rule, and its refusal.
 //! - [`assets`] — the embedded UI, or the notice page, as `ragondin-api`'s
 //!   asset table.
-//! - [`launcher`] — `Launcher`: capabilities, a binding's check, the
-//!   identity probe.
+//! - [`launcher`] — `Launcher`: capabilities, a binding's and a document's
+//!   check, the identity probe, and a run's identity and execution over
+//!   `bench`'s path.
 //! - [`location`] — where the workspace is, from `--workspace`, `--store` or
 //!   nothing.
 
@@ -69,6 +70,9 @@ pub async fn run(request: &Request<'_>) -> Result<()> {
         .await
         .map_err(|error| anyhow::anyhow!("{error}"))?
         .datasets;
+    // The launcher reads a submission's benchmark where the registry keeps
+    // it, so a benchmark downloaded from the UI is the one a run evaluates.
+    let launcher = launcher::BinaryLauncher::new(&datasets);
     let registry = FsRegistry::new(datasets, ragondin_benchmarks::manifest::manifest());
     registry
         .sweep_staging()
@@ -87,7 +91,7 @@ pub async fn run(request: &Request<'_>) -> Result<()> {
         pipelines: Arc::new(FsPipelines::new(&workspace)),
         registry: Arc::new(registry),
         settings: Arc::new(settings),
-        launcher: Arc::new(launcher::BinaryLauncher),
+        launcher: Arc::new(launcher),
     };
     let server = ragondin_api::router(
         backends,

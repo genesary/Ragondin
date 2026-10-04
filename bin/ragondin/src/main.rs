@@ -50,6 +50,7 @@ use clap::{Parser, Subcommand};
 mod bench;
 mod binding;
 mod compare;
+mod execution;
 mod notices;
 #[cfg(feature = "ui")]
 mod ui;

@@ -14,6 +14,7 @@
 #![allow(dead_code)] // each includer uses the part it needs
 
 use std::net::TcpListener as StdListener;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
@@ -312,8 +313,14 @@ impl context_builder_server::ContextBuilder for ContextBuilderService {
 
 /// Hosts `ragondin-stub`'s generator, serving [`GENERATOR_MODEL`]: it answers
 /// with the first line of the context the template places, and refuses any
-/// other served model (ADR-C31 § 4).
-struct GeneratorService(StubGenerator);
+/// other served model (ADR-C31 § 4). Once its switch is set, it reports
+/// [`CHANGED_GENERATOR_IDENTITY`] instead — a service whose model was swapped
+/// while it kept its address.
+struct GeneratorService(StubGenerator, Arc<AtomicBool>);
+
+/// What a generator served by [`serve_switchable_generator`] reports once
+/// its switch is set.
+pub const CHANGED_GENERATOR_IDENTITY: &str = "qwen2.5-7b-instruct@swapped";
 
 #[tonic::async_trait]
 impl generator_server::Generator for GeneratorService {
@@ -340,6 +347,10 @@ impl generator_server::Generator for GeneratorService {
             .model_identity(&served_model)
             .await
             .map_err(|e| status_from_error(&e))?;
+        let identity = match self.1.load(Ordering::SeqCst) {
+            true => ModelIdentity::new(CHANGED_GENERATOR_IDENTITY),
+            false => identity,
+        };
         Ok(Response::new(identity.into_proto()))
     }
 }
@@ -355,9 +366,18 @@ pub fn serve_context_builder() -> Service {
 
 /// Serves `ragondin-stub`'s generator under [`GENERATOR_MODEL`].
 pub fn serve_generator() -> Service {
-    serve(
+    serve_switchable_generator().0
+}
+
+/// Serves the generator [`serve_generator`] serves, and returns the switch
+/// that makes it report [`CHANGED_GENERATOR_IDENTITY`] from then on.
+pub fn serve_switchable_generator() -> (Service, Arc<AtomicBool>) {
+    let switch = Arc::new(AtomicBool::new(false));
+    let service = serve(
         Server::builder().add_service(generator_server::GeneratorServer::new(GeneratorService(
             StubGenerator::new(GENERATOR_MODEL),
+            Arc::clone(&switch),
         ))),
-    )
+    );
+    (service, switch)
 }

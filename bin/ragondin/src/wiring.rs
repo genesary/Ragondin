@@ -87,8 +87,6 @@ const LOCAL: [(Family, &str, Gate); 7] = [
 
 /// What carries a [`LOCAL`] entry: any one of `features`, and whether this
 /// build has one, derived from `features` by [`Gate::any_of`].
-// Read only by what `ragondin ui` reports.
-#[cfg_attr(not(feature = "ui"), allow(dead_code))]
 struct Gate {
     features: &'static [&'static str],
     on: bool,
@@ -136,6 +134,127 @@ pub fn is_local(family: Family, name: &str) -> bool {
     LOCAL
         .iter()
         .any(|(of, local, _)| *of == family && *local == name)
+}
+
+/// An `impl:` name this build constructs nothing under: neither a `Local`
+/// component it carries nor a name bound with `--remote`.
+///
+/// Its words are planning's for a name no build gives a `Local` component —
+/// the refusal is the same, made before the benchmark loads rather than at
+/// planning — and name the features that would carry one another build does.
+#[derive(Debug)]
+pub struct NotInBuild {
+    /// The family the node is in.
+    pub family: Family,
+    /// The `impl:` name.
+    pub name: String,
+    /// The features any one of which would carry it, from [`LOCAL`]'s gate;
+    /// empty for a name no build gives a `Local` component.
+    pub features: &'static [&'static str],
+}
+
+impl std::fmt::Display for NotInBuild {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            family,
+            name,
+            features,
+        } = self;
+        match features {
+            [] => write!(f, "no {family} implementation is registered under `{name}`"),
+            _ => write!(
+                f,
+                "this build cannot construct the {family} `{name}`: rebuild with the `{}` feature",
+                features.join("` or `")
+            ),
+        }
+    }
+}
+
+impl std::error::Error for NotInBuild {}
+
+/// Refuses the first node whose `impl:` name this build constructs nothing
+/// under ([`NotInBuild`]): checked against [`LOCAL`] and `bindings` — the
+/// names [`register`] registers — before the benchmark loads, so a run that
+/// cannot be planned is refused before anything expensive is done. The
+/// `embedder:` a `dense` node names is [`check_nodes`]' to refuse.
+pub fn refuse_not_in_build(
+    pipeline: &LogicalPipeline,
+    bindings: &Bindings,
+) -> Result<(), NotInBuild> {
+    for node in pipeline.nodes() {
+        let Some((family, name)) = family_of(node) else {
+            continue;
+        };
+        if bindings.binds(family, name) {
+            continue;
+        }
+        match LOCAL
+            .iter()
+            .find(|(of, local, _)| *of == family && *local == name)
+        {
+            Some((_, _, gate)) if gate.on => {}
+            gated => {
+                return Err(NotInBuild {
+                    family,
+                    name: name.to_owned(),
+                    features: gated.map_or(&[], |(_, _, gate)| gate.features),
+                })
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The family a node is planned in and the `impl:` name it is looked up
+/// under; `None` for an extension node, which has no family.
+fn family_of(node: &LogicalNode) -> Option<(Family, &str)> {
+    Some(match node {
+        LogicalNode::Retriever(node) => (Family::Retriever, node.implementation.as_str()),
+        LogicalNode::Fusion(node) => (Family::Fusion, node.implementation.as_str()),
+        LogicalNode::Reranker(node) => (Family::Reranker, node.implementation.as_str()),
+        LogicalNode::ContextBuilder(node) => (Family::ContextBuilder, node.implementation.as_str()),
+        LogicalNode::Generator(node) => (Family::Generator, node.implementation.as_str()),
+        LogicalNode::Extension(_) => return None,
+    })
+}
+
+/// The node an identity read failed at — the context [`model_hashes`] puts
+/// on each node's failure — and the address of the service it reads through,
+/// when it reads through one. It reads as ``node `<id>` ``, exactly as a plain
+/// context would, so `bench`'s words are unchanged; `ragondin ui`'s launcher
+/// reads the address back to say which service did not answer.
+#[derive(Debug)]
+pub struct AtNode {
+    /// The node's id.
+    pub node: String,
+    /// The address its component is bound to — for a `dense` node, its
+    /// embedder's — when it is bound. Read only by `ragondin ui`'s launcher.
+    #[cfg_attr(not(feature = "ui"), allow(dead_code))]
+    pub service: Option<String>,
+}
+
+impl std::fmt::Display for AtNode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "node `{}`", self.node)
+    }
+}
+
+/// The address `node`'s component is bound to in `bindings`, if it is: its
+/// own `impl:` name in its family, or a `dense` node's `embedder:`.
+fn service_of(node: &LogicalNode, bindings: &Bindings) -> Option<String> {
+    let (family, name) = match node {
+        LogicalNode::Retriever(node) if node.implementation == DENSE => {
+            match node.params.get("embedder") {
+                Some(ParamValue::String(embedder)) => (Family::Embedder, embedder.as_str()),
+                _ => return None,
+            }
+        }
+        node => family_of(node)?,
+    };
+    bindings
+        .get(family, name)
+        .map(|binding| binding.uri.clone())
 }
 
 /// The `Local` components **this** build carries, by family, in [`LOCAL`]'s
@@ -768,8 +887,8 @@ pub fn embedder_spec(
 /// then dropped — registration constructs another. The key is the node's
 /// **family**, never its `impl:` name: `embedder` for a `dense` node's
 /// embedder, `reranker`, `context_builder` and `generator`. A node whose name
-/// this build cannot construct is skipped, and planning's unknown `impl:`
-/// names it. A role is recorded once, so two nodes on one role must report the
+/// this build cannot construct is skipped: [`refuse_not_in_build`] names it,
+/// before this read in the shared preparation, and planning would. A role is recorded once, so two nodes on one role must report the
 /// same identity — the rule [`embedder_spec`] states for the corpus, seen from
 /// the identity side.
 ///
@@ -790,9 +909,10 @@ pub async fn model_hashes(
 
     for node in pipeline.nodes() {
         let id = node.id().as_str();
-        let Some((role, identity)) = identity_of(node, bound)
-            .await
-            .with_context(|| format!("node `{id}`"))?
+        let Some((role, identity)) = identity_of(node, bound).await.with_context(|| AtNode {
+            node: id.to_owned(),
+            service: service_of(node, bound.bindings()),
+        })?
         else {
             continue;
         };
