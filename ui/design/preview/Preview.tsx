@@ -18,6 +18,7 @@ import {
   Inspector,
   LineChart,
   MetricChip,
+  PrefixLabel,
   Progress,
   RankStrip,
   RunSwatch,
@@ -43,7 +44,7 @@ import './preview.css';
 export const COMPONENTS = [
   'Glyph', 'Button', 'Input', 'Select', 'Checkbox', 'StatusChip', 'MetricChip', 'FilterChip', 'RunSwatch', 'Table',
   'Sheet', 'Inspector', 'Toast', 'InlineMessage', 'Progress', 'EmptyState', 'RankStrip', 'SegmentedControl', 'Tabs', 'TopBar',
-  'StatusDot', 'NodeCard', 'Canvas', 'Charts',
+  'StatusDot', 'PrefixLabel', 'NodeCard', 'Canvas', 'Charts',
 ] as const;
 
 /** Three runs, the baseline first, for the chart primitives. */
@@ -449,6 +450,13 @@ function Column({ theme }: { theme: 'light' | 'dark' }) {
         <div className="rg-preview__row">
           <StatusDot connected />
           <StatusDot connected={false} />
+        </div>
+      </Block>
+
+      <Block name="PrefixLabel">
+        <div className="rg-preview__row">
+          <PrefixLabel parent="hybrid-rerank-gen" upTo="rerank" />
+          <PrefixLabel parent={null} upTo="rrf" />
         </div>
       </Block>
 

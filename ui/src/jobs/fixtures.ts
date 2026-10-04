@@ -12,7 +12,7 @@ export function runJob(id: string, state: JobStatus, { pipeline = 'hybrid', benc
     created_at_ms: 1_700_000_000_000,
     position,
     state,
-    work: { kind: 'run', pipeline, benchmark, run_id: runId, up_to: upTo, bindings: [] },
+    work: { kind: 'run', pipeline, benchmark, run_id: runId, up_to: upTo, parent_pipeline_hash: upTo === null ? null : hex('e'), bindings: [] },
   };
 }
 

@@ -12,7 +12,7 @@ const run = (id: string, over: Partial<RunSummary> = {}): RunSummary => ({
   id,
   pipeline: hex('c'),
   pipeline_names: ['hybrid'],
-  refused_pipeline_names: [],
+  refused_pipeline_names: [], prefix_of_documents: [],
   launched_as: { name: 'hybrid', held: 'exactly', prefix_of: null },
   dataset_version: SCIFACT,
   benchmark_names: ['beir/scifact'],
@@ -51,7 +51,7 @@ describe('rowsFromJobs', () => {
     const [row] = rowsFromJobs(jobs(runJob('c', CANCELLED, { pipeline: 'dense', benchmark: 'beir/fiqa', runId: hex('b'), upTo: 'rrf' })), []);
     expect(row?.source).toEqual({ kind: 'job', id: 'c', runId: hex('b') });
     expect(row?.job?.submission).toEqual({ pipeline: 'dense', benchmark: 'beir/fiqa', up_to: 'rrf' });
-    expect(row?.prefix).toEqual({ parent: 'dense', upTo: 'rrf' });
+    expect(row?.prefix).toEqual({ parents: ['dense'], upTo: 'rrf' });
     expect(row?.status).toEqual({ state: 'cancelled' });
   });
 

@@ -10,6 +10,7 @@ export { InlineMessage } from './components/InlineMessage/InlineMessage.tsx';
 export { Input } from './components/Input/Input.tsx';
 export { Inspector } from './components/Inspector/Inspector.tsx';
 export { Delta, MetricChip } from './components/MetricChip/MetricChip.tsx';
+export { PrefixLabel, prefixWords } from './components/PrefixLabel/PrefixLabel.tsx';
 export { Progress } from './components/Progress/Progress.tsx';
 export { RankStrip, rankSentence } from './components/RankStrip/RankStrip.tsx';
 export { RunSwatch, type RunSlot } from './components/RunSwatch/RunSwatch.tsx';

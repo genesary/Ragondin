@@ -1,12 +1,12 @@
 // One run of the store as a row of design/'s Table — a job of the queue is
 // `jobRow.tsx`'s. Every part is design/'s — Checkbox, StatusChip, MetricChip,
-// Glyph — and this file only fills the cells. A row
+// PrefixLabel — and this file only fills the cells. A row
 // draws what its run has and nothing for what it lacks: no dash stands in for
 // a metric the benchmark's ground truth could not produce. The row takes the
 // keyboard as one of the table's single tab stop, so the checkbox and the link
 // inside it leave the tab order; a click still reaches both.
 import type { ReactNode } from 'react';
-import { Checkbox, Glyph, MetricChip, StatusChip, type TableRow } from '../../design/index.ts';
+import { Checkbox, MetricChip, PrefixLabel, StatusChip, type TableRow } from '../../design/index.ts';
 import { formatHash } from '../routes.ts';
 import { benchmarkLabel, formatLatency, formatMetric, metricLabel, openRoute, otherFact, rowKey, shortHash, type RunRow } from './model.ts';
 import type { Refusal } from './selection.ts';
@@ -81,8 +81,7 @@ export function runRow(row: RunRow, { selected, refusal, columns, onToggle }: Ru
       </a>
       {row.prefix === null ? null : (
         <span className="rg-runs__prefix">
-          <Glyph name="prefix" />
-          {row.prefix.upTo === null ? 'prefix' : `prefix up to ${row.prefix.upTo}`}
+          <PrefixLabel parent={row.prefix.parents.join(', ')} upTo={row.prefix.upTo} />
         </span>
       )}
       {/* The fact the group is not headed by: text from the first draw, so nothing moves in later. */}

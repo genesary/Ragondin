@@ -173,7 +173,7 @@ describe('the runs that feed it', () => {
     show(`#pipeline/${NAME}`, routes({ body: PREFIXED }));
     await loaded();
     const prefix = within(runs()).getAllByRole('listitem').find((li) => li.textContent?.includes(RUN_PREFIX.slice(0, 12))) as HTMLElement;
-    expect(prefix.textContent).toContain('prefix up to rerank');
+    expect(within(prefix).getByText(`prefix of ${NAME}, up to rerank`)).toBeTruthy();
     expect(within(prefix).getByText(`Launched as a prefix of ${NAME}, up to rerank`)).toBeTruthy();
     expect(within(prefix).getByText('Content: no current pipeline document')).toBeTruthy();
   });

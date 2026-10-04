@@ -31,6 +31,7 @@ const summary = (id: string, over: Partial<RunSummary> = {}): RunSummary => ({
   pipeline: hex('a'),
   pipeline_names: [],
   refused_pipeline_names: [],
+  prefix_of_documents: [],
   launched_as: null,
   dataset_version: hex('d'),
   benchmark_names: [],
@@ -106,7 +107,20 @@ describe('rowsFromListing', () => {
   it('reads a recorded prefix as a prefix of the parent its record names, up to its node', () => {
     const record = { name: 'hybrid', prefix_of: { up_to: 'rerank', parent_pipeline_hash: hex('a') }, held: 'exactly' as const };
     const [read] = rowsFromListing(listingOf(summary(hex('1'), { launched_as: record })));
-    expect(read).toMatchObject({ launchedAs: 'hybrid', prefix: { parent: 'hybrid', upTo: 'rerank' } });
+    expect(read).toMatchObject({ launchedAs: 'hybrid', prefix: { parents: ['hybrid'], upTo: 'rerank' } });
+  });
+
+  it('reads a run with no record as a prefix of every document the listing says it is structurally a prefix of', () => {
+    const [read] = rowsFromListing(
+      listingOf(summary(hex('1'), { prefix_of_documents: [{ pipeline: 'fork', up_to: 'rerank' }, { pipeline: 'hybrid', up_to: 'rerank' }] })),
+    );
+    expect(read).toMatchObject({ launchedAs: null, prefix: { parents: ['fork', 'hybrid'], upTo: 'rerank' } });
+  });
+
+  it('reads the record’s parent first, the structural relation asked of the run notwithstanding', () => {
+    const record = { name: 'hybrid', prefix_of: { up_to: 'rerank', parent_pipeline_hash: hex('a') }, held: 'exactly' as const };
+    const [read] = rowsFromListing(listingOf(summary(hex('1'), { launched_as: record, prefix_of_documents: [{ pipeline: 'fork', up_to: 'rerank' }] })));
+    expect(read).toMatchObject({ prefix: { parents: ['hybrid'], upTo: 'rerank' } });
   });
 
   it('carries every pipeline and benchmark name the listing gives, and the start time as an instant', () => {
@@ -243,19 +257,32 @@ describe('groupRows', () => {
   it('a prefix run sits in its parent’s group', () => {
     const groups = groupRows([
       row('1', { pipeline: hex('a'), launchedAs: 'hybrid' }),
-      row('2', { pipeline: hex('f'), launchedAs: 'hybrid', prefix: { parent: 'hybrid', upTo: 'rerank' } }),
+      row('2', { pipeline: hex('f'), launchedAs: 'hybrid', prefix: { parents: ['hybrid'], upTo: 'rerank' } }),
     ]);
     expect(groups.map((g) => [g.names, ids(g.rows)])).toEqual([[['hybrid'], ['1', '2']]]);
   });
 
   it('gives a prefix run whose parent has no run here a group under the parent’s name, so it is still shown, with no shape', () => {
-    const groups = groupRows([row('2', { pipeline: hex('f'), launchedAs: 'hybrid', prefix: { parent: 'hybrid', upTo: 'rerank' } })]);
+    const groups = groupRows([row('2', { pipeline: hex('f'), launchedAs: 'hybrid', prefix: { parents: ['hybrid'], upTo: 'rerank' } })]);
     expect(groups.map((g) => [g.names, ids(g.rows), g.shapeKey])).toEqual([[['hybrid'], ['2'], null]]);
+  });
+
+  it('puts a prefix with no record and no hash match — run from the command line — in its parent’s group', () => {
+    const groups = groupRows([
+      row('1', { pipeline: hex('a'), launchedAs: 'hybrid' }),
+      row('2', { pipeline: hex('f'), prefix: { parents: ['hybrid'], upTo: 'rerank' } }),
+    ]);
+    expect(groups.map((g) => [g.names, ids(g.rows)])).toEqual([[['hybrid'], ['1', '2']]]);
+  });
+
+  it('keeps a structural prefix that is itself a workspace document under that document', () => {
+    const groups = groupRows([row('2', { pipeline: hex('f'), pipelineNames: ['up-to-rerank'], prefix: { parents: ['hybrid'], upTo: 'rerank' } })]);
+    expect(groups.map((g) => g.names)).toEqual([['up-to-rerank']]);
   });
 
   it('takes a group’s pipeline — for its shape and its link — from its most recent run of its own, not a prefix', () => {
     const groups = groupRows([
-      row('2', { pipeline: hex('f'), launchedAs: 'hybrid', prefix: { parent: 'hybrid', upTo: 'rerank' } }),
+      row('2', { pipeline: hex('f'), launchedAs: 'hybrid', prefix: { parents: ['hybrid'], upTo: 'rerank' } }),
       row('1', { pipeline: hex('a'), launchedAs: 'hybrid' }),
       row('3', { pipeline: hex('c'), launchedAs: 'hybrid' }),
     ]);

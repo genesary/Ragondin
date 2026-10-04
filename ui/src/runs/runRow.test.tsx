@@ -156,9 +156,9 @@ describe('a done run', () => {
     expect(within(tr).getAllByRole('cell')).toHaveLength(4);
   });
 
-  it('labels a prefix run with the node it stops at', () => {
-    show(done({ launchedAs: 'hybrid', prefix: { parent: 'hybrid', upTo: 'rerank' } }));
-    expect(screen.getByText('prefix up to rerank')).toBeTruthy();
+  it('labels a prefix run with its parent and the node it stops at', () => {
+    show(done({ launchedAs: 'hybrid', prefix: { parents: ['hybrid'], upTo: 'rerank' } }));
+    expect(screen.getByText('prefix of hybrid, up to rerank')).toBeTruthy();
   });
 
   it('writes the fact its group is not headed by beside its hash, in words', () => {

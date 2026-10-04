@@ -6,7 +6,7 @@ import { Button, RunSwatch, Select } from '../../design/index.ts';
 import type { ApiProblem } from '../api/client.ts';
 import type { Comparison, RunListing } from '../api/types.ts';
 import { navigate } from '../routes.ts';
-import { shortHash } from '../runs/model.ts';
+import { prefixText, shortHash } from '../runs/model.ts';
 import { ErrorState, type RequestState } from '../shell/states.tsx';
 import { pipelineName, runSeries } from './model.ts';
 
@@ -37,6 +37,12 @@ export function RunBar({ comparison, ids, baseline, listing, onRetryListing, onA
   // Only runs of the same benchmark — the same dataset version — are offered:
   // a comparison across benchmarks is not one the API makes.
   const candidates = listing.status === 'loaded' ? listing.value.runs.filter((r) => r.dataset_version === dataset && !ids.includes(r.id)) : [];
+  // A prefix run is named so in both selectors, from the listing's record or structural relation, as Runs labels it.
+  const prefixes = new Map(listing.status === 'loaded' ? listing.value.runs.map((r) => [r.id, prefixText(r)]) : []);
+  const withPrefix = (id: string, words: string) => {
+    const prefix = prefixes.get(id);
+    return prefix == null ? words : `${words} · ${prefix}`;
+  };
   const placeholder =
     listing.status === 'loading' ? 'Reading runs…' : listing.status === 'error' ? 'Runs could not be read' : candidates.length === 0 ? 'No other run on this benchmark' : 'Choose a run…';
 
@@ -82,7 +88,7 @@ export function RunBar({ comparison, ids, baseline, listing, onRetryListing, onA
           id="compare-baseline"
           label="Baseline"
           value={baseline}
-          options={comparison.runs.map((run) => ({ value: run.id, label: `${pipelineName(run)} · run ${shortHash(run.id)}` }))}
+          options={comparison.runs.map((run) => ({ value: run.id, label: withPrefix(run.id, `${pipelineName(run)} · run ${shortHash(run.id)}`) }))}
           // A new baseline is state within this view: written in place, as Runs writes its selection.
           onChange={(e) => navigate({ screen: 'compare', ids: [...ids], baseline: e.target.value }, { replace: true })}
         />
@@ -91,7 +97,7 @@ export function RunBar({ comparison, ids, baseline, listing, onRetryListing, onA
             id="compare-add"
             label="Add a run"
             value={chosen}
-            options={[{ value: '', label: placeholder }, ...candidates.map((r) => ({ value: r.id, label: `run ${shortHash(r.id)} · pipeline ${shortHash(r.pipeline)}` }))]}
+            options={[{ value: '', label: placeholder }, ...candidates.map((r) => ({ value: r.id, label: withPrefix(r.id, `run ${shortHash(r.id)} · pipeline ${shortHash(r.pipeline)}`) }))]}
             onChange={(e) => {
               setChosen(e.target.value);
               setProblem(null);

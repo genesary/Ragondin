@@ -99,7 +99,7 @@ describe('downloadView', () => {
   });
 
   it('ignores a run of the same benchmark', () => {
-    const run: JobSummary = { ...job('1-0', RUNNING), work: { kind: 'run', benchmark: 'beir/fiqa', bindings: [], pipeline: 'p', run_id: 'r', up_to: null } };
+    const run: JobSummary = { ...job('1-0', RUNNING), work: { kind: 'run', benchmark: 'beir/fiqa', bindings: [], pipeline: 'p', run_id: 'r', up_to: null, parent_pipeline_hash: null } };
     expect(downloadView('beir/fiqa', undefined, jobs(run))).toEqual({ kind: 'idle' });
   });
 });

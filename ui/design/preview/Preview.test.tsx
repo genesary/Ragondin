@@ -9,7 +9,7 @@ import css from './preview.css?raw';
 const LISTED = [
   'Glyph', 'Button', 'Input', 'Select', 'Checkbox', 'StatusChip', 'MetricChip', 'FilterChip', 'RunSwatch', 'Table',
   'Sheet', 'Inspector', 'Toast', 'InlineMessage', 'Progress', 'EmptyState', 'RankStrip', 'SegmentedControl', 'Tabs', 'TopBar',
-  'StatusDot', 'NodeCard', 'Canvas', 'Charts',
+  'StatusDot', 'PrefixLabel', 'NodeCard', 'Canvas', 'Charts',
 ];
 
 describe('Preview', () => {
