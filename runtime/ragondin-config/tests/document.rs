@@ -341,8 +341,8 @@ fn a_float_is_rendered_with_its_fractional_part() {
     )]))
     .unwrap();
 
-    assert!(text.contains("\"k\": 60.0"), "{text}");
-    assert!(text.contains("\"n\": 60\n"), "{text}");
+    assert!(text.contains("\n        k: 60.0\n"), "{text}");
+    assert!(text.contains("\n        \"n\": 60\n"), "{text}");
 }
 
 #[test]
@@ -350,7 +350,7 @@ fn a_string_another_yaml_reader_would_retype_is_quoted() {
     let text = render_document(&tricky()).unwrap();
 
     for (i, ambiguous) in AMBIGUOUS.iter().enumerate() {
-        let key = format!("\"s{i:02}\": ");
+        let key = format!("s{i:02}: ");
         let line = text
             .lines()
             .find(|line| line.trim_start().starts_with(&key))
@@ -363,17 +363,16 @@ fn a_string_another_yaml_reader_would_retype_is_quoted() {
     }
     // As a key, an id, an implementation or a list item, too.
     for quoted in [
-        "\"id\": \"on\"",
-        "\"component\": \"no\"",
-        "\"impl\": \"2024-01-01\"",
-        "\"id\": \"1.0\"",
+        "- id: \"on\"\n",
+        "component: \"no\"\n",
+        "impl: \"2024-01-01\"\n",
+        "- id: \"1.0\"\n",
         "\"yes\": 1",
         "\"null\": 1",
         "\"123\": 1",
         "\"2024-01-01\": 1",
         "\"1.5\": 1",
-        "  \"yes\",\n",
-        "  \"on\"\n",
+        ", \"yes\", [\"on\"]]\n",
     ] {
         assert!(
             text.contains(quoted),
@@ -382,10 +381,10 @@ fn a_string_another_yaml_reader_would_retype_is_quoted() {
     }
 }
 
-/// Every character a stored document may hold in a string reads back: the
-/// ones YAML folds or refuses bare — U+007F to U+009F, U+2028, U+2029,
-/// U+FFFE, U+FFFF — are written as `\uXXXX`, which JSON and YAML both read
-/// as the character.
+/// Every Unicode scalar value a stored document may hold in a string reads
+/// back, as an id, a key, a value and a list's item: the ones YAML folds or
+/// refuses bare inside double quotes are written as escapes, every other one
+/// as itself.
 #[test]
 fn every_character_a_string_may_hold_reads_back() {
     let all: Vec<char> = (0..=0x10FFFFu32).filter_map(char::from_u32).collect();
@@ -417,6 +416,13 @@ fn every_character_a_string_may_hold_reads_back() {
 #[test]
 fn a_character_yaml_folds_or_refuses_is_written_as_its_escape() {
     for (c, escape) in [
+        ('\u{0}', "\\u0000"),
+        ('\u{1b}', "\\u001b"),
+        ('\n', "\\n"),
+        ('\r', "\\r"),
+        ('\t', "\\t"),
+        ('"', "\\\""),
+        ('\\', "\\\\"),
         ('\u{7f}', "\\u007f"),
         ('\u{85}', "\\u0085"),
         ('\u{9f}', "\\u009f"),
@@ -424,6 +430,7 @@ fn a_character_yaml_folds_or_refuses_is_written_as_its_escape() {
         ('\u{2029}', "\\u2029"),
         ('\u{fffe}', "\\ufffe"),
         ('\u{ffff}', "\\uffff"),
+        ('\u{feff}', "\\ufeff"),
     ] {
         let raw = document(vec![node(
             "lexical",
@@ -438,7 +445,7 @@ fn a_character_yaml_folds_or_refuses_is_written_as_its_escape() {
 }
 
 /// YAML reads a key only when it is short enough once rendered, its quotes
-/// and escapes included: about 1022 plain characters, about half as many `é`
+/// and escapes included: about 1024 plain characters, about half as many `é`
 /// or newlines, which render as two bytes or as `\n`. A parameter name longer
 /// than that would not read back, so it is refused.
 #[test]
@@ -485,4 +492,286 @@ fn the_rendering_loads_to_the_hash_of_the_document_it_renders() {
             .content_hash(),
         parse_document(VALID).unwrap().content_hash()
     );
+}
+
+// The writer's own rules (ADR-C41 § 1), each held by the text it writes.
+
+fn fixture(name: &str) -> String {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures")
+        .join(name);
+    std::fs::read_to_string(&path).unwrap_or_else(|error| panic!("{}: {error}", path.display()))
+}
+
+/// The golden file is house style: the version line first, maps in block
+/// style in the wire schema's key order, lists in flow style, a blank line
+/// between nodes. It renders to itself byte for byte, and so does the
+/// hand-written fixture it is the rendering of, with the same hash (INV-8).
+#[test]
+fn the_golden_file_renders_byte_identical() {
+    let golden = fixture("hybrid-retrieval.rendered.yaml");
+
+    assert_eq!(
+        render_document(&read_document(&golden).unwrap()).unwrap(),
+        golden
+    );
+
+    let written = fixture("hybrid-retrieval.yaml");
+    assert_eq!(
+        render_document(&read_document(&written).unwrap()).unwrap(),
+        golden
+    );
+    assert_eq!(
+        parse_document(&golden).unwrap().content_hash(),
+        parse_document(&written).unwrap().content_hash()
+    );
+}
+
+#[test]
+fn an_empty_list_is_written_as_brackets() {
+    let empty = RawPipeline {
+        version: SchemaVersion::CURRENT,
+        pipeline: RawGraph {
+            inputs: vec![],
+            nodes: vec![],
+        },
+    };
+    assert_eq!(
+        render_document(&empty).unwrap(),
+        "version: 3\npipeline:\n  inputs: []\n  nodes: []\n"
+    );
+
+    let mut lonely = node("n", vec![("l", RawParamValue::List(vec![]))]);
+    lonely.inputs.clear();
+    let text = render_document(&document(vec![lonely])).unwrap();
+    assert!(text.contains("\n      inputs: []\n"), "{text}");
+    assert!(text.contains("\n        l: []\n"), "{text}");
+}
+
+#[test]
+fn a_node_without_parameters_writes_no_params_key() {
+    let raw = document(vec![node("n", vec![])]);
+
+    let text = render_document(&raw).unwrap();
+
+    assert!(!text.contains("params"), "{text}");
+    assert!(text.ends_with("      inputs: [question]\n"), "{text}");
+}
+
+/// A string that starts with an ASCII letter or `_`, continues with
+/// `[A-Za-z0-9_./-]`, and is not a reserved word is written plain — as a
+/// value, a key, an id, a list's item.
+#[test]
+fn a_string_on_the_allowlist_is_written_plain() {
+    for plain in [
+        "BAAI/bge-small-en-v1.5",
+        "_private",
+        "a.b-c_d/e",
+        "x",
+        "Yess",
+        "nulls",
+        "onion",
+        "offset",
+        "True_",
+        "no.",
+        "e5",
+        "inf",
+        "nan",
+        "NaN",
+        "Infinity",
+    ] {
+        let mut lonely = node(
+            plain,
+            vec![(plain, RawParamValue::String(plain.to_owned()))],
+        );
+        lonely.inputs = vec![plain.to_owned()];
+        let raw = document(vec![lonely]);
+        let text = render_document(&raw).unwrap();
+
+        assert!(text.contains(&format!("\n    - id: {plain}\n")), "{text}");
+        assert!(
+            text.contains(&format!("\n      inputs: [{plain}]\n")),
+            "{text}"
+        );
+        assert!(
+            text.contains(&format!("\n        {plain}: {plain}\n")),
+            "{text}"
+        );
+        assert_eq!(read_document(&text).unwrap(), raw, "{text}");
+    }
+}
+
+/// Every spelling of a reserved word in every case, from the letter-first
+/// YAML 1.1 booleans and nulls: each is double-quoted wherever the writer
+/// emits a string — a value, a key, an id, a list's item — and reads back as
+/// the string it was.
+#[test]
+fn every_letter_first_yaml_1_1_boolean_and_null_is_quoted_in_every_case() {
+    let mut spellings = Vec::new();
+    for word in ["y", "n", "yes", "no", "true", "false", "on", "off", "null"] {
+        let letters: Vec<char> = word.chars().collect();
+        for mask in 0..(1u32 << letters.len()) {
+            spellings.push(
+                letters
+                    .iter()
+                    .enumerate()
+                    .map(|(i, c)| {
+                        if mask & (1 << i) == 0 {
+                            *c
+                        } else {
+                            c.to_ascii_uppercase()
+                        }
+                    })
+                    .collect::<String>(),
+            );
+        }
+    }
+    assert_eq!(spellings.len(), 92);
+
+    for spelling in &spellings {
+        let quoted = format!("\"{spelling}\"");
+        let mut lonely = node(
+            spelling,
+            vec![
+                (spelling, RawParamValue::String(spelling.clone())),
+                (
+                    "list",
+                    RawParamValue::List(vec![RawParamValue::String(spelling.clone())]),
+                ),
+            ],
+        );
+        lonely.component = spelling.clone();
+        lonely.implementation = spelling.clone();
+        lonely.inputs = vec![spelling.clone()];
+        let raw = RawPipeline {
+            version: SchemaVersion::CURRENT,
+            pipeline: RawGraph {
+                inputs: vec![spelling.clone()],
+                nodes: vec![lonely],
+            },
+        };
+
+        let text = render_document(&raw).unwrap();
+
+        for line in [
+            format!("\n  inputs: [{quoted}]\n"),
+            format!("\n    - id: {quoted}\n"),
+            format!("\n      component: {quoted}\n"),
+            format!("\n      impl: {quoted}\n"),
+            format!("\n      inputs: [{quoted}]\n"),
+            format!("\n        {quoted}: {quoted}\n"),
+            format!("\n        list: [{quoted}]\n"),
+        ] {
+            assert!(text.contains(&line), "`{line}` is not in: {text}");
+        }
+        assert_eq!(read_document(&text).unwrap(), raw, "{text}");
+    }
+}
+
+/// Whether `text` is a float every YAML reader takes for one: a fractional
+/// part, and a signed exponent when there is one — the YAML 1.1 float form,
+/// which a YAML 1.2 reader reads too.
+fn is_yaml_float(text: &str) -> bool {
+    let unsigned = text.strip_prefix('-').unwrap_or(text);
+    let (mantissa, exponent) = match unsigned.split_once('e') {
+        Some((mantissa, exponent)) => (mantissa, Some(exponent)),
+        None => (unsigned, None),
+    };
+    let Some((whole, fraction)) = mantissa.split_once('.') else {
+        return false;
+    };
+    let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+    digits(whole)
+        && digits(fraction)
+        && exponent.is_none_or(|e| (e.starts_with('+') || e.starts_with('-')) && digits(&e[1..]))
+}
+
+#[test]
+fn a_float_with_an_exponent_writes_it_signed() {
+    for (float, written) in [
+        (1e20, "1.0e+20"),
+        (-1e-7, "-1.0e-7"),
+        (f64::MAX, "1.7976931348623157e+308"),
+        (1.5e300, "1.5e+300"),
+        (-0.0, "-0.0"),
+        (0.1, "0.1"),
+    ] {
+        let text = render_document(&document(vec![node(
+            "n",
+            vec![("f", RawParamValue::Float(float))],
+        )]))
+        .unwrap();
+
+        assert!(
+            text.contains(&format!("\n        f: {written}\n")),
+            "{text}"
+        );
+    }
+}
+
+/// Bit-exact over random bit patterns and the edge values: ±0, the extremes,
+/// the smallest normal, the subnormals.
+#[test]
+fn every_finite_float_reads_back_bit_for_bit() {
+    let mut floats = vec![
+        0.0,
+        -0.0,
+        f64::MAX,
+        f64::MIN,
+        f64::MIN_POSITIVE,
+        -f64::MIN_POSITIVE,
+        f64::from_bits(1),
+        -f64::from_bits(1),
+        f64::from_bits(0x000F_FFFF_FFFF_FFFF),
+        f64::EPSILON,
+        1e16,
+        1e15,
+        1e-5,
+        1e-4,
+        0.1,
+        1.0,
+        60.0,
+        9_007_199_254_740_993.0,
+    ];
+    // A fixed-seed xorshift: the same patterns on every run.
+    let mut state: u64 = 0x9E37_79B9_7F4A_7C15;
+    while floats.len() < 100_000 {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        let float = f64::from_bits(state);
+        if float.is_finite() {
+            floats.push(float);
+        }
+    }
+
+    for batch in floats.chunks(1000) {
+        let keys: Vec<String> = (0..batch.len()).map(|i| format!("f{i:04}")).collect();
+        let raw = document(vec![node(
+            "n",
+            keys.iter()
+                .zip(batch)
+                .map(|(key, float)| (key.as_str(), RawParamValue::Float(*float)))
+                .collect(),
+        )]);
+
+        let text = render_document(&raw).unwrap();
+
+        let read = read_document(&text).unwrap();
+        let written: BTreeMap<&str, &str> = text
+            .lines()
+            .filter_map(|line| line.trim_start().split_once(": "))
+            .collect();
+        for (key, float) in keys.iter().zip(batch) {
+            let written = written[key.as_str()];
+            assert!(is_yaml_float(written), "{float:e} is written `{written}`");
+            let RawParamValue::Float(back) = read.pipeline.nodes[0].params[key] else {
+                panic!(
+                    "{float:e} reads back as {:?}",
+                    read.pipeline.nodes[0].params[key]
+                );
+            };
+            assert_eq!(back.to_bits(), float.to_bits(), "{float:e} as `{written}`");
+        }
+    }
 }

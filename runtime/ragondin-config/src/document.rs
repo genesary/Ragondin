@@ -32,8 +32,8 @@
 //! through it is what lets [`DocumentError`] keep the two apart.
 
 use ragondin_pipeline::{
-    peek_schema_version, validate, LogicalPipeline, RawPipeline, SchemaVersionPeekError,
-    UnsupportedSchemaVersion, ValidationError,
+    peek_schema_version, validate, LogicalPipeline, RawParamValue, RawPipeline,
+    SchemaVersionPeekError, UnsupportedSchemaVersion, ValidationError,
 };
 
 /// Lowers a pipeline document's text to its validated [`LogicalPipeline`], or
@@ -81,64 +81,156 @@ pub fn read_document(text: &str) -> Result<RawPipeline, DocumentError> {
 /// rather than rendered, so no caller ever holds text that means another
 /// document.
 ///
-/// **The rendering is JSON, which YAML reads**: indented, one key per line,
-/// and every string in double quotes. That is how the renderer quotes the
-/// strings another reader of the format could retype — a YAML 1.1 boolean
-/// such as `yes` or `on`, a null, a number, a date: `serde_yaml`'s own writer
-/// quotes only what its own reader would retype, and leaves `yes` plain. A
-/// float keeps its fractional part (`60.0`), an integer has none. Comments,
-/// key order and formatting a person wrote are not in the wire schema, so a
-/// rendering does not keep them.
+/// **The rendering is block YAML, written by the rules of ADR-C41 § 1**:
+/// `version: N` first; maps in block style, in the wire schema's key order,
+/// a node's parameters in the byte order of their keys and a blank line
+/// between nodes; lists in flow style, an empty one `[]`. A string — a key
+/// as much as a value — is written plain only when no YAML 1.1 or 1.2 reader
+/// can take it for anything else, and double-quoted otherwise. A float has a
+/// fractional part (`60.0`) and a signed exponent when it has one
+/// (`1.0e+20`); an integer has neither. Comments, key order and formatting a
+/// person wrote are not in the wire schema, so a rendering does not keep
+/// them.
 pub fn render_document(document: &RawPipeline) -> Result<String, RenderError> {
-    // The wire schema's own `Serialize`, never an internal type's (INV-9).
-    // It does not fail on this schema, whose every key is a string; a
-    // non-finite float it writes as `null`, which the guard below refuses.
-    let json = serde_json::to_string_pretty(document).map_err(|_| RenderError)?;
-    let text = escape_for_yaml(&json) + "\n";
+    let text = write_document(document);
     // The guard that makes the promise above hold by construction: a
-    // non-finite float, which JSON writes as `null`, or a key too long once
-    // rendered for YAML to read as one, is found here rather than by the next reader, and
-    // so would anything else that did not read back.
+    // non-finite float, which the writer spells as no reader's float, or a
+    // key too long once rendered for YAML to read as one, is found here
+    // rather than by the next reader, and so would anything else that did
+    // not read back.
     match read_document(&text) {
         Ok(read) if read == *document => Ok(text),
         _ => Err(RenderError),
     }
 }
 
-/// Whether YAML folds or refuses this character bare in a double-quoted
-/// string where JSON leaves it bare: DEL and the C1 controls, U+0085 among
-/// them, and U+2028 and U+2029, which YAML reads as line breaks, and the two
-/// noncharacters U+FFFE and U+FFFF, which it does not accept as printable.
-fn yaml_needs_escape(c: char) -> bool {
-    matches!(
-        c,
-        '\u{7f}'..='\u{9f}' | '\u{2028}' | '\u{2029}' | '\u{fffe}' | '\u{ffff}'
-    )
-}
-
-/// The JSON with each character [`yaml_needs_escape`] names written as
-/// `\uXXXX`, an escape JSON and YAML both read as the character, so a string
-/// holding one reads back. JSON's structure is ASCII and these characters are
-/// not, so each one found sits inside a string, where the escape is valid;
-/// `serde_json` writes every backslash of a string as a pair, so none is left
-/// open before it.
-fn escape_for_yaml(json: &str) -> String {
-    let mut out = String::with_capacity(json.len());
-    for c in json.chars() {
-        if yaml_needs_escape(c) {
-            out.push_str(&format!("\\u{:04x}", u32::from(c)));
-        } else {
-            out.push(c);
+/// The writer of ADR-C41: the wire schema, and nothing else, as block YAML.
+/// It reads nothing and edits no text in place; [`render_document`] checks
+/// everything it writes through the one reader (ADR-C41 § 4).
+fn write_document(document: &RawPipeline) -> String {
+    let graph = &document.pipeline;
+    let mut out = format!(
+        "version: {}\npipeline:\n  inputs: {}\n",
+        document.version.get(),
+        flow(graph.inputs.iter().map(|input| scalar(input)))
+    );
+    if graph.nodes.is_empty() {
+        out.push_str("  nodes: []\n");
+        return out;
+    }
+    out.push_str("  nodes:\n");
+    for (i, node) in graph.nodes.iter().enumerate() {
+        if i > 0 {
+            out.push('\n');
+        }
+        out.push_str(&format!("    - id: {}\n", scalar(&node.id)));
+        out.push_str(&format!("      component: {}\n", scalar(&node.component)));
+        out.push_str(&format!("      impl: {}\n", scalar(&node.implementation)));
+        out.push_str(&format!(
+            "      inputs: {}\n",
+            flow(node.inputs.iter().map(|input| scalar(input)))
+        ));
+        // An empty map has no block form, and an absent `params` reads as
+        // empty, so a node with none writes no key.
+        if !node.params.is_empty() {
+            out.push_str("      params:\n");
+            for (key, value) in &node.params {
+                out.push_str(&format!("        {}: {}\n", scalar(key), param(value)));
+            }
         }
     }
     out
 }
 
+/// A list in flow style: `[a, b]`, and `[]` when it is empty.
+fn flow(items: impl Iterator<Item = String>) -> String {
+    format!("[{}]", items.collect::<Vec<_>>().join(", "))
+}
+
+fn param(value: &RawParamValue) -> String {
+    match value {
+        RawParamValue::Bool(flag) => flag.to_string(),
+        RawParamValue::Int(int) => int.to_string(),
+        RawParamValue::Float(float) => write_float(*float),
+        RawParamValue::String(text) => scalar(text),
+        RawParamValue::List(items) => flow(items.iter().map(param)),
+    }
+}
+
+/// A float in the YAML 1.1 float form, which a YAML 1.2 reader reads too: a
+/// fractional part always, and a signed exponent when there is one. Rust's
+/// `Debug` gives the shortest digits that read back to the same value; this
+/// adds the `.0` and the `+` it leaves out. A non-finite float comes out as
+/// `inf` or `NaN`, which no reader takes for a float; the guard refuses it.
+fn write_float(float: f64) -> String {
+    let shortest = format!("{float:?}");
+    let Some((mantissa, exponent)) = shortest.split_once('e') else {
+        return shortest;
+    };
+    let point = if mantissa.contains('.') { "" } else { ".0" };
+    let sign = if exponent.starts_with('-') { "" } else { "+" };
+    format!("{mantissa}{point}e{sign}{exponent}")
+}
+
+/// The words YAML 1.1 reads as a boolean or a null, in any case, that the
+/// plain-string rule would otherwise admit.
+const RESERVED: [&str; 9] = ["y", "n", "yes", "no", "true", "false", "on", "off", "null"];
+
+/// A string, plain when ADR-C41 § 1's allowlist admits it — an ASCII letter
+/// or `_`, then `[A-Za-z0-9_./-]`, and not a [`RESERVED`] word in any case —
+/// and double-quoted otherwise. Every other implicit type of YAML 1.1 and
+/// 1.2 begins with a digit, a sign, `.`, `~`, `=` or `<`, so a string the
+/// allowlist admits reads as a string under both. Keys take this rule too.
+fn scalar(text: &str) -> String {
+    let plain = text.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_')
+        && text
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '/' | '-'))
+        && !RESERVED.iter().any(|word| word.eq_ignore_ascii_case(text));
+    if plain {
+        return text.to_owned();
+    }
+    let mut out = String::with_capacity(text.len() + 2);
+    out.push('"');
+    for c in text.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if needs_escape(c) => out.push_str(&format!("\\u{:04x}", u32::from(c))),
+            // Outside the Basic Multilingual Plane too: written as itself,
+            // never as a surrogate pair.
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+/// Whether a character is written as `\uXXXX` inside double quotes: every
+/// character YAML does not count as printable — the C0 controls, DEL, the C1
+/// controls, U+FFFE and U+FFFF — and the line breaks it would fold, U+0085,
+/// U+2028 and U+2029, and U+FEFF, the byte-order mark.
+fn needs_escape(c: char) -> bool {
+    matches!(
+        c,
+        '\u{0}'..='\u{1f}'
+            | '\u{7f}'..='\u{9f}'
+            | '\u{2028}'
+            | '\u{2029}'
+            | '\u{feff}'
+            | '\u{fffe}'
+            | '\u{ffff}'
+    )
+}
+
 /// A wire-schema document whose rendering would not read back as itself: a
-/// non-finite float, which neither JSON nor the wire schema's reader carries,
-/// or a parameter name too long once rendered for YAML to read it as a key:
-/// the limit counts the key as written, its quotes and escapes included —
-/// about 1022 plain characters, about 511 `é` or newlines (`\n`).
+/// non-finite float, which the wire schema's reader does not carry, or a
+/// parameter name too long once rendered for YAML to read it as a key: the
+/// limit counts the key as written, its quotes and escapes included —
+/// about 1024 plain characters, about 511 `é` or newlines (`\n`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 #[error("the document holds what the configuration format cannot carry: a number that is not finite, or a parameter name too long once rendered")]
 pub struct RenderError;

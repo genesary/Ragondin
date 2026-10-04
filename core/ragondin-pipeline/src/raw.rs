@@ -430,7 +430,10 @@ pub struct RawGraph {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct RawPipeline {
     /// The wire schema version. Absent means [`SchemaVersion::CURRENT`], so a
-    /// configuration only writes this line to pin a version deliberately.
+    /// hand-written configuration may leave this line out; a rendered one
+    /// always writes it, so that the file states the grammar it was written
+    /// in and a later build refuses it rather than reading it under another
+    /// (ADR-C41 § 1).
     #[serde(default)]
     pub version: SchemaVersion,
     /// The pipeline itself.
