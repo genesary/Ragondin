@@ -10,6 +10,7 @@ import { parseRules } from '../../design/testing/css.ts';
 import editorCss from './Editor.css?raw';
 import { Editor } from './Editor.tsx';
 import { GRAMMAR, HYBRID, SERVICES, WORKSPACE } from './fixtures.ts';
+import { bool, float, int, list, str } from '../parameters.ts';
 import type { PortGrammar } from './ports.ts';
 
 const HASH = 'b'.repeat(64);
@@ -44,8 +45,8 @@ function setup(routes: MockRoutes = { 'POST /pipelines/validate': { body: { hash
 const nodeEl = (root: HTMLElement, id: string) => root.querySelector(`.react-flow__node[data-id="${id}"]`) as HTMLElement | null;
 const inPort = (root: HTMLElement, id: string, port: number) => nodeEl(root, id)!.querySelectorAll<HTMLElement>('.rg-port[data-side="in"]')[port]!;
 const outPort = (root: HTMLElement, id: string) => nodeEl(root, id)!.querySelector<HTMLElement>('.rg-port[data-side="out"]')!;
-const validations = (api: ReturnType<typeof mockApi>) => api.requests.flatMap((r, i) => (r === 'POST /api/v1/pipelines/validate' ? [api.bodies[i] as { document: string }] : []));
-const nodesOf = (body: { document: string }) => (JSON.parse(body.document) as WireDocument).pipeline.nodes;
+const validations = (api: ReturnType<typeof mockApi>) => api.requests.flatMap((r, i) => (r === 'POST /api/v1/pipelines/validate' ? [api.bodies[i] as { typed: WireDocument }] : []));
+const nodesOf = (body: { typed: WireDocument }) => body.typed.pipeline.nodes;
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -58,11 +59,11 @@ describe('live validation', () => {
     fireEvent.click(within(screen.getByRole('region', { name: 'Palette' })).getByRole('button', { name: /^rrf/ }));
     await waitFor(() => expect(validations(api)).toHaveLength(2));
     const sent = validations(api)[1]!;
-    expect(Object.keys(sent)).toEqual(['document']);
-    const doc = JSON.parse(sent.document) as WireDocument;
+    expect(Object.keys(sent)).toEqual(['typed']);
+    const doc = sent.typed;
     expect(Object.keys(doc)).toEqual(['pipeline']);
     expect(nodesOf(sent).at(-1)).toEqual({ id: 'rrf', component: 'fusion', impl: 'rrf', inputs: [], params: {} });
-    expect(sent.document).not.toMatch(/"x"|"y"|position/);
+    expect(JSON.stringify(sent)).not.toMatch(/"x"|"y"|position/);
     expect(await within(container).findByText(HASH)).toBeTruthy();
   });
 
@@ -344,12 +345,13 @@ describe('the keyboard', () => {
   it('undoes with focus on a checkbox, which has no undo of its own', async () => {
     const { api } = setup(undefined, { start: 'fused' });
     fireEvent.change(screen.getByLabelText('New parameter'), { target: { value: 'normalize' } });
+    fireEvent.change(screen.getByLabelText('Kind'), { target: { value: 'bool' } });
     fireEvent.change(screen.getByLabelText('Value'), { target: { value: 'true' } });
     fireEvent.click(screen.getByRole('button', { name: 'Add parameter' }));
     const box = screen.getByRole('checkbox', { name: 'normalize' });
     fireEvent.keyDown(box, { key: 'z', ctrlKey: true });
     expect(screen.queryByRole('checkbox', { name: 'normalize' })).toBeNull();
-    await waitFor(() => expect(nodesOf(validations(api).at(-1)!).find((n) => n.id === 'fused')?.params).toEqual({ k: 60 }));
+    await waitFor(() => expect(nodesOf(validations(api).at(-1)!).find((n) => n.id === 'fused')?.params).toEqual({ k: int('60') }));
   });
 
   it('leaves Ctrl+Z inside a text field to the field', () => {
@@ -374,7 +376,7 @@ describe('the inspector in write mode', () => {
     const field = screen.getByLabelText('top_k');
     fireEvent.change(field, { target: { value: '50' } });
     fireEvent.blur(field);
-    await waitFor(() => expect(nodesOf(validations(api).at(-1)!).find((n) => n.id === 'lexical')?.params).toEqual({ top_k: 50 }));
+    await waitFor(() => expect(nodesOf(validations(api).at(-1)!).find((n) => n.id === 'lexical')?.params).toEqual({ top_k: int('50') }));
   });
 
   it('refuses an id another node has, before the server does, and renames on a free one', () => {
@@ -391,16 +393,100 @@ describe('the inspector in write mode', () => {
   });
 
   it.each([
-    ['.5', 0.5],
-    ['1.', 1],
-    ['1e3', 1000],
-    ['-2.5e-1', -0.25],
-  ])('reads a new value %s as the number %s', async (text, number) => {
+    ['10', int('10')],
+    ['-3', int('-3')],
+    ['.5', float(0.5)],
+    ['1.', float(1)],
+    ['1.0', float(1)],
+    ['1e3', float(1000)],
+    ['-2.5e-1', float(-0.25)],
+    ['a, b', str('a, b')],
+    ['true', str('true')],
+    ['bge', str('bge')],
+  ])('reads a new value %s, of no kind picked, as %j', async (text, value) => {
     const { api } = setup(undefined, { start: 'fused' });
     fireEvent.change(screen.getByLabelText('New parameter'), { target: { value: 'w' } });
     fireEvent.change(screen.getByLabelText('Value'), { target: { value: text } });
     fireEvent.click(screen.getByRole('button', { name: 'Add parameter' }));
-    await waitFor(() => expect(nodesOf(validations(api).at(-1)!).find((n) => n.id === 'fused')?.params['w']).toBe(number));
+    await waitFor(() => expect(nodesOf(validations(api).at(-1)!).find((n) => n.id === 'fused')?.params['w']).toEqual(value));
+  });
+
+  it.each([
+    ['bool', 'true', bool(true)],
+    ['list', 'a, b', list(str('a'), str('b'))],
+    ['list', '1, 2.5', list(int('1'), float(2.5))],
+    ['float', '60', float(60)],
+    ['string', '60', str('60')],
+  ])('reads a new value of the kind picked, %s, from %s', async (kind, text, value) => {
+    const { api } = setup(undefined, { start: 'fused' });
+    fireEvent.change(screen.getByLabelText('New parameter'), { target: { value: 'w' } });
+    fireEvent.change(screen.getByLabelText('Kind'), { target: { value: kind } });
+    fireEvent.change(screen.getByLabelText('Value'), { target: { value: text } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add parameter' }));
+    await waitFor(() => expect(nodesOf(validations(api).at(-1)!).find((n) => n.id === 'fused')?.params['w']).toEqual(value));
+  });
+
+  it('refuses a new value its kind cannot carry, in words, and adds nothing', () => {
+    setup(undefined, { start: 'fused' });
+    const inspector = within(screen.getByRole('complementary', { name: 'fused' }));
+    fireEvent.change(screen.getByLabelText('New parameter'), { target: { value: 'w' } });
+    fireEvent.change(screen.getByLabelText('Kind'), { target: { value: 'int' } });
+    fireEvent.change(screen.getByLabelText('Value'), { target: { value: '1.5' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add parameter' }));
+    expect(inspector.getByText('An integer is a whole number, such as 60: "1.5" is not one.')).toBeTruthy();
+    expect(screen.queryByLabelText('w')).toBeNull();
+  });
+
+  it('shows each value’s kind beside it, and changes the kind alone when another is picked', async () => {
+    const { api } = setup(undefined, { start: 'fused' });
+    const kind = screen.getByLabelText('Kind of k') as HTMLSelectElement;
+    expect(kind.value).toBe('int');
+    fireEvent.change(kind, { target: { value: 'float' } });
+    await waitFor(() => expect(nodesOf(validations(api).at(-1)!).find((n) => n.id === 'fused')?.params['k']).toEqual(float(60)));
+    expect((screen.getByLabelText('k') as HTMLInputElement).value).toBe('60.0');
+    fireEvent.change(screen.getByLabelText('Kind of k'), { target: { value: 'string' } });
+    await waitFor(() => expect(nodesOf(validations(api).at(-1)!).find((n) => n.id === 'fused')?.params['k']).toEqual(str('60.0')));
+  });
+
+  it('refuses a change of kind the value cannot take, in words, and keeps the value', () => {
+    setup({ 'POST /pipelines/validate': { body: { hash: HASH } } }, { start: 'vectors' });
+    fireEvent.change(screen.getByLabelText('Kind of embedder'), { target: { value: 'int' } });
+    expect(screen.getByText('An integer is a whole number, such as 60: "bge" is not one.')).toBeTruthy();
+    expect((screen.getByLabelText('Kind of embedder') as HTMLSelectElement).value).toBe('string');
+  });
+
+  it('draws a float with its fractional part, so 60.0 never reads as the integer 60', () => {
+    const initial: WireDocument = { pipeline: { inputs: ['question'], nodes: [{ id: 'fused', component: 'fusion', impl: 'rrf', inputs: [], params: { k: float(60) } }] } };
+    setup(undefined, { initial, start: 'fused' });
+    expect((screen.getByLabelText('k') as HTMLInputElement).value).toBe('60.0');
+    expect((screen.getByLabelText('Kind of k') as HTMLSelectElement).value).toBe('float');
+  });
+
+  it.each([
+    ['1e999', 'A float is a finite number: "1e999" is not one.'],
+    ['Infinity', 'A float is a finite number: "Infinity" is not one.'],
+    ['NaN', 'A float is a finite number: "NaN" is not one.'],
+  ])('refuses a non-finite float, %s, in words, before it is sent', async (text, words) => {
+    const initial: WireDocument = { pipeline: { inputs: ['question'], nodes: [{ id: 'fused', component: 'fusion', impl: 'rrf', inputs: [], params: { k: float(60) } }] } };
+    const { api } = setup(undefined, { initial, start: 'fused' });
+    await waitFor(() => expect(validations(api)).toHaveLength(1));
+    const field = screen.getByLabelText('k');
+    fireEvent.change(field, { target: { value: text } });
+    fireEvent.blur(field);
+    expect(screen.getByText(words)).toBeTruthy();
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(validations(api)).toHaveLength(1);
+  });
+
+  it('keeps an integer whole, however wide, and refuses one wider than 64 bits', async () => {
+    const { api } = setup(undefined, { start: 'lexical' });
+    const field = screen.getByLabelText('top_k');
+    fireEvent.change(field, { target: { value: '-9223372036854775808' } });
+    fireEvent.blur(field);
+    await waitFor(() => expect(nodesOf(validations(api).at(-1)!).find((n) => n.id === 'lexical')?.params['top_k']).toEqual(int('-9223372036854775808')));
+    fireEvent.change(field, { target: { value: '9223372036854775808' } });
+    fireEvent.blur(field);
+    expect(screen.getByText('An integer has at most 64 bits: "9223372036854775808" is wider.')).toBeTruthy();
   });
 
   it('refuses a rename to an id a dangling input still names, which would silently take its edge back', () => {
@@ -419,11 +505,12 @@ describe('the inspector in write mode', () => {
   it('adds and removes a parameter', async () => {
     const { api } = setup(undefined, { start: 'fused' });
     fireEvent.change(screen.getByLabelText('New parameter'), { target: { value: 'weights' } });
+    fireEvent.change(screen.getByLabelText('Kind'), { target: { value: 'list' } });
     fireEvent.change(screen.getByLabelText('Value'), { target: { value: '0.7, 0.3' } });
     fireEvent.click(screen.getByRole('button', { name: 'Add parameter' }));
-    await waitFor(() => expect(nodesOf(validations(api).at(-1)!).find((n) => n.id === 'fused')?.params).toEqual({ k: 60, weights: [0.7, 0.3] }));
+    await waitFor(() => expect(nodesOf(validations(api).at(-1)!).find((n) => n.id === 'fused')?.params).toEqual({ k: int('60'), weights: list(float(0.7), float(0.3)) }));
     fireEvent.click(screen.getByRole('button', { name: 'Remove k' }));
-    await waitFor(() => expect(nodesOf(validations(api).at(-1)!).find((n) => n.id === 'fused')?.params).toEqual({ weights: [0.7, 0.3] }));
+    await waitFor(() => expect(nodesOf(validations(api).at(-1)!).find((n) => n.id === 'fused')?.params).toEqual({ weights: list(float(0.7), float(0.3)) }));
   });
 });
 

@@ -1,3 +1,4 @@
+import { float, int, str } from '../parameters.ts';
 import type { Graph } from '../api/types.ts';
 
 /**
@@ -16,13 +17,13 @@ export const HYBRID_RERANK_GEN: Graph = {
       id: 'answer',
       family: 'generator',
       implementation: 'answerer',
-      parameters: { served_model: 'qwen2.5-7b-instruct', temperature: 0.2 },
+      parameters: { served_model: str('qwen2.5-7b-instruct'), temperature: float(0.2) },
     },
-    { id: 'fused', family: 'fusion', implementation: 'rrf', parameters: { k: 60 } },
-    { id: 'lexical', family: 'retriever', implementation: 'bm25', parameters: { top_k: 3 } },
-    { id: 'prompt', family: 'context_builder', implementation: 'concat', parameters: { max_chunks: 5, separator: '\n' } },
-    { id: 'reranked', family: 'reranker', implementation: 'cross_encoder', parameters: { top_k: 10 } },
-    { id: 'vectors', family: 'retriever', implementation: 'dense', parameters: { top_k: 3, embedder: 'onnx' } },
+    { id: 'fused', family: 'fusion', implementation: 'rrf', parameters: { k: int('60') } },
+    { id: 'lexical', family: 'retriever', implementation: 'bm25', parameters: { top_k: int('3') } },
+    { id: 'prompt', family: 'context_builder', implementation: 'concat', parameters: { max_chunks: int('5'), separator: str('\n') } },
+    { id: 'reranked', family: 'reranker', implementation: 'cross_encoder', parameters: { top_k: int('10') } },
+    { id: 'vectors', family: 'retriever', implementation: 'dense', parameters: { top_k: int('3'), embedder: str('onnx') } },
   ],
   edges: [
     { from: 'question', to: 'answer', port: 0, kind: 'query' },
@@ -47,8 +48,8 @@ export const GATED_GEN: Graph = {
   inputs: [{ id: 'question', kind: 'query' }],
   nodes: [
     { id: 'answer', family: 'generator', implementation: 'answerer', parameters: {} },
-    { id: 'gate', family: 'extension', implementation: 'threshold', parameters: { min_score: 0.4 } },
-    { id: 'lexical', family: 'retriever', implementation: 'bm25', parameters: { top_k: 10 } },
+    { id: 'gate', family: 'extension', implementation: 'threshold', parameters: { min_score: float(0.4) } },
+    { id: 'lexical', family: 'retriever', implementation: 'bm25', parameters: { top_k: int('10') } },
   ],
   edges: [
     { from: 'question', to: 'answer', port: 0, kind: 'query' },

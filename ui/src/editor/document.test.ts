@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { danglingInputs, emptyDocument, freshId, toGraph, validationRequest, type WireDocument } from './document.ts';
 import { GRAMMAR, HYBRID } from './fixtures.ts';
+import { int } from '../parameters.ts';
 
 describe('the wire-schema document', () => {
   it('starts empty: one declared input, no node, and no version line, which reads as the version the server writes', () => {
@@ -26,8 +27,7 @@ describe('the wire-schema document', () => {
 
   it('is sent to validation as the wire schema and nothing else: no position, no presentation', () => {
     const body = validationRequest(HYBRID);
-    expect(Object.keys(body)).toEqual(['document']);
-    expect(JSON.parse(body.document)).toEqual(HYBRID);
+    expect(body).toEqual({ typed: HYBRID });
   });
 });
 
@@ -36,7 +36,7 @@ describe('the graph the canvas draws from the document', () => {
     const graph = toGraph(HYBRID, GRAMMAR);
     expect(graph.inputs).toEqual([{ id: 'question', kind: 'query' }]);
     expect(graph.nodes.map((n) => n.id)).toEqual(['fused', 'lexical', 'reranked', 'vectors']);
-    expect(graph.nodes.find((n) => n.id === 'lexical')).toEqual({ id: 'lexical', family: 'retriever', implementation: 'bm25', parameters: { top_k: 100 } });
+    expect(graph.nodes.find((n) => n.id === 'lexical')).toEqual({ id: 'lexical', family: 'retriever', implementation: 'bm25', parameters: { top_k: int('100') } });
     expect(graph.edges.filter((e) => e.to === 'reranked')).toEqual([
       { from: 'question', to: 'reranked', port: 0, kind: 'query' },
       { from: 'fused', to: 'reranked', port: 1, kind: 'chunks' },

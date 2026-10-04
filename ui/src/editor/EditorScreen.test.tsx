@@ -4,23 +4,28 @@ import { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createApiClient } from '../api/client.ts';
 import { mockApi, type MockRoutes } from '../api/testing.ts';
-import type { Workspace } from '../api/types.ts';
+import type { PipelineDetail, Workspace } from '../api/types.ts';
 import type { RequestState } from '../shell/states.tsx';
 import { EditorScreen } from './EditorScreen.tsx';
-import { SERVICES, WORKSPACE } from './fixtures.ts';
+import { HYBRID, SERVICES, WORKSPACE } from './fixtures.ts';
 
 const HASH = 'c'.repeat(64);
+// The editor's chunk loads lazily, then validation waits out its debounce: under a loaded test run that can pass a second.
+const SLOW = 5000;
 
-function Harness({ name, workspace = { status: 'loaded', value: WORKSPACE } }: { name?: string; workspace?: RequestState<Workspace> }) {
+function Harness({ name, node, workspace = { status: 'loaded', value: WORKSPACE } }: { name?: string; node?: string; workspace?: RequestState<Workspace> }) {
   const [client] = useState(() => createApiClient());
-  return <EditorScreen client={client} name={name} workspace={workspace} />;
+  return <EditorScreen client={client} name={name} node={node} workspace={workspace} />;
 }
 
 const ROUTES: MockRoutes = {
   'GET /services': { body: SERVICES },
   'POST /pipelines/validate': { body: { hash: HASH } },
-  'GET /pipelines/{name}': { body: { name: 'hybrid', document: 'pipeline:\n  inputs: [q]\n  nodes: []\n', etag: 'e'.repeat(64), hash: HASH, error: null } },
 };
+
+/** `HYBRID` as `GET /pipelines/{name}` serves it: its text, and its typed document. */
+const STORED_DETAIL: PipelineDetail = { name: 'hybrid', document: 'pipeline: …\n', etag: 'e'.repeat(64), hash: HASH, error: null, typed: HYBRID };
+const STORED: MockRoutes = { ...ROUTES, 'GET /pipelines/{name}': { body: STORED_DETAIL } };
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -55,13 +60,47 @@ describe('the Editor screen', () => {
     expect(port('concat', 'in')[1]!.getAttribute('data-drop')).toBe('refused');
   });
 
-  it('says why a stored pipeline cannot be opened on the canvas yet, and offers a new one instead', async () => {
-    const api = mockApi(ROUTES);
+  it('opens a stored pipeline on the canvas from its typed document, and sends that document to validation', async () => {
+    const api = mockApi(STORED);
     render(<Harness name="hybrid" />);
-    expect(await screen.findByRole('heading', { name: 'hybrid cannot be opened on the canvas yet' })).toBeTruthy();
-    expect(screen.getByText(/serves a pipeline as its text/)).toBeTruthy();
-    expect(screen.getByRole('link', { name: 'Start a new pipeline' }).getAttribute('href')).toBe('#editor');
+    const canvas = await screen.findByRole('application', { name: 'Pipeline hybrid' }, { timeout: SLOW });
+    expect(canvas.querySelector('.react-flow__node[data-id="fused"]')).toBeTruthy();
     expect(api.requests).toContain('GET /api/v1/pipelines/hybrid');
+    await waitFor(() => expect(api.requests).toContain('POST /api/v1/pipelines/validate'), { timeout: SLOW });
+    expect(api.bodies[api.requests.indexOf('POST /api/v1/pipelines/validate')]).toEqual({ typed: HYBRID });
+    expect(await screen.findByText(HASH)).toBeTruthy();
+  });
+
+  it('opens a stored pipeline that does not validate, with the server’s words on it', async () => {
+    mockApi({
+      ...STORED,
+      'GET /pipelines/{name}': { body: { ...STORED_DETAIL, hash: null, error: { detail: 'the pipeline does not validate', location: { node: 'fused', edge: null } } } },
+      'POST /pipelines/validate': { problem: { type: 'urn:ragondin:problem:pipeline_invalid', title: 'The pipeline is invalid', status: 422, code: 'pipeline_invalid', detail: 'the pipeline does not validate: dangling', hint: 'Correct it.', location: { node: 'fused', edge: null } } },
+    });
+    render(<Harness name="hybrid" />);
+    const canvas = await screen.findByRole('application', { name: 'Pipeline hybrid' }, { timeout: SLOW });
+    await waitFor(() => expect(canvas.querySelector('.react-flow__node[data-id="fused"] .rg-node')?.getAttribute('data-status')).toBe('invalid'), { timeout: SLOW });
+  });
+
+  it('restores the node the address selects, and writes the node selected into the address', async () => {
+    mockApi(STORED);
+    window.location.hash = '#editor/hybrid/node/lexical';
+    render(<Harness name="hybrid" node="lexical" />);
+    expect(await screen.findByRole('complementary', { name: 'lexical' }, { timeout: SLOW })).toBeTruthy();
+    const canvas = screen.getByRole('application', { name: 'Pipeline hybrid' });
+    fireEvent.click(canvas.querySelector('.react-flow__node[data-id="vectors"]')!);
+    await waitFor(() => expect(window.location.hash).toBe('#editor/hybrid/node/vectors'), { timeout: SLOW });
+  });
+
+  it('says a stored pipeline whose text does not read opens as text only, in the server’s words, and offers a new one', async () => {
+    mockApi({
+      ...STORED,
+      'GET /pipelines/{name}': { body: { ...STORED_DETAIL, document: 'pipeline: [', hash: null, typed: null, error: { detail: 'could not parse configuration: line 1', location: { node: null, edge: null } } } },
+    });
+    render(<Harness name="hybrid" />);
+    expect(await screen.findByRole('heading', { name: 'hybrid cannot be opened on the canvas' })).toBeTruthy();
+    expect(screen.getByText(/could not parse configuration: line 1/)).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Start a new pipeline' }).getAttribute('href')).toBe('#editor');
   });
 
   it('shows a failed read of the services with Retry, in place of the editor', async () => {

@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { emptyDocument, validationRequest } from './document.ts';
 import { HYBRID } from './fixtures.ts';
+import { float, int } from '../parameters.ts';
 import { canRedo, canUndo, editorReducer, initialEditor, type EditorAction, type EditorState } from './store.ts';
 
 const run = (state: EditorState, ...actions: EditorAction[]) => actions.reduce(editorReducer, state);
-const bytes = (state: EditorState) => validationRequest(state.doc).document;
+const bytes = (state: EditorState) => JSON.stringify(validationRequest(state.doc));
 const node = (state: EditorState, id: string) => state.doc.pipeline.nodes.find((n) => n.id === id);
 
 describe('the editor store', () => {
@@ -33,9 +34,9 @@ describe('the editor store', () => {
       start,
       { type: 'add', component: 'reranker', impl: 'cross_encoder', position: { x: 0, y: 0 } },
       { type: 'connect', from: 'question', to: 'cross_encoder', port: 0 },
-      { type: 'setParam', node: 'cross_encoder', key: 'top_k', value: 5 },
+      { type: 'setParam', node: 'cross_encoder', key: 'top_k', value: int('5') },
     );
-    expect(node(edited, 'cross_encoder')).toEqual({ id: 'cross_encoder', component: 'reranker', impl: 'cross_encoder', inputs: ['question'], params: { top_k: 5 } });
+    expect(node(edited, 'cross_encoder')).toEqual({ id: 'cross_encoder', component: 'reranker', impl: 'cross_encoder', inputs: ['question'], params: { top_k: int('5') } });
     const once = run(edited, { type: 'undo' });
     expect(node(once, 'cross_encoder')).toEqual({ id: 'cross_encoder', component: 'reranker', impl: 'cross_encoder', inputs: ['question'], params: {} });
     const twice = run(once, { type: 'undo' });
@@ -47,23 +48,29 @@ describe('the editor store', () => {
   });
 
   it('redoes what was undone, and forgets the redo once something else changes', () => {
-    const edited = run(initialEditor(HYBRID), { type: 'setParam', node: 'lexical', key: 'top_k', value: 50 });
+    const edited = run(initialEditor(HYBRID), { type: 'setParam', node: 'lexical', key: 'top_k', value: int('50') });
     const undone = run(edited, { type: 'undo' });
-    expect(node(undone, 'lexical')?.params['top_k']).toBe(100);
+    expect(node(undone, 'lexical')?.params['top_k']).toEqual(int('100'));
     expect(canRedo(undone)).toBe(true);
-    expect(node(run(undone, { type: 'redo' }), 'lexical')?.params['top_k']).toBe(50);
-    const branched = run(undone, { type: 'setParam', node: 'lexical', key: 'top_k', value: 7 });
+    expect(node(run(undone, { type: 'redo' }), 'lexical')?.params['top_k']).toEqual(int('50'));
+    const branched = run(undone, { type: 'setParam', node: 'lexical', key: 'top_k', value: int('7') });
     expect(canRedo(branched)).toBe(false);
   });
 
   it('records no step for a change that changes nothing', () => {
-    const same = run(initialEditor(HYBRID), { type: 'setParam', node: 'lexical', key: 'top_k', value: 100 });
+    const same = run(initialEditor(HYBRID), { type: 'setParam', node: 'lexical', key: 'top_k', value: int('100') });
     expect(canUndo(same)).toBe(false);
+  });
+
+  it('records a change of kind alone as a step: `100` and `100.0` are two pipelines', () => {
+    const floated = run(initialEditor(HYBRID), { type: 'setParam', node: 'lexical', key: 'top_k', value: float(100) });
+    expect(canUndo(floated)).toBe(true);
+    expect(node(floated, 'lexical')?.params['top_k']).toEqual(float(100));
   });
 
   it('removes a parameter', () => {
     const state = run(initialEditor(HYBRID), { type: 'removeParam', node: 'vectors', key: 'embedder' });
-    expect(node(state, 'vectors')?.params).toEqual({ top_k: 100 });
+    expect(node(state, 'vectors')?.params).toEqual({ top_k: int('100') });
   });
 
   it('renames a node, and every input naming it and its position follow', () => {
@@ -102,7 +109,7 @@ describe('the editor store', () => {
 
   it('duplicates a node under a fresh id, with its parameters and inputs, beside it', () => {
     const state = run(initialEditor(HYBRID, { lexical: { x: 0, y: 0 } }), { type: 'duplicate', node: 'lexical' });
-    expect(node(state, 'bm25')).toEqual({ id: 'bm25', component: 'retriever', impl: 'bm25', inputs: ['question'], params: { top_k: 100 } });
+    expect(node(state, 'bm25')).toEqual({ id: 'bm25', component: 'retriever', impl: 'bm25', inputs: ['question'], params: { top_k: int('100') } });
     expect(state.layout['bm25']).toEqual({ x: 32, y: 32 });
   });
 

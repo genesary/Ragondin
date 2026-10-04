@@ -1,5 +1,6 @@
 import type { ServiceListing, Workspace } from '../api/types.ts';
 import type { WireDocument } from './document.ts';
+import { int, str } from '../parameters.ts';
 import type { PortGrammar } from './ports.ts';
 
 /**
@@ -20,10 +21,10 @@ export const HYBRID: WireDocument = {
   pipeline: {
     inputs: ['question'],
     nodes: [
-      { id: 'lexical', component: 'retriever', impl: 'bm25', inputs: ['question'], params: { top_k: 100 } },
-      { id: 'vectors', component: 'retriever', impl: 'dense', inputs: ['question'], params: { top_k: 100, embedder: 'bge' } },
-      { id: 'fused', component: 'fusion', impl: 'rrf', inputs: ['lexical', 'vectors'], params: { k: 60 } },
-      { id: 'reranked', component: 'reranker', impl: 'cross_encoder', inputs: ['question', 'fused'], params: { top_k: 10 } },
+      { id: 'lexical', component: 'retriever', impl: 'bm25', inputs: ['question'], params: { top_k: int('100') } },
+      { id: 'vectors', component: 'retriever', impl: 'dense', inputs: ['question'], params: { top_k: int('100'), embedder: str('bge') } },
+      { id: 'fused', component: 'fusion', impl: 'rrf', inputs: ['lexical', 'vectors'], params: { k: int('60') } },
+      { id: 'reranked', component: 'reranker', impl: 'cross_encoder', inputs: ['question', 'fused'], params: { top_k: int('10') } },
     ],
   },
 };

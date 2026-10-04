@@ -1,7 +1,8 @@
 import { useEffect, useId, useState, type KeyboardEvent } from 'react';
-import { Button, Checkbox, Input, Inspector, familyOfComponent } from '../../design/index.ts';
+import { Button, Checkbox, Input, Inspector, Select, familyOfComponent } from '../../design/index.ts';
 import type { ParameterValue } from '../api/types.ts';
 import { PORT_LABEL } from '../canvas/Port.tsx';
+import { bool, float, formatFloat, int, list, str } from '../parameters.ts';
 import { freshId, type WireDocument, type WireNode } from './document.ts';
 import type { NodePorts } from './ports.ts';
 import type { EditorAction } from './store.ts';
@@ -21,52 +22,134 @@ export type EditorInspectorProps = {
   onRenamed: (id: string) => void;
 };
 
-const show = (value: ParameterValue): string => (Array.isArray(value) ? value.map(show).join(', ') : String(value));
+type Kind = ParameterValue['kind'];
 
-// A typed value read back as the type it had (ADR-C22's flat grammar): a
-// number stays a number, a flag a flag, text text, and a list's items take
-// the type of its first, or are read as a new value's are.
-// `1`, `1.5`, `.5`, `1.`, `1e3`, each optionally signed: the forms a person types for a number.
-const NUMBER = /^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/;
-function infer(text: string): ParameterValue {
-  const t = text.trim();
-  if (NUMBER.test(t)) return Number(t);
-  if (t === 'true' || t === 'false') return t === 'true';
-  if (t.includes(',')) return t.split(',').map((item) => infer(item));
-  return text;
-}
-function readAs(old: ParameterValue, text: string): ParameterValue | null {
-  if (Array.isArray(old)) {
-    const items = text.split(',').map((item) => item.trim()).filter((item) => item !== '');
-    const first = old[0];
-    return items.map((item) => (first === undefined || Array.isArray(first) ? infer(item) : (readAs(first, item) ?? item)));
+// Each kind ADR-C22's flat grammar has, as the person picks it. The order is
+// the one a configuration most often needs them in.
+const KINDS: readonly { value: Kind; label: string }[] = [
+  { value: 'int', label: 'Integer' },
+  { value: 'float', label: 'Float' },
+  { value: 'string', label: 'Text' },
+  { value: 'bool', label: 'Flag' },
+  { value: 'list', label: 'List' },
+];
+
+/** A value as its field shows it: a float with its fractional part, a list's items separated by commas. */
+function textOf(value: ParameterValue): string {
+  switch (value.kind) {
+    case 'int':
+    case 'string':
+      return value.value;
+    case 'float':
+      return formatFloat(value.value);
+    case 'bool':
+      return String(value.value);
+    case 'list':
+      return value.value.map(textOf).join(', ');
   }
-  if (typeof old === 'number') return NUMBER.test(text.trim()) ? Number(text.trim()) : null;
-  return text;
 }
+
+// The forms a person types: a whole number, signed or not; and a number
+// with a point or an exponent, `1.5`, `.5`, `1.`, `1e3`.
+const INTEGER = /^[-+]?\d+$/;
+const NUMBER = /^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/;
+const NOT_FINITE = /^[-+]?(inf|infinity|nan)$/i;
+const I64_MIN = -(2n ** 63n);
+const I64_MAX = 2n ** 63n - 1n;
+
+/** Text read as one kind: the value, or why the kind cannot carry it, in words. */
+type Read = { value: ParameterValue } | { error: string };
+
+function readAs(kind: Kind, text: string, items: Kind | null = null): Read {
+  const t = text.trim();
+  switch (kind) {
+    case 'int': {
+      if (!INTEGER.test(t)) return { error: `An integer is a whole number, such as 60: "${text}" is not one.` };
+      const whole = BigInt(t);
+      // Held as decimal text, never as a browser number, which would round it.
+      if (whole < I64_MIN || whole > I64_MAX) return { error: `An integer has at most 64 bits: "${text}" is wider.` };
+      return { value: int(whole.toString()) };
+    }
+    case 'float': {
+      const number = Number(t);
+      if (NOT_FINITE.test(t) || (NUMBER.test(t) && !Number.isFinite(number))) return { error: `A float is a finite number: "${text}" is not one.` };
+      if (!NUMBER.test(t)) return { error: `A float is a number, such as 0.5: "${text}" is not one.` };
+      return { value: float(number) };
+    }
+    case 'bool':
+      if (t === 'true' || t === 'false') return { value: bool(t === 'true') };
+      return { error: `A flag is true or false: "${text}" is neither.` };
+    case 'string':
+      return { value: str(text) };
+    case 'list': {
+      const read: ParameterValue[] = [];
+      for (const item of text.split(',').map((i) => i.trim()).filter((i) => i !== '')) {
+        const one = items === null || items === 'list' ? infer(item) : readAs(items, item);
+        if ('error' in one) return one;
+        read.push(one.value);
+      }
+      return { value: list(...read) };
+    }
+  }
+}
+
+/**
+ * A value no kind was picked for: an integer when it is a whole number, a
+ * float when it has a point or an exponent, else text as typed — `true`, or
+ * text holding a comma, stays text unless the person picks another kind
+ * (ADR-C40 § 8).
+ */
+function infer(text: string): Read {
+  const t = text.trim();
+  if (INTEGER.test(t)) return readAs('int', t);
+  if (NUMBER.test(t)) return readAs('float', t);
+  return readAs('string', text);
+}
+
+/** A list's items keep the kind of its first, as a value keeps its own. */
+const itemKind = (value: ParameterValue): Kind | null => (value.kind === 'list' ? (value.value[0]?.kind ?? null) : null);
 
 function Parameter({ prefix, name, value, onSet, onRemove }: { prefix: string; name: string; value: ParameterValue; onSet: (v: ParameterValue) => void; onRemove: () => void }) {
-  const [text, setText] = useState(show(value));
+  const [text, setText] = useState(textOf(value));
   const [error, setError] = useState<string | undefined>(undefined);
-  useEffect(() => setText(show(value)), [value]);
+  const [kindError, setKindError] = useState<string | undefined>(undefined);
+  useEffect(() => setText(textOf(value)), [value]);
   const commit = () => {
-    const read = readAs(value, text);
-    if (read === null) {
-      setError(`${name} is a number: "${text}" is not one.`);
-      return;
-    }
+    const read = readAs(value.kind, text, itemKind(value));
+    if ('error' in read) return setError(read.error);
     setError(undefined);
-    onSet(read);
+    setKindError(undefined);
+    onSet(read.value);
   };
+  // The value as it reads in the kind picked; refused in words when it cannot, and the kind kept.
+  const rekind = (kind: Kind) => {
+    const read = readAs(kind, textOf(value));
+    if ('error' in read) return setKindError(read.error);
+    setError(undefined);
+    setKindError(undefined);
+    onSet(read.value);
+  };
+  const id = `${prefix}-param-${name}`;
+  const kind = (
+    <Select
+      id={`${id}-kind`}
+      label={`Kind of ${name}`}
+      options={KINDS}
+      value={value.kind}
+      {...(kindError === undefined ? {} : { error: kindError })}
+      onChange={(e) => rekind(e.target.value as Kind)}
+    />
+  );
   const remove = (
     <Button kind="quiet" size="s" icon="close" onClick={onRemove}>
       <span className="rg-visually-hidden">Remove {name}</span>
     </Button>
   );
-  if (typeof value === 'boolean') {
+  if (value.kind === 'bool') {
     return (
       <div className="rg-editor-inspector__param">
-        <Checkbox label={name} checked={value} onChange={onSet} />
+        <Checkbox label={name} checked={value.value} onChange={(checked) => onSet(bool(checked))} />
+        {kind}
         {remove}
       </div>
     );
@@ -74,13 +157,13 @@ function Parameter({ prefix, name, value, onSet, onRemove }: { prefix: string; n
   return (
     <div className="rg-editor-inspector__param">
       <Input
-        id={`${prefix}-param-${name}`}
+        id={id}
         label={name}
         mono
-        numeric={typeof value === 'number'}
+        numeric={value.kind === 'int' || value.kind === 'float'}
         value={text}
         // The line is always there, so an error replaces it rather than pushing the fields below down.
-        help={Array.isArray(value) ? 'A list: items separated by commas.' : ' '}
+        help={value.kind === 'list' ? 'A list: items separated by commas.' : ' '}
         {...(error === undefined ? {} : { error })}
         onChange={(e) => setText(e.target.value)}
         onBlur={commit}
@@ -88,10 +171,14 @@ function Parameter({ prefix, name, value, onSet, onRemove }: { prefix: string; n
           if (e.key === 'Enter') commit();
         }}
       />
+      {kind}
       {remove}
     </div>
   );
 }
+
+// What the new parameter's kind starts as: none picked, read from the value.
+const FROM_VALUE = '';
 
 /**
  * The inspector in write mode: the node's family, `impl:` name and id — the
@@ -109,6 +196,8 @@ export function EditorInspector({ doc, node, ports, verdict, quiet, dispatch, on
   const [idError, setIdError] = useState<string | undefined>(undefined);
   const [key, setKey] = useState('');
   const [value, setValue] = useState('');
+  const [newKind, setNewKind] = useState<Kind | typeof FROM_VALUE>(FROM_VALUE);
+  const [valueError, setValueError] = useState<string | undefined>(undefined);
   useEffect(() => {
     setId(node.id);
     setIdError(undefined);
@@ -126,9 +215,13 @@ export function EditorInspector({ doc, node, ports, verdict, quiet, dispatch, on
   const add = () => {
     const name = key.trim();
     if (name === '' || value.trim() === '') return;
-    dispatch({ type: 'setParam', node: node.id, key: name, value: infer(value) });
+    const read = newKind === FROM_VALUE ? infer(value) : readAs(newKind, value);
+    if ('error' in read) return setValueError(read.error);
+    setValueError(undefined);
+    dispatch({ type: 'setParam', node: node.id, key: name, value: read.value });
     setKey('');
     setValue('');
+    setNewKind(FROM_VALUE);
   };
   const onIdKey = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key === 'Enter') rename();
@@ -184,7 +277,15 @@ export function EditorInspector({ doc, node, ports, verdict, quiet, dispatch, on
       ))}
       <div className="rg-editor-inspector__add">
         <Input id={`${prefix}-key`} label="New parameter" mono value={key} onChange={(e) => setKey(e.target.value)} />
-        <Input id={`${prefix}-value`} label="Value" mono value={value} onChange={(e) => setValue(e.target.value)} />
+        <Select
+          id={`${prefix}-kind`}
+          label="Kind"
+          options={[{ value: FROM_VALUE, label: 'From the value' }, ...KINDS]}
+          value={newKind}
+          help="From the value: a whole number is an integer, one with a point or an exponent a float, anything else text."
+          onChange={(e) => setNewKind(e.target.value as Kind | typeof FROM_VALUE)}
+        />
+        <Input id={`${prefix}-value`} label="Value" mono value={value} {...(valueError === undefined ? {} : { error: valueError })} onChange={(e) => setValue(e.target.value)} />
         <Button kind="secondary" size="s" onClick={add}>
           Add parameter
         </Button>

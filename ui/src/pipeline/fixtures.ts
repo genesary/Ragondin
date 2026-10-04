@@ -4,6 +4,7 @@
 // matrix), and the variants each state needs. Test data only; no application
 // module imports it.
 import type { FeedingRun, MatrixCell, MatrixColumn, MatrixGain, MatrixRow, PipelineMatrix } from '../api/types.ts';
+import { int } from '../parameters.ts';
 
 const hex = (c: string) => c.repeat(64);
 export const NAME = 'hybrid-rerank-gen';
@@ -121,7 +122,7 @@ export const SINCE_CHANGED: FeedingRun = {
   prefix_of: null,
   content_since_changed: {
     launched: 'as_pipeline',
-    difference: { kind: 'compared', same_logical_form: false, parameters: [{ node: 'dense', key: { kind: 'param', name: 'top_k' }, values: [50, 100] }] },
+    difference: { kind: 'compared', same_logical_form: false, parameters: [{ node: 'dense', key: { kind: 'param', name: 'top_k' }, values: [int('50'), int('100')] }] },
   },
 };
 

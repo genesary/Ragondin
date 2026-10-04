@@ -3,6 +3,7 @@ import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { StrictMode } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import type { Graph } from '../api/types.ts';
+import { int } from '../parameters.ts';
 import { parseRules } from '../../design/testing/css.ts';
 import css from './Canvas.css?raw';
 import { Canvas, type CanvasProps } from './Canvas.tsx';
@@ -11,7 +12,7 @@ import { Canvas, type CanvasProps } from './Canvas.tsx';
 const GRAPH: Graph = {
   inputs: [{ id: 'question', kind: 'query' }],
   nodes: [
-    { id: 'lexical', family: 'retriever', implementation: 'bm25', parameters: { top_k: 100 } },
+    { id: 'lexical', family: 'retriever', implementation: 'bm25', parameters: { top_k: int('100') } },
     { id: 'reranked', family: 'reranker', implementation: 'cross_encoder', parameters: {} },
     { id: 'vectors', family: 'retriever', implementation: 'dense', parameters: {} },
   ],

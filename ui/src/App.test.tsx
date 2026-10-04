@@ -56,9 +56,9 @@ describe('the shell’s screens', () => {
     ['#compare/aaa', 'Compare', 'Choose at least two runs'],
     ['#replay', 'Replay', 'No query chosen'],
     ['#editor', 'Editor', 'No pipeline open'],
-    ['#editor/hybrid-rrf', 'Editor', 'hybrid-rrf cannot be opened on the canvas yet'],
+    ['#editor/hybrid-rrf', 'Editor', 'hybrid-rrf cannot be opened on the canvas'],
   ])('%s renders the %s screen, restored from the hash, in its empty state', async (hash, tab, heading) => {
-    const pipeline = { name: 'hybrid-rrf', document: 'pipeline: {}\n', etag: 'e'.repeat(64), hash: null, error: null };
+    const pipeline = { name: 'hybrid-rrf', document: 'pipeline: {}\n', etag: 'e'.repeat(64), hash: null, error: null, typed: null };
     mockApi({ 'GET /workspace': { body: WORKSPACE }, 'GET /runs': { body: { runs: [], unreadable: [], shapes: {} } }, 'GET /pipelines/{name}': { body: pipeline } }, { build: BUILD });
     show(hash);
     expect(within(main()).getByRole('heading', { level: 1 }).textContent).toBe(tab);
