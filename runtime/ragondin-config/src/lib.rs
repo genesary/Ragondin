@@ -7,8 +7,10 @@
 //!
 //! - [`document`], the one definition of a pipeline document's load:
 //!   [`parse_document`] takes the text — not a path — and returns the
-//!   validated `LogicalPipeline` or a [`DocumentError`];
-//!   [`incompatible_wiring`] renders an edge of the wrong kind. Every caller
+//!   validated `LogicalPipeline` or a [`DocumentError`]; [`read_document`]
+//!   is its first half, text into the wire schema; [`render_document`]
+//!   writes the wire schema back as text; [`incompatible_wiring`] renders an
+//!   edge of the wrong kind. Every caller
 //!   holding a document runs these, the CLI, `ragondin-api` and
 //!   `ragondin-experiments` alike, and none keeps a copy.
 //! - [`source`], holding the [`ConfigSource`] abstraction
@@ -40,5 +42,7 @@
 pub mod document;
 pub mod source;
 
-pub use document::{incompatible_wiring, parse_document, DocumentError};
+pub use document::{
+    incompatible_wiring, parse_document, read_document, render_document, DocumentError, RenderError,
+};
 pub use source::{ConfigError, ConfigSource, LocalFile};

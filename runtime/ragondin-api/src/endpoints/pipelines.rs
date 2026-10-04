@@ -15,13 +15,15 @@ use axum::extract::State;
 use axum::http::{header, HeaderValue};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
+use ragondin_config::read_document;
 use ragondin_experiments::UnixMillis;
 
 use crate::backends::{PipelineFile, Precondition, Revision};
+use crate::convert;
 use crate::error::ApiError;
 use crate::extract::{ApiHeaders, ApiJson, ApiPath, ApiQuery, NoParameters};
 use crate::handlers::AppState;
-use crate::request::{PipelineDocument, PreconditionHeaders};
+use crate::request::{PipelineDocument, PreconditionHeaders, ValidationRequest};
 use crate::response::{
     Layout, PipelineDetail, PipelineError, PipelineLayout, PipelineListing, PipelineSummary,
     PipelineValidated, PipelineWritten,
@@ -67,6 +69,11 @@ pub(crate) async fn read(
 ) -> Result<Response, ApiError> {
     let file = state.backends.pipelines.read(&name).await?;
     let (hash, error) = verdict(&file.document);
+    // The load's first half alone: a document that does not validate still
+    // reads, and the editor opens it (ADR-C40 § 4).
+    let typed = read_document(&file.document)
+        .ok()
+        .and_then(|raw| convert::typed_document(&raw));
     let etag = file.revision.clone();
     Ok(with_etag(
         Json(PipelineDetail {
@@ -75,6 +82,7 @@ pub(crate) async fn read(
             etag: etag.as_str().to_owned(),
             hash,
             error,
+            typed,
         }),
         &etag,
     ))
@@ -119,14 +127,17 @@ pub(crate) async fn write(
     ))
 }
 
-/// `POST /pipelines/validate`: the hash, or `pipeline_invalid`.
+/// `POST /pipelines/validate`: the hash, or `pipeline_invalid` — of the text
+/// as sent, or of the typed document's rendering.
 pub(crate) async fn validate(
     _: ApiQuery<NoParameters>,
-    ApiJson(request): ApiJson<PipelineDocument>,
+    ApiJson(request): ApiJson<ValidationRequest>,
 ) -> Result<Json<PipelineValidated>, ApiError> {
-    Ok(Json(PipelineValidated {
-        hash: validation::check(&request.document)?,
-    }))
+    let hash = match request {
+        ValidationRequest::Document(text) => validation::check(&text)?,
+        ValidationRequest::Typed(typed) => validation::check_typed(&typed)?,
+    };
+    Ok(Json(PipelineValidated { hash }))
 }
 
 /// `GET /pipelines/{name}/layout`.

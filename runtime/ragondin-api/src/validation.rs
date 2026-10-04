@@ -4,6 +4,10 @@
 //! document is parsed into `RawPipeline`, never into an internal type; INV-8:
 //! the hash is the canonical form's).
 //!
+//! The editor's typed document (ADR-C40) takes the same path: converted to
+//! the wire schema, rendered as text by `ragondin-config`'s
+//! `render_document`, and that rendering checked like any text.
+//!
 //! Nothing is added to those checks: `POST /pipelines/validate` answers what
 //! `ragondin validate` answers. The composition root's key refusals, which
 //! `validate` does not make (ADR-C32 § 2), are `Launcher::check_document`'s,
@@ -16,11 +20,12 @@
 //! with "the configuration" where the CLI names the file. `bin/ragondin`'s
 //! `tests/ui.rs` compares the two byte for byte.
 
-use ragondin_config::{incompatible_wiring, parse_document, DocumentError};
+use ragondin_config::{incompatible_wiring, parse_document, render_document, DocumentError};
 use ragondin_pipeline::{LogicalPipeline, NodeId, ValidationError};
 
+use crate::convert;
 use crate::error::ApiError;
-use crate::response::{EdgeLocation, Location};
+use crate::response::{EdgeLocation, Location, TypedDocument};
 
 /// The content hash of `document`'s canonical logical form, or why it is
 /// not a pipeline, as `pipeline_invalid`. The one place this crate renders a
@@ -29,23 +34,41 @@ pub(crate) fn check(document: &str) -> Result<String, ApiError> {
     Ok(lower(document)?.content_hash().to_string())
 }
 
+/// The content hash of the editor's typed document, or why it is not a
+/// pipeline, as `pipeline_invalid` (ADR-C40 § 5). The document is converted
+/// to the wire schema, rendered as text by `ragondin-config`'s one renderer,
+/// and that text goes through [`check`]: the hash is the one of exactly the
+/// bytes a write would store, and the load is the one every text takes.
+pub(crate) fn check_typed(typed: &TypedDocument) -> Result<String, ApiError> {
+    let raw = convert::wire_document(typed)
+        .map_err(|unsupported| refusal(DocumentError::UnsupportedSchemaVersion(unsupported)))?;
+    let text = render_document(&raw).map_err(|error| ApiError::PipelineInvalid {
+        detail: error.to_string(),
+        location: unlocated(),
+    })?;
+    check(&text)
+}
+
 /// `document`'s validated logical pipeline, or why it is not one, as
 /// `pipeline_invalid`.
 pub(crate) fn lower(document: &str) -> Result<LogicalPipeline, ApiError> {
-    parse_document(document).map_err(|error| {
-        let (detail, location) = match &error {
-            DocumentError::Invalid(verdict) => (
-                incompatible_wiring("the configuration", verdict).unwrap_or_else(|| headed(&error)),
-                located(verdict),
-            ),
-            // The deserializer's message carries the line and the column; a
-            // `Location` names nodes and edges, which these have none of.
-            DocumentError::UnsupportedSchemaVersion(_) | DocumentError::Malformed(_) => {
-                (headed(&error), unlocated())
-            }
-        };
-        ApiError::PipelineInvalid { detail, location }
-    })
+    parse_document(document).map_err(refusal)
+}
+
+/// The load's refusal as `pipeline_invalid`, located where it can be.
+fn refusal(error: DocumentError) -> ApiError {
+    let (detail, location) = match &error {
+        DocumentError::Invalid(verdict) => (
+            incompatible_wiring("the configuration", verdict).unwrap_or_else(|| headed(&error)),
+            located(verdict),
+        ),
+        // The deserializer's message carries the line and the column; a
+        // `Location` names nodes and edges, which these have none of.
+        DocumentError::UnsupportedSchemaVersion(_) | DocumentError::Malformed(_) => {
+            (headed(&error), unlocated())
+        }
+    };
+    ApiError::PipelineInvalid { detail, location }
 }
 
 /// The refusal's heading and its cause, on one line: what `ragondin validate`

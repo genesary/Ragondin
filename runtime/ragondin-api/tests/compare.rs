@@ -165,6 +165,11 @@ fn queries() -> impl Iterator<Item = (usize, String)> {
 }
 
 fn dense_only_run(id: u8) -> Run {
+    dense_run_of(id, DENSE_ONLY)
+}
+
+/// A run of a one-retriever pipeline written as `config`.
+fn dense_run_of(id: u8, config: &str) -> Run {
     let traces = queries()
         .map(|(n, q)| {
             let trace = Trace {
@@ -180,7 +185,7 @@ fn dense_only_run(id: u8) -> Run {
         .collect::<Vec<_>>();
     run_over(
         id,
-        DENSE_ONLY,
+        config,
         &benchmark(),
         traces
             .iter()
@@ -533,7 +538,48 @@ async fn three_runs_give_the_metric_table_with_best_and_deltas_and_the_differing
         .iter()
         .find(|row| row["node"] == "dense")
         .unwrap();
-    assert_eq!(top_k["values"], json!([100, 50, 50]));
+    // Tagged with its kind: an integer travels as decimal text (ADR-C40 § 1).
+    assert_eq!(
+        top_k["values"],
+        json!([
+            { "kind": "int", "value": "100" },
+            { "kind": "int", "value": "50" },
+            { "kind": "int", "value": "50" },
+        ])
+    );
+}
+
+/// `60` and `60.0` are two configurations (ADR-C22), and the row that tells
+/// them apart says which is which: each value carries its kind (ADR-C40
+/// § 2), never "60 | 60".
+#[tokio::test(flavor = "multi_thread")]
+async fn an_integer_and_a_float_of_one_value_are_two_kinds_in_the_matrix() {
+    let as_dense = |id: u8, top_k: &str| dense_run_of(id, &DENSE_ONLY.replace("100", top_k));
+    let integer = as_dense(0x01, "60");
+    let float = as_dense(0x02, "60.0");
+    let workspace = scratch("compare_integer_and_float");
+
+    let (status, body) = post_compare(
+        app(vec![integer.clone(), float.clone()], &workspace, None),
+        json!({
+            "run_ids": ids(&[&integer, &float]),
+            "baseline": integer.id.to_string(),
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        body["configuration"]["parameters"],
+        json!([{
+            "node": "dense",
+            "key": { "kind": "param", "name": "top_k" },
+            "values": [
+                { "kind": "int", "value": "60" },
+                { "kind": "float", "value": 60.0 },
+            ],
+        }])
+    );
 }
 
 /// A metric the catalogue does not know has no direction, so no run holds

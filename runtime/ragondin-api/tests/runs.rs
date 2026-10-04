@@ -379,12 +379,15 @@ async fn the_detail_carries_the_graph_lowered_from_the_stored_document() {
         json!([
             {
                 "id": "answer", "family": "generator", "implementation": "stub_generator",
-                "parameters": { "served_model": "stub-model", "template": "{context}" },
+                "parameters": {
+                    "served_model": { "kind": "string", "value": "stub-model" },
+                    "template": { "kind": "string", "value": "{context}" },
+                },
             },
             {
                 "id": "context", "family": "context_builder",
                 "implementation": "stub_context_builder",
-                "parameters": { "budget": 1 },
+                "parameters": { "budget": { "kind": "int", "value": "1" } },
             },
             {
                 "id": "fused", "family": "fusion", "implementation": "stub_interleave",
@@ -392,11 +395,17 @@ async fn the_detail_carries_the_graph_lowered_from_the_stored_document() {
             },
             {
                 "id": "leg_a", "family": "retriever", "implementation": "stub_retriever",
-                "parameters": { "label": "doc-a", "top_k": 1 },
+                "parameters": {
+                    "label": { "kind": "string", "value": "doc-a" },
+                    "top_k": { "kind": "int", "value": "1" },
+                },
             },
             {
                 "id": "leg_b", "family": "retriever", "implementation": "stub_retriever",
-                "parameters": { "label": "doc-b", "top_k": 1 },
+                "parameters": {
+                    "label": { "kind": "string", "value": "doc-b" },
+                    "top_k": { "kind": "int", "value": "1" },
+                },
             },
         ])
     );
