@@ -10,11 +10,15 @@
 # dirty.
 #
 # Dirty is a tracked file modified, or a change staged, against HEAD. An
-# untracked file is not: no build reads one it was not told about (a Finder
-# `.DS_Store`, an editor's swap file), and counting it made the binary say
-# dirty where the page did not, so the page refused to load. A new source
-# file is dirty once staged; until then, a build reaches it only through an
-# edit to a tracked file that names it, and that edit is dirty.
+# untracked file is not, because most are read by no build (a Finder
+# `.DS_Store`, an editor's swap file), and counting them made the binary say
+# dirty where the page did not, so the page refused to load. A new module is
+# dirty once staged; until then, a build reaches it only through an edit to a
+# tracked file that names it, and that edit is dirty. The known exceptions are
+# files a tool discovers by itself, which change a build with no tracked edit
+# and which this rule does not see: Cargo's `.cargo/config.toml` and
+# `rust-toolchain.toml`, and its auto-discovered targets under `src/bin/`,
+# `tests/`, `examples/` and `benches/`; Vite's `.env` files.
 # `--no-optional-locks`: a plain `status` may rewrite the index, which the
 # binary's build script watches, and would rerun it for a change it made.
 rev-parse --short=12 HEAD

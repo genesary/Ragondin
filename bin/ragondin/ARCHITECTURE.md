@@ -562,11 +562,16 @@ runs in <store>) at http://<address>/`. It opens no browser.
   `ui/tests/build-identity.test.ts` pin the rule's meaning on fixture
   checkouts: an untracked file leaves the tree clean, a modified tracked file
   or a staged new one makes it dirty. **An untracked file is not counted**
-  because no build reads one it was not told about — a new source file is
-  reached only through an edit to a tracked file that names it, and that
-  edit is dirty — while counting it, when the page applied no dirty rule of
-  its own, let a Finder `.DS_Store` mark the binary dirty and not the page,
-  which then refused to load. `--no-optional-locks`:
+  because most are read by no build — a new module is reached only through
+  an edit to a tracked file that names it, and that edit is dirty — while
+  counting them, when the page applied no dirty rule of its own, let a
+  Finder `.DS_Store` mark the binary dirty and not the page, which then
+  refused to load. The known exceptions are files a tool discovers by
+  itself, which change a build with no tracked edit and which the rule does
+  not see: Cargo's `.cargo/config.toml` and `rust-toolchain.toml`, and its
+  auto-discovered targets under `src/bin/`, `tests/`, `examples/` and
+  `benches/`; Vite's `.env` files. A build from such a tree can say clean
+  while it is not, the same blind spot as an edit left unstaged below. `--no-optional-locks`:
   a plain `status` may rewrite the index, which `build.rs` watches, and rerun
   the script on the next build for a change it made itself.
 - **`build.rs` reruns when `HEAD`, the branch it names, `packed-refs` or the
