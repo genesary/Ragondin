@@ -101,9 +101,10 @@ enum Command {
         constructed from it. Every query of the benchmark is executed and the \
         judged ones are scored; the run is written to the store and its \
         identity and metrics are printed. A run the store already holds is \
-        kept as it is: this execution is not saved, and `bench` prints the \
-        run's id and `already stored, launched as <name>; this execution was \
-        not kept`, without the name when the stored run records none.\n\n\
+        kept as it is and refused before the corpus is embedded: `bench` \
+        exits non-zero with the run's id and `already stored, launched as \
+        <name>; this execution was not kept`, without the name when the \
+        stored run records none.\n\n\
         `--benchmark` names a format and a dataset: `beir/<dir>` (qrels only), \
         `beir-qa/<dir>` (the same directory with its `answers.jsonl`), or \
         `squad/<dir>` (the SQuAD v1.1 dev file). A benchmark carrying reference \

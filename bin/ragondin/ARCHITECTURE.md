@@ -22,7 +22,7 @@ charter.
 | `src/validate.rs` | Loads a configuration and prints its content hash |
 | `src/compare.rs` | Reads two stored runs and prints their diff: metric by metric, then the configuration parameters they differ in |
 | `src/execution.rs` | The one path from a pipeline and a benchmark to a run, shared by `bench` and the UI's launcher: the preparation up to the run's identity, and the execution from there (§ Local invariants) |
-| `src/bench.rs` | Evaluates a configuration against a benchmark through that path and records the run, or says the store already holds it |
+| `src/bench.rs` | Evaluates a configuration against a benchmark through that path and records the run, or refuses, before executing, a run the store already holds |
 | `src/binding.rs` | `--remote <family>/<name>=<uri>`: the bindings, parsed and checked (ADR-C32 § 2) |
 | `src/wiring.rs` | A node's `Params` on one side, a constructed component on the other; a binding's channel, and the `Remote` adapter over it |
 | `src/ui/` | `ragondin ui`, behind the `ui` feature: the loopback rule (`address.rs`), the embedded asset table `ragondin-api` serves (`assets.rs`), `Launcher` (`launcher.rs`), where the workspace is (`location.rs`), and the handler that opens it and wires the backends (`mod.rs`) |
@@ -43,7 +43,7 @@ charter.
 configuration and prints its content hash. `compare` reads two runs already in
 a run store and prints their diff. `bench` evaluates a configuration against a
 benchmark, records the run and prints what it scored, or, for a run the store
-already holds, keeps that one and says so. `ui`, behind its
+already holds, keeps that one and refuses before executing. `ui`, behind its
 feature, serves the front end and its API on loopback (§ The ui subcommand);
 a build without the feature refuses it. `serve` parses its
 arguments and refuses. Declaring all five is deliberate rather than premature:
@@ -403,26 +403,27 @@ release.
   records these choices. The harness assembles the run with no record. The
   record is outside identity (INV-8), and the printed summary does not show
   it.
-- **`bench` says when the run is already stored, and keeps the stored one
-  (ADR-C39 § 8).** After `evaluate`, `bench` reads the run id through the
-  store's `load`. When the run is there, `save` is not called, so the stored
-  run, its record included, stays byte for byte as it was. Instead of the
-  summary, `bench` prints `run <id>` and then `already stored, launched as
-  <name>; this execution was not kept`, or `already stored; this execution
-  was not kept` when the stored run has no name in its record, and exits
-  `0`. A stored run that does not read is an error naming it, and nothing is
-  saved: it used to exit `0` with the usual summary, and now exits non-zero.
-  Two smaller consequences follow from `save` not being called. An execution
-  whose metrics hold a non-finite value, over a run already stored, now exits
-  `0` with the report, since nothing is written and so `save`'s `NotFinite`
-  refusal is never reached. And the race between `load` and `save` remains:
-  another writer that files the same run between the two leaves this
-  execution's `save` a no-op, which still prints the summary as if filed,
-  until the lookup moves before execution. The evaluation still runs first:
-  the shared preparation now knows the identity before execution, but
-  refusing there, as the UI's `409 run_exists` does, changes what a second
-  `bench` does — a non-zero exit where it exits `0` — and is left to its own
-  change.
+- **`bench` refuses a run the store already holds, before executing it, and
+  keeps the stored one (ADR-C39 § 8).** After `execution::prepare`, `bench`
+  takes `Prepared::identity` — the harness's `run_identity` over the
+  evaluation `execute` would run — and reads that id through the store's
+  `load`, before the corpus is embedded, as the UI's `409 run_exists` refuses
+  a submission. When the run is there, nothing executes and nothing is saved,
+  so the stored run, its record included, stays byte for byte as it was;
+  `bench` prints nothing on stdout and exits non-zero with `run <id>: already
+  stored, launched as <name>; this execution was not kept`, or `run <id>:
+  already stored; this execution was not kept` when the stored run has no
+  name in its record. A stored run that does not read is refused too, as an
+  error naming it. No escape such as a forced re-run is offered. Within one
+  `Prepared` nothing hashed changes, so the id checked is the id the finished
+  run carries; the store is asked once more after `execute`, before `save`,
+  because `save` does nothing for a run already stored, and a writer that
+  filed the same run while this one executed is refused the same way. The
+  race is narrowed, not closed: a writer that files the run between that
+  second `load` and `save` leaves this `save` a no-op, which still prints the
+  summary as if filed. The refusal replaced a report that exited `0` after
+  running the whole evaluation; a script that re-runs a benchmark into the
+  same store now sees a non-zero exit, as ADR-C39 § 8 decides.
 - **A `Remote` component is bound on the command line, never in the
   configuration (ADR-C32 § 1–§ 3).** `bench --remote <family>/<name>=<uri>`,
   repeatable, binds an `impl:` name — or, for `embedder`, an `embedder:`
