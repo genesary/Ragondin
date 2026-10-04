@@ -170,9 +170,12 @@ fn answer(query: usize, reference: Option<usize>) -> String {
 }
 
 /// `queries` queries, judged as `shape` says: the third document of the
-/// query's own ranking at the top grade, and with more judgments, others —
-/// every other one ranked by the run, the rest not — at lower grades. A
-/// generation shape gives each query three reference answers.
+/// query's own ranking at the top grade, and with more judgments, others at
+/// lower grades: every other one `document(q, 2 + j)`, an index from 4 to
+/// 100 of the query's own ranking — the run ranks indices `0..k`, so with
+/// `k = 100` the last, index 100, is not ranked — and the rest documents no
+/// run ranks. A generation shape gives each query three
+/// reference answers.
 fn benchmark(shape: Shape, queries: usize) -> Benchmark {
     let mut qrels = Qrels::new();
     let mut references = ReferenceAnswers::new();
@@ -360,16 +363,20 @@ fn what_the_cache_costs_and_saves_per_run() {
             measure(shape, RUNS, queries, k);
         }
     }
+    let _ = std::fs::remove_dir_all(scratch());
+}
+
+/// The directory every measurement of this process files its runs under.
+fn scratch() -> std::path::PathBuf {
+    std::env::temp_dir().join(format!("ragondin-api-cache-cost-{}", std::process::id()))
 }
 
 /// Files `runs` runs of `shape` and prints what each step costs per run.
 fn measure(shape: Shape, runs: usize, queries: usize, k: usize) {
-    let workspace = std::env::temp_dir()
-        .join(format!("ragondin-api-cache-cost-{}", std::process::id()))
-        .join(format!(
-            "{}-{}-{}-{queries}-{k}",
-            shape.generation, shape.passage_bytes, shape.judged
-        ));
+    let workspace = scratch().join(format!(
+        "{}-{}-{}-{queries}-{k}",
+        shape.generation, shape.passage_bytes, shape.judged
+    ));
     let _ = std::fs::remove_dir_all(&workspace);
     let store = FileSystemRunStore::new(workspace.join("runs"));
     for byte in 0..runs {

@@ -1480,8 +1480,8 @@ binary's build identity (#365) provides; its doc comment says so.
   the key costs as much as the figures or more: the key reads every trace,
   context text included, which no figure reads. On generation runs with a
   small context (about 3 kB) the answer metrics make the figures dearer
-  than the key, and the cache saves 1–7%. In every case the stakes are a
-  few ms out of a 30–130 ms request. On the literal reading, the drop
+  than the key, and the cache saves 1–7%. In every case the stakes are up
+  to about 10 ms at 1000 queries, out of a 30–130 ms request. On the literal reading, the drop
   condition fails for small-context generation runs, so the cache stays
   and no API changes.
 
