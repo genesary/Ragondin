@@ -16,12 +16,50 @@
 //! ADR-C36 § 4 allows one definition of each. This module digests the tuple
 //! through the same `Encoder`, under its own domain, so the three digests
 //! cannot drift apart in how a string or a count is written.
+//!
+//! The tuple is built from an [`Evaluation`] by one function, [`inputs`],
+//! which both [`run_identity`] and the tail of `evaluate_observed` call: an id
+//! announced before a run and the id the finished run carries share one
+//! construction, so they differ only when an input does.
 
-use ragondin_benchmarks::identity::Encoder;
+use ragondin_benchmarks::identity::{dataset_version, Encoder};
 use ragondin_experiments::{RunId, RunInputs};
+
+use crate::Evaluation;
 
 /// The domain separator of the run identity digest.
 const RUN_DOMAIN: &str = "ragondin/run-id/v1";
+
+/// The id a run of `evaluation` will carry, computed without running it.
+///
+/// The same tuple, built the same way, that [`evaluate`](crate::evaluate)
+/// digests once its last query has run: it needs no `EngineContext` and
+/// executes nothing, so a caller can name a run before deciding to run it —
+/// refuse one already stored, say. Only the harness assembles a run id
+/// (`ragondin-experiments` defines the record and leaves the digest here), so
+/// a caller that needs the id early asks for it here rather than hashing the
+/// tuple itself.
+///
+/// It reads the whole benchmark to digest it (`dataset_version`), so over a
+/// large one it is not cheap: a caller on an async runtime moves it off the
+/// runtime's workers.
+pub fn run_identity(evaluation: &Evaluation<'_>) -> RunId {
+    run_id(&inputs(evaluation))
+}
+
+/// The identity tuple of a run of `evaluation`: the one construction both
+/// [`run_identity`] and `evaluate_observed`'s tail use.
+pub(crate) fn inputs(evaluation: &Evaluation<'_>) -> RunInputs {
+    RunInputs {
+        pipeline: evaluation.pipeline.content_hash(),
+        dataset_version: dataset_version(evaluation.benchmark),
+        index_version: evaluation.index.version().to_string(),
+        model_hashes: evaluation.model_hashes.clone(),
+        // The workspace shares one version, so this crate's own is the version
+        // of the engine it was compiled against.
+        engine_version: env!("CARGO_PKG_VERSION").to_string(),
+    }
+}
 
 /// The content address of a run: the digest of its whole identity tuple.
 pub(crate) fn run_id(inputs: &RunInputs) -> RunId {

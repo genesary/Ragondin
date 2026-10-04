@@ -237,6 +237,17 @@ is this crate's own:
 and a component reaches this crate only inside a context that was assembled
 elsewhere; an empty map is the honest value for a pipeline that reads no model.
 
+**The id can be read before the run.** `run_identity(&Evaluation) -> RunId`
+builds the tuple through `identity::inputs` — the one construction, which
+`evaluate_observed`'s tail also calls — and digests it with `run_id`. It needs
+no `EngineContext` and executes nothing. It exists for the composition root's
+`Launcher`, which announces a run's id at submission so that a run already
+stored is refused before it runs (ADR-C36 § 1); the id the finished run carries
+is still `evaluate`'s, and the two differ only when an input changed in
+between. Only this crate assembles a run id (`ragondin-experiments`' `run.rs`
+leaves the digest here), so a caller that needs the id early asks for it here
+rather than hashing the tuple itself.
+
 ## Design choices made here
 
 Recorded under `AGENTS.md` § Rules of engagement: each stayed inside this
@@ -317,6 +328,12 @@ reader can disagree with it.
    and both refusals, rather than beside the `traces.insert` of a query that
    passed: a partial record that dropped the query which stopped the run
    would drop the one trace worth replaying.
+10. **`run_identity` returns the id alone, and `run_id` stays private.** A
+    caller that needs the tuple has the finished `Run`'s `inputs`; one that
+    announces a run needs only its name. Exporting `run_id` over a
+    caller-built `RunInputs` would let a caller assemble the tuple a second
+    way, and the point of the function is that the announced and the decided
+    id share one construction.
 
 ## Tests
 
@@ -351,7 +368,11 @@ reader's agree.
 `tests/progress_and_cancellation.rs` drives `evaluate_observed` over the BEIR
 fixture, with a retriever that wraps the stub's and counts its calls — the
 proof that no query ran past a cancellation — and, for the signal set while a
-query is in flight, sets it from inside that query's first retrieval leg.
+query is in flight, sets it from inside that query's first retrieval leg. The
+same file holds `run_identity`'s two tests: the id it announces equals the
+id a completed `evaluate` over the same `Evaluation` carries, and it still
+answers for a run cancelled before its first query — the identity needs no
+query.
 
 The expected metrics in the first two files are derived by hand in a
 comment, from the fixture's qrels and from what the stub components fabricate;

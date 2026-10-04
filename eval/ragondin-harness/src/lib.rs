@@ -29,6 +29,9 @@
 //! - The `Run` — the record, named by `hash(pipeline_config, dataset_version,
 //!   index_version, model_hashes, engine_version)` (§7.1). Identical inputs
 //!   yield an identical `run_id` and identical metrics (P4).
+//!   [`run_identity`] computes that id from an [`Evaluation`] without running
+//!   it, through the construction `evaluate` names the finished run by, so a
+//!   caller can announce a run before executing it.
 //!
 //! # What a run scores
 //!
@@ -67,7 +70,8 @@
 
 // Private modules with a flat re-export: one path to each item. The two names a
 // caller needs are `evaluate` and `Evaluation`; a caller that watches or stops
-// a run adds `evaluate_observed` and `QueryProgress`.
+// a run adds `evaluate_observed` and `QueryProgress`, and one that must name a
+// run before running it adds `run_identity`.
 mod error;
 mod evaluate;
 mod identity;
@@ -78,4 +82,5 @@ mod trace;
 // keeps every caller that names `ragondin_harness::CorpusIndex` compiling.
 pub use error::{HarnessError, RankingWalkError};
 pub use evaluate::{evaluate, evaluate_observed, Evaluation, QueryProgress};
+pub use identity::run_identity;
 pub use ragondin_benchmarks::identity::CorpusIndex;

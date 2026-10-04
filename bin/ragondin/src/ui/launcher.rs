@@ -3,31 +3,43 @@
 //! The one path from the UI to the data plane (INV-12): `ragondin-api` holds
 //! an `Arc<dyn Launcher>` and never names a component; this module, in the
 //! only crate that knows them, answers for it. Everything here reuses what
-//! `bench` already runs: the capabilities are [`wiring::carried`] and
-//! [`wiring::not_carried`], with each family's ports as
-//! [`ragondin_api::family_ports`] reads them off the pipeline grammar, a binding's
-//! check is [`binding::check`] — `--remote`'s refusals, in its words — and the
-//! probe is [`wiring::service_identity`], the read `bench` makes before a run.
+//! `bench` already runs: the capabilities are [`wiring::carried`], a binding's
+//! check is [`binding::check`] — `--remote`'s refusals, in its words — the
+//! probe is [`wiring::service_identity`], the read `bench` makes before a run,
+//! and a run is [`execution`]'s preparation and execution, the steps `bench`
+//! is made of.
 //!
-//! `identity` and `execute` answer "not available in this build yet": a run's
-//! identity at submission and its execution over `bench`'s path are the
-//! launcher's issue (#353), which replaces both.
+//! - **`identity`** prepares the submission and returns the harness's
+//!   identity over it: the announced id.
+//! - **`execute`** prepares it again — the submission is the authority, and a
+//!   job may sit queued for hours while a service swaps its model or a
+//!   dataset is rewritten — and runs it. The id the returned run carries is
+//!   the harness's over what ran, the decided one, and is never rewritten to
+//!   match the announced one: comparing the two is the queue's.
+//!
+//! Both run on a thread of their own with its own runtime, never on the
+//! API's: a preparation loads and digests the benchmark and may read model
+//! files, and an execution runs the ONNX Runtime and components that may
+//! block (ADR-C25). The API's task awaits the answer over a channel, so the
+//! server keeps answering meanwhile.
 
 use async_trait::async_trait;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use ragondin_api::{
     ApiError, Cancellation, Capabilities, FamilyCapabilities, Launcher, LauncherError, Location,
-    NotCarried, RunObserver, ServiceBinding, ServiceIdentity, Submission,
+    NotCarried, QueryProgress, RunObserver, ServiceBinding, ServiceIdentity, Submission,
 };
-use ragondin_experiments::{Run, RunId};
+use ragondin_contracts::ComponentError;
+use ragondin_engine::ExecError;
+use ragondin_experiments::{Run, RunId, RunProvenance};
+use ragondin_harness::HarnessError;
 use ragondin_pipeline::LogicalPipeline;
 
 use crate::binding::{self, Binding, Bindings, Family};
-use crate::wiring;
-
-/// What `identity` and `execute` answer until the launcher's issue fills them.
-const NOT_YET: &str = "running a pipeline from the UI is not available in this build yet";
+use crate::execution::{self, Pipeline, Prepared, Refusal};
+use crate::wiring::{self, AtNode};
 
 /// How long a probe waits for its connection: a person is waiting on the
 /// answer, and an address that drops packets would otherwise hold them for
@@ -36,9 +48,22 @@ const NOT_YET: &str = "running a pipeline from the UI is not available in this b
 #[cfg(feature = "remote")]
 const PROBE_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
-/// The binary's `Launcher`. It holds nothing: the build's capabilities are
-/// fixed at compile time, and a probe builds its channel per call.
-pub struct BinaryLauncher;
+/// The binary's `Launcher`. It holds the datasets directory a submission's
+/// benchmark is read under — the one the registry downloads into — and
+/// nothing else: the build's capabilities are fixed at compile time, and a
+/// probe builds its channel per call.
+pub struct BinaryLauncher {
+    datasets: PathBuf,
+}
+
+impl BinaryLauncher {
+    /// A launcher reading benchmarks under `datasets`.
+    pub fn new(datasets: impl Into<PathBuf>) -> Self {
+        Self {
+            datasets: datasets.into(),
+        }
+    }
+}
 
 #[async_trait]
 impl Launcher for BinaryLauncher {
@@ -125,24 +150,211 @@ impl Launcher for BinaryLauncher {
         read_identity(binding, served_model).await
     }
 
-    async fn identity(&self, _submission: &Submission) -> Result<RunId, LauncherError> {
-        Err(not_yet())
+    /// The submission prepared — steps 1–3 and the index build, `bench`'s —
+    /// and the harness's identity over the evaluation it will run.
+    async fn identity(&self, submission: &Submission) -> Result<RunId, LauncherError> {
+        let job = Job::of(submission, &self.datasets);
+        on_own_thread(move || async move { Ok(job.prepare().await?.identity()) }).await
     }
 
+    /// The submission prepared again, then executed — steps 4–6 — with its
+    /// times stamped by this preparation and its launch record named after
+    /// the submitted pipeline. Each query reaches `observer` as it completes,
+    /// and `cancel` is read between two queries.
     async fn execute(
         &self,
-        _submission: &Submission,
-        _observer: Arc<dyn RunObserver>,
-        _cancel: Cancellation,
+        submission: &Submission,
+        observer: Arc<dyn RunObserver>,
+        cancel: Cancellation,
     ) -> Result<Run, LauncherError> {
-        Err(not_yet())
+        let job = Job::of(submission, &self.datasets);
+        // The record's `prefix_of` waits for the parent's hash on the
+        // submission; until then a launch records its name alone.
+        let provenance = RunProvenance::named(&submission.pipeline_name);
+        on_own_thread(move || async move {
+            let prepared = job.prepare().await?;
+            let flag = cancel.flag();
+            prepared
+                .execute(
+                    Some(provenance),
+                    |progress: ragondin_harness::QueryProgress<'_>| {
+                        observer.query_done(QueryProgress {
+                            position: progress.position as u64,
+                            total: progress.total as u64,
+                            query: progress.query.clone(),
+                            elapsed: progress.elapsed,
+                            trace: progress.trace.clone(),
+                        })
+                    },
+                    &flag,
+                )
+                .await
+                .map_err(failed)
+        })
+        .await
     }
 }
 
-fn not_yet() -> LauncherError {
+/// A submission, owned, with the datasets directory its benchmark is read
+/// under: what a run's thread takes with it.
+struct Job {
+    document: String,
+    benchmark: String,
+    bindings: Vec<ServiceBinding>,
+    datasets: PathBuf,
+}
+
+impl Job {
+    fn of(submission: &Submission, datasets: &std::path::Path) -> Self {
+        Self {
+            document: submission.pipeline.clone(),
+            benchmark: submission.benchmark.clone(),
+            bindings: submission.bindings.clone(),
+            datasets: datasets.to_path_buf(),
+        }
+    }
+
+    /// [`execution::prepare`] over the submission, with the bindings `bench`
+    /// would be given for it: the workspace's bindings a node of the document
+    /// uses, through `--remote`'s refusals. A submission carries every
+    /// binding the workspace holds, and one no node uses is not this run's.
+    async fn prepare(&self) -> Result<Prepared, LauncherError> {
+        let pipeline = ragondin_config::parse_document(&self.document).map_err(|error| {
+            LauncherError::PipelineInvalid {
+                detail: format!("{:#}", anyhow::Error::from(error)),
+                node: None,
+            }
+        })?;
+        let used: Vec<&ServiceBinding> = self
+            .bindings
+            .iter()
+            .filter(|binding| binding::used_by(&pipeline, &binding.family, &binding.name))
+            .collect();
+        // `--remote`'s refusal in a build without the feature, as the
+        // capability it is.
+        #[cfg(not(feature = "remote"))]
+        if let Some(binding) = used.first() {
+            return Err(LauncherError::ImplNotInBuild {
+                family: binding.family.clone(),
+                implementation: binding.name.clone(),
+                feature: Some("remote".to_owned()),
+            });
+        }
+        let arguments: Vec<String> = used
+            .iter()
+            .map(|binding| format!("{}/{}={}", binding.family, binding.name, binding.uri))
+            .collect();
+        let bindings =
+            Bindings::parse(&arguments).map_err(|error| LauncherError::PipelineInvalid {
+                detail: format!("{error:#}"),
+                node: None,
+            })?;
+        execution::prepare(execution::Request {
+            pipeline: Pipeline::Document(&self.document),
+            benchmark: &self.benchmark,
+            datasets: &self.datasets,
+            bindings,
+        })
+        .await
+        .map_err(refusal_of)
+    }
+}
+
+/// Runs `work` to its end on a thread of its own, inside a runtime of its
+/// own, and awaits its answer without holding the caller's runtime. A
+/// dedicated thread rather than `spawn_blocking`, which would share the
+/// API's blocking pool with every file read of every request.
+async fn on_own_thread<F, W, T>(work: F) -> Result<T, LauncherError>
+where
+    F: FnOnce() -> W + Send + 'static,
+    W: std::future::Future<Output = Result<T, LauncherError>>,
+    T: Send + 'static,
+{
+    let (answer, answered) = tokio::sync::oneshot::channel();
+    std::thread::Builder::new()
+        .name("ragondin-run".to_owned())
+        .spawn(move || {
+            let result = match tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            {
+                Ok(runtime) => runtime.block_on(work()),
+                Err(error) => Err(execution_failed(format!(
+                    "the run's runtime could not start: {error}"
+                ))),
+            };
+            // The caller may have gone; the answer then has no one to reach.
+            let _ = answer.send(result);
+        })
+        .map_err(|error| execution_failed(format!("the run's thread could not start: {error}")))?;
+    answered.await.unwrap_or_else(|_| {
+        Err(execution_failed(
+            "the run's thread stopped without an answer",
+        ))
+    })
+}
+
+fn execution_failed(error: impl Into<String>) -> LauncherError {
     LauncherError::Execution {
-        error: NOT_YET.to_owned(),
+        error: error.into(),
         at_node: None,
+    }
+}
+
+/// A preparation's refusal, as `POST /runs` answers it: an `impl:` this build
+/// lacks; a service that did not answer its identity read, at the address its
+/// node is bound to; the pipeline, in `bench`'s words, naming the node when
+/// one is at fault; and the benchmark, which no other variant names, as an
+/// execution failure.
+fn refusal_of(refusal: Refusal) -> LauncherError {
+    match refusal {
+        Refusal::NotInBuild(refusal) => LauncherError::ImplNotInBuild {
+            family: refusal.family.name().to_owned(),
+            implementation: refusal.name,
+            feature: (!refusal.features.is_empty()).then(|| refusal.features.join("` or `")),
+        },
+        Refusal::Identity(error) => {
+            let at = error.downcast_ref::<AtNode>();
+            let unreachable = error.chain().any(|cause| {
+                matches!(
+                    cause.downcast_ref::<ComponentError>(),
+                    Some(ComponentError::Unavailable(_))
+                )
+            });
+            match (unreachable, at.and_then(|at| at.service.clone())) {
+                (true, Some(uri)) => LauncherError::ServiceUnreachable {
+                    uri,
+                    reason: format!("{error:#}"),
+                },
+                _ => LauncherError::PipelineInvalid {
+                    node: at.map(|at| at.node.clone()),
+                    detail: format!("{error:#}"),
+                },
+            }
+        }
+        Refusal::Pipeline(error) => LauncherError::PipelineInvalid {
+            detail: format!("{error:#}"),
+            node: None,
+        },
+        Refusal::Benchmark(error) => execution_failed(format!("{error:#}")),
+    }
+}
+
+/// An execution's failure: the harness's cancellation as `Cancelled`, a
+/// query that failed naming its node when a component failed in one, and
+/// anything else — the corpus that could not be embedded, a plan refused —
+/// in its own words.
+fn failed(error: anyhow::Error) -> LauncherError {
+    match error.downcast_ref::<HarnessError>() {
+        Some(HarnessError::Cancelled { .. }) => LauncherError::Cancelled,
+        Some(HarnessError::Execute { source, .. }) => LauncherError::Execution {
+            at_node: match source.as_ref() {
+                ExecError::Component { node, .. } => Some(node.as_str().to_owned()),
+                _ => None,
+            },
+            error: format!("{error:#}"),
+        },
+        _ => execution_failed(format!("{error:#}")),
     }
 }
 
@@ -174,8 +386,6 @@ async fn read_identity(
     binding: Binding,
     served_model: Option<&str>,
 ) -> Result<ServiceIdentity, ApiError> {
-    use ragondin_contracts::ComponentError;
-
     let uri = binding.uri.clone();
     let result = async {
         let bindings = Bindings::parse(&[format!(
@@ -232,6 +442,16 @@ mod tests {
 
     use super::*;
 
+    /// The binary's fixtures, where `beir-mini/` and the other miniature
+    /// datasets sit.
+    fn fixtures() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures")
+    }
+
+    fn launcher() -> BinaryLauncher {
+        BinaryLauncher::new(fixtures())
+    }
+
     fn families(capabilities: &Capabilities) -> Vec<(&str, Vec<&str>)> {
         capabilities
             .families
@@ -242,6 +462,22 @@ mod tests {
             .collect()
     }
 
+    /// Read by the two capability tests below, which compile in `ui` alone
+    /// and in `--all-features` only.
+    #[cfg(any(
+        not(any(
+            feature = "bm25",
+            feature = "onnx",
+            feature = "remote",
+            feature = "stub"
+        )),
+        all(
+            feature = "bm25",
+            feature = "onnx",
+            feature = "remote",
+            feature = "stub"
+        )
+    ))]
     fn not_carried(capabilities: &Capabilities) -> Vec<(&str, Vec<(&str, &str)>)> {
         capabilities
             .families
@@ -261,7 +497,7 @@ mod tests {
 
     #[test]
     fn every_family_is_listed_once_in_the_order_bindings_name_them() {
-        let capabilities = BinaryLauncher.capabilities();
+        let capabilities = launcher().capabilities();
         let names: Vec<&str> = families(&capabilities)
             .into_iter()
             .map(|(family, _)| family)
@@ -293,7 +529,7 @@ mod tests {
              \x20   - { id: c, component: context_builder, impl: concat, inputs: [question, k] }\n\
              \x20   - { id: g, component: generator, impl: x, inputs: [question, c] }\n",
         );
-        let capabilities = BinaryLauncher.capabilities();
+        let capabilities = launcher().capabilities();
         let ports = |family: &str| {
             let entry = capabilities
                 .families
@@ -372,7 +608,7 @@ mod tests {
     )))]
     #[test]
     fn with_ui_alone_the_build_carries_only_what_no_feature_gates() {
-        let capabilities = BinaryLauncher.capabilities();
+        let capabilities = launcher().capabilities();
 
         assert_eq!(
             families(&capabilities),
@@ -420,7 +656,7 @@ mod tests {
     ))]
     #[test]
     fn with_every_feature_the_build_carries_every_local_component_and_remote() {
-        let capabilities = BinaryLauncher.capabilities();
+        let capabilities = launcher().capabilities();
 
         assert_eq!(
             families(&capabilities),
@@ -442,45 +678,447 @@ mod tests {
         );
     }
 
-    fn submission() -> Submission {
+    /// A submission of `document`, launched as `hybrid`, over `benchmark`,
+    /// with `bindings` as the workspace holds them.
+    fn submission(document: &str, benchmark: &str, bindings: Vec<ServiceBinding>) -> Submission {
         Submission {
             pipeline_name: "hybrid".to_owned(),
-            pipeline: "pipeline: {}".to_owned(),
-            benchmark: "beir/scifact".to_owned(),
-            bindings: Vec::new(),
+            pipeline: document.to_owned(),
+            benchmark: benchmark.to_owned(),
+            bindings,
             up_to: None,
         }
     }
 
-    #[tokio::test]
-    async fn a_run_s_identity_is_not_available_in_this_build_yet() {
-        let error = BinaryLauncher
-            .identity(&submission())
-            .await
-            .expect_err("submission is not wired yet");
+    fn fixture_text(name: &str) -> String {
+        std::fs::read_to_string(fixtures().join(name)).expect("the fixture reads")
+    }
 
+    /// An observer that drops what it is told.
+    struct Unobserved;
+    impl RunObserver for Unobserved {
+        fn query_done(&self, _: ragondin_api::QueryProgress) {}
+    }
+
+    const NOWHERE_RETRIEVER: &str = "pipeline:\n  inputs: [question]\n  nodes:\n    \
+        - id: lexical\n      component: retriever\n      impl: nowhere\n      \
+        inputs: [question]\n      params: { top_k: 10 }\n";
+
+    #[tokio::test]
+    async fn an_impl_the_build_lacks_is_refused_at_identity_before_the_benchmark_loads() {
+        // `beir/absent` names no dataset: had the benchmark been loaded first,
+        // the refusal would be about it.
+        let unknown = submission(NOWHERE_RETRIEVER, "beir/absent", Vec::new());
+
+        let error = launcher()
+            .identity(&unknown)
+            .await
+            .expect_err("no build carries a retriever named `nowhere`");
+
+        assert_eq!(
+            error,
+            LauncherError::ImplNotInBuild {
+                family: "retriever".to_owned(),
+                implementation: "nowhere".to_owned(),
+                feature: None,
+            }
+        );
+        // Execution prepares again, and refuses in the same words.
+        let error = launcher()
+            .execute(&unknown, Arc::new(Unobserved), Cancellation::new())
+            .await
+            .expect_err("the same preparation");
         assert!(
-            matches!(&error, LauncherError::Execution { error, at_node: None } if error.contains("not available in this build yet")),
+            matches!(&error, LauncherError::ImplNotInBuild { implementation, .. } if implementation == "nowhere"),
             "{error:?}"
         );
     }
 
+    /// A name another build carries is refused naming the feature that would.
+    #[cfg(not(feature = "bm25"))]
     #[tokio::test]
-    async fn execution_fails_as_not_available_in_this_build_yet() {
-        struct Unobserved;
-        impl RunObserver for Unobserved {
-            fn query_done(&self, _: ragondin_api::QueryProgress) {}
+    async fn a_local_name_this_build_does_not_carry_names_its_feature() {
+        let error = launcher()
+            .identity(&submission(
+                &fixture_text("lexical-pipeline.yaml"),
+                "beir/absent",
+                Vec::new(),
+            ))
+            .await
+            .expect_err("`bm25` needs its feature");
+
+        assert_eq!(
+            error,
+            LauncherError::ImplNotInBuild {
+                family: "retriever".to_owned(),
+                implementation: "bm25".to_owned(),
+                feature: Some("bm25".to_owned()),
+            }
+        );
+    }
+
+    #[cfg(feature = "bm25")]
+    mod over_bm25 {
+        use std::path::Path;
+        use std::sync::Mutex;
+        use std::thread::ThreadId;
+        use std::time::{Duration, SystemTime};
+
+        use ragondin_api::QueryProgress;
+        use ragondin_experiments::{FileSystemRunStore, UnixMillis};
+
+        use super::*;
+
+        /// A run store of this test's own, emptied first.
+        fn store(test_name: &str) -> PathBuf {
+            let root = std::env::temp_dir().join(format!(
+                "ragondin-launcher-{}-{test_name}",
+                std::process::id()
+            ));
+            let _ = std::fs::remove_dir_all(&root);
+            root
         }
 
-        let error = BinaryLauncher
-            .execute(&submission(), Arc::new(Unobserved), Cancellation::new())
-            .await
-            .expect_err("execution is not wired yet");
+        fn lexical() -> Submission {
+            submission(
+                &fixture_text("lexical-pipeline.yaml"),
+                "beir/beir-mini",
+                Vec::new(),
+            )
+        }
 
-        assert!(
-            matches!(&error, LauncherError::Execution { error, at_node: None } if error.contains("not available in this build yet")),
-            "{error:?}"
-        );
+        /// Files the lexical fixture with `bench` into `store`, outside the
+        /// workspace convention, so with no launch record.
+        async fn bench_lexical(store: &Path) {
+            crate::bench::run(&crate::bench::Request {
+                config: &fixtures().join("lexical-pipeline.yaml"),
+                benchmark: "beir/beir-mini",
+                datasets: &fixtures(),
+                store,
+                remote: &[],
+            })
+            .await
+            .expect("bench runs the lexical fixture");
+        }
+
+        #[tokio::test]
+        async fn the_announced_identity_equals_the_one_bench_files() {
+            let store = store("announced");
+            bench_lexical(&store).await;
+
+            let announced = launcher()
+                .identity(&lexical())
+                .await
+                .expect("the lexical fixture is runnable here");
+
+            FileSystemRunStore::new(&store)
+                .load(&announced)
+                .expect("bench filed the run under the announced id");
+        }
+
+        /// Every observer call, with the thread it was made on.
+        #[derive(Default)]
+        struct Recording {
+            calls: Mutex<Vec<(ThreadId, QueryProgress)>>,
+            cancel_at: Option<(u64, Cancellation)>,
+            /// Waited on by the first call: sent by a task of the caller's
+            /// runtime, which can run only if `execute` does not hold it.
+            gate: Mutex<Option<std::sync::mpsc::Receiver<()>>>,
+            gate_opened: Mutex<Option<bool>>,
+        }
+
+        impl RunObserver for Recording {
+            fn query_done(&self, progress: QueryProgress) {
+                if let Some(gate) = self.gate.lock().expect("lock").take() {
+                    let opened = gate.recv_timeout(Duration::from_secs(20)).is_ok();
+                    *self.gate_opened.lock().expect("lock") = Some(opened);
+                }
+                if let Some((at, cancel)) = &self.cancel_at {
+                    if progress.position == *at {
+                        cancel.cancel();
+                    }
+                }
+                self.calls
+                    .lock()
+                    .expect("lock")
+                    .push((std::thread::current().id(), progress));
+            }
+        }
+
+        #[tokio::test]
+        async fn execute_runs_off_the_caller_s_thread_and_reports_every_query() {
+            let (open, gate) = std::sync::mpsc::channel();
+            let observer = Arc::new(Recording {
+                gate: Mutex::new(Some(gate)),
+                ..Recording::default()
+            });
+            // On the caller's runtime — a current-thread one, as a handler's
+            // task shares its worker with every other request's.
+            let concurrent = tokio::spawn(async move { open.send(()).is_ok() });
+
+            let run = launcher()
+                .execute(&lexical(), observer.clone(), Cancellation::new())
+                .await
+                .expect("the lexical fixture runs");
+
+            assert!(concurrent.await.expect("the task ran"));
+            assert_eq!(
+                *observer.gate_opened.lock().expect("lock"),
+                Some(true),
+                "a task of the caller's runtime ran while the run was executing"
+            );
+            let calls = observer.calls.lock().expect("lock");
+            let caller = std::thread::current().id();
+            assert_eq!(calls.len(), 3, "one call per query of beir-mini");
+            for (position, (thread, progress)) in calls.iter().enumerate() {
+                assert_ne!(*thread, caller, "observed off the caller's thread");
+                assert_eq!(progress.position, position as u64 + 1);
+                assert_eq!(progress.total, 3);
+                assert_eq!(
+                    progress.trace, run.traces[&progress.query],
+                    "the trace the run files"
+                );
+            }
+        }
+
+        #[tokio::test]
+        async fn cancellation_stops_between_queries_and_reports_how_many_ran() {
+            let cancel = Cancellation::new();
+            let observer = Arc::new(Recording {
+                cancel_at: Some((2, cancel.clone())),
+                ..Recording::default()
+            });
+
+            let error = launcher()
+                .execute(&lexical(), observer.clone(), cancel)
+                .await
+                .expect_err("cancelled after the second query");
+
+            assert_eq!(error, LauncherError::Cancelled);
+            assert_eq!(observer.calls.lock().expect("lock").len(), 2);
+        }
+
+        fn now() -> UnixMillis {
+            UnixMillis::from_system_time(SystemTime::now()).expect("a clock after the epoch")
+        }
+
+        #[tokio::test]
+        async fn execute_stamps_the_run_s_times_from_its_own_preparation() {
+            // An identity read first, and time spent after it: neither is the
+            // run's.
+            launcher()
+                .identity(&lexical())
+                .await
+                .expect("the lexical fixture is runnable here");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            let before = now();
+
+            let run = launcher()
+                .execute(&lexical(), Arc::new(Unobserved), Cancellation::new())
+                .await
+                .expect("the lexical fixture runs");
+
+            let after = now();
+            let times = run.times.expect("a clock after the epoch gives times");
+            assert!(before <= times.started(), "{before:?} {times:?}");
+            assert!(times.started() <= times.finished(), "{times:?}");
+            assert!(times.finished() <= after, "{times:?} {after:?}");
+        }
+
+        #[tokio::test]
+        async fn execute_stamps_the_submitted_name_and_prefix_of_on_the_run() {
+            let store = store("provenance");
+            bench_lexical(&store).await;
+
+            let run = launcher()
+                .execute(&lexical(), Arc::new(Unobserved), Cancellation::new())
+                .await
+                .expect("the lexical fixture runs");
+
+            let provenance = run.provenance.as_ref().expect("a launch record");
+            assert_eq!(provenance.name(), Some("hybrid"));
+            assert_eq!(provenance.prefix_of(), None);
+            // The record is outside identity: the same run, filed by `bench`
+            // with no record, has the same id.
+            let filed = FileSystemRunStore::new(&store)
+                .load(&run.id)
+                .expect("bench filed the same id");
+            assert_eq!(filed.provenance, None);
+        }
+
+        #[tokio::test]
+        async fn a_benchmark_that_does_not_resolve_or_load_is_an_execution_failure() {
+            // No other variant names a benchmark: `POST /runs` answers it as
+            // `backend_failed`, in the loader's words.
+            for (benchmark, words) in [
+                ("beir/absent", "loading the benchmark"),
+                ("trec/robust04", "is not a benchmark format"),
+            ] {
+                let error = launcher()
+                    .identity(&submission(
+                        &fixture_text("lexical-pipeline.yaml"),
+                        benchmark,
+                        Vec::new(),
+                    ))
+                    .await
+                    .expect_err("no such benchmark");
+
+                assert!(
+                    matches!(&error, LauncherError::Execution { error, at_node: None } if error.contains(words)),
+                    "{benchmark}: {error:?}"
+                );
+            }
+        }
+
+        /// Records when each query was observed, and lingers on the last one,
+        /// so the run's end is after it by a margin a millisecond clock sees.
+        struct Timing(Mutex<Vec<UnixMillis>>);
+
+        impl RunObserver for Timing {
+            fn query_done(&self, progress: QueryProgress) {
+                if progress.position == progress.total {
+                    std::thread::sleep(Duration::from_millis(30));
+                }
+                self.0.lock().expect("lock").push(now());
+            }
+        }
+
+        #[tokio::test]
+        async fn finished_is_read_once_the_last_query_has_run() {
+            let observer = Arc::new(Timing(Mutex::new(Vec::new())));
+
+            let run = launcher()
+                .execute(&lexical(), observer.clone(), Cancellation::new())
+                .await
+                .expect("the lexical fixture runs");
+
+            let last = *observer.0.lock().expect("lock").last().expect("observed");
+            let times = run.times.expect("a clock after the epoch gives times");
+            assert!(last <= times.finished(), "{last:?} {times:?}");
+        }
+
+        #[cfg(unix)]
+        #[tokio::test]
+        async fn started_is_read_before_the_benchmark_loads() {
+            // The corpus is a pipe, written only once the loader has opened
+            // it and some time has passed: a `started` read after the load
+            // would fall after `opened`.
+            let (datasets, corpus) = datasets_with_a_piped_corpus("started");
+            let text = std::fs::read(fixtures().join("beir-mini/corpus.jsonl")).expect("reads");
+            let writer = tokio::spawn(async move {
+                use tokio::io::AsyncWriteExt;
+                loop {
+                    match tokio::net::unix::pipe::OpenOptions::new().open_sender(&corpus) {
+                        Ok(mut sender) => {
+                            let opened = now();
+                            tokio::time::sleep(Duration::from_millis(50)).await;
+                            sender.write_all(&text).await.expect("the corpus writes");
+                            return opened;
+                        }
+                        Err(_) => tokio::time::sleep(Duration::from_millis(5)).await,
+                    }
+                }
+            });
+
+            let run = BinaryLauncher::new(&datasets)
+                .execute(&lexical(), Arc::new(Unobserved), Cancellation::new())
+                .await
+                .expect("the piped benchmark loads and runs");
+
+            let opened = writer.await.expect("the writer ran");
+            let times = run.times.expect("a clock after the epoch gives times");
+            assert!(times.started() <= opened, "{times:?} {opened:?}");
+        }
+
+        /// `beir-mini` copied into a directory of this test's own, its corpus
+        /// a named pipe: reading the benchmark blocks until something writes
+        /// the corpus into it.
+        #[cfg(unix)]
+        fn datasets_with_a_piped_corpus(test_name: &str) -> (PathBuf, PathBuf) {
+            let root = store(test_name);
+            let dataset = root.join("beir-mini");
+            std::fs::create_dir_all(dataset.join("qrels")).expect("a writable tmpdir");
+            let source = fixtures().join("beir-mini");
+            for file in ["queries.jsonl", "qrels/test.tsv"] {
+                std::fs::copy(source.join(file), dataset.join(file)).expect("the fixture copies");
+            }
+            let corpus = dataset.join("corpus.jsonl");
+            let made = std::process::Command::new("mkfifo")
+                .arg(&corpus)
+                .status()
+                .expect("mkfifo runs");
+            assert!(made.success());
+            (root, corpus)
+        }
+
+        #[cfg(unix)]
+        #[tokio::test]
+        async fn a_concurrent_request_is_answered_while_an_identity_is_computed() {
+            use std::sync::atomic::{AtomicBool, Ordering};
+
+            let (datasets, corpus) = datasets_with_a_piped_corpus("piped");
+            let text = std::fs::read(fixtures().join("beir-mini/corpus.jsonl")).expect("reads");
+            // Only if the caller's runtime is free: the corpus written by a
+            // task of it. Retried, because the pipe opens for writing only
+            // once its reader has opened it.
+            let writer = {
+                let (corpus, text) = (corpus.clone(), text.clone());
+                tokio::spawn(async move {
+                    use tokio::io::AsyncWriteExt;
+                    loop {
+                        match tokio::net::unix::pipe::OpenOptions::new().open_sender(&corpus) {
+                            Ok(mut sender) => {
+                                sender.write_all(&text).await.expect("the corpus writes");
+                                return;
+                            }
+                            Err(_) => tokio::time::sleep(Duration::from_millis(5)).await,
+                        }
+                    }
+                })
+            };
+            // Should the runtime be held, a watchdog writes the corpus after
+            // a while, so the test fails rather than hangs.
+            let watchdog_fired = Arc::new(AtomicBool::new(false));
+            let watchdog = {
+                let fired = Arc::clone(&watchdog_fired);
+                let done = Arc::new(AtomicBool::new(false));
+                let stop = Arc::clone(&done);
+                let handle = std::thread::spawn(move || {
+                    for _ in 0..200 {
+                        if stop.load(Ordering::SeqCst) {
+                            return;
+                        }
+                        std::thread::sleep(Duration::from_millis(100));
+                    }
+                    fired.store(true, Ordering::SeqCst);
+                    let mut pipe = std::fs::OpenOptions::new()
+                        .read(true)
+                        .write(true)
+                        .open(&corpus)
+                        .expect("the pipe opens");
+                    std::io::Write::write_all(&mut pipe, &text).expect("the corpus writes");
+                });
+                (done, handle)
+            };
+
+            let announced = BinaryLauncher::new(&datasets)
+                .identity(&lexical())
+                .await
+                .expect("the piped benchmark loads");
+
+            watchdog.0.store(true, Ordering::SeqCst);
+            watchdog.1.join().expect("the watchdog ends");
+            assert!(
+                !watchdog_fired.load(Ordering::SeqCst),
+                "the caller's runtime was held while the identity was computed"
+            );
+            writer.await.expect("the writer ran");
+            assert_eq!(
+                announced,
+                launcher().identity(&lexical()).await.expect("runnable"),
+                "the same benchmark, read through a pipe"
+            );
+        }
     }
 
     #[test]
@@ -495,7 +1133,7 @@ mod tests {
             ),
             ("context_builder", "concat", "http://host", "`Local`"),
         ] {
-            let error = BinaryLauncher
+            let error = launcher()
                 .check_binding(family, name, uri)
                 .expect_err("refused");
 
@@ -507,7 +1145,7 @@ mod tests {
             );
         }
         // Whatever the build: storing a binding needs no `remote`.
-        BinaryLauncher
+        launcher()
             .check_binding("generator", "qwen", "http://[::1]:8080")
             .expect("well formed");
     }
@@ -528,7 +1166,7 @@ mod tests {
             "{CROSS_ENCODER_NODE}, endpoint: \"http://10.0.0.5:50051\" }}\n"
         ));
 
-        let error = BinaryLauncher
+        let error = launcher()
             .check_document(&document, &[])
             .expect_err("`endpoint` is read by nothing");
 
@@ -554,7 +1192,7 @@ mod tests {
              tokenizer: t.json, query_prefix: \"http://example.org/q \" }\n",
         );
 
-        BinaryLauncher
+        launcher()
             .check_document(&document, &[])
             .expect("every key is one the ONNX embedder's node reads");
     }
@@ -582,7 +1220,7 @@ mod tests {
             binding("reranker", "unused", "https://h"),
         ];
 
-        BinaryLauncher
+        launcher()
             .check_document(&pipeline(BM25_ONLY), &bindings)
             .expect("no node uses any of them");
     }
@@ -596,7 +1234,7 @@ mod tests {
              inputs: [question, lexical]\n      params: { top_k: 5, served_model: r }\n",
         );
 
-        let error = BinaryLauncher
+        let error = launcher()
             .check_document(
                 &document,
                 &[
@@ -627,7 +1265,7 @@ mod tests {
             uri: "http://127.0.0.1:9000".to_owned(),
         }];
 
-        BinaryLauncher
+        launcher()
             .check_document(&document, &bound)
             .expect("a bound reranker reads `top_k` and `served_model`");
         let stray = pipeline(
@@ -636,7 +1274,7 @@ mod tests {
              \x20   - id: ranked\n      component: reranker\n      impl: bge-reranker\n      \
              inputs: [question, lexical]\n      params: { top_k: 5, served_model: r, model: m }\n",
         );
-        let error = BinaryLauncher
+        let error = launcher()
             .check_document(&stray, &bound)
             .expect_err("a bound reranker reads no `model`");
         assert!(
@@ -648,7 +1286,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_probe_that_is_not_a_well_formed_binding_is_refused_with_the_binding_s_reason() {
-        let error = BinaryLauncher
+        let error = launcher()
             .probe("store", "qdrant", "http://127.0.0.1:1", None)
             .await
             .expect_err("`store` is not a family a name is bound in");
@@ -662,7 +1300,7 @@ mod tests {
     #[cfg(not(feature = "remote"))]
     #[tokio::test]
     async fn a_build_without_remote_answers_every_probe_with_impl_not_in_build() {
-        let error = BinaryLauncher
+        let error = launcher()
             .probe("context_builder", "lines", "http://127.0.0.1:1", None)
             .await
             .expect_err("this build cannot reach a `Remote` component");
@@ -686,10 +1324,83 @@ mod tests {
         use crate::remote_fakes as fakes;
 
         #[tokio::test]
+        async fn an_unreachable_service_is_refused_at_identity_naming_its_address() {
+            // A bound retriever, which reports no identity, and a bound
+            // context builder, whose identity is read before the benchmark
+            // loads — each at an address of its own, so the one named is the
+            // context builder's; and a workspace binding no node uses, which
+            // a submission carries and the run ignores.
+            let uri = fakes::unreachable_uri();
+            let retriever_uri = "http://127.0.0.1:2";
+            let document = "pipeline:\n  inputs: [question]\n  nodes:\n    \
+                - id: search\n      component: retriever\n      impl: far\n      \
+                inputs: [question]\n      params: { top_k: 3 }\n    \
+                - id: prompt\n      component: context_builder\n      impl: lines\n      \
+                inputs: [question, search]\n      params: { budget: 100 }\n";
+            let bindings = vec![
+                binding("retriever", "far", retriever_uri),
+                binding("context_builder", "lines", &uri),
+                binding("generator", "unused", "http://127.0.0.1:2"),
+            ];
+
+            let error = launcher()
+                .identity(&submission(document, "beir/absent", bindings))
+                .await
+                .expect_err("nothing listens there");
+
+            assert!(
+                matches!(&error, LauncherError::ServiceUnreachable { uri: at, .. } if *at == uri),
+                "{error:?}"
+            );
+        }
+
+        #[tokio::test]
+        async fn a_changed_remote_identity_yields_a_decided_id_that_differs_from_the_announced_one()
+        {
+            let embedder = fakes::serve_embedder(fakes::FakeEmbedder::default());
+            let context_builder = fakes::serve_context_builder();
+            let (generator, swap) = fakes::serve_switchable_generator();
+            let generation = submission(
+                &fixture_text("remote-generation.yaml"),
+                "beir-qa/qa-mini",
+                vec![
+                    binding("embedder", "bge", &embedder.uri),
+                    binding("context_builder", "lines", &context_builder.uri),
+                    binding("generator", "vllm", &generator.uri),
+                ],
+            );
+
+            let announced = launcher()
+                .identity(&generation)
+                .await
+                .expect("every service answers");
+            // The service swaps its model between submission and execution.
+            swap.store(true, std::sync::atomic::Ordering::SeqCst);
+            let run = launcher()
+                .execute(&generation, Arc::new(Unobserved), Cancellation::new())
+                .await
+                .expect("the run executes");
+
+            assert_ne!(run.id, announced, "the decided id names what ran");
+            assert_eq!(
+                run.inputs.model_hashes["generator"],
+                fakes::CHANGED_GENERATOR_IDENTITY
+            );
+            assert_eq!(
+                run.id,
+                launcher()
+                    .identity(&generation)
+                    .await
+                    .expect("every service answers"),
+                "the id is the harness's over what ran, never rewritten"
+            );
+        }
+
+        #[tokio::test]
         async fn a_probe_reads_the_identity_the_service_reports() {
             let service = fakes::serve_context_builder();
 
-            let identity = BinaryLauncher
+            let identity = launcher()
                 .probe("context_builder", "lines", &service.uri, None)
                 .await
                 .expect("the service answers");
@@ -722,7 +1433,7 @@ mod tests {
                     fakes::RERANKER_IDENTITY,
                 ),
             ] {
-                let identity = BinaryLauncher
+                let identity = launcher()
                     .probe(family, "served", uri, Some(model))
                     .await
                     .unwrap_or_else(|error| panic!("{family}: {error:?}"));
@@ -735,7 +1446,7 @@ mod tests {
         async fn a_service_that_refuses_the_served_model_answers_request_invalid() {
             let generator = fakes::serve_generator();
 
-            let error = BinaryLauncher
+            let error = launcher()
                 .probe("generator", "served", &generator.uri, Some("not-served"))
                 .await
                 .expect_err("the fake serves one model");
@@ -750,7 +1461,7 @@ mod tests {
         async fn a_probe_of_a_closed_port_is_service_unreachable() {
             let uri = fakes::unreachable_uri();
 
-            let error = BinaryLauncher
+            let error = launcher()
                 .probe("context_builder", "lines", &uri, None)
                 .await
                 .expect_err("nothing listens there");
@@ -768,7 +1479,7 @@ mod tests {
             // once that it is unreachable, the test passes sooner.
             let started = Instant::now();
 
-            let error = BinaryLauncher
+            let error = launcher()
                 .probe("context_builder", "lines", "http://10.255.255.1:9", None)
                 .await
                 .expect_err("nothing answers there");
@@ -790,7 +1501,7 @@ mod tests {
             // failure.
             let service = fakes::serve_generator();
             for family in ["embedder", "reranker", "generator"] {
-                let error = BinaryLauncher
+                let error = launcher()
                     .probe(family, "vllm", &service.uri, None)
                     .await
                     .expect_err("no served model to read the identity for");
@@ -805,7 +1516,7 @@ mod tests {
         #[tokio::test]
         async fn a_family_whose_service_reports_no_identity_cannot_be_probed() {
             for family in ["retriever", "fusion"] {
-                let error = BinaryLauncher
+                let error = launcher()
                     .probe(family, "remote-one", &fakes::unreachable_uri(), None)
                     .await
                     .expect_err("a retriever or a fusion service reports no identity");
@@ -819,7 +1530,7 @@ mod tests {
 
         #[tokio::test]
         async fn a_name_this_build_gives_a_local_component_is_refused() {
-            let error = BinaryLauncher
+            let error = launcher()
                 .probe("context_builder", "concat", &fakes::unreachable_uri(), None)
                 .await
                 .expect_err("`concat` is a `Local` context builder");
