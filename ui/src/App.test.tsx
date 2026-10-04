@@ -429,7 +429,7 @@ describe('the connection state', () => {
     const job = (state: JobSummary['state']): JobSummary => ({ id: 'j1', created_at_ms: 1, position: 0, state, work: { kind: 'run', pipeline: 'hybrid', benchmark: 'beir/scifact', run_id: 'a'.repeat(64), up_to: null, bindings: [] } });
     act(() => FakeEventSource.latest().open());
     act(() => FakeEventSource.latest().emit(JSON.stringify({ jobs: [job({ kind: 'running', done: 1, total: 2, started_at_ms: 1, median_latency_nanos: null })], faults: [] }), 'resync'));
-    act(() => FakeEventSource.latest().emit(JSON.stringify(job({ kind: 'failed', at_node: 'rerank', error: 'boom', finished_at_ms: 2 })), 'failed'));
+    act(() => FakeEventSource.latest().emit(JSON.stringify(job({ kind: 'failed', at_node: 'rerank', error: 'boom', finished_at_ms: 2, partial_traces: 0 })), 'failed'));
     const toast = within(screen.getByRole('region', { name: 'Notifications' })).getByRole('alert');
     expect(toast.textContent).toContain('Run failed at rerank');
   });

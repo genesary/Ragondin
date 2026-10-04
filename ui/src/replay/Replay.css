@@ -74,6 +74,9 @@
 /* The screen: the toolbar, a status line whose height is reserved, then three columns — the queries, the stage, the inspector — whose widths never depend on what is selected or read, so nothing moves under the pointer. */
 .rg-replay { display: grid; gap: var(--space-3); min-width: 0; }
 .rg-replay__bar { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--space-3) var(--space-4); }
+/* A job's partial traces name their source in words where a run's swatch stands: never a run's colour. */
+.rg-replay__source { display: flex; align-items: baseline; gap: var(--space-2); margin: 0; color: var(--ink); }
+.rg-replay__source code { font: var(--type-hash); letter-spacing: var(--type-hash-tracking); color: var(--ink-2); }
 .rg-replay__status { min-height: var(--space-4); margin: 0; font: var(--type-caption); color: var(--ink-3); }
 .rg-replay__body { display: grid; grid-template-columns: 280px minmax(0, 1fr) var(--size-inspector); gap: var(--space-4); align-items: start; min-width: 0; }
 /* Side by side the stage keeps the width two stacked canvases need, and the inspector's two columns sit below them, across the same width, whatever is selected. */

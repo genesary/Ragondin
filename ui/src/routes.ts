@@ -27,6 +27,12 @@ export type Route =
   | { screen: 'replay'; run: string; query?: never }
   /** `#replay/<run>/q/<query>?with=<run>`: one query of one run, node by node, optionally beside another run. */
   | { screen: 'replay'; run: string; query: string; with?: string }
+  /**
+   * `#replay/job/<id>/q/<query>`: one query of a failed or cancelled run
+   * job's partial traces, alone — never a stored run; `#replay/job/<id>`
+   * before a query is chosen.
+   */
+  | { screen: 'replay'; job: string; query?: string }
   /** `#editor`: before a pipeline is opened. */
   | { screen: 'editor'; name?: never; node?: never }
   /** `#editor/<name>/node/<id>`: one pipeline, edited on the canvas, and the node selected on it; `#editor/<name>` with none. */
@@ -65,6 +71,7 @@ export function formatHash(route: Route): string {
       return `#compare/${route.ids.map(enc).join('+')}${query}`;
     }
     case 'replay': {
+      if ('job' in route) return route.query === undefined ? `#replay/job/${enc(route.job)}` : `#replay/job/${enc(route.job)}/q/${enc(route.query)}`;
       if (!('run' in route)) return '#replay';
       if (route.query === undefined) return `#replay/${enc(route.run)}`;
       const query = route.with === undefined ? '' : `?with=${enc(route.with)}`;
@@ -82,6 +89,7 @@ export function formatHash(route: Route): string {
  */
 export function viewOf(route: Route): string {
   if (route.screen === 'replay' && 'run' in route) return formatHash({ screen: 'replay', run: route.run });
+  if (route.screen === 'replay' && 'job' in route) return formatHash({ screen: 'replay', job: route.job });
   // Setup's section is a place on one page, not another view: moving to it
   // focuses the section, and the shell must not take focus to the heading.
   if (route.screen === 'setup') return '#setup';
@@ -160,6 +168,12 @@ export function parseHash(hash: string): Route | null {
     case 'replay': {
       const other = query.get('with');
       if (rest.length === 0) return other === null ? { screen } : null;
+      // A run is named by its hash, so `job` is never one: it opens a job's partial traces.
+      if (rest[0] === 'job') {
+        if (other !== null || !nonEmpty) return null;
+        if (rest.length === 2) return { screen, job: rest[1] as string };
+        return rest.length === 4 && rest[2] === 'q' ? { screen, job: rest[1] as string, query: rest[3] as string } : null;
+      }
       if (rest.length === 1) return other === null && nonEmpty ? { screen, run: rest[0] as string } : null;
       if (rest.length !== 3 || rest[1] !== 'q' || !nonEmpty || (other !== null && !isValue(other))) return null;
       const [run, , q] = rest as [string, string, string];

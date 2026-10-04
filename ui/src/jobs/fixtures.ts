@@ -33,9 +33,10 @@ export const doneAs = (runId: string, mismatch: { announced: string; decided: st
   finished_at_ms: 1_700_000_100_000,
 });
 
-export const failedAt = (node: string | null, error: string): JobStatus => ({ kind: 'failed', at_node: node, error, finished_at_ms: 1_700_000_100_000 });
+/** A failure at `node`, having kept the traces of `partial` queries. */
+export const failedAt = (node: string | null, error: string, partial = 0): JobStatus => ({ kind: 'failed', at_node: node, error, finished_at_ms: 1_700_000_100_000, partial_traces: partial });
 
-export const CANCELLED: JobStatus = { kind: 'cancelled', finished_at_ms: 1_700_000_100_000 };
+export const CANCELLED: JobStatus = { kind: 'cancelled', finished_at_ms: 1_700_000_100_000, partial_traces: 0 };
 
 /** The part of a test's fake event stream these helpers drive: `FakeEventSource.latest()`, passed in. */
 export type Stream = { open(): void; emit(data: string, name?: string): void };

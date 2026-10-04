@@ -52,7 +52,8 @@ pipeline matrix*; `GET /pipelines`,
 `POST /pipelines/validate`, `GET`/`PUT /pipelines/{name}`,
 `GET`/`PUT /pipelines/{name}/layout`; `GET /benchmarks`,
 `POST /benchmarks/import`, `POST /benchmarks/{name}/download`;
-`POST /runs`, `GET /jobs`, `GET`/`PATCH`/`DELETE /jobs/{id}` and
+`POST /runs`, `GET /jobs`, `GET`/`PATCH`/`DELETE /jobs/{id}`,
+`GET /jobs/{id}/queries`, `GET /jobs/{id}/trace/{query}` and
 `GET /jobs/events` — those described in § *The job queue*; `GET /services`,
 `PUT`/`DELETE /services/{family}/{name}`,
 `POST /services/{family}/{name}/probe` — those described in § *The workspace
@@ -765,7 +766,49 @@ executed** in `jobs/<id>/partial/traces.json`, a map by query id — the shape
 the store gives a run's `traces.json`, so a reader reads the two alike — and
 nothing under `runs/`: the store holds a run complete or not at all. The
 traces are kept in memory as the observer delivers them and written when the
-run stops; a job interrupted by a crash has none.
+run stops. **How many it kept is on
+the job**: `partial_traces` on the `failed` and `cancelled` states, written
+into `jobs/<id>.json` with the state — the number of traces written, `0`
+when the write failed (the fault says so), for a run that completed no
+query, a job failed before it ran, a download, and a job interrupted by a
+crash. The query a failed run stopped on is among them: the harness hands
+its trace to the observer before it returns the error
+(`HarnessError::Execute`, the failing node its last entry), and the queue
+tallies it before writing. **A crash keeps none it can vouch for**: the
+traces are written, then the job's end, so a crash between the two leaves a
+file beside a job the next start finds running and fails as interrupted,
+with a count of `0`; that file is never served as the job's. A job file
+written before the count was recorded has none; `Queue::open` counts the
+traces it kept when it reads it back, and reports a file of traces that
+does not read, never repairing it.
+
+### The partial traces, served
+
+`GET /jobs/{id}/queries` and `GET /jobs/{id}/trace/{query}` serve a failed
+or cancelled run job's partial traces, read from `jobs/<id>/partial/` and
+never from the store, for Replay over the job (#354's job view leads
+there). The first answers `PartialQueries`: the job as `GET /jobs/{id}`
+answers it, the graph lowered from the document it snapshotted at
+submission — by `lower_configuration`, the lowering a stored run's graph
+comes from — each kept query with its latency (`Trace::latency_nanos`), and
+`failed_query`, the query whose trace holds a failed node: the one a failed run
+stopped on, which Replay opens on.
+The second answers `PartialTrace`: one query's nodes as `TraceNodeView`s,
+built by `convert::trace_view`, the conversion `GET /runs/{id}/trace/{query}`
+serves a stored run's trace through, so Replay reads the two alike. **Nothing
+is scored, and no query or passage text is read**: each query's `text` is
+`null` and its `scores` empty, each node's `metrics` and `gold_ranks` and each
+passage's `text` and `grade` `null`. A run records the digests of the dataset
+it was evaluated on, and ADR-C36 § 4 reads the ground truth and the text only
+against a dataset that digests to them; a job's partial traces record none,
+and resolving the dataset by the benchmark's name instead is the resolution
+by something other than the run's own digests that section rules out. A job
+queued or running is `job_not_ended`; one done, a download, or a run that kept
+no trace is `no_partial_traces`, its detail saying which; a query the traces do
+not hold is `query_not_found`; a kept trace that does not read is
+`backend_failed`, naming the query, and so is a traces file that does not
+read, whatever the count says — reported, never repaired, and never answered
+as "kept none".
 
 ### Progress, and the live median
 
@@ -863,6 +906,19 @@ escalate:
 - **`DELETE` answers `200` in both cases**, with the job as it stands — still
   `running` when the signal was set — since the description gives an
   operation one success response; the `cancelled` event says when it ended.
+- **A job's partial traces are served by job-scoped twins** of
+  `GET /runs/{id}/queries` and `GET /runs/{id}/trace/{query}`, not by those
+  endpoints taking a job as an alternative source: a run id and a job id are
+  different namespaces, and the run endpoints' answers carry a ground-truth
+  verdict and a `run` field that a job has no value for. The twins answer
+  types of their own, `PartialQueries` and `PartialTrace`, which share the
+  run endpoints' `QueryScores` and `TraceNodeView` so the trace's shape has
+  one definition. `PartialQueries` carries the graph and the job, so Replay
+  over a job reads one listing where Replay over a run reads `GET /runs/{id}`
+  and `GET /runs/{id}/queries`.
+- **The count is recorded, not counted on read**: `GET /jobs` and the event
+  stream answer every job's summary, and counting would read every failed
+  job's traces file on each.
 
 ## Response types are this crate's own
 
@@ -1129,7 +1185,7 @@ code.
 | `run_exists` | 409 | a submission's run id is held by a job not yet ended or by the store; `link` is that job's or that run's path | `POST /runs` |
 | `run_unreadable` | 500 | a stored run this build cannot read: torn, malformed, or a configuration that no longer lowers | `GET /runs/{id}` |
 | `run_not_found` | 404 | no run under this id, or a string that is not a run id | `GET /runs/{id}` and below |
-| `query_not_found` | 404 | a query id the run's traces do not hold | `GET /runs/{id}/trace/{query}` |
+| `query_not_found` | 404 | a query id the run's traces, or a job's partial traces, do not hold; the hint names the listing to pick from | `GET /runs/{id}/trace/{query}`, `GET /jobs/{id}/trace/{query}` |
 | `parameter_invalid` | 400 | a query parameter the endpoint does not take, given twice, or a value it cannot read; a query string that is not percent-encoded UTF-8; a path value that does not decode to UTF-8 or does not read, naming the path parameter; a header the endpoint reads, sent twice, naming it. `name` carries the parameter when it is known | every endpoint |
 | `dataset_absent` | 404 | ground truth needed, and the run's dataset is not on disk or pinned by nothing | `GET /runs/{id}/queries?missing_gold_at=` |
 | `dataset_differs` | 409 | ground truth needed, and the dataset on disk is not the run's: its digest differs, or it does not load (the detail says which) | `GET /runs/{id}/queries?missing_gold_at=` |
@@ -1153,6 +1209,8 @@ code.
 | `job_not_found` | 404 | no job under this id in the queue | `GET`/`PATCH`/`DELETE /jobs/{id}` |
 | `job_not_queued` | 409 | a reorder of a job that is running or ended; the detail names its state | `PATCH /jobs/{id}` |
 | `job_finished` | 409 | a cancellation of a job that already ended | `DELETE /jobs/{id}` |
+| `job_not_ended` | 409 | a read of the partial traces of a job still queued or running; the detail names its state | `GET /jobs/{id}/queries`, `GET /jobs/{id}/trace/{query}` |
+| `no_partial_traces` | 404 | a read of the partial traces of a job that has none: done, a download, or a run that kept none — interrupted by a crash, stopped before its first query, or whose traces could not be written; the detail says which | `GET /jobs/{id}/queries`, `GET /jobs/{id}/trace/{query}` |
 
 Choices made here (`AGENTS.md` § Rules of engagement), since the design
 document § 8 lists seven codes and leaves the rest to the implementation:
@@ -1208,14 +1266,22 @@ document § 8 lists seven codes and leaves the rest to the implementation:
 - **An invalid path value is `parameter_invalid`**, naming the path
   parameter (ADR-C37 § 4) — never `run_not_found` or `pipeline_not_found`,
   which would tell the client a thing is absent when its request named none.
-- **Three codes for the queue**, each a different action for the client.
+- **Five codes for the queue**, each a different action for the client.
   `job_not_found` is its own 404 for the reason `run_not_found` is.
   `job_not_queued` and `job_finished` are 409s — the request is well-formed
   and the job's state forbids it — and two codes rather than one because the
   actions differ: a running job keeps its place, an ended one is resubmitted.
   `run_exists` carries `link`, the path of the job or the run that holds the
   id, which the design document § 8 asks of its hint: a client opens it
-  rather than parsing the prose.
+  rather than parsing the prose. For the partial traces, `job_not_ended`
+  is a 409 — the job's state forbids the read for now, and the client's
+  action is to wait — and `no_partial_traces` a 404 — nothing is there, nor
+  ever will be, and the client's action is to look elsewhere: a done run in
+  the store, or nowhere after a crash. Not `query_not_found`'s 404 for both,
+  which would tell a client waiting on a running job that nothing will come.
+  `query_not_found` itself is shared with the run endpoints, its `owner` and
+  `listing` naming whose traces were looked in and where to pick a query:
+  the client's action is the same.
 - **`runs_not_comparable` for `POST /compare`**, a 409 as the issue that
   added it asked: `pipeline_invalid` would tell the client a document is
   wrong, and `request_invalid` that the body is — here the request is

@@ -23,10 +23,10 @@ use crate::request::{
     ServiceAddress,
 };
 use crate::response::{
-    BenchmarkListing, Comparison, DownloadAccepted, JobEvent, JobListing, PipelineDetail,
-    PipelineLayout, PipelineListing, PipelineMatrix, PipelineValidated, PipelineWritten,
-    ProbeResult, Problem, QueryTrace, RunAccepted, RunDetail, RunListing, RunQueries,
-    ServiceListing, Workspace,
+    BenchmarkListing, Comparison, DownloadAccepted, JobEvent, JobListing, PartialQueries,
+    PartialTrace, PipelineDetail, PipelineLayout, PipelineListing, PipelineMatrix,
+    PipelineValidated, PipelineWritten, ProbeResult, Problem, QueryTrace, RunAccepted, RunDetail,
+    RunListing, RunQueries, ServiceListing, Workspace,
 };
 
 /// One operation the router serves, as the description declares it.
@@ -290,6 +290,26 @@ pub const OPERATIONS: &[Operation] = &[
     },
     Operation {
         method: "get",
+        path: "/jobs/{id}/queries",
+        summary: "A failed or cancelled run job's partial traces: the queries it executed before it stopped, the one a failed run stopped on included, and the graph of the pipeline it snapshotted.",
+        response: Response::Json("PartialQueries"),
+        request: None,
+        description: Some(
+            "Read from jobs/<id>/partial/, never from the store. Nothing is scored and no text is read: the traces record no dataset digest. A job still queued or running is job_not_ended (409); one that is done, a download, or a run that kept no trace — a crash keeps none it can vouch for — is no_partial_traces (404); traces that do not read are backend_failed. failed_query names the query a failed run stopped on.",
+        ),
+    },
+    Operation {
+        method: "get",
+        path: "/jobs/{id}/trace/{query}",
+        summary: "One query's trace from a failed or cancelled run job's partial traces, node by node, in the shape a stored run's trace is served in.",
+        response: Response::Json("PartialTrace"),
+        request: None,
+        description: Some(
+            "job_not_ended and no_partial_traces as for the job's queries; a query its traces do not hold is query_not_found (404).",
+        ),
+    },
+    Operation {
+        method: "get",
         path: "/pipelines",
         summary: "Every pipeline document: its etag, its hash or why it does not validate.",
         response: Response::Json("PipelineListing"),
@@ -440,6 +460,8 @@ fn description() -> Value {
     generator.subschema_for::<RunAccepted>();
     generator.subschema_for::<DownloadAccepted>();
     generator.subschema_for::<JobListing>();
+    generator.subschema_for::<PartialQueries>();
+    generator.subschema_for::<PartialTrace>();
     // The event stream's events, which no operation answers as JSON.
     generator.subschema_for::<JobEvent>();
     generator.subschema_for::<Problem>();

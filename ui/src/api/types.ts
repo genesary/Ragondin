@@ -570,10 +570,21 @@ export type JobStatus = {
   /** When it failed. */
   finished_at_ms: number | null;
   kind: "failed";
+  /**
+   * How many queries' traces a run kept when it stopped — every query
+   * it executed, the one it failed on included — under
+   * `jobs/<id>/partial/`, which `GET /jobs/{id}/queries` serves. `0`
+   * for a download, a run that executed none, traces that could not
+   * be written, and a job interrupted by a crash, which keeps none it
+   * can vouch for.
+   */
+  partial_traces: number;
 } | {
   /** When it was cancelled. */
   finished_at_ms: number | null;
   kind: "cancelled";
+  /** How many queries' traces a run kept, as for `failed`. */
+  partial_traces: number;
 };
 
 /** One job: what it does and where it stands. */
@@ -935,6 +946,57 @@ export type ParameterRow = {
 /** A node parameter's value. */
 export type ParameterValue = boolean | number | string | ParameterValue[];
 
+/**
+ * `GET /jobs/{id}/queries`: the queries a failed or cancelled run job
+ * executed before it stopped — the one a failed run stopped on included,
+ * its failing node last — whose traces it kept under
+ * `jobs/<id>/partial/` — never in the store, which holds a run complete or
+ * not at all.
+ *
+ * Nothing here is scored, and no query or passage text is read: a run
+ * records the digests of the dataset it was evaluated on, and the ground
+ * truth and the text are read only against a dataset that digests to them
+ * (ADR-C36 § 4); a job's partial traces record none.
+ */
+export type PartialQueries = {
+  /**
+   * The query whose trace holds a failed node — the one a failed run
+   * stopped on, its failing node last; `null` when no kept trace does.
+   */
+  failed_query: string | null;
+  /**
+   * The graph lowered from the pipeline document the job snapshotted at
+   * submission.
+   */
+  graph: Graph;
+  /**
+   * The job, as `GET /jobs/{id}` answers it: what was submitted, the run
+   * id it announced — under which nothing is stored — and how it ended.
+   */
+  job: JobSummary;
+  /**
+   * The queries, by id, each with its latency; its `text` is `null` and
+   * its `scores` empty.
+   */
+  queries: QueryScores[];
+};
+
+/**
+ * `GET /jobs/{id}/trace/{query}`: one query's trace from a failed or
+ * cancelled run job's partial traces, node by node, in the shape
+ * `GET /runs/{id}/trace/{query}` serves a stored run's — each node's
+ * `metrics` and `gold_ranks`, and each passage's `text` and `grade`,
+ * `null`, for the reason [`PartialQueries`] gives.
+ */
+export type PartialTrace = {
+  /** The job's id. */
+  job: string;
+  /** The nodes, in execution order. */
+  nodes: TraceNodeView[];
+  /** The query's id. */
+  query: string;
+};
+
 /** `GET /pipelines/{name}`: one pipeline document, verbatim. */
 export type PipelineDetail = {
   /** The document, byte for byte as the file holds it. */
@@ -1124,7 +1186,7 @@ export type Problem = {
    * The stable code a client matches on: one of `ApiError::CODES`, which
    * the schema lists as an enum so a generated client can narrow on it.
    */
-  code: "pipeline_invalid" | "impl_not_in_build" | "service_unreachable" | "run_exists" | "run_unreadable" | "run_not_found" | "query_not_found" | "parameter_invalid" | "dataset_absent" | "dataset_differs" | "benchmark_not_found" | "benchmark_exists" | "download_failed" | "download_cancelled" | "import_refused" | "pipeline_not_found" | "precondition_failed" | "binding_refused" | "service_not_found" | "request_invalid" | "backend_failed" | "host_refused" | "origin_refused" | "route_not_found" | "method_not_allowed" | "runs_not_comparable" | "body_too_large" | "job_not_found" | "job_not_queued" | "job_finished";
+  code: "pipeline_invalid" | "impl_not_in_build" | "service_unreachable" | "run_exists" | "run_unreadable" | "run_not_found" | "query_not_found" | "parameter_invalid" | "dataset_absent" | "dataset_differs" | "benchmark_not_found" | "benchmark_exists" | "download_failed" | "download_cancelled" | "import_refused" | "pipeline_not_found" | "precondition_failed" | "binding_refused" | "service_not_found" | "request_invalid" | "backend_failed" | "host_refused" | "origin_refused" | "route_not_found" | "method_not_allowed" | "runs_not_comparable" | "body_too_large" | "job_not_found" | "job_not_queued" | "job_finished" | "job_not_ended" | "no_partial_traces";
   /** What happened, in this occurrence's words. */
   detail: string;
   /**
@@ -1856,6 +1918,25 @@ export type Paths = {
       };
       body: ReorderRequest;
       response: JobListing;
+    };
+  };
+  "/jobs/{id}/queries": {
+    /** A failed or cancelled run job's partial traces: the queries it executed before it stopped, the one a failed run stopped on included, and the graph of the pipeline it snapshotted. */
+    get: {
+      params: {
+        id: string;
+      };
+      response: PartialQueries;
+    };
+  };
+  "/jobs/{id}/trace/{query}": {
+    /** One query's trace from a failed or cancelled run job's partial traces, node by node, in the shape a stored run's trace is served in. */
+    get: {
+      params: {
+        id: string;
+        query: string;
+      };
+      response: PartialTrace;
     };
   };
   "/pipelines": {

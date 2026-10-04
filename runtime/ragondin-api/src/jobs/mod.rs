@@ -25,7 +25,7 @@ mod file;
 mod queue;
 mod stream;
 
-pub(crate) use queue::Queue;
+pub(crate) use queue::{Partial, Queue};
 pub(crate) use stream::events;
 
 /// A job: a run or a download asked for through the API, as `jobs/<id>.json`
@@ -139,11 +139,21 @@ pub enum JobState {
         at_node: Option<String>,
         /// When it failed.
         finished_at: Option<UnixMillis>,
+        /// How many queries' traces it kept under `jobs/<id>/partial/`:
+        /// `Some(0)` for a job that executed none, failed before running, or
+        /// was interrupted by a crash. `None` only in a file written before
+        /// the count was recorded; the queue counts the traces such a job
+        /// kept when it reads the file back.
+        #[serde(default)]
+        partial_traces: Option<u64>,
     },
     /// Cancelled before it finished.
     Cancelled {
         /// When it was cancelled.
         finished_at: Option<UnixMillis>,
+        /// How many queries' traces it kept, as for `Failed`.
+        #[serde(default)]
+        partial_traces: Option<u64>,
     },
 }
 
@@ -248,17 +258,25 @@ pub(crate) fn summary(job: &Job) -> JobSummary {
                 }),
                 finished_at_ms: millis(*finished_at),
             },
+            // The queue counts the traces of a file that recorded no count
+            // when it reads it back, so `None` is not met once a job is in it.
             JobState::Failed {
                 error,
                 at_node,
                 finished_at,
+                partial_traces,
             } => JobStatus::Failed {
                 error: error.clone(),
                 at_node: at_node.clone(),
                 finished_at_ms: millis(*finished_at),
+                partial_traces: partial_traces.unwrap_or(0),
             },
-            JobState::Cancelled { finished_at } => JobStatus::Cancelled {
+            JobState::Cancelled {
+                finished_at,
+                partial_traces,
+            } => JobStatus::Cancelled {
                 finished_at_ms: millis(*finished_at),
+                partial_traces: partial_traces.unwrap_or(0),
             },
         },
     }

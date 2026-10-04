@@ -1,17 +1,19 @@
 // The Replay screen: one run, one query, node by node — and two runs side by
-// side (the front-end design, § 3). Its state is the address,
-// `#replay/<run>/q/<query>?with=<run>`; it owns the per-node metric, the
-// filter, the search and the selected node, none of them remembered.
+// side (the front-end design, § 3) — or a failed or cancelled job's partial
+// traces, alone and labelled partial. Its state is the address,
+// `#replay/<run>/q/<query>?with=<run>` or `#replay/job/<id>/q/<query>`; it
+// owns the per-node metric, the filter, the search and the selected node,
+// none of them remembered.
 // ARCHITECTURE.md § The Replay screen.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { EmptyState, InlineMessage, RunSwatch, SegmentedControl, Select, Sheet } from '../../design/index.ts';
+import { ButtonLink, EmptyState, InlineMessage, RunSwatch, SegmentedControl, Select, Sheet } from '../../design/index.ts';
 import type { ApiClient, ApiProblem, ApiResult } from '../api/client.ts';
-import type { Graph, QueryTrace, RunDetail, RunListing, RunQueries } from '../api/types.ts';
+import type { Graph, JobSummary, PartialQueries, PartialTrace, QueryTrace, RunDetail, RunListing, RunQueries } from '../api/types.ts';
 import { Canvas } from '../canvas/index.ts';
-import { navigate } from '../routes.ts';
+import { formatHash, navigate } from '../routes.ts';
 import { ErrorState, Loading, type RequestState } from '../shell/states.tsx';
 import { defaultMetric } from '../metrics.ts';
-import { candidates, firstJudged, overlayOf, passagesBanner, runName } from './model.ts';
+import { candidates, firstJudged, fromPartial, overlayOf, passagesBanner, runName, type ReplayTrace } from './model.ts';
 import { NodeInspector, type Side } from './NodeInspector.tsx';
 import { QueryList } from './QueryList.tsx';
 import './Replay.css';
@@ -19,7 +21,7 @@ import './Replay.css';
 /** The depth the "where we miss" filter looks for a gold document in: the rank strip's ten cells. */
 export const MISS_AT = 10;
 
-export type ReplayScreenProps = {
+type RunSource = {
   client: ApiClient;
   /** The run the address names. */
   run: string;
@@ -28,6 +30,17 @@ export type ReplayScreenProps = {
   /** The run it names beside, if any. */
   with?: string | undefined;
 };
+
+type JobSource = {
+  client: ApiClient;
+  /** The failed or cancelled run job whose partial traces the address names. */
+  job: string;
+  /** The query it names, if any. */
+  query?: string | undefined;
+};
+
+/** What Replay reads: a stored run, or a job's partial traces — never one passed off as the other. */
+export type ReplayScreenProps = RunSource | JobSource;
 
 type Read<T> = { key: string | null; state: RequestState<T>; shown: T | null; retry: () => void };
 
@@ -93,9 +106,13 @@ type Selected = { node: string; from: 'A' | 'B' };
 const has = (graph: Graph, id: string) => graph.nodes.some((n) => n.id === id) || graph.inputs.some((i) => i.id === id);
 
 /** The B last drawn beside A: kept on screen, stale, while B's answer for a newer query is read. */
-type Kept = { run: string; graph: Graph; trace: QueryTrace };
+type Kept = { run: string; graph: Graph; trace: ReplayTrace };
 
-export function ReplayScreen({ client, run, query, with: other }: ReplayScreenProps) {
+export function ReplayScreen(props: ReplayScreenProps) {
+  return 'job' in props ? <PartialReplay {...props} /> : <RunReplay {...props} />;
+}
+
+function RunReplay({ client, run, query, with: other }: RunSource) {
   const detail = useRead<RunDetail>(`detail ${run}`, (signal) => client.get('/runs/{id}', { id: run }, { signal }));
   const queries = useRead<RunQueries>(`queries ${run}`, (signal) => client.get('/runs/{id}/queries', { id: run }, { signal }));
   const listing = useRead<RunListing>('listing', (signal) => client.get('/runs', { signal }));
@@ -284,6 +301,111 @@ export function ReplayScreen({ client, run, query, with: other }: ReplayScreenPr
   );
 }
 
+/** How a job ended, in the words the partial banner opens on. */
+function ending(job: JobSummary): string {
+  const { state } = job;
+  if (state.kind === 'failed') return state.at_node === null ? `Job ${job.id} failed: ${state.error}.` : `Job ${job.id} failed at ${state.at_node}: ${state.error}.`;
+  if (state.kind === 'cancelled') return `Job ${job.id} was cancelled.`;
+  return `Job ${job.id} is ${state.kind}.`;
+}
+
+/**
+ * Replay over a failed or cancelled run job's partial traces
+ * (`#replay/job/<id>/q/<query>`): the traces it kept, read query by query
+ * as a run's are, alone and labelled partial — never as a stored run. The API
+ * reads them against no dataset, so nothing is scored and no text is shown,
+ * and nothing stands beside them.
+ */
+function PartialReplay({ client, job, query }: JobSource) {
+  const queries = useRead<PartialQueries>(`partial ${job}`, (signal) => client.get('/jobs/{id}/queries', { id: job }, { signal }));
+  const trace = useRead<PartialTrace>(query === undefined ? null : `partial ${job} ${query}`, (signal) => client.get('/jobs/{id}/trace/{query}', { id: job, query: query ?? '' }, { signal }));
+  const [selected, setSelected] = useState<Selected | null>(null);
+  const listed = loaded(queries);
+  const go = useCallback((q: string) => navigate({ screen: 'replay', job, query: q }, { replace: true }), [job]);
+  // No query chosen: the one a failed job stopped on, else the first kept one, filled in as a correction.
+  const first = listed === null ? null : (listed.failed_query ?? listed.queries[0]?.id ?? null);
+  useEffect(() => {
+    if (query === undefined && first !== null) go(first);
+  }, [query, first, go]);
+
+  if (queries.state.status === 'error') return <ErrorState problem={queries.state.problem} onRetry={queries.retry} />;
+  if (listed === null) {
+    return (
+      <Sheet>
+        <Loading label={`Reading job ${job}`} />
+      </Sheet>
+    );
+  }
+  if (query === undefined) {
+    return (
+      <Sheet>
+        <Loading label="Opening the query it stopped on" />
+      </Sheet>
+    );
+  }
+  // A newer query's trace is read while the one on screen stays.
+  const answer = trace.state.status === 'loaded' ? trace.state.value : trace.shown;
+  const sides: Side[] = answer === null ? [] : [{ letter: 'A', name: `job ${job}`, graph: listed.graph, trace: fromPartial(answer), queries: null }];
+  const reading = trace.state.status === 'loading' && answer !== null ? `Reading query ${query}…` : '';
+  const kept = listed.queries.length;
+  return (
+    <div className="rg-replay">
+      <div className="rg-replay__bar">
+        <p className="rg-replay__source">
+          <strong>Partial traces</strong> <code title={job}>{job}</code>
+        </p>
+        <SegmentedControl
+          label="Replay mode"
+          value="single"
+          onChange={() => {}}
+          options={[
+            { value: 'single', label: 'Alone' },
+            { value: 'side', label: 'Side by side', disabled: true, reason: 'A job’s partial traces are replayed alone' },
+          ]}
+        />
+      </div>
+      <p className="rg-replay__status" role="status">
+        {reading}
+      </p>
+      <InlineMessage tone="info" title={`Partial traces of job ${job}`}>
+        {ending(listed.job)} These are the traces of the {kept === 1 ? 'query' : `${kept.toLocaleString('en-US')} queries`} it executed before it stopped. No run was stored, so nothing is scored and no passage text is shown: a run records the dataset it was evaluated on, and these traces record none.{' '}
+        <ButtonLink size="s" href={formatHash({ screen: 'runs', job })}>
+          Open the job
+        </ButtonLink>
+      </InlineMessage>
+      <div className="rg-replay__body" data-columns={1}>
+        <aside className="rg-replay__side" aria-label="Queries of this job">
+          <QueryList queries={listed.queries} current={query} metric={null} onChoose={go} filter={{ pressed: false, onToggle: () => {}, disabled: true, reason: 'Partial traces are not scored' }} />
+        </aside>
+        <div className="rg-replay__stage" aria-busy={reading !== '' || undefined}>
+          {sides.length === 0 ? (
+            trace.state.status === 'error' ? <ErrorState problem={trace.state.problem} onRetry={trace.retry} /> : <Loading label={`Reading query ${query}…`} />
+          ) : (
+            <Stage
+              sides={sides}
+              stale={null}
+              held={null}
+              trace={trace.state.status === 'error' ? trace.state : null}
+              onRetry={trace.retry}
+              metric={null}
+              selected={selected}
+              onSelect={setSelected}
+              labelOf={(side) => `Job ${job}, partial traces, query ${side.trace.query}`}
+            />
+          )}
+        </div>
+        <div className="rg-replay__panel">
+          {selected === null || sides.length === 0 ? (
+            <p className="rg-replay__placeholder">Select a node to see what it produced for this query.</p>
+          ) : (
+            <NodeInspector node={selected.node} from="A" sides={sides} metric={null} onClose={() => setSelected(null)} />
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /** B's place while B has no canvas to show — its first read, a run just chosen, or a failure, with what failed. */
 type Held = { name: string; failure: { problem: ApiProblem; retry: () => void } | null };
 
@@ -303,10 +425,14 @@ type StageProps = {
   metric: string | null;
   selected: Selected | null;
   onSelect: (selected: Selected | null) => void;
+  /** Each canvas's accessible name; a run's by default. */
+  labelOf?: (side: Side, stale: boolean) => string;
 };
 
+const runLabel = (side: Side, stale: boolean) => `Run ${side.letter}, ${side.name}, query ${side.trace.query}${stale ? ', stale' : ''}`;
+
 /** The query's head, the banner, and the canvas — or two, stacked, with their run labels. */
-function Stage({ sides, stale, held, trace, onRetry, metric, selected, onSelect }: StageProps) {
+function Stage({ sides, stale, held, trace, onRetry, metric, selected, onSelect, labelOf = runLabel }: StageProps) {
   const a = sides[0]!;
   const b = sides[1];
   const overlays = useMemo(
@@ -315,7 +441,7 @@ function Stage({ sides, stale, held, trace, onRetry, metric, selected, onSelect 
   );
   // Each run's passages are checked on their own: B's dataset may differ where A's does not.
   const banners = sides.flatMap((side) => {
-    const banner = passagesBanner(side.trace.passages);
+    const banner = side.trace.passages === null ? null : passagesBanner(side.trace.passages);
     if (banner === null) return [];
     return [{ ...banner, letter: side.letter, title: sides.length === 2 ? `Run ${side.letter}: ${banner.title.charAt(0).toLowerCase()}${banner.title.slice(1)}` : banner.title }];
   });
@@ -343,7 +469,7 @@ function Stage({ sides, stale, held, trace, onRetry, metric, selected, onSelect 
               {b === undefined && held === null ? null : <RunSwatch slot={side.letter === 'A' ? 'a' : 'b'} name={side.name} />}
               <Canvas
                 graph={side.graph}
-                label={`Run ${side.letter}, ${side.name}, query ${side.trace.query}${old ? ', stale' : ''}`}
+                label={labelOf(side, old)}
                 overlay={overlays[i]}
                 selected={mine}
                 onSelect={(id) => onSelect(id === null ? null : { node: id, from: side.letter })}

@@ -160,7 +160,7 @@ fn binding(binding: &RunBinding) -> ServiceBinding {
 /// puts on it: the query for a declared input — which is what a pipeline's
 /// one declared input is (ADR-C18) — and otherwise the kind the core derives
 /// from the producing node's variant (ADR-C16).
-fn graph(pipeline: &LogicalPipeline) -> Graph {
+pub(crate) fn graph(pipeline: &LogicalPipeline) -> Graph {
     let producer_kind = |id: &str| -> EdgeKind {
         pipeline
             .nodes()

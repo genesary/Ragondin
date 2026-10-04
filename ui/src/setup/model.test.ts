@@ -66,7 +66,7 @@ describe('splitBuild', () => {
 const job = (id: string, state: JobSummary['state'], benchmark = 'beir/fiqa'): JobSummary => ({ id, created_at_ms: 1, position: 0, state, work: { kind: 'download', benchmark } });
 const jobs = (...list: JobSummary[]) => new Map(list.map((j) => [j.id, j]));
 const RUNNING: JobSummary['state'] = { kind: 'running', done: 5, total: 10, started_at_ms: 1, median_latency_nanos: null };
-const FAILED: JobSummary['state'] = { kind: 'failed', error: 'reset', at_node: null, finished_at_ms: 2 };
+const FAILED: JobSummary['state'] = { kind: 'failed', error: 'reset', at_node: null, finished_at_ms: 2, partial_traces: 0 };
 const DONE: JobSummary['state'] = { kind: 'done', run_id: null, id_mismatch: null, finished_at_ms: 2 };
 const REFUSAL: ApiProblem = { code: 'backend_failed', message: 'disk full', hint: 'Free space.', location: null, status: 500 };
 
@@ -94,7 +94,7 @@ describe('downloadView', () => {
   it('without a submission, reads the benchmark’s last job — one started elsewhere, or before this page — but a done one, which the listing already says', () => {
     expect(downloadView('beir/fiqa', undefined, jobs(job('1-0', FAILED), job('2-0', RUNNING)))).toEqual({ kind: 'running', done: 5, total: 10 });
     expect(downloadView('beir/fiqa', undefined, jobs(job('1-0', RUNNING), job('2-0', FAILED)))).toEqual({ kind: 'failed', error: 'reset' });
-    expect(downloadView('beir/fiqa', undefined, jobs(job('1-0', { kind: 'cancelled', finished_at_ms: 2 })))).toEqual({ kind: 'cancelled' });
+    expect(downloadView('beir/fiqa', undefined, jobs(job('1-0', { kind: 'cancelled', finished_at_ms: 2, partial_traces: 0 })))).toEqual({ kind: 'cancelled' });
     expect(downloadView('beir/fiqa', undefined, jobs(job('1-0', DONE)))).toEqual({ kind: 'idle' });
   });
 

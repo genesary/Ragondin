@@ -146,8 +146,10 @@ async fn run_not_found() {
 
 #[tokio::test]
 async fn query_not_found() {
+    let run = "ab".repeat(32);
     let (status, body) = render(ApiError::QueryNotFound {
-        run_id: "ab".repeat(32),
+        owner: format!("run {run}"),
+        listing: format!("/runs/{run}/queries"),
         query: "q-9".to_owned(),
     })
     .await;
@@ -439,6 +441,30 @@ async fn job_finished() {
     assert_problem(&body, status, "job_finished");
 }
 
+#[tokio::test]
+async fn job_not_ended() {
+    let (status, body) = render(ApiError::JobNotEnded {
+        id: "1700000000000-1".to_owned(),
+        state: "running".to_owned(),
+    })
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_problem(&body, status, "job_not_ended");
+    assert!(body["detail"].as_str().unwrap().contains("running"));
+}
+
+#[tokio::test]
+async fn no_partial_traces() {
+    let (status, body) = render(ApiError::NoPartialTraces {
+        id: "1700000000000-1".to_owned(),
+        reason: "it was interrupted by a crash, which leaves none".to_owned(),
+    })
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_problem(&body, status, "no_partial_traces");
+    assert!(body["detail"].as_str().unwrap().contains("crash"));
+}
+
 #[test]
 fn every_variant_has_a_distinct_code() {
     let codes = ApiError::CODES;
@@ -448,7 +474,7 @@ fn every_variant_has_a_distinct_code() {
     assert_eq!(sorted.len(), codes.len(), "codes are unique: {codes:?}");
     assert_eq!(
         codes.len(),
-        30,
+        32,
         "a variant added without a test here: {codes:?}"
     );
 }
