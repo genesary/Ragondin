@@ -71,7 +71,7 @@ function Shell() {
   const runs = route?.screen === 'runs' ? route : { screen: 'runs' as const };
   return (
     <JobQueueProvider>
-      <RunsScreen client={client} sel={runs.sel ?? []} job={runs.job} store="/work/ws" />
+      <RunsScreen client={client} sel={runs.sel ?? []} job={runs.job} launch={runs.launch} store="/work/ws" />
       <JobToasts />
     </JobQueueProvider>
   );
@@ -191,6 +191,53 @@ describe('the launch panel', () => {
     const missing = await within(at).findByText(/which this build does not carry/);
     expect(missing.textContent).toContain('Rebuild with the feature, or bind a Remote under this name.');
     expect(pipelineField.getAttribute('aria-invalid')).toBe('true');
+  });
+});
+
+describe('the launch panel up to a node', () => {
+  const PREFIX = '#runs?launch=hybrid&up_to=rerank';
+
+  it('opens on the pipeline cut at the node, offers only benchmarks the prefix can be scored on, and says why the others are absent', async () => {
+    const { api, stream } = await show(PREFIX, routes({ 'POST /runs': { body: { job_id: 'j1', run_id: ANNOUNCED } } }));
+    connect(stream);
+    const at = await within(panel()).findByText('prefix of hybrid, up to rerank');
+    const sheet = at.closest('section') as HTMLElement;
+    const benchmark = within(sheet).getByLabelText('Benchmark') as HTMLSelectElement;
+    // `mine` carries reference answers: a prefix ending before the generator produces no answer to score.
+    expect([...benchmark.options].map((o) => o.textContent)).toEqual(['beir/scifact — qrels']);
+    expect(within(sheet).getByText(/Not offered: mine, which carries reference answers/)).toBeTruthy();
+    // The identity is the cut's, announced by the API: the parent's hash is not shown as if it were the run's.
+    expect(within(sheet).queryByText(`pipeline ${short(HYBRID)}`)).toBeNull();
+    expect(within(sheet).getByText(/identity is announced when it is queued/)).toBeTruthy();
+
+    fireEvent.click(within(sheet).getByRole('button', { name: 'Launch' }));
+    await within(sheet).findByRole('button', { name: 'Queued' });
+    expect(api.bodies[api.requests.indexOf('POST /api/v1/runs')]).toEqual({ pipeline: 'hybrid', benchmark: 'beir/scifact', up_to: 'rerank' });
+    expect(within(sheet).getByText(`run ${short(ANNOUNCED)}`)).toBeTruthy();
+  });
+
+  it('goes back to the whole pipeline, every ready benchmark offered again', async () => {
+    const { stream } = await show(PREFIX);
+    connect(stream);
+    await within(panel()).findByText('prefix of hybrid, up to rerank');
+    fireEvent.click(within(panel()).getByRole('button', { name: 'Run the whole pipeline' }));
+    await waitFor(() => expect(window.location.hash).toBe('#runs?launch=hybrid'));
+    const benchmark = (await within(panel()).findByLabelText('Benchmark')) as HTMLSelectElement;
+    await waitFor(() => expect(benchmark.options).toHaveLength(2));
+    expect(within(panel()).queryByText('prefix of hybrid, up to rerank')).toBeNull();
+  });
+
+  it('shows a refused cut on the pipeline field, naming the node', async () => {
+    const refused = problem('prefix_is_whole_pipeline', 422, '`rerank` is the pipeline’s output: the prefix would be the whole pipeline', 'Launch the whole pipeline instead.', {
+      location: { node: 'rerank', edge: null },
+    });
+    const { stream } = await show(PREFIX, routes({ 'POST /runs': refused }));
+    connect(stream);
+    await within(panel()).findByText('prefix of hybrid, up to rerank');
+    fireEvent.click(within(panel()).getByRole('button', { name: 'Launch' }));
+    const words = await within(panel()).findByText(/the prefix would be the whole pipeline/);
+    expect(words.textContent).toContain('At node rerank.');
+    expect((within(panel()).getByLabelText('Pipeline') as HTMLElement).getAttribute('aria-invalid')).toBe('true');
   });
 });
 

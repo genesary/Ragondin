@@ -11,9 +11,12 @@ export type Route =
    * Compare in the order they were checked; `#runs`, or an empty hash, with
    * none selected. `#runs/job/<id>` shows one job of the queue among them
    * — the address a toast's "open" and a pasted link land on — with the
-   * same selection beside it.
+   * same selection beside it. `#runs?launch=<pipeline>&up_to=<node>`
+   * opens the launch panel on that pipeline, cut at that node — where the
+   * editor's "Run up to this node" lands — or, without `up_to`, on the whole
+   * pipeline; beside a selection or a job.
    */
-  | { screen: 'runs'; sel?: string[]; job?: string }
+  | { screen: 'runs'; sel?: string[]; job?: string; launch?: { pipeline: string; upTo?: string } }
   /** `#pipeline/<name>`: one pipeline's node × benchmark matrix; `#pipeline` before one is chosen. */
   | { screen: 'pipeline'; name?: string }
   /**
@@ -56,7 +59,12 @@ export function formatHash(route: Route): string {
   switch (route.screen) {
     case 'runs': {
       const path = route.job === undefined ? '#runs' : `#runs/job/${enc(route.job)}`;
-      return route.sel === undefined || route.sel.length === 0 ? path : `${path}?sel=${route.sel.map(enc).join(',')}`;
+      const query = [
+        ...(route.sel === undefined || route.sel.length === 0 ? [] : [`sel=${route.sel.map(enc).join(',')}`]),
+        ...(route.launch === undefined ? [] : [`launch=${enc(route.launch.pipeline)}`]),
+        ...(route.launch?.upTo === undefined ? [] : [`up_to=${enc(route.launch.upTo)}`]),
+      ];
+      return query.length === 0 ? path : `${path}?${query.join('&')}`;
     }
     case 'setup':
       return route.section === undefined ? '#setup' : `#setup/${route.section}`;
@@ -130,7 +138,12 @@ export function parseHash(hash: string): Route | null {
     case 'runs': {
       const job = rest.length === 2 && rest[0] === 'job' && nonEmpty ? (rest[1] as string) : undefined;
       if (rest.length !== 0 && job === undefined) return null;
-      const at = job === undefined ? {} : { job };
+      // The launch panel's pipeline, and the node it is cut at: a node with no pipeline names nothing.
+      const pipeline = query.get('launch');
+      const upTo = query.get('up_to');
+      if ((pipeline === null && upTo !== null) || (pipeline !== null && !isValue(pipeline)) || (upTo !== null && !isValue(upTo))) return null;
+      const launch = pipeline === null ? {} : { launch: upTo === null ? { pipeline } : { pipeline, upTo } };
+      const at = { ...(job === undefined ? {} : { job }), ...launch };
       // Read from the raw query, split before decoding, so an encoded `,`
       // stays inside its id.
       const raw = search.split('&').find((pair) => pair.startsWith('sel='));
