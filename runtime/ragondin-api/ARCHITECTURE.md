@@ -92,7 +92,7 @@ the one definition of a pipeline document's load, its first half
 `read_document`, `render_document`, the one writer of the format, and
 `incompatible_wiring`, the CLI's report for an edge of the wrong kind
 (§ The pipelines, § The typed document); its closure
-is `ragondin-pipeline`, the YAML parser, the JSON writer and two macro crates,
+is `ragondin-pipeline`, the YAML parser and two macro crates,
 no RPC or HTTP stack — `ragondin-experiments` — the `RunStore`
 trait, the `Run` record, the typed `Trace`, `lower_configuration`, the
 walk to a run's ranking node, and `compare_runs` — `ragondin-pipeline`, for the `LogicalPipeline`
