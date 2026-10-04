@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 
 import { Glyph, type GlyphName } from '../../design/index.ts';
 import { PORT_LABEL } from '../canvas/Port.tsx';
 import type { WireDocument } from './document.ts';
+import type { RunUpTo } from './prefix.ts';
 import type { PaletteSection } from './Palette.tsx';
 import { portsOf, type PortGrammar } from './ports.ts';
 
@@ -50,21 +51,25 @@ export type NodeEntriesProps = {
   /** A declared input: it has nothing to open, duplicate, run or delete, and is connected like any node. */
   input?: boolean;
   refuse: (from: string, to: string, port: number) => string | null;
+  /** Whether the node can be run up to: open with what the prefix keeps and skips, or refused with why. */
+  run?: RunUpTo;
   close: () => void;
   onOpen: () => void;
   onDuplicate: () => void;
   onConnect: (to: string, port: number) => void;
   onDelete: () => void;
+  /** Opens the launch panel on the stored pipeline, cut at this node. */
+  onRunUpTo?: () => void;
 };
 
 /**
  * The node menu's entries in write mode: "Open parameters", "Duplicate",
  * "Connect output to…" — the drag's keyboard equivalent, which turns the menu
  * into every input port of every other node, each open or refused with the
- * reason the drag would show — "Run up to this node", refused until #357
- * enables it, and "Delete node".
+ * reason the drag would show — "Run up to this node", whose second line says
+ * what the prefix keeps and skips, or why it is refused, and "Delete node".
  */
-export function NodeEntries({ doc, grammar, node, input = false, refuse, close, onOpen, onDuplicate, onConnect, onDelete }: NodeEntriesProps) {
+export function NodeEntries({ doc, grammar, node, input = false, refuse, run = { kind: 'refused', reason: 'Only a node can be run up to.' }, close, onOpen, onDuplicate, onConnect, onDelete, onRunUpTo = () => {} }: NodeEntriesProps) {
   const [connecting, setConnecting] = useState(false);
   const act = (action: () => void) => () => {
     close();
@@ -101,7 +106,7 @@ export function NodeEntries({ doc, grammar, node, input = false, refuse, close, 
     <MenuItem key="open" glyph="split" title="Open parameters" onChoose={act(onOpen)} />,
     <MenuItem key="duplicate" glyph="copy" title="Duplicate" onChoose={act(onDuplicate)} />,
     toggle,
-    <MenuItem key="run" glyph="prefix" title="Run up to this node" line="Arrives with #357." refused onChoose={() => {}} />,
+    <MenuItem key="run" glyph="prefix" title="Run up to this node" line={run.kind === 'open' ? run.line : run.reason} refused={run.kind === 'refused'} onChoose={act(onRunUpTo)} />,
     <MenuItem key="delete" glyph="close" title="Delete node" onChoose={act(onDelete)} />,
   ];
 }

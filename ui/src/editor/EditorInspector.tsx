@@ -6,6 +6,7 @@ import { bool, float, formatFloat, int, list, str } from '../parameters.ts';
 import { freshId, type WireDocument, type WireNode } from './document.ts';
 import type { NodePorts } from './ports.ts';
 import type { EditorAction } from './store.ts';
+import type { RunUpTo } from './prefix.ts';
 
 /** What the server said about this node: its words, and the input port the edge it named enters, if it named one. */
 export type NodeVerdict = { message: string; port: number | null } | null;
@@ -20,6 +21,10 @@ export type EditorInspectorProps = {
   dispatch: (action: EditorAction) => void;
   /** The node was renamed: the selection follows it. */
   onRenamed: (id: string) => void;
+  /** Whether the node can be run up to, as the node menu says it. */
+  run: RunUpTo;
+  /** Opens the launch panel on the stored pipeline, cut at this node. */
+  onRunUpTo: () => void;
 };
 
 type Kind = ParameterValue['kind'];
@@ -238,7 +243,7 @@ const FROM_VALUE = '';
  * moves no field under the pointer; an edge it named is said again on that
  * port's row.
  */
-export function EditorInspector({ doc, node, ports, verdict, quiet, dispatch, onRenamed }: EditorInspectorProps) {
+export function EditorInspector({ doc, node, ports, verdict, quiet, dispatch, onRenamed, run, onRunUpTo }: EditorInspectorProps) {
   const prefix = useId();
   const [id, setId] = useState(node.id);
   const [idError, setIdError] = useState<string | undefined>(undefined);
@@ -278,7 +283,23 @@ export function EditorInspector({ doc, node, ports, verdict, quiet, dispatch, on
   const family = familyOfComponent(node.component) ?? 'control';
   const params = Object.keys(node.params).sort();
   return (
-    <Inspector family={family} title={node.id} impl={`${node.component}/${node.impl}`}>
+    <Inspector
+      family={family}
+      title={node.id}
+      impl={`${node.component}/${node.impl}`}
+      footer={
+        // The secondary action: the node menu's "Run up to this node", refused for the same reason.
+        run.kind === 'open' ? (
+          <Button kind="secondary" size="s" icon="prefix" onClick={onRunUpTo}>
+            Run up to here
+          </Button>
+        ) : (
+          <Button kind="secondary" size="s" icon="prefix" disabled disabledReason={run.reason}>
+            Run up to here
+          </Button>
+        )
+      }
+    >
       <div className="rg-editor-inspector__verdict" data-invalid={verdict === null ? undefined : true}>
         {verdict === null ? quiet : verdict.message}
       </div>

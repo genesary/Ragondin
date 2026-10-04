@@ -9,7 +9,7 @@ import type { WireDocument } from './document.ts';
 import { parseRules } from '../../design/testing/css.ts';
 import editorCss from './Editor.css?raw';
 import { Editor } from './Editor.tsx';
-import { GRAMMAR, HYBRID, SERVICES, WORKSPACE } from './fixtures.ts';
+import { GRAMMAR, HYBRID, HYBRID_RAG, SERVICES, WORKSPACE } from './fixtures.ts';
 import { bool, float, int, list, str } from '../parameters.ts';
 import type { PortGrammar } from './ports.ts';
 
@@ -25,12 +25,12 @@ const invalid = (detail: string, location: NonNullable<Problem['location']>): { 
 const KIND_MISMATCH =
   'the configuration wires two nodes incompatibly\n  edge: `lexical` feeds `reranked` at port 1\n  expected: chunks\n  found: query';
 
-function Harness({ initial = DRAFT, grammar = GRAMMAR, start = null }: { initial?: WireDocument; grammar?: PortGrammar | null; start?: string | null }) {
+function Harness({ initial = DRAFT, grammar = GRAMMAR, start = null, stored = null }: { initial?: WireDocument; grammar?: PortGrammar | null; start?: string | null; stored?: string | null }) {
   const [client] = useState(() => createApiClient());
   const [selected, setSelected] = useState<string | null>(start);
   return (
     <div style={{ width: 1400, height: 800 }}>
-      <Editor client={client} title="Draft" initial={initial} capabilities={WORKSPACE.capabilities} services={SERVICES.services} grammar={grammar} selected={selected} onSelect={setSelected} />
+      <Editor client={client} title="Draft" stored={stored} initial={initial} capabilities={WORKSPACE.capabilities} services={SERVICES.services} grammar={grammar} selected={selected} onSelect={setSelected} />
       <output data-testid="selected">{selected ?? ''}</output>
     </div>
   );
@@ -156,14 +156,46 @@ describe('the node menu', () => {
     return screen.getByRole('menu', { name: `Node ${id}` });
   };
 
-  it('opens on Shift+F10 with its entries, "Run up to this node" disabled and saying which issue enables it', () => {
+  it('opens on Shift+F10 with its entries, focus on the first', () => {
     const { container } = setup();
     const menu = openMenu(container, 'fused');
     expect(within(menu).getAllByRole('menuitem').map((m) => m.querySelector('b')?.textContent)).toEqual(['Open parameters', 'Duplicate', 'Connect output to…', 'Run up to this node', 'Delete node']);
-    const run = within(menu).getByRole('menuitem', { name: /Run up to this node/ });
-    expect(run.getAttribute('aria-disabled')).toBe('true');
-    expect(within(run).getByText('Arrives with #357.')).toBeTruthy();
     expect(document.activeElement).toBe(within(menu).getAllByRole('menuitem')[0]);
+  });
+
+  describe('"Run up to this node"', () => {
+    const OPENED = { initial: HYBRID_RAG, stored: 'hybrid-rag' };
+    const runEntry = (container: HTMLElement, id: string) => within(openMenu(container, id)).getByRole('menuitem', { name: /Run up to this node/ });
+
+    it('is enabled on a ranking node, its second line naming what is kept and skipped and the generation saved, and opens the launch panel cut there', () => {
+      window.history.replaceState(null, '', '/#editor/hybrid-rag');
+      const { container } = setup(undefined, OPENED);
+      const run = runEntry(container, 'reranked');
+      expect(run.getAttribute('aria-disabled')).toBeNull();
+      expect(within(run).getByText('Keeps lexical, vectors, fused and reranked. Skips context and answer, so no generation cost.')).toBeTruthy();
+      fireEvent.click(run);
+      expect(window.location.hash).toBe('#runs?launch=hybrid-rag&up_to=reranked');
+    });
+
+    it('is refused, with its reason, on the pipeline’s output and on a context builder', () => {
+      const { container } = setup(undefined, OPENED);
+      const output = runEntry(container, 'answer');
+      expect(output.getAttribute('aria-disabled')).toBe('true');
+      expect(within(output).getByText('This node is the pipeline’s output: the prefix would be the whole pipeline.')).toBeTruthy();
+      fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
+      const context = runEntry(container, 'context');
+      expect(context.getAttribute('aria-disabled')).toBe('true');
+      expect(within(context).getByText('A context is scored by nothing: run up to the node that feeds it chunks.')).toBeTruthy();
+    });
+
+    it('is refused on a pipeline that is not stored, or whose canvas changed since it was opened', () => {
+      const { container, unmount } = setup(undefined, { initial: HYBRID_RAG });
+      expect(within(runEntry(container, 'reranked')).getByText('Not a workspace pipeline yet: a run takes a stored document.')).toBeTruthy();
+      unmount();
+      const opened = setup(undefined, OPENED);
+      fireEvent.click(within(openMenu(opened.container, 'vectors')).getByRole('menuitem', { name: /Duplicate/ }));
+      expect(within(runEntry(opened.container, 'reranked')).getByText('The canvas differs from the stored document, and a run takes the stored one.')).toBeTruthy();
+    });
   });
 
   it('deletes a node, leaving its consumers marked invalid and no edge to the missing node', async () => {
@@ -359,6 +391,23 @@ describe('the keyboard', () => {
     fireEvent.click(within(screen.getByRole('region', { name: 'Palette' })).getByRole('button', { name: /^rrf/ }));
     fireEvent.keyDown(screen.getByLabelText('New parameter'), { key: 'z', ctrlKey: true });
     expect(nodeEl(container, 'rrf')).toBeTruthy();
+  });
+});
+
+describe('the inspector’s "Run up to here"', () => {
+  it('opens the launch panel cut at the node, and is refused with the menu’s reason where the menu refuses', () => {
+    window.history.replaceState(null, '', '/#editor/hybrid-rag');
+    const { unmount } = setup(undefined, { initial: HYBRID_RAG, stored: 'hybrid-rag', start: 'fused' });
+    const run = screen.getByRole('button', { name: 'Run up to here' });
+    expect(run.getAttribute('aria-disabled')).toBeNull();
+    fireEvent.click(run);
+    expect(window.location.hash).toBe('#runs?launch=hybrid-rag&up_to=fused');
+    unmount();
+
+    setup(undefined, { initial: HYBRID_RAG, stored: 'hybrid-rag', start: 'context' });
+    const refused = screen.getByRole('button', { name: 'Run up to here' });
+    expect(refused.getAttribute('aria-disabled')).toBe('true');
+    expect(screen.getByText('A context is scored by nothing: run up to the node that feeds it chunks.')).toBeTruthy();
   });
 });
 

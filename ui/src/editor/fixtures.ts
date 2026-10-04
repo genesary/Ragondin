@@ -29,6 +29,18 @@ export const HYBRID: WireDocument = {
   },
 };
 
+/** {@link HYBRID} with a context builder and a generator after the reranker. */
+export const HYBRID_RAG: WireDocument = {
+  pipeline: {
+    inputs: ['question'],
+    nodes: [
+      ...HYBRID.pipeline.nodes,
+      { id: 'context', component: 'context_builder', impl: 'concat', inputs: ['question', 'reranked'], params: {} },
+      { id: 'answer', component: 'generator', impl: 'qwen', inputs: ['question', 'context'], params: {} },
+    ],
+  },
+};
+
 /**
  * A recorded `GET /workspace` answer: the capabilities a build with `ui`,
  * `bm25` and `remote`, and without `onnx` or `stub`, served on 2026-10-03
