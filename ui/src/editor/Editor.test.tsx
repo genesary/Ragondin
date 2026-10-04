@@ -502,6 +502,84 @@ describe('the inspector in write mode', () => {
     expect(nodeEl(container, 'fused')).toBeNull();
   });
 
+  describe('a value nobody changed is left as it is', () => {
+    const LISTS: WireDocument = {
+      pipeline: {
+        inputs: ['question'],
+        nodes: [
+          {
+            id: 'fused',
+            component: 'fusion',
+            impl: 'rrf',
+            inputs: [],
+            params: {
+              k: float(60),
+              label: str(' 60'),
+              mixed: list(int('1'), float(0.5)),
+              nested: list(list(str('a'), str('b')), str('c')),
+              texts: list(str('10'), str('true')),
+            },
+          },
+        ],
+      },
+    };
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 300));
+
+    it('sends nothing when a field is tabbed through with its text untouched', async () => {
+      const { api } = setup(undefined, { initial: LISTS, start: 'fused' });
+      await waitFor(() => expect(validations(api)).toHaveLength(1));
+      for (const name of ['k', 'label', 'mixed', 'nested', 'texts']) {
+        const field = screen.getByLabelText(name);
+        fireEvent.focus(field);
+        fireEvent.blur(field);
+        fireEvent.keyDown(field, { key: 'Enter' });
+      }
+      await settle();
+      expect(validations(api)).toHaveLength(1);
+      expect(screen.queryByText(/is not one|is neither|is wider/)).toBeNull();
+    });
+
+    it('gives each item of a list its own kind, so a mixed list stays editable', async () => {
+      const { api } = setup(undefined, { initial: LISTS, start: 'fused' });
+      const field = screen.getByLabelText('mixed') as HTMLInputElement;
+      expect(field.value).toBe('1, 0.5');
+      fireEvent.change(field, { target: { value: '1, 0.75' } });
+      fireEvent.blur(field);
+      await waitFor(() => expect(nodesOf(validations(api).at(-1)!)[0]!.params['mixed']).toEqual(list(int('1'), float(0.75))));
+      fireEvent.change(field, { target: { value: '2, 3, 0.25' } });
+      fireEvent.blur(field);
+      await waitFor(() => expect(nodesOf(validations(api).at(-1)!)[0]!.params['mixed']).toEqual(list(int('2'), float(3), float(0.25))));
+    });
+
+    it('keeps the items a person did not touch as they were, a text item reading as a number included', async () => {
+      const { api } = setup(undefined, { initial: LISTS, start: 'fused' });
+      const field = screen.getByLabelText('texts');
+      fireEvent.change(field, { target: { value: '10, true, 7' } });
+      fireEvent.blur(field);
+      await waitFor(() => expect(nodesOf(validations(api).at(-1)!)[0]!.params['texts']).toEqual(list(str('10'), str('true'), int('7'))));
+    });
+
+    it('shows a list holding a list, but does not edit it, and says why', async () => {
+      const { api } = setup(undefined, { initial: LISTS, start: 'fused' });
+      await waitFor(() => expect(validations(api)).toHaveLength(1));
+      const field = screen.getByLabelText('nested') as HTMLInputElement;
+      expect(field.readOnly).toBe(true);
+      expect(screen.getByText('A list holding a list is shown, not edited, here: its field would flatten it. Edit it in the file.')).toBeTruthy();
+      expect((screen.getByLabelText('Kind of nested') as HTMLSelectElement).disabled).toBe(true);
+      fireEvent.change(field, { target: { value: 'a, b, c' } });
+      fireEvent.blur(field);
+      await settle();
+      expect(validations(api)).toHaveLength(1);
+    });
+
+    it('shows a list holding text with a comma, but does not edit it, and says why', () => {
+      const initial: WireDocument = { pipeline: { inputs: ['question'], nodes: [{ id: 'fused', component: 'fusion', impl: 'rrf', inputs: [], params: { names: list(str('a, b'), str('c')) } }] } };
+      setup(undefined, { initial, start: 'fused' });
+      expect((screen.getByLabelText('names') as HTMLInputElement).readOnly).toBe(true);
+      expect(screen.getByText('A list holding text with a comma, or with spaces at its ends, is shown, not edited, here: its field would split or trim it. Edit it in the file.')).toBeTruthy();
+    });
+  });
+
   it('adds and removes a parameter', async () => {
     const { api } = setup(undefined, { start: 'fused' });
     fireEvent.change(screen.getByLabelText('New parameter'), { target: { value: 'weights' } });
@@ -511,6 +589,23 @@ describe('the inspector in write mode', () => {
     await waitFor(() => expect(nodesOf(validations(api).at(-1)!).find((n) => n.id === 'fused')?.params).toEqual({ k: int('60'), weights: list(float(0.7), float(0.3)) }));
     fireEvent.click(screen.getByRole('button', { name: 'Remove k' }));
     await waitFor(() => expect(nodesOf(validations(api).at(-1)!).find((n) => n.id === 'fused')?.params).toEqual({ weights: list(float(0.7), float(0.3)) }));
+  });
+});
+
+describe('a parameter row', () => {
+  const rule = (selector: string) => parseRules(editorCss).find((r) => r.selector === selector);
+  it('keeps the value field a width of its own, whatever the kind’s label or error says', () => {
+    const row = rule('.rg-editor-inspector__param');
+    expect(row?.declarations.get('grid-template-columns')).toBe('minmax(6rem, 1fr) 8rem auto');
+    // The tops line up, so the select's box sits level with the value's whatever lines sit under either.
+    expect(row?.declarations.get('align-items')).toBe('start');
+  });
+
+  it('cuts a long kind label to its column, and drops the remove button level with the boxes', () => {
+    const label = rule('.rg-editor-inspector__param .rg-field__label');
+    expect(label?.declarations.get('white-space')).toBe('nowrap');
+    expect(label?.declarations.get('text-overflow')).toBe('ellipsis');
+    expect(rule('.rg-editor-inspector__param > .rg-btn')?.declarations.get('margin-top')).toBe('calc(20px + (var(--size-control) - var(--size-control-s)) / 2)');
   });
 });
 

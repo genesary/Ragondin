@@ -88,7 +88,13 @@
 .rg-editor-inspector__inputs li small { grid-column: 1 / -1; height: 16px; font: 400 11.5px/16px var(--font-sans); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--critical); }
 .rg-editor-inspector__inputs code { font-family: var(--font-mono); }
 .rg-editor-inspector__none { margin: 0; font: var(--type-dense); color: var(--ink-3); }
-.rg-editor-inspector__param { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: end; gap: var(--space-2); margin-bottom: var(--space-2); }
+/* Value, kind, remove. The value keeps 6rem whatever the kind's label or error says, and the kind a column of
+   its own; the tops line up, so the boxes sit level under labels one line high, whatever lines sit under each. */
+.rg-editor-inspector__param { display: grid; grid-template-columns: minmax(6rem, 1fr) 8rem auto; align-items: start; gap: var(--space-2); margin-bottom: var(--space-2); }
+.rg-editor-inspector__param .rg-field__label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Below the label's line and its gap (16px + 4px), centred on a box of the control's height. */
+.rg-editor-inspector__param > .rg-btn { margin-top: calc(20px + (var(--size-control) - var(--size-control-s)) / 2); }
+.rg-editor-inspector__param > .rg-check { margin-top: 20px; min-height: var(--size-control); }
 .rg-editor-inspector__add { display: grid; gap: var(--space-2); margin-top: var(--space-3); padding-top: var(--space-3); border-top: 1px solid var(--line); }
 
 @media (max-width: 900px) {

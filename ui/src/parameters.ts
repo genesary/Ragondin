@@ -18,8 +18,10 @@ export function formatFloat(value: number): string {
   return Number.isInteger(value) && !text.includes('e') ? `${text}.0` : text;
 }
 
-// Text a reader would take for a number, a flag, a list or nothing at all.
-const LOOKS_TYPED = /^\s*$|^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$|^(true|false)$|,/;
+// Text a reader would take for a number, a flag, a list, quoted text or
+// nothing at all: spaces at its ends hide, so ` 60` is checked as `60`, and a
+// leading bracket or quote reads as a list or as quoted text.
+const LOOKS_TYPED = /^\s*$|^\s*[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?\s*$|^\s*(true|false)\s*$|,|^\s*["'[]/;
 
 /** A value as a configuration writes it; text that would read as another kind in quotes. */
 export function formatParameter(value: ParameterValue): string {

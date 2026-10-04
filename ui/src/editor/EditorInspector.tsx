@@ -60,7 +60,13 @@ const I64_MAX = 2n ** 63n - 1n;
 /** Text read as one kind: the value, or why the kind cannot carry it, in words. */
 type Read = { value: ParameterValue } | { error: string };
 
-function readAs(kind: Kind, text: string, items: Kind | null = null): Read {
+/**
+ * Text read as one kind. A list's items are read one by one against `was`,
+ * the items the list held: an item whose text is unchanged is kept as it was,
+ * a changed one keeps its item's kind when its text reads in it, and any
+ * other is read from its text, so `[1, 0.5]` stays an integer and a float.
+ */
+function readAs(kind: Kind, text: string, was: readonly ParameterValue[] = []): Read {
   const t = text.trim();
   switch (kind) {
     case 'int': {
@@ -83,8 +89,15 @@ function readAs(kind: Kind, text: string, items: Kind | null = null): Read {
       return { value: str(text) };
     case 'list': {
       const read: ParameterValue[] = [];
-      for (const item of text.split(',').map((i) => i.trim()).filter((i) => i !== '')) {
-        const one = items === null || items === 'list' ? infer(item) : readAs(items, item);
+      const items = text.split(',').map((i) => i.trim()).filter((i) => i !== '');
+      for (const [at, item] of items.entries()) {
+        const before = was[at];
+        if (before !== undefined && before.kind !== 'list' && textOf(before) === item) {
+          read.push(before);
+          continue;
+        }
+        const kept = before === undefined || before.kind === 'list' ? null : readAs(before.kind, item);
+        const one = kept !== null && 'value' in kept ? kept : infer(item);
         if ('error' in one) return one;
         read.push(one.value);
       }
@@ -106,16 +119,31 @@ function infer(text: string): Read {
   return readAs('string', text);
 }
 
-/** A list's items keep the kind of its first, as a value keeps its own. */
-const itemKind = (value: ParameterValue): Kind | null => (value.kind === 'list' ? (value.value[0]?.kind ?? null) : null);
+/**
+ * Why a list's field cannot edit it, or null when it can. The field shows the
+ * items separated by commas and reads them back split on commas and trimmed,
+ * so a list holding a list would come back flattened, and text holding a
+ * comma, or spaces at its ends, would come back split or trimmed.
+ */
+function readOnlyReason(value: ParameterValue): string | null {
+  if (value.kind !== 'list') return null;
+  if (value.value.some((item) => item.kind === 'list')) return 'A list holding a list is shown, not edited, here: its field would flatten it. Edit it in the file.';
+  if (value.value.some((item) => item.kind === 'string' && (item.value.includes(',') || item.value.trim() !== item.value || item.value === ''))) {
+    return 'A list holding text with a comma, or with spaces at its ends, is shown, not edited, here: its field would split or trim it. Edit it in the file.';
+  }
+  return null;
+}
 
 function Parameter({ prefix, name, value, onSet, onRemove }: { prefix: string; name: string; value: ParameterValue; onSet: (v: ParameterValue) => void; onRemove: () => void }) {
   const [text, setText] = useState(textOf(value));
   const [error, setError] = useState<string | undefined>(undefined);
   const [kindError, setKindError] = useState<string | undefined>(undefined);
   useEffect(() => setText(textOf(value)), [value]);
+  const readOnly = readOnlyReason(value);
   const commit = () => {
-    const read = readAs(value.kind, text, itemKind(value));
+    // Tabbing through a field, or Enter on it, changes nothing it was not asked to.
+    if (readOnly !== null || text === textOf(value)) return setError(undefined);
+    const read = readAs(value.kind, text, value.kind === 'list' ? value.value : []);
     if ('error' in read) return setError(read.error);
     setError(undefined);
     setKindError(undefined);
@@ -136,6 +164,7 @@ function Parameter({ prefix, name, value, onSet, onRemove }: { prefix: string; n
       label={`Kind of ${name}`}
       options={KINDS}
       value={value.kind}
+      disabled={readOnly !== null}
       {...(kindError === undefined ? {} : { error: kindError })}
       onChange={(e) => rekind(e.target.value as Kind)}
     />
@@ -162,10 +191,13 @@ function Parameter({ prefix, name, value, onSet, onRemove }: { prefix: string; n
         mono
         numeric={value.kind === 'int' || value.kind === 'float'}
         value={text}
+        readOnly={readOnly !== null}
         // The line is always there, so an error replaces it rather than pushing the fields below down.
-        help={value.kind === 'list' ? 'A list: items separated by commas.' : ' '}
+        help={readOnly ?? (value.kind === 'list' ? 'A list: items separated by commas.' : ' ')}
         {...(error === undefined ? {} : { error })}
-        onChange={(e) => setText(e.target.value)}
+        onChange={(e) => {
+          if (readOnly === null) setText(e.target.value);
+        }}
         onBlur={commit}
         onKeyDown={(e) => {
           if (e.key === 'Enter') commit();

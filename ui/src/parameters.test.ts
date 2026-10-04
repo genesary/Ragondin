@@ -23,6 +23,10 @@ describe('a parameter value in words', () => {
     expect(formatParameter(str('a, b'))).toBe('"a, b"');
   });
 
+  it.each([' 60', '60 ', '[a]', '"60"', ' true'])('quotes text that would pass for another kind once drawn, %j', (text) => {
+    expect(formatParameter(str(text))).toBe(JSON.stringify(text));
+  });
+
   it('writes a flag and a list as a configuration does', () => {
     expect(formatParameter(bool(true))).toBe('true');
     expect(formatParameter(list(int('1'), str('a'), float(2), bool(false)))).toBe('[1, a, 2.0, false]');
