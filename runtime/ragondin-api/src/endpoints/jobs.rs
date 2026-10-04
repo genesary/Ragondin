@@ -9,6 +9,13 @@
 //! constructs the components and reads the services' identities — computes
 //! the id. So an existing run is refused and an unreachable service fails at
 //! once, not when the worker reaches the job (ADR-C36 § 1).
+//!
+//! With `up_to`, the document is cut at that node first (`prefix.rs`): the
+//! job's pipeline is the cut, announced under the cut's own identity, and the
+//! submission carries the parent's name and canonical hash for the launch
+//! record's `prefix_of` (ADR-C39 § 1, § 3). A cut that cannot be a prefix,
+//! or that the chosen benchmark could not score, is refused before the
+//! launcher is asked anything.
 
 use std::collections::BTreeMap;
 
@@ -28,7 +35,7 @@ use crate::request::{ReorderRequest, RunRequest};
 use crate::response::{
     JobListing, JobSummary, Location, PartialQueries, PartialTrace, QueryScores, RunAccepted,
 };
-use crate::{convert, validation};
+use crate::{convert, prefix, validation};
 
 /// `POST /runs`: `202` with the job and the run id it announced, or
 /// `run_exists` linking the job or the run that holds that id.
@@ -42,14 +49,28 @@ pub(crate) async fn submit(
     }): ApiJson<RunRequest>,
 ) -> Result<(StatusCode, Json<RunAccepted>), ApiError> {
     let file = state.backends.pipelines.read(&pipeline).await?;
-    validation::lower(&file.document)?;
+    // A prefix run is an ordinary run of the cut document: the job snapshots
+    // the cut, and the parent is its name and hash, provenance beside it.
+    let (document, parent_pipeline_hash) = match &up_to {
+        None => {
+            validation::lower(&file.document)?;
+            (file.document, None)
+        }
+        Some(node) => {
+            let cut = prefix::cut(&file.name, &file.document, node)?;
+            let entry = state.backends.registry.verify(&benchmark).await?;
+            prefix::scorable(node, cut.output, &entry)?;
+            (cut.document, Some(cut.parent_hash))
+        }
+    };
     let bindings = state.backends.settings.read().await?.services;
     let submission = Submission {
         pipeline_name: file.name,
-        pipeline: file.document,
+        pipeline: document,
         benchmark,
         bindings,
         up_to,
+        parent_pipeline_hash,
     };
     let run_id = state
         .backends

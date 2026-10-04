@@ -611,11 +611,22 @@ export type JobWork = {
   /** The `Remote` bindings in force at submission. */
   bindings: ServiceBinding[];
   kind: "run";
+  /**
+   * For a prefix run, the canonical hash of the parent document the
+   * cut was made from at submission; `null` for a whole run. Beside
+   * `up_to`, the prefix's provenance, never part of the run's
+   * identity.
+   */
+  parent_pipeline_hash: string | null;
   /** The pipeline's name in the workspace. */
   pipeline: string;
   /** The run id announced at submission. */
   run_id: string;
-  /** The node a prefix run stops after; `null` for a whole run. */
+  /**
+   * The node a prefix run stops at; `null` for a whole run. The
+   * pipeline is then the parent's name, and the job ran the parent's
+   * document cut at this node.
+   */
   up_to: string | null;
 } | {
   /** The benchmark's selector. */
@@ -1220,7 +1231,7 @@ export type Problem = {
    * The stable code a client matches on: one of `ApiError::CODES`, which
    * the schema lists as an enum so a generated client can narrow on it.
    */
-  code: "pipeline_invalid" | "impl_not_in_build" | "service_unreachable" | "run_exists" | "run_unreadable" | "run_not_found" | "query_not_found" | "parameter_invalid" | "dataset_absent" | "dataset_differs" | "benchmark_not_found" | "benchmark_exists" | "download_failed" | "download_cancelled" | "import_refused" | "pipeline_not_found" | "precondition_failed" | "binding_refused" | "service_not_found" | "request_invalid" | "backend_failed" | "host_refused" | "origin_refused" | "route_not_found" | "method_not_allowed" | "runs_not_comparable" | "body_too_large" | "job_not_found" | "job_not_queued" | "job_finished" | "job_not_ended" | "no_partial_traces";
+  code: "pipeline_invalid" | "impl_not_in_build" | "service_unreachable" | "run_exists" | "run_unreadable" | "run_not_found" | "query_not_found" | "parameter_invalid" | "dataset_absent" | "dataset_differs" | "benchmark_not_found" | "benchmark_exists" | "download_failed" | "download_cancelled" | "import_refused" | "pipeline_not_found" | "precondition_failed" | "binding_refused" | "service_not_found" | "request_invalid" | "backend_failed" | "host_refused" | "origin_refused" | "route_not_found" | "method_not_allowed" | "runs_not_comparable" | "body_too_large" | "job_not_found" | "job_not_queued" | "job_finished" | "job_not_ended" | "no_partial_traces" | "prefix_node_not_found" | "prefix_is_whole_pipeline" | "prefix_ends_in_context" | "prefix_not_scorable";
   /** What happened, in this occurrence's words. */
   detail: string;
   /**
@@ -1576,6 +1587,18 @@ export type RunSummary = {
    * [`launched_as`](Self::launched_as), nor that of this.
    */
   pipeline_names: string[];
+  /**
+   * Every current workspace document the run's pipeline is a structural
+   * prefix of — its declared inputs the same, each of its nodes one of the
+   * document's, equal in canonical form, and fewer of them — each with the
+   * node the run stops at, sorted by name; empty when it is a prefix of
+   * none, or its stored document no longer lowers. A content fact like
+   * [`pipeline_names`](Self::pipeline_names), asked of every run whatever
+   * [`launched_as`](Self::launched_as) records (ADR-C39 § 5), so a prefix
+   * written by hand and run from the command line is one too; the pipeline
+   * matrix counts a prefix by the same test.
+   */
+  prefix_of_documents: PrefixOf[];
   /**
    * The names among [`pipeline_names`](Self::pipeline_names) the backend
    * refuses to read, sorted; empty when it refuses none. A name is refused

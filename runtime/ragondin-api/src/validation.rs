@@ -20,8 +20,10 @@
 //! with "the configuration" where the CLI names the file. `bin/ragondin`'s
 //! `tests/ui.rs` compares the two byte for byte.
 
-use ragondin_config::{incompatible_wiring, parse_document, render_document, DocumentError};
-use ragondin_pipeline::{LogicalPipeline, NodeId, ValidationError};
+use ragondin_config::{
+    incompatible_wiring, parse_document, read_document, render_document, DocumentError,
+};
+use ragondin_pipeline::{LogicalPipeline, NodeId, RawPipeline, ValidationError};
 
 use crate::convert;
 use crate::error::ApiError;
@@ -53,6 +55,12 @@ pub(crate) fn check_typed(typed: &TypedDocument) -> Result<String, ApiError> {
 /// `pipeline_invalid`.
 pub(crate) fn lower(document: &str) -> Result<LogicalPipeline, ApiError> {
     parse_document(document).map_err(refusal)
+}
+
+/// `document` read into the wire schema — the load's first half — or why it
+/// does not read, as `pipeline_invalid`.
+pub(crate) fn read(document: &str) -> Result<RawPipeline, ApiError> {
+    read_document(document).map_err(refusal)
 }
 
 /// The load's refusal as `pipeline_invalid`, located where it can be.

@@ -465,6 +465,73 @@ async fn no_partial_traces() {
     assert!(body["detail"].as_str().unwrap().contains("crash"));
 }
 
+/// A refused cut names its node in `location`, as a validation failure
+/// does, so the launch panel says where.
+async fn prefix_refusal(error: ApiError, code: &str, node: &str) -> Value {
+    let (status, body) = render(error).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_problem(&body, status, code);
+    assert_eq!(body["location"]["node"], node);
+    body
+}
+
+#[tokio::test]
+async fn prefix_node_not_found() {
+    let body = prefix_refusal(
+        ApiError::PrefixNodeNotFound {
+            pipeline: "hybrid".to_owned(),
+            node: "nowhere".to_owned(),
+        },
+        "prefix_node_not_found",
+        "nowhere",
+    )
+    .await;
+    assert!(body["detail"].as_str().unwrap().contains("hybrid"));
+}
+
+#[tokio::test]
+async fn prefix_is_whole_pipeline() {
+    let body = prefix_refusal(
+        ApiError::PrefixIsWholePipeline {
+            node: "generate".to_owned(),
+        },
+        "prefix_is_whole_pipeline",
+        "generate",
+    )
+    .await;
+    assert!(body["detail"]
+        .as_str()
+        .unwrap()
+        .contains("the prefix would be the whole pipeline"));
+}
+
+#[tokio::test]
+async fn prefix_ends_in_context() {
+    prefix_refusal(
+        ApiError::PrefixEndsInContext {
+            node: "concat".to_owned(),
+        },
+        "prefix_ends_in_context",
+        "concat",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn prefix_not_scorable() {
+    let body = prefix_refusal(
+        ApiError::PrefixNotScorable {
+            node: "rerank".to_owned(),
+            benchmark: "squad/dev".to_owned(),
+            kind: "chunks".to_owned(),
+        },
+        "prefix_not_scorable",
+        "rerank",
+    )
+    .await;
+    assert!(body["detail"].as_str().unwrap().contains("squad/dev"));
+}
+
 #[test]
 fn every_variant_has_a_distinct_code() {
     let codes = ApiError::CODES;
@@ -474,7 +541,7 @@ fn every_variant_has_a_distinct_code() {
     assert_eq!(sorted.len(), codes.len(), "codes are unique: {codes:?}");
     assert_eq!(
         codes.len(),
-        32,
+        36,
         "a variant added without a test here: {codes:?}"
     );
 }

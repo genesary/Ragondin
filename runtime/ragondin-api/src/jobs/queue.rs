@@ -357,6 +357,7 @@ impl Queue {
             benchmark: submission.benchmark,
             bindings: submission.bindings,
             up_to: submission.up_to,
+            parent_pipeline_hash: submission.parent_pipeline_hash,
         };
         self.enqueue(&mut state, work).await
     }

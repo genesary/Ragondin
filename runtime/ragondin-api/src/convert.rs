@@ -29,9 +29,9 @@ use crate::response::{
     BenchmarkEntry, BenchmarkState, ConfigurationMatrix, ConsumedPorts, DatasetCheck,
     DatasetStatus, DatasetVersions, EdgeKind, FamilyPorts, FoundVersions, Graph, GraphEdge,
     GraphInput, GraphNode, GroundTruth, LaunchedAs, LaunchedPrefix, MetricDirection, MetricFamily,
-    MetricRow, NameHeld, NodeMetrics, ParameterName, ParameterRow, ParameterValue, RunDetail,
-    RunInputs, RunSummary, ServiceBinding, TraceNodeView, TracePassage, TraceValue, TypedDocument,
-    TypedGraph, TypedNode,
+    MetricRow, NameHeld, NodeMetrics, ParameterName, ParameterRow, ParameterValue, PrefixOf,
+    RunDetail, RunInputs, RunSummary, ServiceBinding, TraceNodeView, TracePassage, TraceValue,
+    TypedDocument, TypedGraph, TypedNode,
 };
 
 /// One run, as the listing shows it, with the names the request found for
@@ -65,6 +65,15 @@ pub(crate) fn summary(
             .provenance
             .as_ref()
             .map(|record| launched_as(record, Some(index))),
+        prefix_of_documents: lower_configuration(&run.config)
+            .map(|pipeline| {
+                index
+                    .prefixes(&pipeline)
+                    .into_iter()
+                    .map(|(pipeline, up_to)| PrefixOf { pipeline, up_to })
+                    .collect()
+            })
+            .unwrap_or_default(),
         dataset_version: run.inputs.dataset_version.clone(),
         benchmark_names,
         index_version: run.inputs.index_version.clone(),

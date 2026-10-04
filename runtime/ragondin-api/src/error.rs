@@ -283,6 +283,41 @@ pub enum ApiError {
         /// Why it has none.
         reason: String,
     },
+    /// A prefix run cut at a node the pipeline does not have: `up_to` names
+    /// no node of the document — a declared input is not a node.
+    #[error("the pipeline {pipeline} has no node `{node}` to run up to")]
+    PrefixNodeNotFound {
+        /// The pipeline's name.
+        pipeline: String,
+        /// The node `up_to` named.
+        node: String,
+    },
+    /// A prefix run cut at the pipeline's terminal node: the node no other
+    /// node consumes, so nothing would be cut.
+    #[error("`{node}` is the pipeline's output: the prefix would be the whole pipeline")]
+    PrefixIsWholePipeline {
+        /// The terminal node.
+        node: String,
+    },
+    /// A prefix run cut at a context builder: a context is scored by nothing
+    /// unless a generator follows (ADR-C30 § 3).
+    #[error("`{node}` is a context builder: a context is scored by nothing, so a prefix cannot end on one")]
+    PrefixEndsInContext {
+        /// The context builder.
+        node: String,
+    },
+    /// A prefix run whose output is not an answer, on a benchmark that
+    /// carries reference answers: the harness refuses it (ADR-C30 § 5), so
+    /// it is refused at submission, in the harness's words.
+    #[error("the prefix up to `{node}` cannot run on {benchmark}: the benchmark carries reference answers, and the pipeline's output is of kind `{kind}`, not an answer")]
+    PrefixNotScorable {
+        /// The node the prefix stops at.
+        node: String,
+        /// The benchmark's selector.
+        benchmark: String,
+        /// The kind the prefix's output is, as a configuration names it.
+        kind: String,
+    },
 }
 
 impl ApiError {
@@ -320,6 +355,10 @@ impl ApiError {
         "job_finished",
         "job_not_ended",
         "no_partial_traces",
+        "prefix_node_not_found",
+        "prefix_is_whole_pipeline",
+        "prefix_ends_in_context",
+        "prefix_not_scorable",
     ];
 
     /// The stable code a client matches on.
@@ -333,7 +372,11 @@ impl ApiError {
             Self::PipelineInvalid { .. }
             | Self::ImplNotInBuild { .. }
             | Self::ImportRefused { .. }
-            | Self::BindingRefused { .. } => StatusCode::UNPROCESSABLE_ENTITY,
+            | Self::BindingRefused { .. }
+            | Self::PrefixNodeNotFound { .. }
+            | Self::PrefixIsWholePipeline { .. }
+            | Self::PrefixEndsInContext { .. }
+            | Self::PrefixNotScorable { .. } => StatusCode::UNPROCESSABLE_ENTITY,
             Self::PreconditionFailed { .. } => StatusCode::PRECONDITION_FAILED,
             Self::ParameterInvalid { .. } | Self::RequestInvalid { .. } => StatusCode::BAD_REQUEST,
             Self::ServiceUnreachable { .. } | Self::DownloadFailed { .. } => {
@@ -378,6 +421,13 @@ impl ApiError {
             hint: self.hint(),
             location: match self {
                 Self::PipelineInvalid { location, .. } => Some(location.clone()),
+                Self::PrefixNodeNotFound { node, .. }
+                | Self::PrefixIsWholePipeline { node }
+                | Self::PrefixEndsInContext { node }
+                | Self::PrefixNotScorable { node, .. } => Some(Location {
+                    node: Some(node.clone()),
+                    edge: None,
+                }),
                 _ => None,
             },
             etag: match self {
@@ -429,6 +479,10 @@ impl ApiError {
             Self::JobFinished { .. } => 29,
             Self::JobNotEnded { .. } => 30,
             Self::NoPartialTraces { .. } => 31,
+            Self::PrefixNodeNotFound { .. } => 32,
+            Self::PrefixIsWholePipeline { .. } => 33,
+            Self::PrefixEndsInContext { .. } => 34,
+            Self::PrefixNotScorable { .. } => 35,
         }
     }
 
@@ -466,6 +520,10 @@ impl ApiError {
             Self::JobFinished { .. } => "The job already ended",
             Self::JobNotEnded { .. } => "The job has not ended",
             Self::NoPartialTraces { .. } => "The job kept no partial traces",
+            Self::PrefixNodeNotFound { .. } => "No such node to run up to",
+            Self::PrefixIsWholePipeline { .. } => "The prefix would be the whole pipeline",
+            Self::PrefixEndsInContext { .. } => "A prefix cannot end on a context builder",
+            Self::PrefixNotScorable { .. } => "The prefix cannot be scored on this benchmark",
         }
     }
 
@@ -574,6 +632,18 @@ impl ApiError {
             }
             Self::NoPartialTraces { .. } => {
                 "Nothing to replay from the job: a done run is replayed from the store, and a crash keeps none it can vouch for.".to_owned()
+            }
+            Self::PrefixNodeNotFound { .. } => {
+                "Run up to one of the pipeline's nodes, by its id.".to_owned()
+            }
+            Self::PrefixIsWholePipeline { .. } => {
+                "Launch the whole pipeline instead, or run up to a node before its output.".to_owned()
+            }
+            Self::PrefixEndsInContext { .. } => {
+                "Run up to the node that feeds the context builder its chunks, or launch the whole pipeline.".to_owned()
+            }
+            Self::PrefixNotScorable { .. } => {
+                "Run the prefix on a benchmark that carries qrels and no reference answers, or launch the whole pipeline.".to_owned()
             }
         }
     }
@@ -751,6 +821,21 @@ mod tests {
             ApiError::NoPartialTraces {
                 id: String::new(),
                 reason: String::new(),
+            },
+            ApiError::PrefixNodeNotFound {
+                pipeline: String::new(),
+                node: String::new(),
+            },
+            ApiError::PrefixIsWholePipeline {
+                node: String::new(),
+            },
+            ApiError::PrefixEndsInContext {
+                node: String::new(),
+            },
+            ApiError::PrefixNotScorable {
+                node: String::new(),
+                benchmark: String::new(),
+                kind: String::new(),
             },
         ];
         assert_eq!(samples.len(), ApiError::CODES.len());

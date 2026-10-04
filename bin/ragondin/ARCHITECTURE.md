@@ -798,9 +798,15 @@ API crate holds it as an `Arc<dyn Launcher>` and names no component.
   its cancellation signal is the API's `Cancellation::flag()`, the same
   `AtomicBool`. `HarnessError::Cancelled` is `Cancelled`; a failed query is
   `Execution`, naming the node when a component failed in it. The run's
-  launch record is `RunProvenance::named(submission.pipeline_name)`, with
-  no `prefix_of` until the submission carries the parent's hash; the
-  bindings it records are the used ones, as `bench` records its own.
+  launch record is `RunProvenance::named(submission.pipeline_name)`, or,
+  for a prefix run — a submission carrying `up_to` and the parent's
+  canonical hash, `parent_pipeline_hash` — `RunProvenance::prefix` with
+  `PrefixOf::new(up_to, parent_pipeline_hash)`: the name is then the
+  parent's (ADR-C39 § 2). That copy is all the binary does for a prefix
+  run: the cut itself is `ragondin-api`'s, made on the wire schema before
+  the submission is handed over, so the document it prepares and executes
+  is already the cut, and the run id is the cut's own. The bindings it
+  records are the used ones, as `bench` records its own.
 - **Both run on a thread of their own** (`on_own_thread`): a
   `std::thread` carrying a current-thread `tokio` runtime, its answer handed
   back over a `oneshot` the API's task awaits. A preparation loads and
