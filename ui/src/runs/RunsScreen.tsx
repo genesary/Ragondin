@@ -139,8 +139,12 @@ function Loaded({ client, listing, askedWith, refresh, sel, job, store, reread }
   const stored = useMemo(() => rowsFromListing(listing), [listing]);
   // A reorder's answer is the queue in its new order; the stream's `reordered` events then say it too, and win.
   const [positions, setPositions] = useState<ReadonlyMap<string, number> | null>(null);
+  // How many times the stream has said the order: an answer to a reorder sent before the last of them is older than the stream.
+  const orderSaid = useRef(0);
   useJobEvents((_before, _after, event) => {
-    if (event.event === 'reordered' || event.event === 'resync') setPositions(null);
+    if (event.event !== 'reordered' && event.event !== 'resync') return;
+    orderSaid.current += 1;
+    setPositions(null);
   });
   const queue = useMemo(() => withPositions(jobs, positions), [jobs, positions]);
   const rows = useMemo<RunRow[]>(() => [...rowsFromJobs(queue, stored), ...withAnnounced(stored, jobs)], [queue, stored, jobs]);
@@ -192,6 +196,14 @@ function Loaded({ client, listing, askedWith, refresh, sel, job, store, reread }
 
   // Cancel, reorder and resubmit: each a request to the API, whose outcome the stream then says.
   const [cancelling, setCancelling] = useState<ReadonlySet<string>>(new Set());
+  // A cancel is resolved once its job has ended: forget it then.
+  useEffect(() => {
+    const ended = [...cancelling].filter((id) => {
+      const state = jobs.get(id)?.state.kind;
+      return state !== 'queued' && state !== 'running';
+    });
+    if (ended.length > 0) setCancelling((all) => new Set([...all].filter((id) => !ended.includes(id))));
+  }, [jobs, cancelling]);
   const [refused, setRefused] = useState<ApiProblem | null>(null);
   // Where focus goes once the rows have redrawn, when the control that had it is gone, replaced or moved.
   const focusNext = useRef<{ want: Control; from: Control } | null>(null);
@@ -223,13 +235,16 @@ function Loaded({ client, listing, askedWith, refresh, sel, job, store, reread }
   const move = async (id: string, place: number, control: string) => {
     setRefused(null);
     const kept = holding(id, control);
+    const said = orderSaid.current;
     const result = await client.patch('/jobs/{id}', { position: place }, { id });
     if (!result.ok) {
       setRefused(result.problem);
       return;
     }
-    // The rows follow the API's answer, not the request: the queue may have placed it elsewhere.
-    setPositions(new Map(result.value.jobs.map((j) => [j.id, j.position])));
+    // The rows follow the API's answer, not the request — the queue may have placed it elsewhere — unless the
+    // stream has said the order since the request left: the queue publishes a reorder's events before it answers,
+    // so the stream is then at least as new as this answer, and an answer overtaken by another is never shown.
+    if (orderSaid.current === said) setPositions(new Map(result.value.jobs.map((j) => [j.id, j.position])));
     if (kept) focusNext.current = { want: { job: id, control }, from: { job: id, control } };
   };
   const resubmit = async (row: RunRow) => {

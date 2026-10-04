@@ -81,6 +81,8 @@ async function show(hash = '#runs', mocks: MockRoutes = routes()) {
   const api = mockApi(mocks);
   render(<Shell />);
   await screen.findByRole('row', { name: new RegExp(`^Run ${short(OLD)} on `) });
+  // The screen's effects run after the commit the row appeared in: let them, before the test drives the stream.
+  await act(async () => {});
   return { api, stream: FakeEventSource.latest() };
 }
 
@@ -275,13 +277,15 @@ describe('the queue’s rows', () => {
     const resubmit = within(jobRowOf()).getByRole('button', { name: `Resubmit run ${short(ANNOUNCED)}` });
     expect(document.activeElement).toBe(resubmit);
 
-    // Resubmitting sends the same submission, so the same announced identity.
+    // Resubmitting sends the same submission again.
     fireEvent.click(resubmit);
     await waitFor(() => expect(api.requests).toContain('POST /api/v1/runs'));
     expect(api.bodies[api.requests.indexOf('POST /api/v1/runs')]).toEqual({ pipeline: 'hybrid', benchmark: 'beir/scifact', up_to: null });
     send(stream, { event: 'queued', data: runJob('j3', QUEUED, { position: 2 }) });
     expect(within(jobRowOf()).getByText('queued, next')).toBeTruthy();
     expect(screen.getAllByRole('row', { name: new RegExp(`^Run ${short(ANNOUNCED)} on `) })).toHaveLength(1);
+    // The Resubmit that had focus went with its row: focus is on the new job's Cancel.
+    expect(document.activeElement).toBe(within(jobRowOf()).getByRole('button', { name: `Cancel run ${short(ANNOUNCED)}` }));
 
     // The running row says "cancelling…" until the cancelled event arrives.
     const current = jobRowOf(hex('d'));
@@ -319,6 +323,58 @@ describe('the queue’s rows', () => {
       send(stream, { event: 'reordered', data: j });
     }
     expect(order()).toEqual([short(B), short(A), short(C)]);
+  });
+
+  it('follows the stream, not a reorder’s answer that the stream’s own events overtook', async () => {
+    const A = hex('a');
+    const B = hex('b');
+    const C = hex('e');
+    const q = (id: string, runId: string, position: number) => runJob(id, QUEUED, { runId, position });
+    // Two quick moves; the stream says both, then the answers arrive, the older last.
+    const answers: ((reply: { body: JobListing }) => void)[] = [];
+    const { stream } = await show('#runs', routes({ 'PATCH /jobs/{id}': () => new Promise((resolve) => answers.push(resolve)) }));
+    connect(stream, [q('ja', A, 0), q('jb', B, 1), q('jc', C, 2)]);
+    const order = () => screen.getAllByRole('row', { name: /, queued/ }).map((r) => r.getAttribute('aria-label')?.slice(4, 16));
+
+    fireEvent.click(within(jobRowOf(B)).getByRole('button', { name: `Move run ${short(B)} up` }));
+    fireEvent.click(within(jobRowOf(C)).getByRole('button', { name: `Move run ${short(C)} up` }));
+    await waitFor(() => expect(answers).toHaveLength(2));
+    // The queue publishes each reorder's events before it answers it.
+    for (const j of [q('jb', B, 0), q('ja', A, 1)]) send(stream, { event: 'reordered', data: j });
+    for (const j of [q('jc', C, 1), q('ja', A, 2)]) send(stream, { event: 'reordered', data: j });
+    expect(order()).toEqual([short(B), short(C), short(A)]);
+    await act(async () => answers[1]?.({ body: { faults: [], jobs: [q('jb', B, 0), q('jc', C, 1), q('ja', A, 2)] } }));
+    await act(async () => answers[0]?.({ body: { faults: [], jobs: [q('jb', B, 0), q('ja', A, 1), q('jc', C, 2)] } }));
+    expect(order()).toEqual([short(B), short(C), short(A)]);
+  });
+
+  it('shows both ids on the run filed under another id than its job announced', async () => {
+    const DECIDED = hex('d');
+    const later: RunListing = { ...LISTING, runs: [run(DECIDED, { started_at_ms: 5 }), ...LISTING.runs] };
+    const { stream } = await show('#runs', routes({ 'GET /runs': [{ body: LISTING }, { body: later }] }));
+    connect(stream, [runJob('j1', running(9, 10))]);
+    send(stream, { event: 'done', data: runJob('j1', doneAs(DECIDED, { announced: ANNOUNCED, decided: DECIDED })) });
+    const row = await screen.findByRole('row', { name: new RegExp(`^Run ${short(DECIDED)} on beir/scifact$`) });
+    expect(within(row).getByText(`announced as ${short(ANNOUNCED)}; filed under this id because what ran differs from what was announced`)).toBeTruthy();
+  });
+
+  it('names a running row by where it stands, not by its count, so a tick does not re-announce it', async () => {
+    const { stream } = await show();
+    connect(stream, [runJob('j1', running(1, 10))]);
+    const label = jobRowOf().getAttribute('aria-label');
+    send(stream, { event: 'running', data: runJob('j1', running(2, 10)) });
+    expect(jobRowOf().getAttribute('aria-label')).toBe(label);
+    expect(label).toBe(`Run ${short(ANNOUNCED)} on beir/scifact, running`);
+    expect(within(jobRowOf()).getByText('running 2 / 10')).toBeTruthy();
+  });
+
+  it('says a done job that names no run as such, rather than reading the store for it forever', async () => {
+    const { api, stream } = await show();
+    connect(stream, [runJob('j1', running(9, 10))]);
+    send(stream, { event: 'done', data: runJob('j1', { kind: 'done', run_id: null, id_mismatch: null, finished_at_ms: 2 }) });
+    expect(within(jobRowOf()).getByText('Done; the queue names no run filed.')).toBeTruthy();
+    await act(async () => {});
+    expect(api.requests.filter((r) => r === 'GET /api/v1/runs')).toHaveLength(1);
   });
 });
 
@@ -401,6 +457,11 @@ describe('the layout', () => {
   it('holds every job row one small control high, a button in it or not, as a block box', () => {
     expect(rule(runsCss, '.rg-runs__job')?.declarations.get('min-height')).toBe('var(--size-control-s)');
     expect(rule(runsCss, '.rg-runs__job')?.declarations.get('display')).toBe('flex');
+  });
+
+  it('gives a running job’s figures and Cancel one line, so the median arriving with the first tick wraps nothing and grows no row', () => {
+    // Measured in Chrome: "1,840 ms / query", "12:34 elapsed" and Cancel side by side take 37 ch of the body face.
+    expect(rule(runsCss, '.rg-runs__job')?.declarations.get('min-width')).toBe('40ch');
   });
 
   it('floats the toasts over the page’s corner, within a phone’s width, and lets a click through where there is none', () => {

@@ -13,6 +13,7 @@ const facts = (over: Partial<JobFacts> = {}): JobFacts => ({
   queued: 0,
   startedAtMs: null,
   medianMs: null,
+  filed: null,
   mismatch: null,
   ...over,
 });
@@ -157,7 +158,7 @@ describe('a failed row', () => {
     expect(screen.getByText('The run failed: interrupted')).toBeTruthy();
   });
 
-  it('offers Resubmit: the same submission, so the same announced identity', () => {
+  it('offers Resubmit: the same submission again', () => {
     const { onResubmit } = show(job({ state: 'failed', node: null, error: 'interrupted' }));
     fireEvent.click(screen.getByRole('button', { name: 'Resubmit run a1b2c3d4e5f6' }));
     expect(onResubmit).toHaveBeenCalledTimes(1);
@@ -175,13 +176,13 @@ describe('a cancelled row', () => {
 
 describe('a done row, before the store lists its run', () => {
   it('says the run was filed and is being read', () => {
-    show(job({ state: 'done' }));
+    show(job({ state: 'done' }, { filed: ANNOUNCED }));
     expect(chip()?.getAttribute('data-state')).toBe('done');
     expect(screen.getByText('Filed; reading it from the store…')).toBeTruthy();
   });
 
   it('shows both ids and why, when the run was filed under another than the one announced', () => {
-    show(job({ state: 'done' }, { mismatch: { announced: ANNOUNCED, decided: 'ffeeddccbbaa'.padEnd(64, '9') } }));
+    show(job({ state: 'done' }, { filed: 'ffeeddccbbaa'.padEnd(64, '9'), mismatch: { announced: ANNOUNCED, decided: 'ffeeddccbbaa'.padEnd(64, '9') } }));
     expect(screen.getByText(/Filed under ffeeddccbbaa, not the announced a1b2c3d4e5f6: what ran differs from what was announced/)).toBeTruthy();
   });
 });

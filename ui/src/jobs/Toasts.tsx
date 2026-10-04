@@ -51,17 +51,14 @@ export function endedBetween(before: Jobs, after: Jobs): Outcome[] {
  */
 export function JobToasts() {
   const [shown, setShown] = useState<Outcome[]>([]);
-  // Once per job, whatever replays: a resync that says again what was said changes nothing.
-  const said = useRef(new Set<string>());
   const region = useRef<HTMLElement>(null);
   // Where focus goes once a toast that held it has left: the place it held.
   const refocus = useRef<number | null>(null);
 
   useJobEvents((before, after) => {
-    const fresh = endedBetween(before, after).filter((o) => !said.current.has(o.job));
-    if (fresh.length === 0) return;
-    for (const o of fresh) said.current.add(o.job);
-    setShown((all) => [...all, ...fresh]);
+    // Once per job, whatever replays: a job the queue already held as ended is never said again.
+    const fresh = endedBetween(before, after);
+    if (fresh.length > 0) setShown((all) => [...all, ...fresh]);
   });
 
   const dismiss = (job: string) => {

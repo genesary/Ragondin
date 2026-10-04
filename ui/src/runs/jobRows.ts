@@ -104,6 +104,7 @@ export function rowsFromJobs(jobs: Jobs, runs: readonly RunRow[]): RunRow[] {
           queued: queued.length,
           startedAtMs: state.kind === 'running' ? state.started_at_ms : null,
           medianMs: state.kind === 'running' && state.median_latency_nanos !== null ? state.median_latency_nanos / 1e6 : null,
+          filed: state.kind === 'done' ? state.run_id : null,
           mismatch: state.kind === 'done' ? state.id_mismatch : null,
         },
         announced: null,

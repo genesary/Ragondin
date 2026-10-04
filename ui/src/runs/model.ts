@@ -110,6 +110,8 @@ export type JobFacts = {
    * it on each tick; null before the first query. Never computed here.
    */
   medianMs: number | null;
+  /** The run a done job filed, as the queue says; null before it is done, or when it names none. */
+  filed: string | null;
   /** Both ids, when the run was filed under another than the one announced. */
   mismatch: { announced: string; decided: string } | null;
 };

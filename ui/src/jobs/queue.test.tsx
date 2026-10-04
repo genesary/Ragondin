@@ -1,11 +1,11 @@
 /** @vitest-environment happy-dom */
 import { act, render, screen } from '@testing-library/react';
-import { StrictMode, useState } from 'react';
+import { StrictMode, useLayoutEffect, useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Jobs } from '../api/jobs.ts';
 import { FakeEventSource, installFakeEventSource } from '../api/testing.ts';
 import { connect, QUEUED, runJob, running, send } from './fixtures.ts';
-import { JobQueueProvider, useJobEvents, useJobs } from './queue.tsx';
+import { JobQueueProvider, useJobEvents, useJobQueue, useJobs } from './queue.tsx';
 
 /** Prints what a consumer reads of the queue. */
 function Reader({ name }: { name: string }) {
@@ -64,6 +64,54 @@ describe('the job queue', () => {
     expect(seen).toHaveLength(2);
     expect(seen[1]?.[0].get('j1')?.state.kind).toBe('queued');
     expect(seen[1]?.[1].get('j1')?.state.kind).toBe('running');
+  });
+
+  it('hands a listener mounted later every event, even one that arrives between its commit and its passive effects', () => {
+    const seen: [Jobs, Jobs][] = [];
+    // Arrives in the window a passive-effect subscription would miss: during the commit, after the listener is in the tree.
+    function EmitOnCommit() {
+      useLayoutEffect(() => {
+        FakeEventSource.latest().emit(JSON.stringify(runJob('j1', running(1, 10))), 'running');
+      }, []);
+      return null;
+    }
+    function Later() {
+      const [shown, setShown] = useState(false);
+      return shown ? (
+        <>
+          <Listener seen={seen} />
+          <EmitOnCommit />
+        </>
+      ) : (
+        <button type="button" onClick={() => setShown(true)}>
+          show
+        </button>
+      );
+    }
+    render(
+      <JobQueueProvider>
+        <Later />
+      </JobQueueProvider>,
+    );
+    connect(FakeEventSource.latest(), [runJob('j1', QUEUED)]);
+    act(() => screen.getByRole('button', { name: 'show' }).click());
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.[1].get('j1')?.state.kind).toBe('running');
+  });
+
+  it('is the same queue from the first render, so nothing subscribes to a queue that is then replaced', () => {
+    const queues: unknown[] = [];
+    function Probe() {
+      queues.push(useJobQueue());
+      return null;
+    }
+    render(
+      <JobQueueProvider>
+        <Probe />
+      </JobQueueProvider>,
+    );
+    connect(FakeEventSource.latest());
+    expect(new Set(queues).size).toBe(1);
   });
 
   it('calls back on every reconnection after the first, so the shell re-checks the build', () => {

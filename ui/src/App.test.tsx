@@ -40,7 +40,7 @@ const main = () => screen.getByRole('main');
 beforeEach(() => {
   window.sessionStorage.clear();
   window.localStorage.clear();
-  // Setup follows the job stream while it is open.
+  // The shell follows the job stream when a test tells it to (`followJobs`).
   installFakeEventSource();
 });
 

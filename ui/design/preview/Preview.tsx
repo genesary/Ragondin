@@ -349,6 +349,11 @@ function Column({ theme }: { theme: 'light' | 'dark' }) {
             Launch refused: generator <b>qwen2.5-7b</b> is unreachable.
           </Toast>
         </div>
+        <div>
+          <Toast tone="critical" persist action={{ label: 'Open', onClick: () => {} }} onDismiss={() => {}}>
+            Run failed at <b>rerank</b> · hybrid on beir/scifact
+          </Toast>
+        </div>
       </Block>
 
       <Block name="InlineMessage">

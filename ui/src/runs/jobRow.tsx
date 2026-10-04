@@ -158,7 +158,9 @@ export function jobRow(row: RunRow, { columns, stale, cancelling, onCancel, onMo
       break;
     case 'done':
       detail =
-        job?.mismatch == null ? (
+        job?.filed == null ? (
+          <span>Done; the queue names no run filed.</span>
+        ) : job.mismatch === null ? (
           <span>Filed; reading it from the store…</span>
         ) : (
           <span>
@@ -185,7 +187,8 @@ export function jobRow(row: RunRow, { columns, stale, cancelling, onCancel, onMo
 
   return {
     id: rowKey(row),
-    label: `Run ${short} on ${bench}, ${words}${last}`,
+    // The name says where the job stands, never its count: a name that changed on every tick would be re-announced each time.
+    label: `Run ${short} on ${bench}, ${status.state === 'running' && !cancelling ? 'running' : words}${last}`,
     cells: [
       <span className="rg-runs__bench">{bench}</span>,
       run,

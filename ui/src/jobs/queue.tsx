@@ -1,7 +1,7 @@
 // The job queue the page follows: one subscription to `GET /jobs/events`,
 // opened by the shell, which every screen and the toasts read. No component
 // opens its own stream. ARCHITECTURE.md § The job stream.
-import { createContext, useContext, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import type { ConnectionState } from '../api/events.ts';
 import { applyJobEvent, openJobStream, type Jobs } from '../api/jobs.ts';
 import type { JobEvent } from '../api/types.ts';
@@ -28,8 +28,12 @@ const IDLE: JobQueue = { jobs: () => NONE, connection: () => null, subscribe: ()
 
 const Context = createContext<JobQueue>(IDLE);
 
-/** Opens the stream and holds what it gives; `close` ends both. */
-function follow(onReconnect: () => void): JobQueue & { close(): void } {
+/**
+ * The queue a provider holds, made once with it, so every consumer
+ * subscribes to the one object from the first render; `start` opens the
+ * stream into it and returns what closes it.
+ */
+function makeQueue(): JobQueue & { start(onReconnect: () => void): () => void } {
   let jobs: Jobs = NONE;
   let connection: ConnectionState = 'connecting';
   const watchers = new Set<() => void>();
@@ -37,19 +41,6 @@ function follow(onReconnect: () => void): JobQueue & { close(): void } {
   const changed = () => {
     for (const watch of watchers) watch();
   };
-  const stream = openJobStream({
-    onEvent: (event) => {
-      const before = jobs;
-      jobs = applyJobEvent(before, event);
-      for (const listener of listeners) listener(before, jobs, event);
-      changed();
-    },
-    onState: (state) => {
-      connection = state;
-      changed();
-    },
-    onReconnect,
-  });
   return {
     jobs: () => jobs,
     connection: () => connection,
@@ -61,7 +52,22 @@ function follow(onReconnect: () => void): JobQueue & { close(): void } {
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
-    close: () => stream.close(),
+    start: (onReconnect) => {
+      const stream = openJobStream({
+        onEvent: (event) => {
+          const before = jobs;
+          jobs = applyJobEvent(before, event);
+          for (const listener of listeners) listener(before, jobs, event);
+          changed();
+        },
+        onState: (state) => {
+          connection = state;
+          changed();
+        },
+        onReconnect,
+      });
+      return () => stream.close();
+    },
   };
 }
 
@@ -73,17 +79,13 @@ export type JobQueueProviderProps = {
 
 /** Follows the job stream while mounted, for everything under it. */
 export function JobQueueProvider({ onReconnect, children }: JobQueueProviderProps) {
-  const [queue, setQueue] = useState<JobQueue>(IDLE);
+  const [queue] = useState(makeQueue);
   // Kept in a ref: a new callback from a re-rendering parent is no reason to reopen the stream.
   const reconnect = useRef(onReconnect);
   useEffect(() => {
     reconnect.current = onReconnect;
   }, [onReconnect]);
-  useEffect(() => {
-    const followed = follow(() => reconnect.current?.());
-    setQueue(followed);
-    return () => followed.close();
-  }, []);
+  useEffect(() => queue.start(() => reconnect.current?.()), [queue]);
   return <Context.Provider value={queue}>{children}</Context.Provider>;
 }
 
@@ -100,12 +102,17 @@ export function useJobQueue(): JobQueue {
   return useContext(Context);
 }
 
-/** Calls `listener` on every event while mounted; the latest `listener` given is the one called. */
+/**
+ * Calls `listener` on every event while mounted; the latest `listener` given
+ * is the one called. It subscribes during the commit — a layout effect — so
+ * an event that arrives between a consumer's commit and its passive effects
+ * still reaches it.
+ */
 export function useJobEvents(listener: JobListener) {
   const queue = useContext(Context);
   const latest = useRef(listener);
-  useEffect(() => {
+  useLayoutEffect(() => {
     latest.current = listener;
   });
-  useEffect(() => queue.listen((before, after, event) => latest.current(before, after, event)), [queue]);
+  useLayoutEffect(() => queue.listen((before, after, event) => latest.current(before, after, event)), [queue]);
 }

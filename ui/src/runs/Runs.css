@@ -96,6 +96,9 @@
   align-items: center;
   gap: var(--space-2);
   min-height: var(--size-control-s);
+  /* Room for a running job's median, elapsed time and Cancel on one line: the median appears with the first
+     tick, and must not wrap the cell and grow the row. The table scrolls sideways rather than squeeze it. */
+  min-width: 40ch;
   white-space: normal;
 }
 .rg-runs__bench { color: var(--ink-2); }
