@@ -50,6 +50,12 @@ export type RunRow = {
    */
   pipelineNames: string[];
   /**
+   * The names among `pipelineNames` the listing says the API refuses to read
+   * (`refused_pipeline_names`): another stored name differs from each only in
+   * case. Empty when it refuses none, and for a job, which has no hash match.
+   */
+  refusedNames: string[];
+  /**
    * The workspace pipeline name the run's launch record says it was launched
    * as — a prefix run's parent's — or null when it has no record naming one.
    * Recorded at launch, so it may name a pipeline whose content has changed
@@ -60,7 +66,8 @@ export type RunRow = {
   /**
    * Whether the workspace holds `launchedAs` now, as the listing says it
    * (`launched_as.held`, from the same listing of `pipelines/` as the hash
-   * matches): exactly, only under another case, or gone; null with no name.
+   * matches): exactly, refused as a case alias of a stored name, or gone;
+   * null with no name.
    */
   launchedHeld: NameHeld | null;
   /** Whether the run has a launch record at all — one may name no pipeline. */
@@ -123,12 +130,14 @@ export type RunGroup = {
   /** The name or names the group is headed by, each linked: a recorded name, or every hash match; empty when the group is its canonical hash. */
   names: string[];
   /**
-   * Whether the workspace holds the name the group is headed by: a recorded
-   * name as its runs' records say — `unchecked` when they say nothing, so it
-   * fails closed, unlinked — and `exactly` for hash matches, current
-   * documents of the same listing, and for a group headed by its hash.
+   * Whether the workspace holds each name the group is headed by, one per
+   * name in `names`' order: a recorded name as its runs' records say —
+   * `unchecked` when they say nothing, so it fails closed, unlinked — and a
+   * hash match `exactly`, a current document of the same listing, unless
+   * the listing says the API refuses it (`refusedNames`): `other_case`.
+   * Empty for a group headed by its hash.
    */
-  held: NameHeld;
+  held: NameHeld[];
   /** The canonical hash of the group's most recent run of its own — not a prefix — or, with none, of its first run. */
   pipeline: string;
   /** The key of the listing's `shapes` that draws the group: `pipeline`; null when it has no row of its own. */
@@ -196,6 +205,7 @@ export function rowsFromListing(listing: RunListing): RunRow[] {
       source: { kind: 'run', id: run.id },
       pipeline: run.pipeline,
       pipelineNames: run.pipeline_names,
+      refusedNames: run.refused_pipeline_names,
       launchedAs: run.launched_as?.name ?? null,
       launchedHeld: run.launched_as?.held ?? null,
       launchRecorded: run.launched_as !== null,
@@ -256,9 +266,13 @@ export function groupRows(rows: readonly RunRow[]): RunGroup[] {
     const own = (stored.length === 0 ? members : stored).filter((r) => r.prefix === null);
     const head = own[0] ?? (members[0] as RunRow);
     // Every row's record comes from one listing, so the first that names the heading says it. A heading no record
-    // names is hash matches, current documents, so held; one a record names but says nothing of fails closed, unlinked.
+    // names is hash matches, current documents, so held unless the listing says the API refuses it; one a record
+    // names but says nothing of fails closed, unlinked.
     const recorded = (stored.length === 0 ? members : stored).find((r) => r.launchedAs !== null && r.launchedAs === names[0]);
-    const held: NameHeld = recorded === undefined ? 'exactly' : (recorded.launchedHeld ?? 'unchecked');
+    const held = names.map((name): NameHeld => {
+      if (recorded !== undefined) return recorded.launchedHeld ?? 'unchecked';
+      return members.some((r) => r.refusedNames.includes(name)) ? 'other_case' : 'exactly';
+    });
     return { key, names, held, pipeline: head.pipeline, shapeKey: own.length === 0 || stored.length === 0 ? null : head.pipeline, rows: members };
   });
 }

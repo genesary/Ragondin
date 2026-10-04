@@ -178,6 +178,14 @@ pub struct RunSummary {
     /// pipeline, this is the content one; it is not a resolution of
     /// [`launched_as`](Self::launched_as), nor that of this.
     pub pipeline_names: Vec<String>,
+    /// The names among [`pipeline_names`](Self::pipeline_names) the backend
+    /// refuses to read, sorted; empty when it refuses none. A name is refused
+    /// when another stored name is a case alias of it — the same name in
+    /// another ASCII case, `request_invalid` on a read — as two documents can
+    /// be on a filesystem that keeps case; each of the two is then refused.
+    /// Read from the same listing of `pipelines/` as `pipeline_names`, by the
+    /// rule [`NameHeld::OtherCase`] reads a recorded name by.
+    pub refused_pipeline_names: Vec<String>,
     /// The run's launch record, as it was written once with the run, read
     /// and never computed or inferred; `null` for a run stored without one.
     /// Recorded at launch, so its name may be a pipeline whose content has

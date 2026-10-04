@@ -220,6 +220,7 @@ const summary = (id: string, name: string, dataset: string): RunSummary => ({
   id,
   pipeline: id,
   pipeline_names: [name],
+  refused_pipeline_names: [],
   launched_as: null,
   dataset_version: dataset,
   index_version: INDEX,

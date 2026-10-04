@@ -18,7 +18,7 @@ const R5 = hex('6');
 const R6 = hex('7');
 const FIQA_RUN = hex('8');
 
-const summary = (id: string, dataset: string): RunSummary => ({ id, pipeline: hex('9'), dataset_version: dataset, index_version: hex('0'), engine_version: '0.0.0', metrics: {}, pipeline_names: [], launched_as: null, benchmark_names: [], started_at_ms: null, finished_at_ms: null, metric_families: {}, median_query_latency_nanos: null });
+const summary = (id: string, dataset: string): RunSummary => ({ id, pipeline: hex('9'), dataset_version: dataset, index_version: hex('0'), engine_version: '0.0.0', metrics: {}, pipeline_names: [], refused_pipeline_names: [], launched_as: null, benchmark_names: [], started_at_ms: null, finished_at_ms: null, metric_families: {}, median_query_latency_nanos: null });
 const LISTING: RunListing = {
   runs: [summary(DENSE, SCIFACT), summary(HYBRID, SCIFACT), summary(RERANK, SCIFACT), summary(R4, SCIFACT), summary(R5, SCIFACT), summary(R6, SCIFACT), summary(FIQA_RUN, OTHER_BENCH)],
   unreadable: [],

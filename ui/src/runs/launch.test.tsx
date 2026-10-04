@@ -36,6 +36,7 @@ const run = (id: string, over: Partial<RunSummary> = {}): RunSummary => ({
   id,
   pipeline: HYBRID,
   pipeline_names: ['hybrid'],
+  refused_pipeline_names: [],
   launched_as: { name: 'hybrid', held: 'exactly', prefix_of: null },
   dataset_version: SCIFACT,
   benchmark_names: ['beir/scifact'],

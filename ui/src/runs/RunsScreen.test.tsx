@@ -20,6 +20,7 @@ const summary = (id: string, pipeline: string, dataset: string, metrics: Record<
   id,
   pipeline,
   pipeline_names: [],
+  refused_pipeline_names: [],
   launched_as: null,
   dataset_version: dataset,
   benchmark_names: [],
@@ -169,7 +170,7 @@ describe('over a listing with two benchmarks', () => {
     expect(screen.getByRole('button', { name: /^beir\/scifact, scifact-local/ })).toBeTruthy();
   });
 
-  it('heads a group by its recorded name as the listing says it is held: linked, gone, or held only under another case', async () => {
+  it('heads a group by its recorded name as the listing says it is held: linked, gone, or refused as a case alias', async () => {
     const recorded: RunListing = {
       ...LISTING,
       runs: [
@@ -185,10 +186,23 @@ describe('over a listing with two benchmarks', () => {
     expect(gone.textContent).toContain('no longer a document in this workspace');
     const cased = screen.getByText('Dense').closest('th') as HTMLElement;
     expect(within(cased).queryByRole('link')).toBeNull();
-    expect(cased.textContent).toContain('held only under another case');
+    expect(cased.textContent).toContain('refused: another spelling differs only in case');
     expect(screen.getByRole('link', { name: 'hybrid' }).getAttribute('href')).toBe('#pipeline/hybrid');
     // The listing says it all: no second read of the workspace's documents.
     expect(api.requests.some((r) => r.startsWith('GET /api/v1/pipelines'))).toBe(false);
+  });
+
+  it('links neither of two hash matches that differ only in case, and says why truly, linking the third', async () => {
+    // `hybrid.yaml` and `Hybrid.yaml` both stored: the API refuses a read of either.
+    const both: RunListing = {
+      ...LISTING,
+      runs: [summary(R1, HYBRID, SCIFACT, {}, { pipeline_names: ['Hybrid', 'hybrid', 'hybrid-copy'], refused_pipeline_names: ['Hybrid', 'hybrid'] })],
+    };
+    show('#runs', routes({ body: both }));
+    await loaded();
+    const heading = screen.getByText('hybrid-copy').closest('th') as HTMLElement;
+    expect(within(heading).getAllByRole('link').map((a) => a.textContent)).toEqual(['hybrid-copy']);
+    expect(heading.textContent?.match(/refused: another spelling differs only in case/g)).toHaveLength(2);
   });
 
   it('lists the most recent run first, a run of unknown time last, and shows when each started', async () => {

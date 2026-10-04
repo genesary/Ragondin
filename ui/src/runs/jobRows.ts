@@ -88,6 +88,7 @@ export function rowsFromJobs(jobs: Jobs, runs: readonly RunRow[]): RunRow[] {
         // A job knows the name it was launched as, never its canonical hash.
         pipeline: '',
         pipelineNames: [],
+        refusedNames: [],
         launchedAs: work.pipeline,
         launchedHeld: null,
         launchRecorded: true,

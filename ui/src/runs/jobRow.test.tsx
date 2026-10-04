@@ -22,6 +22,7 @@ const job = (status: RunRow['status'], over: Partial<JobFacts> = {}): RunRow => 
   source: { kind: 'job', id: 'j1', runId: ANNOUNCED },
   pipeline: '',
   pipelineNames: [],
+  refusedNames: [],
   launchedAs: 'hybrid',
   launchedHeld: null,
   launchRecorded: true,
