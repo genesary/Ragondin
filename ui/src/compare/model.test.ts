@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Comparison, MetricDeltas } from '../api/types.ts';
 import { COMPARISON, DENSE, HYBRID, metricDeltas, RERANK } from './fixtures.ts';
+import { bool, float, int, list, str } from '../parameters.ts';
 import {
   automaticLinks,
   barMetrics,
@@ -81,10 +82,16 @@ describe('departures', () => {
   });
 
   it('writes a value as a configuration does, and an unset one in words', () => {
-    expect(formatParameter(100)).toBe('100');
-    expect(formatParameter('cross_encoder')).toBe('cross_encoder');
-    expect(formatParameter([1, 'a', true])).toBe('[1, a, true]');
+    expect(formatParameter(int('100'))).toBe('100');
+    expect(formatParameter(str('cross_encoder'))).toBe('cross_encoder');
+    expect(formatParameter(list(int('1'), str('a'), bool(true)))).toBe('[1, a, true]');
     expect(formatParameter(null)).toBe('not set');
+  });
+
+  it('never draws an integer and a float of one value alike, and marks the one that departs', () => {
+    const row = { node: 'fused', key: { kind: 'param' as const, name: 'k' }, values: [int('60'), float(60)] };
+    expect(row.values.map(formatParameter)).toEqual(['60', '60.0']);
+    expect(departures(row)).toEqual([false, true]);
   });
 });
 

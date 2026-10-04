@@ -16,7 +16,8 @@ use ragondin_experiments::{
 use ragondin_metrics::{Family, Metric};
 use ragondin_pipeline::{
     consumed_kinds, produced_kind, ContextBuilderNode, FusionNode, GeneratorNode, LogicalNode,
-    LogicalPipeline, NodeId, ParamValue, Params, PortSpec, RerankerNode, RetrieverNode, ValueKind,
+    LogicalPipeline, NodeId, ParamValue, Params, PortSpec, RawGraph, RawNode, RawParamValue,
+    RawPipeline, RerankerNode, RetrieverNode, SchemaVersion, UnsupportedSchemaVersion, ValueKind,
 };
 use ragondin_types::DocId;
 
@@ -29,7 +30,8 @@ use crate::response::{
     DatasetStatus, DatasetVersions, EdgeKind, FamilyPorts, FoundVersions, Graph, GraphEdge,
     GraphInput, GraphNode, GroundTruth, LaunchedAs, LaunchedPrefix, MetricDirection, MetricFamily,
     MetricRow, NameHeld, NodeMetrics, ParameterName, ParameterRow, ParameterValue, RunDetail,
-    RunInputs, RunSummary, ServiceBinding, TraceNodeView, TracePassage, TraceValue,
+    RunInputs, RunSummary, ServiceBinding, TraceNodeView, TracePassage, TraceValue, TypedDocument,
+    TypedGraph, TypedNode,
 };
 
 /// One run, as the listing shows it, with the names the request found for
@@ -388,6 +390,8 @@ pub(crate) fn configuration_matrix(
     }
 }
 
+/// A lowered parameter, with its kind. Every float in a `LogicalPipeline` is
+/// finite: the validation pass refuses any other (`NonFiniteParam`).
 fn parameter(value: &ParamValue) -> ParameterValue {
     match value {
         ParamValue::String(text) => ParameterValue::String(text.clone()),
@@ -395,6 +399,92 @@ fn parameter(value: &ParamValue) -> ParameterValue {
         ParamValue::Float(number) => ParameterValue::Float(*number),
         ParamValue::Bool(flag) => ParameterValue::Bool(*flag),
         ParamValue::List(items) => ParameterValue::List(items.iter().map(parameter).collect()),
+    }
+}
+
+/// A wire-schema document as the editor holds it, or `None` when it holds a
+/// value the typed document cannot carry: a non-finite float (ADR-C40 § 4).
+/// Field by field, by hand, never derived from `RawPipeline` (ADR-C40 § 3).
+pub(crate) fn typed_document(raw: &RawPipeline) -> Option<TypedDocument> {
+    Some(TypedDocument {
+        version: Some(raw.version.get()),
+        pipeline: TypedGraph {
+            inputs: raw.pipeline.inputs.clone(),
+            nodes: raw
+                .pipeline
+                .nodes
+                .iter()
+                .map(|node| {
+                    Some(TypedNode {
+                        id: node.id.clone(),
+                        component: node.component.clone(),
+                        implementation: node.implementation.clone(),
+                        inputs: node.inputs.clone(),
+                        params: node
+                            .params
+                            .iter()
+                            .map(|(key, value)| Some((key.clone(), typed_value(value)?)))
+                            .collect::<Option<_>>()?,
+                    })
+                })
+                .collect::<Option<_>>()?,
+        },
+    })
+}
+
+fn typed_value(value: &RawParamValue) -> Option<ParameterValue> {
+    Some(match value {
+        RawParamValue::String(text) => ParameterValue::String(text.clone()),
+        RawParamValue::Int(number) => ParameterValue::Int(*number),
+        RawParamValue::Float(number) if number.is_finite() => ParameterValue::Float(*number),
+        RawParamValue::Float(_) => return None,
+        RawParamValue::Bool(flag) => ParameterValue::Bool(*flag),
+        RawParamValue::List(items) => {
+            ParameterValue::List(items.iter().map(typed_value).collect::<Option<_>>()?)
+        }
+    })
+}
+
+/// The editor's typed document in the wire schema, or the schema version it
+/// states that this build cannot read. The inverse of [`typed_document`] for
+/// every document that function answers.
+pub(crate) fn wire_document(
+    typed: &TypedDocument,
+) -> Result<RawPipeline, UnsupportedSchemaVersion> {
+    Ok(RawPipeline {
+        version: match typed.version {
+            Some(version) => SchemaVersion::new(version)?,
+            None => SchemaVersion::CURRENT,
+        },
+        pipeline: RawGraph {
+            inputs: typed.pipeline.inputs.clone(),
+            nodes: typed
+                .pipeline
+                .nodes
+                .iter()
+                .map(|node| RawNode {
+                    id: node.id.clone(),
+                    component: node.component.clone(),
+                    implementation: node.implementation.clone(),
+                    inputs: node.inputs.clone(),
+                    params: node
+                        .params
+                        .iter()
+                        .map(|(key, value)| (key.clone(), wire_value(value)))
+                        .collect(),
+                })
+                .collect(),
+        },
+    })
+}
+
+fn wire_value(value: &ParameterValue) -> RawParamValue {
+    match value {
+        ParameterValue::String(text) => RawParamValue::String(text.clone()),
+        ParameterValue::Int(number) => RawParamValue::Int(*number),
+        ParameterValue::Float(number) => RawParamValue::Float(*number),
+        ParameterValue::Bool(flag) => RawParamValue::Bool(*flag),
+        ParameterValue::List(items) => RawParamValue::List(items.iter().map(wire_value).collect()),
     }
 }
 

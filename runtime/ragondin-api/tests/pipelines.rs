@@ -902,3 +902,274 @@ async fn validate_refuses_every_branch_with_the_problem_body_it_always_has() {
         );
     }
 }
+
+// The typed document (ADR-C40): what `GET /pipelines/{name}` adds beside the
+// text, and what `POST /pipelines/validate` reads from the editor.
+
+/// A pipeline holding a float written with a fractional part, an integer, a
+/// flag, text that reads as another kind, and a list.
+const KINDS: &str = "pipeline:\n  inputs: [question]\n  nodes:\n    - id: lexical\n      component: retriever\n      impl: bm25\n      inputs: [question]\n      params:\n        top_k: 10\n        k: 60.0\n        exact: true\n        label: 'yes'\n        weights: [1, 0.5]\n";
+
+/// `KINDS` as the editor holds it.
+fn kinds_typed() -> Value {
+    json!({
+        "version": 3,
+        "pipeline": {
+            "inputs": ["question"],
+            "nodes": [{
+                "id": "lexical",
+                "component": "retriever",
+                "impl": "bm25",
+                "inputs": ["question"],
+                "params": {
+                    "exact": { "kind": "bool", "value": true },
+                    "k": { "kind": "float", "value": 60.0 },
+                    "label": { "kind": "string", "value": "yes" },
+                    "top_k": { "kind": "int", "value": "10" },
+                    "weights": { "kind": "list", "value": [
+                        { "kind": "int", "value": "1" },
+                        { "kind": "float", "value": 0.5 },
+                    ] },
+                },
+            }],
+        },
+    })
+}
+
+async fn read_detail(workspace: &Workspace, name: &str, text: &str) -> Value {
+    fs::write(workspace.pipelines().join(format!("{name}.yaml")), text).unwrap();
+    body_json(send(server(workspace), get(&format!("/api/v1/pipelines/{name}"))).await).await
+}
+
+async fn validate(workspace: &Workspace, body: &Value) -> (StatusCode, Value) {
+    let response = send(
+        server(workspace),
+        write_request("POST", "/api/v1/pipelines/validate", body, &[]),
+    )
+    .await;
+    (response.status(), body_json(response).await)
+}
+
+#[tokio::test]
+async fn a_read_carries_the_typed_document_every_value_with_its_kind() {
+    let workspace = scratch("typed_read");
+
+    let body = read_detail(&workspace, "kinds", KINDS).await;
+
+    assert_eq!(body["document"], KINDS);
+    assert_eq!(body["typed"], kinds_typed());
+}
+
+#[tokio::test]
+async fn a_document_that_reads_but_does_not_validate_still_carries_its_typed_document() {
+    let workspace = scratch("typed_invalid");
+
+    let body = read_detail(&workspace, "broken", MIS_KINDED).await;
+
+    assert_eq!(body["hash"], Value::Null);
+    assert!(body["error"].is_object(), "{body}");
+    let nodes = body["typed"]["pipeline"]["nodes"]
+        .as_array()
+        .expect("typed");
+    assert_eq!(nodes[1]["id"], "ranked");
+    assert_eq!(nodes[1]["inputs"], json!(["legs", "question"]));
+}
+
+#[tokio::test]
+async fn a_document_that_does_not_read_or_holds_a_value_the_type_cannot_carry_is_text_only() {
+    let workspace = scratch("typed_text_only");
+    let nan = KINDS.replace("k: 60.0", "k: .nan");
+    let infinite = KINDS.replace("k: 60.0", "k: -.inf");
+
+    for (name, text) in [
+        ("syntax", "pipeline: ["),
+        (
+            "version",
+            "version: 99\npipeline:\n  inputs: [q]\n  nodes: []\n",
+        ),
+        ("nan", nan.as_str()),
+        ("infinite", infinite.as_str()),
+    ] {
+        let body = read_detail(&workspace, name, text).await;
+
+        assert_eq!(body["typed"], Value::Null, "{name}: {body}");
+        assert_eq!(body["document"], text, "{name}");
+    }
+}
+
+#[tokio::test]
+async fn validating_the_typed_document_hashes_what_validating_its_text_hashes() {
+    let workspace = scratch("typed_validate");
+
+    let (status, typed) = validate(&workspace, &json!({ "typed": kinds_typed() })).await;
+    let (_, text) = validate(&workspace, &document(KINDS)).await;
+
+    assert_eq!(status, StatusCode::OK, "{typed}");
+    assert_eq!(typed["hash"], text["hash"]);
+}
+
+#[tokio::test]
+async fn a_float_and_an_integer_of_one_value_validate_to_two_hashes() {
+    let workspace = scratch("typed_kinds_hash");
+    let with_k = |value: Value| {
+        let mut typed = kinds_typed();
+        typed["pipeline"]["nodes"][0]["params"]["k"] = value;
+        json!({ "typed": typed })
+    };
+
+    // The browser's `JSON.stringify(60.0)` is `60`: the tag keeps it a float.
+    let (_, float) = validate(&workspace, &with_k(json!({ "kind": "float", "value": 60 }))).await;
+    let (_, integer) = validate(&workspace, &with_k(json!({ "kind": "int", "value": "60" }))).await;
+    let (_, text) = validate(&workspace, &document(KINDS)).await;
+    let (_, integer_text) = validate(&workspace, &document(&KINDS.replace("60.0", "60"))).await;
+
+    assert_eq!(float["hash"], text["hash"]);
+    assert_ne!(integer["hash"], float["hash"]);
+    assert_eq!(integer["hash"], integer_text["hash"]);
+}
+
+#[tokio::test]
+async fn a_typed_document_the_pass_refuses_is_pipeline_invalid_located() {
+    let workspace = scratch("typed_dangling");
+    let mut typed = kinds_typed();
+    typed["pipeline"]["nodes"][0]["inputs"] = json!(["nowhere"]);
+
+    let (status, problem) = validate(&workspace, &json!({ "typed": typed })).await;
+
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{problem}");
+    assert_eq!(problem["code"], "pipeline_invalid");
+    assert_eq!(problem["location"]["node"], "lexical");
+}
+
+/// A typed document the renderer cannot write so that it reads back — here a
+/// parameter name too long, once rendered, for YAML to read as a key — is refused as
+/// `pipeline_invalid` in the renderer's words, never rendered otherwise.
+#[tokio::test]
+async fn a_typed_document_the_renderer_cannot_write_is_pipeline_invalid_in_its_words() {
+    let workspace = scratch("typed_unrenderable");
+    let mut typed = kinds_typed();
+    typed["pipeline"]["nodes"][0]["params"]["k".repeat(1100)] =
+        json!({ "kind": "bool", "value": true });
+
+    let (status, problem) = validate(&workspace, &json!({ "typed": typed })).await;
+
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{problem}");
+    assert_eq!(problem["code"], "pipeline_invalid");
+    assert!(
+        problem["detail"]
+            .as_str()
+            .unwrap()
+            .contains("a parameter name too long once rendered"),
+        "{problem}"
+    );
+}
+
+#[tokio::test]
+async fn a_typed_document_in_a_version_this_build_cannot_read_is_pipeline_invalid() {
+    let workspace = scratch("typed_version");
+    let mut typed = kinds_typed();
+    typed["version"] = json!(2);
+
+    let (status, problem) = validate(&workspace, &json!({ "typed": typed })).await;
+
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{problem}");
+    assert!(
+        problem["detail"]
+            .as_str()
+            .unwrap()
+            .contains("schema version this build cannot read"),
+        "{problem}"
+    );
+}
+
+#[tokio::test]
+async fn a_typed_document_without_a_version_is_read_in_the_version_this_build_reads() {
+    let workspace = scratch("typed_no_version");
+    let mut typed = kinds_typed();
+    typed.as_object_mut().unwrap().remove("version");
+
+    let (status, body) = validate(&workspace, &json!({ "typed": typed })).await;
+    let (_, text) = validate(&workspace, &document(KINDS)).await;
+
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["hash"], text["hash"]);
+}
+
+#[tokio::test]
+async fn a_value_its_kind_does_not_carry_is_request_invalid() {
+    let workspace = scratch("typed_bad_values");
+
+    for value in [
+        json!({ "kind": "int", "value": 10 }),
+        json!({ "kind": "int", "value": "1.0" }),
+        json!({ "kind": "int", "value": "1e3" }),
+        json!({ "kind": "int", "value": " 10" }),
+        json!({ "kind": "int", "value": "+10" }),
+        json!({ "kind": "int", "value": "010" }),
+        json!({ "kind": "int", "value": "-0" }),
+        json!({ "kind": "int", "value": "" }),
+        json!({ "kind": "int", "value": "9223372036854775808" }),
+        json!({ "kind": "float", "value": "60.0" }),
+        json!({ "kind": "bool", "value": "true" }),
+        json!({ "kind": "string", "value": 1 }),
+        json!({ "kind": "map", "value": {} }),
+        json!(10),
+        json!({ "kind": "int" }),
+        json!({ "kind": "int", "value": "1", "extra": 1 }),
+    ] {
+        let mut typed = kinds_typed();
+        typed["pipeline"]["nodes"][0]["params"]["k"] = value.clone();
+
+        let (status, problem) = validate(&workspace, &json!({ "typed": typed })).await;
+
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{value}: {problem}");
+        assert_eq!(problem["code"], "request_invalid", "{value}");
+    }
+}
+
+#[tokio::test]
+async fn the_widest_integers_travel_whole() {
+    let workspace = scratch("typed_wide_integers");
+    let text = KINDS.replace("top_k: 10", "top_k: -9223372036854775808");
+
+    let body = read_detail(&workspace, "wide", &text).await;
+    let top_k = &body["typed"]["pipeline"]["nodes"][0]["params"]["top_k"];
+    let (_, typed) = validate(&workspace, &json!({ "typed": body["typed"] })).await;
+    let (_, from_text) = validate(&workspace, &document(&text)).await;
+
+    assert_eq!(
+        top_k,
+        &json!({ "kind": "int", "value": "-9223372036854775808" })
+    );
+    assert_eq!(typed["hash"], from_text["hash"]);
+}
+
+#[tokio::test]
+async fn a_body_that_is_neither_form_is_request_invalid() {
+    let workspace = scratch("typed_bad_body");
+
+    for body in [
+        json!({ "document": KINDS, "typed": kinds_typed() }),
+        json!({ "typed": KINDS }),
+        json!({ "typed": { "pipeline": { "inputs": [], "nodes": [] }, "extra": 1 } }),
+        json!({ "typed": { "version": 3 } }),
+    ] {
+        let (status, problem) = validate(&workspace, &body).await;
+
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}: {problem}");
+        assert_eq!(problem["code"], "request_invalid", "{body}");
+    }
+}
+
+#[tokio::test]
+async fn a_typed_document_read_from_a_file_validates_to_the_hash_of_its_text() {
+    // What the editor does on opening a stored pipeline: it sends back the
+    // typed document it read, and the hash is the one its text has.
+    let workspace = scratch("typed_read_validate");
+    let detail = read_detail(&workspace, "kinds", KINDS).await;
+
+    let (status, body) = validate(&workspace, &json!({ "typed": detail["typed"] })).await;
+
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["hash"], detail["hash"]);
+}

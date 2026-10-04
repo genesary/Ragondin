@@ -6,6 +6,7 @@
 // partial traces it kept. Test data only; no application module
 // imports it.
 import type { DatasetCheck, Graph, PartialQueries, PartialTrace, QueryTrace, RunDetail, RunListing, RunQueries, RunSummary, TraceNodeView, TracePassage } from '../api/types.ts';
+import { float, int } from '../parameters.ts';
 
 const hex = (c: string) => c.repeat(64);
 export const HYBRID = hex('b');
@@ -22,12 +23,12 @@ const edge = (from: string, to: string, port: number, kind: Graph['edges'][numbe
 export const HYBRID_GRAPH: Graph = {
   inputs: [{ id: 'question', kind: 'query' }],
   nodes: [
-    { id: 'answer', family: 'generator', implementation: 'answerer', parameters: { temperature: 0 } },
-    { id: 'bm25', family: 'retriever', implementation: 'bm25', parameters: { top_k: 5 } },
-    { id: 'context', family: 'context_builder', implementation: 'concat', parameters: { max_chunks: 3 } },
-    { id: 'dense', family: 'retriever', implementation: 'dense', parameters: { top_k: 5 } },
-    { id: 'rerank', family: 'reranker', implementation: 'cross_encoder', parameters: { top_k: 4 } },
-    { id: 'rrf', family: 'fusion', implementation: 'rrf', parameters: { k: 60 } },
+    { id: 'answer', family: 'generator', implementation: 'answerer', parameters: { temperature: float(0) } },
+    { id: 'bm25', family: 'retriever', implementation: 'bm25', parameters: { top_k: int('5') } },
+    { id: 'context', family: 'context_builder', implementation: 'concat', parameters: { max_chunks: int('3') } },
+    { id: 'dense', family: 'retriever', implementation: 'dense', parameters: { top_k: int('5') } },
+    { id: 'rerank', family: 'reranker', implementation: 'cross_encoder', parameters: { top_k: int('4') } },
+    { id: 'rrf', family: 'fusion', implementation: 'rrf', parameters: { k: int('60') } },
   ],
   edges: [
     edge('question', 'answer', 0, 'query'),
@@ -46,7 +47,7 @@ export const HYBRID_GRAPH: Graph = {
 /** `dense-only`: one retriever. */
 export const DENSE_GRAPH: Graph = {
   inputs: [{ id: 'question', kind: 'query' }],
-  nodes: [{ id: 'dense', family: 'retriever', implementation: 'dense', parameters: { top_k: 5 } }],
+  nodes: [{ id: 'dense', family: 'retriever', implementation: 'dense', parameters: { top_k: int('5') } }],
   edges: [edge('question', 'dense', 0, 'query')],
 };
 

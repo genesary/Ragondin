@@ -943,8 +943,35 @@ export type ParameterRow = {
   values: (ParameterValue | null)[];
 };
 
-/** A node parameter's value. */
-export type ParameterValue = boolean | number | string | ParameterValue[];
+/**
+ * A node parameter's value, tagged with its kind: the one parameter type of
+ * the API, in a run's graph, a comparison's rows and a pipeline's typed
+ * document alike (ADR-C40 § 2). `60` and `60.0` are two configurations
+ * (ADR-C22), so an integer and a float of one value are never one value
+ * here.
+ *
+ * An integer travels as decimal text, which the browser's number type
+ * cannot round; a float travels as a JSON number and is finite. Read from a
+ * request, each refuses what its kind does not carry: a number for an
+ * integer, text for a float, an integer written `+1`, `01`, `-0` or wider
+ * than 64 bits.
+ */
+export type ParameterValue = {
+  kind: "string";
+  value: string;
+} | {
+  kind: "int";
+  value: string;
+} | {
+  kind: "float";
+  value: number;
+} | {
+  kind: "bool";
+  value: boolean;
+} | {
+  kind: "list";
+  value: ParameterValue[];
+};
 
 /**
  * `GET /jobs/{id}/queries`: the queries a failed or cancelled run job
@@ -997,7 +1024,10 @@ export type PartialTrace = {
   query: string;
 };
 
-/** `GET /pipelines/{name}`: one pipeline document, verbatim. */
+/**
+ * `GET /pipelines/{name}`: one pipeline document, verbatim, and as the
+ * editor holds it when it can.
+ */
 export type PipelineDetail = {
   /** The document, byte for byte as the file holds it. */
   document: string;
@@ -1009,12 +1039,16 @@ export type PipelineDetail = {
   hash: string | null;
   /** Its name. */
   name: string;
+  /**
+   * The document as the editor holds it, whenever its text reads into the
+   * wire schema, whether or not it validates; `null` when it does not
+   * read, or holds a value the typed document cannot carry, such as a
+   * non-finite float (ADR-C40 § 4).
+   */
+  typed: TypedDocument | null;
 };
 
-/**
- * `PUT /pipelines/{name}` and `POST /pipelines/validate`: a pipeline
- * document, as text.
- */
+/** `PUT /pipelines/{name}`: a pipeline document, as text. */
 export type PipelineDocument = {
   /**
    * The YAML document. Stored byte for byte when it is written: never
@@ -1770,6 +1804,55 @@ export type TraceValue = {
 };
 
 /**
+ * A pipeline document as the editor holds it (ADR-C40 § 1): the wire
+ * schema's shape — an optional schema version, the declared inputs in
+ * order, the nodes in order — with every parameter value tagged with its
+ * kind. The API's own type, converted by hand to and from the wire schema
+ * in `convert.rs`, never derived from it: the configuration format on disk
+ * is unchanged, and the browser never reads or writes it.
+ */
+export type TypedDocument = {
+  /** The pipeline itself. */
+  pipeline: TypedGraph;
+  /**
+   * The schema version the document is written in. Absent, the version
+   * this build reads.
+   */
+  version?: number | null;
+};
+
+/**
+ * The graph of a `TypedDocument`, as a configuration nests it under
+ * `pipeline:`.
+ */
+export type TypedGraph = {
+  /**
+   * The ids of the values the pipeline receives from its caller, in
+   * declared order.
+   */
+  inputs: string[];
+  /** The nodes, in the order the document lists them. */
+  nodes: TypedNode[];
+};
+
+/** One node of a `TypedDocument`, keyed as a configuration writes it. */
+export type TypedNode = {
+  /**
+   * Its family, a configuration's `component:` value; not yet known to
+   * name one.
+   */
+  component: string;
+  /** The node's id; not yet known to be unique. */
+  id: string;
+  /** Its `impl:` value. */
+  impl: string;
+  /** The ids it consumes, in port order; not yet known to exist. */
+  inputs: string[];
+  /** Its parameters, in key order. */
+  params: Record<string, ParameterValue>;
+};
+
+/**
  * A pair drawn by hand that a comparison could not apply to one of its
  * runs: a node it names is not a retriever, fusion or reranker of the run
  * it would be read in. A pairing is kept against two pipelines' current
@@ -1799,6 +1882,16 @@ export type UnreadableRun = {
   id: string;
   /** What loading it reported. */
   reason: string;
+};
+
+/**
+ * `POST /pipelines/validate`: a pipeline document, as text or as the editor
+ * holds it — one key, naming which (ADR-C40 § 5, § 6).
+ */
+export type ValidationRequest = {
+  document: string;
+} | {
+  typed: TypedDocument;
 };
 
 /**
@@ -1950,12 +2043,12 @@ export type Paths = {
     /** The canonical hash `ragondin validate` prints for a document, or `pipeline_invalid`, located. */
     post: {
       params: Record<string, never>;
-      body: PipelineDocument;
+      body: ValidationRequest;
       response: PipelineValidated;
     };
   };
   "/pipelines/{name}": {
-    /** One pipeline document, verbatim, with its etag and its hash or why it does not validate. */
+    /** One pipeline document, verbatim, with its etag, its hash or why it does not validate, and its typed document when it reads. */
     get: {
       params: {
         name: string;

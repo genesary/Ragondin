@@ -1,28 +1,17 @@
-// The one in-memory shape of a pipeline the editor holds: the wire schema,
-// `RawPipeline` (`core/ragondin-pipeline/src/raw.rs`), as a configuration
-// writes it — never a lowered or logical form (INV-9). ARCHITECTURE.md § The
-// editor.
-import type { EdgeKind, Graph, ParameterValue, PipelineDocument } from '../api/types.ts';
+// The one in-memory shape of a pipeline the editor holds: the API's typed
+// document (ADR-C40), which has the wire schema's shape — `RawPipeline`
+// (`core/ragondin-pipeline/src/raw.rs`) as a configuration writes it — with
+// every parameter value tagged with its kind; never a lowered or logical form
+// (INV-9). The browser never reads or writes the configuration format.
+// ARCHITECTURE.md § The editor.
+import type { EdgeKind, Graph, TypedDocument, TypedNode, ValidationRequest } from '../api/types.ts';
 import { INPUT_KIND, producedBy, type PortGrammar } from './ports.ts';
 
-/** One node, as § 5.1 of the system architecture writes it. */
-export type WireNode = {
-  id: string;
-  /** The family, a configuration's `component:` value. */
-  component: string;
-  /** The `impl:` value. */
-  impl: string;
-  /** The ids it consumes, in port order. */
-  inputs: string[];
-  /** The flat parameter grammar of ADR-C22: scalars and lists, no map. */
-  params: Record<string, ParameterValue>;
-};
+/** One node, as § 5.1 of the system architecture writes it, each parameter with its kind. */
+export type WireNode = TypedNode;
 
 /** A whole pipeline document. No `version` means the version the server reads. */
-export type WireDocument = {
-  version?: number;
-  pipeline: { inputs: string[]; nodes: WireNode[] };
-};
+export type WireDocument = TypedDocument;
 
 /** A new pipeline: one declared input, the query, and no node. */
 export const emptyDocument = (): WireDocument => ({ pipeline: { inputs: ['query'], nodes: [] } });
@@ -42,12 +31,12 @@ export function freshId(doc: WireDocument, impl: string): string {
 }
 
 /**
- * What `POST /pipelines/validate` is sent: the document as text and nothing
- * else — no position, which lives beside it (ADR-016 § 4). The text is JSON,
- * which is YAML, so the server's own parser reads it into `RawPipeline`; the
- * browser writes no YAML and parses none.
+ * What `POST /pipelines/validate` is sent: the typed document and nothing
+ * else — no position, which lives beside it (ADR-016 § 4). The server renders
+ * it as the configuration format and checks that rendering, so the hash it
+ * answers is the one of the bytes a write would store (ADR-C40 § 5).
  */
-export const validationRequest = (doc: WireDocument): PipelineDocument => ({ document: JSON.stringify(doc) });
+export const validationRequest = (doc: WireDocument): ValidationRequest => ({ typed: doc });
 
 /**
  * The document as the canvas draws it: the generated `Graph`, as

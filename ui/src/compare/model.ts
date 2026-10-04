@@ -5,6 +5,7 @@
 // is written, and the verdict sentence. ARCHITECTURE.md § The Compare screen.
 import { familyOfComponent, type Family, type HistogramBin, type RunSeries, type RunSlot, type StackSegment } from '../../design/index.ts';
 import type { Comparison, MetricDeltas, MetricDirection, MetricRow, NodePair, ParameterRow, ParameterValue, StageName, UnplacedPair } from '../api/types.ts';
+import { formatParameter as formatValueOf } from '../parameters.ts';
 import { shortHash } from '../runs/model.ts';
 
 const SLOTS: readonly RunSlot[] = ['base', 'a', 'b', 'c', 'd'];
@@ -61,12 +62,8 @@ export function deltaOf(direction: MetricDirection | null, delta: number): { tex
   return { text, meaning: up === (direction === 'higher') ? 'better' : 'worse', direction: up ? 'up' : 'down' };
 }
 
-/** A parameter's value as a configuration writes it; an unset one in words. */
-export function formatParameter(value: ParameterValue | null): string {
-  if (value === null) return 'not set';
-  if (Array.isArray(value)) return `[${value.map((v) => formatParameter(v)).join(', ')}]`;
-  return String(value);
-}
+/** A parameter's value as a configuration writes it, its kind never lost; an unset one in words. */
+export const formatParameter = (value: ParameterValue | null): string => (value === null ? 'not set' : formatValueOf(value));
 
 /** Which of a row's values differ from the baseline's — the first. */
 export function departures(row: ParameterRow): boolean[] {

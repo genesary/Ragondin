@@ -156,14 +156,27 @@ impl crate::extract::HeaderFields for PreconditionHeaders {
     const NAMES: &'static [&'static str] = &["If-Match", "If-None-Match"];
 }
 
-/// `PUT /pipelines/{name}` and `POST /pipelines/validate`: a pipeline
-/// document, as text.
+/// `PUT /pipelines/{name}`: a pipeline document, as text.
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PipelineDocument {
     /// The YAML document. Stored byte for byte when it is written: never
     /// re-serialized.
     pub document: String,
+}
+
+/// `POST /pipelines/validate`: a pipeline document, as text or as the editor
+/// holds it — one key, naming which (ADR-C40 § 5, § 6).
+#[derive(Clone, Debug, PartialEq, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub enum ValidationRequest {
+    /// The YAML document, checked exactly as `ragondin validate` checks a
+    /// file: what an import and the command line send.
+    Document(String),
+    /// The typed document the editor holds. The server converts it to the
+    /// wire schema, renders that as text, and checks the rendering, so the
+    /// hash is the one of the bytes a write would store.
+    Typed(crate::response::TypedDocument),
 }
 
 /// `POST /benchmarks/import`: a corpus on disk, and the name to import it as.

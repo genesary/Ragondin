@@ -20,7 +20,7 @@ use serde_json::{json, Map, Value};
 
 use crate::request::{
     CompareRequest, ImportRequest, PipelineDocument, ProbeRequest, ReorderRequest, RunRequest,
-    ServiceAddress,
+    ServiceAddress, ValidationRequest,
 };
 use crate::response::{
     BenchmarkListing, Comparison, DownloadAccepted, JobEvent, JobListing, PartialQueries,
@@ -321,13 +321,15 @@ pub const OPERATIONS: &[Operation] = &[
         path: "/pipelines/validate",
         summary: "The canonical hash `ragondin validate` prints for a document, or `pipeline_invalid`, located.",
         response: Response::Json("PipelineValidated"),
-        request: Some("PipelineDocument"),
-        description: None,
+        request: Some("ValidationRequest"),
+        description: Some(
+            "The body holds the document as text, under `document`, or as the editor holds it, under `typed`. A typed document is converted to the wire schema, rendered as text and checked as that text is, so the hash is the one of the bytes a write would store; a schema version it states that this build cannot read, or a value its rendering cannot carry, is pipeline_invalid.",
+        ),
     },
     Operation {
         method: "get",
         path: "/pipelines/{name}",
-        summary: "One pipeline document, verbatim, with its etag and its hash or why it does not validate.",
+        summary: "One pipeline document, verbatim, with its etag, its hash or why it does not validate, and its typed document when it reads.",
         response: Response::Json("PipelineDetail"),
         request: None,
         description: Some(
@@ -467,6 +469,7 @@ fn description() -> Value {
     generator.subschema_for::<Problem>();
     // The request bodies.
     generator.subschema_for::<PipelineDocument>();
+    generator.subschema_for::<ValidationRequest>();
     generator.subschema_for::<ImportRequest>();
     generator.subschema_for::<ServiceAddress>();
     generator.subschema_for::<ProbeRequest>();

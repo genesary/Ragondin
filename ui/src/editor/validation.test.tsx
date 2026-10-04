@@ -27,7 +27,7 @@ describe('live validation', () => {
     expect(sent(api)).toHaveLength(0);
     await act(async () => vi.advanceTimersByTime(1));
     expect(sent(api)).toHaveLength(1);
-    expect(JSON.parse((api.bodies[sent(api)[0]!] as { document: string }).document)).toEqual(withNode('b'));
+    expect(api.bodies[sent(api)[0]!]).toEqual({ typed: withNode('b') });
   });
 
   it('cancels the request a newer document supersedes, and shows only the newer verdict', async () => {

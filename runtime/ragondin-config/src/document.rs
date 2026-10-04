@@ -1,6 +1,7 @@
-//! A pipeline document loaded from its text: [`parse_document`], the
-//! [`DocumentError`] it refuses with, and [`incompatible_wiring`], the report
-//! for an edge of the wrong kind.
+//! A pipeline document loaded from its text: [`parse_document`], its first
+//! half [`read_document`], the [`DocumentError`] they refuse with,
+//! [`render_document`], which writes the wire schema back as text, and
+//! [`incompatible_wiring`], the report for an edge of the wrong kind.
 //!
 //! This is the one definition of the load. Every caller that holds a
 //! document runs it — [`LocalFile`](crate::LocalFile) over a file's contents,
@@ -14,6 +15,7 @@
 //!
 //! ```text
 //! text → RawPipeline (serde) → validate → LogicalPipeline
+//!        └─ read_document ─┘
 //! ```
 //!
 //! The wire schema is `ragondin-pipeline`'s [`RawPipeline`], hand-maintained
@@ -35,7 +37,7 @@ use ragondin_pipeline::{
 };
 
 /// Lowers a pipeline document's text to its validated [`LogicalPipeline`], or
-/// says why it is not one.
+/// says why it is not one: [`read_document`], then the validation pass.
 ///
 /// Stops at `LogicalPipeline`: resolving implementations to components is
 /// physical planning, which needs an `EngineContext` and belongs to the
@@ -43,6 +45,17 @@ use ragondin_pipeline::{
 /// [`content_hash`](LogicalPipeline::content_hash), over the canonical logical
 /// form and never over this text (INV-8).
 pub fn parse_document(text: &str) -> Result<LogicalPipeline, DocumentError> {
+    validate(read_document(text)?).map_err(DocumentError::Invalid)
+}
+
+/// Reads a pipeline document's text into the wire schema, [`RawPipeline`],
+/// whether or not the graph it describes validates: the first half of
+/// [`parse_document`], and never a second load beside it.
+///
+/// A caller that shows a document a person is still editing needs this half
+/// alone, since a document that does not validate has no lowered form
+/// (ADR-C40 § 4).
+pub fn read_document(text: &str) -> Result<RawPipeline, DocumentError> {
     // The version first, for the reason this module documents. A peek that
     // comes back `Unreadable` is *not* reported: the deserializer walked a
     // document it could not make sense of, and `ragondin-pipeline` says what
@@ -56,10 +69,79 @@ pub fn parse_document(text: &str) -> Result<LogicalPipeline, DocumentError> {
 
     // Into the hand-maintained wire schema, never into an internal type
     // (INV-9).
-    let raw: RawPipeline = serde_yaml::from_str(text).map_err(DocumentError::Malformed)?;
-
-    validate(raw).map_err(DocumentError::Invalid)
+    serde_yaml::from_str(text).map_err(DocumentError::Malformed)
 }
+
+/// Renders a wire-schema document as the configuration format's text: the
+/// one writer of the format, beside its one reader.
+///
+/// What it writes reads back, through [`read_document`], to the same
+/// [`RawPipeline`], and rendering that again changes nothing (ADR-C40 § 5).
+/// A document whose rendering would read back as anything else is refused
+/// rather than rendered, so no caller ever holds text that means another
+/// document.
+///
+/// **The rendering is JSON, which YAML reads**: indented, one key per line,
+/// and every string in double quotes. That is how the renderer quotes the
+/// strings another reader of the format could retype — a YAML 1.1 boolean
+/// such as `yes` or `on`, a null, a number, a date: `serde_yaml`'s own writer
+/// quotes only what its own reader would retype, and leaves `yes` plain. A
+/// float keeps its fractional part (`60.0`), an integer has none. Comments,
+/// key order and formatting a person wrote are not in the wire schema, so a
+/// rendering does not keep them.
+pub fn render_document(document: &RawPipeline) -> Result<String, RenderError> {
+    // The wire schema's own `Serialize`, never an internal type's (INV-9).
+    // It does not fail on this schema, whose every key is a string; a
+    // non-finite float it writes as `null`, which the guard below refuses.
+    let json = serde_json::to_string_pretty(document).map_err(|_| RenderError)?;
+    let text = escape_for_yaml(&json) + "\n";
+    // The guard that makes the promise above hold by construction: a
+    // non-finite float, which JSON writes as `null`, or a key too long once
+    // rendered for YAML to read as one, is found here rather than by the next reader, and
+    // so would anything else that did not read back.
+    match read_document(&text) {
+        Ok(read) if read == *document => Ok(text),
+        _ => Err(RenderError),
+    }
+}
+
+/// Whether YAML folds or refuses this character bare in a double-quoted
+/// string where JSON leaves it bare: DEL and the C1 controls, U+0085 among
+/// them, and U+2028 and U+2029, which YAML reads as line breaks, and the two
+/// noncharacters U+FFFE and U+FFFF, which it does not accept as printable.
+fn yaml_needs_escape(c: char) -> bool {
+    matches!(
+        c,
+        '\u{7f}'..='\u{9f}' | '\u{2028}' | '\u{2029}' | '\u{fffe}' | '\u{ffff}'
+    )
+}
+
+/// The JSON with each character [`yaml_needs_escape`] names written as
+/// `\uXXXX`, an escape JSON and YAML both read as the character, so a string
+/// holding one reads back. JSON's structure is ASCII and these characters are
+/// not, so each one found sits inside a string, where the escape is valid;
+/// `serde_json` writes every backslash of a string as a pair, so none is left
+/// open before it.
+fn escape_for_yaml(json: &str) -> String {
+    let mut out = String::with_capacity(json.len());
+    for c in json.chars() {
+        if yaml_needs_escape(c) {
+            out.push_str(&format!("\\u{:04x}", u32::from(c)));
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// A wire-schema document whose rendering would not read back as itself: a
+/// non-finite float, which neither JSON nor the wire schema's reader carries,
+/// or a parameter name too long once rendered for YAML to read it as a key:
+/// the limit counts the key as written, its quotes and escapes included —
+/// about 1022 plain characters, about 511 `é` or newlines (`\n`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+#[error("the document holds what the configuration format cannot carry: a number that is not finite, or a parameter name too long once rendered")]
+pub struct RenderError;
 
 /// Why a document's text is not a [`LogicalPipeline`]: the three halves of
 /// the load that can refuse it, each with its own cause intact.

@@ -331,20 +331,133 @@ pub struct GraphNode {
     pub parameters: BTreeMap<String, ParameterValue>,
 }
 
-/// A node parameter's value.
-#[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
-#[serde(untagged)]
+/// A node parameter's value, tagged with its kind: the one parameter type of
+/// the API, in a run's graph, a comparison's rows and a pipeline's typed
+/// document alike (ADR-C40 § 2). `60` and `60.0` are two configurations
+/// (ADR-C22), so an integer and a float of one value are never one value
+/// here.
+///
+/// An integer travels as decimal text, which the browser's number type
+/// cannot round; a float travels as a JSON number and is finite. Read from a
+/// request, each refuses what its kind does not carry: a number for an
+/// integer, text for a float, an integer written `+1`, `01`, `-0` or wider
+/// than 64 bits.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(
+    tag = "kind",
+    content = "value",
+    rename_all = "snake_case",
+    deny_unknown_fields
+)]
 pub enum ParameterValue {
+    /// Text.
+    String(String),
+    /// An integer of at most 64 bits, as decimal text: `-?(0|[1-9][0-9]*)`,
+    /// never `-0`.
+    Int(
+        #[serde(with = "decimal")]
+        #[schemars(schema_with = "decimal::schema")]
+        i64,
+    ),
+    /// A finite floating-point number.
+    Float(#[serde(deserialize_with = "finite")] f64),
     /// A boolean.
     Bool(bool),
-    /// An integer.
-    Int(i64),
-    /// A floating-point number.
-    Float(f64),
-    /// A string.
-    String(String),
     /// An ordered list.
     List(Vec<ParameterValue>),
+}
+
+/// An integer as decimal text, in the one spelling each value has.
+mod decimal {
+    use schemars::{json_schema, Schema, SchemaGenerator};
+    use serde::{de, Deserialize, Deserializer, Serializer};
+
+    /// Text in the one spelling: `0`, or a minus or none and no leading zero.
+    pub(super) fn schema(_: &mut SchemaGenerator) -> Schema {
+        json_schema!({ "type": "string", "pattern": "^(0|-?[1-9][0-9]*)$" })
+    }
+
+    pub(super) fn serialize<S: Serializer>(value: &i64, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_str(value)
+    }
+
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<i64, D::Error> {
+        let text = String::deserialize(deserializer)?;
+        // One spelling per value — no sign but a minus, no leading zero, no
+        // `-0` — so the text a value is shown as is the text it is read from.
+        let digits = text.strip_prefix('-').unwrap_or(&text);
+        let canonical = !digits.is_empty()
+            && digits.bytes().all(|b| b.is_ascii_digit())
+            && (digits == "0" || !digits.starts_with('0'))
+            && text != "-0";
+        let refused = || {
+            de::Error::custom(format!(
+                "an integer is decimal text of at most 64 bits, such as \"60\", not {text:?}"
+            ))
+        };
+        if !canonical {
+            return Err(refused());
+        }
+        text.parse().map_err(|_| refused())
+    }
+}
+
+/// A float that is finite. JSON carries no other, but the refusal is this
+/// type's to say rather than the reader's.
+fn finite<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<f64, D::Error> {
+    let value = f64::deserialize(deserializer)?;
+    if value.is_finite() {
+        Ok(value)
+    } else {
+        Err(serde::de::Error::custom("a float is a finite number"))
+    }
+}
+
+/// A pipeline document as the editor holds it (ADR-C40 § 1): the wire
+/// schema's shape — an optional schema version, the declared inputs in
+/// order, the nodes in order — with every parameter value tagged with its
+/// kind. The API's own type, converted by hand to and from the wire schema
+/// in `convert.rs`, never derived from it: the configuration format on disk
+/// is unchanged, and the browser never reads or writes it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TypedDocument {
+    /// The schema version the document is written in. Absent, the version
+    /// this build reads.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<u32>,
+    /// The pipeline itself.
+    pub pipeline: TypedGraph,
+}
+
+/// The graph of a `TypedDocument`, as a configuration nests it under
+/// `pipeline:`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TypedGraph {
+    /// The ids of the values the pipeline receives from its caller, in
+    /// declared order.
+    pub inputs: Vec<String>,
+    /// The nodes, in the order the document lists them.
+    pub nodes: Vec<TypedNode>,
+}
+
+/// One node of a `TypedDocument`, keyed as a configuration writes it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TypedNode {
+    /// The node's id; not yet known to be unique.
+    pub id: String,
+    /// Its family, a configuration's `component:` value; not yet known to
+    /// name one.
+    pub component: String,
+    /// Its `impl:` value.
+    #[serde(rename = "impl")]
+    pub implementation: String,
+    /// The ids it consumes, in port order; not yet known to exist.
+    pub inputs: Vec<String>,
+    /// Its parameters, in key order.
+    pub params: BTreeMap<String, ParameterValue>,
 }
 
 /// A data edge: `from`'s output feeds `to`'s input at `port`.
@@ -779,8 +892,9 @@ pub struct PipelineSummary {
     pub error: Option<PipelineError>,
 }
 
-/// `GET /pipelines/{name}`: one pipeline document, verbatim.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+/// `GET /pipelines/{name}`: one pipeline document, verbatim, and as the
+/// editor holds it when it can.
+#[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
 #[schemars(transform = every_property_required)]
 pub struct PipelineDetail {
     /// Its name.
@@ -793,6 +907,11 @@ pub struct PipelineDetail {
     pub hash: Option<String>,
     /// Why it does not validate, when it does not.
     pub error: Option<PipelineError>,
+    /// The document as the editor holds it, whenever its text reads into the
+    /// wire schema, whether or not it validates; `null` when it does not
+    /// read, or holds a value the typed document cannot carry, such as a
+    /// non-finite float (ADR-C40 § 4).
+    pub typed: Option<TypedDocument>,
 }
 
 /// Why a pipeline document does not validate: `pipeline_invalid`'s detail and

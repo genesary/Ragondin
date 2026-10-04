@@ -318,3 +318,19 @@ fn the_problem_name_is_optional() {
     assert_eq!(schemas["Problem"]["properties"]["name"]["type"], "string");
     assert!(!required(&schemas["Problem"]).contains(&"name"));
 }
+
+/// An integer parameter travels as decimal text in its one spelling: the
+/// schema says which text, so a generated client can check it too.
+#[test]
+fn an_integer_parameter_s_text_is_described_by_its_pattern() {
+    let variants = schemas()["ParameterValue"]["oneOf"].clone();
+    let int = variants
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|v| v["properties"]["kind"]["enum"][0] == "int")
+        .expect("an int variant")
+        .clone();
+    assert_eq!(int["properties"]["value"]["type"], "string");
+    assert_eq!(int["properties"]["value"]["pattern"], "^(0|-?[1-9][0-9]*)$");
+}

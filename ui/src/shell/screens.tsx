@@ -125,7 +125,7 @@ export function Screen({ route, heading, client, workspace, refreshWorkspace, re
     return (
       <>
         {title}
-        <EditorScreen client={client} name={route.name} workspace={workspace} />
+        <EditorScreen client={client} name={route.name} node={route.node} workspace={workspace} />
       </>
     );
   }

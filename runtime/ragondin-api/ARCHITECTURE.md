@@ -88,10 +88,12 @@ hand-built here over its generated stubs would call a service without
 `tonic` channel or a generated client type in this crate.
 
 Its workspace dependencies today are `ragondin-config` — `parse_document`,
-the one definition of a pipeline document's load, and `incompatible_wiring`,
-the CLI's report for an edge of the wrong kind (§ The pipelines); its closure
-is `ragondin-pipeline`, the YAML parser and two macro crates, no RPC or HTTP
-stack — `ragondin-experiments` — the `RunStore`
+the one definition of a pipeline document's load, its first half
+`read_document`, `render_document`, the one writer of the format, and
+`incompatible_wiring`, the CLI's report for an edge of the wrong kind
+(§ The pipelines, § The typed document); its closure
+is `ragondin-pipeline`, the YAML parser, the JSON writer and two macro crates,
+no RPC or HTTP stack — `ragondin-experiments` — the `RunStore`
 trait, the `Run` record, the typed `Trace`, `lower_configuration`, the
 walk to a run's ranking node, and `compare_runs` — `ragondin-pipeline`, for the `LogicalPipeline`
 that lowering yields,
@@ -616,6 +618,50 @@ whole problem body.
   `LocalFile::load` and `ragondin-experiments`' `lower_configuration` each
   call `parse_document` and add only their own words around its verdict.
 
+### The typed document
+
+ADR-C40 decides how a pipeline document travels to and from the editor: as a
+typed document, `TypedDocument` in `response.rs` — the wire schema's shape
+(an optional `version`, the declared `inputs`, the `nodes` with `id`,
+`component`, `impl`, `inputs` and `params`), every parameter value a tagged
+`ParameterValue`. It is this crate's own type, converted by hand in
+`convert.rs` (`typed_document`, `wire_document`), never derived from
+`RawPipeline` or `ParamValue` (ADR-C40 § 3, INV-9): `ParamValue`'s externally
+tagged `{"Float": 60.0}` is the in-memory model's, not the API's.
+
+- **`ParameterValue` is the one parameter type of the API** (ADR-C40 § 2): a
+  run's graph, a comparison's `ParameterRow` and the typed document all carry
+  it, as `{"kind": "...", "value": ...}`, adjacently tagged, every kind
+  tagged — `string`, `int`, `float`, `bool`, `list`. **An integer travels as
+  decimal text**, in its one spelling — no `+`, no leading zero, no `-0` —
+  since the browser's number type rounds above 2^53; **a float travels as a
+  JSON number**, finite. Read from a request, a value its kind does not carry
+  is `request_invalid`: a number for an integer, text for a float, an integer
+  wider than 64 bits (wider integers in the wire schema are #178's).
+- **Reading** (`GET /pipelines/{name}`, ADR-C40 § 4): the text, as before,
+  and `typed`, the document as the editor holds it, whenever the text reads
+  into the wire schema — `ragondin-config`'s `read_document`, the first half
+  of the one load — whether or not it validates; `null` when it does not
+  read, or holds a value the typed document cannot carry: a non-finite float
+  (`.nan`, `.inf`), which a JSON number cannot be. Such a document opens as
+  text only.
+- **Validating** (`POST /pipelines/validate`, ADR-C40 § 5): the body is
+  `ValidationRequest`, one key naming its form — `{"document": "<text>"}`,
+  the text checked as `ragondin validate` checks a file, which an import and
+  the CLI parity test send, or `{"typed": <TypedDocument>}`, the editor's.
+  A typed document is converted to the wire schema (a schema version this
+  build cannot read is `pipeline_invalid`, in the load's words), rendered by
+  `ragondin-config`'s `render_document` (a value the rendering cannot carry
+  is `pipeline_invalid`), and that text goes through `validation::check` like
+  any other: the hash answered is the one of exactly the bytes a write would
+  store, through the one load (INV-8). `tests/pipelines.rs` holds that a
+  typed document hashes as its text does, that `60` and `60.0` hash apart,
+  and that the typed document a read serves validates to the read's hash.
+- **What is not here**: writing the rendering — `PUT` still stores the text
+  it is sent, byte for byte — and the warning before a rendering replaces
+  text a person wrote, which are #356's (ADR-C40 § 7); patching stored text
+  instead of re-rendering it, left to its own decision (§ 9).
+
 ### The services and the probe
 
 The bindings are `WorkspaceSettings`' services. A `PUT` asks
@@ -935,7 +981,8 @@ from `response.rs`'s types only, is where a reviewer would see one arrive.
 `ragondin-experiments`' `compare` already runs — `lower_configuration`, which
 runs `ragondin-config`'s `parse_document` over the kept text. This crate calls
 that function; it does not parse YAML itself. A node
-carries its id, family, `impl:` name and parameters; an edge carries its
+carries its id, family, `impl:` name and parameters, each a tagged
+`ParameterValue` (§ The typed document); an edge carries its
 producer, consumer, port and the kind of value its producer puts on it — the
 query for a declared input, and otherwise `produced_kind` of the producing
 node. The nodes come in the canonical order (by id), the edges grouped by

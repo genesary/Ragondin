@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Graph } from '../api/types.ts';
+import { float, str } from '../parameters.ts';
 import { HYBRID_RERANK_GEN } from './fixtures.ts';
 import { describeOverlay, toModel } from './model.ts';
 
@@ -54,10 +55,19 @@ describe('toModel', () => {
     expect(byId(HYBRID_RERANK_GEN, 'answer').param).toEqual({ name: 'temperature', value: '0.2' });
     const bare: Graph = {
       inputs: [],
-      nodes: [{ id: 'r', family: 'retriever', implementation: 'bm25', parameters: { label: 'x' } }],
+      nodes: [{ id: 'r', family: 'retriever', implementation: 'bm25', parameters: { label: str('x') } }],
       edges: [],
     };
     expect(byId(bare, 'r').param).toBeUndefined();
+  });
+
+  it('draws a float with its fractional part, so it never reads as the integer of the same value', () => {
+    const graph: Graph = {
+      inputs: [],
+      nodes: [{ id: 'f', family: 'fusion', implementation: 'rrf', parameters: { k: float(60) } }],
+      edges: [],
+    };
+    expect(byId(graph, 'f').param).toEqual({ name: 'k', value: '60.0' });
   });
 
   it('types every input port by the kind of its edge, in port order, and the output by what the node puts out', () => {

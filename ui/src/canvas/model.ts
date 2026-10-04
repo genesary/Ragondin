@@ -1,4 +1,5 @@
-import type { EdgeKind, Graph, ParameterValue } from '../api/types.ts';
+import type { EdgeKind, Graph } from '../api/types.ts';
+import { formatParameter } from '../parameters.ts';
 import { familyOfComponent, rankSentence, type Family } from '../../design/index.ts';
 
 /** What a port carries: the API's edge kind, drawn by shape (Port.tsx). */
@@ -94,7 +95,6 @@ const DEFAULT_OUTPUT: Partial<Record<Family, PortKind>> = {
   generator: 'answer',
 };
 
-const show = (value: ParameterValue): string => (Array.isArray(value) ? value.map(show).join(', ') : String(value));
 
 export const edgeId = (from: string, to: string, port: number) => `${from}->${to}:${port}`;
 
@@ -123,7 +123,7 @@ export function toModel(graph: Graph): CanvasModel {
       id: node.id,
       family,
       impl: `${node.family}/${node.implementation}`,
-      ...(key !== undefined && value !== undefined ? { param: { name: key, value: show(value) } } : {}),
+      ...(key !== undefined && value !== undefined ? { param: { name: key, value: formatParameter(value) } } : {}),
       inputs: Array.from(ports, (kind) => kind ?? 'opaque'),
       output: outputOf(node.id) ?? DEFAULT_OUTPUT[family] ?? null,
     };

@@ -647,7 +647,10 @@ async fn a_run_launched_as_the_pipeline_whose_content_has_since_changed_fills_no
         serde_json::json!([{
             "node": "dense",
             "key": {"kind": "param", "name": "top_k"},
-            "values": [50, 10],
+            "values": [
+                { "kind": "int", "value": "50" },
+                { "kind": "int", "value": "10" },
+            ],
         }])
     );
     assert_eq!(feeding(&body, &id(2)).unwrap()["fills_column"], false);

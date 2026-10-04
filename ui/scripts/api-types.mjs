@@ -12,9 +12,9 @@
 
 const REF = '#/components/schemas/';
 
-// The keys a schema may carry that change no type: documentation and numeric
-// bounds the server enforces.
-const INERT = new Set(['description', 'format', 'minimum', 'maximum']);
+// The keys a schema may carry that change no type: documentation, and the
+// numeric bounds and string patterns the server enforces.
+const INERT = new Set(['description', 'format', 'minimum', 'maximum', 'pattern']);
 const KNOWN = new Set([
   ...INERT,
   '$ref',

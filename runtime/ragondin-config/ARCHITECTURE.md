@@ -14,7 +14,10 @@ YAML run locally **is** the Kubernetes custom resource, modulo the wire format.
 | Piece | Role |
 |---|---|
 | `parse_document` | A document's load, defined once, over text |
+| `read_document` | Its first half: text into the wire schema, valid or not |
+| `render_document` | The one writer of the format: the wire schema back to text |
 | `DocumentError` | Its three refusals, with no path |
+| `RenderError` | A document whose rendering would not read back as itself |
 | `incompatible_wiring` | The report for an edge of the wrong kind |
 | `ConfigSource` | The trait a binary holds, as `Box<dyn ConfigSource>` |
 | `LocalFile` | A YAML file on disk (P2), read and handed to `parse_document` |
@@ -66,10 +69,38 @@ nothing here presupposes an answer to it.
   around the verdict — a path, a problem body, a sentence about a stored run.
   A second reader of the format written beside these is the drift this rules
   out.
+- **`read_document` is the first half of the load, not a second one.**
+  `parse_document` is `read_document` then `validate`; `ragondin-api` calls
+  the first half alone to serve the typed document of a pipeline that does
+  not validate (ADR-C40 § 4), since such a document has no lowered form.
+- **The renderer writes JSON, which YAML reads** — a choice made here.
+  ADR-C40 § 5 asks that the rendering read back to the same `RawPipeline`,
+  that rendering it again change nothing, and that a string another reader
+  of the format could take for a boolean or a date be quoted. `serde_yaml`'s
+  writer quotes only what its own reader would retype: it leaves `yes`,
+  `on`, `off` and `2024-01-01` plain, which a YAML 1.1 reader takes for
+  booleans and a date, and it offers no way to ask for quotes. So
+  `render_document` writes `serde_json`'s indented JSON of the wire schema's
+  own `Serialize`: every string double-quoted, a float with its fractional
+  part (`60.0`), an integer without. The characters YAML folds or refuses
+  bare where JSON leaves them bare — U+007F to U+009F, U+2028, U+2029,
+  U+FFFE and U+FFFF — are written as `\uXXXX`, an escape both read as the
+  character, so every character a string may hold reads back; a test walks
+  them all. No YAML writer is written here, and no second YAML library is
+  taken on, which would escalate (`AGENTS.md` § Rules of engagement). **The
+  renderer refuses what would not read back as itself** — a non-finite
+  float, a parameter name too long once rendered for YAML to read it as a
+  key (the limit counts its quotes and escapes: about 1022 plain characters,
+  about 511 `é` or newlines) —
+  by reading its own rendering back through `read_document` and comparing,
+  so the promise holds by construction, not by the cases a test thought of. The cost, for #356,
+  which stores the rendering: a pipeline saved from the canvas is a JSON
+  document in a `.yaml` file. The tests in `tests/document.rs` hold the
+  round trip, the fixed point and the quoting over the ambiguous strings.
 - **The closure stays light, because two planes depend on this crate.**
   `ragondin-api` and `ragondin-experiments` reach `parse_document` through it,
   so its normal dependencies are `ragondin-pipeline`, `serde_yaml`,
-  `thiserror` and `async-trait`. `ragondin-proto`, the edge
+  `serde_json` (the renderer's writer), `thiserror` and `async-trait`. `ragondin-proto`, the edge
   `docs/code-architecture.md` §4.3 draws for the `Stream` source, is not
   declared: it would carry `tonic` and `prost` into both planes for nothing.
   The M7 work adds it with the source that uses it.

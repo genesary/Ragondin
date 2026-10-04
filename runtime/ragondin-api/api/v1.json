@@ -2572,34 +2572,114 @@
         "type": "object"
       },
       "ParameterValue": {
-        "anyOf": [
+        "description": "A node parameter's value, tagged with its kind: the one parameter type of\nthe API, in a run's graph, a comparison's rows and a pipeline's typed\ndocument alike (ADR-C40 § 2). `60` and `60.0` are two configurations\n(ADR-C22), so an integer and a float of one value are never one value\nhere.\n\nAn integer travels as decimal text, which the browser's number type\ncannot round; a float travels as a JSON number and is finite. Read from a\nrequest, each refuses what its kind does not carry: a number for an\ninteger, text for a float, an integer written `+1`, `01`, `-0` or wider\nthan 64 bits.",
+        "oneOf": [
           {
-            "description": "A boolean.",
-            "type": "boolean"
-          },
-          {
-            "description": "An integer.",
-            "format": "int64",
-            "type": "integer"
-          },
-          {
-            "description": "A floating-point number.",
-            "format": "double",
-            "type": "number"
-          },
-          {
-            "description": "A string.",
-            "type": "string"
-          },
-          {
-            "description": "An ordered list.",
-            "items": {
-              "$ref": "#/components/schemas/ParameterValue"
+            "additionalProperties": false,
+            "description": "Text.",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "string"
+                ],
+                "type": "string"
+              },
+              "value": {
+                "type": "string"
+              }
             },
-            "type": "array"
+            "required": [
+              "kind",
+              "value"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "An integer of at most 64 bits, as decimal text: `-?(0|[1-9][0-9]*)`,\nnever `-0`.",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "int"
+                ],
+                "type": "string"
+              },
+              "value": {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "value"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "A finite floating-point number.",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "float"
+                ],
+                "type": "string"
+              },
+              "value": {
+                "format": "double",
+                "type": "number"
+              }
+            },
+            "required": [
+              "kind",
+              "value"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "A boolean.",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "bool"
+                ],
+                "type": "string"
+              },
+              "value": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "kind",
+              "value"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "An ordered list.",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "list"
+                ],
+                "type": "string"
+              },
+              "value": {
+                "items": {
+                  "$ref": "#/components/schemas/ParameterValue"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "kind",
+              "value"
+            ],
+            "type": "object"
           }
-        ],
-        "description": "A node parameter's value."
+        ]
       },
       "PartialQueries": {
         "description": "`GET /jobs/{id}/queries`: the queries a failed or cancelled run job\nexecuted before it stopped — the one a failed run stopped on included,\nits failing node last — whose traces it kept under\n`jobs/<id>/partial/` — never in the store, which holds a run complete or\nnot at all.\n\nNothing here is scored, and no query or passage text is read: a run\nrecords the digests of the dataset it was evaluated on, and the ground\ntruth and the text are read only against a dataset that digests to them\n(ADR-C36 § 4); a job's partial traces record none.",
@@ -2668,7 +2748,7 @@
         "type": "object"
       },
       "PipelineDetail": {
-        "description": "`GET /pipelines/{name}`: one pipeline document, verbatim.",
+        "description": "`GET /pipelines/{name}`: one pipeline document, verbatim, and as the\neditor holds it when it can.",
         "properties": {
           "document": {
             "description": "The document, byte for byte as the file holds it.",
@@ -2700,6 +2780,20 @@
           "name": {
             "description": "Its name.",
             "type": "string"
+          },
+          "typed": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TypedDocument"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "The document as the editor holds it, whenever its text reads into the\nwire schema, whether or not it validates; `null` when it does not\nread, or holds a value the typed document cannot carry, such as a\nnon-finite float (ADR-C40 § 4)."
           }
         },
         "required": [
@@ -2707,13 +2801,14 @@
           "error",
           "etag",
           "hash",
-          "name"
+          "name",
+          "typed"
         ],
         "type": "object"
       },
       "PipelineDocument": {
         "additionalProperties": false,
-        "description": "`PUT /pipelines/{name}` and `POST /pipelines/validate`: a pipeline\ndocument, as text.",
+        "description": "`PUT /pipelines/{name}`: a pipeline document, as text.",
         "properties": {
           "document": {
             "description": "The YAML document. Stored byte for byte when it is written: never\nre-serialized.",
@@ -4251,6 +4346,96 @@
           }
         ]
       },
+      "TypedDocument": {
+        "additionalProperties": false,
+        "description": "A pipeline document as the editor holds it (ADR-C40 § 1): the wire\nschema's shape — an optional schema version, the declared inputs in\norder, the nodes in order — with every parameter value tagged with its\nkind. The API's own type, converted by hand to and from the wire schema\nin `convert.rs`, never derived from it: the configuration format on disk\nis unchanged, and the browser never reads or writes it.",
+        "properties": {
+          "pipeline": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TypedGraph"
+              }
+            ],
+            "description": "The pipeline itself."
+          },
+          "version": {
+            "description": "The schema version the document is written in. Absent, the version\nthis build reads.",
+            "format": "uint32",
+            "minimum": 0,
+            "nullable": true,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "pipeline"
+        ],
+        "type": "object"
+      },
+      "TypedGraph": {
+        "additionalProperties": false,
+        "description": "The graph of a `TypedDocument`, as a configuration nests it under\n`pipeline:`.",
+        "properties": {
+          "inputs": {
+            "description": "The ids of the values the pipeline receives from its caller, in\ndeclared order.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "nodes": {
+            "description": "The nodes, in the order the document lists them.",
+            "items": {
+              "$ref": "#/components/schemas/TypedNode"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "inputs",
+          "nodes"
+        ],
+        "type": "object"
+      },
+      "TypedNode": {
+        "additionalProperties": false,
+        "description": "One node of a `TypedDocument`, keyed as a configuration writes it.",
+        "properties": {
+          "component": {
+            "description": "Its family, a configuration's `component:` value; not yet known to\nname one.",
+            "type": "string"
+          },
+          "id": {
+            "description": "The node's id; not yet known to be unique.",
+            "type": "string"
+          },
+          "impl": {
+            "description": "Its `impl:` value.",
+            "type": "string"
+          },
+          "inputs": {
+            "description": "The ids it consumes, in port order; not yet known to exist.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "params": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ParameterValue"
+            },
+            "description": "Its parameters, in key order.",
+            "type": "object"
+          }
+        },
+        "required": [
+          "id",
+          "component",
+          "impl",
+          "inputs",
+          "params"
+        ],
+        "type": "object"
+      },
       "UnplacedPair": {
         "description": "A pair drawn by hand that a comparison could not apply to one of its\nruns: a node it names is not a retriever, fusion or reranker of the run\nit would be read in. A pairing is kept against two pipelines' current\ndocuments, and applies to a run launched under a pipeline's name whose\ncontent has since changed for the nodes that run still has (decided in #402); every\nother pair is reported here, never skipped and never guessed onto\nanother node.",
         "properties": {
@@ -4299,6 +4484,37 @@
           "reason"
         ],
         "type": "object"
+      },
+      "ValidationRequest": {
+        "description": "`POST /pipelines/validate`: a pipeline document, as text or as the editor\nholds it — one key, naming which (ADR-C40 § 5, § 6).",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "description": "The YAML document, checked exactly as `ragondin validate` checks a\nfile: what an import and the command line send.",
+            "properties": {
+              "document": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "document"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "The typed document the editor holds. The server converts it to the\nwire schema, renders that as text, and checks the rendering, so the\nhash is the one of the bytes a write would store.",
+            "properties": {
+              "typed": {
+                "$ref": "#/components/schemas/TypedDocument"
+              }
+            },
+            "required": [
+              "typed"
+            ],
+            "type": "object"
+          }
+        ]
       },
       "Workspace": {
         "description": "`GET /workspace`: where the server works, how it is set up, which build is\nanswering and what that build can run.",
@@ -4833,12 +5049,13 @@
     },
     "/pipelines/validate": {
       "post": {
+        "description": "The body holds the document as text, under `document`, or as the editor holds it, under `typed`. A typed document is converted to the wire schema, rendered as text and checked as that text is, so the hash is the one of the bytes a write would store; a schema version it states that this build cannot read, or a value its rendering cannot carry, is pipeline_invalid.",
         "parameters": [],
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/PipelineDocument"
+                "$ref": "#/components/schemas/ValidationRequest"
               }
             }
           },
@@ -4891,7 +5108,7 @@
                 }
               }
             },
-            "description": "One pipeline document, verbatim, with its etag and its hash or why it does not validate."
+            "description": "One pipeline document, verbatim, with its etag, its hash or why it does not validate, and its typed document when it reads."
           },
           "default": {
             "content": {
@@ -4904,7 +5121,7 @@
             "description": "An error, as application/problem+json."
           }
         },
-        "summary": "One pipeline document, verbatim, with its etag and its hash or why it does not validate."
+        "summary": "One pipeline document, verbatim, with its etag, its hash or why it does not validate, and its typed document when it reads."
       },
       "put": {
         "description": "A write states one precondition: `If-Match` to replace the stored document, or `If-None-Match: *` to create one. A stale etag, `If-Match: *` with nothing stored, a creation over an existing document, or neither header is precondition_failed (412), with the current etag in the `ETag` header, the detail and the problem's `etag` member, and nothing written; both headers at once is request_invalid. A document the composition root refuses — a key no component reads — is pipeline_invalid, in `ragondin bench`'s words. The answer's etag is also its `ETag` header.",

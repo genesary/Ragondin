@@ -1,12 +1,13 @@
 // The Editor screen: the canvas in write mode over a pipeline document held
-// in state (src/editor/Editor.tsx). ARCHITECTURE.md § The editor.
+// in state (src/editor/Editor.tsx): a new one, or a stored one opened from its
+// typed document. ARCHITECTURE.md § The editor.
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button, ButtonLink, EmptyState, Sheet } from '../../design/index.ts';
 import type { ApiClient, ApiResult } from '../api/client.ts';
 import type { PipelineDetail, ServiceListing, Workspace } from '../api/types.ts';
-import { formatHash } from '../routes.ts';
+import { formatHash, navigate } from '../routes.ts';
 import { ErrorState, Loading, Resource, type RequestState } from '../shell/states.tsx';
-import { emptyDocument } from './document.ts';
+import { emptyDocument, type WireDocument } from './document.ts';
 import { grammarOf } from './ports.ts';
 
 // The canvas and its two libraries come with the editor, in a chunk of their
@@ -17,6 +18,8 @@ export type EditorScreenProps = {
   client: ApiClient;
   /** The pipeline the address names, if any. */
   name: string | undefined;
+  /** The node the address selects in it, if any. */
+  node?: string | undefined;
   /** The shell's read of `GET /workspace`: its capabilities fill the palette. */
   workspace: RequestState<Workspace>;
 };
@@ -47,11 +50,9 @@ function useOnce<T>(read: ((signal: AbortSignal) => Promise<ApiResult<T>>) | nul
   return [state, ask];
 }
 
-/** The editor over a new, empty document, once the services are read. */
-function NewPipeline({ client, workspace }: { client: ApiClient; workspace: Workspace }) {
+/** The editor over `initial`, once the services are read. */
+function Editing({ client, workspace, title, initial, selected, onSelect }: { client: ApiClient; workspace: Workspace; title: string; initial: WireDocument; selected: string | null; onSelect: (id: string | null) => void }) {
   const [services, retry] = useOnce<ServiceListing>((signal) => client.get('/services', { signal }));
-  const [selected, setSelected] = useState<string | null>(null);
-  const [initial] = useState(emptyDocument);
   const grammar = useMemo(() => grammarOf(workspace.capabilities), [workspace.capabilities]);
   return (
     <Resource state={services} loading="Reading the services Setup bound" error={(problem) => <ErrorState problem={problem} onRetry={retry} />}>
@@ -59,13 +60,13 @@ function NewPipeline({ client, workspace }: { client: ApiClient; workspace: Work
         <Suspense fallback={<Loading label="Opening the editor" />}>
         <Editor
           client={client}
-          title="New pipeline"
+          title={title}
           initial={initial}
           capabilities={workspace.capabilities}
           services={listing.services}
           grammar={grammar}
           selected={selected}
-          onSelect={setSelected}
+          onSelect={onSelect}
         />
         </Suspense>
       )}
@@ -73,36 +74,58 @@ function NewPipeline({ client, workspace }: { client: ApiClient; workspace: Work
   );
 }
 
-/** A stored pipeline: read, and said to be out of the canvas's reach until the API serves it as a graph. */
-function Stored({ client, name }: { client: ApiClient; name: string }) {
+/** The editor over a new, empty document; its selection is the screen's, since no address names it. */
+function NewPipeline({ client, workspace }: { client: ApiClient; workspace: Workspace }) {
+  const [selected, setSelected] = useState<string | null>(null);
+  const [initial] = useState(emptyDocument);
+  return <Editing client={client} workspace={workspace} title="New pipeline" initial={initial} selected={selected} onSelect={setSelected} />;
+}
+
+/**
+ * A stored pipeline, opened from the typed document `GET /pipelines/{name}`
+ * serves — whether or not it validates (ADR-C40 § 4) — its selected node the
+ * address's: restored from `#editor/<name>/node/<id>`, and written there.
+ * A document whose text does not read into the wire schema, or holds a value
+ * the typed document cannot carry, has none, and is said to be text only.
+ */
+function Stored({ client, name, node, workspace }: { client: ApiClient; name: string; node: string | undefined; workspace: RequestState<Workspace> }) {
   const [detail, retry] = useOnce<PipelineDetail>((signal) => client.get('/pipelines/{name}', { name }, { signal }));
+  const onSelect = useCallback((id: string | null) => navigate(id === null ? { screen: 'editor', name } : { screen: 'editor', name, node: id }, { replace: true }), [name]);
   return (
     <Resource state={detail} loading={`Reading ${name}`} error={(problem) => <ErrorState problem={problem} onRetry={retry} />}>
-      {() => (
-        <Sheet>
-          <EmptyState
-            heading={`${name} cannot be opened on the canvas yet`}
-            action={
-              <ButtonLink kind="primary" size="l" href={formatHash({ screen: 'editor' })}>
-                Start a new pipeline
-              </ButtonLink>
-            }
-          >
-            The API serves a pipeline as its text, and the editor holds a pipeline as its wire-schema document, which it does not parse from text. Until the API serves a stored pipeline's graph, the canvas edits new pipelines only.
-          </EmptyState>
-        </Sheet>
-      )}
+      {(pipeline) => {
+        if (pipeline.typed === null) {
+          return (
+            <Sheet>
+              <EmptyState
+                heading={`${name} cannot be opened on the canvas`}
+                action={
+                  <ButtonLink kind="primary" size="l" href={formatHash({ screen: 'editor' })}>
+                    Start a new pipeline
+                  </ButtonLink>
+                }
+              >
+                Its text does not read as a pipeline document the canvas can hold{pipeline.error === null ? '.' : `: ${pipeline.error.detail}`}
+              </EmptyState>
+            </Sheet>
+          );
+        }
+        if (workspace.status === 'loading') return <Loading label="Reading this build's capabilities" />;
+        // A failed workspace read is the shell's to show, with Retry, above the screen.
+        if (workspace.status === 'error') return null;
+        return <Editing client={client} workspace={workspace.value} title={name} initial={pipeline.typed} selected={node ?? null} onSelect={onSelect} />;
+      }}
     </Resource>
   );
 }
 
 /**
- * `#editor`: one action, a new pipeline, and a link to Runs. `#editor/<name>`:
- * the stored pipeline, read, and why the canvas cannot open it yet.
+ * `#editor`: one action, a new pipeline, and a link to Runs.
+ * `#editor/<name>[/node/<id>]`: the stored pipeline on the canvas.
  */
-export function EditorScreen({ client, name, workspace }: EditorScreenProps) {
+export function EditorScreen({ client, name, node, workspace }: EditorScreenProps) {
   const [started, setStarted] = useState(false);
-  if (name !== undefined) return <Stored client={client} name={name} />;
+  if (name !== undefined) return <Stored key={name} client={client} name={name} node={node} workspace={workspace} />;
   if (started) {
     if (workspace.status === 'loading') return <Loading label="Reading this build's capabilities" />;
     // A failed workspace read is the shell's to show, with Retry, above the screen.
