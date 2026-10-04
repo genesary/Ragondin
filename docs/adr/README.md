@@ -21,7 +21,7 @@ An **Architecture Decision Record (ADR)** captures one architectural decision: i
 
 - **`000-template.md`** — the template every ADR follows: Context / Decision / Alternatives rejected / Consequences / Status, plus an optional Amendments section (process rule 2).
 - **`ADR-001-*.md` … `ADR-016-*.md`** — the frozen decisions of the *system* architecture, one file per decision, cited as `ADR-1` … `ADR-16`.
-- **`ADR-C01-*.md` … `ADR-C39-*.md`** — the frozen decisions of the *code* architecture, one file per decision, cited as `ADR-C1` … `ADR-C39`.
+- **`ADR-C01-*.md` … `ADR-C40-*.md`** — the frozen decisions of the *code* architecture, one file per decision, cited as `ADR-C1` … `ADR-C40`.
 
 Each file is self-contained: it should be understandable and actionable on its own, without first reading `AGENTS.md` or the architecture documents. If an ADR only makes sense after reading something else, it is under-specified and should be fixed.
 
@@ -93,6 +93,7 @@ index of citable decisions is worse than none — `just check` fails when it dri
 | [`ADR-C37`](ADR-C37-request-input-read-through-own-extractors.md) | Request input reaches `ragondin-api`'s `/api` handlers only through the crate's own extractors, over axum's `query` feature; every query parameter and every request header a handler reads is typed and declared in the API description | INV-1, INV-4, INV-11, INV-12 | amended |
 | [`ADR-C38`](ADR-C38-workspace-toml-edited-in-place-with-toml-edit.md) | The settings file `workspace.toml` is read and edited in place with `toml_edit`, a dependency of `ragondin-api` alone; its schema is checked by meaning, and it is written by per-key operations that keep a person's comments | INV-4, INV-12 | accepted |
 | [`ADR-C39`](ADR-C39-a-run-records-how-it-was-launched-outside-its-identity.md) | A run records the workspace pipeline name it was launched as, and for a prefix run its parent, in a write-once launch record outside its identity, stamped only by the composition root; the record and the current hash matches are two independent facts, and a Pipeline matrix cell is filled from the current content alone | INV-1, INV-8, INV-9 | accepted |
+| [`ADR-C40`](ADR-C40-a-pipeline-document-crosses-the-api-as-a-typed-document.md) | A pipeline document crosses the internal API as a typed document that mirrors the wire schema's shape and whose every parameter value states its kind; the browser never parses or writes the configuration format, and the server alone renders it | INV-8, INV-9 | accepted |
 
 <!-- END GENERATED ADR INDEX -->
 
@@ -146,7 +147,7 @@ stated here canonically.
 number is **never padded**:
 
 - System-architecture decisions use the bare prefix: `ADR-1` … `ADR-16`.
-- Code-architecture decisions use the `C` prefix: `ADR-C1` … `ADR-C39`.
+- Code-architecture decisions use the `C` prefix: `ADR-C1` … `ADR-C40`.
 - New decisions (from `decision` issues) continue the appropriate sequence and are added, never inserted retroactively.
 
 **The filename** is `ADR-<number>-<slug>.md`, where the number **is** padded — to
