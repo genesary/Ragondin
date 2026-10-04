@@ -118,7 +118,7 @@ of the same value are never shown as the same value.
   schema, renders it to the configuration format, and loads that rendering
   through the single load.
 - **The hash it reports is therefore the hash of exactly the bytes a write
-  would store** (INV-8).
+  would store.**
 - **A write stores that rendering, and only when the pipeline validates.**
 - **The rendering parses back to the same wire document, and rendering it
   again changes nothing.**
@@ -176,8 +176,7 @@ made by a hand-written editor for the format.
   hash is unchanged.**
 - **Integers keep their full width.**
 - **The editor can open stored pipelines, including invalid ones.**
-- **The known limit recorded in `ui/ARCHITECTURE.md` § The editor is
-  withdrawn**, by the implementation that makes it untrue.
+- **The known limit recorded in `ui/ARCHITECTURE.md` is withdrawn.**
 - **#433 item 3 is re-scoped**: it serves the typed document instead of a
   graph, and `runtime/ragondin-config` joins its scope.
 - **Integers too wide for a 64-bit integer**, which the wire schema currently
@@ -187,12 +186,9 @@ made by a hand-written editor for the format.
   what its rendering cannot carry, and that the user be told before a text the
   editor did not write is replaced; § 7 above names what that warning says.
   ADR-016's Decision changes only by supersession (`docs/adr/README.md`
-  process rule 1), and nothing here supersedes it.
-- **ADR-C36 is not amended.** The typed document is one of the API's own types
-  under § 2, and the browser still holds no implementation of the pipeline
-  grammar (§ 1).
-- **ADR-C22 is not amended.** The parameter grammar is unchanged, and no `Map`
-  is added; a kind it adds later gains its own tag here (§ 1).
+  process rules 1 and 2), and nothing here supersedes it.
+- **ADR-C22 is not amended.** The parameter grammar is unchanged; a kind it
+  adds later gains its own tag here (§ 1).
 - **No format-preserving editor of the configuration format is adopted.**
   ADR-C38 adopted one for `workspace.toml`; whether a write patches a stored
   pipeline's text is left to its own decision (§ 9), and a hand-written editor
