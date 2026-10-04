@@ -1543,18 +1543,18 @@ ranking and the answer are the walk's, and a pair never moves them.
   by `lineage::pipeline_of`. It is reported as each run's `pipeline`: the
   lookup's answer, not a claim about which version the run is. No record
   naming one and no document, or several, is `null`, and such a run pairs
-  automatically only. A recorded name the workspace no longer holds, or
-  that a stored name differs from only in case, has no pairing, and the
-  comparison goes on without one: a pairing is read only for two names the
-  listing holds exactly (`lineage::Index::held`: stored as given, and no
-  case alias of either stored beside it), so neither `pipeline_not_found`
-  nor the case alias's `request_invalid` can refuse the comparison. The
-  comparison lists the pipelines once (`lineage::index`): the names it
-  looks a pairing up among are those of the listing it found each run's
-  pipeline in. That narrows the window in which a document deleted
-  meanwhile names a run's pipeline and is then missing; it cannot close it,
-  so a `pipeline_not_found` from `read_pairing` is read as no pairing, and
-  the comparison goes on.
+  automatically only. A run's pipeline name — recorded, or its one hash
+  match — that the workspace no longer holds, or that a stored name differs
+  from only in case, has no pairing, and the comparison goes on without one:
+  a pairing is read only for two names the listing holds exactly
+  (`lineage::Index::held`: stored as given, and no case alias of either
+  stored beside it), so neither `pipeline_not_found` nor the case alias's
+  `request_invalid` can refuse the comparison. The comparison lists the
+  pipelines once (`lineage::index`): the names it looks a pairing up among
+  are those of the listing it found each run's pipeline in. That narrows the
+  window in which a document deleted meanwhile names a run's pipeline and is
+  then missing; it cannot close it, so a `pipeline_not_found` from
+  `read_pairing` is read as no pairing, and the comparison goes on.
 - **A run of earlier content gets the pairs whose nodes it still has.** A
   pairing is kept against the two pipelines' current documents. Applied to
   a run launched as *N* whose content has since changed, *N*'s pairs apply

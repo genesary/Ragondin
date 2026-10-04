@@ -95,6 +95,14 @@ describe('the group heading', () => {
     expect(document.querySelector('th[scope="rowgroup"]')?.textContent).toContain('not checked against the workspace');
   });
 
+  it('fails closed on a name the group gives no held state for: unlinked', () => {
+    show(group({ names: ['x'], held: [] }));
+    expect(screen.queryByRole('link')).toBeNull();
+    const header = document.querySelector('th[scope="rowgroup"]') as HTMLElement;
+    expect(header.textContent).toContain('x');
+    expect(header.textContent).toContain('not checked against the workspace');
+  });
+
   it('links a recorded name the workspace holds exactly', () => {
     show(group({ names: ['hybrid'], held: ['exactly'] }));
     expect(screen.getByRole('link', { name: 'hybrid' }).getAttribute('href')).toBe('#pipeline/hybrid');

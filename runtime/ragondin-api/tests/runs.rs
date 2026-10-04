@@ -827,3 +827,23 @@ async fn hash_matches_no_case_alias_shadows_are_refused_none() {
     assert_eq!(body["runs"][0]["pipeline_names"], json!(["stub"]));
     assert_eq!(body["runs"][0]["refused_pipeline_names"], json!([]));
 }
+
+#[tokio::test]
+async fn a_single_hash_match_beside_a_case_alias_that_does_not_validate_is_refused() {
+    // `Stub.yaml` does not validate, so it is no hash match, yet it is a
+    // stored name: the file backend refuses `stub`, its case alias, all the
+    // same.
+    let text = fixture_run().config.as_str().to_owned();
+    let mut backends = fakes(FakeRunStore::holding([fixture_run()]));
+    backends.pipelines = Arc::new(HeldPipelines {
+        files: vec![
+            ("stub".to_owned(), text),
+            ("Stub".to_owned(), "pipeline: [".to_owned()),
+        ],
+    });
+
+    let body = json(send(app_with_backends(backends), get("/api/v1/runs")).await).await;
+
+    assert_eq!(body["runs"][0]["pipeline_names"], json!(["stub"]));
+    assert_eq!(body["runs"][0]["refused_pipeline_names"], json!(["stub"]));
+}
