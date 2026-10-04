@@ -8,6 +8,12 @@ Each unit of work is a single issue, developed on its own branch, in its own git
 
 Branch naming follows `<type>/<issue-number>-<slug>`, e.g. `feat/12-logical-pipeline-hash`.
 
+**Remove a worktree as soon as its agent is finished.** A worktree's agent is finished when its PR is merged or closed, or when its work has been handed to another worktree. Each worktree carries its own `target/` and `ui/node_modules/`, which run to several gigabytes per worktree once `just check` has run. Worktrees left in place fill the disk, and every agent then fails with "no space left on device".
+
+- Run `git worktree remove <path>` right after the merge, and `git worktree prune` after it.
+- Keep only the worktrees whose agent is still running, or whose PR is still open and awaiting review or fixes.
+- Before removing a worktree, check `git -C <path> status`. Uncommitted changes there are either work to save first, or the stale leftovers of a branch that has already merged.
+
 ## How to launch an agent on an issue
 
 Use this framing, verbatim:
