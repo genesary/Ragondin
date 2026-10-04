@@ -38,12 +38,9 @@ use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use ragondin_benchmarks::identity::dataset_version;
 use ragondin_benchmarks::{Benchmark, CarriedPieces};
 use ragondin_engine::{plan_physical, Engine, EngineContext, ExecutionTrace, Output, ValueSummary};
-use ragondin_experiments::{
-    ranking_node, terminal, ConfigDocument, Metrics, Run, RunInputs, TraceDocument,
-};
+use ragondin_experiments::{ranking_node, terminal, ConfigDocument, Metrics, Run, TraceDocument};
 use ragondin_metrics::{
     documents_by_first_occurrence, exact_match, ndcg_at_k, recall_at_k, reciprocal_rank, token_f1,
     Metric,
@@ -52,7 +49,7 @@ use ragondin_pipeline::{LogicalPipeline, NodeId};
 use ragondin_types::{DocId, QueryId};
 
 use crate::error::{HarnessError, RankingWalkError};
-use crate::identity::run_id;
+use crate::identity::{self, run_id};
 use crate::trace::render;
 use crate::CorpusIndex;
 
@@ -274,15 +271,9 @@ where
         metrics.insert(name.to_string(), value);
     }
 
-    let inputs = RunInputs {
-        pipeline: evaluation.pipeline.content_hash(),
-        dataset_version: dataset_version(evaluation.benchmark),
-        index_version: evaluation.index.version().to_string(),
-        model_hashes: evaluation.model_hashes.clone(),
-        // The workspace shares one version, so this crate's own is the version
-        // of the engine it was compiled against.
-        engine_version: env!("CARGO_PKG_VERSION").to_string(),
-    };
+    // The construction `run_identity` announces a run by, so an id announced
+    // before the run and this one differ only when an input did.
+    let inputs = identity::inputs(evaluation);
 
     Ok(Run {
         id: run_id(&inputs),

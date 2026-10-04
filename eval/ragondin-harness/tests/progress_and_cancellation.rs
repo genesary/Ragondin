@@ -23,7 +23,7 @@ use ragondin_contracts::{ComponentError, RetrieveParams, Retriever};
 use ragondin_engine::EngineContext;
 use ragondin_experiments::{ConfigDocument, Run, TraceDocument};
 use ragondin_harness::{
-    evaluate, evaluate_observed, CorpusIndex, Evaluation, HarnessError, QueryProgress,
+    evaluate, evaluate_observed, run_identity, CorpusIndex, Evaluation, HarnessError, QueryProgress,
 };
 use ragondin_pipeline::{LogicalPipeline, ParamValue};
 use ragondin_stub::{StubFusion, StubRetriever};
@@ -506,4 +506,54 @@ fn without_durations(run: &Run) -> Vec<(QueryId, serde_json::Value)> {
             (query.clone(), value)
         })
         .collect()
+}
+
+#[tokio::test]
+async fn the_identity_announced_before_a_run_is_the_one_the_completed_run_carries() {
+    // A caller that must name a run before running it — a queue refusing a
+    // run already stored — reads the id from the same construction the run's
+    // tail uses, so the two can differ only when an input does.
+    let (pipeline, config) = pipeline(&fixture("stub-over-beir-mini.yaml")).await;
+    let benchmark = beir_mini();
+    let index = CorpusIndex::build(benchmark.corpus());
+    let mut evaluation = evaluation(&pipeline, &config, &benchmark, &index);
+    evaluation
+        .model_hashes
+        .insert("embedder".to_owned(), "sha256:abc".to_owned());
+    let calls = Arc::new(AtomicUsize::new(0));
+
+    let announced = run_identity(&evaluation);
+    let run = evaluate(&evaluation, &counting_context(&calls, None))
+        .await
+        .expect("the stub pipeline cannot fail on this benchmark");
+
+    assert_eq!(announced, run.id);
+}
+
+#[tokio::test]
+async fn the_identity_answers_for_a_run_cancelled_before_its_first_query() {
+    // No query, no context consulted: the identity is a function of the
+    // evaluation's inputs alone.
+    let (pipeline, config) = pipeline(&fixture("stub-over-beir-mini.yaml")).await;
+    let benchmark = beir_mini();
+    let index = CorpusIndex::build(benchmark.corpus());
+    let evaluation = evaluation(&pipeline, &config, &benchmark, &index);
+    let calls = Arc::new(AtomicUsize::new(0));
+
+    let stopped = evaluate_observed(
+        &evaluation,
+        &counting_context(&calls, None),
+        |_: QueryProgress<'_>| {},
+        &AtomicBool::new(true),
+    )
+    .await
+    .expect_err("the signal is read before the first query");
+    let announced = run_identity(&evaluation);
+
+    assert!(matches!(stopped, HarnessError::Cancelled { completed: 0 }));
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    let completed = evaluate(&evaluation, &counting_context(&calls, None))
+        .await
+        .expect("the same evaluation, run to its end");
+    assert_eq!(announced, completed.id);
 }
