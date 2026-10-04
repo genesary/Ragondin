@@ -1,0 +1,21 @@
+# The git half of the build identity, `<version>+<commit>[-dirty]`: one rule,
+# read by both builds that compute it, so that a UI built with the binary
+# carries the identity that binary reports. bin/ragondin/build.rs reads it for
+# the binary, ui/scripts/build-identity.mjs for the UI's bundle.
+#
+# Each non-comment line is the arguments of one git command, split on
+# whitespace, run at the repository; a command that fails or prints nothing
+# yields nothing. The first prints the commit: nothing means `unknown`, and
+# then the tree is never dirty. The second prints something when the tree is
+# dirty.
+#
+# Dirty is a tracked file modified, or a change staged, against HEAD. An
+# untracked file is not: no build reads one it was not told about (a Finder
+# `.DS_Store`, an editor's swap file), and counting it made the binary say
+# dirty where the page did not, so the page refused to load. A new source
+# file is dirty once staged; until then, a build reaches it only through an
+# edit to a tracked file that names it, and that edit is dirty.
+# `--no-optional-locks`: a plain `status` may rewrite the index, which the
+# binary's build script watches, and would rerun it for a change it made.
+rev-parse --short=12 HEAD
+--no-optional-locks status --porcelain --untracked-files=no

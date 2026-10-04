@@ -25,8 +25,9 @@ charter.
 | `src/bench.rs` | Evaluates a configuration against a benchmark through that path and records the run, or refuses, before executing, a run the store already holds |
 | `src/binding.rs` | `--remote <family>/<name>=<uri>`: the bindings, parsed and checked (ADR-C32 § 2) |
 | `src/wiring.rs` | A node's `Params` on one side, a constructed component on the other; a binding's channel, and the `Remote` adapter over it |
-| `src/ui/` | `ragondin ui`, behind the `ui` feature: the loopback rule (`address.rs`), the embedded asset table `ragondin-api` serves (`assets.rs`), `Launcher` (`launcher.rs`), where the workspace is (`location.rs`), and the handler that opens it and wires the backends (`mod.rs`) |
+| `src/ui/` | `ragondin ui`, behind the `ui` feature: the loopback rule (`address.rs`), the embedded asset table `ragondin-api` serves (`assets.rs`), `Launcher` (`launcher.rs`), where the workspace is (`location.rs`), the git half of the build identity, which `build.rs` compiles as its own module and the crate only for its tests (`build_identity.rs`), and the handler that opens it and wires the backends (`mod.rs`) |
 | `build.rs` | Under `ui`: what `rust-embed` embeds — `ui/dist/`, or a generated notice page — and the commit the build identity names |
+| `build-identity.rule` | The two git commands that read the build identity's commit and dirty flag: one file, read by `build.rs` and by `ui/scripts/build-identity.mjs` |
 | `tests/cli.rs` | `validate` and the rest of the command line, exercised as a process |
 | `tests/compare.rs` | `compare`, exercised as a process, against runs written straight into a store |
 | `tests/calibration.rs` | The harness against a published SciFact figure, and the exit criterion on real data — ignored by default, run by `just calibrate` |
@@ -539,20 +540,41 @@ runs in <store>) at http://<address>/`. It opens no browser.
   dependency of this crate, as ADR-C36 § 6 keeps it to `ragondin-api` — the
   product owner's ruling on this issue's review — so no route can be added
   here outside the envelope without a manifest change a reviewer sees.
-- **The build identity is `<crate version>+<commit>`, with `-dirty` when the
-  tree had uncommitted changes**, the commit being `git rev-parse --short=12
-  HEAD` as `build.rs` read it, or `unknown` outside a git checkout. A commit,
-  rather than a digest of the embedded assets, because the UI compares builds
-  to know whether the API it talks to is the one it was built with, and a
-  commit moves with either side; a version alone would not move at all
-  between releases. `-dirty` is `git --no-optional-locks status --porcelain`
-  printing anything (without the flag, `status` may rewrite the watched
-  index and rerun the script on the next build) —
-  a modified, staged or untracked-and-not-ignored file — when `build.rs` ran:
-  it marks the identity a commit cannot vouch for. `build.rs` reruns when
-  `HEAD`, the branch it names, `packed-refs` or the index changes, so a commit
-  or a `git add` refreshes both parts; an edit left unstaged after the last
-  run does not, and a developer's build can then say clean while it is not.
+- **The build identity is `<crate version>+<commit>`, with `-dirty` when a
+  tracked file is modified or a change is staged**, or `<crate
+  version>+unknown` outside a git checkout. A commit, rather than a digest of
+  the embedded assets, because the UI compares builds to know whether the API
+  it talks to is the one it was built with, and a commit moves with either
+  side; a version alone would not move at all between releases. `-dirty`
+  marks the identity a commit cannot vouch for.
+- **The UI's bundle computes the same identity by the same rule, read from
+  one file.** `build-identity.rule` holds the two git commands — the
+  commit's, `rev-parse --short=12 HEAD`, and the dirty check's,
+  `--no-optional-locks status --porcelain --untracked-files=no` — and
+  `src/ui/build_identity.rs` runs them; `build.rs` compiles that file as a
+  module, through `#[path]`, and it embeds the rule with `include_str!`, so a
+  change to either recompiles and reruns the script.
+  `ui/scripts/build-identity.mjs` reads the same file (`ui/ARCHITECTURE.md`
+  § The build identity handshake). One file rather than one script both
+  call, because the Rust build must not need Node (ADR-C36 § 5) and a shell
+  script would tie it to a POSIX shell; what is left on each side is running
+  a git command and testing its output for emptiness. The module's tests and
+  `ui/tests/build-identity.test.ts` pin the rule's meaning on fixture
+  checkouts: an untracked file leaves the tree clean, a modified tracked file
+  or a staged new one makes it dirty. **An untracked file is not counted**
+  because no build reads one it was not told about — a new source file is
+  reached only through an edit to a tracked file that names it, and that
+  edit is dirty — while counting it, when the page applied no dirty rule of
+  its own, let a Finder `.DS_Store` mark the binary dirty and not the page,
+  which then refused to load. `--no-optional-locks`:
+  a plain `status` may rewrite the index, which `build.rs` watches, and rerun
+  the script on the next build for a change it made itself.
+- **`build.rs` reruns when `HEAD`, the branch it names, `packed-refs` or the
+  index changes**, so a commit or a `git add` refreshes both parts of the
+  identity; an edit left unstaged after the last run does not, and a
+  developer's build can then say clean while it is not. A UI rebuilt after
+  such an edit changes `ui/dist/`, which `build.rs` also watches, so the
+  binary built over it reads the tree again.
 
 ### The assets and the notice page
 
