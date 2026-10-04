@@ -31,6 +31,12 @@ export type ApiProblem = {
   status: number | null;
   /** The parameter, path parameter or header a `parameter_invalid` names, when the API knows which; absent otherwise. */
   name?: string;
+  /**
+   * For `run_exists`, where what already holds the run id is read —
+   * `/api/v1/jobs/<id>` or `/api/v1/runs/<id>` — when the API says; absent
+   * otherwise.
+   */
+  link?: string;
 };
 
 /**
@@ -227,6 +233,7 @@ export function createApiClient(): ApiClient {
       if (!isProblem(parsed)) return failed('its problem body lacks a string code, detail or hint, or has a malformed location');
       const problem: ApiProblem = { code: parsed.code, message: parsed.detail, hint: parsed.hint, location: parsed.location ?? null, status: response.status };
       if (typeof parsed.name === 'string') problem.name = parsed.name;
+      if (typeof parsed.link === 'string') problem.link = parsed.link;
       return { ok: false, build, problem };
     }
     if (!response.ok) return failed(`its body is ${type === '' ? 'untyped' : type}, not a problem`);

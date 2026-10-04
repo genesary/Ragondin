@@ -9,9 +9,11 @@ export type Route =
   /**
    * `#runs?sel=<id>,<id>…`: the workspace's runs, and the runs selected for
    * Compare in the order they were checked; `#runs`, or an empty hash, with
-   * none selected.
+   * none selected. `#runs/job/<id>` shows one job of the queue among them
+   * — the address a toast's "open" and a pasted link land on — with the
+   * same selection beside it.
    */
-  | { screen: 'runs'; sel?: string[] }
+  | { screen: 'runs'; sel?: string[]; job?: string }
   /** `#pipeline/<name>`: one pipeline's node × benchmark matrix; `#pipeline` before one is chosen. */
   | { screen: 'pipeline'; name?: string }
   /**
@@ -46,8 +48,10 @@ const enc = encodeURIComponent;
 /** The hash that shows `route`, every value encoded. */
 export function formatHash(route: Route): string {
   switch (route.screen) {
-    case 'runs':
-      return route.sel === undefined || route.sel.length === 0 ? '#runs' : `#runs?sel=${route.sel.map(enc).join(',')}`;
+    case 'runs': {
+      const path = route.job === undefined ? '#runs' : `#runs/job/${enc(route.job)}`;
+      return route.sel === undefined || route.sel.length === 0 ? path : `${path}?sel=${route.sel.map(enc).join(',')}`;
+    }
     case 'setup':
       return route.section === undefined ? '#setup' : `#setup/${route.section}`;
     case 'pipeline':
@@ -83,6 +87,8 @@ export function viewOf(route: Route): string {
   if (route.screen === 'setup') return '#setup';
   // The node selected is state within the pipeline's view, as Replay's query is.
   if (route.screen === 'editor' && route.name !== undefined) return formatHash({ screen: 'editor', name: route.name });
+  // The job shown is state within Runs, as a selection is: the screen moves focus to it itself.
+  if (route.screen === 'runs') return '#runs';
   return formatHash(route).split('?')[0] as string;
 }
 
@@ -114,18 +120,20 @@ export function parseHash(hash: string): Route | null {
     case undefined:
       return { screen: 'runs' };
     case 'runs': {
-      if (rest.length !== 0) return null;
+      const job = rest.length === 2 && rest[0] === 'job' && nonEmpty ? (rest[1] as string) : undefined;
+      if (rest.length !== 0 && job === undefined) return null;
+      const at = job === undefined ? {} : { job };
       // Read from the raw query, split before decoding, so an encoded `,`
       // stays inside its id.
       const raw = search.split('&').find((pair) => pair.startsWith('sel='));
-      if (raw === undefined) return { screen };
+      if (raw === undefined) return { screen, ...at };
       let sel: string[];
       try {
         sel = raw.slice('sel='.length).split(',').map((id) => decodeURIComponent(id));
       } catch {
         return null;
       }
-      return sel.every(isValue) ? { screen, sel } : null;
+      return sel.every(isValue) ? { screen, ...at, sel } : null;
     }
     case 'setup': {
       if (rest.length === 0) return { screen };

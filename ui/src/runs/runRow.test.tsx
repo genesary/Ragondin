@@ -22,6 +22,8 @@ const done = (over: Partial<RunRow> = {}): RunRow => ({
   latencyMs: null,
   startedAt: null,
   prefix: null,
+  job: null,
+  announced: null,
   ...over,
 });
 
@@ -170,52 +172,10 @@ describe('a done run', () => {
   });
 });
 
-describe('a failed row', () => {
-  const failed = done({ status: { state: 'failed', node: 'rerank', error: 'the reranker service did not answer' } });
-
-  it('renders its failed chip naming the node, and the error as a sentence', () => {
-    show(failed);
-    const chip = document.querySelector('.rg-status');
-    expect(chip?.getAttribute('data-state')).toBe('failed');
-    expect(chip?.textContent).toBe('failed at rerank');
-    expect(screen.getByText('rerank failed: the reranker service did not answer')).toBeTruthy();
-  });
-
-  it('is named with its failure', () => {
-    const { tr } = show(failed);
-    expect(tr.getAttribute('aria-label')).toBe('Run a1b2c3d4e5f6 on beir/scifact, failed at rerank');
-  });
-
-  it('says the run failed without a node when the failure names none', () => {
-    show(done({ status: { state: 'failed', node: null, error: 'interrupted' } }));
-    expect(document.querySelector('.rg-status')?.textContent).toBe('failed');
-    expect(screen.getByText('The run failed: interrupted')).toBeTruthy();
-  });
-
-  it('shows a failed job’s id as text, not as a link to a run it is not', () => {
-    show(done({ source: { kind: 'job', id: 'f00dfeedbeef'.padEnd(64, '1'), runId: null }, status: { state: 'failed', node: 'rerank', error: 'boom' } }));
-    expect(screen.queryByRole('link')).toBeNull();
-    expect(screen.getByText('f00dfeedbeef')).toBeTruthy();
-  });
-});
-
-describe('a row that has not finished', () => {
-  it.each([
-    ['queued', { state: 'queued' } as const, 'queued'],
-    ['running', { state: 'running', done: 412, total: 1000 } as const, 'running 412 / 1,000'],
-    ['cancelled', { state: 'cancelled' } as const, 'cancelled'],
-  ])('renders the placeholder row: the %s chip only, and no tab stop', (_, status, word) => {
-    const { tr } = show(done({ source: { kind: 'job', id: 'j', runId: null }, status, metrics: [{ family: 'ranking', metrics: [{ name: 'mrr', value: 0.5 }] }] }));
-    expect(document.querySelector('.rg-status')?.textContent).toBe(word);
-    expect(screen.queryByRole('checkbox')).toBeNull();
-    expect(screen.queryByRole('link')).toBeNull();
-    expect(screen.queryByText('mrr')).toBeNull();
-    expect(tr.hasAttribute('tabindex')).toBe(false);
-  });
-
-  it('draws the running meter from the real count', () => {
-    show(done({ source: { kind: 'job', id: 'j', runId: null }, status: { state: 'running', done: 412, total: 1000 } }));
-    expect((document.querySelector('.rg-status__meter i') as HTMLElement).style.width).toBe('41%');
+describe('a run filed under another id than its job announced', () => {
+  it('says both, and why, beside its hash', () => {
+    show(done({ announced: 'ffeeddccbbaa'.padEnd(64, '9') }));
+    expect(screen.getByText('announced as ffeeddccbbaa; filed under this id because what ran differs from what was announced')).toBeTruthy();
   });
 });
 

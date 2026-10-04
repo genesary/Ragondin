@@ -4,7 +4,7 @@ import { StrictMode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createApiClient } from './api/client.ts';
 import { FakeEventSource, installFakeEventSource, mockApi } from './api/testing.ts';
-import type { Workspace } from './api/types.ts';
+import type { JobSummary, Workspace } from './api/types.ts';
 import { App } from './App.tsx';
 import { COMPARISON, DENSE, HYBRID, RERANK } from './compare/fixtures.ts';
 import * as replay from './replay/fixtures.ts';
@@ -26,11 +26,11 @@ const WORKSPACE: Workspace = {
   counts: { pipelines: 0, runs: 0, benchmarks_ready: 0, services_connected: 0 },
 };
 
-function show(hash: string, props: { reload?: () => void; eventsPath?: string } = {}) {
+function show(hash: string, props: { reload?: () => void; followJobs?: boolean } = {}) {
   window.history.replaceState(null, '', `/${hash}`);
   const reload = props.reload ?? vi.fn();
   const client = createApiClient();
-  const view = render(<App client={client} build={BUILD} reload={reload} {...(props.eventsPath === undefined ? {} : { eventsPath: props.eventsPath })} />);
+  const view = render(<App client={client} build={BUILD} reload={reload} {...(props.followJobs === undefined ? {} : { followJobs: props.followJobs })} />);
   return { ...view, reload, client };
 }
 
@@ -380,7 +380,7 @@ describe('the connection state', () => {
 
   it('shows the stream connected, then "disconnected — retrying" while it is down, and never current meanwhile', async () => {
     mockApi({ 'GET /workspace': { body: WORKSPACE } }, { build: BUILD });
-    show('#editor', { eventsPath: '/jobs/events' });
+    show('#editor', { followJobs: true });
     await screen.findByText(WORKSPACE.path);
     const banner = within(screen.getByRole('banner'));
     expect(banner.getByText('connecting')).toBeTruthy();
@@ -393,7 +393,7 @@ describe('the connection state', () => {
 
   it('re-checks the build identity when the stream reconnects, and reloads if the server became another build', async () => {
     const { requests } = mockApi({ 'GET /workspace': [{ body: WORKSPACE }, { body: WORKSPACE, build: '0.0.0+cccccccccccc' }] }, { build: BUILD });
-    const { reload } = show('#editor', { eventsPath: '/jobs/events' });
+    const { reload } = show('#editor', { followJobs: true });
     await screen.findByText(WORKSPACE.path);
     act(() => FakeEventSource.latest().open());
     act(() => FakeEventSource.latest().fail());
@@ -404,7 +404,7 @@ describe('the connection state', () => {
 
   it('closes its stream when the shell unmounts', async () => {
     mockApi({ 'GET /workspace': { body: WORKSPACE } }, { build: BUILD });
-    const { unmount } = show('#editor', { eventsPath: '/jobs/events' });
+    const { unmount } = show('#editor', { followJobs: true });
     await screen.findByText(WORKSPACE.path);
     unmount();
     expect(FakeEventSource.latest().closed).toBe(true);
@@ -412,12 +412,26 @@ describe('the connection state', () => {
 
   it('neither reads the workspace again nor reopens the stream when it re-renders with a new reload function', async () => {
     const { requests } = mockApi({ 'GET /workspace': { body: WORKSPACE } }, { build: BUILD });
-    const { rerender, client } = show('#editor', { eventsPath: '/jobs/events' });
+    const { rerender, client } = show('#editor', { followJobs: true });
     await screen.findByText(WORKSPACE.path);
-    rerender(<App client={client} build={BUILD} reload={vi.fn()} eventsPath="/jobs/events" />);
+    rerender(<App client={client} build={BUILD} reload={vi.fn()} followJobs />);
     await act(async () => {});
     expect(requests).toEqual(['GET /api/v1/workspace']);
     expect(FakeEventSource.instances).toHaveLength(1);
+  });
+
+  it('follows GET /jobs/events, once for the whole page, and raises a run’s outcome as a toast on whatever screen is shown', async () => {
+    mockApi({ 'GET /workspace': { body: WORKSPACE } }, { build: BUILD });
+    show('#editor', { followJobs: true });
+    await screen.findByText(WORKSPACE.path);
+    expect(FakeEventSource.instances).toHaveLength(1);
+    expect(FakeEventSource.latest().url).toBe('/api/v1/jobs/events');
+    const job = (state: JobSummary['state']): JobSummary => ({ id: 'j1', created_at_ms: 1, position: 0, state, work: { kind: 'run', pipeline: 'hybrid', benchmark: 'beir/scifact', run_id: 'a'.repeat(64), up_to: null, bindings: [] } });
+    act(() => FakeEventSource.latest().open());
+    act(() => FakeEventSource.latest().emit(JSON.stringify({ jobs: [job({ kind: 'running', done: 1, total: 2, started_at_ms: 1, median_latency_nanos: null })], faults: [] }), 'resync'));
+    act(() => FakeEventSource.latest().emit(JSON.stringify(job({ kind: 'failed', at_node: 'rerank', error: 'boom', finished_at_ms: 2 })), 'failed'));
+    const toast = within(screen.getByRole('region', { name: 'Notifications' })).getByRole('alert');
+    expect(toast.textContent).toContain('Run failed at rerank');
   });
 
   it('shows no connection state when no stream is open', async () => {

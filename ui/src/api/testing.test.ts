@@ -72,6 +72,14 @@ describe('mockApi, writing', () => {
     expect(api.requests).toEqual(['PUT /api/v1/services/generator/qwen', 'DELETE /api/v1/services/generator/qwen']);
     expect(api.bodies).toEqual([{ uri: 'http://127.0.0.1:8080' }, undefined]);
   });
+
+  it('answers a PATCH from the body and the path it was sent, recording the body', async () => {
+    const api = mockApi({ 'PATCH /jobs/{id}': (body, path) => ({ body: { faults: [{ path, reason: `to ${body.position}` }], jobs: [] } }) });
+    const patched = await createApiClient().patch('/jobs/{id}', { position: 0 }, { id: 'j2' });
+    expect(patched.ok && patched.value).toEqual({ faults: [{ path: '/api/v1/jobs/j2', reason: 'to 0' }], jobs: [] });
+    expect(api.requests).toEqual(['PATCH /api/v1/jobs/j2']);
+    expect(api.bodies).toEqual([{ position: 0 }]);
+  });
 });
 
 describe('mockApi, a query string', () => {

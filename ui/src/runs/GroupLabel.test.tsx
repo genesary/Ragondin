@@ -21,6 +21,8 @@ const row = (id: string): RunRow => ({
   latencyMs: null,
   startedAt: null,
   prefix: null,
+  job: null,
+  announced: null,
 });
 
 const group = (over: Partial<RunGroup> = {}): RunGroup => ({ key: 'name:hybrid', names: ['hybrid'], held: 'exactly', pipeline: HASH, shapeKey: HASH, rows: [row('1'), row('2')], ...over });

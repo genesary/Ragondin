@@ -68,6 +68,19 @@ describe('Toast lifetime', () => {
     expect(onDismiss).toHaveBeenCalledTimes(1);
   });
 
+  it('stays until acted on when it needs action, however long it is left', () => {
+    const onDismiss = vi.fn();
+    render(
+      <Toast tone="critical" persist onDismiss={onDismiss} action={{ label: 'Open', onClick: () => {} }}>
+        Run failed at rerank
+      </Toast>,
+    );
+    act(() => vi.advanceTimersByTime(60_000));
+    expect(onDismiss).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+    expect(onDismiss).toHaveBeenCalledTimes(1);
+  });
+
   it('can be dismissed by hand', () => {
     const onDismiss = vi.fn();
     render(<Toast onDismiss={onDismiss}>Copied</Toast>);

@@ -3,12 +3,12 @@
 // services, and what this build can run — or, on a workspace with no
 // benchmark and no service, the first-launch invitation. ARCHITECTURE.md
 // § The Setup screen.
-import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Sheet } from '../../design/index.ts';
 import type { ApiClient, ApiProblem } from '../api/client.ts';
-import type { ConnectionState } from '../api/events.ts';
-import { applyJobEvent, openJobStream, type Jobs } from '../api/jobs.ts';
+import type { Jobs } from '../api/jobs.ts';
 import type { BenchmarkEntry, ServiceBinding, ServiceStatus, Workspace } from '../api/types.ts';
+import { useJobEvents, useJobQueue, useJobs } from '../jobs/queue.tsx';
 import type { SetupSection } from '../routes.ts';
 import { Loading, type RequestState } from '../shell/states.tsx';
 import { Benchmarks, type Downloads } from './Benchmarks.tsx';
@@ -355,12 +355,15 @@ export function SetupScreen({ client, workspace, refreshWorkspace, retryWorkspac
     return null;
   };
 
-  // The downloads: the job stream, followed while the screen is open — its
-  // first event is the whole queue, so a download already under way is shown
-  // — and this page's own submissions, by benchmark.
-  const [jobs, setJobs] = useState<Jobs>(new Map());
-  const jobsNow = useRef<Jobs>(jobs);
-  const [stream, setStream] = useState<ConnectionState>('connecting');
+  // The downloads: the page's job queue, which the shell follows — the
+  // stream's first event is the whole queue, so a download already under way
+  // is shown — and this page's own submissions, by benchmark.
+  const { jobs, connection } = useJobs();
+  const queue = useJobQueue();
+  const queueNow = useRef(queue);
+  queueNow.current = queue;
+  // The queue as it is now, read after an await: never the jobs of the render that started it.
+  const jobsNow = useMemo(() => ({ get current(): Jobs { return queueNow.current.jobs(); } }), []);
   const [submissions, setSubmissions] = useState<ReadonlyMap<string, Submission>>(new Map());
   const submitted = useRef(new Set<string>());
   const reloadBenchmarks = benchmarks.reload;
@@ -398,21 +401,10 @@ export function SetupScreen({ client, workspace, refreshWorkspace, retryWorkspac
     finishNow.current = finish;
   });
 
-  useEffect(() => {
-    const stream = openJobStream({
-      onEvent: (event) => {
-        const before = jobsNow.current;
-        const after = applyJobEvent(before, event);
-        jobsNow.current = after;
-        setJobs(after);
-        void finishNow.current(finishedDownloads(before, after, submitted.current));
-      },
-      onState: setStream,
-      // The server may have been restarted as another build meanwhile.
-      onReconnect: () => refresh.current(),
-    });
-    return () => stream.close();
-  }, []);
+  // The page's job queue, followed by the shell: each event's downloads that ended done.
+  useJobEvents((before, after) => {
+    void finishNow.current(finishedDownloads(before, after, submitted.current));
+  });
 
   const startDownload = async (name: string) => {
     setSubmissions((all) => new Map(all).set(name, { kind: 'submitting' }));
@@ -431,7 +423,7 @@ export function SetupScreen({ client, workspace, refreshWorkspace, retryWorkspac
   const downloads: Downloads = {
     view: (name) => downloadView(name, submissions.get(name), jobs),
     start: (name) => void startDownload(name),
-    streamDown: stream === 'disconnected',
+    streamDown: connection === 'disconnected',
   };
 
   const onImport = async (path: string, name: string) => {

@@ -16,6 +16,8 @@ const row = (id: string, benchmark: string, over: Partial<RunRow> = {}): RunRow 
   latencyMs: null,
   startedAt: null,
   prefix: null,
+  job: null,
+  announced: null,
   ...over,
 });
 

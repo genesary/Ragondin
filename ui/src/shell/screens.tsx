@@ -81,7 +81,7 @@ export function Screen({ route, heading, client, workspace, refreshWorkspace, re
     return (
       <>
         {title}
-        <RunsScreen client={client} sel={route.sel ?? []} />
+        <RunsScreen client={client} sel={route.sel ?? []} job={route.job} store={workspace.status === 'loaded' ? workspace.value.path : null} />
       </>
     );
   }

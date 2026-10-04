@@ -18,6 +18,8 @@ const row = (id: string, over: Partial<RunRow> = {}): RunRow => ({
   latencyMs: null,
   startedAt: null,
   prefix: null,
+  job: null,
+  announced: null,
   ...over,
 });
 
@@ -129,17 +131,21 @@ describe('a row’s source', () => {
     expect(openRoute(row('r1'))).toEqual({ screen: 'replay', run: 'r1' });
   });
 
-  it('opens a job nowhere yet, whatever its status: the job view has no address in this build', () => {
+  it('opens a job at its own address, whatever its status, and never as a run it is not', () => {
     const job = (status: RunRow['status']) => row('j1', { source: { kind: 'job', id: 'j1', runId: 'r9' }, status });
-    expect(openRoute(job({ state: 'failed', node: 'rerank', error: 'boom' }))).toBeNull();
-    expect(openRoute(job({ state: 'queued' }))).toBeNull();
-    expect(openRoute(job({ state: 'cancelled' }))).toBeNull();
+    expect(openRoute(job({ state: 'failed', node: 'rerank', error: 'boom' }))).toEqual({ screen: 'runs', job: 'j1' });
+    expect(openRoute(job({ state: 'queued' }))).toEqual({ screen: 'runs', job: 'j1' });
+    expect(openRoute(job({ state: 'cancelled' }))).toEqual({ screen: 'runs', job: 'j1' });
   });
 });
 
 describe('the running state', () => {
   it('reads the queries done out of the total, never a percentage the client computed', () => {
     expect(runningLabel({ state: 'running', done: 1234, total: 10570 })).toBe('running 1,234 / 10,570');
+  });
+
+  it('says a run is starting until the queue knows its total, never a fraction of nothing', () => {
+    expect(runningLabel({ state: 'running', done: 0, total: null })).toBe('starting');
   });
 });
 

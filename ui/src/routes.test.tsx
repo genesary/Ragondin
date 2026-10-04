@@ -49,6 +49,28 @@ describe('#runs?sel=<id>,<id>…', () => {
   });
 });
 
+describe('#runs/job/<id>', () => {
+  it('carries the job shown, and restores it from the hash on load', () => {
+    const route: Route = { screen: 'runs', job: '1696000000000-1' };
+    expect(formatHash(route)).toBe('#runs/job/1696000000000-1');
+    expect(load('#runs/job/1696000000000-1')).toEqual(route);
+  });
+
+  it('keeps the selection beside the job, and encodes the id so it round-trips', () => {
+    const route: Route = { screen: 'runs', job: 'a/b', sel: ['r1'] };
+    expect(formatHash(route)).toBe('#runs/job/a%2Fb?sel=r1');
+    expect(parseHash(formatHash(route))).toEqual(route);
+  });
+
+  it.each(['#runs/job', '#runs/job/', '#runs/job/..', '#runs/job/a/b', '#runs/jobs/a'])('names no job at %s, and so no route', (hash) => {
+    expect(parseHash(hash)).toBeNull();
+  });
+
+  it('is state within the Runs view: opening a job moves no focus to the heading', () => {
+    expect(viewOf({ screen: 'runs', job: 'j1' })).toBe('#runs');
+  });
+});
+
 describe('#pipeline', () => {
   it('is the screen before a pipeline is chosen', () => {
     expect(formatHash({ screen: 'pipeline' })).toBe('#pipeline');
