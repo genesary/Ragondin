@@ -188,6 +188,16 @@ describe('the API client, on a problem', () => {
     });
   });
 
+  it('carries where a run_exists says the run id is held, and nothing when it says nowhere', async () => {
+    const conflict = { ...problem, code: 'run_exists', status: 409 } as const;
+    stubFetch(async () => json({ ...conflict, link: '/api/v1/jobs/1700000000000-1' }, { status: 409, type: 'application/problem+json' }));
+    const linked = await createApiClient().get('/workspace');
+    expect(linked.ok ? null : linked.problem.link).toBe('/api/v1/jobs/1700000000000-1');
+    stubFetch(async () => json({ ...conflict, link: null }, { status: 409, type: 'application/problem+json' }));
+    const unlinked = await createApiClient().get('/workspace');
+    expect(unlinked.ok ? null : 'link' in unlinked.problem).toBe(false);
+  });
+
   it('carries the parameter a parameter_invalid names, and none when it names none', async () => {
     const refused = { ...problem, code: 'parameter_invalid', status: 400 } as const;
     stubFetch(async () => json({ ...refused, name: 'missing_gold_at' }, { status: 400, type: 'application/problem+json' }));

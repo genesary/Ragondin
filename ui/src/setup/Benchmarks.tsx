@@ -7,6 +7,7 @@ import type { ReactNode, Ref } from 'react';
 import { Button, Section, StatusChip, Table, type Status, type TableRow } from '../../design/index.ts';
 import type { ApiProblem } from '../api/client.ts';
 import type { BenchmarkEntry } from '../api/types.ts';
+import { STREAM_DOWN, STREAM_DOWN_LIVE } from '../jobs/stream.ts';
 import { ErrorState, Resource, type RequestState } from '../shell/states.tsx';
 import { ImportForm } from './forms.tsx';
 import { formatSize, groundTruthLabel, shortDigest, type DownloadView } from './model.ts';
@@ -19,10 +20,6 @@ export type Downloads = {
   streamDown: boolean;
 };
 
-/** What the screen says while the job stream is down (the front-end design, § 8: the state never pretends to be current). */
-export const STREAM_DOWN = 'Job stream disconnected, retrying.';
-/** The same, while a download is under way, whose progress on screen is then the last known. */
-export const STREAM_DOWN_LIVE = 'Job stream disconnected, retrying: progress shown is the last known.';
 
 /** Whether a download's state comes from a job still under way, which only the stream keeps current. */
 export const isLive = (view: DownloadView) => view.kind === 'queued' || view.kind === 'running' || view.kind === 'verifying';

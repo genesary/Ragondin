@@ -85,8 +85,9 @@ export type MockReply<T> = { body: T; build?: string } | { problem: Problem; bui
  * template: a key the description does not have, or a body that is not its
  * path's generated type, does not compile. A list is answered in order, its
  * last reply repeating. A GET may answer from the query string and the path
- * it was sent — one template, two ids — and a POST or a PUT from the body it
- * was sent, typed as its path's request body — and later, through a promise
+ * it was sent — one template, two ids — a POST or a PUT from the body it
+ * was sent, typed as its path's request body, and a PATCH from the body and
+ * the path — and later, through a promise
  * the test resolves, so two answers can be made to arrive out of order.
  */
 export type MockRoutes = {
@@ -95,6 +96,8 @@ export type MockRoutes = {
   [P in PathWith<'post'> as `POST ${P}`]?: MockReply<Answer<P, 'post'>> | MockReply<Answer<P, 'post'>>[] | ((body: Body<P, 'post'>) => MockReply<Answer<P, 'post'>> | Promise<MockReply<Answer<P, 'post'>>>);
 } & {
   [P in PathWith<'put'> as `PUT ${P}`]?: MockReply<Answer<P, 'put'>> | MockReply<Answer<P, 'put'>>[] | ((body: Body<P, 'put'>) => MockReply<Answer<P, 'put'>> | Promise<MockReply<Answer<P, 'put'>>>);
+} & {
+  [P in PathWith<'patch'> as `PATCH ${P}`]?: MockReply<Answer<P, 'patch'>> | MockReply<Answer<P, 'patch'>>[] | ((body: Body<P, 'patch'>, path: string) => MockReply<Answer<P, 'patch'>> | Promise<MockReply<Answer<P, 'patch'>>>);
 } & {
   [P in PathWith<'delete'> as `DELETE ${P}`]?: MockReply<Answer<P, 'delete'>> | MockReply<Answer<P, 'delete'>>[];
 };
@@ -117,7 +120,7 @@ export function mockApi(routes: MockRoutes, { build = 'test-build' }: { build?: 
   const requests: string[] = [];
   const bodies: unknown[] = [];
   const signals: (AbortSignal | undefined)[] = [];
-  // A function is handed the request's query string and path for a GET, its parsed body otherwise.
+  // A function is handed the request's query string and path for a GET, its parsed body (and, for a PATCH, its path) otherwise.
   type Reply = (sent: unknown, path?: string) => MockReply<unknown> | Promise<MockReply<unknown>>;
   type Replies = MockReply<unknown>[] | Reply;
   const table = Object.entries(routes).map(([key, replies]) => {
@@ -152,7 +155,7 @@ export function mockApi(routes: MockRoutes, { build = 'test-build' }: { build?: 
     const route = table.find((r) => r.method === method && r.match.test(url));
     const replies = route?.replies;
     const [path = url, search = ''] = url.split(/\?(.*)/s);
-    const reply = replies === undefined ? undefined : typeof replies === 'function' ? await (method === 'GET' ? replies(new URLSearchParams(search), path) : replies(sent)) : replies.length > 1 ? replies.shift() : replies[0];
+    const reply = replies === undefined ? undefined : typeof replies === 'function' ? await (method === 'GET' ? replies(new URLSearchParams(search), path) : replies(sent, path)) : replies.length > 1 ? replies.shift() : replies[0];
     if (reply === undefined) {
       const problem: Problem = {
         type: 'urn:ragondin:problem:route_not_found',

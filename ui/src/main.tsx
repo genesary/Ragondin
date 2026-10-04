@@ -10,7 +10,7 @@ if (root === null) throw new Error('index.html has no #root element');
 
 createRoot(root).render(
   <StrictMode>
-    {/* No stream for the top bar's connection state: Setup follows /jobs/events itself (ARCHITECTURE.md § The job stream). */}
-    <App client={createApiClient()} build={BUILD} reload={() => window.location.reload()} />
+    {/* The page follows /jobs/events once, for the top bar, every screen that shows the queue, and the toasts (ARCHITECTURE.md § The job stream). */}
+    <App client={createApiClient()} build={BUILD} reload={() => window.location.reload()} followJobs />
   </StrictMode>,
 );

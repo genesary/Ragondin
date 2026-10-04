@@ -7,6 +7,7 @@ import { createApiClient } from '../api/client.ts';
 import { FakeEventSource, installFakeEventSource, mockApi, type MockRoutes } from '../api/testing.ts';
 import type { BenchmarkEntry, JobEvent, JobSummary, Problem, ServiceListing, ServiceStatus, Workspace } from '../api/types.ts';
 import type { SetupSection } from '../routes.ts';
+import { JobQueueProvider } from '../jobs/queue.tsx';
 import type { RequestState } from '../shell/states.tsx';
 import { parseRules } from '../../design/testing/css.ts';
 import { SetupScreen, UNDO_WINDOW_MS } from './SetupScreen.tsx';
@@ -81,10 +82,14 @@ const problem = (code: Problem['code'], status: number, detail: string, hint = '
   problem: { type: `urn:ragondin:problem:${code}`, title: code, status, detail, code, hint },
 });
 
-/** What the shell hands the screen: the workspace it read, and the two ways to read it again. */
+/** What the shell hands the screen: the workspace it read, the two ways to read it again, and the job queue it follows. */
 function Harness({ workspace = { status: 'loaded', value: WORKSPACE }, section, refresh = () => {} }: { workspace?: RequestState<Workspace>; section?: SetupSection; refresh?: () => void }) {
   const [client] = useState(() => createApiClient());
-  return <SetupScreen client={client} workspace={workspace} refreshWorkspace={refresh} retryWorkspace={refresh} section={section} />;
+  return (
+    <JobQueueProvider>
+      <SetupScreen client={client} workspace={workspace} refreshWorkspace={refresh} retryWorkspace={refresh} section={section} />
+    </JobQueueProvider>
+  );
 }
 
 const routes = (over: MockRoutes = {}): MockRoutes => ({
@@ -324,13 +329,11 @@ describe('the download', () => {
     expect(slot?.declarations.get('display')).toBe('flex');
   });
 
-  it('closes the stream when the screen goes', async () => {
+  it('opens no stream of its own: it follows the queue the page follows', async () => {
     mockApi(routes());
-    const { unmount } = render(<Harness />);
+    render(<Harness />);
     await within(await screen.findByRole('region', { name: 'Benchmarks' })).findByText('beir/fiqa');
-    unmount();
-    expect(FakeEventSource.instances.length).toBeGreaterThan(0);
-    expect(FakeEventSource.instances.every((s) => s.closed)).toBe(true);
+    expect(FakeEventSource.instances).toHaveLength(1);
   });
 
   it('the first launch’s Download follows its job too, and its end opens the sections', async () => {
@@ -476,18 +479,6 @@ describe('the download, when things go wrong around it', () => {
     act(() => FakeEventSource.latest().fail());
     expect(start.textContent).toContain('last known');
     expect(start.textContent).toContain('disconnected, retrying');
-  });
-
-  it('re-checks the build identity whenever the job stream reconnects, as the shell’s stream does', async () => {
-    mockApi(routes());
-    const refresh = vi.fn();
-    render(<Harness refresh={refresh} />);
-    await within(await screen.findByRole('region', { name: 'Benchmarks' })).findByText('beir/fiqa');
-    act(() => FakeEventSource.latest().open());
-    expect(refresh).not.toHaveBeenCalled();
-    act(() => FakeEventSource.latest().fail());
-    act(() => FakeEventSource.latest().open());
-    expect(refresh).toHaveBeenCalledTimes(1);
   });
 
   it('ends ready a download whose end the stream carried before the submission was answered', async () => {

@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ButtonLink, InlineMessage, TopBar } from '../design/index.ts';
 import type { ApiClient, ApiProblem } from './api/client.ts';
-import { openEvents, type ConnectionState } from './api/events.ts';
+import type { ConnectionState } from './api/events.ts';
 import type { Workspace } from './api/types.ts';
+import { JobQueueProvider, useJobs } from './jobs/queue.tsx';
+import { JobToasts } from './jobs/Toasts.tsx';
 import { pipelineEntry } from './pipeline/last.ts';
 import { formatHash, useRoute, viewOf } from './routes.ts';
 import { judgeBuild } from './shell/build.ts';
@@ -18,8 +20,12 @@ export type AppProps = {
   build: string;
   /** Reloads the page, fetching the UI of the build that now answers. */
   reload: () => void;
-  /** The event stream to follow, under the API's base address; none is opened without it. */
-  eventsPath?: string;
+  /**
+   * Follow the job queue's stream, `GET /jobs/events`, for the whole page:
+   * one subscription that the top bar's connection state, every screen that
+   * shows the queue and the toasts read. None is opened without it.
+   */
+  followJobs?: boolean;
 };
 
 /** What the top bar shows of the stream, in words beside the dot (the front-end design, § 8). */
@@ -37,17 +43,30 @@ const mismatch = (served: string | null, expected: string): ApiProblem => ({
   status: null,
 });
 
+/** The top bar, with the job stream's connection when the page follows one. */
+function Bar({ workspace, current }: { workspace: RequestState<Workspace>; current: string | undefined }) {
+  const { connection } = useJobs();
+  return (
+    <TopBar
+      workspace={<WorkspaceIndicator state={workspace} />}
+      links={SCREENS.map((s) => ({ label: s.label, href: formatHash(s.screen === 'pipeline' ? pipelineEntry() : s.bare), current: current === s.screen }))}
+      services={[]}
+      {...(connection === null ? {} : { status: CONNECTION[connection] })}
+      end={<ThemeControl />}
+    />
+  );
+}
+
 /**
  * The shell: the top bar — the name, the workspace, the six screens, the
- * connection state and the theme — and the screen the address shows. It
- * reads the workspace once on load, and again whenever the event stream
- * reconnects, comparing each time the build that answered with its own.
+ * connection state and the theme — the screen the address shows, and the
+ * toasts. It reads the workspace once on load, and again whenever the job
+ * stream reconnects, comparing each time the build that answered with its own.
  */
-export function App({ client, build, reload, eventsPath }: AppProps) {
+export function App({ client, build, reload, followJobs = false }: AppProps) {
   const route = useRoute();
   const [workspace, setWorkspace] = useState<RequestState<Workspace>>({ status: 'loading' });
   const [refused, setRefused] = useState<ApiProblem | null>(null);
-  const [connection, setConnection] = useState<ConnectionState | null>(null);
   const heading = useRef<HTMLHeadingElement>(null);
   // Keyed on the view, not the whole address: state within a view written to
   // the address (a selection, a correction in place) moves no focus.
@@ -81,26 +100,17 @@ export function App({ client, build, reload, eventsPath }: AppProps) {
     void readWorkspace();
   }, [readWorkspace]);
 
-  useEffect(() => {
-    if (eventsPath === undefined) return;
-    const stream = openEvents(eventsPath, { onState: setConnection, onReconnect: () => void readWorkspace() });
-    return () => stream.close();
-  }, [eventsPath, readWorkspace]);
+  // The server may have been restarted as another build while the stream was down.
+  const reconnected = useCallback(() => void readWorkspace(), [readWorkspace]);
 
   const retry = () => {
     setWorkspace({ status: 'loading' });
     void readWorkspace();
   };
 
-  return (
+  const page = (
     <>
-      <TopBar
-        workspace={<WorkspaceIndicator state={workspace} />}
-        links={SCREENS.map((s) => ({ label: s.label, href: formatHash(s.screen === 'pipeline' ? pipelineEntry() : s.bare), current: route?.screen === s.screen }))}
-        services={[]}
-        {...(connection === null ? {} : { status: CONNECTION[connection] })}
-        end={<ThemeControl />}
-      />
+      <Bar workspace={workspace} current={route?.screen} />
       <main className="rg-shell__main">
         {refused !== null ? (
           <ErrorState problem={refused} />
@@ -131,6 +141,8 @@ export function App({ client, build, reload, eventsPath }: AppProps) {
           </>
         )}
       </main>
+      {followJobs ? <JobToasts /> : null}
     </>
   );
+  return followJobs ? <JobQueueProvider onReconnect={reconnected}>{page}</JobQueueProvider> : page;
 }

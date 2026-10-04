@@ -85,3 +85,72 @@
 }
 .rg-runs__family-label { font: var(--type-caption); color: var(--ink-3); }
 .rg-runs__failure { color: var(--ink); white-space: normal; }
+
+/* The job queue's rows. The detail cell is one small control high, a button in
+   it or not, and a block box — an empty inline box sits on the text's baseline
+   and makes a row without a button taller than one with — so a control coming,
+   changing or going moves no row. */
+.rg-runs__job {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--size-control-s);
+  /* Room for a running job's median, elapsed time and Cancel on one line: the median appears with the first
+     tick, and must not wrap the cell and grow the row. The table scrolls sideways rather than squeeze it. */
+  min-width: 40ch;
+  white-space: normal;
+}
+.rg-runs__bench { color: var(--ink-2); }
+.rg-runs__elapsed { font-variant-numeric: tabular-nums; color: var(--ink-2); }
+
+/* What the screen says while the job stream is down: present while the page
+   follows the queue, empty or not, so the table never moves as it drops. */
+.rg-runs__stream {
+  min-height: var(--space-4);
+  margin: 0;
+  padding: 0 var(--space-4) var(--space-2);
+  font: var(--type-caption);
+  color: var(--ink-3);
+}
+
+/* The launch panel: its fields side by side while they fit, stacked on a phone. */
+.rg-launch {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr));
+  gap: var(--space-4);
+  align-items: start;
+}
+.rg-launch__field { display: grid; gap: var(--space-1); min-width: 0; }
+.rg-launch__identity { min-height: var(--space-4); margin: 0; font: var(--type-caption); color: var(--ink-2); }
+.rg-launch__identity code,
+.rg-launch__store code,
+.rg-launch__bindings code { font: var(--type-hash); letter-spacing: var(--type-hash-tracking); overflow-wrap: anywhere; }
+.rg-launch__label { display: block; font: var(--type-label); color: var(--ink-2); }
+.rg-launch__note { margin: 0; font: var(--type-caption); color: var(--ink-3); }
+.rg-launch__bindings ul { margin: var(--space-1) 0; padding: 0; list-style: none; font: var(--type-dense); }
+.rg-launch__bindings,
+.rg-launch__store { display: grid; gap: var(--space-1); min-width: 0; }
+/* The action, its identity and the answer span the whole panel. */
+.rg-launch__action,
+.rg-launch > .rg-inline { grid-column: 1 / -1; }
+.rg-launch__action { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); }
+
+/* One job, at its own address. */
+.rg-job { display: grid; gap: var(--space-3); justify-items: start; }
+.rg-job__facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--space-1) var(--space-4);
+  margin: 0;
+}
+.rg-job__facts dt { font: var(--type-label); color: var(--ink-2); }
+.rg-job__facts dd { margin: 0; }
+.rg-job__facts code { font: var(--type-hash); letter-spacing: var(--type-hash-tracking); }
+.rg-job__partial { margin: 0; max-width: 72ch; color: var(--ink-2); }
+
+@media (max-width: 640px) {
+  /* The stream line's longer sentence wraps to two lines here: both are held, empty or not. */
+  .rg-runs__stream { min-height: calc(2 * var(--space-4)); }
+  .rg-job__facts { grid-template-columns: minmax(0, 1fr); }
+}

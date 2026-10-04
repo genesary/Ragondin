@@ -6,7 +6,7 @@
 // and its column or label is not drawn: nothing here is invented to fill a
 // cell. ARCHITECTURE.md § The Runs screen.
 import { familyOfComponent, type Family } from '../../design/index.ts';
-import type { Graph, MetricFamily, NameHeld, RunListing, RunSummary } from '../api/types.ts';
+import type { Graph, MetricFamily, NameHeld, RunListing, RunRequest, RunSummary } from '../api/types.ts';
 import type { Route } from '../routes.ts';
 
 /**
@@ -29,15 +29,14 @@ export type MetricGroup = { family: MetricFamily | null; metrics: { name: string
 export type RowSource = { kind: 'run'; id: string } | { kind: 'job'; id: string; runId: string | null };
 
 /**
- * Where a row stands. `done` and `failed` are full rows; `queued`, `running`
- * and `cancelled` are the slot the job queue fills, drawn as their status
- * chip only.
+ * Where a row stands. A run of the store is `done`; a job of the queue is any
+ * of the five, as the stream last said.
  */
 export type RowStatus =
   | { state: 'done' }
   | { state: 'failed'; /** The node that failed, when the failure names one. */ node: string | null; error: string }
   | { state: 'queued' }
-  | { state: 'running'; /** Queries done, out of `total`, as the queue reports them. */ done: number; total: number }
+  | { state: 'running'; /** Queries done, out of `total`, as the queue reports them; `total` null until the first query. */ done: number; total: number | null }
   | { state: 'cancelled' };
 
 export type RunRow = {
@@ -86,6 +85,35 @@ export type RunRow = {
    * gives the parent, and the node it stops at.
    */
   prefix: { parent: string; upTo: string | null } | null;
+  /** What the queue says of a job's row; null for a run of the store. */
+  job: JobFacts | null;
+  /**
+   * The id the run was announced under, when it was filed under another
+   * (`id_mismatch`): what ran differs from what was announced (ADR-C36 § 1).
+   * Null for every other run, and for a job.
+   */
+  announced: string | null;
+};
+
+/** A job's own facts, beside what its row shares with a run's. */
+export type JobFacts = {
+  /** What was submitted, sent again as it is to resubmit the job. */
+  submission: RunRequest;
+  /** Its place among the queued run jobs, 0 the next taken; null when it is not queued. */
+  place: number | null;
+  /** How many run jobs are queued, so the last place is known. */
+  queued: number;
+  /** When the worker took it, in milliseconds since the epoch; null before, or when unknown. */
+  startedAtMs: number | null;
+  /**
+   * The median query latency so far, in milliseconds, as the queue reports
+   * it on each tick; null before the first query. Never computed here.
+   */
+  medianMs: number | null;
+  /** The run a done job filed, as the queue says; null before it is done, or when it names none. */
+  filed: string | null;
+  /** Both ids, when the run was filed under another than the one announced. */
+  mismatch: { announced: string; decided: string } | null;
 };
 
 /** A pipeline's runs, under one heading. */
@@ -115,17 +143,16 @@ export const rowKey = (row: RunRow) => `${row.source.kind}:${row.source.id}`;
 export const runId = (row: RunRow) => (row.source.kind === 'run' ? row.source.id : null);
 
 /**
- * Where opening a row leads: a run to Replay, before a query is chosen. A job
- * has no address in this build — the job view is the launch flow's — so it
- * opens nowhere rather than as a run it is not.
+ * Where opening a row leads: a run to Replay, before a query is chosen; a job
+ * to its own address in Runs (`#runs/job/<id>`), never as a run it is not.
  */
-export function openRoute(row: RunRow): Route | null {
-  return row.source.kind === 'run' ? { screen: 'replay', run: row.source.id } : null;
+export function openRoute(row: RunRow): Route {
+  return row.source.kind === 'run' ? { screen: 'replay', run: row.source.id } : { screen: 'runs', job: row.source.id };
 }
 
-/** The running chip's words: the real count, as the queue reports it. */
+/** The running chip's words: the real count, as the queue reports it, or `starting` before it knows the total. */
 export const runningLabel = (status: Extract<RowStatus, { state: 'running' }>) =>
-  `running ${status.done.toLocaleString('en-US')} / ${status.total.toLocaleString('en-US')}`;
+  status.total === null ? 'starting' : `running ${status.done.toLocaleString('en-US')} / ${status.total.toLocaleString('en-US')}`;
 
 /**
  * Most recent first by start time; a run whose start is unknown after every
@@ -179,6 +206,8 @@ export function rowsFromListing(listing: RunListing): RunRow[] {
       latencyMs: run.median_query_latency_nanos === null ? null : run.median_query_latency_nanos / 1e6,
       startedAt: run.started_at_ms === null ? null : new Date(run.started_at_ms).toISOString(),
       prefix: prefixOf(run),
+      job: null,
+      announced: null,
     };
   });
 }
@@ -221,13 +250,16 @@ export function groupRows(rows: readonly RunRow[]): RunGroup[] {
     ordered.set(key, group);
   }
   return [...ordered].map(([key, { names, rows: members }]) => {
-    const own = members.filter((r) => r.prefix === null);
+    // The heading is the store's: a job knows the name it was launched as, but neither its canonical hash nor
+    // whether the workspace holds that name now, so it heads a group only when no run of the store is in it.
+    const stored = members.filter((r) => r.source.kind === 'run');
+    const own = (stored.length === 0 ? members : stored).filter((r) => r.prefix === null);
     const head = own[0] ?? (members[0] as RunRow);
     // Every row's record comes from one listing, so the first that names the heading says it. A heading no record
     // names is hash matches, current documents, so held; one a record names but says nothing of fails closed, unlinked.
-    const recorded = members.find((r) => r.launchedAs !== null && r.launchedAs === names[0]);
+    const recorded = (stored.length === 0 ? members : stored).find((r) => r.launchedAs !== null && r.launchedAs === names[0]);
     const held: NameHeld = recorded === undefined ? 'exactly' : (recorded.launchedHeld ?? 'unchecked');
-    return { key, names, held, pipeline: head.pipeline, shapeKey: own.length === 0 ? null : head.pipeline, rows: members };
+    return { key, names, held, pipeline: head.pipeline, shapeKey: own.length === 0 || stored.length === 0 ? null : head.pipeline, rows: members };
   });
 }
 

@@ -14,13 +14,20 @@ export type ToastProps = {
   action?: { label: string; onClick: () => void };
   /** Called when the toast leaves: after six unattended seconds, or by hand. */
   onDismiss?: () => void;
+  /**
+   * An outcome that needs action stays until acted on — its action or
+   * Dismiss — rather than leaving after six seconds (the front-end design,
+   * § 8: an error that needs action does not dismiss itself).
+   */
+  persist?: boolean;
 };
 
 /**
  * A short confirmation of what just happened. It pauses while hovered or
- * while something in it has focus, so it can be read and reached.
+ * while something in it has focus, so it can be read and reached; one that
+ * needs action (`persist`) waits for it.
  */
-export function Toast({ tone = 'good', children, action, onDismiss }: ToastProps) {
+export function Toast({ tone = 'good', children, action, onDismiss, persist = false }: ToastProps) {
   const [hovered, setHovered] = useState(false);
   const [focused, setFocused] = useState(false);
   const dismiss = useRef(onDismiss);
@@ -28,10 +35,10 @@ export function Toast({ tone = 'good', children, action, onDismiss }: ToastProps
     dismiss.current = onDismiss;
   }, [onDismiss]);
   useEffect(() => {
-    if (hovered || focused) return undefined;
+    if (persist || hovered || focused) return undefined;
     const timer = setTimeout(() => dismiss.current?.(), TOAST_MS);
     return () => clearTimeout(timer);
-  }, [hovered, focused]);
+  }, [persist, hovered, focused]);
 
   return (
     <div

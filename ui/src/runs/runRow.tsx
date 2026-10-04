@@ -1,5 +1,6 @@
-// One run as a row of design/'s Table. Every part is design/'s — Checkbox,
-// StatusChip, MetricChip, Glyph — and this file only fills the cells. A row
+// One run of the store as a row of design/'s Table — a job of the queue is
+// `jobRow.tsx`'s. Every part is design/'s — Checkbox, StatusChip, MetricChip,
+// Glyph — and this file only fills the cells. A row
 // draws what its run has and nothing for what it lacks: no dash stands in for
 // a metric the benchmark's ground truth could not produce. The row takes the
 // keyboard as one of the table's single tab stop, so the checkbox and the link
@@ -7,7 +8,7 @@
 import type { ReactNode } from 'react';
 import { Checkbox, Glyph, MetricChip, StatusChip, type TableRow } from '../../design/index.ts';
 import { formatHash } from '../routes.ts';
-import { benchmarkLabel, formatLatency, formatMetric, metricLabel, openRoute, otherFact, rowKey, runningLabel, shortHash, type RunRow } from './model.ts';
+import { benchmarkLabel, formatLatency, formatMetric, metricLabel, openRoute, otherFact, rowKey, shortHash, type RunRow } from './model.ts';
 import type { Refusal } from './selection.ts';
 
 /** The optional columns, drawn only when some row of the table has their data. */
@@ -21,13 +22,7 @@ export type RunRowOptions = {
   onToggle: () => void;
 };
 
-/** The failure as a sentence, beside the chip: colour is never the only carrier. */
-const failure = (node: string | null, error: string) => (node === null ? `The run failed: ${error}` : `${node} failed: ${error}`);
-
 const started = (iso: string) => new Date(iso).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' });
-
-/** The id a row prints: its run's, else its job's. */
-const printed = (row: RunRow) => (row.source.kind === 'run' ? row.source.id : (row.source.runId ?? row.source.id));
 
 function metrics(row: RunRow): ReactNode {
   return (
@@ -54,30 +49,15 @@ function metrics(row: RunRow): ReactNode {
   );
 }
 
-/** `row` as a Table row: its key, its name, its cells. */
+/** `row`, a run of the store, as a Table row: its key, its name, its cells. */
 export function runRow(row: RunRow, { selected, refusal, columns, onToggle }: RunRowOptions): TableRow {
-  const { status } = row;
   const extra: ReactNode[] = [
     ...(columns.latency ? [row.latencyMs === null ? null : formatLatency(row.latencyMs)] : []),
     ...(columns.started ? [row.startedAt === null ? null : <time dateTime={row.startedAt}>{started(row.startedAt)}</time>] : []),
   ];
 
-  if (status.state === 'queued' || status.state === 'running' || status.state === 'cancelled') {
-    // The job queue's slot: the chip alone until the queue fills the row.
-    const chip =
-      status.state === 'running' ? (
-        <StatusChip state="running" fraction={status.total > 0 ? status.done / status.total : 0}>
-          {runningLabel(status)}
-        </StatusChip>
-      ) : (
-        <StatusChip state={status.state} />
-      );
-    return { id: rowKey(row), passive: true, cells: [null, null, chip, null, ...extra] };
-  }
-
   const bench = benchmarkLabel(row);
-  const short = shortHash(printed(row));
-  const to = openRoute(row);
+  const short = shortHash(row.source.id);
   const name = `Run ${short} on ${bench}`;
   const box =
     refusal === null ? (
@@ -96,13 +76,9 @@ export function runRow(row: RunRow, { selected, refusal, columns, onToggle }: Ru
   const fact = otherFact(row);
   const run = (
     <>
-      {to === null ? (
-        <code className="rg-runs__hash">{short}</code>
-      ) : (
-        <a className="rg-runs__hash" href={formatHash(to)} tabIndex={-1}>
-          {short}
-        </a>
-      )}
+      <a className="rg-runs__hash" href={formatHash(openRoute(row))} tabIndex={-1}>
+        {short}
+      </a>
       {row.prefix === null ? null : (
         <span className="rg-runs__prefix">
           <Glyph name="prefix" />
@@ -111,30 +87,13 @@ export function runRow(row: RunRow, { selected, refusal, columns, onToggle }: Ru
       )}
       {/* The fact the group is not headed by: text from the first draw, so nothing moves in later. */}
       {fact === null ? null : <span className="rg-runs__fact">{fact}</span>}
+      {row.announced === null ? null : (
+        <span className="rg-runs__fact">
+          announced as {shortHash(row.announced)}; filed under this id because what ran differs from what was announced
+        </span>
+      )}
     </>
   );
-
-  if (status.state === 'failed') {
-    return {
-      id: rowKey(row),
-      label: status.node === null ? `${name}, failed` : `${name}, failed at ${status.node}`,
-      cells: [
-        box,
-        run,
-        <StatusChip state="failed">
-          {status.node === null ? (
-            'failed'
-          ) : (
-            <>
-              failed at <code>{status.node}</code>
-            </>
-          )}
-        </StatusChip>,
-        <span className="rg-runs__failure">{failure(status.node, status.error)}</span>,
-        ...extra,
-      ],
-    };
-  }
 
   // The row keeps focus when Space toggles it, so its name carries the state:
   // a change to it is what a screen reader announces.
