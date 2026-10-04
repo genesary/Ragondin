@@ -785,3 +785,65 @@ async fn a_recorded_name_stored_beside_a_case_alias_is_not_held_exactly() {
 
     assert_eq!(body["runs"][0]["launched_as"]["held"], "other_case");
 }
+
+#[tokio::test]
+async fn hash_matches_stored_beside_a_case_alias_are_listed_and_said_to_be_refused() {
+    // `hybrid.yaml` and `Hybrid.yaml` hold the run's content, made by hand on
+    // a filesystem that keeps case: both are hash matches, and the file
+    // backend refuses a read of either, each a case alias of the other.
+    let text = fixture_run().config.as_str().to_owned();
+    let mut backends = fakes(FakeRunStore::holding([fixture_run()]));
+    backends.pipelines = Arc::new(HeldPipelines {
+        files: vec![
+            ("hybrid".to_owned(), text.clone()),
+            ("hybrid-copy".to_owned(), format!("# a copy\n{text}")),
+            ("Hybrid".to_owned(), text),
+        ],
+    });
+
+    let body = json(send(app_with_backends(backends), get("/api/v1/runs")).await).await;
+
+    // Every match is still named: the content fact is not narrowed.
+    assert_eq!(
+        body["runs"][0]["pipeline_names"],
+        json!(["Hybrid", "hybrid", "hybrid-copy"])
+    );
+    assert_eq!(
+        body["runs"][0]["refused_pipeline_names"],
+        json!(["Hybrid", "hybrid"])
+    );
+}
+
+#[tokio::test]
+async fn hash_matches_no_case_alias_shadows_are_refused_none() {
+    let text = fixture_run().config.as_str().to_owned();
+    let mut backends = fakes(FakeRunStore::holding([fixture_run()]));
+    backends.pipelines = Arc::new(HeldPipelines {
+        files: vec![("stub".to_owned(), text)],
+    });
+
+    let body = json(send(app_with_backends(backends), get("/api/v1/runs")).await).await;
+
+    assert_eq!(body["runs"][0]["pipeline_names"], json!(["stub"]));
+    assert_eq!(body["runs"][0]["refused_pipeline_names"], json!([]));
+}
+
+#[tokio::test]
+async fn a_single_hash_match_beside_a_case_alias_that_does_not_validate_is_refused() {
+    // `Stub.yaml` does not validate, so it is no hash match, yet it is a
+    // stored name: the file backend refuses `stub`, its case alias, all the
+    // same.
+    let text = fixture_run().config.as_str().to_owned();
+    let mut backends = fakes(FakeRunStore::holding([fixture_run()]));
+    backends.pipelines = Arc::new(HeldPipelines {
+        files: vec![
+            ("stub".to_owned(), text),
+            ("Stub".to_owned(), "pipeline: [".to_owned()),
+        ],
+    });
+
+    let body = json(send(app_with_backends(backends), get("/api/v1/runs")).await).await;
+
+    assert_eq!(body["runs"][0]["pipeline_names"], json!(["stub"]));
+    assert_eq!(body["runs"][0]["refused_pipeline_names"], json!(["stub"]));
+}

@@ -8,6 +8,7 @@ const row = (id: string, over: Partial<RunRow> = {}): RunRow => ({
   source: { kind: 'run', id },
   pipeline: hex('p'),
   pipelineNames: [],
+  refusedNames: [],
   launchedAs: null,
   launchedHeld: null,
   launchRecorded: false,
@@ -29,6 +30,7 @@ const summary = (id: string, over: Partial<RunSummary> = {}): RunSummary => ({
   id,
   pipeline: hex('a'),
   pipeline_names: [],
+  refused_pipeline_names: [],
   launched_as: null,
   dataset_version: hex('d'),
   benchmark_names: [],
@@ -94,6 +96,11 @@ describe('rowsFromListing', () => {
     const [held] = rowsFromListing(listingOf(summary(hex('1'), { launched_as: { name: 'hybrid', prefix_of: null, held: 'other_case' } })));
     expect(held).toMatchObject({ launchedAs: 'hybrid', launchedHeld: 'other_case' });
     expect(rowsFromListing(listingOf(summary(hex('1'))))[0]).toMatchObject({ launchedHeld: null });
+  });
+
+  it('reads which hash matches the listing says are refused, beside every hash match', () => {
+    const [read] = rowsFromListing(listingOf(summary(hex('1'), { pipeline_names: ['Hybrid', 'hybrid', 'hybrid-copy'], refused_pipeline_names: ['Hybrid', 'hybrid'] })));
+    expect(read).toMatchObject({ pipelineNames: ['Hybrid', 'hybrid', 'hybrid-copy'], refusedNames: ['Hybrid', 'hybrid'] });
   });
 
   it('reads a recorded prefix as a prefix of the parent its record names, up to its node', () => {
@@ -176,12 +183,24 @@ describe('groupRows', () => {
       row('5', { pipeline: hex('9') }),
     ]);
     expect(groups.map((g) => [g.names, g.held])).toEqual([
-      [['hybrid-old'], 'gone'],
-      [['Hybrid'], 'other_case'],
-      [['dense'], 'exactly'],
+      [['hybrid-old'], ['gone']],
+      [['Hybrid'], ['other_case']],
+      [['dense'], ['exactly']],
       // Hash matches are current documents, from the same listing.
-      [['bm25', 'bm25-copy'], 'exactly'],
-      [[], 'exactly'],
+      [['bm25', 'bm25-copy'], ['exactly', 'exactly']],
+      [[], []],
+    ]);
+  });
+
+  it('says a hash match is not held exactly when the listing says it is refused, each name for itself', () => {
+    const groups = groupRows([
+      row('1', { pipeline: hex('a'), pipelineNames: ['Hybrid', 'hybrid', 'hybrid-copy'], refusedNames: ['Hybrid', 'hybrid'] }),
+      // One match, refused because another document — of other content — differs from it only in case.
+      row('2', { pipeline: hex('c'), pipelineNames: ['dense'], refusedNames: ['dense'] }),
+    ]);
+    expect(groups.map((g) => [g.names, g.held])).toEqual([
+      [['Hybrid', 'hybrid', 'hybrid-copy'], ['other_case', 'other_case', 'exactly']],
+      [['dense'], ['other_case']],
     ]);
   });
 
@@ -191,8 +210,8 @@ describe('groupRows', () => {
       row('2', { pipeline: hex('c'), launchedAs: 'dense', launchedHeld: 'unchecked' }),
     ]);
     expect(groups.map((g) => [g.names, g.held])).toEqual([
-      [['hybrid'], 'unchecked'],
-      [['dense'], 'unchecked'],
+      [['hybrid'], ['unchecked']],
+      [['dense'], ['unchecked']],
     ]);
   });
 

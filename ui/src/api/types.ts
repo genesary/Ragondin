@@ -1481,6 +1481,16 @@ export type RunSummary = {
    */
   pipeline_names: string[];
   /**
+   * The names among [`pipeline_names`](Self::pipeline_names) the backend
+   * refuses to read, sorted; empty when it refuses none. A name is refused
+   * when another stored name is a case alias of it — the same name in
+   * another ASCII case, `request_invalid` on a read — as two documents can
+   * be on a filesystem that keeps case; each of the two is then refused.
+   * Read from the same listing of `pipelines/` as `pipeline_names`, by the
+   * rule [`NameHeld::OtherCase`] reads a recorded name by.
+   */
+  refused_pipeline_names: string[];
+  /**
    * When the run started, in milliseconds since the Unix epoch, as the
    * process that ran it recorded; `null` when unknown.
    */

@@ -12,6 +12,7 @@ const run = (id: string, over: Partial<RunSummary> = {}): RunSummary => ({
   id,
   pipeline: hex('c'),
   pipeline_names: ['hybrid'],
+  refused_pipeline_names: [],
   launched_as: { name: 'hybrid', held: 'exactly', prefix_of: null },
   dataset_version: SCIFACT,
   benchmark_names: ['beir/scifact'],
@@ -66,7 +67,7 @@ describe('rowsFromJobs', () => {
     expect(groups[0]?.names).toEqual(['hybrid']);
     // The heading is the runs' own: their hash draws the shape, their record says the name is held.
     expect(groups[0]?.pipeline).toBe(hex('c'));
-    expect(groups[0]?.held).toBe('exactly');
+    expect(groups[0]?.held).toEqual(['exactly']);
   });
 
   it('labels the benchmark as the store does when a run there pins the same name, so one filter chip holds both', () => {

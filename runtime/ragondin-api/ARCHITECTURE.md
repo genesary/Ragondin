@@ -904,6 +904,14 @@ listing — reported, never repaired.
   several documents can be one canonical form. It is the content fact of
   the two ADR-C39 § 4 exposes about a run's pipeline: the current hash
   match.
+- `refused_pipeline_names`: the names among `pipeline_names` the backend
+  refuses to read, sorted — each one another stored name is a case alias of
+  (`backends::case_alias`), as `hybrid` and `Hybrid` both are when a
+  filesystem that keeps case holds the two. Read by `lineage::Index::held`,
+  the rule `launched_as.held` is read by, from the same listing, so the UI
+  links no hash match whose address the API would refuse and writes no case
+  rule of its own. `pipeline_names` itself is not narrowed: both are still
+  the run's content.
 - `launched_as` — `RunDetail` carries it too — the other fact: the run's
   launch record (`Run::provenance`, ADR-C39 § 1), `{name, prefix_of: {up_to,
   parent_pipeline_hash}}` with each part `null` when the record holds none,
@@ -1535,17 +1543,18 @@ ranking and the answer are the walk's, and a pair never moves them.
   by `lineage::pipeline_of`. It is reported as each run's `pipeline`: the
   lookup's answer, not a claim about which version the run is. No record
   naming one and no document, or several, is `null`, and such a run pairs
-  automatically only. A recorded name the workspace no longer holds, or
-  holds only under another case, has no pairing, and the comparison goes on
-  without one: a pairing is read only for two names the listing holds
-  exactly (`lineage::Index::held`: stored as given, and no case alias of
-  either stored beside it), so neither `pipeline_not_found` nor the case
-  alias's `request_invalid` can refuse the comparison. The comparison lists
-  the pipelines once (`lineage::index`): the names it looks a pairing up
-  among are those of the listing it found each run's pipeline in. That
-  narrows the window in which a document deleted meanwhile names a run's
-  pipeline and is then missing; it cannot close it, so a `pipeline_not_found`
-  from `read_pairing` is read as no pairing, and the comparison goes on.
+  automatically only. A run's pipeline name — recorded, or its one hash
+  match — that the workspace no longer holds, or that a stored name differs
+  from only in case, has no pairing, and the comparison goes on without one:
+  a pairing is read only for two names the listing holds exactly
+  (`lineage::Index::held`: stored as given, and no case alias of either
+  stored beside it), so neither `pipeline_not_found` nor the case alias's
+  `request_invalid` can refuse the comparison. The comparison lists the
+  pipelines once (`lineage::index`): the names it looks a pairing up among
+  are those of the listing it found each run's pipeline in. That narrows the
+  window in which a document deleted meanwhile names a run's pipeline and is
+  then missing; it cannot close it, so a `pipeline_not_found` from
+  `read_pairing` is read as no pairing, and the comparison goes on.
 - **A run of earlier content gets the pairs whose nodes it still has.** A
   pairing is kept against the two pipelines' current documents. Applied to
   a run launched as *N* whose content has since changed, *N*'s pairs apply

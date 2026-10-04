@@ -34,8 +34,9 @@ use crate::response::{
 
 /// One run, as the listing shows it, with the names the request found for
 /// it — the workspace pipelines sharing its hash and the benchmarks pinned
-/// to its digest, each sorted here — and its median query latency, derived
-/// by the handler.
+/// to its digest, each sorted here — which of those pipelines `index` says
+/// the backend refuses to read, and its median query latency, derived by the
+/// handler.
 pub(crate) fn summary(
     run: &Run,
     index: &lineage::Index,
@@ -46,10 +47,18 @@ pub(crate) fn summary(
     pipeline_names.sort();
     benchmark_names.sort();
     let (started_at_ms, finished_at_ms) = times(run);
+    // A hash match is stored as given, so `held` is never `Gone` for one:
+    // `OtherCase` is the one way the backend refuses it.
+    let refused_pipeline_names = pipeline_names
+        .iter()
+        .filter(|name| index.held(name) == NameHeld::OtherCase)
+        .cloned()
+        .collect();
     RunSummary {
         id: run.id.to_string(),
         pipeline: run.inputs.pipeline.to_string(),
         pipeline_names,
+        refused_pipeline_names,
         launched_as: run
             .provenance
             .as_ref()
@@ -218,10 +227,9 @@ pub(crate) fn family(of: &LogicalNode) -> String {
     node(of).family
 }
 
-/// A run's launch record, as the API spells it.
-/// `record` as the API serves it, `held` read from `index` — or
-/// [`NameHeld::Unchecked`] without one, for an endpoint that lists no
-/// `pipelines/`.
+/// A run's launch record, `record`, as the API serves it, `held` read from
+/// `index` — or [`NameHeld::Unchecked`] without one, for an endpoint that
+/// lists no `pipelines/`.
 pub(crate) fn launched_as(
     record: &ragondin_experiments::RunProvenance,
     index: Option<&lineage::Index>,

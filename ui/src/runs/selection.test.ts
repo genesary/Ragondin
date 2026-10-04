@@ -6,6 +6,7 @@ const row = (id: string, benchmark: string, over: Partial<RunRow> = {}): RunRow 
   source: { kind: 'run', id },
   pipeline: 'p',
   pipelineNames: [],
+  refusedNames: [],
   launchedAs: null,
   launchedHeld: null,
   launchRecorded: false,

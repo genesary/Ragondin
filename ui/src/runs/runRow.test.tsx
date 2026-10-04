@@ -12,6 +12,7 @@ const done = (over: Partial<RunRow> = {}): RunRow => ({
   source: { kind: 'run', id: ID },
   pipeline: 'p'.repeat(64),
   pipelineNames: ['hybrid'],
+  refusedNames: [],
   launchedAs: null,
   launchedHeld: null,
   launchRecorded: false,

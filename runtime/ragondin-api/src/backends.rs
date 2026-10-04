@@ -53,7 +53,7 @@ pub struct Backends {
 /// such a name (`request_invalid`), because on a filesystem that ignores case
 /// the two are one file (`ARCHITECTURE.md` § The pipelines). The one place
 /// the rule is written: the file backend refuses by it, and
-/// `lineage::Index::held` reads a recorded name by it.
+/// `lineage::Index::held` reads a recorded name and a hash match by it.
 pub(crate) fn case_alias(stored: &str, name: &str) -> bool {
     stored != name && stored.eq_ignore_ascii_case(name)
 }

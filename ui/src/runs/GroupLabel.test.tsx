@@ -11,6 +11,7 @@ const row = (id: string): RunRow => ({
   source: { kind: 'run', id },
   pipeline: HASH,
   pipelineNames: [],
+  refusedNames: [],
   launchedAs: null,
   launchedHeld: null,
   launchRecorded: false,
@@ -25,7 +26,10 @@ const row = (id: string): RunRow => ({
   announced: null,
 });
 
-const group = (over: Partial<RunGroup> = {}): RunGroup => ({ key: 'name:hybrid', names: ['hybrid'], held: 'exactly', pipeline: HASH, shapeKey: HASH, rows: [row('1'), row('2')], ...over });
+const group = (over: Partial<RunGroup> = {}): RunGroup => {
+  const names = over.names ?? ['hybrid'];
+  return { key: 'name:hybrid', names, held: names.map(() => 'exactly' as const), pipeline: HASH, shapeKey: HASH, rows: [row('1'), row('2')], ...over };
+};
 
 const SHAPE: ShapeNode[] = [
   { node: 'bm25', family: 'retriever' },
@@ -61,32 +65,48 @@ describe('the group heading', () => {
   });
 
   it('does not link a recorded name the workspace no longer holds, and says why', () => {
-    show(group({ names: ['hybrid-old'], held: 'gone' }));
+    show(group({ names: ['hybrid-old'], held: ['gone'] }));
     expect(screen.queryByRole('link')).toBeNull();
     const header = document.querySelector('th[scope="rowgroup"]') as HTMLElement;
     expect(header.textContent).toContain('hybrid-old');
     expect(header.textContent).toContain('no longer a document in this workspace');
   });
 
-  it('does not link a recorded name held only under another case, and says so apart from a gone one', () => {
-    show(group({ names: ['Hybrid'], held: 'other_case' }));
+  it('does not link a name refused as a case alias, and says why apart from a gone one, true whether or not it is also stored as given', () => {
+    show(group({ names: ['Hybrid'], held: ['other_case'] }));
     expect(screen.queryByRole('link')).toBeNull();
     const header = document.querySelector('th[scope="rowgroup"]') as HTMLElement;
     expect(header.textContent).toContain('Hybrid');
-    expect(header.textContent).toContain('held only under another case');
-    expect(header.textContent).not.toContain('no longer');
+    expect(header.textContent).toContain('refused: another spelling differs only in case');
+    // "only under another case" would be false with `Hybrid.yaml` stored too.
+    expect(header.textContent).not.toMatch(/only under|no longer/);
+  });
+
+  it('links each hash match the workspace holds exactly and no other, each saying why for itself', () => {
+    show(group({ key: 'names:x', names: ['Hybrid', 'hybrid', 'hybrid-copy'], held: ['other_case', 'other_case', 'exactly'] }));
+    expect(screen.getAllByRole('link').map((a) => a.textContent)).toEqual(['hybrid-copy']);
+    const header = document.querySelector('th[scope="rowgroup"]') as HTMLElement;
+    expect(header.textContent?.match(/refused: another spelling differs only in case/g)).toHaveLength(2);
   });
 
   it('does not link a recorded name nothing checked, and says so', () => {
-    show(group({ names: ['hybrid'], held: 'unchecked' }));
+    show(group({ names: ['hybrid'], held: ['unchecked'] }));
     expect(screen.queryByRole('link')).toBeNull();
     expect(document.querySelector('th[scope="rowgroup"]')?.textContent).toContain('not checked against the workspace');
   });
 
+  it('fails closed on a name the group gives no held state for: unlinked', () => {
+    show(group({ names: ['x'], held: [] }));
+    expect(screen.queryByRole('link')).toBeNull();
+    const header = document.querySelector('th[scope="rowgroup"]') as HTMLElement;
+    expect(header.textContent).toContain('x');
+    expect(header.textContent).toContain('not checked against the workspace');
+  });
+
   it('links a recorded name the workspace holds exactly', () => {
-    show(group({ names: ['hybrid'], held: 'exactly' }));
+    show(group({ names: ['hybrid'], held: ['exactly'] }));
     expect(screen.getByRole('link', { name: 'hybrid' }).getAttribute('href')).toBe('#pipeline/hybrid');
-    expect(document.querySelector('th[scope="rowgroup"]')?.textContent).not.toMatch(/no longer|another case/);
+    expect(document.querySelector('th[scope="rowgroup"]')?.textContent).not.toMatch(/no longer|refused/);
   });
 
   it('names a pipeline without a name by its short hash, linking by the full one', () => {

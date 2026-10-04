@@ -3544,6 +3544,13 @@
             },
             "type": "array"
           },
+          "refused_pipeline_names": {
+            "description": "The names among [`pipeline_names`](Self::pipeline_names) the backend\nrefuses to read, sorted; empty when it refuses none. A name is refused\nwhen another stored name is a case alias of it — the same name in\nanother ASCII case, `request_invalid` on a read — as two documents can\nbe on a filesystem that keeps case; each of the two is then refused.\nRead from the same listing of `pipelines/` as `pipeline_names`, by the\nrule [`NameHeld::OtherCase`] reads a recorded name by.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "started_at_ms": {
             "description": "When the run started, in milliseconds since the Unix epoch, as the\nprocess that ran it recorded; `null` when unknown.",
             "format": "uint64",
@@ -3565,6 +3572,7 @@
           "metrics",
           "pipeline",
           "pipeline_names",
+          "refused_pipeline_names",
           "started_at_ms"
         ],
         "type": "object"

@@ -314,9 +314,10 @@ async fn pairings(
     // pairing, and the comparison goes on without one. A pairing is read only
     // for two names `index` holds exactly ([`lineage::Index::held`]) — the
     // listing the runs' pipelines were found in — so the case alias's refusal
-    // cannot reach here. A document deleted after that listing still can, which the
-    // one listing narrows but cannot close: its `pipeline_not_found` is read
-    // as no pairing, the same as a name the listing did not hold.
+    // cannot reach here. A document deleted after that listing still can,
+    // which the one listing narrows but cannot close: its
+    // `pipeline_not_found` is read as no pairing, the same as a name the
+    // listing did not hold.
     let mut pairings: Vec<Pairing> = Vec::new();
     let mut seen = BTreeSet::new();
     for run in &runs[1..] {
