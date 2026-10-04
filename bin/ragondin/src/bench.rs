@@ -9,10 +9,11 @@
 //!
 //! Thin by rule, all the same. The steps — ADR-C32 § 4's six, in their order —
 //! are [`crate::execution`]'s, shared with `ragondin ui`'s launcher, and the
-//! run's times are stamped there; `bench` is that preparation, then that
-//! execution, then the save and the summary. What is this module's own is
-//! what it does around them: the launch record it stamps from its two paths,
-//! and what it does with a run the store already holds.
+//! run's times are stamped there; `bench` is that preparation, then the
+//! store's answer for the run's identity, then that execution, then the save
+//! and the summary. What is this module's own is what it does around them:
+//! the launch record it stamps from its two paths, and its refusal of a run
+//! the store already holds.
 //!
 //! # The launch record
 //!
@@ -51,33 +52,36 @@
 //! # A run already stored
 //!
 //! One run, one record, and the first launch's record wins (ADR-C39 § 8).
-//! After the evaluation, `bench` asks the store for the run id the harness
-//! computed. When the store holds it, nothing is saved, the stored run is left
-//! byte for byte as it was, and instead of the summary `bench` prints the id
-//! and then the two facts in this order:
+//! Once the preparation has run, `bench` asks the store for the run id the
+//! harness computes from it (`Prepared::identity`), before the corpus is
+//! embedded. When the store holds it, `bench` refuses, as the UI's
+//! `409 run_exists` refuses a submission: nothing executes, nothing is saved,
+//! the stored run is left byte for byte as it was, nothing is printed on
+//! stdout, and it exits non-zero with the id and then the two facts in this
+//! order:
 //!
 //! ```text
-//! run <id>
-//!   already stored, launched as <name>; this execution was not kept
+//! error: run <id>: already stored, launched as <name>; this execution was not kept
 //! ```
 //!
 //! `<name>` is the stored record's name. When the stored run has no record,
 //! or a record with no name, the line is
-//! `already stored; this execution was not kept`. It exits `0`: nothing
-//! failed, and a script that re-runs a benchmark keeps working. A run the
-//! store holds but cannot read is an error that names the run, and nothing is
-//! saved over it; before this rule it exited `0` with the usual summary. When the store does not hold the id, `bench` saves the run
-//! and prints exactly what it always has.
+//! `error: run <id>: already stored; this execution was not kept`. A run the
+//! store holds but cannot read is refused as an error that names the run. No
+//! escape, such as a forced re-run, is offered.
 //!
-//! The whole evaluation still runs before the store is asked: refusing
-//! before the corpus is embedded, as the UI's `409 run_exists` does, is a
-//! change of `bench`'s behaviour this module does not make yet.
+//! The store is asked once more after the execution, before the save:
+//! `save` does nothing for a run already stored, so a writer that filed the
+//! same run while this one executed would otherwise leave this execution
+//! reported as filed. Within one preparation nothing the harness hashes
+//! changes, so both questions are about one id. When the store does not hold
+//! the id, `bench` saves the run and prints exactly what it always has.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 
-use anyhow::{Context, Result};
-use ragondin_experiments::{FileSystemRunStore, Run, RunProvenance, RunStoreError};
+use anyhow::{anyhow, Context, Result};
+use ragondin_experiments::{FileSystemRunStore, Run, RunId, RunProvenance, RunStoreError};
 
 use crate::binding::Bindings;
 use crate::execution::{self, Pipeline, Refusal};
@@ -105,7 +109,8 @@ pub struct Request<'a> {
 /// `--remote` argument refused, an unreadable or invalid configuration, a configuration v0 does not run, a node
 /// key the composition root refuses, a binding no node uses, a component whose
 /// identity cannot be read, a dataset that does not load, an `impl:` this build did not register,
-/// a query that fails, or a store that cannot be written.
+/// a run the store already holds — refused before it executes — a query that
+/// fails, or a store that cannot be written.
 pub async fn run(request: &Request<'_>) -> Result<()> {
     // Refused on their text alone: a malformed binding is found before the
     // configuration is even read (ADR-C32 § 2).
@@ -123,6 +128,13 @@ pub async fn run(request: &Request<'_>) -> Result<()> {
     })
     .await
     .map_err(Refusal::into_error)?;
+
+    // One run, one record (ADR-C39 § 8): the identity is known now, before
+    // the corpus is embedded, so a run the store already holds is refused
+    // here, as the UI's `409 run_exists` refuses it, and nothing runs.
+    let store = FileSystemRunStore::new(request.store);
+    refuse_if_stored(&store, &prepared.identity())?;
+
     let run = prepared
         .execute(
             launched_as(request.config, request.store).map(RunProvenance::named),
@@ -131,45 +143,44 @@ pub async fn run(request: &Request<'_>) -> Result<()> {
         )
         .await?;
 
-    // One run, one record (ADR-C39 § 8): a run already stored is kept as it
-    // is, its launch record included, and this execution is dropped and said
-    // to be — `save` is not called, and the run is never reported as filed.
-    // Looked up through the store's own read, so "stored" means what the
-    // store says, and the record is read as the store reads it.
-    let store = FileSystemRunStore::new(request.store);
-    match store.load(&run.id) {
-        Ok(stored) => {
-            print!("{}", render_already_stored(&stored));
-            return Ok(());
-        }
-        Err(RunStoreError::NotFound { .. }) => {}
-        Err(error) => {
-            return Err(error).with_context(|| {
-                format!(
-                    "run {} is already in the store and does not read; this execution was not kept",
-                    run.id
-                )
-            })
-        }
-    }
+    // Asked again, because `save` does nothing for a run already stored: a
+    // writer that filed this run while it executed would otherwise leave it
+    // reported as filed by this execution.
+    refuse_if_stored(&store, &run.id)?;
     store.save(&run)?;
     print!("{}", render(&run));
 
     Ok(())
 }
 
-/// What `bench` prints for a run the store already holds: its id, then that
-/// it was kept and this execution was not — naming the workspace pipeline it
-/// was first launched as when its record has a name, and naming none when it
-/// has no record or a record without one.
-fn render_already_stored(stored: &Run) -> String {
+/// Refuses a run the store already holds, leaving it as it is.
+///
+/// Looked up through the store's own read, so "stored" means what the store
+/// says, and the launch record is read as the store reads it.
+fn refuse_if_stored(store: &FileSystemRunStore, id: &RunId) -> Result<()> {
+    match store.load(id) {
+        Ok(stored) => Err(anyhow!(already_stored(&stored))),
+        Err(RunStoreError::NotFound { .. }) => Ok(()),
+        Err(error) => Err(error).with_context(|| {
+            format!(
+                "run {id} is already in the store and does not read; this execution was not kept"
+            )
+        }),
+    }
+}
+
+/// Why `bench` refuses a run the store already holds: its id, then that it
+/// was launched before and this execution is not kept — naming the workspace
+/// pipeline it was first launched as when its record has a name, and naming
+/// none when it has no record or a record without one.
+fn already_stored(stored: &Run) -> String {
     match stored.provenance.as_ref().and_then(RunProvenance::name) {
         Some(name) => format!(
-            "run {}\n  already stored, launched as {name}; this execution was not kept\n",
+            "run {}: already stored, launched as {name}; this execution was not kept",
             stored.id
         ),
         None => format!(
-            "run {}\n  already stored; this execution was not kept\n",
+            "run {}: already stored; this execution was not kept",
             stored.id
         ),
     }

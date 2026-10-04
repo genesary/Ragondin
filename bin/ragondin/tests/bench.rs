@@ -381,6 +381,53 @@ mod with_remote_components {
     }
 
     #[test]
+    fn a_stored_run_is_refused_before_execution() {
+        // The bound embedder is the observer: it sees every text the corpus
+        // embedding and the queries send it. A second bench of a run the
+        // store holds sends it nothing — the refusal comes after the identity
+        // read and before step 4 (ADR-C39 § 8).
+        let store = store("remote-refused-before-execution");
+        let services = services();
+        let first = saved(&store, &bench(&store, &services.arguments));
+        let run_dir = store.join(first.id.to_string());
+        let embedded = services.embedder.texts().len();
+        assert!(embedded > 0, "the first run embedded through the observer");
+        let stored = std::fs::read_dir(&run_dir)
+            .expect("the run directory reads")
+            .map(|entry| {
+                let path = entry.expect("an entry reads").path();
+                let bytes = std::fs::read(&path).expect("a run file reads");
+                (path, bytes)
+            })
+            .collect::<std::collections::BTreeMap<_, _>>();
+
+        let second = bench(&store, &services.arguments);
+
+        assert!(!second.status.success(), "{}", stdout(&second));
+        assert_eq!(
+            stderr(&second),
+            format!(
+                "error: run {}: already stored; this execution was not kept\n",
+                first.id
+            )
+        );
+        assert_eq!(stdout(&second), "");
+        assert_eq!(
+            services.embedder.texts().len(),
+            embedded,
+            "nothing was embedded and no query ran"
+        );
+        for (path, bytes) in stored {
+            assert_eq!(
+                std::fs::read(&path).expect("a run file reads"),
+                bytes,
+                "{}",
+                path.display()
+            );
+        }
+    }
+
+    #[test]
     fn bench_over_a_bound_generator_records_its_identity_and_binding_and_scores_its_answers() {
         let store = store("remote-generation");
         let embedder = remote::serve_embedder(FakeEmbedder::default());
@@ -981,9 +1028,10 @@ mod with_components {
     }
 
     #[test]
-    fn a_second_bench_reports_the_stored_run_and_keeps_it() {
+    fn a_second_bench_is_refused_naming_the_stored_run_and_keeps_it() {
         // The same pipeline under a second name: one run id, and the first
-        // launch's record is the one kept (ADR-C39 § 8).
+        // launch's record is the one kept (ADR-C39 § 8). The second launch is
+        // refused, as the UI's `409 run_exists` refuses it.
         let w = workspace(
             "second-reported",
             &["pipelines/hybrid.yaml", "pipelines/fork.yaml"],
@@ -996,18 +1044,19 @@ mod with_components {
 
         let second = bench_output(&w.join("pipelines/fork.yaml"), &w.join("runs"));
 
-        assert!(second.status.success(), "{}", stderr(&second));
+        assert!(!second.status.success(), "{}", stdout(&second));
         assert_eq!(
-            stdout(&second),
+            stderr(&second),
             format!(
-                "run {id}\n  already stored, launched as hybrid; this execution was not kept\n"
+                "error: run {id}: already stored, launched as hybrid; this execution was not kept\n"
             )
         );
+        assert_eq!(stdout(&second), "", "no summary of a run not filed");
         assert_eq!(files_of(&run_dir), stored, "the stored run is untouched");
     }
 
     #[test]
-    fn a_second_bench_over_a_run_without_a_record_reports_without_a_name() {
+    fn a_second_bench_over_a_run_without_a_record_is_refused_without_a_name() {
         // Outside the workspace convention: the first run is filed with no
         // record, and no `provenance.json`.
         let w = workspace("second-unnamed", &["drafts/hybrid.yaml"]);
@@ -1020,11 +1069,12 @@ mod with_components {
 
         let second = bench_output(&w.join("drafts/hybrid.yaml"), &w.join("runs"));
 
-        assert!(second.status.success(), "{}", stderr(&second));
+        assert!(!second.status.success(), "{}", stdout(&second));
         assert_eq!(
-            stdout(&second),
-            format!("run {id}\n  already stored; this execution was not kept\n")
+            stderr(&second),
+            format!("error: run {id}: already stored; this execution was not kept\n")
         );
+        assert_eq!(stdout(&second), "", "no summary of a run not filed");
         assert_eq!(files_of(&run_dir), stored, "the stored run is untouched");
     }
 

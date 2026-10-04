@@ -2,9 +2,10 @@
 //! `bench` and by `ragondin ui`'s launcher (ADR-C36 § 1): a **preparation**
 //! that goes as far as the run's identity is known, and an **execution** that
 //! takes it from there. There is no second copy of these steps anywhere in the
-//! binary (P1, ADR-4): `bench` is [`prepare`] → [`Prepared::execute`] → save →
-//! print, and the launcher is [`prepare`] → `Prepared::identity` at
-//! submission, and [`prepare`] → [`Prepared::execute`] again at execution.
+//! binary (P1, ADR-4): `bench` is [`prepare`] → [`Prepared::identity`],
+//! refused when the store holds it → [`Prepared::execute`] → save → print, and
+//! the launcher is [`prepare`] → [`Prepared::identity`] at submission, and
+//! [`prepare`] → [`Prepared::execute`] again at execution.
 //!
 //! What is genuinely this module's own is the *order* — ADR-C32 § 4's six
 //! steps, with the identity of every component this build knows how to
@@ -16,12 +17,14 @@
 //! # The two identities
 //!
 //! [`prepare`] stops after step 3 and the index build, before the expensive
-//! embedding, holding everything the harness hashes. `Prepared::identity` is
+//! embedding, holding everything the harness hashes. [`Prepared::identity`] is
 //! the harness's `run_identity` over the [`Evaluation`] that
 //! [`Prepared::execute`] then evaluates — one function builds it for both — so
 //! the id announced at submission and the id the finished run carries share
 //! one construction, and differ only when an input changed in between: a
-//! `Remote` service that swapped its model, a dataset rewritten. The binary
+//! `Remote` service that swapped its model, a dataset rewritten. Within one
+//! [`Prepared`] nothing it hashes changes, so the id `bench` checks against
+//! the store before executing is the id its finished run carries. The binary
 //! assembles no run id of its own; only the harness does.
 //!
 //! # The stamps
@@ -245,7 +248,7 @@ pub async fn prepare(request: Request<'_>) -> Result<Prepared, Refusal> {
 
 impl Prepared {
     /// The evaluation this run is: the one construction both
-    /// `identity` (under `ui`) and [`execute`](Self::execute) hand the
+    /// [`identity`](Self::identity) and [`execute`](Self::execute) hand the
     /// harness.
     fn evaluation(&self) -> Evaluation<'_> {
         Evaluation {
@@ -259,7 +262,6 @@ impl Prepared {
     }
 
     /// The id this run will carry, from the harness, without running it.
-    #[cfg(feature = "ui")]
     pub fn identity(&self) -> ragondin_experiments::RunId {
         ragondin_harness::run_identity(&self.evaluation())
     }
