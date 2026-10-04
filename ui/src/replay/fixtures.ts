@@ -2,9 +2,10 @@
 // shaped as runtime/ragondin-api builds them (ARCHITECTURE.md there, § Derived
 // data): a hybrid run with a reranker, a context builder and a generator; a
 // dense-only run on the same benchmark; the hybrid failing at its reranker;
-// and a run on another benchmark. Test data only; no application module
+// a run on another benchmark; and a job failed at its reranker, with the
+// partial traces it kept. Test data only; no application module
 // imports it.
-import type { DatasetCheck, Graph, QueryTrace, RunDetail, RunListing, RunQueries, RunSummary, TraceNodeView, TracePassage } from '../api/types.ts';
+import type { DatasetCheck, Graph, PartialQueries, PartialTrace, QueryTrace, RunDetail, RunListing, RunQueries, RunSummary, TraceNodeView, TracePassage } from '../api/types.ts';
 
 const hex = (c: string) => c.repeat(64);
 export const HYBRID = hex('b');
@@ -239,3 +240,29 @@ export const LISTING: RunListing = {
   shapes: {},
   unreadable: [],
 };
+
+/** A run job that failed at its reranker on its third query, keeping the traces of q1 and q2. */
+export const JOB = '1700000000000-2';
+
+/** That job's partial traces, as `GET /jobs/{id}/queries` lists them: nothing scored, no text. */
+export const PARTIAL_QUERIES: PartialQueries = {
+  job: {
+    id: JOB,
+    position: 2,
+    created_at_ms: 1_700_000_000_000,
+    work: { kind: 'run', run_id: hex('a'), pipeline: 'hybrid-rerank-gen', benchmark: 'beir/scifact', bindings: [], up_to: null },
+    state: { kind: 'failed', error: 'the reranker answered 503', at_node: 'rerank', finished_at_ms: 1_700_000_100_000, partial_traces: 2 },
+  },
+  graph: HYBRID_GRAPH,
+  queries: [
+    { id: 'q1', text: null, scores: {}, duration_nanos: ms(1000) },
+    { id: 'q2', text: null, scores: {}, duration_nanos: ms(900) },
+  ],
+};
+
+/** One of its traces, as `GET /jobs/{id}/trace/{query}` serves it: the hybrid's nodes, nothing read against a dataset. */
+export const partialTrace = (query: string): PartialTrace => ({
+  job: JOB,
+  query,
+  nodes: withPassages(HYBRID_TRACE, 'dataset_absent').nodes,
+});

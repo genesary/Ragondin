@@ -64,7 +64,9 @@ describe('openJobStream', () => {
     ['a work kind the description does not give', { ...QUEUED, work: { kind: 'upload', benchmark: 'beir/scifact' } }],
     ['a running count that is not a number', { ...RUNNING, state: { ...RUNNING.state, done: '400' } }],
     ['a running total that is neither a number nor null', { ...RUNNING, state: { ...RUNNING.state, total: '1000' } }],
-    ['a failure without its error', { ...QUEUED, state: { kind: 'failed', at_node: null, finished_at_ms: 3 } }],
+    ['a failure without its error', { ...QUEUED, state: { kind: 'failed', at_node: null, finished_at_ms: 3, partial_traces: 0 } }],
+    ['a failure without the count of the traces it kept', { ...QUEUED, state: { kind: 'failed', error: 'boom', at_node: null, finished_at_ms: 3 } }],
+    ['a cancellation whose count is not a number', { ...QUEUED, state: { kind: 'cancelled', finished_at_ms: 3, partial_traces: '2' } }],
     ['a download without its benchmark', { ...QUEUED, work: { kind: 'download' } }],
   ])('treats %s as unreadable: never handed on, and the stream starts again', (_, data) => {
     const { events } = open();

@@ -63,6 +63,17 @@ pub(crate) struct Published {
     pub(crate) data: String,
 }
 
+/// A failed or cancelled run job's partial traces, as [`Queue::partial`]
+/// reads them.
+pub(crate) struct Partial {
+    /// The job.
+    pub(crate) job: Job,
+    /// The pipeline document it snapshotted at submission.
+    pub(crate) pipeline: String,
+    /// The traces it kept, by query.
+    pub(crate) traces: BTreeMap<QueryId, TraceDocument>,
+}
+
 /// The queue, shared by every handler and both workers.
 pub(crate) struct Queue {
     dir: PathBuf,
@@ -130,10 +141,12 @@ impl State {
 impl Queue {
     /// The queue over `dir`, read back from it: every job found `Running`
     /// is failed as interrupted — no process runs it now — unless it is a run
-    /// whose announced id the store holds, which is done; and the queued
-    /// ones wait in their stored order. When called inside a `tokio`
-    /// runtime, as the binary does, the workers start on them at once; a
-    /// lane without a runtime starts at its next submission.
+    /// whose announced id the store holds, which is done; a failed or
+    /// cancelled job whose file recorded no count of partial traces has the
+    /// traces it kept counted; and the queued ones wait in their stored
+    /// order. When called inside a `tokio` runtime, as the binary does, the
+    /// workers start on them at once; a lane without a runtime starts at its
+    /// next submission.
     pub(crate) fn open(dir: PathBuf, backends: &Backends) -> Arc<Self> {
         let (jobs, mut faults) = file::load(&dir);
         let mut entries = Vec::with_capacity(jobs.len());
@@ -171,10 +184,13 @@ impl Queue {
                         id_mismatch: None,
                         finished_at: at,
                     },
+                    // A crash leaves no partial traces: they are written when
+                    // a run stops.
                     None => JobState::Failed {
                         error: INTERRUPTED.to_owned(),
                         at_node: None,
                         finished_at: at,
+                        partial_traces: Some(0),
                     },
                 };
                 job.history.push(Transition {
@@ -187,6 +203,7 @@ impl Queue {
                     faults.push(fault(&dir, &job.id, reason));
                 }
             }
+            recount(&dir, &mut job, &mut faults);
             entries.push(Entry {
                 job,
                 cancel: Cancellation::new(),
@@ -231,6 +248,65 @@ impl Queue {
         let state = self.state.lock().await;
         let index = state.find(id)?;
         Ok(summary(&state.jobs[index].job))
+    }
+
+    /// The partial traces of a run job that failed or was cancelled, with
+    /// the job: `job_not_ended` while it is queued or running, and
+    /// `no_partial_traces` for a job that ended without any — done, a
+    /// download, or a run that kept none.
+    pub(crate) async fn partial(&self, id: &str) -> Result<Partial, ApiError> {
+        let job = {
+            let state = self.state.lock().await;
+            state.jobs[state.find(id)?].job.clone()
+        };
+        let none = |reason: &str| ApiError::NoPartialTraces {
+            id: job.id.clone(),
+            reason: reason.to_owned(),
+        };
+        let kept = match &job.state {
+            JobState::Queued | JobState::Running { .. } => {
+                return Err(ApiError::JobNotEnded {
+                    id: job.id.clone(),
+                    state: job.state.name().to_owned(),
+                })
+            }
+            JobState::Done { .. } => {
+                return Err(none("it is done, and a done run is in the store, complete"))
+            }
+            JobState::Failed { partial_traces, .. }
+            | JobState::Cancelled { partial_traces, .. } => partial_traces.unwrap_or(0),
+        };
+        let Work::Run { pipeline, .. } = &job.work else {
+            return Err(none("it is a download, which executes no query"));
+        };
+        let pipeline = pipeline.clone();
+        if kept == 0 {
+            return Err(none(match &job.state {
+                JobState::Failed { error, .. } if error == INTERRUPTED => {
+                    "it was interrupted by a crash, which leaves none"
+                }
+                _ => "it completed no query before it stopped, or its traces could not be written",
+            }));
+        }
+        let (dir, job_id) = (self.dir.clone(), job.id.clone());
+        let traces = tokio::task::spawn_blocking(move || file::read_partial(&dir, &job_id))
+            .await
+            .map_err(|error| format!("reading the partial traces did not complete: {error}"))
+            .and_then(|read| read)
+            .and_then(|traces| {
+                traces.ok_or_else(|| {
+                    format!(
+                        "{} is not there, though the job recorded {kept} traces",
+                        file::partial_path(&self.dir, &job.id).display()
+                    )
+                })
+            })
+            .map_err(|detail| ApiError::BackendFailed { detail })?;
+        Ok(Partial {
+            job,
+            pipeline,
+            traces,
+        })
     }
 
     /// Queues `submission` under the id `run_id` announced for it — unless a
@@ -346,7 +422,10 @@ impl Queue {
             JobState::Queued => {
                 let mut job = entry.job.clone();
                 let at = now();
-                job.state = JobState::Cancelled { finished_at: at };
+                job.state = JobState::Cancelled {
+                    finished_at: at,
+                    partial_traces: Some(0),
+                };
                 job.history.push(Transition {
                     state: job.state.name().to_owned(),
                     at,
@@ -565,6 +644,7 @@ impl Queue {
                         error: format!("the job could not be started: {reason}"),
                         at_node: None,
                         finished_at: at,
+                        partial_traces: Some(0),
                     };
                     failed.history.push(Transition {
                         state: failed.state.name().to_owned(),
@@ -615,12 +695,12 @@ impl Queue {
         let at = now();
         let state = match result {
             Ok(run) => self.file(&job, run, &tally, at).await,
-            Err(LauncherError::Cancelled) => {
-                self.keep_partial(&job.id, &tally).await;
-                JobState::Cancelled { finished_at: at }
-            }
+            Err(LauncherError::Cancelled) => JobState::Cancelled {
+                finished_at: at,
+                partial_traces: Some(self.keep_partial(&job.id, &tally).await),
+            },
             Err(error) => {
-                self.keep_partial(&job.id, &tally).await;
+                let kept = self.keep_partial(&job.id, &tally).await;
                 let at_node = match &error {
                     LauncherError::Execution { at_node, .. } => at_node.clone(),
                     LauncherError::PipelineInvalid { node, .. } => node.clone(),
@@ -630,6 +710,7 @@ impl Queue {
                     error: error.to_string(),
                     at_node,
                     finished_at: at,
+                    partial_traces: Some(kept),
                 }
             }
         };
@@ -670,11 +751,12 @@ impl Queue {
                 finished_at: at,
             },
             Err(error) => {
-                self.keep_partial(&job.id, tally).await;
+                let kept = self.keep_partial(&job.id, tally).await;
                 JobState::Failed {
                     error,
                     at_node: None,
                     finished_at: at,
+                    partial_traces: Some(kept),
                 }
             }
         }
@@ -725,9 +807,10 @@ impl Queue {
         self.publish(&mut state, &JobEvent::Running(view));
     }
 
-    /// Writes a stopped run's traces under `jobs/<id>/partial/`; a failed
-    /// write is reported among the faults.
-    async fn keep_partial(&self, id: &str, tally: &Tally) {
+    /// Writes a stopped run's traces under `jobs/<id>/partial/`, and
+    /// returns how many it kept: none when the write failed, which is
+    /// reported among the faults.
+    async fn keep_partial(&self, id: &str, tally: &Tally) -> u64 {
         let (dir, id, traces) = (self.dir.clone(), id.to_owned(), tally.traces.clone());
         let written = {
             let (dir, id) = (dir.clone(), id.clone());
@@ -736,11 +819,15 @@ impl Queue {
                 .map_err(|error| format!("writing the partial traces did not complete: {error}"))
                 .and_then(|written| written)
         };
-        if let Err(reason) = written {
-            self.state.lock().await.faults.push(JobFault {
-                path: file::partial_path(&dir, &id).display().to_string(),
-                reason,
-            });
+        match written {
+            Ok(()) => tally.traces.len() as u64,
+            Err(reason) => {
+                self.state.lock().await.faults.push(JobFault {
+                    path: file::partial_path(&dir, &id).display().to_string(),
+                    reason,
+                });
+                0
+            }
         }
     }
 
@@ -795,11 +882,15 @@ impl Queue {
                 id_mismatch: None,
                 finished_at: at,
             },
-            Err(ApiError::DownloadCancelled { .. }) => JobState::Cancelled { finished_at: at },
+            Err(ApiError::DownloadCancelled { .. }) => JobState::Cancelled {
+                finished_at: at,
+                partial_traces: Some(0),
+            },
             Err(error) => JobState::Failed {
                 error: error.to_string(),
                 at_node: None,
                 finished_at: at,
+                partial_traces: Some(0),
             },
         };
         self.end(&job.id, state).await;
@@ -834,7 +925,7 @@ impl Queue {
         let at = match &terminal {
             JobState::Done { finished_at, .. }
             | JobState::Failed { finished_at, .. }
-            | JobState::Cancelled { finished_at } => *finished_at,
+            | JobState::Cancelled { finished_at, .. } => *finished_at,
             JobState::Queued | JobState::Running { .. } => now(),
         };
         job.state = terminal;
@@ -876,6 +967,31 @@ impl RunObserver for Forward {
         // after that is not part of the job.
         let _ = self.0.send(progress);
     }
+}
+
+/// Sets the count of partial traces of a failed or cancelled job whose file
+/// was written before the count was recorded, from the traces it kept: none
+/// when there is no file. A file that does not read counts none, and is
+/// reported — never repaired.
+fn recount(dir: &std::path::Path, job: &mut Job, faults: &mut Vec<JobFault>) {
+    let (JobState::Failed { partial_traces, .. } | JobState::Cancelled { partial_traces, .. }) =
+        &mut job.state
+    else {
+        return;
+    };
+    if partial_traces.is_some() {
+        return;
+    }
+    *partial_traces = Some(match file::read_partial(dir, &job.id) {
+        Ok(traces) => traces.map_or(0, |traces| traces.len() as u64),
+        Err(reason) => {
+            faults.push(JobFault {
+                path: file::partial_path(dir, &job.id).display().to_string(),
+                reason: format!("{reason}; the job counts none"),
+            });
+            0
+        }
+    });
 }
 
 fn fault(dir: &std::path::Path, id: &str, reason: String) -> JobFault {

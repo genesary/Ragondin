@@ -254,7 +254,7 @@ describe('the download', () => {
     fireEvent.click(within(row('beir/fiqa')).getByRole('button', { name: 'Download' }));
     await waitFor(() => expect(row('beir/fiqa').textContent).toContain('Queued'));
 
-    send({ event: 'failed', data: download('7-0', { kind: 'failed', error: 'corpus.jsonl: digest differs from the manifest', at_node: null, finished_at_ms: 3 }) });
+    send({ event: 'failed', data: download('7-0', { kind: 'failed', error: 'corpus.jsonl: digest differs from the manifest', at_node: null, finished_at_ms: 3, partial_traces: 0 }) });
     const alert = within(row('beir/fiqa')).getByRole('alert');
     expect(alert.textContent).toContain('corpus.jsonl: digest differs from the manifest');
     expect(within(row('beir/fiqa')).getByText('failed').closest('.rg-status')?.getAttribute('data-state')).toBe('failed');
@@ -288,7 +288,7 @@ describe('the download', () => {
     expect(row('beir/fiqa').textContent).toContain('Downloading… 1 MB of 17.1 MB');
     expect(document.activeElement).toBe(button);
     expect(button.getAttribute('aria-disabled')).toBe('true');
-    send({ event: 'failed', data: download('7-0', { kind: 'failed', error: 'connection reset', at_node: null, finished_at_ms: 3 }) });
+    send({ event: 'failed', data: download('7-0', { kind: 'failed', error: 'connection reset', at_node: null, finished_at_ms: 3, partial_traces: 0 }) });
     expect(document.activeElement).toBe(button);
     expect(button.textContent).toBe('Retry');
   });

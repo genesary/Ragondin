@@ -111,6 +111,16 @@ export function Screen({ route, heading, client, workspace, refreshWorkspace, re
       </>
     );
   }
+  if (route.screen === 'replay' && 'job' in route) {
+    return (
+      <>
+        {title}
+        <Suspense fallback={<Loading label="Opening Replay" />}>
+          <ReplayScreen client={client} job={route.job} query={route.query} />
+        </Suspense>
+      </>
+    );
+  }
   if (route.screen === 'editor') {
     return (
       <>

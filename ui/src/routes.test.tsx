@@ -150,6 +150,27 @@ describe('#replay/<run>/q/<query>?with=<run>', () => {
   });
 });
 
+describe('#replay/job/<id>/q/<query>', () => {
+  it('carries a job whose partial traces are replayed, and the query, and restores them from the hash on load', () => {
+    const route: Route = { screen: 'replay', job: '1700000000000-2', query: 'q/1' };
+    expect(formatHash(route)).toBe('#replay/job/1700000000000-2/q/q%2F1');
+    expect(load('#replay/job/1700000000000-2/q/q%2F1')).toEqual(route);
+  });
+
+  it('carries the job alone before a query is chosen', () => {
+    expect(formatHash({ screen: 'replay', job: 'j2' })).toBe('#replay/job/j2');
+    expect(load('#replay/job/j2')).toEqual({ screen: 'replay', job: 'j2' });
+  });
+
+  it("is the job's view: the query is state within it", () => {
+    expect(viewOf({ screen: 'replay', job: 'j2', query: 'q1' })).toBe('#replay/job/j2');
+  });
+
+  it.each(['#replay/job', '#replay/job/j2/q', '#replay/job/j2/q/q1?with=aaa', '#replay/job/../q/q1'])('reads %s as no route', (hash) => {
+    expect(parseHash(hash)).toBeNull();
+  });
+});
+
 describe('#editor', () => {
   it('is the screen before a pipeline is opened', () => {
     expect(formatHash({ screen: 'editor' })).toBe('#editor');

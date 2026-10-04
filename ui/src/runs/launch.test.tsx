@@ -246,15 +246,21 @@ describe('the queue’s rows', () => {
 
   it('a_failed_job_opens_with_its_partial_traces', async () => {
     const { stream } = await show('#runs/job/j2');
-    connect(stream, [runJob('j2', failedAt('rerank', 'the reranker answered 503'), { runId: hex('b') })]);
+    connect(stream, [runJob('j2', failedAt('rerank', 'the reranker answered 503', 2), { runId: hex('b') })]);
     const job = await screen.findByRole('region', { name: 'Job j2' });
     expect(job.querySelector('.rg-status')?.textContent).toBe('failed at rerank');
     expect(within(job).getByText('rerank failed: the reranker answered 503')).toBeTruthy();
-    // Where the partial traces are, said as what it is: kept by the job, not in the store, and not served yet.
-    expect(within(job).getByText(/traces of the queries it executed before it failed are kept under jobs\/j2\/partial\/traces\.json/)).toBeTruthy();
-    expect(within(job).getByText(/does not serve them yet, so Replay cannot open them/)).toBeTruthy();
+    // The count, said as what it is: the traces the job kept, not a run in the store — and the way to Replay them.
+    expect(within(job).getByText('It kept the traces of the 2 queries it completed before it failed, under jobs/j2/partial/ in the workspace, never in the store.')).toBeTruthy();
+    expect(within(job).queryByText(/does not serve/)).toBeNull();
+    expect(within(job).getByRole('link', { name: 'Replay the partial traces' }).getAttribute('href')).toBe('#replay/job/j2');
     expect(within(job).getByText(short(hex('b')))).toBeTruthy();
     expect(jobRowOf(hex('b')).getAttribute('aria-current')).toBe('true');
+
+    // A job that kept none says so, and offers nothing to replay.
+    send(stream, { event: 'failed', data: runJob('j2', failedAt(null, 'interrupted', 0), { runId: hex('b') }) });
+    expect(within(job).getByText('It kept no trace: a run keeps the traces of the queries it completed when it fails or is cancelled, and a crash keeps none.')).toBeTruthy();
+    expect(within(job).queryByRole('link', { name: 'Replay the partial traces' })).toBeNull();
   });
 
   it('cancel_and_resubmit_round_trip_through_the_api', async () => {

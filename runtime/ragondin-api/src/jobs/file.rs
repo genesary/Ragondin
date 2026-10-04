@@ -102,6 +102,23 @@ pub(super) fn write(dir: &Path, job: &Job) -> Result<(), String> {
         .map_err(|error| format!("{} cannot be written: {error}", path.display()))
 }
 
+/// The traces a stopped run kept, by query; `None` when it kept none — no
+/// file, as a crash leaves it.
+pub(super) fn read_partial(
+    dir: &Path,
+    id: &str,
+) -> Result<Option<BTreeMap<QueryId, TraceDocument>>, String> {
+    let path = partial_path(dir, id);
+    let bytes = match fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(format!("{} cannot be read: {error}", path.display())),
+    };
+    serde_json::from_slice(&bytes)
+        .map(Some)
+        .map_err(|error| format!("{} is not a map of traces: {error}", path.display()))
+}
+
 /// Writes the traces of the queries a run executed before it stopped.
 pub(super) fn write_partial(
     dir: &Path,

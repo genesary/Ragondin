@@ -23,8 +23,8 @@ const STATES: Record<JobStatus['kind'], (s: Record<string, unknown>) => boolean>
   queued: () => true,
   running: (s) => isCount(s.done) && (s.total === null || isCount(s.total)),
   done: () => true,
-  failed: (s) => typeof s.error === 'string',
-  cancelled: () => true,
+  failed: (s) => typeof s.error === 'string' && isCount(s.partial_traces),
+  cancelled: (s) => isCount(s.partial_traces),
 };
 const WORKS: Record<JobWork['kind'], (w: Record<string, unknown>) => boolean> = {
   run: (w) => typeof w.benchmark === 'string',
@@ -37,8 +37,8 @@ const isSummary = (value: unknown) => isObject(value) && typeof value.id === 'st
 /**
  * One event as `JobEvent`, or null when its data is not JSON or lacks what
  * the screens read: a listing's jobs; a job's id, a state and a work of a
- * kind the description gives, a running job's counts, a failure's error and
- * a work's benchmark.
+ * kind the description gives, a running job's counts, a failure's error, how
+ * many traces a failed or cancelled job kept, and a work's benchmark.
  */
 function readJobEvent(name: string, data: string): JobEvent | null {
   if (!isName(name)) return null;

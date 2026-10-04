@@ -4,8 +4,19 @@
 // the screen's issue); what is computed is presentation: shares of time,
 // moves between a node and its upstream, the counterpart beside a node, and
 // the sentences. ARCHITECTURE.md § The Replay screen.
-import type { DatasetCheck, Graph, QueryScores, QueryTrace, RunListing, RunSummary, TracePassage, TraceNodeView } from '../api/types.ts';
+import type { DatasetCheck, Graph, PartialTrace, QueryScores, QueryTrace, RunListing, RunSummary, TracePassage, TraceNodeView } from '../api/types.ts';
 import type { NodeOverlay } from '../canvas/index.ts';
+
+/**
+ * One query's trace as the stage and the inspector read it: a stored run's
+ * (`GET /runs/{id}/trace/{query}`), or a job's partial trace, which the API
+ * reads against no dataset — so no text, no scores, and no passages check
+ * (`passages` null).
+ */
+export type ReplayTrace = Pick<QueryTrace, 'query' | 'text' | 'scores' | 'nodes'> & { passages: DatasetCheck | null };
+
+/** A job's partial trace as the screen reads it: its nodes as served, nothing read against a dataset. */
+export const fromPartial = (trace: PartialTrace): ReplayTrace => ({ query: trace.query, text: null, scores: {}, nodes: trace.nodes, passages: null });
 
 /**
  * The name a run goes by on this screen: the name its launch record gives,
@@ -39,7 +50,7 @@ function upstreamOf(graph: Graph, id: string): string[] {
  * Each chunk's best rank, 1-based, across the upstream lists of `id` in this
  * trace; null when nothing upstream ranked chunks (a retriever).
  */
-function formerRanks(graph: Graph, trace: QueryTrace, id: string): Map<string, number> | null {
+function formerRanks(graph: Graph, trace: ReplayTrace, id: string): Map<string, number> | null {
   const lists = upstreamOf(graph, id).flatMap((from) => {
     const chunks = chunksOf(trace.nodes.find((n) => n.node === from));
     return chunks === null ? [] : [chunks];
@@ -76,7 +87,7 @@ export type NodeList = { kept: ListItem[]; discarded: ListItem[] };
  * the same trace, and the upstream chunks it did not keep. Null when it
  * produced no chunks: an answer, a failure, a node that did not run.
  */
-export function listOf(graph: Graph, trace: QueryTrace, id: string): NodeList | null {
+export function listOf(graph: Graph, trace: ReplayTrace, id: string): NodeList | null {
   const chunks = chunksOf(trace.nodes.find((n) => n.node === id));
   if (chunks === null) return null;
   const former = formerRanks(graph, trace, id);
@@ -110,7 +121,7 @@ export function terminalOf(graph: Graph): string | null {
 
 export type OverlayInput = {
   graph: Graph;
-  trace: QueryTrace;
+  trace: ReplayTrace;
   /** The per-node metric chosen in the toolbar. */
   metric: string | null;
   /** This run's letter in side by side: A, or B for the run beside. */
@@ -162,7 +173,7 @@ export type Counterpart = { kind: 'same'; node: string } | { kind: 'final'; node
  * — when it has none — the other run's final output: the last node that ran,
  * which is its terminal node, or the node it failed at. Null when nothing ran.
  */
-export function counterpart(id: string, other: { graph: Graph; trace: QueryTrace }): Counterpart | null {
+export function counterpart(id: string, other: { graph: Graph; trace: ReplayTrace }): Counterpart | null {
   if (other.graph.nodes.some((n) => n.id === id) || other.graph.inputs.some((i) => i.id === id)) return { kind: 'same', node: id };
   const last = other.trace.nodes.at(-1);
   return last === undefined ? null : { kind: 'final', node: last.node };

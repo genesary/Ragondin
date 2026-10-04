@@ -4,17 +4,17 @@
 // final node the verdict. Side by side, one column per run, the other run's
 // node resolved by `counterpart`. ARCHITECTURE.md § The Replay screen.
 import { FamilyTile, Inspector, InlineMessage, RunSwatch, familyOfComponent, type Family } from '../../design/index.ts';
-import type { Graph, QueryTrace, RunQueries } from '../api/types.ts';
+import type { Graph, RunQueries } from '../api/types.ts';
 import { percent } from '../canvas/index.ts';
-import { counterpart, formatMs, formatScore, listOf, terminalOf, verdict, type ListItem, type Reading } from './model.ts';
+import { counterpart, formatMs, formatScore, listOf, terminalOf, verdict, type ListItem, type Reading, type ReplayTrace } from './model.ts';
 
 /** One run as the inspector reads it. */
 export type Side = {
   letter: 'A' | 'B';
-  /** The run's name: its pipeline's, or its short id. */
+  /** The run's name: its pipeline's, or its short id; for a job's partial traces, the job's. */
   name: string;
   graph: Graph;
-  trace: QueryTrace;
+  trace: ReplayTrace;
   /** Its query listing, for the per-run metric and its ranking node; null while it is read. */
   queries: RunQueries | null;
 };

@@ -632,7 +632,12 @@ async fn cancelling_a_queued_job_never_executes_it() {
     )
     .await;
     assert_eq!(response.status(), StatusCode::OK);
-    assert_eq!(kind(&json(response).await), "cancelled");
+    let cancelled = json(response).await;
+    assert_eq!(kind(&cancelled), "cancelled");
+    assert_eq!(
+        cancelled["state"]["partial_traces"], 0,
+        "it executed nothing"
+    );
 
     launcher.gate.add_permits(1);
     job_until(&app, &running, finished).await;
@@ -673,6 +678,8 @@ async fn cancelling_the_running_job_keeps_its_partial_traces_and_files_no_run() 
     )
     .unwrap();
     assert_eq!(partial.keys().collect::<Vec<_>>(), ["q-1", "q-2"]);
+    assert_eq!(job["state"]["partial_traces"], 2, "{job}");
+    assert_eq!(job_file(&workspace, &id)["state"]["partial_traces"], 2);
     assert_eq!(
         FileSystemRunStore::new(workspace.join("runs"))
             .ids()
@@ -703,6 +710,8 @@ async fn a_failing_execution_keeps_the_error_the_node_and_the_partial_traces() {
     )
     .unwrap();
     assert_eq!(partial.keys().collect::<Vec<_>>(), ["q-1"]);
+    assert_eq!(job["state"]["partial_traces"], 1, "{job}");
+    assert_eq!(file["state"]["partial_traces"], 1);
     assert_eq!(
         FileSystemRunStore::new(workspace.join("runs"))
             .ids()
@@ -1130,6 +1139,8 @@ async fn restart_marks_the_running_job_interrupted_and_resumes_the_queue() {
     assert_eq!(jobs[1].0, "was-queued");
     assert!(matches!(jobs[1].1, "queued" | "running"), "{listing}");
     assert_eq!(listing["jobs"][0]["state"]["error"], "interrupted");
+    // A crash leaves no partial traces: they are written when a run stops.
+    assert_eq!(listing["jobs"][0]["state"]["partial_traces"], 0);
     let file = job_file(&workspace, "was-running");
     assert_eq!(file["state"]["kind"], "failed");
     assert_eq!(file["state"]["error"], "interrupted");
@@ -1278,4 +1289,194 @@ fn every_transition_is_on_disk_before_the_next_one_starts() {
         assert_eq!(kind(&job), "failed");
         assert_eq!(job["state"]["error"], "interrupted");
     });
+}
+
+/// A failed run job, its traces for queries 1 and 2 kept, and the server
+/// over it: the reranker fails on query 3.
+async fn failed_at_the_third_query(name: &str) -> (PathBuf, Server, String) {
+    let workspace = scratch(name);
+    let launcher = Arc::new(ScriptedLauncher::new(Script {
+        queries: vec![100, 200, 300],
+        fail_at: Some(3),
+        ..Script::default()
+    }));
+    let app = server(&workspace, launcher);
+    let id = accepted(&app, PIPELINE).await;
+    let job = job_until(&app, &id, finished).await;
+    assert_eq!(kind(&job), "failed", "{job}");
+    (workspace, app, id)
+}
+
+/// The job view's count and Replay over the job read one record: a failed
+/// job's partial traces, listed with the graph its snapshot lowers to, and
+/// each read in the node shape `GET /runs/{id}/trace/{query}` serves.
+#[tokio::test]
+async fn a_failed_job_s_partial_traces_are_listed_and_read_query_by_query() {
+    let (_workspace, app, id) = failed_at_the_third_query("jobs-partial-served").await;
+
+    let response = send(app.clone(), get(&format!("/api/v1/jobs/{id}/queries"))).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let listed = json(response).await;
+    assert_eq!(listed["job"]["id"], id.as_str());
+    assert_eq!(listed["job"]["state"]["kind"], "failed");
+    assert_eq!(listed["job"]["state"]["at_node"], "rerank");
+    assert_eq!(listed["job"]["state"]["partial_traces"], 2);
+    let nodes: Vec<&str> = listed["graph"]["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|node| node["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(nodes, ["answer", "context", "fused", "leg_a", "leg_b"]);
+    // Nothing recorded the dataset these traces ran on, so nothing is scored
+    // and no text is read (ADR-C36 § 4).
+    assert_eq!(
+        listed["queries"],
+        json!([
+            { "id": "q-1", "text": null, "scores": {}, "duration_nanos": 100 },
+            { "id": "q-2", "text": null, "scores": {}, "duration_nanos": 200 },
+        ])
+    );
+
+    let response = send(app.clone(), get(&format!("/api/v1/jobs/{id}/trace/q-2"))).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        json(response).await,
+        json!({
+            "job": id,
+            "query": "q-2",
+            "nodes": [{
+                "node": "answer",
+                "inputs": [],
+                "output": null,
+                "duration_nanos": 200,
+                "error": null,
+                "metrics": null,
+                "gold_ranks": null,
+            }],
+        })
+    );
+}
+
+/// A job that has no partial traces says why with a stable code: one still
+/// queued or running has not written them yet; a done one filed its run; a
+/// crash left none; and a query the traces do not hold is not found.
+#[tokio::test]
+async fn a_job_without_partial_traces_answers_a_stable_code() {
+    async fn problem(app: &Server, path: &str) -> (StatusCode, Value) {
+        let response = send(app.clone(), get(path)).await;
+        (response.status(), json(response).await)
+    }
+
+    let (_workspace, app, failed) = failed_at_the_third_query("jobs-partial-codes").await;
+    let (status, body) = problem(&app, &format!("/api/v1/jobs/{failed}/trace/q-3")).await;
+    assert_eq!(
+        (status, &body["code"]),
+        (StatusCode::NOT_FOUND, &json!("query_not_found"))
+    );
+    assert_eq!(
+        body["hint"],
+        format!("Pick a query from GET /jobs/{failed}/queries.")
+    );
+    let (status, body) = problem(&app, "/api/v1/jobs/no-such-job/queries").await;
+    assert_eq!(
+        (status, &body["code"]),
+        (StatusCode::NOT_FOUND, &json!("job_not_found"))
+    );
+
+    let workspace = scratch("jobs-partial-codes-running");
+    let launcher = Arc::new(ScriptedLauncher::new(Script {
+        queries: vec![100, 200],
+        gate_after: Some(1),
+        ..Script::default()
+    }));
+    let app = server(&workspace, Arc::clone(&launcher));
+    let running = accepted(&app, PIPELINE).await;
+    job_until(&app, &running, |job| job["state"]["done"] == 1).await;
+    for path in [
+        format!("/api/v1/jobs/{running}/queries"),
+        format!("/api/v1/jobs/{running}/trace/q-1"),
+    ] {
+        let (status, body) = problem(&app, &path).await;
+        assert_eq!(
+            (status, &body["code"]),
+            (StatusCode::CONFLICT, &json!("job_not_ended")),
+            "{path}"
+        );
+    }
+    launcher.gate.add_permits(1);
+    let done = job_until(&app, &running, finished).await;
+    assert_eq!(kind(&done), "done", "{done}");
+    let (status, body) = problem(&app, &format!("/api/v1/jobs/{running}/queries")).await;
+    assert_eq!(
+        (status, &body["code"]),
+        (StatusCode::NOT_FOUND, &json!("no_partial_traces"))
+    );
+
+    let workspace = scratch("jobs-partial-codes-crashed");
+    std::fs::create_dir_all(workspace.join("jobs")).unwrap();
+    let crashed = stored_job(
+        "was-running",
+        1,
+        json!({ "kind": "running", "done": 1, "total": 2, "started_at": null, "median_latency_nanos": null }),
+        &["queued", "running"],
+    );
+    std::fs::write(
+        workspace.join("jobs/was-running.json"),
+        serde_json::to_vec(&crashed).unwrap(),
+    )
+    .unwrap();
+    let app = server(&workspace, Arc::new(ScriptedLauncher::default()));
+    let (status, body) = problem(&app, "/api/v1/jobs/was-running/trace/q-1").await;
+    assert_eq!(
+        (status, &body["code"]),
+        (StatusCode::NOT_FOUND, &json!("no_partial_traces"))
+    );
+}
+
+/// A job file written before the count was recorded: the count is read from
+/// the traces it kept, and a job that kept none says none.
+#[tokio::test]
+async fn a_job_file_without_the_count_reads_it_from_its_partial_traces() {
+    let workspace = scratch("jobs-partial-count-recovered");
+    let jobs = workspace.join("jobs");
+    std::fs::create_dir_all(jobs.join("kept/partial")).unwrap();
+    let ended = |id: &str, position| {
+        stored_job(
+            id,
+            position,
+            json!({ "kind": "failed", "error": "the reranker failed", "at_node": "rerank", "finished_at": null }),
+            &["queued", "running", "failed"],
+        )
+    };
+    for job in [ended("kept", 1), ended("none", 2)] {
+        std::fs::write(
+            jobs.join(format!("{}.json", job["id"].as_str().unwrap())),
+            serde_json::to_vec(&job).unwrap(),
+        )
+        .unwrap();
+    }
+    let traces: BTreeMap<QueryId, TraceDocument> = [
+        (QueryId::new("q-1"), trace(100)),
+        (QueryId::new("q-2"), trace(200)),
+    ]
+    .into();
+    std::fs::write(
+        jobs.join("kept/partial/traces.json"),
+        serde_json::to_vec(&traces).unwrap(),
+    )
+    .unwrap();
+
+    let app = server(&workspace, Arc::new(ScriptedLauncher::default()));
+
+    let kept = json(send(app.clone(), get("/api/v1/jobs/kept")).await).await;
+    assert_eq!(kept["state"]["partial_traces"], 2, "{kept}");
+    let none = json(send(app.clone(), get("/api/v1/jobs/none")).await).await;
+    assert_eq!(none["state"]["partial_traces"], 0, "{none}");
+    let listed = json(send(app.clone(), get("/api/v1/jobs/kept/queries")).await).await;
+    assert_eq!(
+        listed["queries"].as_array().map(Vec::len),
+        Some(2),
+        "{listed}"
+    );
 }

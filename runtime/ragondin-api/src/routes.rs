@@ -87,6 +87,8 @@ pub(crate) fn api(routes: &mut impl Routes) {
     routes.route(Get, "/jobs/{id}", jobs::read);
     routes.route(Patch, "/jobs/{id}", jobs::reorder);
     routes.route(Delete, "/jobs/{id}", jobs::cancel);
+    routes.route(Get, "/jobs/{id}/queries", jobs::queries);
+    routes.route(Get, "/jobs/{id}/trace/{query}", jobs::trace);
     routes.route(Post, "/compare", compare::compare);
     routes.route(Get, "/pipelines", pipelines::list);
     // A static segment outranks a parameter, so `validate` is never a

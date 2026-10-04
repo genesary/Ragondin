@@ -10,18 +10,25 @@
 //! the id. So an existing run is refused and an unreachable service fails at
 //! once, not when the worker reaches the job (ADR-C36 § 1).
 
+use std::collections::BTreeMap;
+
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::Json;
+use ragondin_experiments::{lower_configuration, ConfigDocument, Trace, TraceDocument};
+use ragondin_types::QueryId;
 
 use crate::backends::{LauncherError, Submission};
 use crate::endpoints::services::last_read_at;
 use crate::error::ApiError;
 use crate::extract::{ApiJson, ApiPath, ApiQuery, NoParameters};
 use crate::handlers::AppState;
+use crate::jobs::{summary, Partial};
 use crate::request::{ReorderRequest, RunRequest};
-use crate::response::{JobListing, JobSummary, Location, RunAccepted};
-use crate::validation;
+use crate::response::{
+    JobListing, JobSummary, Location, PartialQueries, PartialTrace, QueryScores, RunAccepted,
+};
+use crate::{convert, validation};
 
 /// `POST /runs`: `202` with the job and the run id it announced, or
 /// `run_exists` linking the job or the run that holds that id.
@@ -104,6 +111,85 @@ pub(crate) async fn read(
     _: ApiQuery<NoParameters>,
 ) -> Result<Json<JobSummary>, ApiError> {
     Ok(Json(state.jobs.job(&id).await?))
+}
+
+/// `GET /jobs/{id}/queries`: the queries a failed or cancelled run job
+/// completed, from the traces it kept under `jobs/<id>/partial/`, with the
+/// graph its snapshotted document lowers to. Nothing is scored and no text is
+/// read: the traces record no dataset digest to check one against (ADR-C36
+/// § 4).
+pub(crate) async fn queries(
+    State(state): State<AppState>,
+    ApiPath(id): ApiPath<String>,
+    _: ApiQuery<NoParameters>,
+) -> Result<Json<PartialQueries>, ApiError> {
+    let Partial {
+        job,
+        pipeline,
+        traces,
+    } = state.jobs.partial(&id).await?;
+    let lowered = lower_configuration(&ConfigDocument::new(pipeline)).map_err(|reason| {
+        ApiError::BackendFailed {
+            detail: format!("job {id}'s pipeline document no longer lowers: {reason}"),
+        }
+    })?;
+    let queries = traces
+        .iter()
+        .map(|(query, document)| {
+            Ok(QueryScores {
+                id: query.as_str().to_owned(),
+                text: None,
+                scores: BTreeMap::new(),
+                duration_nanos: read_partial_trace(&id, query, document)?.latency_nanos(),
+            })
+        })
+        .collect::<Result<_, ApiError>>()?;
+    Ok(Json(PartialQueries {
+        job: summary(&job),
+        graph: convert::graph(&lowered),
+        queries,
+    }))
+}
+
+/// `GET /jobs/{id}/trace/{query}`: one query's trace from a failed or
+/// cancelled run job's partial traces, in the node shape a stored run's
+/// trace is served in, with nothing read against a dataset.
+pub(crate) async fn trace(
+    State(state): State<AppState>,
+    ApiPath((id, query)): ApiPath<(String, String)>,
+    _: ApiQuery<NoParameters>,
+) -> Result<Json<PartialTrace>, ApiError> {
+    let Partial { job, traces, .. } = state.jobs.partial(&id).await?;
+    let query_id = QueryId::new(&query);
+    let document = traces
+        .get(&query_id)
+        .ok_or_else(|| ApiError::QueryNotFound {
+            owner: format!("job {}", job.id),
+            listing: format!("/jobs/{}/queries", job.id),
+            query: query.clone(),
+        })?;
+    let trace = read_partial_trace(&job.id, &query_id, document)?;
+    let nodes = convert::trace_view(&trace, None, |_| None, |_| None, |_| None);
+    Ok(Json(PartialTrace {
+        job: job.id,
+        query,
+        nodes,
+    }))
+}
+
+/// One kept trace, typed; one that does not read is reported, never
+/// repaired, naming the query.
+fn read_partial_trace(
+    id: &str,
+    query: &QueryId,
+    document: &TraceDocument,
+) -> Result<Trace, ApiError> {
+    Trace::try_from(document).map_err(|error| ApiError::BackendFailed {
+        detail: format!(
+            "job {id}'s partial trace of query {} cannot be read: {error}",
+            query.as_str()
+        ),
+    })
 }
 
 /// `PATCH /jobs/{id}`: moves a queued job among its lane's queued jobs, and

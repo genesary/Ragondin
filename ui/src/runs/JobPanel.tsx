@@ -1,7 +1,8 @@
 // One job of the queue, at its own address (`#runs/job/<id>`): what was
 // submitted, the identity it announced, where it stands, and — failed or
-// cancelled — where the traces of the queries it executed are kept. The job
-// is the stream's when the queue holds it, else `GET /jobs/{id}`'s answer.
+// cancelled — how many queries' traces it kept, where, and the way to Replay
+// over them. The job is the stream's when the queue holds it, else
+// `GET /jobs/{id}`'s answer.
 // ARCHITECTURE.md § The Runs screen.
 import { useEffect, useState, type Ref } from 'react';
 import { ButtonLink, Section, StatusChip } from '../../design/index.ts';
@@ -69,9 +70,18 @@ function Facts({ job }: { job: JobSummary }) {
       </dl>
       {state.kind === 'failed' ? <p className="rg-runs__failure">{state.at_node === null ? `The run failed: ${state.error}` : `${state.at_node} failed: ${state.error}`}</p> : null}
       {state.kind === 'failed' || state.kind === 'cancelled' ? (
-        <p className="rg-job__partial">
-          The traces of the queries it executed before it {state.kind === 'failed' ? 'failed' : 'was cancelled'} are kept under jobs/{job.id}/partial/traces.json in the workspace, never in the store. This build’s API does not serve them yet, so Replay cannot open them.
-        </p>
+        state.partial_traces === 0 ? (
+          <p className="rg-job__partial">It kept no trace: a run keeps the traces of the queries it completed when it fails or is cancelled, and a crash keeps none.</p>
+        ) : (
+          <p className="rg-job__partial">
+            <span>
+              It kept the traces of the {state.partial_traces === 1 ? 'query' : `${state.partial_traces.toLocaleString('en-US')} queries`} it completed before it {state.kind === 'failed' ? 'failed' : 'was cancelled'}, under jobs/{job.id}/partial/ in the workspace, never in the store.
+            </span>{' '}
+            <ButtonLink size="s" href={formatHash({ screen: 'replay', job: job.id })}>
+              Replay the partial traces
+            </ButtonLink>
+          </p>
+        )
       ) : null}
       {state.kind === 'done' && state.run_id !== null ? (
         <p>

@@ -74,11 +74,14 @@ pub enum ApiError {
         /// The id as the request spelled it.
         id: String,
     },
-    /// A query the run did not execute: its traces hold none under this id.
-    #[error("run {run_id} executed no query {query}")]
+    /// A query whose trace is not there: a run's traces, or a job's partial
+    /// traces, hold none under this id.
+    #[error("{owner} holds no trace of query {query}")]
     QueryNotFound {
-        /// The run's id.
-        run_id: String,
+        /// Whose traces were looked in: `run <id>`, or `job <id>`.
+        owner: String,
+        /// The path that lists the queries it holds.
+        listing: String,
         /// The query id as the request spelled it.
         query: String,
     },
@@ -262,6 +265,24 @@ pub enum ApiError {
         /// The terminal state it is in.
         state: String,
     },
+    /// A read of the partial traces of a job still queued or running: a
+    /// run's traces are written when it stops.
+    #[error("job {id} is {state}: its traces are kept only once it fails or is cancelled")]
+    JobNotEnded {
+        /// The job's id.
+        id: String,
+        /// The state it is in.
+        state: String,
+    },
+    /// A read of the partial traces of a job that ended without any: done,
+    /// a download, or a run that kept none.
+    #[error("job {id} kept no partial traces: {reason}")]
+    NoPartialTraces {
+        /// The job's id.
+        id: String,
+        /// Why it has none.
+        reason: String,
+    },
 }
 
 impl ApiError {
@@ -297,6 +318,8 @@ impl ApiError {
         "job_not_found",
         "job_not_queued",
         "job_finished",
+        "job_not_ended",
+        "no_partial_traces",
     ];
 
     /// The stable code a client matches on.
@@ -322,7 +345,8 @@ impl ApiError {
             | Self::DownloadCancelled { .. }
             | Self::RunsNotComparable { .. }
             | Self::JobNotQueued { .. }
-            | Self::JobFinished { .. } => StatusCode::CONFLICT,
+            | Self::JobFinished { .. }
+            | Self::JobNotEnded { .. } => StatusCode::CONFLICT,
             Self::RunUnreadable { .. } | Self::BackendFailed { .. } => {
                 StatusCode::INTERNAL_SERVER_ERROR
             }
@@ -333,7 +357,8 @@ impl ApiError {
             | Self::PipelineNotFound { .. }
             | Self::ServiceNotFound { .. }
             | Self::RouteNotFound { .. }
-            | Self::JobNotFound { .. } => StatusCode::NOT_FOUND,
+            | Self::JobNotFound { .. }
+            | Self::NoPartialTraces { .. } => StatusCode::NOT_FOUND,
             Self::HostRefused { .. } => StatusCode::MISDIRECTED_REQUEST,
             Self::OriginRefused { .. } => StatusCode::FORBIDDEN,
             Self::MethodNotAllowed { .. } => StatusCode::METHOD_NOT_ALLOWED,
@@ -402,6 +427,8 @@ impl ApiError {
             Self::JobNotFound { .. } => 27,
             Self::JobNotQueued { .. } => 28,
             Self::JobFinished { .. } => 29,
+            Self::JobNotEnded { .. } => 30,
+            Self::NoPartialTraces { .. } => 31,
         }
     }
 
@@ -413,7 +440,7 @@ impl ApiError {
             Self::RunExists { .. } => "The run already exists",
             Self::RunUnreadable { .. } => "The run cannot be read",
             Self::RunNotFound { .. } => "No such run",
-            Self::QueryNotFound { .. } => "No such query in this run",
+            Self::QueryNotFound { .. } => "No trace of this query",
             Self::ParameterInvalid { .. } => "A parameter is invalid",
             Self::DatasetAbsent { .. } => "The dataset is absent",
             Self::DatasetDiffers { .. } => "The dataset differs from the run's",
@@ -437,6 +464,8 @@ impl ApiError {
             Self::JobNotFound { .. } => "No such job",
             Self::JobNotQueued { .. } => "The job is not queued",
             Self::JobFinished { .. } => "The job already ended",
+            Self::JobNotEnded { .. } => "The job has not ended",
+            Self::NoPartialTraces { .. } => "The job kept no partial traces",
         }
     }
 
@@ -469,9 +498,7 @@ impl ApiError {
             Self::RunNotFound { .. } => {
                 "Check the run id: a run is named by 64 lowercase hex digits.".to_owned()
             }
-            Self::QueryNotFound { run_id, .. } => {
-                format!("Pick a query from GET /runs/{run_id}/queries.")
-            }
+            Self::QueryNotFound { listing, .. } => format!("Pick a query from GET {listing}."),
             Self::ParameterInvalid { .. } => {
                 "Check the parameter against the API description, api/v1.json.".to_owned()
             }
@@ -541,6 +568,12 @@ impl ApiError {
             }
             Self::JobFinished { .. } => {
                 "Nothing to cancel: submit it again to run it again.".to_owned()
+            }
+            Self::JobNotEnded { .. } => {
+                "Wait for the job to end: a run that fails or is cancelled keeps the traces of the queries it completed.".to_owned()
+            }
+            Self::NoPartialTraces { .. } => {
+                "Nothing to replay from the job: a done run is replayed from the store, and a crash leaves no traces.".to_owned()
             }
         }
     }
@@ -634,7 +667,8 @@ mod tests {
             },
             ApiError::RunNotFound { id: String::new() },
             ApiError::QueryNotFound {
-                run_id: String::new(),
+                owner: String::new(),
+                listing: String::new(),
                 query: String::new(),
             },
             ApiError::ParameterInvalid {
@@ -709,6 +743,14 @@ mod tests {
             ApiError::JobFinished {
                 id: String::new(),
                 state: String::new(),
+            },
+            ApiError::JobNotEnded {
+                id: String::new(),
+                state: String::new(),
+            },
+            ApiError::NoPartialTraces {
+                id: String::new(),
+                reason: String::new(),
             },
         ];
         assert_eq!(samples.len(), ApiError::CODES.len());

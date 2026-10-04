@@ -1492,13 +1492,20 @@
                   "failed"
                 ],
                 "type": "string"
+              },
+              "partial_traces": {
+                "description": "How many queries' traces a run kept when it stopped — those it\ncompleted, under `jobs/<id>/partial/`, which\n`GET /jobs/{id}/queries` serves. `0` for a download, a run that\ncompleted none, and a job interrupted by a crash, which leaves\nnone.",
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
               }
             },
             "required": [
               "at_node",
               "error",
               "finished_at_ms",
-              "kind"
+              "kind",
+              "partial_traces"
             ],
             "type": "object"
           },
@@ -1517,11 +1524,18 @@
                   "cancelled"
                 ],
                 "type": "string"
+              },
+              "partial_traces": {
+                "description": "How many queries' traces a run kept, as for `failed`.",
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
               }
             },
             "required": [
               "finished_at_ms",
-              "kind"
+              "kind",
+              "partial_traces"
             ],
             "type": "object"
           }
@@ -2587,6 +2601,66 @@
         ],
         "description": "A node parameter's value."
       },
+      "PartialQueries": {
+        "description": "`GET /jobs/{id}/queries`: the queries a failed or cancelled run job\ncompleted before it stopped, whose traces it kept under\n`jobs/<id>/partial/` — never in the store, which holds a run complete or\nnot at all.\n\nNothing here is scored, and no query or passage text is read: a run\nrecords the digests of the dataset it was evaluated on, and the ground\ntruth and the text are read only against a dataset that digests to them\n(ADR-C36 § 4); a job's partial traces record none.",
+        "properties": {
+          "graph": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Graph"
+              }
+            ],
+            "description": "The graph lowered from the pipeline document the job snapshotted at\nsubmission."
+          },
+          "job": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/JobSummary"
+              }
+            ],
+            "description": "The job, as `GET /jobs/{id}` answers it: what was submitted, the run\nid it announced — under which nothing is stored — and how it ended."
+          },
+          "queries": {
+            "description": "The queries, by id, each with its latency; its `text` is `null` and\nits `scores` empty.",
+            "items": {
+              "$ref": "#/components/schemas/QueryScores"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "job",
+          "graph",
+          "queries"
+        ],
+        "type": "object"
+      },
+      "PartialTrace": {
+        "description": "`GET /jobs/{id}/trace/{query}`: one query's trace from a failed or\ncancelled run job's partial traces, node by node, in the shape\n`GET /runs/{id}/trace/{query}` serves a stored run's — each node's\n`metrics` and `gold_ranks`, and each passage's `text` and `grade`,\n`null`, for the reason [`PartialQueries`] gives.",
+        "properties": {
+          "job": {
+            "description": "The job's id.",
+            "type": "string"
+          },
+          "nodes": {
+            "description": "The nodes, in execution order.",
+            "items": {
+              "$ref": "#/components/schemas/TraceNodeView"
+            },
+            "type": "array"
+          },
+          "query": {
+            "description": "The query's id.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job",
+          "query",
+          "nodes"
+        ],
+        "type": "object"
+      },
       "PipelineDetail": {
         "description": "`GET /pipelines/{name}`: one pipeline document, verbatim.",
         "properties": {
@@ -2954,7 +3028,9 @@
               "body_too_large",
               "job_not_found",
               "job_not_queued",
-              "job_finished"
+              "job_finished",
+              "job_not_ended",
+              "no_partial_traces"
             ],
             "type": "string"
           },
@@ -4635,6 +4711,90 @@
           }
         },
         "summary": "Moves a queued job among its lane's queued jobs, and answers the queue in its new order."
+      }
+    },
+    "/jobs/{id}/queries": {
+      "get": {
+        "description": "Read from jobs/<id>/partial/, never from the store. Nothing is scored and no text is read: the traces record no dataset digest. A job still queued or running is job_not_ended (409); one that is done, a download, or a run that kept no trace — a crash keeps none — is no_partial_traces (404).",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PartialQueries"
+                }
+              }
+            },
+            "description": "A failed or cancelled run job's partial traces: the queries it completed before it stopped, and the graph of the pipeline it snapshotted."
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "An error, as application/problem+json."
+          }
+        },
+        "summary": "A failed or cancelled run job's partial traces: the queries it completed before it stopped, and the graph of the pipeline it snapshotted."
+      }
+    },
+    "/jobs/{id}/trace/{query}": {
+      "get": {
+        "description": "job_not_ended and no_partial_traces as for the job's queries; a query its traces do not hold is query_not_found (404).",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PartialTrace"
+                }
+              }
+            },
+            "description": "One query's trace from a failed or cancelled run job's partial traces, node by node, in the shape a stored run's trace is served in."
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "An error, as application/problem+json."
+          }
+        },
+        "summary": "One query's trace from a failed or cancelled run job's partial traces, node by node, in the shape a stored run's trace is served in."
       }
     },
     "/pipelines": {

@@ -329,7 +329,8 @@ pub(crate) async fn trace(
         .traces
         .get(&query_id)
         .ok_or_else(|| ApiError::QueryNotFound {
-            run_id: run.id.to_string(),
+            owner: format!("run {}", run.id),
+            listing: format!("/runs/{}/queries", run.id),
             query: query.clone(),
         })?;
     let trace = read_trace(&run, &query_id, document)?;

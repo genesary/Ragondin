@@ -3,7 +3,7 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createApiClient } from '../api/client.ts';
 import { mockApi, type MockReply } from '../api/testing.ts';
-import type { Problem, QueryTrace, RunDetail, RunQueries } from '../api/types.ts';
+import type { PartialQueries, Problem, QueryTrace, RunDetail, RunQueries } from '../api/types.ts';
 import { parseHash } from '../routes.ts';
 import {
   DENSE,
@@ -20,7 +20,10 @@ import {
   HYBRID_MISSING,
   HYBRID_QUERIES,
   HYBRID_TRACE,
+  JOB,
   LISTING,
+  PARTIAL_QUERIES,
+  partialTrace,
   withPassages,
 } from './fixtures.ts';
 import { declared } from '../../design/testing/css.ts';
@@ -286,6 +289,58 @@ describe('Replay of a failed run', () => {
     expect(within(rerank).getByText('The service at 127.0.0.1:7001 did not answer within 30 s.')).toBeTruthy();
     for (const id of ['context', 'answer']) expect(cardOf(graph.parentElement!, id).getAttribute('data-status'), id).toBe('not-run');
     expect(screen.getByText('This query failed at rerank; the nodes after it did not run.')).toBeTruthy();
+  });
+});
+
+describe('Replay over a job’s partial traces', () => {
+  /** The API over the job: its partial traces, and a refusal for any other job. */
+  const jobApi = (queries: MockReply<PartialQueries> = { body: PARTIAL_QUERIES }) =>
+    mockApi({
+      'GET /jobs/{id}/queries': (_q, path) => (segment(path, 4) === JOB ? queries : { problem: problem('job_not_found', 404, 'no such job') }),
+      'GET /jobs/{id}/trace/{query}': (_q, path) => ({ body: partialTrace(segment(path, 6)) }),
+    });
+  const showJob = (query?: string) =>
+    render(
+      <div style={{ width: 1400 }}>
+        <ReplayScreen client={createApiClient()} job={JOB} query={query} />
+      </div>,
+    );
+
+  it('replays_a_failed_job_s_partial_traces_query_by_query_labelled_partial', async () => {
+    const calls = jobApi();
+    showJob('q1');
+    const graph = await screen.findByRole('application', { name: `Job ${JOB}, partial traces, query q1` });
+    await drawn(graph.parentElement!, 'rerank');
+    // The nodes of a kept trace, read as a run's are: durations on the canvas, nothing scored.
+    expect(within(cardOf(graph.parentElement!, 'rerank')).getByText('349 ms')).toBeTruthy();
+    // Labelled as what it is: a job's partial traces, never a stored run.
+    const banner = screen.getByText(`Partial traces of job ${JOB}`).closest('.rg-inline') as HTMLElement;
+    expect(banner.textContent).toContain('failed at rerank: the reranker answered 503');
+    expect(banner.textContent).toContain('2 queries it completed before it stopped');
+    expect(banner.textContent).toContain('No run was stored');
+    expect(banner.textContent).toContain('the query it stopped on left no trace');
+    expect(within(banner).getByRole('link', { name: 'Open the job' }).getAttribute('href')).toBe(`#runs/job/${JOB}`);
+    expect(calls.requests.filter((r) => r.startsWith('GET /api/v1/runs'))).toEqual([]);
+    // One job, alone: nothing stands beside it, and nothing is scored to filter on.
+    expect((screen.getByRole('radio', { name: 'Side by side' }) as HTMLInputElement).disabled).toBe(true);
+    expect((screen.getByRole('button', { name: /No gold in the top 10/ }) as HTMLButtonElement).disabled).toBe(true);
+    // Query by query, the address following.
+    const list = screen.getByRole('listbox', { name: 'Queries' });
+    expect(within(list).getAllByRole('option').map((o) => o.id.split('-').at(-1))).toHaveLength(2);
+    fireEvent.keyDown(list, { key: 'ArrowDown' });
+    expect(route()).toEqual({ screen: 'replay', job: JOB, query: 'q2' });
+  });
+
+  it('opens a job on its first kept query when none is chosen', async () => {
+    jobApi();
+    showJob();
+    await waitFor(() => expect(route()).toEqual({ screen: 'replay', job: JOB, query: 'q1' }));
+  });
+
+  it('says why a job has no partial traces, with the way on', async () => {
+    jobApi({ problem: problem('no_partial_traces', 404, `job ${JOB} kept no partial traces: it was interrupted by a crash, which leaves none`) });
+    showJob('q1');
+    expect(await screen.findByText(/interrupted by a crash, which leaves none/)).toBeTruthy();
   });
 });
 
