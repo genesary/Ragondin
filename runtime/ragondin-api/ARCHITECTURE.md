@@ -1413,10 +1413,12 @@ binary's build identity (#365) provides; its doc comment says so.
   dataset it keeps loaded while the files are unchanged, chunk set included
   (§ *The loaded datasets*).
 - **What it costs, measured; the key kept a content digest.** The ignored
-  test in `src/cache/cost.rs` files twenty runs of a retriever and a
-  reranker (100 chunks ranked per query, 10 kept) in a `FileSystemRunStore`
-  and times each step per run, the fastest of seven; run it with the
-  command its module doc gives. On an Apple M4 Pro, per run of 300 queries
+  test in `src/cache/cost.rs` files twenty runs at a time in a
+  `FileSystemRunStore` and times each step per run, the fastest of seven;
+  run it with the command its module doc gives. For the retrieval-only runs
+  of a retriever and a reranker (100 chunks ranked per query, 10 kept),
+  three ranking metrics, one document judged per query, on an Apple M4 Pro,
+  per run of 300 queries
   (5.4 MB of `traces.json`), then of 1000 (18.2 MB); the "before" key was
   measured on `e5c8d0ec277f`, the tree this change was made from:
 
@@ -1448,13 +1450,40 @@ binary's build identity (#365) provides; its doc comment says so.
   the run times makes them "for display and ordering only"; a digest or a
   version the store keeps beside the run is a change to
   `ragondin-experiments`' `RunStore`, which #443 takes up: a `RunStore`
-  listing that loads no traces, with a digest stored beside the run. And **on `/queries` the figures cost
-  less than their key** for runs like these — 29.5 ms (97.6 ms) per request
-  with the cache against 26.5 ms (88.0 ms) without — because the traces are
-  typed either way and three ranking metrics are cheap to score; the cache
-  is left as it is, and that measurement is the input to #442, which
-  keeps or drops `derived.json` on its measured cost — not a
-  decision taken here.
+  listing that loads no traces, with a digest stored beside the run.
+- **`derived.json` is kept, on its measured cost, generation runs
+  included** — *decided by the owner in #442*. On `/queries` the traces are
+  typed hit or miss, so the cache trades the key for the figures, and the
+  rule was to drop it if the key cost at least as much as the figures. The
+  same test measures that trade over two more dimensions: a generation run
+  (the retrieval-only pipeline, then a context builder keeping 5 chunks and
+  a generator; `exact_match` and `token_f1` recorded beside the ranking
+  metrics; answers of about thirty words, three references per query) with
+  3 kB or 10 kB of passage text in its context, and qrels judging one
+  document per query or grading a hundred. The runs are synthetic, built by
+  the test. On an Apple M4 Pro (14 cores, 24 GB, macOS 26.5.1, rustc
+  1.99.0, shared with other work — the pattern held over four full runs),
+  per run of 300 queries, then of 1000:
+
+  | Run | `traces.json` | key | figures computed | `/queries` with the cache | without it |
+  |---|---|---|---|---|---|
+  | retrieval-only, 1 judged | 5.4 MB (18.2 MB) | 7.5 ms (25.1 ms) | 4.8 ms (16.5 ms) | 30.1 ms (99.6 ms) | 27.2 ms (90.5 ms) |
+  | retrieval-only, 100 graded | 5.4 MB (18.2 MB) | 7.8 ms (26.1 ms) | 6.5 ms (22.4 ms) | 29.9 ms (99.9 ms) | 28.5 ms (95.7 ms) |
+  | generation, 3 kB context, 1 judged | 6.9 MB (23.2 MB) | 10.4 ms (33.8 ms) | 10.9 ms (37.4 ms) | 35.2 ms (115.6 ms) | 35.5 ms (118.6 ms) |
+  | generation, 3 kB context, 100 graded | 6.9 MB (23.2 MB) | 10.3 ms (34.9 ms) | 12.7 ms (43.8 ms) | 34.7 ms (117.0 ms) | 37.0 ms (125.3 ms) |
+  | generation, 10 kB context, 1 judged | 9.0 MB (30.2 MB) | 14.7 ms (47.9 ms) | 10.9 ms (37.3 ms) | 39.7 ms (131.0 ms) | 35.7 ms (119.8 ms) |
+  | generation, 10 kB context, 100 graded | 9.0 MB (30.2 MB) | 14.8 ms (49.3 ms) | 12.7 ms (43.8 ms) | 39.9 ms (132.7 ms) | 37.7 ms (126.6 ms) |
+
+  "With the cache" is load + traces typed + key + hit; "without it", load +
+  traces typed + figures computed. The measurement splits the rule. On
+  retrieval runs, and on generation runs with a large context, computing
+  the key costs as much as the figures or more: the key reads every trace,
+  context text included, which no figure reads. On generation runs with a
+  small context (about 3 kB) the answer metrics make the figures dearer
+  than the key, and the cache saves 1–7%. In every case the stakes are up
+  to about 10 ms at 1000 queries, out of a 30–130 ms request. On the literal reading, the drop
+  condition fails for small-context generation runs, so the cache stays
+  and no API changes.
 
 **Per-node metrics are served by `GET /runs/{id}/queries`**, beside the
 per-query scores they are computed with, and not by `GET /runs/{id}` as the
