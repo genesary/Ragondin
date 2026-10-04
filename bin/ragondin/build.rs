@@ -17,12 +17,14 @@
 //! which folder was taken (`built` or `notice`), for the tests that check what
 //! the binary serves against what it embedded.
 //!
-//! `RAGONDIN_BUILD_COMMIT` is the commit the build is from, `git rev-parse
-//! --short=12 HEAD`, or `unknown` outside a git checkout, and
-//! `RAGONDIN_BUILD_DIRTY` is `true` when `git --no-optional-locks status
-//! --porcelain` printed anything — an uncommitted change or an untracked file
-//! the repository does not ignore; `src/ui/mod.rs` makes them the build identity. Both are read
-//! when this script runs: it reruns when `HEAD`, the branch it names,
+//! `RAGONDIN_BUILD_COMMIT` is the commit the build is from, or `unknown`
+//! outside a git checkout, and `RAGONDIN_BUILD_DIRTY` is `true` when a tracked
+//! file is modified or a change is staged; an untracked file is not counted.
+//! Both come from the git commands `build-identity.rule` names, run by
+//! `src/ui/build_identity.rs`, which this script compiles as a module: the
+//! same rule file `ui/scripts/build-identity.mjs` reads, so the UI's bundle
+//! and the binary carry one identity. `src/ui/mod.rs` makes them the build
+//! identity. Both are read when this script runs: it reruns when `HEAD`, the branch it names,
 //! `packed-refs` or the index changes, so a commit or a `git add` refreshes
 //! them, and an edit left unstaged after the last run does not.
 //!
@@ -32,7 +34,11 @@
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+
+#[path = "src/ui/build_identity.rs"]
+mod build_identity;
+
+use build_identity::git;
 
 /// The page a build without `ui/dist/` serves at `/` and on every client-side
 /// route. No `<style>` and no `style=`: the server's content security policy
@@ -109,14 +115,9 @@ fn main() {
 /// The commit `HEAD` names and whether the tree differs from it, and the
 /// files whose change moves either watched.
 fn commit(dir: &Path) -> (String, bool) {
-    let Some(sha) = git(dir, &["rev-parse", "--short=12", "HEAD"]) else {
+    let Some((sha, dirty)) = build_identity::state(dir) else {
         return ("unknown".to_owned(), false);
     };
-    // `git` returns `None` for empty output, which is a clean tree.
-    // `--no-optional-locks`: a plain `status` may refresh and rewrite the
-    // index, which is watched below, and would rerun this script on the next
-    // build for a change it made itself.
-    let dirty = git(dir, &["--no-optional-locks", "status", "--porcelain"]).is_some();
     // `HEAD` moves on a checkout; the branch it points at moves on a commit,
     // in its loose ref or in `packed-refs`; the index moves on a `git add`.
     // Only existing paths are watched, for the reason given above.
@@ -139,19 +140,4 @@ fn commit(dir: &Path) -> (String, bool) {
         }
     }
     (sha, dirty)
-}
-
-/// One git command's trimmed stdout, or `None` when git is absent or fails.
-fn git(dir: &Path, args: &[&str]) -> Option<String> {
-    let output = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let text = String::from_utf8(output.stdout).ok()?;
-    let text = text.trim();
-    (!text.is_empty()).then(|| text.to_owned())
 }

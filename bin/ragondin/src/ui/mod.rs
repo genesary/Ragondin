@@ -29,6 +29,9 @@ use ragondin_experiments::FileSystemRunStore;
 
 mod address;
 mod assets;
+// `build.rs` runs it; the crate compiles it only to test what that runs.
+#[cfg(test)]
+mod build_identity;
 mod launcher;
 mod location;
 
@@ -115,7 +118,8 @@ pub async fn run(request: &Request<'_>) -> Result<()> {
 }
 
 /// The build's identity: the crate version, then the commit `build.rs` read,
-/// with `-dirty` when the tree had uncommitted changes as it ran — e.g.
+/// with `-dirty` when a tracked file was modified or a change staged as it
+/// ran, by the rule in `build-identity.rule` the UI's build reads too — e.g.
 /// `0.0.0+3f9a1c2b7d4e` or `0.0.0+3f9a1c2b7d4e-dirty` — or `0.0.0+unknown`
 /// outside a git checkout. The UI compares it with the one it loaded under
 /// and reloads when they differ (ADR-C36 § 1); a commit changes with any
