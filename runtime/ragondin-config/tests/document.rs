@@ -382,13 +382,83 @@ fn a_string_another_yaml_reader_would_retype_is_quoted() {
     }
 }
 
+/// Every character a stored document may hold in a string reads back: the
+/// ones YAML folds or refuses bare — U+007F to U+009F, U+2028, U+2029,
+/// U+FFFE, U+FFFF — are written as `\uXXXX`, which JSON and YAML both read
+/// as the character.
+#[test]
+fn every_character_a_string_may_hold_reads_back() {
+    let all: Vec<char> = (0..=0x10FFFFu32).filter_map(char::from_u32).collect();
+    // 128 characters at most 512 bytes: a key stays under YAML's limit on one.
+    for chunk in all.chunks(128) {
+        let text: String = chunk.iter().collect();
+        // As a node's id, a parameter's key, a value and a list's item.
+        let raw = document(vec![node(
+            &text,
+            vec![
+                (&text, RawParamValue::String(text.clone())),
+                (
+                    "l",
+                    RawParamValue::List(vec![RawParamValue::String(text.clone())]),
+                ),
+            ],
+        )]);
+        let rendered = render_document(&raw)
+            .unwrap_or_else(|_| panic!("refused from U+{:04X}", chunk[0] as u32));
+        assert_eq!(
+            read_document(&rendered).unwrap(),
+            raw,
+            "from U+{:04X}",
+            chunk[0] as u32
+        );
+    }
+}
+
+#[test]
+fn a_character_yaml_folds_or_refuses_is_written_as_its_escape() {
+    for (c, escape) in [
+        ('\u{7f}', "\\u007f"),
+        ('\u{85}', "\\u0085"),
+        ('\u{9f}', "\\u009f"),
+        ('\u{2028}', "\\u2028"),
+        ('\u{2029}', "\\u2029"),
+        ('\u{fffe}', "\\ufffe"),
+        ('\u{ffff}', "\\uffff"),
+    ] {
+        let raw = document(vec![node(
+            "lexical",
+            vec![("k", RawParamValue::String(format!("a{c}b")))],
+        )]);
+        let rendered = render_document(&raw).unwrap();
+        assert!(
+            rendered.contains(&format!("\"a{escape}b\"")),
+            "{c:?}: {rendered}"
+        );
+    }
+}
+
+/// YAML reads a key of at most 1024 bytes on its line; a parameter name
+/// longer than that would not read back, so it is refused.
+#[test]
+fn a_parameter_name_too_long_for_a_yaml_key_is_refused() {
+    let short = document(vec![node(
+        "lexical",
+        vec![(&"k".repeat(1000), RawParamValue::Bool(true))],
+    )]);
+    assert!(render_document(&short).is_ok());
+    let long = document(vec![node(
+        "lexical",
+        vec![(&"k".repeat(1100), RawParamValue::Bool(true))],
+    )]);
+    assert_eq!(render_document(&long), Err(RenderError));
+}
+
 #[test]
 fn a_document_whose_rendering_would_read_back_otherwise_is_refused() {
     for value in [
         RawParamValue::Float(f64::NAN),
         RawParamValue::Float(f64::INFINITY),
-        RawParamValue::String("next\u{85}line".to_owned()),
-        RawParamValue::String("delete\u{7f}".to_owned()),
+        RawParamValue::Float(f64::NEG_INFINITY),
     ] {
         let raw = document(vec![node("lexical", vec![("k", value.clone())])]);
 

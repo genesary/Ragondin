@@ -1041,6 +1041,29 @@ async fn a_typed_document_the_pass_refuses_is_pipeline_invalid_located() {
     assert_eq!(problem["location"]["node"], "lexical");
 }
 
+/// A typed document the renderer cannot write so that it reads back — here a
+/// parameter name too long for YAML to read as a key — is refused as
+/// `pipeline_invalid` in the renderer's words, never rendered otherwise.
+#[tokio::test]
+async fn a_typed_document_the_renderer_cannot_write_is_pipeline_invalid_in_its_words() {
+    let workspace = scratch("typed_unrenderable");
+    let mut typed = kinds_typed();
+    typed["pipeline"]["nodes"][0]["params"]["k".repeat(1100)] =
+        json!({ "kind": "bool", "value": true });
+
+    let (status, problem) = validate(&workspace, &json!({ "typed": typed })).await;
+
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{problem}");
+    assert_eq!(problem["code"], "pipeline_invalid");
+    assert!(
+        problem["detail"]
+            .as_str()
+            .unwrap()
+            .contains("a parameter name longer than 1024 bytes"),
+        "{problem}"
+    );
+}
+
 #[tokio::test]
 async fn a_typed_document_in_a_version_this_build_cannot_read_is_pipeline_invalid() {
     let workspace = scratch("typed_version");

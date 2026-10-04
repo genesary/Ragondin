@@ -356,7 +356,7 @@ pub enum ParameterValue {
     /// never `-0`.
     Int(
         #[serde(with = "decimal")]
-        #[schemars(with = "String")]
+        #[schemars(schema_with = "decimal::schema")]
         i64,
     ),
     /// A finite floating-point number.
@@ -369,7 +369,13 @@ pub enum ParameterValue {
 
 /// An integer as decimal text, in the one spelling each value has.
 mod decimal {
+    use schemars::{json_schema, Schema, SchemaGenerator};
     use serde::{de, Deserialize, Deserializer, Serializer};
+
+    /// Text in the one spelling: `0`, or a minus or none and no leading zero.
+    pub(super) fn schema(_: &mut SchemaGenerator) -> Schema {
+        json_schema!({ "type": "string", "pattern": "^(0|-?[1-9][0-9]*)$" })
+    }
 
     pub(super) fn serialize<S: Serializer>(value: &i64, serializer: S) -> Result<S::Ok, S::Error> {
         serializer.collect_str(value)

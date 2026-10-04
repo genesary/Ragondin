@@ -82,13 +82,16 @@ nothing here presupposes an answer to it.
   booleans and a date, and it offers no way to ask for quotes. So
   `render_document` writes `serde_json`'s indented JSON of the wire schema's
   own `Serialize`: every string double-quoted, a float with its fractional
-  part (`60.0`), an integer without. No YAML writer is written here, and no
-  second YAML library is taken on, which would escalate (`AGENTS.md` § Rules
-  of engagement). **The renderer refuses what would not read back as
-  itself** — a non-finite float, a string holding a character YAML folds or
-  refuses where JSON leaves it bare (U+0085, U+007F) — by reading its own
-  rendering back through `read_document` and comparing, so the promise holds
-  by construction, not by the cases a test thought of. The cost, for #356,
+  part (`60.0`), an integer without. The characters YAML folds or refuses
+  bare where JSON leaves them bare — U+007F to U+009F, U+2028, U+2029,
+  U+FFFE and U+FFFF — are written as `\uXXXX`, an escape both read as the
+  character, so every character a string may hold reads back; a test walks
+  them all. No YAML writer is written here, and no second YAML library is
+  taken on, which would escalate (`AGENTS.md` § Rules of engagement). **The
+  renderer refuses what would not read back as itself** — a non-finite
+  float, a parameter name longer than the 1024 bytes YAML reads a key in —
+  by reading its own rendering back through `read_document` and comparing,
+  so the promise holds by construction, not by the cases a test thought of. The cost, for #356,
   which stores the rendering: a pipeline saved from the canvas is a JSON
   document in a `.yaml` file. The tests in `tests/document.rs` hold the
   round trip, the fixed point and the quoting over the ambiguous strings.

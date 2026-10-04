@@ -93,22 +93,52 @@ pub fn render_document(document: &RawPipeline) -> Result<String, RenderError> {
     // The wire schema's own `Serialize`, never an internal type's (INV-9).
     // It does not fail on this schema, whose every key is a string; a
     // non-finite float it writes as `null`, which the guard below refuses.
-    let text = serde_json::to_string_pretty(document).map_err(|_| RenderError)? + "\n";
+    let json = serde_json::to_string_pretty(document).map_err(|_| RenderError)?;
+    let text = escape_for_yaml(&json) + "\n";
     // The guard that makes the promise above hold by construction: a
-    // non-finite float, or a string YAML would fold or refuse — a raw line
-    // separator, a control character JSON leaves unescaped — is found here
-    // rather than by the next reader.
+    // non-finite float, which JSON writes as `null`, or a key too long for
+    // YAML to read as one, is found here rather than by the next reader, and
+    // so would anything else that did not read back.
     match read_document(&text) {
         Ok(read) if read == *document => Ok(text),
         _ => Err(RenderError),
     }
 }
 
+/// Whether YAML folds or refuses this character bare in a double-quoted
+/// string where JSON leaves it bare: DEL and the C1 controls, U+0085 among
+/// them, and U+2028 and U+2029, which YAML reads as line breaks, and the two
+/// noncharacters U+FFFE and U+FFFF, which it does not accept as printable.
+fn yaml_needs_escape(c: char) -> bool {
+    matches!(
+        c,
+        '\u{7f}'..='\u{9f}' | '\u{2028}' | '\u{2029}' | '\u{fffe}' | '\u{ffff}'
+    )
+}
+
+/// The JSON with each character [`yaml_needs_escape`] names written as
+/// `\uXXXX`, an escape JSON and YAML both read as the character, so a string
+/// holding one reads back. JSON's structure is ASCII and these characters are
+/// not, so each one found sits inside a string, where the escape is valid;
+/// `serde_json` writes every backslash of a string as a pair, so none is left
+/// open before it.
+fn escape_for_yaml(json: &str) -> String {
+    let mut out = String::with_capacity(json.len());
+    for c in json.chars() {
+        if yaml_needs_escape(c) {
+            out.push_str(&format!("\\u{:04x}", u32::from(c)));
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
 /// A wire-schema document whose rendering would not read back as itself: a
-/// non-finite float, or a string holding a character the format folds or
-/// refuses where JSON leaves it bare.
+/// non-finite float, which neither JSON nor the wire schema's reader carries,
+/// or a parameter name longer than the 1024 bytes YAML reads a key in.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
-#[error("the document holds a value the configuration format cannot carry as it is: a non-finite number, or a string with a character YAML folds or refuses")]
+#[error("the document holds what the configuration format cannot carry: a number that is not finite, or a parameter name longer than 1024 bytes")]
 pub struct RenderError;
 
 /// Why a document's text is not a [`LogicalPipeline`]: the three halves of

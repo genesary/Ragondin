@@ -74,9 +74,10 @@ describe('renderApiTypes', () => {
       description({
         A: {
           type: 'object',
-          required: ['n', 'i', 'b', 'list', 'map', 'ref', 'maybe'],
+          required: ['n', 'i', 's', 'b', 'list', 'map', 'ref', 'maybe'],
           properties: {
             n: { type: 'number', format: 'double' },
+            s: { type: 'string', pattern: '^(0|-?[1-9][0-9]*)$' },
             i: { type: 'integer', format: 'uint16', minimum: 0, maximum: 65535 },
             b: { type: 'boolean' },
             list: { type: 'array', items: { $ref: '#/components/schemas/B' } },
@@ -89,7 +90,7 @@ describe('renderApiTypes', () => {
       }),
     );
     expect(typeOf(out, 'A')).toBe(
-      '{ n: number; i: number; b: boolean; list: B[]; map: Record<string, number>; ref: B; maybe: string | null; }',
+      '{ n: number; s: string; i: number; b: boolean; list: B[]; map: Record<string, number>; ref: B; maybe: string | null; }',
     );
     expect(typeOf(out, 'B')).toBe('Record<string, never>');
   });
