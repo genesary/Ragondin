@@ -28,4 +28,5 @@ export { ChartFrame, ChartTooltip, type LegendItem } from './charts/ChartFrame.t
 export { Histogram, type HistogramBin } from './charts/Histogram.tsx';
 export { LineChart } from './charts/LineChart.tsx';
 export { type RunSeries } from './charts/scale.ts';
+export { listed } from './words.ts';
 export { StackedBarChart, type StackSegment } from './charts/StackedBarChart.tsx';

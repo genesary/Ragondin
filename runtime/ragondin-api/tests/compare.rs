@@ -533,6 +533,17 @@ async fn three_runs_give_the_metric_table_with_best_and_deltas_and_the_differing
     )));
     assert!(!rows.contains(&("dense".to_owned(), json!({ "kind": "impl" }))));
     assert!(rows.contains(&("rerank".to_owned(), json!({ "kind": "component" }))));
+    // The nodes some run lacks, with which runs hold each, in the runs'
+    // order: `bm25` and `rrf` are not in the dense-only baseline, `rerank`
+    // is only in the last run; `dense` is in all three, so it is not listed.
+    assert_eq!(
+        matrix["partial_nodes"],
+        json!([
+            { "node": "bm25", "present": [false, true, true] },
+            { "node": "rerank", "present": [false, false, true] },
+            { "node": "rrf", "present": [false, true, true] },
+        ])
+    );
     let top_k = matrix["parameters"]
         .as_array()
         .unwrap()

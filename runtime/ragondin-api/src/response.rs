@@ -1272,6 +1272,10 @@ pub enum ConfigurationMatrix {
         /// differ only in their wiring have no row, and are still not one
         /// configuration.
         same_logical_form: bool,
+        /// Every node some run lacks, sorted by id, with which runs hold
+        /// it: what lets a node only one pipeline has read as one fact
+        /// rather than as a row of unset parameters.
+        partial_nodes: Vec<PartialNode>,
     },
     /// A run's stored configuration does not lower under this build.
     Unavailable {
@@ -1280,6 +1284,15 @@ pub enum ConfigurationMatrix {
         /// What the parser or the validation pass said.
         reason: String,
     },
+}
+
+/// A node not every run compared holds.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct PartialNode {
+    /// The node's id.
+    pub node: String,
+    /// Whether each run holds it, in the order of the runs compared.
+    pub present: Vec<bool>,
 }
 
 /// One parameter that is not the same in every run.

@@ -1858,7 +1858,12 @@ empty, its deltas reported all the same), each run's delta to the baseline —
 and the parameter matrix — every parameter not identical across
 the runs — are `ragondin-experiments`' `compare_runs`, converted in
 `convert.rs`: the computation `ragondin compare` prints for two runs, so the
-two cannot drift. Runs of different `dataset_version`s are refused there, and
+two cannot drift. Beside the rows, `partial_nodes` lists every node some run
+lacks, with which runs hold it, read in `convert.rs` from the rows
+themselves: every node names its `component:` family, so its `component`
+row is unset exactly in the runs that lack it. Compare draws such a node as
+one row, "rrf — only in baseline", rather than as rows of unset
+parameters. Runs of different `dataset_version`s are refused there, and
 answered `runs_not_comparable` naming both. **The ceiling is here**: more than
 five run ids is `runs_not_comparable` naming it, before any run is loaded —
 the design system has four run inks, and a sixth run is refused rather than

@@ -177,9 +177,47 @@ describe('StackedBarChart', () => {
     expect(container.querySelector('.rg-chart__tip')?.textContent).toBe('baselinedense10 mstotal10 ms');
   });
 
+  it('draws a segment too short for the scale at the narrowest width an eye finds, so every family in the legend has a bar', () => {
+    const tiny: StackedBarChartProps = {
+      ...PROPS,
+      bars: [{ id: 'r1', label: 'A' }],
+      segments: [
+        [
+          { id: 'rrf', label: 'rrf', value: 0.0001, family: 'fusion' },
+          { id: 'rerank', label: 'rerank', value: 28, family: 'reranker' },
+          { id: 'custom', label: 'custom', value: 0, family: null },
+        ],
+      ],
+    };
+    const { container } = render(<StackedBarChart {...tiny} />);
+    const segs = [...container.querySelectorAll('rect.rg-chart__seg')].map((r) => [Number(r.getAttribute('x')), Number(r.getAttribute('width'))]);
+    const x = linear([0, 30], [PLOT.left, PLOT.width - PLOT.right]);
+    expect(segs[0]).toEqual([x(0), 2]);
+    // The next segment follows it rather than covering it; a zero stays zero.
+    expect(segs[1]?.[0]).toBeCloseTo(x(0) + 2);
+    expect(segs[1]?.[1]).toBeCloseTo(x(28.0001) - x(0.0001));
+    expect(segs[2]?.[1]).toBe(0);
+    // The total is the true one.
+    expect(container.querySelector('.rg-chart__total')?.textContent).toBe('28.0001 ms');
+  });
+
   it('writes the total at the end of each bar', () => {
     const { container } = render(<StackedBarChart {...PROPS} />);
     expect([...container.querySelectorAll('.rg-chart__total')].map((t) => t.textContent)).toEqual(['10 ms', '30 ms']);
     expect(container.querySelectorAll('.rg-chart__axis')).toHaveLength(1);
+  });
+
+  it('keeps each total inside the plot, even for the bar that reaches its end or past it', () => {
+    // The 30 ms bar ends at the domain's end; a bar pushed by narrow segments ends past it.
+    const pushed: StackedBarChartProps = { ...PROPS, segments: [PROPS.segments[0]!, [...Array.from({ length: 20 }, (_, i) => ({ id: `t${i}`, label: `t${i}`, value: 0.0001, family: 'fusion' as const })), ...PROPS.segments[1]!]] };
+    for (const props of [PROPS, pushed]) {
+      const { container, unmount } = render(<StackedBarChart {...props} />);
+      for (const total of container.querySelectorAll('.rg-chart__total')) {
+        // At least 0.66 em of 11px per character: a lower bound of the text's width.
+        const width = (total.textContent ?? '').length * 0.66 * 11;
+        expect(Number(total.getAttribute('x')) + width).toBeLessThanOrEqual(PLOT.width - PLOT.right);
+      }
+      unmount();
+    }
   });
 });

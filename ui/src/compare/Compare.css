@@ -32,14 +32,17 @@
 .rg-compare__departure { padding: 0 var(--space-1); border-radius: var(--radius-xs); background: var(--accent-wash); color: var(--ink); font-weight: 600; }
 .rg-compare__delta { display: block; }
 
-/* The open bin's queries. */
-.rg-compare__queries { display: grid; gap: var(--space-2); }
+/* The open bin's queries, one a line: the id, the text cut to the line, the delta. */
+.rg-compare__queries { display: grid; gap: var(--space-2); min-width: 0; }
 .rg-compare__queries h3 { margin: 0; font: var(--type-label); color: var(--ink); }
-.rg-compare__queries ul { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-3); margin: 0; padding: 0; list-style: none; }
-.rg-compare__queries a { display: inline-flex; gap: var(--space-2); font: var(--type-mono); color: var(--ink); }
-.rg-compare__queries a span:last-child { color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.rg-compare__queries ul { display: grid; gap: var(--space-1); margin: 0; padding: 0; list-style: none; }
+.rg-compare__queries a { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: baseline; gap: var(--space-3); color: var(--ink); }
+.rg-compare__query-id { font: var(--type-mono); color: var(--ink-2); }
+.rg-compare__query-text { overflow: hidden; font: var(--type-dense); text-overflow: ellipsis; white-space: nowrap; }
+.rg-compare__query-delta { font: var(--type-mono); color: var(--ink-3); font-variant-numeric: tabular-nums; }
 
-/* The verdict: the page's last words, then its one action. */
+/* The verdict: the page's last words, a sentence and its action for each run. */
+.rg-compare__judged + .rg-compare__judged { margin-top: var(--space-5); }
 .rg-compare__verdict { margin: 0 0 var(--space-4); max-width: 64ch; font: var(--type-verdict); letter-spacing: var(--type-verdict-tracking); color: var(--ink); }
 .rg-compare__action { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); }
 

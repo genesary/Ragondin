@@ -50,7 +50,7 @@ test('iterate: fork a run, change top_k, launch, compare with the original', asy
   await table.getByRole('checkbox', { name: `Select run ${short(original)} on ${fixture.benchmark}` }).check();
   await forkRow.getByRole('checkbox').check();
   await page.getByRole('button', { name: 'Compare 2 selected' }).click();
-  await expect(page).toHaveURL(new RegExp(`#compare/.*baseline=${original}`));
+  await expect(page).toHaveURL(new RegExp(`#compare/.*baseline=${original.slice(0, 12)}$`));
   await expect(page.getByRole('list', { name: 'Runs compared' }).getByRole('listitem').first()).toHaveText(new RegExp(`^baseline\\s*hybrid-rerank\\s*${original.slice(0, 6)}$`));
 
   // The delta: the parameter, and the ranking after fusion.

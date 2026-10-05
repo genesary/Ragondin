@@ -29,7 +29,7 @@ export type StackedBarChartProps = {
  */
 const LABEL_SIZE = 11;
 /**
- * An upper bound on the width of `name` in that type, in SVG units: per
+ * An upper bound on the width of `name` — a segment's name or a bar's total — in that type, in SVG units: per
  * character, at least the advance the shipped Wix Madefor Text Medium gives
  * it — m, w, their capitals, @ and % 1.06 em, another capital 0.86 em,
  * anything else 0.66 em — so a name judged to fit does, and is never clipped
@@ -45,6 +45,14 @@ function nameWidth(name: string): number {
 }
 /** Room left between a label and its segment's edges, in SVG units. */
 const INSET = 4;
+/**
+ * The narrowest a segment that took any time is drawn, in SVG units: a
+ * fusion of microseconds beside a reranker of seconds would otherwise be no
+ * mark at all while the legend names its family. The segments after it
+ * follow it rather than cover it, so a bar may end up to this much past its
+ * scale per such segment; the total written at its end is the true one.
+ */
+const MIN_SEGMENT = 2;
 
 /**
  * What a segment `width` by `height` wide can hold: its node name when the
@@ -101,6 +109,8 @@ export function StackedBarChart({ label, bars, segments, format }: StackedBarCha
         </g>
         {bars.map((bar, b) => {
           let at = 0;
+          // How far the segments drawn at the narrowest width have pushed the rest of the bar.
+          let pushed = 0;
           return (
             <g key={bar.id}>
               <text className="rg-chart__group" x={PLOT.left} y={barY(b) - 5}>
@@ -110,7 +120,9 @@ export function StackedBarChart({ label, bars, segments, format }: StackedBarCha
                 {(segments[b] ?? []).map((s) => {
                   const from = at;
                   at += s.value;
-                  const box = { x: x(from), y: barY(b), width: x(at) - x(from), height: thickness };
+                  const width = x(at) - x(from);
+                  const box = { x: x(from) + pushed, y: barY(b), width: s.value > 0 ? Math.max(width, MIN_SEGMENT) : width, height: thickness };
+                  pushed += box.width - width;
                   const mark = markFor(s, box.width, box.height);
                   return (
                     <Fragment key={s.id}>
@@ -132,7 +144,8 @@ export function StackedBarChart({ label, bars, segments, format }: StackedBarCha
                   );
                 })}
               </g>
-              <text className="rg-chart__total" x={x(totals[b] ?? 0) + 6} y={barY(b) + thickness / 2} dominantBaseline="middle">
+              {/* At the bar's end, but never past the plot's: a bar reaching the end, or pushed past it, has its total drawn over its last segment. */}
+              <text className="rg-chart__total" x={Math.min(x(totals[b] ?? 0) + pushed + 6, PLOT.width - PLOT.right - nameWidth(format(totals[b] ?? 0)))} y={barY(b) + thickness / 2} dominantBaseline="middle">
                 {format(totals[b] ?? 0)}
               </text>
               <rect

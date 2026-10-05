@@ -7,12 +7,13 @@ import { useLayoutEffect, useRef, useState } from 'react';
 import { Button, FamilyTile, Inspector, InlineMessage, RunSwatch, familyOfComponent, type Family } from '../../design/index.ts';
 import type { Graph, RunQueries } from '../api/types.ts';
 import { percent } from '../canvas/index.ts';
-import { counterpart, formatMs, formatScore, listOf, terminalOf, verdict, type ListItem, type Reading, type ReplayTrace } from './model.ts';
+import { counterpart, formatMs, formatScore, listOf, terminalOf, verdict, type ListItem, type NamedReading, type ReplayTrace } from './model.ts';
 
 /** One run as the inspector reads it. */
 export type Side = {
+  /** Which side it stands on, A first: an identity the screen keys by, never written on screen. */
   letter: 'A' | 'B';
-  /** The run's name: its pipeline's, or its short id; for a job's partial traces, the job's. */
+  /** The run's name, every word the screen says of it: its pipeline's, or its short id; for a job's partial traces, the job's. */
   name: string;
   graph: Graph;
   trace: ReplayTrace;
@@ -198,10 +199,10 @@ function NodeBody({ side, node, metric }: { side: Side; node: string; metric: st
 }
 
 /** One run's reading for the verdict: its score at its output, and its ranking node's gold ranks. */
-function readingOf(side: Side, metric: string): Reading {
+function readingOf(side: Side, metric: string): NamedReading {
   const ranking = side.queries?.ranking_node ?? null;
   const gold = ranking === null ? null : (side.trace.nodes.find((n) => n.node === ranking)?.gold_ranks ?? null);
-  return { score: side.trace.scores[metric], gold };
+  return { name: side.name, score: side.trace.scores[metric], gold };
 }
 
 export type NodeInspectorProps = {
@@ -245,19 +246,19 @@ export function NodeInspector({ node, from, sides, metric, held = false, onClose
             <>
               {final ? (
                 <>
-                  <p className="rg-replay__absent">No such node in {side.letter}.</p>
+                  <p className="rg-replay__absent">No such node in {side.name}.</p>
                   <h4 className="rg-replay__final">
                     <FamilyTile family={familyOf(side.graph, shown!)} />
-                    {side.letter}&apos;s final output: {shown}
+                    Final output of {side.name}: {shown}
                   </h4>
                 </>
               ) : null}
-              {shown === null ? <p className="rg-replay__meta">Nothing ran in {side.letter} for this query.</p> : <NodeBody side={side} node={shown} metric={metric} />}
+              {shown === null ? <p className="rg-replay__meta">Nothing ran in {side.name} for this query.</p> : <NodeBody side={side} node={shown} metric={metric} />}
             </>
           );
           return twoUp ? (
-            <section key={side.letter} className="rg-replay__column" aria-label={`${side.letter}, ${side.name}`}>
-              <RunSwatch slot={side.letter === 'A' ? 'a' : 'b'} name={side.name} />
+            <section key={side.letter} className="rg-replay__column" aria-label={side.name}>
+              <RunSwatch unlettered slot={side.letter === 'A' ? 'a' : 'b'} name={side.name} />
               {content}
             </section>
           ) : (

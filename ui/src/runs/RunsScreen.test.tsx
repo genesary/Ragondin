@@ -445,7 +445,7 @@ describe('the selection', () => {
     await waitFor(() => expect(answers).toHaveLength(2));
     expect(compare().textContent).toBe('Compare 2 selected');
     fireEvent.click(compare());
-    await waitFor(() => expect(window.location.hash).toBe(`#compare/${R1}+${R4}`));
+    await waitFor(() => expect(window.location.hash).toBe(`#compare/${R1.slice(0, 12)}+${R4.slice(0, 12)}`));
   });
 
   it('cancels a re-read a newer one overtakes, and shows no error for it', async () => {
@@ -513,7 +513,8 @@ describe('the actions', () => {
     await loaded();
     expect(compare().textContent).toBe('Compare 2 selected');
     fireEvent.click(compare());
-    await waitFor(() => expect(window.location.hash).toBe(`#compare/${R4}+${R1}`));
+    // Each run by its 12-character prefix, which names one run of the listing.
+    await waitFor(() => expect(window.location.hash).toBe(`#compare/${R4.slice(0, 12)}+${R1.slice(0, 12)}`));
   });
 
   it('offers a new pipeline, in the Editor', async () => {

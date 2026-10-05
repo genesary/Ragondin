@@ -19,7 +19,7 @@ import { JobPanel } from './JobPanel.tsx';
 import { jobRow } from './jobRow.tsx';
 import { rowsFromJobs, withAnnounced } from './jobRows.ts';
 import { Conflict, LaunchPanel } from './LaunchPanel.tsx';
-import { benchmarkLabel, groupRows, openRoute, rowKey, rowsFromListing, runId, shapeOf, shortHash, type RunRow } from './model.ts';
+import { addressIds, benchmarkLabel, groupRows, openRoute, rowKey, rowsFromListing, runId, shapeOf, shortHash, type RunRow } from './model.ts';
 import { runRow } from './runRow.tsx';
 import './Runs.css';
 import { compareRefusal, refusal, sanitize, toggle, unknownIds } from './selection.ts';
@@ -444,7 +444,7 @@ function Loaded({ client, listing, askedWith, refresh, sel, job, launch, store, 
           <ForkButton client={client} run={comparable.length === 1 ? comparable[0]! : null} refusal={comparable.length === 1 ? null : 'Select one run to fork it.'} />
           {launchToggle}
           {compareWhy === null ? (
-            <Button kind="primary" onClick={() => navigate({ screen: 'compare', ids: comparable })}>
+            <Button kind="primary" onClick={() => navigate({ screen: 'compare', ids: addressIds(comparable, rows.flatMap((r) => runId(r) ?? [])) })}>
               Compare {comparable.length} selected
             </Button>
           ) : (

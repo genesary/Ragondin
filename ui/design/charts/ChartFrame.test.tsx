@@ -34,6 +34,17 @@ describe('ChartFrame', () => {
     ).toThrow(/legend/);
   });
 
+  it('names the table already on the page instead of offering a second copy of it', () => {
+    render(
+      <ChartFrame caption="nDCG@10 per run" legend={legend} tableBelow="Metrics of 2 runs">
+        <svg />
+      </ChartFrame>,
+    );
+    const figure = screen.getByRole('figure', { name: 'nDCG@10 per run' });
+    expect(screen.queryByRole('button')).toBeNull();
+    expect(figure.textContent).toContain('The figures are in the table “Metrics of 2 runs” below.');
+  });
+
   it('hides its table until a button — a keyboard stop — shows it, and says which state it is in', () => {
     render(
       <ChartFrame caption="nDCG@10 per run" legend={legend} table={<table aria-label="nDCG@10 per run, as a table" />}>

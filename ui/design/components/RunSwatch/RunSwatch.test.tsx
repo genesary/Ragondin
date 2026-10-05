@@ -78,3 +78,13 @@ describe('RunSwatch hash label, named', () => {
     }
   });
 });
+
+describe('RunSwatch unlettered', () => {
+  it('carries no letter, seen or heard, where a screen names its runs by name alone — the ink and the name remain', () => {
+    const { container } = render(<RunSwatch slot="b" name="dense-only" unlettered />);
+    const swatch = container.querySelector('.rg-swatch') as HTMLElement;
+    expect(swatch.dataset.run).toBe('b');
+    expect(swatch.textContent).toBe('');
+    expect(screen.getByText('dense-only')).toBeTruthy();
+  });
+});

@@ -24,13 +24,13 @@ import {
 } from '../../design/index.ts';
 import type { ApiProblem } from '../api/client.ts';
 import type { Comparison, Pairing, RunListing } from '../api/types.ts';
-import { formatHash } from '../routes.ts';
-import type { RequestState } from '../shell/states.tsx';
+import { formatHash, type Route } from '../routes.ts';
+import { ErrorState, type RequestState } from '../shell/states.tsx';
 import { defaultMetric } from '../metrics.ts';
-import { barMetrics, binsOf, deltaOf, latencyBars, pairsByHandLabel, noVerdict, regressions, runSeries, stageLabel, stageLine, stageMetrics, unplacedLabel, verdict } from './model.ts';
+import { barMetrics, binsOf, deltaOf, hasChange, latencyBars, pairsByHandLabel, noVerdict, queriesByDelta, regressions, runSeries, stageLabel, stageLine, stageMetrics, unplacedLabel, verdict } from './model.ts';
 import { PairingPanel, type PairOutcome } from './PairingPanel.tsx';
 import { RunBar } from './RunBar.tsx';
-import { BinsTable, LatencyTable, MetricsTable, ParameterMatrix, StageTable, ValuesTable } from './tables.tsx';
+import { BinsTable, LatencyTable, metricsCaption, MetricsTable, ParameterMatrix, STAGES_CAPTION, StageTable } from './tables.tsx';
 
 export type ComparisonViewProps = {
   comparison: Comparison;
@@ -42,6 +42,14 @@ export type ComparisonViewProps = {
   onRetryListing: () => void;
   onAdd: (id: string) => Promise<ApiProblem | null>;
   onPair: (pairing: Pairing) => Promise<PairOutcome>;
+  /** The address of a comparison of `ids` against `baseline`, its runs as an address writes them. */
+  addressOf: (ids: readonly string[], baseline: string) => Route;
+  /** Each query's text by id, once read; null before. */
+  texts: ReadonlyMap<string, string> | null;
+  /** Why the queries' texts could not be read; null while none failed. */
+  textsProblem: ApiProblem | null;
+  /** Asks for the queries' texts, the first time a bar's list opens, and again after a failure. */
+  onWantTexts: () => void;
 };
 
 /** The run legend every run chart carries: each run's swatch and its name in words. */
@@ -60,7 +68,7 @@ const ms = (v: number) => `${Number.isInteger(v) ? v : v.toFixed(1)} ms`;
 const four = (v: number) => v.toFixed(4);
 const queries = (n: number) => `${n.toLocaleString('en-US')} quer${n === 1 ? 'y' : 'ies'}`;
 
-export function ComparisonView({ comparison: c, ids, baseline, busy, listing, onRetryListing, onAdd, onPair }: ComparisonViewProps) {
+export function ComparisonView({ comparison: c, ids, baseline, busy, listing, onRetryListing, onAdd, onPair, addressOf, texts, textsProblem, onWantTexts }: ComparisonViewProps) {
   const series = runSeries(c);
   const listId = useId();
   const pairingId = useId();
@@ -102,10 +110,32 @@ export function ComparisonView({ comparison: c, ids, baseline, busy, listing, on
   const open = md?.bins.find((b) => b.bin === openBin) ?? null;
   const openBinView = bins.find((b) => b.id === openBin) ?? null;
   const deltaOfQuery = new Map((md?.deltas ?? []).map((d) => [d.query, d.delta]));
-  const replayOf = (query: string) => formatHash({ screen: 'replay', run: run?.id ?? '', query, with: baseline });
-  const lost = md === null ? null : regressions(md);
-  const sentence = md === null ? noVerdict(c, runName) : verdict(md, runName);
+  const replayFor = (id: string, query: string) => formatHash({ screen: 'replay', run: id, query, with: baseline });
+  const replayOf = (query: string) => replayFor(run?.id ?? '', query);
+  // The verdict: one sentence for every run against the baseline, each on the
+  // histogram's metric where that run has it — the run the histogram shows
+  // holds the page's one primary action.
+  const verdicts = others.map((other, i) => {
+    const index = i + 1;
+    const name = series[index]?.label ?? '';
+    const its = c.query_deltas.find((d) => d.run === other.id)?.metrics ?? [];
+    const metric = its.some((m) => m.metric === shownMetric) ? shownMetric : defaultMetric(its.map((m) => m.metric), {});
+    const deltasOf = its.find((m) => m.metric === metric) ?? null;
+    return {
+      id: other.id,
+      name,
+      sentence: deltasOf === null ? noVerdict(c, name) : verdict(deltasOf, name),
+      metric: deltasOf?.metric ?? null,
+      lost: deltasOf === null ? null : regressions(deltasOf),
+      changed: deltasOf === null || hasChange(deltasOf),
+      primary: other.id === run?.id,
+    };
+  });
   const benchmark = c.ground_truth.benchmark;
+  const openBins = (id: string) => {
+    onWantTexts();
+    setOpenBin((b) => (b === id ? null : id));
+  };
 
   return (
     // Every section shows the comparison on screen, which a newer one is
@@ -121,7 +151,7 @@ export function ComparisonView({ comparison: c, ids, baseline, busy, listing, on
           <p className="rg-compare__busy" role="status">
             {busy ? 'Comparing again…' : ''}
           </p>
-          <RunBar comparison={c} ids={ids} baseline={baseline} listing={listing} onRetryListing={onRetryListing} onAdd={onAdd} />
+          <RunBar comparison={c} ids={ids} baseline={baseline} listing={listing} onRetryListing={onRetryListing} onAdd={onAdd} addressOf={addressOf} />
         </Section>
 
         <Section heading="Metrics" caption="The best of each row in bold; each delta against the baseline, by sign and word.">
@@ -130,18 +160,7 @@ export function ComparisonView({ comparison: c, ids, baseline, busy, listing, on
               <ChartFrame
                 caption="Each metric per run, on one 0–1 scale"
                 legend={runLegend(series)}
-                table={
-                  <ValuesTable
-                    caption="Each metric per run, as a table"
-                    first="Metric"
-                    rows={bars.map((b) => ({ id: b.name, label: b.name }))}
-                    series={series}
-                    values={(r, s) => bars[r]?.values[s] ?? null}
-                    format={four}
-                    gap={() => 'not recorded'}
-                    best={barIndex}
-                  />
-                }
+                tableBelow={metricsCaption(c)}
               >
                 <BarChart
                   label="Each metric per run"
@@ -205,17 +224,7 @@ export function ComparisonView({ comparison: c, ids, baseline, busy, listing, on
                 caption={`${metricAtStages} at each stage`}
                 note="A run without a stage has no point there: the line breaks rather than cross it."
                 legend={runLegend(series)}
-                table={
-                  <ValuesTable
-                    caption={`${metricAtStages} at each stage, as a table`}
-                    first="Stage"
-                    rows={line.x}
-                    series={series}
-                    values={(x, s) => line.values[s]?.[x] ?? null}
-                    format={four}
-                    gap={(x, s) => line.gap(s, x)}
-                  />
-                }
+                tableBelow={STAGES_CAPTION}
               >
                 <LineChart label={`${metricAtStages} at each stage`} x={line.x} series={series} values={line.values} dots={line.dots} domain={[0, 1]} format={four} gapLabel={line.gap} />
               </ChartFrame>
@@ -234,7 +243,7 @@ export function ComparisonView({ comparison: c, ids, baseline, busy, listing, on
           )}
         </Section>
 
-        <Section heading="Per query" caption="Each query's change against the baseline, binned by the API. Open a bar for its queries.">
+        <Section heading="Per query" caption="Each query's change against the baseline, in seven bins from much worse to much better. Open a bar for its queries.">
           <div className="rg-compare__stack">
             <div className="rg-compare__pickers">
               {others.length < 2 ? null : (
@@ -280,7 +289,7 @@ export function ComparisonView({ comparison: c, ids, baseline, busy, listing, on
                     bins={bins}
                     halves={{ worse: 'worse', better: 'better' }}
                     active={openBin}
-                    onActivate={(id) => setOpenBin((b) => (b === id ? null : id))}
+                    onActivate={openBins}
                     controls={listId}
                   />
                 </ChartFrame>
@@ -290,17 +299,21 @@ export function ComparisonView({ comparison: c, ids, baseline, busy, listing, on
                       <h3>
                         {queries(open.count)} {openBinView.label}, {openBinView.range}
                       </h3>
+                      {textsProblem === null ? null : <ErrorState problem={textsProblem} onRetry={onWantTexts} />}
                       {open.queries.length === 0 ? (
                         <p className="rg-compare__note">No query falls in this bin.</p>
                       ) : (
                         <ul>
-                          {open.queries.map((q) => {
+                          {queriesByDelta(open.queries, md.deltas).map((q) => {
                             const d = deltaOfQuery.get(q);
                             return (
                               <li key={q}>
                                 <a href={replayOf(q)}>
-                                  <span>{q}</span>
-                                  <span>{d === undefined ? '' : deltaOf('higher', d).text}</span>
+                                  <span className="rg-compare__query-id">{q}</span>
+                                  <span className="rg-compare__query-text" title={texts?.get(q)}>
+                                    {texts?.get(q) ?? ''}
+                                  </span>
+                                  <span className="rg-compare__query-delta">{d === undefined ? '' : deltaOf('higher', d).text}</span>
                                 </a>
                               </li>
                             );
@@ -320,21 +333,27 @@ export function ComparisonView({ comparison: c, ids, baseline, busy, listing, on
         </Section>
 
         <Section heading="Verdict">
-          <p className="rg-compare__verdict">{sentence}</p>
-          <div className="rg-compare__action">
-            {md !== null && lost !== null && lost.worst !== null ? (
-              <>
-                <ButtonLink kind="primary" size="l" icon="play" href={formatHash({ screen: 'replay', run: run?.id ?? '', query: lost.worst, with: baseline, set: { kind: 'regressions', metric: md.metric } })}>
-                  {`Replay the ${lost.count.toLocaleString('en-US')} regression${lost.count === 1 ? '' : 's'}`}
-                </ButtonLink>
-                <span className="rg-compare__note">Opens the largest regression, {lost.worst}, beside the baseline, with the others one step away.</span>
-              </>
-            ) : (
-              <ButtonLink kind="primary" size="l" icon="play" href={formatHash({ screen: 'replay', run: run?.id ?? '' })}>
-                {`Open ${runName} in Replay`}
-              </ButtonLink>
-            )}
-          </div>
+          {verdicts.map((v) => (
+            <div key={v.id} className="rg-compare__judged">
+              <p className="rg-compare__verdict">{v.sentence}</p>
+              <div className="rg-compare__action">
+                {v.metric !== null && v.lost !== null && v.lost.worst !== null ? (
+                  <>
+                    <ButtonLink kind={v.primary ? 'primary' : 'secondary'} size={v.primary ? 'l' : 'm'} icon="play" href={formatHash({ screen: 'replay', run: v.id, query: v.lost.worst, with: baseline, set: { kind: 'regressions', metric: v.metric } })}>
+                      {`Replay the ${v.lost.count.toLocaleString('en-US')} regression${v.lost.count === 1 ? '' : 's'}`}
+                    </ButtonLink>
+                    <span className="rg-compare__note">Opens the largest regression, {v.lost.worst}, beside the baseline, with the others one step away.</span>
+                  </>
+                ) : v.changed ? (
+                  <ButtonLink kind={v.primary ? 'primary' : 'secondary'} size={v.primary ? 'l' : 'm'} icon="play" href={formatHash({ screen: 'replay', run: v.id })}>
+                    {`Open ${v.name} in Replay`}
+                  </ButtonLink>
+                ) : (
+                  <span className="rg-compare__note">No query changed, so there is nothing to replay.</span>
+                )}
+              </div>
+            </div>
+          ))}
         </Section>
       </Sheet>
     </div>

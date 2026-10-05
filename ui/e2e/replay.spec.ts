@@ -29,13 +29,16 @@ test('side by side, the two canvases share one zoom and line up', async ({ page,
   await expect(page).toHaveURL(/\/q\//);
   const query = /\/q\/([^?/]+)/.exec(page.url())?.[1] ?? '';
   await page.goto(`/#replay/${dense}/q/${query}?with=${hybrid}`);
-  const toolbar = (letter: 'A' | 'B') => page.getByRole('toolbar', { name: new RegExp(`^Canvas, Run ${letter}, `) });
+  // Replay names each run by its name, never a letter (#489): the run replayed
+  // is the first canvas, the run beside the second.
+  const side = { A: 0, B: 1 } as const;
+  const toolbar = (letter: 'A' | 'B') => page.getByRole('toolbar', { name: /^Canvas, .+, query / }).nth(side[letter]);
   await expect(toolbar('A')).toBeVisible();
   await expect(toolbar('B')).toBeVisible();
   const zoom = async (letter: 'A' | 'B') => (await toolbar(letter).locator('.rg-canvas__zoom').textContent()) ?? '';
   await expect.poll(async () => (await zoom('A')) === (await zoom('B')) && (await zoom('A')) !== '').toBe(true);
   // The query input, the first rank of both graphs, stands at the same place across.
-  const input = (letter: 'A' | 'B') => page.getByRole('application', { name: new RegExp(`^Run ${letter}, `) }).locator('.react-flow__node').first();
+  const input = (letter: 'A' | 'B') => page.getByRole('application', { name: /, query / }).nth(side[letter]).locator('.react-flow__node').first();
   const a = await input('A').boundingBox();
   const b = await input('B').boundingBox();
   expect(a).not.toBeNull();

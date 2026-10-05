@@ -1,11 +1,6 @@
 import { Glyph } from '../../glyphs/Glyph.tsx';
+import { listed } from '../../words.ts';
 import './PrefixLabel.css';
-
-/** Names joined as a sentence lists them: "a", "a and b", "a, b and c". */
-function listed(names: readonly string[]): string {
-  if (names.length <= 1) return names.join('');
-  return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
-}
 
 /** How many parents are named outright before the rest are counted. */
 const NAMED = 2;

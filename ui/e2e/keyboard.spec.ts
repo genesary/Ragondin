@@ -22,7 +22,8 @@ test('keyboard only: Runs → Compare → Replay → a node and its menu', async
   await page.keyboard.press('Enter');
 
   // Compare: a regressed bin, then one of its queries, into Replay.
-  await expect(page).toHaveURL(new RegExp(`#compare/${hybrid}\\+${dense}\\?baseline=${hybrid}$`));
+  // Each run by its 12-character prefix, which names one run of the workspace.
+  await expect(page).toHaveURL(new RegExp(`#compare/${hybrid.slice(0, 12)}\\+${dense.slice(0, 12)}\\?baseline=${hybrid.slice(0, 12)}$`));
   const worst = page.getByRole('button', { name: /^much worse, [1-9][\d,]* quer(y|ies), change below −0\.3$/ });
   await tabTo(page, worst, 'the regressed bin');
   await page.keyboard.press('Enter');
@@ -31,8 +32,8 @@ test('keyboard only: Runs → Compare → Replay → a node and its menu', async
   await expect(page).toHaveURL(new RegExp(`#replay/${dense}/q/[^/?]+\\?with=${hybrid}$`));
 
   // Replay: a node selected on the canvas, then its menu.
-  const node = page.getByRole('application', { name: /^Run B/ }).getByRole('group', { name: /^reranker reranked/ });
-  await tabTo(page, node, 'the reranker on run B');
+  const node = page.getByRole('application', { name: /^hybrid-rerank, / }).getByRole('group', { name: /^reranker reranked/ });
+  await tabTo(page, node, 'the reranker on hybrid-rerank');
   await page.keyboard.press('Enter');
   await expect(page).toHaveURL(/\/node\/reranked\?/);
   await expect(page.getByRole('complementary', { name: 'reranked' })).toBeVisible();

@@ -15,19 +15,29 @@ export type ChartFrameProps = {
   caption: string;
   /** Always present: every hue on screen is data a legend explains. */
   legend: readonly LegendItem[];
-  /** The same data as a table: the chart's equivalent for assistive technology and for anyone who wants the numbers. */
-  table: ReactNode;
   /** A line under the caption: how to read the chart. */
   note?: ReactNode;
   children: ReactNode;
-};
+} & (
+  | {
+      /** The same data as a table: the chart's equivalent for assistive technology and for anyone who wants the numbers. */
+      table: ReactNode;
+      tableBelow?: never;
+    }
+  | {
+      table?: never;
+      /** The caption of a table shown below the chart that holds its figures: named, rather than offered a second time behind a button. */
+      tableBelow: string;
+    }
+);
 
 /**
  * A chart's figure: its caption, its legend, the plot, and a button that
- * shows the same data as a table. The plot is drawn for the eye; the table is
+ * shows the same data as a table — or, where that table is already on the
+ * page below the chart, its name. The plot is drawn for the eye; the table is
  * its text equivalent, one keyboard stop away.
  */
-export function ChartFrame({ caption, legend, table, note, children }: ChartFrameProps) {
+export function ChartFrame({ caption, legend, table, tableBelow, note, children }: ChartFrameProps) {
   if (legend.length === 0) throw new Error(`ChartFrame "${caption}" has no legend: every chart carries one.`);
   const captionId = useId();
   const tableId = useId();
@@ -49,14 +59,20 @@ export function ChartFrame({ caption, legend, table, note, children }: ChartFram
         ))}
       </ul>
       <div className="rg-chart__plot">{children}</div>
-      <div className="rg-chart__foot">
-        <Button kind="quiet" size="s" aria-describedby={captionId} aria-expanded={showTable} aria-controls={tableId} onClick={() => setShowTable((v) => !v)}>
-          {showTable ? 'Hide the table' : 'Show as a table'}
-        </Button>
-      </div>
-      <div id={tableId} className="rg-chart__table" hidden={!showTable}>
-        {table}
-      </div>
+      {tableBelow !== undefined ? (
+        <p className="rg-chart__foot rg-chart__note">The figures are in the table “{tableBelow}” below.</p>
+      ) : (
+        <>
+          <div className="rg-chart__foot">
+            <Button kind="quiet" size="s" aria-describedby={captionId} aria-expanded={showTable} aria-controls={tableId} onClick={() => setShowTable((v) => !v)}>
+              {showTable ? 'Hide the table' : 'Show as a table'}
+            </Button>
+          </div>
+          <div id={tableId} className="rg-chart__table" hidden={!showTable}>
+            {table}
+          </div>
+        </>
+      )}
     </figure>
   );
 }
