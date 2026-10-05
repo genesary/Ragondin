@@ -1,0 +1,14 @@
+# Lexical retrieval alone: the baseline the other demo pipelines are compared
+# against. It needs no model file and no service, only a build carrying `bm25`.
+pipeline:
+  # The pipeline's one input: each benchmark query's text.
+  inputs: [query]
+  nodes:
+    # BM25 over the benchmark's corpus: ranks the passages by the query terms
+    # they share, rare terms weighing more, and keeps the five best.
+    - id: lexical
+      component: retriever
+      impl: bm25
+      inputs: [query]
+      params:
+        top_k: 5

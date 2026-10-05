@@ -1,0 +1,50 @@
+# Hybrid retrieval with reranking: a lexical and a dense leg, fused, then
+# reordered by a cross-encoder. Needs a build carrying `bm25` and `onnx`.
+#
+# The models are the repository's toy test models, a few kilobytes each, copied
+# into the workspace's `models/`. Their paths are relative, and a relative path
+# resolves against the directory `ragondin ui` runs in: `just demo` starts it
+# in the workspace.
+pipeline:
+  # The pipeline's one input: each benchmark query's text.
+  inputs: [query]
+  nodes:
+    # The lexical leg: BM25, keeping the five best passages by shared terms.
+    - id: lexical
+      component: retriever
+      impl: bm25
+      inputs: [query]
+      params:
+        top_k: 5
+
+    # The dense leg: the corpus and the query embedded by the ONNX embedder,
+    # and the five passages nearest the query kept.
+    - id: vectors
+      component: retriever
+      impl: dense
+      inputs: [query]
+      params:
+        top_k: 5
+        embedder: onnx
+        model: models/embedder.onnx
+        tokenizer: models/tokenizer.json
+
+    # Reciprocal Rank Fusion: one ranking from the two legs' ranks, each
+    # passage scored by 1 / (k + rank) summed over the legs that found it.
+    - id: fused
+      component: fusion
+      impl: rrf
+      inputs: [lexical, vectors]
+      params:
+        k: 60
+
+    # The cross-encoder reads the query beside each fused passage and
+    # reorders them by its relevance score, keeping ten.
+    - id: reranked
+      component: reranker
+      impl: cross_encoder
+      inputs: [query, fused]
+      params:
+        top_k: 10
+        model: models/cross-encoder.onnx
+        tokenizer: models/tokenizer.json

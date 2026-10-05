@@ -1,0 +1,38 @@
+# Retrieval-augmented generation with the stub generator: retrieve, build a
+# context, answer. Needs a build carrying `bm25` and `stub`, and no service.
+#
+# The stub generator is a test component, not a language model: it answers
+# with the first line of the context its template places. On the demo's QA
+# sets that is the top-ranked passage, so its answer is right exactly when
+# retrieval ranked the right passage first.
+pipeline:
+  # The pipeline's one input: each benchmark question's text.
+  inputs: [query]
+  nodes:
+    # BM25, keeping the three best passages for the context.
+    - id: search
+      component: retriever
+      impl: bm25
+      inputs: [query]
+      params:
+        top_k: 3
+
+    # Concatenates the retrieved passages, best first, one per line, up to
+    # a budget of 2000 characters.
+    - id: prompt
+      component: context_builder
+      impl: concat
+      inputs: [query, search]
+      params:
+        budget: 2000
+        separator: "\n"
+
+    # The stub generator, answering from the context the template places.
+    # `served_model` is the model name a real generator would report.
+    - id: answer
+      component: generator
+      impl: stub_generator
+      inputs: [query, prompt]
+      params:
+        served_model: stub-model
+        template: "Answer from the context.\n{context}\nQuestion: {query}"

@@ -1,6 +1,8 @@
-//! The fixture workspace: one directory, built from the exit-criterion
-//! fixtures, that the Rust tests open and the UI's dev server and end-to-end
-//! tests serve — one truth on both sides (the front-end design, § 9).
+//! The fixture workspace and the demo workspace: directories built from the
+//! repository's test fixtures through the binary's own API. The fixture is
+//! what the Rust tests open and the UI's dev server and end-to-end tests
+//! serve — one truth on both sides (the front-end design, § 9); the demo is
+//! what `just demo` serves.
 //!
 //! [`generate`] writes, under an output directory:
 //!
@@ -40,8 +42,23 @@
 //! ranking-only pipeline is refused on (ADR-C30 § 5) — so the corpus is
 //! copied without it, as `exit_criterion.rs` reads it through `beir/`.
 //!
-//! Shared by `tests/fixture_workspace.rs` and `tests/ui_parity.rs`, beside
-//! `support/ui.rs`, whose `Server` it starts.
+//! [`generate_demo`] writes the demo workspace `just demo` serves with the
+//! same steps — the models copied, benchmarks imported, documents written
+//! and launched through the API — over the example pipelines in
+//! `tests/fixtures/demo/`; its documentation says what it holds. Both
+//! generators empty their output directory first, and both refuse one that
+//! holds files and not their manifest, `fixture.json` or `demo.json`.
+//!
+//! Neither workspace opens as written from anywhere: the workspace is the
+//! `workspace/` below the output directory, and its documents' model paths
+//! are relative to the directory the server runs in. `ragondin ui
+//! --workspace <out>` opens an empty workspace in `<out>`, and `ragondin ui
+//! --workspace <out>/workspace` started elsewhere refuses the dense
+//! pipelines, their models not found; the recipes start it inside the
+//! workspace, as [`serve`] does.
+//!
+//! Shared by `tests/fixture_workspace.rs`, `tests/demo_workspace.rs` and
+//! `tests/ui_parity.rs`, beside `support/ui.rs`, whose `Server` it starts.
 
 #![allow(dead_code)] // each includer uses the part it needs
 
@@ -291,12 +308,18 @@ pub fn bench(
 
 /// A layout for `name`'s nodes: one column per node, in document order.
 fn layout(name: &str) -> serde_json::Value {
-    let ids: Vec<String> = document(name)
+    layout_of(&document(name))
+}
+
+/// A layout for the nodes of the document `text`: one column per node, in
+/// document order.
+fn layout_of(text: &str) -> serde_json::Value {
+    let ids: Vec<String> = text
         .lines()
         .filter_map(|line| line.trim().strip_prefix("- id: "))
         .map(str::to_owned)
         .collect();
-    assert!(!ids.is_empty(), "{name} names its nodes");
+    assert!(!ids.is_empty(), "the document names its nodes");
     let nodes: serde_json::Map<String, serde_json::Value> = ids
         .into_iter()
         .enumerate()
@@ -308,34 +331,73 @@ fn layout(name: &str) -> serde_json::Value {
     serde_json::json!({ "version": 1, "nodes": nodes })
 }
 
-/// Builds the fixture workspace under `out`, emptied first, and returns what
-/// it wrote. See the module's documentation for what that is.
-pub fn generate(out: &Path) -> FixtureWorkspace {
-    // Emptied first, but only a directory this wrote before, or none: one
-    // that holds anything and no `fixture.json` is someone's, and refused.
+/// Empties `out` for a generator whose manifest is `marker`, and creates
+/// `out/workspace`, which it returns. Only a directory that generator wrote
+/// before is emptied, or none: one that holds anything and no `marker` is
+/// someone's, and refused untouched.
+fn prepare(out: &Path, marker: &str) -> PathBuf {
     let foreign = std::fs::read_dir(out).is_ok_and(|mut entries| entries.next().is_some())
-        && !out.join("fixture.json").is_file();
+        && !out.join(marker).is_file();
     assert!(
         !foreign,
-        "{} holds files and no fixture.json: not a fixture workspace this wrote, so it is \
+        "{} holds files and no {marker}: not a workspace this generator wrote, so it is \
          left as it is; name an empty or absent directory",
         out.display()
     );
     let _ = std::fs::remove_dir_all(out);
     let workspace = out.join("workspace");
-    let corpus = out.join("corpus").join(BENCHMARK_NAME);
     std::fs::create_dir_all(&workspace).expect("the workspace directory is created");
+    workspace
+}
 
-    let fixture = exit_criterion();
-    copy_dir(&fixture.join("models"), &workspace.join("models"));
+/// Copies the exit criterion's toy models into `workspace/models`, where a
+/// document's relative `models/…` resolves once the server runs from the
+/// workspace.
+fn copy_models(workspace: &Path) {
+    copy_dir(&exit_criterion().join("models"), &workspace.join("models"));
     // The models' generator is how they were made, not something a run reads.
     std::fs::remove_file(workspace.join("models/generate.py")).expect("the script is there");
+}
+
+/// Writes the fixture corpus as BEIR under `out/corpus/`, without
+/// `answers.jsonl` (see the module's documentation), and returns its path.
+fn write_retrieval_corpus(out: &Path) -> PathBuf {
+    let fixture = exit_criterion();
+    let corpus = out.join("corpus").join(BENCHMARK_NAME);
+    std::fs::create_dir_all(&corpus).expect("the corpus directory is created");
     for file in ["corpus.jsonl", "queries.jsonl"] {
-        std::fs::create_dir_all(&corpus).expect("the corpus directory is created");
         std::fs::copy(fixture.join("dataset").join(file), corpus.join(file))
             .expect("a corpus file copies");
     }
     copy_dir(&fixture.join("dataset/qrels"), &corpus.join("qrels"));
+    corpus
+}
+
+/// Removes the queue's record of the launches: the runs are in the store,
+/// and a workspace opened on them starts with an empty queue, so a journey's
+/// job is the only one on screen.
+fn empty_queue(workspace: &Path) {
+    for entry in std::fs::read_dir(workspace.join("jobs")).expect("the queue's directory reads") {
+        std::fs::remove_file(entry.expect("an entry").path()).expect("a job record is removed");
+    }
+}
+
+/// Writes `manifest` as `out/name`, pretty-printed.
+fn write_manifest(out: &Path, name: &str, manifest: &serde_json::Value) {
+    std::fs::write(
+        out.join(name),
+        serde_json::to_string_pretty(manifest).expect("the manifest serializes") + "\n",
+    )
+    .expect("the manifest is written");
+}
+
+/// Builds the fixture workspace under `out`, emptied first, and returns what
+/// it wrote. See the module's documentation for what that is.
+pub fn generate(out: &Path) -> FixtureWorkspace {
+    let workspace = prepare(out, "fixture.json");
+    let fixture = exit_criterion();
+    copy_models(&workspace);
+    let corpus = write_retrieval_corpus(out);
 
     let server = serve(&workspace);
     let benchmark = import(&server, BENCHMARK_NAME, &corpus);
@@ -368,12 +430,7 @@ pub fn generate(out: &Path) -> FixtureWorkspace {
         &[],
     );
     drop(server);
-    // The queue's record of the three launches: the runs are in the store, and
-    // a workspace opened on them starts with an empty queue, so a journey's
-    // job is the only one on screen.
-    for entry in std::fs::read_dir(workspace.join("jobs")).expect("the queue's directory reads") {
-        std::fs::remove_file(entry.expect("an entry").path()).expect("a job record is removed");
-    }
+    empty_queue(&workspace);
 
     let runs = Runs {
         dense_only,
@@ -394,14 +451,151 @@ pub fn generate(out: &Path) -> FixtureWorkspace {
             "changed": runs.changed,
         },
     });
-    std::fs::write(
-        out.join("fixture.json"),
-        serde_json::to_string_pretty(&manifest).expect("the manifest serializes") + "\n",
-    )
-    .expect("the manifest is written");
+    write_manifest(out, "fixture.json", &manifest);
     FixtureWorkspace {
         workspace,
         corpus,
         runs,
     }
+}
+
+/// The demo's example pipelines, by name: each is
+/// `tests/fixtures/demo/<name>.yaml`.
+pub const DEMO_DOCUMENTS: [&str; 3] = ["lexical", "hybrid", "rag"];
+/// The pipeline the demo forks from `hybrid`'s run.
+pub const DEMO_FORK: &str = "hybrid-fork";
+/// The demo's benchmarks, by selector, with the ground truth each holds.
+pub const DEMO_BENCHMARKS: [(&str, &str); 4] = [
+    (BENCHMARK, "qrels"),
+    ("beir/beir-mini", "qrels"),
+    ("beir-qa/exit-criterion-qa", "both"),
+    ("squad/squad-mini", "both"),
+];
+
+/// What [`generate_demo`] wrote.
+#[derive(Debug, Clone)]
+pub struct DemoWorkspace {
+    /// The workspace directory.
+    pub workspace: PathBuf,
+    /// Every run it filed, in the order it filed them.
+    pub runs: Vec<String>,
+}
+
+/// The source text of a demo pipeline, by name.
+pub fn demo_document(name: &str) -> String {
+    std::fs::read_to_string(fixtures().join("demo").join(format!("{name}.yaml")))
+        .expect("the demo document reads")
+}
+
+/// Builds the demo workspace under `out` — what `just demo` serves — emptied
+/// first when this wrote it, and returns what it wrote. Its steps are the
+/// fixture workspace's, through the server's own API as the UI takes them:
+///
+/// - the toy models under `workspace/models/`;
+/// - four benchmarks imported: two retrieval sets, the fixture corpus as
+///   `beir/exit-criterion` and `beir-mini/` as `beir/beir-mini` (qrels), and
+///   two QA sets, the fixture corpus with its reference answers as
+///   `beir-qa/exit-criterion-qa` and `squad-mini/` as `squad/squad-mini`;
+/// - the example pipelines of [`DEMO_DOCUMENTS`], each with a layout;
+/// - the runs: `lexical` and `hybrid` on `beir/exit-criterion`; `hybrid` up
+///   to its fusion there, a prefix run; a fork of `hybrid`'s run with RRF's
+///   `k` lowered to 10, written as [`DEMO_FORK`] and launched there;
+///   `lexical` on `beir/beir-mini`, where `hybrid` is left for a launch from
+///   the page; and `rag` on both QA sets;
+/// - an empty job queue, and `demo.json`, the marker a regeneration checks
+///   before it empties the directory.
+pub fn generate_demo(out: &Path) -> DemoWorkspace {
+    let workspace = prepare(out, "demo.json");
+    copy_models(&workspace);
+    let corpus = write_retrieval_corpus(out);
+    let fixtures = fixtures();
+
+    let server = serve(&workspace);
+    let imports = [
+        (BENCHMARK_NAME, corpus),
+        ("beir-mini", fixtures.join("beir-mini")),
+        ("exit-criterion-qa", exit_criterion().join("dataset")),
+        ("squad-mini", fixtures.join("squad-mini/dev-v1.1.json")),
+    ];
+    for ((name, source), (selector, _)) in imports.iter().zip(DEMO_BENCHMARKS) {
+        assert_eq!(import(&server, name, source), selector);
+    }
+    let [retrieval, mini, qa, squad] = DEMO_BENCHMARKS.map(|(selector, _)| selector);
+
+    for name in DEMO_DOCUMENTS {
+        let text = demo_document(name);
+        put_text(&server, name, &text);
+        call(
+            &server,
+            "PUT",
+            &format!("/api/v1/pipelines/{name}/layout"),
+            &layout_of(&text),
+            200,
+        );
+    }
+    let lexical = launch(&server, "lexical", retrieval);
+    let hybrid = launch(&server, "hybrid", retrieval);
+    let prefix = launch_prefix(&server, "hybrid", retrieval, "fused");
+    fork(&server, &hybrid, DEMO_FORK, ("k: 60", "k: 10"));
+    let forked = launch(&server, DEMO_FORK, retrieval);
+    let lexical_mini = launch(&server, "lexical", mini);
+    let rag_qa = launch(&server, "rag", qa);
+    let rag_squad = launch(&server, "rag", squad);
+    drop(server);
+    empty_queue(&workspace);
+
+    let runs = vec![
+        lexical,
+        hybrid,
+        prefix,
+        forked,
+        lexical_mini,
+        rag_qa,
+        rag_squad,
+    ];
+    let manifest = serde_json::json!({
+        "workspace": workspace,
+        "benchmarks": DEMO_BENCHMARKS.map(|(selector, _)| selector),
+        "pipelines": DEMO_DOCUMENTS,
+        "runs": runs,
+    });
+    write_manifest(out, "demo.json", &manifest);
+    DemoWorkspace { workspace, runs }
+}
+
+/// A prefix run: `pipeline` on `benchmark` cut after the node `up_to`, as
+/// "Run up to here" submits it. Returns the run id it was filed under.
+pub fn launch_prefix(server: &Server, pipeline: &str, benchmark: &str, up_to: &str) -> String {
+    let accepted = call(
+        server,
+        "POST",
+        "/api/v1/runs",
+        &serde_json::json!({ "pipeline": pipeline, "benchmark": benchmark, "up_to": up_to }),
+        202,
+    );
+    let job = accepted["job_id"].as_str().expect("a job id").to_owned();
+    let state = wait_for(server, &job, FIXTURE_JOB_LIMIT);
+    assert_eq!(state["kind"], "done", "{pipeline} up to {up_to}: {state}");
+    state["run_id"].as_str().expect("a filed run id").to_owned()
+}
+
+/// What "Fork this run" does, then an edit: the run's configuration written
+/// as the new document `name` with `edit.0` replaced by `edit.1`, and the
+/// layout recorded at the run's launch copied beside it.
+pub fn fork(server: &Server, run: &str, name: &str, edit: (&str, &str)) {
+    let detail = read(server, &format!("/api/v1/runs/{run}"));
+    let configuration = detail["configuration"]
+        .as_str()
+        .expect("the run's configuration");
+    let edited = configuration.replacen(edit.0, edit.1, 1);
+    assert_ne!(edited, configuration, "the edit applies: {configuration}");
+    put_text(server, name, &edited);
+    let at_launch = read(server, &format!("/api/v1/runs/{run}/layout"));
+    call(
+        server,
+        "PUT",
+        &format!("/api/v1/pipelines/{name}/layout"),
+        &at_launch["layout"],
+        200,
+    );
 }
