@@ -6,7 +6,7 @@
 // owns the per-node metric, the filter and the search, none of them
 // remembered.
 // ARCHITECTURE.md § The Replay screen.
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Button, ButtonLink, EmptyState, InlineMessage, RunSwatch, SegmentedControl, Select, Sheet } from '../../design/index.ts';
 import type { ApiClient, ApiProblem, ApiResult } from '../api/client.ts';
 import { ForkButton } from '../editor/Fork.tsx';
@@ -200,11 +200,14 @@ function RunReplay({ client, run, query, node, with: other }: RunSource) {
     setFrom('A');
     if (node !== undefined && query !== undefined) go(query, null, null);
   }, [beside, from, node, query, go]);
-  // So does a node neither graph on screen has — B switched to a run that lacks it.
+  // So does a node neither graph has — B switched to a run that lacks it —
+  // but only once B is known: while B is first read, or read again after a
+  // switch, a node only B has waits for it, so a reopened address keeps it.
+  const bKnown = beside === null || graphB !== null || otherFailure !== undefined;
   useEffect(() => {
-    if (graph === undefined || node === undefined || query === undefined) return;
+    if (graph === undefined || node === undefined || query === undefined || !bKnown) return;
     if (!has(graph, node) && (graphB === null || !has(graphB, node))) go(query, beside, null);
-  }, [graph, graphB, node, query, beside, go]);
+  }, [graph, graphB, bKnown, node, query, beside, go]);
 
   // No query chosen: the first judged one, filled in as a correction.
   const first = listed === null ? null : firstJudged(listed.queries);
@@ -462,17 +465,41 @@ function OpenInEditor({ listing, run, node }: { listing: Read<RunListing>; run: 
         : summary === undefined
           ? { reason: 'This run is not in the listing of runs, so no pipeline document is known to hold it.' }
           : editorTarget(summary);
-  if ('reason' in target) {
-    return (
-      <Button size="s" disabled disabledReason={target.reason}>
-        Open in the editor
-      </Button>
-    );
-  }
+  const refused = 'reason' in target;
+  // A refused control is a button and an open one a link, so the runs landing
+  // replaces the element: focus held on it moves to its replacement rather
+  // than falling to the page. Whether focus is held is judged once a blur has
+  // settled, so a blur the replacement itself causes does not count.
+  const wrap = useRef<HTMLSpanElement>(null);
+  const held = useRef(false);
+  useLayoutEffect(() => {
+    const box = wrap.current;
+    if (!held.current || box === null || box.contains(document.activeElement)) return;
+    box.querySelector<HTMLElement>('a, button')?.focus();
+  }, [refused]);
   return (
-    <ButtonLink size="s" href={formatHash(node === null ? { screen: 'editor', name: target.name } : { screen: 'editor', name: target.name, node })}>
-      Open in the editor
-    </ButtonLink>
+    <span
+      ref={wrap}
+      className="rg-replay__open"
+      onFocus={() => {
+        held.current = true;
+      }}
+      onBlur={() => {
+        setTimeout(() => {
+          held.current = wrap.current?.contains(document.activeElement) ?? false;
+        });
+      }}
+    >
+      {'reason' in target ? (
+        <Button size="s" disabled disabledReason={target.reason}>
+          Open in the editor
+        </Button>
+      ) : (
+        <ButtonLink size="s" href={formatHash(node === null ? { screen: 'editor', name: target.name } : { screen: 'editor', name: target.name, node })}>
+          Open in the editor
+        </ButtonLink>
+      )}
+    </span>
   );
 }
 

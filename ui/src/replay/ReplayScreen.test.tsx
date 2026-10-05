@@ -356,6 +356,71 @@ describe('Open in the editor', () => {
     expect(document.getElementById(button.getAttribute('aria-describedby')!)?.textContent).toBe('Hybrid and hybrid hold what this run ran, but each differs from another stored name only in case, so neither can be read. Fork this run to edit it.');
   });
 
+  it('is refused while the runs are being read, saying so', async () => {
+    mockApi({
+      'GET /runs': () => new Promise(() => {}),
+      'GET /runs/{id}': { body: HYBRID_DETAIL },
+      'GET /runs/{id}/queries': { body: HYBRID_QUERIES },
+      'GET /runs/{id}/trace/{query}': { body: HYBRID_TRACE },
+    });
+    show({ query: 'q1' });
+    const button = await screen.findByRole('button', { name: 'Open in the editor' });
+    expect(button.getAttribute('aria-disabled')).toBe('true');
+    expect(document.getElementById(button.getAttribute('aria-describedby')!)?.textContent).toBe('Reading the runs…');
+  });
+
+  it('keeps focus on the control when the runs land and it becomes a link', async () => {
+    let release: (reply: MockReply<RunListing>) => void = () => {};
+    mockApi({
+      'GET /runs': () => new Promise((r) => (release = r)),
+      'GET /runs/{id}': { body: HYBRID_DETAIL },
+      'GET /runs/{id}/queries': { body: HYBRID_QUERIES },
+      'GET /runs/{id}/trace/{query}': { body: HYBRID_TRACE },
+    });
+    show({ query: 'q1' });
+    const button = await screen.findByRole('button', { name: 'Open in the editor' });
+    button.focus();
+    expect(document.activeElement).toBe(button);
+    await act(async () => release({ body: LISTING }));
+    const link = await editorLink();
+    expect(document.activeElement).toBe(link);
+  });
+
+  it('takes no focus when the runs land after focus moved elsewhere', async () => {
+    let release: (reply: MockReply<RunListing>) => void = () => {};
+    mockApi({
+      'GET /runs': () => new Promise((r) => (release = r)),
+      'GET /runs/{id}': { body: HYBRID_DETAIL },
+      'GET /runs/{id}/queries': { body: HYBRID_QUERIES },
+      'GET /runs/{id}/trace/{query}': { body: HYBRID_TRACE },
+    });
+    show({ query: 'q1' });
+    const button = await screen.findByRole('button', { name: 'Open in the editor' });
+    button.focus();
+    const list = screen.getByRole('listbox', { name: 'Queries' });
+    act(() => list.focus());
+    await act(async () => new Promise((r) => setTimeout(r, 10)));
+    await act(async () => release({ body: LISTING }));
+    await editorLink();
+    expect(document.activeElement).toBe(list);
+  });
+
+  it('opens the fork on the node selected in Replay', async () => {
+    mockApi({
+      'GET /runs': { body: LISTING },
+      'GET /runs/{id}': { body: HYBRID_DETAIL },
+      'GET /runs/{id}/queries': { body: HYBRID_QUERIES },
+      'GET /runs/{id}/trace/{query}': { body: HYBRID_TRACE },
+      'GET /pipelines': { body: { pipelines: [] } },
+      'PUT /pipelines/{name}': { body: { name: 'run-x-fork', etag: 'f'.repeat(64), hash: HYBRID } },
+      'GET /runs/{id}/layout': { body: { layout: null } },
+    });
+    show({ query: 'q1', node: 'rerank' });
+    await screen.findByRole('list', { name: 'Ranked by rerank, 4 chunks' });
+    fireEvent.click(screen.getByRole('button', { name: 'Fork this run' }));
+    await waitFor(() => expect(window.location.hash).toBe('#editor/run-x-fork/node/rerank'));
+  });
+
   it('is refused while the runs are being read, and says the listing failed when it did', async () => {
     mockApi({
       'GET /runs': { problem: problem('backend_failed', 500, 'the store is down') },
@@ -433,6 +498,24 @@ describe('Replay over a job’s partial traces', () => {
         <Routed client={createApiClient()} job={JOB} query={query} />
       </div>,
     );
+
+  it("writes the node selected on a job's query in place, never as a new entry", async () => {
+    jobApi();
+    window.history.replaceState(null, '', `/${formatHash({ screen: 'replay', job: JOB, query: 'q1' })}`);
+    const entries = window.history.length;
+    showJob('q1');
+    const graph = await screen.findByRole('application', { name: /partial traces/ });
+    fireEvent.click(await drawn(graph.parentElement!, 'rerank'));
+    expect(route()).toEqual({ screen: 'replay', job: JOB, query: 'q1', node: 'rerank' });
+    expect(window.history.length).toBe(entries);
+  });
+
+  it("clears a node the job's graph does not have", async () => {
+    jobApi();
+    window.history.replaceState(null, '', `/${formatHash({ screen: 'replay', job: JOB, query: 'q1', node: 'nowhere' })}`);
+    showJob('q1');
+    await waitFor(() => expect(route()).toEqual({ screen: 'replay', job: JOB, query: 'q1' }));
+  });
 
   it("restores the node the address names on a job's query", async () => {
     jobApi();
@@ -717,8 +800,7 @@ describe('side by side, while B is held', () => {
     expect(screen.getByRole('link', { name: 'Open in the editor' }).getAttribute('href')).toBe('#editor/dense-only');
   });
 
-  it('clears a node only B has when B is switched to another run — even one that has it — rather than calling it not run in A', async () => {
-    // The third run on the benchmark has the reranker too: B has no canvas while it is read, so the node goes.
+  it('keeps a node only B has when B is switched to another run that has it, once that run is read', async () => {
     api();
     const view = render(<Routed client={createApiClient()} run={DENSE} query="q1" with={HYBRID} />);
     const b = await screen.findByRole('application', { name: /^Run B, hybrid-rerank-gen/ });
@@ -726,11 +808,56 @@ describe('side by side, while B is held', () => {
     await screen.findByRole('region', { name: 'B, hybrid-rerank-gen' });
     view.rerender(<Routed client={createApiClient()} run={DENSE} query="q1" with={FAILED} />);
     await screen.findByRole('application', { name: /^Run B, hybrid-broken/ });
-    expect(await screen.findByText('Select a node to see what it produced for this query.')).toBeTruthy();
-    // The new B's own cards may say "not run"; the inspector's place says nothing of the node.
+    expect(await screen.findByRole('region', { name: 'B, hybrid-broken' })).toBeTruthy();
+    expect(route()).toMatchObject({ node: 'rerank' });
+    // A lacks it, and says so in its column; it is never called not run there.
     const panel = document.querySelector('.rg-replay__panel') as HTMLElement;
-    expect(within(panel).queryByText(/Not run/)).toBeNull();
-    expect(within(panel).queryByText('No such node in A.')).toBeNull();
+    expect(within(within(panel).getByRole('region', { name: 'A, dense-only' })).queryByText(/Not run/)).toBeNull();
+  });
+
+  it('keeps a node only B has, named in a reopened address, while B is first read, and shows it once B lands', async () => {
+    let releaseB: (reply: MockReply<QueryTrace>) => void = () => {};
+    api({ trace: (run, q) => (run === HYBRID ? new Promise((r) => (releaseB = r)) : traceOf(DENSE_TRACE, q)) });
+    show({ run: DENSE, query: 'q1', node: 'rerank', with: HYBRID });
+    await screen.findByRole('application', { name: 'Run A, dense-only, query q1' });
+    await screen.findByText(/Reading query q1 in B/);
+    expect(route()).toMatchObject({ node: 'rerank' });
+    await act(async () => releaseB(traceOf(HYBRID_TRACE, 'q1')));
+    expect(await screen.findByRole('region', { name: 'B, hybrid-rerank-gen' })).toBeTruthy();
+    expect(route()).toMatchObject({ node: 'rerank' });
+  });
+
+  it("clears a node only B has, named in a reopened address, when B's read fails", async () => {
+    api({ trace: (run, q) => (run === HYBRID ? { problem: problem('query_not_found', 404, 'Run B holds no query q1.') } : traceOf(DENSE_TRACE, q)) });
+    show({ run: DENSE, query: 'q1', node: 'rerank', with: HYBRID });
+    expect(await screen.findByText('Run B holds no query q1.')).toBeTruthy();
+    await waitFor(() => expect(route()).toEqual({ screen: 'replay', run: DENSE, query: 'q1', with: HYBRID }));
+  });
+
+  it('reads a node both runs have, selected on B, as B’s: its verdict when it is B’s final node', async () => {
+    api();
+    show({ query: 'q1', with: DENSE });
+    const b = await screen.findByRole('application', { name: /^Run B, dense-only/ });
+    fireEvent.click(await drawn(b.parentElement!, 'dense'));
+    await screen.findByRole('region', { name: 'B, dense-only' });
+    // `dense` ends B's pipeline, not A's: only read as B's does it carry the verdict.
+    expect(await screen.findByRole('heading', { name: 'Verdict' })).toBeTruthy();
+  });
+
+  it('clears a node both runs have, selected on B, when B is put away', async () => {
+    api();
+    const view = show({ query: 'q1', with: DENSE });
+    const b = await screen.findByRole('application', { name: /^Run B, dense-only/ });
+    fireEvent.click(await drawn(b.parentElement!, 'dense'));
+    await screen.findByRole('region', { name: 'B, dense-only' });
+    expect(route()).toMatchObject({ node: 'dense' });
+    view.rerender(
+      <div style={{ width: 1400 }}>
+        <Routed client={createApiClient()} run={HYBRID} query="q1" with={undefined} />
+      </div>,
+    );
+    await waitFor(() => expect(route()).not.toHaveProperty('node'));
+    expect(await screen.findByText('Select a node to see what it produced for this query.')).toBeTruthy();
   });
 });
 
