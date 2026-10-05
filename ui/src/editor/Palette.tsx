@@ -70,7 +70,7 @@ export type PaletteProps = {
  * `impl:` name. An entry is placed by a click, Enter or Space, or dragged
  * onto the canvas; one that cannot be placed stays visible and focusable, and
  * says why on its second line. Its entries are one tab stop, as a table's rows
- * are: the up and down arrows — stopping at either end — Home and End move
+ * are, held in one vertical toolbar so a screen reader says so: the up and down arrows — stopping at either end — Home and End move
  * between them, refused ones included, so Tab passes the palette in one press
  * on the way to the canvas.
  */
@@ -92,6 +92,8 @@ export function Palette({ entries, onPlace }: PaletteProps) {
   };
   return (
     <section className="rg-palette" aria-label="Palette">
+      {/* A vertical toolbar: its role tells a screen reader that the arrow keys reach the entries Tab skips. */}
+      <div className="rg-palette__entries" role="toolbar" aria-orientation="vertical" aria-label="Palette entries">
       {entries.map((section) => (
         <div key={section.label} className="rg-palette__section" role="group" aria-label={section.label}>
           <h3 className="rg-palette__head">
@@ -132,6 +134,7 @@ export function Palette({ entries, onPlace }: PaletteProps) {
           })}
         </div>
       ))}
+      </div>
     </section>
   );
 }

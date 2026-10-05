@@ -656,10 +656,19 @@ function Surface({
       <div ref={root} className="rg-canvas" data-mode={mode} data-drawing={drawing === null ? undefined : true} onKeyDown={onKeyDown} onDragOver={onDragOver} onDrop={onDrop}>
         {/* First in the tab order, before the nodes. */}
         <Toolbar label={label} onFit={fit} />
-        {/* Its height is kept whether or not it speaks, so nothing moves when it does. */}
+        {/* Its height is kept whether or not it speaks, so nothing moves when it does. While it is
+            silent it shows how to move between nodes, beside the live region rather than in it, so
+            the hint is never announced: every node's description already says it. */}
         {editable ? (
-          <p className="rg-canvas__status" role="status">
-            <Words text={status} />
+          <p className="rg-canvas__status">
+            <span role="status">
+              <Words text={status} />
+            </span>
+            {status === '' ? (
+              <span className="rg-canvas__hint" aria-hidden="true">
+                Alt + arrow keys: move between nodes
+              </span>
+            ) : null}
           </p>
         ) : null}
         <ReactFlow<CardNode, LineEdge>
@@ -747,10 +756,13 @@ function Surface({
  * The pipeline canvas: the lowered graph as node cards and typed edges, laid
  * out automatically or at stored positions, with pan, zoom, one selection and
  * a keyboard model — Tab walks the toolbar, then the nodes in topological
- * order; Enter selects, Shift+F10 opens the node menu, Escape clears. In
- * write mode nodes move, by drag or by the arrow keys, an edge is drawn from
- * an output port onto an input port that every port judges during the drag,
- * and `/` asks for the caller's insert list. It receives everything through
+ * order; the arrow keys move focus between nodes in that order in read mode,
+ * Alt and the arrow keys do in write mode, and Home and End go to the first
+ * and the last node, in either mode; Enter selects, Shift+F10 opens the node
+ * menu, Escape clears. In write mode the plain arrow keys move the focused
+ * node, as a drag does, an edge is drawn from an output port onto an input
+ * port that every port judges during the drag, and `/` asks for the caller's
+ * insert list. It receives everything through
  * its props and makes no request; it knows no screen. Each canvas holds its
  * own viewport and selection, so two side by side share nothing.
  */

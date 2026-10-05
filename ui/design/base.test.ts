@@ -7,22 +7,24 @@ import { THEMES, tokenIn } from './testing/themes.ts';
 const tokenOf = (value: string | undefined) => /^var\((--[a-z0-9-]+)\)$/.exec(value ?? '')?.[1] ?? null;
 
 describe('links, wherever a screen writes one bare', () => {
-  it('take their ink and their underline from tokens, never the browser\'s blue and purple', () => {
+  it('take their ink from a token, never the browser\'s blue and purple', () => {
     const ink = declared(base, 'a', 'color');
-    const underline = declared(base, 'a', 'text-decoration-color');
     expect(tokenOf(ink)).not.toBeNull();
-    expect(tokenOf(underline)).not.toBeNull();
     expect(declared(base, 'a', 'text-decoration-line')).toBe('underline');
     // Underlined, so a link in a line of text is told by its mark, not by its colour alone.
     for (const theme of THEMES) {
       expect(tokenIn(theme, tokenOf(ink)!), `${theme} ink`).toBeDefined();
-      expect(tokenIn(theme, tokenOf(underline)!), `${theme} underline`).toBeDefined();
     }
   });
 
   it('yields to a component\'s own rule for its links: no colour on a selector a class could lose to', () => {
     // `a:visited` would outrank `.rg-workspace`, and a hash link is visited once followed.
     expect(parseRules(base).filter((r) => r.declarations.has('color') && selectors(r).some((s) => /^a\W/.test(s)))).toEqual([]);
-    expect(declared(base, 'a:hover', 'text-decoration-color')).toBe('currentColor');
+  });
+
+  it('draw their underline in their own ink, so a link a component colours is underlined in that colour', () => {
+    expect(declared(base, 'a', 'text-decoration-color')).toBe('currentColor');
+    // Hover thickens the line rather than recolouring it, which it already is; a decoration takes no room.
+    expect(declared(base, 'a:hover', 'text-decoration-thickness')).toBe('2px');
   });
 });

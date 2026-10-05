@@ -71,7 +71,9 @@
 .rg-editor__stage { position: relative; min-width: 0; min-height: 0; display: flex; }
 
 /* The palette: one section per family, each entry a full-width button. */
-.rg-palette { overflow-y: auto; padding: var(--space-3); border-right: 1px solid var(--line); display: grid; align-content: start; gap: var(--space-4); }
+.rg-palette { overflow-y: auto; padding: var(--space-3); border-right: 1px solid var(--line); }
+/* The toolbar that holds the entries lays the sections out, so wrapping them in it moved nothing. */
+.rg-palette__entries { display: grid; align-content: start; gap: var(--space-4); }
 .rg-palette__section { display: grid; gap: 2px; }
 .rg-palette__head { display: flex; align-items: center; gap: var(--space-2); margin: 0 0 var(--space-1); font: 600 12px/16px var(--font-sans); color: var(--ink-2); }
 .rg-palette__head .rg-tile { width: 20px; height: 20px; border-radius: 5px; }

@@ -52,18 +52,20 @@ textarea {
 }
 
 /* A link a screen writes bare reads in ink with an underline in both themes, never the browser's blue and purple:
-   the underline is its mark, so it is not told by colour alone. A component that draws its links otherwise (the
-   screens in the top bar, a ButtonLink) says so in its own rule, which wins: the selector is the bare element, and
-   the browser's own colour for a visited link yields to any author rule. */
+   the underline is its mark, so it is not told by colour alone. The underline is drawn in the link's own colour,
+   so a link a component colours (a run's edit link, say) is underlined in that colour; hover thickens it, which
+   takes no room. A component that draws its links otherwise (the screens in the top bar, a ButtonLink) says so in
+   its own rule, which wins: the selector is the bare element, and the browser's own colour for a visited link
+   yields to any author rule. */
 a {
   color: var(--ink);
   text-decoration-line: underline;
-  text-decoration-color: var(--ink-3);
+  text-decoration-color: currentColor;
   text-decoration-thickness: 1px;
   text-underline-offset: 0.2em;
 }
 a:hover {
-  text-decoration-color: currentColor;
+  text-decoration-thickness: 2px;
 }
 
 code,

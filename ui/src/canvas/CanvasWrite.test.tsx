@@ -149,6 +149,24 @@ describe('Canvas in write mode, an edge drawn by drag', () => {
     expect(rule?.declarations.get('pointer-events')).toBe('all');
   });
 
+  it('shows, while the status line is silent, how to move between nodes — beside the live region, never inside it', () => {
+    const { container } = renderWrite();
+    const status = within(container).getByRole('status');
+    const hint = container.querySelector('.rg-canvas__hint');
+    expect(hint?.textContent).toBe('Alt + arrow keys: move between nodes');
+    expect(hint?.getAttribute('aria-hidden')).toBe('true');
+    expect(status.contains(hint)).toBe(false);
+    expect(hint?.parentElement).toBe(status.parentElement);
+    expect(status.textContent).toBe('');
+    fireEvent.pointerDown(outPort(container, 'question'), { button: 0 });
+    expect(container.querySelector('.rg-canvas__hint')).toBeNull();
+  });
+
+  it('shows no such hint in read mode, where the plain arrow keys already move between nodes', () => {
+    const { container } = renderWrite({ mode: 'read' });
+    expect(container.querySelector('.rg-canvas__hint')).toBeNull();
+  });
+
   it('lets the status line wrap below the toolbar on a narrow screen rather than cut its reason off', () => {
     const narrow = parseRules(css).filter((r) => r.selector === '.rg-canvas__status' && r.atRule?.includes('max-width'));
     expect(narrow.at(-1)?.declarations.get('white-space')).toBe('normal');

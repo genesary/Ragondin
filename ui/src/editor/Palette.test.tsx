@@ -128,4 +128,11 @@ describe('the palette from the keyboard', () => {
     expect(document.activeElement).toBe(all[0]);
     expect(stops(palette)).toEqual([all[0]]);
   });
+
+  it('holds its entries in one vertical toolbar, so a screen reader says the arrow keys reach the others', () => {
+    const { palette } = renderPalette();
+    const toolbar = within(palette).getByRole('toolbar', { name: 'Palette entries' });
+    expect(toolbar.getAttribute('aria-orientation')).toBe('vertical');
+    expect(within(toolbar).getAllByRole('button')).toEqual(entries(palette));
+  });
 });
