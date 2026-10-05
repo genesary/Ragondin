@@ -12,7 +12,8 @@ import { useJobEvents, useJobQueue, useJobs } from '../jobs/queue.tsx';
 import type { SetupSection } from '../routes.ts';
 import { Loading, type RequestState } from '../shell/states.tsx';
 import { Benchmarks, type Downloads } from './Benchmarks.tsx';
-import { FirstLaunch } from './FirstLaunch.tsx';
+import { FirstLaunch, NextStep } from './FirstLaunch.tsx';
+import { EMPTY_DRAFT, type ConnectDraft } from './forms.tsx';
 import { downloadView, finishedDownloads, isFirstLaunch, serviceKey, type Submission } from './model.ts';
 import { displayed, Services, type RemovedSlot, type SessionProbe } from './Services.tsx';
 import './Setup.css';
@@ -150,6 +151,9 @@ export function SetupScreen({ client, workspace, refreshWorkspace, retryWorkspac
   // Derived during render from the previous decision (React's pattern for
   // state that follows other state), never written to a ref.
   const [mode, setMode] = useState<Mode | null>(null);
+  // Whether this page saw the first launch end: the sections then say what is
+  // in place and the next step, so the way on does not go with the invitation.
+  const [ended, setEnded] = useState(false);
   const next: Mode | null =
     benchmarks.state.status === 'loaded' && services.state.status === 'loaded'
       ? isFirstLaunch(benchmarks.state.value, services.state.value)
@@ -158,7 +162,13 @@ export function SetupScreen({ client, workspace, refreshWorkspace, retryWorkspac
       : mode === null && (benchmarks.state.status === 'error' || services.state.status === 'error')
         ? 'sections'
         : mode;
-  if (next !== mode) setMode(next);
+  if (next !== mode) {
+    if (mode === 'first' && next === 'sections') setEnded(true);
+    setMode(next);
+  }
+  // The Connect form's fields, kept here so the first launch's form and the
+  // Services section's are one draft: the first launch ending loses nothing typed.
+  const [draft, setDraft] = useState<ConnectDraft>(EMPTY_DRAFT);
 
   // The address's section is scrolled to and focused once it is on the page:
   // on load, and on every move to another section.
@@ -420,9 +430,20 @@ export function SetupScreen({ client, workspace, refreshWorkspace, retryWorkspac
     if (jobsNow.current.get(jobId)?.state.kind === 'done') void finish([name]);
   };
 
+  // The download jobs this page asked to cancel, until the stream says each ended.
+  const [cancels, setCancels] = useState<ReadonlySet<string>>(new Set());
+  const cancelDownload = async (jobId: string) => {
+    setCancels((all) => new Set(all).add(jobId));
+    const result = await client.del('/jobs/{id}', { id: jobId });
+    // Refused — the job ended meanwhile — the stream says how; the button goes back.
+    if (!result.ok) setCancels((all) => new Set([...all].filter((id) => id !== jobId)));
+  };
+
   const downloads: Downloads = {
     view: (name) => downloadView(name, submissions.get(name), jobs),
     start: (name) => void startDownload(name),
+    cancel: (jobId) => void cancelDownload(jobId),
+    cancelling: (jobId) => cancels.has(jobId),
     streamDown: connection === 'disconnected',
   };
 
@@ -438,12 +459,19 @@ export function SetupScreen({ client, workspace, refreshWorkspace, retryWorkspac
   const loaded = workspace.status === 'loaded' ? workspace.value : null;
   const connect = {
     families: loaded?.capabilities.families.map((f) => f.family) ?? [],
+    // The first launch's step is a generator's; the same default after it ends, so the family shown never changes by itself.
+    initialFamily: 'generator',
     remote: loaded?.capabilities.remote ?? null,
+    draft,
+    onDraft: setDraft,
     onConnect,
   };
 
   return (
     <Sheet>
+      <p className="rg-setup__title" aria-hidden="true">
+        Setup
+      </p>
       <p className="rg-setup__intro">Everything a run needs besides its pipeline. Nothing here enters a run’s identity except the benchmarks’ digests.</p>
       <WorkspaceSection state={workspace} onRetry={retryWorkspace} />
       {mode === null ? (
@@ -451,9 +479,10 @@ export function SetupScreen({ client, workspace, refreshWorkspace, retryWorkspac
           <Loading label="Reading benchmarks and services" />
         </div>
       ) : mode === 'first' && benchmarks.state.status === 'loaded' ? (
-        <FirstLaunch benchmarks={benchmarks.state.value} capabilities={loaded?.capabilities ?? null} onImport={onImport} downloads={downloads} connect={{ ...connect, initialFamily: 'generator' }} />
+        <FirstLaunch benchmarks={benchmarks.state.value} capabilities={loaded?.capabilities ?? null} onImport={onImport} downloads={downloads} connect={connect} />
       ) : (
         <>
+          {ended && benchmarks.state.status === 'loaded' && services.state.status === 'loaded' ? <NextStep benchmarks={benchmarks.state.value} services={services.state.value} /> : null}
           <Benchmarks
             state={benchmarks.state}
             stale={benchmarks.stale}

@@ -10,8 +10,8 @@ import { ErrorState, Resource, type RequestState } from '../shell/states.tsx';
 import { ConnectForm, type ConnectFormProps } from './forms.tsx';
 import { serviceKey } from './model.ts';
 
-/** ADR-C32's rule in one sentence, as issue #345 words it for this screen. */
-export const ADDRESS_RULE = 'The address never enters a pipeline. A run records which address answered, as provenance — two runs with different addresses and the same identity are one experiment run twice.';
+/** ADR-C32's rule in one sentence, in plain words: the address is not part of what a run measures. */
+export const ADDRESS_RULE = 'The address is not part of a pipeline: the same pipeline run against two addresses that serve the same model is the same experiment, run twice. Each run notes which address answered.';
 
 /** A probe this page ran: at which address, when, and what came back. */
 export type SessionProbe = { uri: string; at: Date; outcome: { ok: true; identity: string } | { ok: false; problem: ApiProblem } };
@@ -239,13 +239,13 @@ export type ServicesProps = {
 
 export function Services({ state, onRetry, connecting, probes, testing, models, onServedModel, onTest, onRemove, slots, refusal, onUndo, undoId, rowRef, slotRef, connect, anchor }: ServicesProps) {
   return (
-    <Section heading="Services" caption="A service is connected when its identity was read, not when a port answered." anchor={anchor}>
+    <Section heading="Services" caption="A service is a model server Ragondin calls over the network — an embedder, a reranker or a generator a pipeline names. A pipeline that only retrieves needs none." anchor={anchor}>
       <Resource state={state} loading="Reading services" error={(problem) => <ErrorState problem={problem} onRetry={onRetry} />}>
         {(listed) => {
           const services = connecting !== null && !listed.some((s) => serviceKey(s) === serviceKey(connecting)) ? [...listed, connecting] : listed;
           const rows = displayed(services, slots);
           return rows.length === 0 ? (
-            <p className="rg-setup__note">No service is bound: a pipeline runs only on the components this build carries until one is.</p>
+            <p className="rg-setup__note">No service is connected yet. Until one is, a pipeline runs only on the components built into this program.</p>
           ) : (
             <ul className="rg-setup__services">
               {rows.map((row) => {
@@ -275,7 +275,7 @@ export function Services({ state, onRetry, connecting, probes, testing, models, 
       </Resource>
       {refusal === null ? null : <ErrorState problem={refusal} />}
       <p className="rg-setup__note">{ADDRESS_RULE}</p>
-      <p className="rg-setup__note">The times shown are those of probes run since this page was opened; the server keeps none. A served model typed on a row is kept for this page only.</p>
+      <p className="rg-setup__note">Test asks the server which model it serves: a service is connected once it answers that, not merely when its port is open. The times shown are those of tests run since this page was opened, and a served model typed on a row is forgotten when the page is reloaded.</p>
       <h3 className="rg-setup__subheading">Connect a service</h3>
       <ConnectForm {...connect} />
     </Section>

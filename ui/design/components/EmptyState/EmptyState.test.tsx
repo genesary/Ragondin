@@ -38,4 +38,15 @@ describe('EmptyState', () => {
     );
     expect(screen.getAllByRole('button')).toHaveLength(2);
   });
+
+  it('places the steps to fill the screen between its sentence and its actions', () => {
+    const { container } = render(
+      <EmptyState heading="No runs yet" steps={<ol><li>Add a benchmark</li></ol>} action={<button type="button">Run</button>}>
+        x
+      </EmptyState>,
+    );
+    const children = [...(container.querySelector('.rg-empty') as HTMLElement).children].map((c) => c.tagName.toLowerCase() + (c.className === '' ? '' : `.${c.className}`));
+    expect(children).toEqual(['div.rg-empty__art', 'h3', 'p', 'div.rg-empty__steps', 'div.rg-empty__actions']);
+    expect(screen.getByRole('listitem').textContent).toBe('Add a benchmark');
+  });
 });

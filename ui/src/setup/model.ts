@@ -2,9 +2,10 @@
 // sizes and digests in words, the first-launch rule, the build identity's
 // parts, where a benchmark's download stands. ARCHITECTURE.md § The Setup
 // screen.
+import { FAMILY_LABEL, familyOfComponent } from '../../design/index.ts';
 import type { ApiProblem } from '../api/client.ts';
 import type { Jobs } from '../api/jobs.ts';
-import type { BenchmarkEntry, GroundTruth, JobSummary, ServiceStatus } from '../api/types.ts';
+import type { BenchmarkEntry, GroundTruth, JobSummary, ScorablePipelines, ServiceStatus } from '../api/types.ts';
 
 const UNITS = ['B', 'kB', 'MB', 'GB', 'TB'] as const;
 
@@ -34,6 +35,28 @@ const GROUND_TRUTH: Record<GroundTruth, string> = {
 export const groundTruthLabel = (truth: GroundTruth) => GROUND_TRUTH[truth];
 
 /**
+ * Which pipelines a benchmark scores, in words: the API's `scorable`, read
+ * off `CarriedPieces::scorable`, said as it is — never decided here.
+ */
+export function scorableLabel(scorable: ScorablePipelines): string {
+  if (scorable.ending_in_answer && scorable.ending_elsewhere) return 'any pipeline';
+  if (scorable.ending_in_answer) return 'only a pipeline that ends in an answer';
+  if (scorable.ending_elsewhere) return 'only a pipeline that does not end in an answer';
+  return 'no pipeline';
+}
+
+/**
+ * A family as a person reads it — design/'s `FAMILY_LABEL` of the tile
+ * `familyOfComponent` gives it, so `context_builder` is "context builder" —
+ * or its own name for a family no tile draws (`embedder`). The value sent
+ * stays the configuration's.
+ */
+export function familyLabel(family: string): string {
+  const tile = familyOfComponent(family);
+  return tile === null ? family : FAMILY_LABEL[tile];
+}
+
+/**
  * Whether the workspace is at its first launch: no benchmark on disk — an
  * `available` entry is the manifest's offer, not something held — and no
  * service bound. The screen is then an invitation rather than four sections.
@@ -49,6 +72,25 @@ const isAvailable = (b: BenchmarkEntry): b is Available => b.state.kind === 'ava
 /** The available benchmark with the fewest bytes — a good first run, read from the manifest's sizes — or null. */
 export function smallestAvailable(benchmarks: readonly BenchmarkEntry[]): Available | null {
   return benchmarks.filter(isAvailable).reduce<Available | null>((best, b) => (best === null || b.state.size_bytes < best.state.size_bytes ? b : best), null);
+}
+
+/**
+ * The benchmark of the front-end design's first-run journey (§ 3: download
+ * SciFact, then the Editor's retrieval-only example, then Launch). Named
+ * here because the manifest records no ground truth before a download, so
+ * which entry that example is scored on cannot be read from the listing.
+ */
+export const FIRST_RUN_BENCHMARK = 'beir/scifact';
+
+/**
+ * The benchmark the first launch recommends: the first-run journey's when the
+ * manifest offers it, otherwise the smallest available; null when none is.
+ */
+export function firstBenchmark(benchmarks: readonly BenchmarkEntry[]): { entry: Available; why: 'first-run' | 'smallest' } | null {
+  const named = benchmarks.filter(isAvailable).find((b) => b.name === FIRST_RUN_BENCHMARK);
+  if (named !== undefined) return { entry: named, why: 'first-run' };
+  const smallest = smallestAvailable(benchmarks);
+  return smallest === null ? null : { entry: smallest, why: 'smallest' };
 }
 
 /** The build identity's two parts, `<version>+<commit>` (ARCHITECTURE.md § The build identity handshake). */
@@ -68,8 +110,8 @@ export type DownloadView =
   | { kind: 'idle' }
   | { kind: 'submitting' }
   | { kind: 'refused'; problem: ApiProblem }
-  | { kind: 'queued' }
-  | { kind: 'running'; done: number; total: number | null }
+  | { kind: 'queued'; jobId: string }
+  | { kind: 'running'; jobId: string; done: number; total: number | null }
   | { kind: 'verifying' }
   | { kind: 'failed'; error: string }
   | { kind: 'cancelled' };
@@ -80,9 +122,9 @@ function viewOf(job: JobSummary): DownloadView {
   const state = job.state;
   switch (state.kind) {
     case 'queued':
-      return { kind: 'queued' };
+      return { kind: 'queued', jobId: job.id };
     case 'running':
-      return { kind: 'running', done: state.done, total: state.total };
+      return { kind: 'running', jobId: job.id, done: state.done, total: state.total };
     case 'done':
       return { kind: 'verifying' };
     case 'failed':
@@ -104,7 +146,7 @@ export function downloadView(name: string, submission: Submission | undefined, j
   if (submission !== undefined) {
     if (submission.kind !== 'accepted') return submission;
     const job = jobs.get(submission.jobId);
-    return job === undefined ? { kind: 'queued' } : viewOf(job);
+    return job === undefined ? { kind: 'queued', jobId: submission.jobId } : viewOf(job);
   }
   const last = [...jobs.values()].filter(isDownloadOf(name)).at(-1);
   return last === undefined || last.state.kind === 'done' ? { kind: 'idle' } : viewOf(last);

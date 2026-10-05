@@ -1,12 +1,13 @@
 // The first-launch state: on a workspace with no benchmark on disk and no
 // service, Setup is a two-step invitation rather than four sections (the
 // front-end design, § 3: the default path, made the obvious one).
-import { Section } from '../../design/index.ts';
+import { ButtonLink, Section } from '../../design/index.ts';
 import type { ApiProblem } from '../api/client.ts';
-import type { BenchmarkEntry, Capabilities } from '../api/types.ts';
-import { ActionSlot, DownloadButton, downloadWords, isLive, Licence, type Downloads } from './Benchmarks.tsx';
+import type { BenchmarkEntry, Capabilities, ServiceStatus } from '../api/types.ts';
+import { formatHash } from '../routes.ts';
+import { ActionSlot, DownloadControls, downloadWords, isLive, Licence, type Downloads } from './Benchmarks.tsx';
 import { ConnectForm, ImportForm, type ConnectFormProps } from './forms.tsx';
-import { formatSize, smallestAvailable } from './model.ts';
+import { firstBenchmark, formatSize, scorableLabel, serviceKey } from './model.ts';
 
 /**
  * Why a retrieval-only pipeline needs no service, from what this build
@@ -29,7 +30,8 @@ export type FirstLaunchProps = {
 };
 
 export function FirstLaunch({ benchmarks, capabilities, onImport, downloads, connect }: FirstLaunchProps) {
-  const first = smallestAvailable(benchmarks);
+  const pick = firstBenchmark(benchmarks);
+  const first = pick?.entry ?? null;
   const view = first === null ? null : downloads.view(first.name);
   const builtIn = builtInSentence(capabilities);
   return (
@@ -46,11 +48,11 @@ export function FirstLaunch({ benchmarks, capabilities, onImport, downloads, con
                     , <Licence entry={first} />
                   </>
                 )}{' '}
-                — the smallest, a good first run.
+                {pick?.why === 'first-run' ? <> — the first-run benchmark: the Editor’s example pipeline, retrieval-only, is scored on it with no service.</> : <> — the smallest, a good first run.</>}
               </p>
               <div className="rg-setup__submit">
                 <ActionSlot benchmark={first.name}>
-                  <DownloadButton view={view} onStart={() => downloads.start(first.name)} />
+                  <DownloadControls benchmark={first.name} view={view} downloads={downloads} />
                 </ActionSlot>
                 {/* The lead above already gives the size: an idle line says nothing. */}
                 <span className="rg-setup__said">
@@ -70,6 +72,40 @@ export function FirstLaunch({ benchmarks, capabilities, onImport, downloads, con
           <ConnectForm {...connect} />
         </li>
       </ol>
+    </Section>
+  );
+}
+
+/**
+ * What the first launch leaves behind once it ends, so the way on is not
+ * lost with it: what is now in place, and the next step — a pipeline in the
+ * Editor, launched from Runs — or, when a service ended it, a benchmark.
+ */
+export function NextStep({ benchmarks, services }: { benchmarks: readonly BenchmarkEntry[]; services: readonly ServiceStatus[] }) {
+  const ready = benchmarks.filter((b) => b.state.kind === 'ready' || b.state.kind === 'local');
+  const only = ready.length === 1 ? (ready[0] as BenchmarkEntry) : null;
+  return (
+    <Section heading="Next step">
+      {ready.length === 0 ? (
+        <p className="rg-setup__lead">
+          {services.map(serviceKey).join(', ')} {services.length === 1 ? 'is' : 'are'} bound. Next: add a benchmark below — a run is one pipeline on one benchmark.
+        </p>
+      ) : (
+        <>
+          <p className="rg-setup__lead">
+            {ready.map((b) => b.name).join(', ')} {ready.length === 1 ? 'is' : 'are'} ready{only?.scorable == null ? '.' : <>: it scores {scorableLabel(only.scorable)}.</>} Next: build a pipeline in the Editor, then launch it from{' '}
+            <a className="rg-setup__link" href={formatHash({ screen: 'runs' })}>
+              Runs
+            </a>
+            .
+          </p>
+          <div className="rg-setup__submit">
+            <ButtonLink kind="primary" href={formatHash({ screen: 'editor' })}>
+              Open Editor
+            </ButtonLink>
+          </div>
+        </>
+      )}
     </Section>
   );
 }

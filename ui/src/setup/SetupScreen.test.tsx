@@ -67,17 +67,21 @@ const entry = (name: string, state: BenchmarkEntry['state'], over: Partial<Bench
   name,
   format: name.split('/')[0] ?? 'beir',
   ground_truth: null,
+  scorable: null,
   licence: 'CC-BY-SA-4.0',
   licence_url: null,
   state,
   ...over,
 });
 
-const READY = entry('beir/scifact', { kind: 'ready', dataset_version: hex('5') }, { ground_truth: 'qrels' });
+/** What the API says a ground truth scores (`CarriedPieces::scorable`), as it sends it. */
+const ANY = { ending_in_answer: true, ending_elsewhere: true };
+const ANSWERS_ONLY = { ending_in_answer: true, ending_elsewhere: false };
+const READY = entry('beir/scifact', { kind: 'ready', dataset_version: hex('5') }, { ground_truth: 'qrels', scorable: ANY });
 const AVAILABLE = entry('beir/fiqa', { kind: 'available', size_bytes: 17_100_000 }, { licence_url: 'https://example.org/fiqa-terms' });
-const DIFFERS = entry('beir/nfcorpus', { kind: 'differs', expected: hex('a'), found: hex('b') }, { ground_truth: 'qrels' });
+const DIFFERS = entry('beir/nfcorpus', { kind: 'differs', expected: hex('a'), found: hex('b') }, { ground_truth: 'qrels', scorable: ANY });
 const UNREADABLE = entry('squad/squad', { kind: 'unreadable', error: 'corpus.jsonl line 4: expected `_id`' });
-const LOCAL = entry('mine', { kind: 'local', dataset_version: hex('c') }, { format: 'beir-qa', ground_truth: 'both', licence: null });
+const LOCAL = entry('mine', { kind: 'local', dataset_version: hex('c') }, { format: 'beir-qa', ground_truth: 'both', scorable: ANSWERS_ONLY, licence: null });
 const EVERY_STATE = [READY, AVAILABLE, DIFFERS, UNREADABLE, LOCAL];
 
 const service = (family: string, name: string, uri: string, over: Partial<ServiceStatus> = {}): ServiceStatus => ({ family, name, uri, connected: false, identity: null, ...over });
@@ -611,18 +615,31 @@ describe('the first launch', () => {
     expect(screen.queryByRole('region', { name: 'Services' })).toBeNull();
   });
 
-  it('points at the smallest benchmark the manifest pins, read from its size', async () => {
-    const big = entry('beir/trec-covid', { kind: 'available', size_bytes: 230_000_000 });
-    const small = entry('beir/scifact', { kind: 'available', size_bytes: 5_200_000 });
-    mockApi(routes({ 'GET /benchmarks': { body: { scorable: SCORABLE, benchmarks: [big, small] } }, 'GET /services': { body: { services: [] } } }));
+  it('recommends beir/scifact, the first-run benchmark the Editor’s retrieval-only example is scored on, though another is smaller', async () => {
+    const squad = entry('squad/dev', { kind: 'available', size_bytes: 4_854_279 });
+    const scifact = entry('beir/scifact', { kind: 'available', size_bytes: 8_172_614 });
+    mockApi(routes({ 'GET /benchmarks': { body: { scorable: SCORABLE, benchmarks: [scifact, squad] } }, 'GET /services': { body: { services: [] } } }));
     render(<Harness />);
     const start = await screen.findByRole('region', { name: 'Get started' });
     const first = within(start).getAllByRole('listitem')[0] as HTMLElement;
     expect(first.textContent).toContain('beir/scifact');
-    expect(first.textContent).toContain('5.2 MB');
-    expect(first.textContent).toContain('the smallest, a good first run');
-    expect(first.textContent).not.toContain('beir/trec-covid');
+    expect(first.textContent).toContain('8.2 MB');
+    expect(first.textContent).toContain('the Editor’s example pipeline, retrieval-only, is scored on it');
+    expect(first.textContent).not.toContain('squad/dev');
     expect(within(first).getByRole('button', { name: 'Download' }).getAttribute('aria-disabled')).toBeNull();
+  });
+
+  it('points at the smallest benchmark the manifest pins when it does not offer beir/scifact', async () => {
+    const big = entry('beir/trec-covid', { kind: 'available', size_bytes: 230_000_000 });
+    const small = entry('beir/nfcorpus', { kind: 'available', size_bytes: 5_200_000 });
+    mockApi(routes({ 'GET /benchmarks': { body: { scorable: SCORABLE, benchmarks: [big, small] } }, 'GET /services': { body: { services: [] } } }));
+    render(<Harness />);
+    const start = await screen.findByRole('region', { name: 'Get started' });
+    const first = within(start).getAllByRole('listitem')[0] as HTMLElement;
+    expect(first.textContent).toContain('beir/nfcorpus');
+    expect(first.textContent).toContain('5.2 MB');
+    expect(first.textContent).toContain('the smallest');
+    expect(first.textContent).not.toContain('beir/trec-covid');
   });
 
   it('adding a benchmark leaves the first launch state', async () => {
@@ -726,11 +743,11 @@ describe('the services', () => {
     await services.findByRole('listitem', { name: 'generator/qwen' });
     view.rerender(<Harness workspace={{ status: 'loaded', value: WORKSPACE }} />);
     const form = within(services.getByRole('form', { name: 'Connect a service' }));
-    expect((form.getByLabelText('Family') as HTMLSelectElement).value).toBe('retriever');
+    expect((form.getByLabelText('Family') as HTMLSelectElement).value).toBe('generator');
     fireEvent.change(form.getByLabelText('Name'), { target: { value: 'q2' } });
     fireEvent.change(form.getByLabelText('Address'), { target: { value: 'http://127.0.0.1:7070' } });
     fireEvent.click(form.getByRole('button', { name: 'Connect' }));
-    await waitFor(() => expect(api.requests).toContain('PUT /api/v1/services/retriever/q2'));
+    await waitFor(() => expect(api.requests).toContain('PUT /api/v1/services/generator/q2'));
   });
 
   it('shows the binding as its row at once, while it is stored and tested', async () => {
@@ -764,7 +781,7 @@ describe('the services', () => {
     expect(within(qwen).getByText('connected')).toBeTruthy();
     expect(qwen.textContent).toContain('qwen2.5-7b-instruct');
     expect(qwen.textContent).toContain('read before this page was opened');
-    expect(services.textContent).toContain('The address never enters a pipeline. A run records which address answered, as provenance — two runs with different addresses and the same identity are one experiment run twice.');
+    expect(services.textContent).toContain('The address is not part of a pipeline: the same pipeline run against two addresses that serve the same model is the same experiment, run twice.');
     expect(services.textContent).toContain('since this page was opened');
   });
 
@@ -1099,6 +1116,124 @@ describe('the address', () => {
       window.location.hash = '#setup/benchmarks';
     });
     await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('region', { name: 'Benchmarks' })));
+  });
+});
+
+describe('leading a new user to a first run', () => {
+  const empty = routes({ 'GET /benchmarks': { body: { scorable: SCORABLE, benchmarks: [] } }, 'GET /services': { body: { services: [] } } });
+
+  it('says which pipelines each benchmark can score, from what the API says, and that an available one says so once downloaded', async () => {
+    mockApi(routes());
+    render(<Harness />);
+    await within(await screen.findByRole('region', { name: 'Benchmarks' })).findByText('beir/scifact');
+    expect(within(region('Benchmarks')).getByRole('columnheader', { name: 'Scores' })).toBeTruthy();
+    expect(row('beir/scifact').textContent).toContain('any pipeline');
+    expect(row('mine').textContent).toContain('only a pipeline that ends in an answer');
+    expect(row('beir/fiqa').textContent).toContain('known once downloaded');
+  });
+
+  it('after the first launch ends with a benchmark ready, says so and offers the next step, the Editor', async () => {
+    const imported = entry('notes', { kind: 'local', dataset_version: hex('d') }, { licence: null, ground_truth: 'qrels', scorable: ANY });
+    mockApi({ ...empty, 'POST /benchmarks/import': { body: imported } });
+    render(<Harness />);
+    const start = within(await screen.findByRole('region', { name: 'Get started' }));
+    fireEvent.change(start.getByLabelText('Corpus directory'), { target: { value: '/data/notes' } });
+    fireEvent.change(start.getByLabelText('Import as'), { target: { value: 'notes' } });
+    fireEvent.click(start.getByRole('button', { name: 'Import' }));
+
+    const next = await screen.findByRole('region', { name: 'Next step' });
+    expect(next.textContent).toContain('notes is ready');
+    expect(next.textContent).toContain('scores any pipeline');
+    expect(within(next).getByRole('link', { name: 'Open Editor' }).getAttribute('href')).toBe('#editor');
+    expect(within(next).getByRole('link', { name: 'Runs' }).getAttribute('href')).toBe('#runs');
+  });
+
+  it('keeps the family and the fields typed in the first launch’s Connect form once the first launch ends', async () => {
+    const imported = entry('notes', { kind: 'local', dataset_version: hex('d') }, { licence: null, ground_truth: 'qrels', scorable: ANY });
+    mockApi({ ...empty, 'POST /benchmarks/import': { body: imported } });
+    render(<Harness />);
+    const start = within(await screen.findByRole('region', { name: 'Get started' }));
+    const connect = within(start.getByRole('form', { name: 'Connect a service' }));
+    expect((connect.getByLabelText('Family') as HTMLSelectElement).value).toBe('generator');
+    fireEvent.change(connect.getByLabelText('Family'), { target: { value: 'reranker' } });
+    fireEvent.change(connect.getByLabelText('Name'), { target: { value: 'bge' } });
+    fireEvent.change(start.getByLabelText('Corpus directory'), { target: { value: '/data/notes' } });
+    fireEvent.change(start.getByLabelText('Import as'), { target: { value: 'notes' } });
+    fireEvent.click(start.getByRole('button', { name: 'Import' }));
+
+    const services = within(await screen.findByRole('region', { name: 'Services' }));
+    const form = within(services.getByRole('form', { name: 'Connect a service' }));
+    expect((form.getByLabelText('Family') as HTMLSelectElement).value).toBe('reranker');
+    expect((form.getByLabelText('Name') as HTMLInputElement).value).toBe('bge');
+  });
+
+  it('names a family in words in the Connect form, sending its configuration name', async () => {
+    mockApi(routes());
+    render(<Harness />);
+    const form = within(within(await screen.findByRole('region', { name: 'Services' })).getByRole('form', { name: 'Connect a service' }));
+    const option = form.getByRole('option', { name: 'context builder' }) as HTMLOptionElement;
+    expect(option.value).toBe('context_builder');
+    expect(form.queryByRole('option', { name: 'context_builder' })).toBeNull();
+  });
+
+  it('refuses the Connect form, saying why, in a build without remote', async () => {
+    mockApi(routes());
+    render(<Harness workspace={{ status: 'loaded', value: { ...WORKSPACE, capabilities: { ...WORKSPACE.capabilities, remote: false } } }} />);
+    const form = within(within(await screen.findByRole('region', { name: 'Services' })).getByRole('form', { name: 'Connect a service' }));
+    for (const field of ['Family', 'Name', 'Address', 'Served model']) expect((form.getByLabelText(field) as HTMLInputElement).disabled, field).toBe(true);
+    const button = form.getByRole('button', { name: 'Connect' });
+    expect(button.getAttribute('aria-disabled')).toBe('true');
+    expect(document.getElementById(button.getAttribute('aria-describedby') ?? '')?.textContent).toContain('remote feature');
+  });
+
+  it('gives the fields of both forms an example as their placeholder', async () => {
+    mockApi(routes());
+    render(<Harness />);
+    const benchmarks = within(await screen.findByRole('region', { name: 'Benchmarks' }));
+    expect(benchmarks.getByLabelText('Corpus directory').getAttribute('placeholder')).toMatch(/^\//);
+    expect(benchmarks.getByLabelText('Import as').getAttribute('placeholder')).not.toBeNull();
+    const form = within(within(region('Services')).getByRole('form', { name: 'Connect a service' }));
+    expect(form.getByLabelText('Name').getAttribute('placeholder')).not.toBeNull();
+    // The address has none: the one-origin scan refuses any scheme-and-host text in the UI's sources; its help line gives the shape.
+    expect(form.getByLabelText('Served model').getAttribute('placeholder')).not.toBeNull();
+  });
+
+  it('offers Cancel on a download under way, which cancels its job and says so until the stream says it ended', async () => {
+    const api = mockApi(routes({ 'POST /benchmarks/{name}/download': { body: { job_id: '7-0' } }, 'DELETE /jobs/{id}': { body: download('7-0', running(1_000_000, 17_100_000)) } }));
+    render(<Harness />);
+    await within(await screen.findByRole('region', { name: 'Benchmarks' })).findByText('beir/fiqa');
+    send({ event: 'resync', data: { jobs: [], faults: [] } });
+    fireEvent.click(within(row('beir/fiqa')).getByRole('button', { name: 'Download' }));
+    await waitFor(() => expect(row('beir/fiqa').textContent).toContain('Queued'));
+    send({ event: 'running', data: download('7-0', running(1_000_000, 17_100_000)) });
+    const cancel = within(row('beir/fiqa')).getByRole('button', { name: 'Cancel the download of beir/fiqa' });
+    fireEvent.click(cancel);
+    await waitFor(() => expect(api.requests).toContain('DELETE /api/v1/jobs/7-0'));
+    await waitFor(() => expect(within(row('beir/fiqa')).getByRole('button', { name: /Cancel/ }).getAttribute('aria-disabled')).toBe('true'));
+    expect(row('beir/fiqa').textContent).toContain('Cancelling');
+    send({ event: 'cancelled', data: download('7-0', { kind: 'cancelled', finished_at_ms: 4, partial_traces: 0 }) });
+    await waitFor(() => expect(within(row('beir/fiqa')).getByRole('button', { name: 'Retry' })).toBeTruthy());
+    expect(within(row('beir/fiqa')).queryByRole('button', { name: /Cancel/ })).toBeNull();
+  });
+
+  it('says what a service is in plain words', async () => {
+    mockApi(routes());
+    render(<Harness />);
+    const services = await screen.findByRole('region', { name: 'Services' });
+    expect(services.textContent).toContain('A service is a model server');
+    expect(services.textContent).not.toContain('provenance');
+  });
+
+  it('shows the screen’s name, and draws a licence as a link styled like every link', async () => {
+    mockApi(routes());
+    render(<Harness />);
+    await within(await screen.findByRole('region', { name: 'Benchmarks' })).findByText('beir/fiqa');
+    expect(screen.getByText('Setup', { selector: '.rg-setup__title' })).toBeTruthy();
+    const link = within(row('beir/fiqa')).getByRole('link', { name: 'CC-BY-SA-4.0' });
+    expect(link.classList.contains('rg-setup__link')).toBe(true);
+    const css = (await import('./Setup.css?raw')).default;
+    const rules = parseRules(css);
+    expect(rules.some((r) => r.selector.includes('.rg-setup__link') && r.declarations.get('color') === 'var(--accent)' && r.declarations.get('text-decoration-line') === 'underline')).toBe(true);
   });
 });
 

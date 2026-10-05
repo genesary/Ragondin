@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { ApiProblem } from '../api/client.ts';
 import type { BenchmarkEntry, JobSummary } from '../api/types.ts';
-import { downloadView, finishedDownloads, formatSize, groundTruthLabel, isFirstLaunch, shortDigest, smallestAvailable, splitBuild } from './model.ts';
+import { downloadView, familyLabel, finishedDownloads, firstBenchmark, formatSize, groundTruthLabel, isFirstLaunch, scorableLabel, shortDigest, smallestAvailable, splitBuild } from './model.ts';
 
-const entry = (name: string, state: BenchmarkEntry['state']): BenchmarkEntry => ({ name, format: 'beir', ground_truth: null, licence: null, licence_url: null, state });
+const entry = (name: string, state: BenchmarkEntry['state']): BenchmarkEntry => ({ name, format: 'beir', ground_truth: null, scorable: null, licence: null, licence_url: null, state });
 
 describe('formatSize', () => {
   it.each([
@@ -78,13 +78,13 @@ describe('downloadView', () => {
   it('follows the submission until its job is known: asking, refused, then queued', () => {
     expect(downloadView('beir/fiqa', { kind: 'submitting' }, jobs())).toEqual({ kind: 'submitting' });
     expect(downloadView('beir/fiqa', { kind: 'refused', problem: REFUSAL }, jobs())).toEqual({ kind: 'refused', problem: REFUSAL });
-    expect(downloadView('beir/fiqa', { kind: 'accepted', jobId: '2-0' }, jobs())).toEqual({ kind: 'queued' });
+    expect(downloadView('beir/fiqa', { kind: 'accepted', jobId: '2-0' }, jobs())).toEqual({ kind: 'queued', jobId: '2-0' });
   });
 
   it('reads the submitted job, never an older one of the same benchmark', () => {
     const older = job('1-0', FAILED);
-    expect(downloadView('beir/fiqa', { kind: 'accepted', jobId: '2-0' }, jobs(older, job('2-0', RUNNING)))).toEqual({ kind: 'running', done: 5, total: 10 });
-    expect(downloadView('beir/fiqa', { kind: 'accepted', jobId: '2-0' }, jobs(older))).toEqual({ kind: 'queued' });
+    expect(downloadView('beir/fiqa', { kind: 'accepted', jobId: '2-0' }, jobs(older, job('2-0', RUNNING)))).toEqual({ kind: 'running', jobId: '2-0', done: 5, total: 10 });
+    expect(downloadView('beir/fiqa', { kind: 'accepted', jobId: '2-0' }, jobs(older))).toEqual({ kind: 'queued', jobId: '2-0' });
   });
 
   it('a submitted job that is done is being verified until the listing is read again', () => {
@@ -92,7 +92,7 @@ describe('downloadView', () => {
   });
 
   it('without a submission, reads the benchmark’s last job — one started elsewhere, or before this page — but a done one, which the listing already says', () => {
-    expect(downloadView('beir/fiqa', undefined, jobs(job('1-0', FAILED), job('2-0', RUNNING)))).toEqual({ kind: 'running', done: 5, total: 10 });
+    expect(downloadView('beir/fiqa', undefined, jobs(job('1-0', FAILED), job('2-0', RUNNING)))).toEqual({ kind: 'running', jobId: '2-0', done: 5, total: 10 });
     expect(downloadView('beir/fiqa', undefined, jobs(job('1-0', RUNNING), job('2-0', FAILED)))).toEqual({ kind: 'failed', error: 'reset' });
     expect(downloadView('beir/fiqa', undefined, jobs(job('1-0', { kind: 'cancelled', finished_at_ms: 2, partial_traces: 0 })))).toEqual({ kind: 'cancelled' });
     expect(downloadView('beir/fiqa', undefined, jobs(job('1-0', DONE)))).toEqual({ kind: 'idle' });
@@ -114,5 +114,35 @@ describe('finishedDownloads', () => {
   it('counts a job done at its first sight only when this page submitted it: an old done job is not news', () => {
     const after = jobs(job('1-0', DONE), job('2-0', DONE, 'beir/scifact'));
     expect(finishedDownloads(jobs(), after, new Set(['2-0']))).toEqual(['beir/scifact']);
+  });
+});
+
+describe('scorableLabel', () => {
+  it.each([
+    [{ ending_in_answer: true, ending_elsewhere: true }, 'any pipeline'],
+    [{ ending_in_answer: true, ending_elsewhere: false }, 'only a pipeline that ends in an answer'],
+    [{ ending_in_answer: false, ending_elsewhere: true }, 'only a pipeline that does not end in an answer'],
+    [{ ending_in_answer: false, ending_elsewhere: false }, 'no pipeline'],
+  ])('says in words what the API says %j scores', (scorable, words) => {
+    expect(scorableLabel(scorable)).toBe(words);
+  });
+});
+
+describe('familyLabel', () => {
+  it('writes a family as words, as a person reads it', () => {
+    expect(familyLabel('context_builder')).toBe('context builder');
+    expect(familyLabel('generator')).toBe('generator');
+    expect(familyLabel('embedder')).toBe('embedder');
+  });
+});
+
+describe('firstBenchmark', () => {
+  const available = (name: string, size_bytes: number) => entry(name, { kind: 'available', size_bytes });
+  it('is beir/scifact when the manifest offers it, whatever its size', () => {
+    expect(firstBenchmark([available('squad/dev', 1), available('beir/scifact', 9)])).toEqual({ entry: available('beir/scifact', 9), why: 'first-run' });
+  });
+  it('is the smallest available otherwise, and none when nothing is available', () => {
+    expect(firstBenchmark([available('beir/a', 5), available('beir/b', 2)])).toEqual({ entry: available('beir/b', 2), why: 'smallest' });
+    expect(firstBenchmark([entry('beir/scifact', { kind: 'ready', dataset_version: 'x' })])).toBeNull();
   });
 });
