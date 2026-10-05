@@ -6,7 +6,7 @@
 .rg-editor { display: flex; flex-direction: column; height: calc(100vh - 120px); min-height: 480px; }
 .rg-editor__bar {
   display: grid;
-  grid-template-columns: auto auto auto minmax(0, 1fr);
+  grid-template-columns: auto auto minmax(0, 1fr);
   align-items: center;
   gap: var(--space-2) var(--space-4);
   padding: var(--space-3) var(--space-4);
@@ -14,6 +14,10 @@
 }
 .rg-editor__title { margin: 0; font: 600 16px/24px var(--font-display); }
 .rg-editor__history { display: flex; gap: 2px; }
+/* The bar's actions in one row: the picker, Launch…, the history, Tidy layout, Export. The picker's label is said, not shown. */
+.rg-editor__actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.rg-editor__actions .rg-field { gap: 0; }
+.rg-editor__actions .rg-field__label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .rg-editor__verdict {
   margin: 0;
   height: 40px;
@@ -148,7 +152,7 @@
   .rg-editor__body { grid-template-columns: minmax(0, 1fr); }
   .rg-editor__stage { min-height: 480px; }
   .rg-palette { border-right: 0; border-bottom: 1px solid var(--line); }
-  .rg-editor__bar { grid-template-columns: minmax(0, 1fr) auto auto; }
+  .rg-editor__bar { grid-template-columns: minmax(0, 1fr); }
   .rg-editor__verdict { grid-column: 1 / -1; }
   /* The inspector goes under the canvas, which otherwise keeps no width beside it. */
   .rg-editor__stage .rg-canvas-frame { flex-direction: column; }
@@ -161,10 +165,11 @@
 .rg-editor-inspector__about { margin: calc(-1 * var(--space-1)) 0 var(--space-2); font: var(--type-caption); color: var(--ink-3); }
 
 /* The empty state's way to an existing pipeline: the recent ones as links, every one in a picker. */
-.rg-editor__open { display: grid; justify-items: center; gap: var(--space-3); margin: 0 auto var(--space-8); max-width: 32rem; }
+.rg-editor__open { display: grid; justify-items: start; gap: var(--space-3); padding: 0 var(--space-8) var(--space-8); }
 .rg-editor__open-head { margin: 0; font: var(--type-label); color: var(--ink-2); }
-.rg-editor__recent { display: flex; flex-wrap: wrap; justify-content: center; gap: var(--space-2) var(--space-4); margin: 0; padding: 0; list-style: none; font: 400 13px/20px var(--font-mono); }
+.rg-editor__recent { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-4); margin: 0; padding: 0; list-style: none; font: 400 13px/20px var(--font-mono); }
 .rg-editor__open .rg-field { min-width: 16rem; }
 /* The name and its Rename, or the field that renames it, in the bar's first place. */
 .rg-editor__name { display: flex; align-items: end; gap: var(--space-2); min-width: 0; }
 .rg-editor__name .rg-field { min-width: 14rem; }
+.rg-editor__recent a { color: var(--accent); }

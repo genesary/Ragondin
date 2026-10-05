@@ -479,32 +479,34 @@ export function Editor({ client, title, stored = null, initial, layout, capabili
             }}
           />
         )}
-        {picker?.(save.file.name ?? stored)}
-        <Button
-          kind="primary"
-          size="s"
-          icon="play"
-          onClick={() => {
-            if (onDisk !== null) navigate({ screen: 'runs', launch: { pipeline: onDisk } });
-          }}
-          {...(launchRefusal === null ? {} : { disabled: true, disabledReason: launchRefusal })}
-        >
-          Launch…
-        </Button>
-        <div className="rg-editor__history" role="group" aria-label="History">
-          <Button kind="quiet" size="s" icon="undo" onClick={() => dispatch({ type: 'undo' })} {...(canUndo(state) ? {} : { disabled: true, disabledReason: 'Nothing to undo.' })}>
-            Undo
+        <div className="rg-editor__actions">
+          {picker?.(save.file.name ?? stored)}
+          <Button
+            kind="primary"
+            size="s"
+            icon="play"
+            onClick={() => {
+              if (onDisk !== null) navigate({ screen: 'runs', launch: { pipeline: onDisk } });
+            }}
+            {...(launchRefusal === null ? {} : { disabled: true, disabledReason: launchRefusal })}
+          >
+            Launch…
           </Button>
-          <Button kind="quiet" size="s" icon="redo" onClick={() => dispatch({ type: 'redo' })} {...(canRedo(state) ? {} : { disabled: true, disabledReason: 'Nothing to redo.' })}>
-            Redo
+          <div className="rg-editor__history" role="group" aria-label="History">
+            <Button kind="quiet" size="s" icon="undo" onClick={() => dispatch({ type: 'undo' })} {...(canUndo(state) ? {} : { disabled: true, disabledReason: 'Nothing to undo.' })}>
+              Undo
+            </Button>
+            <Button kind="quiet" size="s" icon="redo" onClick={() => dispatch({ type: 'redo' })} {...(canRedo(state) ? {} : { disabled: true, disabledReason: 'Nothing to redo.' })}>
+              Redo
+            </Button>
+          </div>
+          <Button kind="quiet" size="s" icon="fit" onClick={() => dispatch({ type: 'arrange', positions: resolveLayout(toModel(graph)).positions })}>
+            Tidy layout
+          </Button>
+          <Button kind="quiet" size="s" aria-expanded={exporting} onClick={() => setExporting(!exporting)} {...(rendering === null ? { disabled: true, disabledReason: 'Only a document the server calls valid is exported.' } : {})}>
+            Export
           </Button>
         </div>
-        <Button kind="quiet" size="s" icon="fit" onClick={() => dispatch({ type: 'arrange', positions: resolveLayout(toModel(graph)).positions })}>
-          Tidy layout
-        </Button>
-        <Button kind="quiet" size="s" aria-expanded={exporting} onClick={() => setExporting(!exporting)} {...(rendering === null ? { disabled: true, disabledReason: 'Only a document the server calls valid is exported.' } : {})}>
-          Export
-        </Button>
         <p className="rg-editor__verdict">{header}</p>
         <p className="rg-visually-hidden" role="status">
           {announced}
@@ -514,7 +516,7 @@ export function Editor({ client, title, stored = null, initial, layout, capabili
             <p className="rg-editor__save" data-testid="save-state" role="status" aria-live="polite">
               <Words text={saveWords(save, dirty, verdict, errors)} />
             </p>
-            {save.file.name === null && !save.keep ? (
+            {save.file.name === null && !save.keep && save.phase.kind !== 'naming' ? (
               <Button size="s" onClick={() => act({ type: 'keep' })}>
                 Keep this pipeline
               </Button>

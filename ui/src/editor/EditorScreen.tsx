@@ -272,6 +272,7 @@ export function EditorScreen({ client, name, node, workspace }: EditorScreenProp
     setSession({ key: kept ? session.key : session.key + 1, route: name, owned: kept ? session.owned : null });
   }
   const onNamed = useCallback((written: string) => {
+    rememberPipeline(written);
     setSession((s) => ({ ...s, owned: written }));
     navigate({ screen: 'editor', name: written }, { replace: true });
   }, []);
