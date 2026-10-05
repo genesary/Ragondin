@@ -151,7 +151,8 @@ export function parseHash(hash: string): Route | null {
       // pipeline names nothing.
       const pipeline = query.get('launch');
       const upTo = query.get('up_to');
-      const benchmarks = query.getAll('benchmark');
+      // A benchmark named twice is one run on it, not two: the first place of each is kept.
+      const benchmarks = [...new Set(query.getAll('benchmark'))];
       if (pipeline === null ? upTo !== null || benchmarks.length > 0 : ![pipeline, upTo, ...benchmarks].every((v) => v === null || isValue(v))) return null;
       const launch = pipeline === null ? {} : { launch: { pipeline, ...(upTo === null ? {} : { upTo }), ...(benchmarks.length === 0 ? {} : { benchmarks }) } };
       const at = { ...(job === undefined ? {} : { job }), ...launch };

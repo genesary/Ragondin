@@ -243,6 +243,15 @@ describe('the verdict and the one primary action', () => {
     expect(screen.getByText('Not launched: dataset 000000000000, which no benchmark name is pinned to, so there is nothing to launch it on.')).toBeTruthy();
   });
 
+  it('hands each benchmark once, though two columns of missing cells carry its name', async () => {
+    const launch = vi.fn();
+    const twice: PipelineMatrix = { ...WITH_FIQA, missing: [...WITH_FIQA.missing, { benchmark: 'beir/fiqa', dataset_version: '1'.repeat(64), nodes: ['bm25'] }] };
+    show(`#pipeline/${NAME}`, routes({ body: twice }), launch);
+    await loaded();
+    fireEvent.click(screen.getByRole('button', { name: 'Run the 7 missing cells' }));
+    expect(launch.mock.calls).toEqual([[{ pipeline: NAME, benchmarks: ['beir/fiqa'] }]]);
+  });
+
   it('opens Runs’ launch panel on every missing benchmark from “Run the N missing cells”', async () => {
     const both: PipelineMatrix = { ...WITH_FIQA, missing: [...WITH_FIQA.missing, ...PREFIXED.missing] };
     show(`#pipeline/${NAME}`, routes({ body: both }));

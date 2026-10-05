@@ -92,6 +92,10 @@ describe('#runs?launch=<pipeline>&up_to=<node>', () => {
     expect(parseHash(formatHash(cut))).toEqual(cut);
   });
 
+  it('drops a benchmark the address repeats, keeping the first place of each — one run per benchmark', () => {
+    expect(load('#runs?launch=hybrid&benchmark=a&benchmark=b&benchmark=a')).toEqual({ screen: 'runs', launch: { pipeline: 'hybrid', benchmarks: ['a', 'b'] } });
+  });
+
   it('carries several benchmarks, one value per key, in order — where “Run the N missing cells” lands', () => {
     const route: Route = { screen: 'runs', sel: ['r1'], launch: { pipeline: 'hybrid', benchmarks: ['beir/fiqa', 'a&b', 'squad/dev'] } };
     expect(formatHash(route)).toBe('#runs?sel=r1&launch=hybrid&benchmark=beir%2Ffiqa&benchmark=a%26b&benchmark=squad%2Fdev');

@@ -55,6 +55,8 @@ const NOT_LAUNCHED: Record<Standing, string> = {
   'not offered': 'cannot score this prefix',
 };
 
+const runsLabel = (n: number) => `Launch ${n} run${n === 1 ? '' : 's'}`;
+
 /** The outcomes of several submissions as one sentence of counts. */
 function outcomeCounts(outcomes: readonly Submission[]): string {
   const queued = outcomes.filter((o) => o.kind === 'queued').length;
@@ -230,6 +232,9 @@ export function LaunchPanel({ client, store, anchor, pipeline: opened, upTo = nu
   // Several: the ones that can be launched, in the address's order.
   const launchable = several === null || benchmarks.status !== 'loaded' ? [] : several.filter((name) => standing(name) === null);
   const submitted = batch !== null && launchable.every((name) => batch[name] !== undefined && batch[name].kind !== 'sending');
+  const sending = batch !== null && Object.values(batch).some((o) => o.kind === 'sending');
+  // What a retry sends: the refused alone — a run or job already holding the identity is not refused, it is there.
+  const refusedNames = batch === null ? [] : launchable.filter((name) => batch[name]?.kind === 'refused' && (batch[name] as { problem: ApiProblem }).problem.code !== 'run_exists');
   const benchmark = unoffered !== null ? null : (ready.find((b) => b.name === chosenBenchmark) ?? ready[0] ?? null);
 
   // A change of what would be launched is a new launch: the last answer no longer describes it.
@@ -248,9 +253,9 @@ export function LaunchPanel({ client, store, anchor, pipeline: opened, upTo = nu
   };
 
   // One confirmation, then one `POST /runs` per launchable benchmark, one after another, each answer kept beside its benchmark.
-  const sendAll = async () => {
+  const sendAll = async (names: readonly string[]) => {
     if (pipeline === null) return;
-    for (const name of launchable) {
+    for (const name of names) {
       setBatch((b) => ({ ...b, [name]: { kind: 'sending' } }));
       const request: RunRequest = upTo === null ? { pipeline: pipeline.name, benchmark: name } : { pipeline: pipeline.name, benchmark: name, up_to: upTo };
       const result = await client.post('/runs', request);
@@ -273,8 +278,8 @@ export function LaunchPanel({ client, store, anchor, pipeline: opened, upTo = nu
         : several !== null
           ? launchable.length === 0
             ? 'None of these benchmarks can be launched: each says why.'
-            : submitted
-              ? 'Submitted: each benchmark says its outcome. Choose another pipeline to launch again.'
+            : submitted && refusedNames.length === 0
+              ? 'Submitted: each benchmark says its outcome.'
               : null
         : unoffered !== null
           ? unofferedBecause === 'unknown'
@@ -303,6 +308,8 @@ export function LaunchPanel({ client, store, anchor, pipeline: opened, upTo = nu
               value={pipeline?.name ?? ''}
               options={docs.map((p) => ({ value: p.name, label: p.hash === null ? `${p.name} — does not validate` : p.name }))}
               onChange={(e) => choose(setPipeline)(e.target.value)}
+              // Several runs in flight are the chosen pipeline's: another chosen now would have their answers written over it.
+              disabled={sending}
               {...(pipelineError === undefined ? {} : { error: pipelineError })}
             />
             {/* The identity the API gives, never one computed here: the pipeline's hash now, the run's once queued. Up to a
@@ -406,16 +413,21 @@ export function LaunchPanel({ client, store, anchor, pipeline: opened, upTo = nu
             <>
               {why !== null ? (
                 <Button kind="primary" disabled disabledReason={why}>
-                  {submitted ? 'Submitted' : `Launch ${launchable.length} runs`}
+                  {launchable.length === 0 ? 'Nothing to launch' : submitted ? 'Submitted' : runsLabel(launchable.length)}
+                </Button>
+              ) : submitted ? (
+                <Button kind="primary" onClick={() => void sendAll(refusedNames)}>
+                  {`Retry the ${refusedNames.length} refused`}
                 </Button>
               ) : (
-                <Button kind="primary" busy={batch !== null} busyLabel="Launching…" onClick={() => void sendAll()}>
-                  {`Launch ${launchable.length} runs`}
+                <Button kind="primary" busy={sending} busyLabel="Launching…" onClick={() => void sendAll(launchable)}>
+                  {runsLabel(launchable.length)}
                 </Button>
               )}
               <span className="rg-launch__note" role="status">
                 {submitted && batch !== null ? outcomeCounts(launchable.map((name) => batch[name] as Submission)) : ''}
               </span>
+              {sending ? <span className="rg-launch__note">Closing this panel does not stop the runs not yet sent: they are sent all the same.</span> : null}
             </>
           ) : launch.kind === 'queued' ? (
             <>

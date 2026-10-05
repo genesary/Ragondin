@@ -174,7 +174,8 @@ function Loaded({ matrix, listing, launch }: { matrix: PipelineMatrix; listing: 
   }
 
   // Every launchable column's benchmark goes to the panel at once; a column no name is pinned to is said, not launched.
-  const toLaunch = matrix.missing.flatMap((column) => (column.benchmark === null ? [] : [column.benchmark]));
+  // Two columns may carry one name (two digests pinned under it): it is one run, handed once.
+  const toLaunch = [...new Set(matrix.missing.flatMap((column) => (column.benchmark === null ? [] : [column.benchmark])))];
   const unlaunchable = matrix.missing.filter((column) => column.benchmark === null);
 
   return (
