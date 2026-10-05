@@ -67,6 +67,7 @@ const HYBRID_DETAIL: PipelineDetail = {
   etag: 'e',
   hash: HYBRID,
   error: null,
+  canonical: false,
   typed: {
     pipeline: {
       inputs: ['question'],

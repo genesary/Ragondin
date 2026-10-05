@@ -369,6 +369,23 @@ describe('a document never written', () => {
     await waitFor(() => expect(onNamed).toHaveBeenCalledWith('example'));
   });
 
+  it('offers “Run up to this node” once it is on disk, launching the file it wrote', async () => {
+    const { api, container } = setup({ 'PUT /pipelines/{name}': { body: { name: 'example', etag: NEW_ETAG, hash: HASH } } }, { file: UNNAMED });
+    await waitFor(() => expect(validations(api)).toHaveLength(1));
+    const runEntry = () => {
+      fireEvent.keyDown(container.querySelector('.react-flow__node[data-id="fused"]')!, { key: 'F10', shiftKey: true });
+      return within(screen.getByRole('menu', { name: 'Node fused' })).getByRole('menuitem', { name: /Run up to this node/ });
+    };
+    expect(runEntry().getAttribute('aria-disabled')).toBe('true');
+    fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
+    fireEvent.click(screen.getByRole('button', { name: 'Keep this pipeline' }));
+    await waitFor(() => expect(saveLine().textContent).toBe('Saved'));
+    const run = runEntry();
+    expect(run.getAttribute('aria-disabled')).toBeNull();
+    fireEvent.click(run);
+    expect(window.location.hash).toBe('#runs?launch=example&up_to=fused');
+  });
+
   it('is created at its first change', async () => {
     const { api } = setup({ 'PUT /pipelines/{name}': { body: { name: 'example', etag: NEW_ETAG, hash: HASH } } }, { file: UNNAMED });
     await waitFor(() => expect(validations(api)).toHaveLength(1));
