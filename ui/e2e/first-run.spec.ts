@@ -42,7 +42,8 @@ test('first run: an empty workspace to a completed run', async ({ page, fixture 
   await panel.getByRole('combobox', { name: 'Pipeline' }).selectOption('example');
   await panel.getByRole('combobox', { name: 'Benchmark' }).selectOption(fixture.benchmark);
   await panel.getByRole('button', { name: 'Launch', exact: true }).click();
-  await expect(panel.getByText(/announced/)).toBeVisible();
+  // Exactly the note beside the queued run's id: the panel's caption says the id "is announced when it is queued" too.
+  await expect(panel.getByText('announced', { exact: true })).toBeVisible();
 
   // It appears, and completes: the toast, then the run filed in the table.
   await expect(page.getByRole('region', { name: 'Notifications' })).toContainText(`Run done · example on ${fixture.benchmark}`);
