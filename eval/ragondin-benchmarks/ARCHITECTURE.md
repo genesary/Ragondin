@@ -54,6 +54,15 @@ on to pick the metric families. Choices made here, inside this crate:
   case does not compile. It is deliberately not `#[non_exhaustive]`: the
   quadruple has two optional pieces, and a fifth case would be a new regime a
   caller must not absorb through a wildcard arm.
+- **ADR-C30 § 5's refusal is defined on the enum, once.**
+  `CarriedPieces::scores_answers` says whether reference answers are carried,
+  and `CarriedPieces::scorable(ends_in_answer)` holds the conjunction — a
+  benchmark carrying them needs a pipeline ending in an answer. The harness
+  calls it for its `NoAnswer` refusal and `ragondin-api` for its submission
+  check; the API may not reach the harness (INV-12), and both already depend
+  on this crate. It takes a `bool` rather than a `ValueKind` so that this
+  crate stays off `ragondin-pipeline`: each caller answers "ends in an
+  answer" from what it holds — a query's trace, a cut node's produced kind.
 - **Judged over `Benchmark::queries`, not over the pieces as sets.** A
   judgment or a reference naming a query the benchmark does not hold is
   nothing a run can score, and the ADR's wording is "at least one of its
