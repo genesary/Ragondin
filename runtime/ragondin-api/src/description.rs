@@ -223,6 +223,14 @@ pub const OPERATIONS: &[Operation] = &[
         description: None,
     },
     Operation {
+        method: "get",
+        path: "/runs/{id}/layout",
+        summary: "The layout copied at launch for a run's pipeline, `layouts/<hash>.json` by its canonical hash, or `null`: what a fork from the run copies beside its new document.",
+        response: Response::Json("PipelineLayout"),
+        request: None,
+        description: None,
+    },
+    Operation {
         method: "post",
         path: "/compare",
         summary: "Runs of one benchmark against a baseline: the metric table, the parameter matrix, the stages with their pairing, the per-query deltas and their bins, and the latency per node.",
@@ -323,13 +331,13 @@ pub const OPERATIONS: &[Operation] = &[
         response: Response::Json("PipelineValidated"),
         request: Some("ValidationRequest"),
         description: Some(
-            "The body holds the document as text, under `document`, or as the editor holds it, under `typed`. A typed document is converted to the wire schema, rendered as text and checked as that text is, so the hash is the one of the bytes a write would store; a schema version it states that this build cannot read, or a value its rendering cannot carry, is pipeline_invalid.",
+            "The body holds the document as text, under `document`, or as the editor holds it, under `typed`. A typed document is converted to the wire schema, rendered as text and checked as that text is, so the hash is the one of the bytes a write would store; a schema version it states that this build cannot read, or a value its rendering cannot carry, is pipeline_invalid. The answer's `rendering` is the server's rendering of the document: what a write of a typed document stores, and what the editor exports.",
         ),
     },
     Operation {
         method: "get",
         path: "/pipelines/{name}",
-        summary: "One pipeline document, verbatim, with its etag, its hash or why it does not validate, and its typed document when it reads.",
+        summary: "One pipeline document, verbatim, with its etag, its hash or why it does not validate, its typed document when it reads, and whether its text is the server's own rendering.",
         response: Response::Json("PipelineDetail"),
         request: None,
         description: Some(
@@ -339,11 +347,11 @@ pub const OPERATIONS: &[Operation] = &[
     Operation {
         method: "put",
         path: "/pipelines/{name}",
-        summary: "Stores a document byte for byte when it validates and its precondition holds.",
+        summary: "Stores a document when it validates and its precondition holds: a text byte for byte, a typed document as the server renders it.",
         response: Response::Json("PipelineWritten"),
         request: Some("PipelineDocument"),
         description: Some(
-            "A write states one precondition: `If-Match` to replace the stored document, or `If-None-Match: *` to create one. A stale etag, `If-Match: *` with nothing stored, a creation over an existing document, or neither header is precondition_failed (412), with the current etag in the `ETag` header, the detail and the problem's `etag` member, and nothing written; both headers at once is request_invalid. A document the composition root refuses — a key no component reads — is pipeline_invalid, in `ragondin bench`'s words. The answer's etag is also its `ETag` header.",
+            "The body holds the document as text, under `document`, stored byte for byte, or as the editor holds it, under `typed`, stored as its rendering — the bytes `POST /pipelines/validate` answers as `rendering`. A write states one precondition: `If-Match` to replace the stored document, or `If-None-Match: *` to create one. A stale etag, `If-Match: *` with nothing stored, a creation over an existing document, or neither header is precondition_failed (412), with the current etag in the `ETag` header, the detail and the problem's `etag` member, and nothing written; both headers at once is request_invalid. A document the composition root refuses — a key no component reads — is pipeline_invalid, in `ragondin bench`'s words. The answer's etag is also its `ETag` header.",
         ),
     },
     Operation {

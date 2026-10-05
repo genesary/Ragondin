@@ -39,19 +39,39 @@ pub(crate) fn check(document: &str) -> Result<String, ApiError> {
     Ok(lower(document)?.content_hash().to_string())
 }
 
-/// The content hash of the editor's typed document, or why it is not a
-/// pipeline, as `pipeline_invalid` (ADR-C40 § 5). The document is converted
-/// to the wire schema, rendered as text by `ragondin-config`'s one renderer,
-/// and that text goes through [`check`]: the hash is the one of exactly the
-/// bytes a write would store, and the load is the one every text takes.
-pub(crate) fn check_typed(typed: &TypedDocument) -> Result<String, ApiError> {
+/// The editor's typed document as text: converted to the wire schema and
+/// rendered by `ragondin-config`'s one renderer (ADR-C41) — the bytes a write
+/// of it stores. Its text then goes through [`check`] like any other, so the
+/// hash validation answers is the one of exactly the bytes a write would
+/// store, through the one load (ADR-C40 § 5). Refused as
+/// `pipeline_invalid` in a schema version this build cannot read, or holding
+/// a value the rendering cannot carry.
+pub(crate) fn render_typed(typed: &TypedDocument) -> Result<String, ApiError> {
     let raw = convert::wire_document(typed)
         .map_err(|unsupported| refusal(DocumentError::UnsupportedSchemaVersion(unsupported)))?;
-    let text = render_document(&raw).map_err(|error| ApiError::PipelineInvalid {
+    render_document(&raw).map_err(|error| ApiError::PipelineInvalid {
         detail: error.to_string(),
         location: unlocated(),
-    })?;
-    check(&text)
+    })
+}
+
+/// The rendering of the document `document` reads to — what the editor
+/// would write for it, none of the text's comments or formatting kept — or
+/// `None` when it does not read, or the renderer cannot write it so that it
+/// reads back.
+pub(crate) fn rendering(document: &str) -> Option<String> {
+    read_document(document)
+        .ok()
+        .and_then(|raw| render_document(&raw).ok())
+}
+
+/// Whether `document` is, byte for byte, its own [`rendering`]: a text the
+/// editor wrote, which a write from the editor replaces with nothing a
+/// person put there. A plain comparison, with no normalisation of its own.
+/// The rendering is the editor's stable way of writing, not the canonical
+/// form a hash is computed over (INV-8).
+pub(crate) fn is_rendering(document: &str) -> bool {
+    rendering(document).as_deref() == Some(document)
 }
 
 /// `document`'s validated logical pipeline, or why it is not one, as

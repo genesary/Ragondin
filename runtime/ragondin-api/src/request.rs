@@ -156,13 +156,18 @@ impl crate::extract::HeaderFields for PreconditionHeaders {
     const NAMES: &'static [&'static str] = &["If-Match", "If-None-Match"];
 }
 
-/// `PUT /pipelines/{name}`: a pipeline document, as text.
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct PipelineDocument {
-    /// The YAML document. Stored byte for byte when it is written: never
-    /// re-serialized.
-    pub document: String,
+/// `PUT /pipelines/{name}`: a pipeline document, as text or as the editor
+/// holds it — one key, naming which (ADR-C40 § 5, § 6).
+#[derive(Clone, Debug, PartialEq, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub enum PipelineDocument {
+    /// The YAML document, stored byte for byte: never re-serialized. What an
+    /// import and a fork from a run send.
+    Document(String),
+    /// The typed document the editor holds. The server converts it to the
+    /// wire schema and stores its rendering — the bytes `POST
+    /// /pipelines/validate` answers as `rendering` for the same document.
+    Typed(crate::response::TypedDocument),
 }
 
 /// `POST /pipelines/validate`: a pipeline document, as text or as the editor

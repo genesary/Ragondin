@@ -924,6 +924,12 @@ pub struct PipelineDetail {
     /// read, or holds a value the typed document cannot carry, such as a
     /// non-finite float (ADR-C40 § 4).
     pub typed: Option<TypedDocument>,
+    /// Whether the text is, byte for byte, the server's own rendering of the
+    /// document it reads to — what a write from the editor would store.
+    /// `false` for a text a person wrote (a comment, another key order,
+    /// another formatting) and for one that does not read: the editor warns
+    /// before its first save replaces such a text (ADR-016 § 5).
+    pub canonical: bool,
 }
 
 /// Why a pipeline document does not validate: `pipeline_invalid`'s detail and
@@ -947,12 +953,20 @@ pub struct PipelineWritten {
     pub hash: String,
 }
 
-/// `POST /pipelines/validate`: the document validates, and this is its hash.
+/// `POST /pipelines/validate`: the document validates, and this is its hash
+/// and its rendering.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+#[schemars(transform = every_property_required)]
 pub struct PipelineValidated {
     /// The content hash of the canonical logical form, as `ragondin validate`
     /// prints it.
     pub hash: String,
+    /// The document as the server renders it: for a typed document, the
+    /// bytes a write of it stores; for a text, the rendering of the document
+    /// it reads to, which keeps none of its comments or formatting. What the
+    /// editor exports. `null` only for a text whose document the renderer
+    /// cannot write so that it reads back.
+    pub rendering: Option<String>,
 }
 
 /// `GET /pipelines/{name}/layout`: the layout beside the document, if it has

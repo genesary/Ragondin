@@ -1040,6 +1040,14 @@ export type PartialTrace = {
  * editor holds it when it can.
  */
 export type PipelineDetail = {
+  /**
+   * Whether the text is, byte for byte, the server's own rendering of the
+   * document it reads to — what a write from the editor would store.
+   * `false` for a text a person wrote (a comment, another key order,
+   * another formatting) and for one that does not read: the editor warns
+   * before its first save replaces such a text (ADR-016 § 5).
+   */
+  canonical: boolean;
   /** The document, byte for byte as the file holds it. */
   document: string;
   /** Why it does not validate, when it does not. */
@@ -1059,13 +1067,14 @@ export type PipelineDetail = {
   typed: TypedDocument | null;
 };
 
-/** `PUT /pipelines/{name}`: a pipeline document, as text. */
+/**
+ * `PUT /pipelines/{name}`: a pipeline document, as text or as the editor
+ * holds it — one key, naming which (ADR-C40 § 5, § 6).
+ */
 export type PipelineDocument = {
-  /**
-   * The YAML document. Stored byte for byte when it is written: never
-   * re-serialized.
-   */
   document: string;
+} | {
+  typed: TypedDocument;
 };
 
 /**
@@ -1164,13 +1173,24 @@ export type PipelineSummary = {
   name: string;
 };
 
-/** `POST /pipelines/validate`: the document validates, and this is its hash. */
+/**
+ * `POST /pipelines/validate`: the document validates, and this is its hash
+ * and its rendering.
+ */
 export type PipelineValidated = {
   /**
    * The content hash of the canonical logical form, as `ragondin validate`
    * prints it.
    */
   hash: string;
+  /**
+   * The document as the server renders it: for a typed document, the
+   * bytes a write of it stores; for a text, the rendering of the document
+   * it reads to, which keeps none of its comments or formatting. What the
+   * editor exports. `null` only for a text whose document the renderer
+   * cannot write so that it reads back.
+   */
+  rendering: string | null;
 };
 
 /** `PUT /pipelines/{name}`: what was written. */
@@ -2073,14 +2093,14 @@ export type Paths = {
     };
   };
   "/pipelines/{name}": {
-    /** One pipeline document, verbatim, with its etag, its hash or why it does not validate, and its typed document when it reads. */
+    /** One pipeline document, verbatim, with its etag, its hash or why it does not validate, its typed document when it reads, and whether its text is the server's own rendering. */
     get: {
       params: {
         name: string;
       };
       response: PipelineDetail;
     };
-    /** Stores a document byte for byte when it validates and its precondition holds. */
+    /** Stores a document when it validates and its precondition holds: a text byte for byte, a typed document as the server renders it. */
     put: {
       params: {
         name: string;
@@ -2152,6 +2172,15 @@ export type Paths = {
         id: string;
       };
       response: RunDetail;
+    };
+  };
+  "/runs/{id}/layout": {
+    /** The layout copied at launch for a run's pipeline, `layouts/<hash>.json` by its canonical hash, or `null`: what a fork from the run copies beside its new document. */
+    get: {
+      params: {
+        id: string;
+      };
+      response: PipelineLayout;
     };
   };
   "/runs/{id}/queries": {

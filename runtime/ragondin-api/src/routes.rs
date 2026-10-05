@@ -79,6 +79,7 @@ pub(crate) fn api(routes: &mut impl Routes) {
     routes.route(Get, "/runs/{id}", handlers::run);
     routes.route(Get, "/runs/{id}/queries", handlers::queries);
     routes.route(Get, "/runs/{id}/trace/{query}", handlers::trace);
+    routes.route(Get, "/runs/{id}/layout", pipelines::run_layout);
     routes.route(Post, "/runs", jobs::submit);
     routes.route(Get, "/jobs", jobs::list);
     // A static segment outranks a parameter, so `events` is never a job's

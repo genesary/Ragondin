@@ -2756,6 +2756,10 @@
       "PipelineDetail": {
         "description": "`GET /pipelines/{name}`: one pipeline document, verbatim, and as the\neditor holds it when it can.",
         "properties": {
+          "canonical": {
+            "description": "Whether the text is, byte for byte, the server's own rendering of the\ndocument it reads to — what a write from the editor would store.\n`false` for a text a person wrote (a comment, another key order,\nanother formatting) and for one that does not read: the editor warns\nbefore its first save replaces such a text (ADR-016 § 5).",
+            "type": "boolean"
+          },
           "document": {
             "description": "The document, byte for byte as the file holds it.",
             "type": "string"
@@ -2803,6 +2807,7 @@
           }
         },
         "required": [
+          "canonical",
           "document",
           "error",
           "etag",
@@ -2813,18 +2818,35 @@
         "type": "object"
       },
       "PipelineDocument": {
-        "additionalProperties": false,
-        "description": "`PUT /pipelines/{name}`: a pipeline document, as text.",
-        "properties": {
-          "document": {
-            "description": "The YAML document. Stored byte for byte when it is written: never\nre-serialized.",
-            "type": "string"
+        "description": "`PUT /pipelines/{name}`: a pipeline document, as text or as the editor\nholds it — one key, naming which (ADR-C40 § 5, § 6).",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "description": "The YAML document, stored byte for byte: never re-serialized. What an\nimport and a fork from a run send.",
+            "properties": {
+              "document": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "document"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "The typed document the editor holds. The server converts it to the\nwire schema and stores its rendering — the bytes `POST\n/pipelines/validate` answers as `rendering` for the same document.",
+            "properties": {
+              "typed": {
+                "$ref": "#/components/schemas/TypedDocument"
+              }
+            },
+            "required": [
+              "typed"
+            ],
+            "type": "object"
           }
-        },
-        "required": [
-          "document"
-        ],
-        "type": "object"
+        ]
       },
       "PipelineError": {
         "description": "Why a pipeline document does not validate: `pipeline_invalid`'s detail and\nlocation, inside a response that still answers.",
@@ -3001,15 +3023,21 @@
         "type": "object"
       },
       "PipelineValidated": {
-        "description": "`POST /pipelines/validate`: the document validates, and this is its hash.",
+        "description": "`POST /pipelines/validate`: the document validates, and this is its hash\nand its rendering.",
         "properties": {
           "hash": {
             "description": "The content hash of the canonical logical form, as `ragondin validate`\nprints it.",
             "type": "string"
+          },
+          "rendering": {
+            "description": "The document as the server renders it: for a typed document, the\nbytes a write of it stores; for a text, the rendering of the document\nit reads to, which keeps none of its comments or formatting. What the\neditor exports. `null` only for a text whose document the renderer\ncannot write so that it reads back.",
+            "nullable": true,
+            "type": "string"
           }
         },
         "required": [
-          "hash"
+          "hash",
+          "rendering"
         ],
         "type": "object"
       },
@@ -5067,7 +5095,7 @@
     },
     "/pipelines/validate": {
       "post": {
-        "description": "The body holds the document as text, under `document`, or as the editor holds it, under `typed`. A typed document is converted to the wire schema, rendered as text and checked as that text is, so the hash is the one of the bytes a write would store; a schema version it states that this build cannot read, or a value its rendering cannot carry, is pipeline_invalid.",
+        "description": "The body holds the document as text, under `document`, or as the editor holds it, under `typed`. A typed document is converted to the wire schema, rendered as text and checked as that text is, so the hash is the one of the bytes a write would store; a schema version it states that this build cannot read, or a value its rendering cannot carry, is pipeline_invalid. The answer's `rendering` is the server's rendering of the document: what a write of a typed document stores, and what the editor exports.",
         "parameters": [],
         "requestBody": {
           "content": {
@@ -5126,7 +5154,7 @@
                 }
               }
             },
-            "description": "One pipeline document, verbatim, with its etag, its hash or why it does not validate, and its typed document when it reads."
+            "description": "One pipeline document, verbatim, with its etag, its hash or why it does not validate, its typed document when it reads, and whether its text is the server's own rendering."
           },
           "default": {
             "content": {
@@ -5139,10 +5167,10 @@
             "description": "An error, as application/problem+json."
           }
         },
-        "summary": "One pipeline document, verbatim, with its etag, its hash or why it does not validate, and its typed document when it reads."
+        "summary": "One pipeline document, verbatim, with its etag, its hash or why it does not validate, its typed document when it reads, and whether its text is the server's own rendering."
       },
       "put": {
-        "description": "A write states one precondition: `If-Match` to replace the stored document, or `If-None-Match: *` to create one. A stale etag, `If-Match: *` with nothing stored, a creation over an existing document, or neither header is precondition_failed (412), with the current etag in the `ETag` header, the detail and the problem's `etag` member, and nothing written; both headers at once is request_invalid. A document the composition root refuses — a key no component reads — is pipeline_invalid, in `ragondin bench`'s words. The answer's etag is also its `ETag` header.",
+        "description": "The body holds the document as text, under `document`, stored byte for byte, or as the editor holds it, under `typed`, stored as its rendering — the bytes `POST /pipelines/validate` answers as `rendering`. A write states one precondition: `If-Match` to replace the stored document, or `If-None-Match: *` to create one. A stale etag, `If-Match: *` with nothing stored, a creation over an existing document, or neither header is precondition_failed (412), with the current etag in the `ETag` header, the detail and the problem's `etag` member, and nothing written; both headers at once is request_invalid. A document the composition root refuses — a key no component reads — is pipeline_invalid, in `ragondin bench`'s words. The answer's etag is also its `ETag` header.",
         "parameters": [
           {
             "in": "path",
@@ -5190,7 +5218,7 @@
                 }
               }
             },
-            "description": "Stores a document byte for byte when it validates and its precondition holds."
+            "description": "Stores a document when it validates and its precondition holds: a text byte for byte, a typed document as the server renders it."
           },
           "default": {
             "content": {
@@ -5203,7 +5231,7 @@
             "description": "An error, as application/problem+json."
           }
         },
-        "summary": "Stores a document byte for byte when it validates and its precondition holds."
+        "summary": "Stores a document when it validates and its precondition holds: a text byte for byte, a typed document as the server renders it."
       }
     },
     "/pipelines/{name}/layout": {
@@ -5435,6 +5463,43 @@
           }
         },
         "summary": "One run: its inputs, metrics, configuration, bindings and lowered graph."
+      }
+    },
+    "/runs/{id}/layout": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PipelineLayout"
+                }
+              }
+            },
+            "description": "The layout copied at launch for a run's pipeline, `layouts/<hash>.json` by its canonical hash, or `null`: what a fork from the run copies beside its new document."
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "An error, as application/problem+json."
+          }
+        },
+        "summary": "The layout copied at launch for a run's pipeline, `layouts/<hash>.json` by its canonical hash, or `null`: what a fork from the run copies beside its new document."
       }
     },
     "/runs/{id}/queries": {
