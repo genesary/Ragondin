@@ -156,8 +156,16 @@ export function LaunchPanel({ client, store, anchor, pipeline: opened, upTo = nu
   const absent = upTo === null ? null : notOffered(onDisk.filter((b) => !scores(b)));
   const pipeline = docs.find((p) => p.name === chosenPipeline) ?? docs.find((p) => p.hash !== null) ?? docs[0] ?? null;
   // The benchmark the address named, while it is still the one chosen and is not offered: refused, never replaced.
+  // Why it is not offered: the workspace does not know it, it is not on disk as expected, or the cut cannot be scored on it.
   const unoffered = benchmarks.status === 'loaded' && named !== undefined && chosenBenchmark === named && !ready.some((b) => b.name === named) ? named : null;
-  const unscorable = unoffered !== null && onDisk.some((b) => b.name === unoffered);
+  const unofferedBecause: 'unknown' | 'not ready' | 'not offered' | null =
+    unoffered === null || benchmarks.status !== 'loaded'
+      ? null
+      : !benchmarks.value.benchmarks.some((b) => b.name === unoffered)
+        ? 'unknown'
+        : onDisk.some((b) => b.name === unoffered)
+          ? 'not offered'
+          : 'not ready';
   const benchmark = unoffered !== null ? null : (ready.find((b) => b.name === chosenBenchmark) ?? ready[0] ?? null);
 
   // A change of what would be launched is a new launch: the last answer no longer describes it.
@@ -187,9 +195,11 @@ export function LaunchPanel({ client, store, anchor, pipeline: opened, upTo = nu
       : pipeline.hash === null
         ? 'This pipeline does not validate.'
         : unoffered !== null
-          ? unscorable
-            ? `${unoffered} cannot score this prefix: choose another benchmark.`
-            : `${unoffered} is not ready: download or import it in Setup, or choose another benchmark.`
+          ? unofferedBecause === 'unknown'
+            ? `${unoffered} is not a benchmark of this workspace: choose another benchmark.`
+            : unofferedBecause === 'not offered'
+              ? `${unoffered} cannot score this prefix: choose another benchmark.`
+              : `${unoffered} is not ready: download or import it in Setup, or choose another benchmark.`
           : benchmark === null
           ? upTo !== null && onDisk.length > 0
             ? 'No ready benchmark carries qrels alone, the only ground truth a prefix can be scored on.'
@@ -242,11 +252,11 @@ export function LaunchPanel({ client, store, anchor, pipeline: opened, upTo = nu
               label="Benchmark"
               value={unoffered ?? benchmark?.name ?? ''}
               options={[
-                ...(unoffered === null ? [] : [{ value: unoffered, label: `${unoffered} — ${unscorable ? 'not offered' : 'not ready'}` }]),
+                ...(unoffered === null ? [] : [{ value: unoffered, label: `${unoffered} — ${unofferedBecause ?? 'not ready'}` }]),
                 ...ready.map((b) => ({ value: b.name, label: b.ground_truth === null ? b.name : `${b.name} — ${groundTruthLabel(b.ground_truth)}` })),
               ]}
               onChange={(e) => choose(setBenchmark)(e.target.value)}
-              {...(benchmarkError === undefined ? { help: 'Ready benchmarks only, with the ground truth each carries.' } : { error: benchmarkError })}
+              {...(benchmarkError === undefined ? { help: unoffered === null ? 'Ready benchmarks only, with the ground truth each carries.' : `Ready benchmarks, with the ground truth each carries, and ${unoffered}, which the address named.` } : { error: benchmarkError })}
               {...(absent === null ? {} : { 'aria-describedby': ids.absent })}
             />
             {absent === null ? null : (
@@ -254,7 +264,7 @@ export function LaunchPanel({ client, store, anchor, pipeline: opened, upTo = nu
                 {absent}
               </p>
             )}
-            {ready.length === 0 || (unoffered !== null && !unscorable) ? (
+            {ready.length === 0 || unofferedBecause === 'not ready' ? (
               <ButtonLink size="s" href={formatHash({ screen: 'setup', section: 'benchmarks' })}>
                 Open Setup
               </ButtonLink>
