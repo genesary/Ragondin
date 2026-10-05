@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createApiClient } from '../api/client.ts';
 import { mockApi, type MockRoutes } from '../api/testing.ts';
-import type { PipelineValidated, Problem } from '../api/types.ts';
+import type { PipelineValidated, PipelineWritten, Problem } from '../api/types.ts';
 import type { WireDocument } from './document.ts';
 import { Editor } from './Editor.tsx';
 import { GRAMMAR, HYBRID, SERVICES, WORKSPACE } from './fixtures.ts';
@@ -52,7 +52,8 @@ function Harness({ file = STORED, initial = HYBRID, forkedFrom = null, onNamed =
   );
 }
 
-const WRITTEN: MockRoutes['PUT /pipelines/{name}'] = { body: { name: 'hybrid', etag: NEW_ETAG, hash: HASH } };
+// Typed as the reply itself, never as the route's optional slot, which may be `undefined` under `exactOptionalPropertyTypes`.
+const WRITTEN: { body: PipelineWritten } = { body: { name: 'hybrid', etag: NEW_ETAG, hash: HASH } };
 
 function setup(routes: MockRoutes, props: Props = {}) {
   const api = mockApi({ 'POST /pipelines/validate': VALID, 'PUT /pipelines/{name}': WRITTEN, 'PUT /pipelines/{name}/layout': { body: { layout: null } }, ...routes });
