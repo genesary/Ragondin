@@ -8,7 +8,7 @@ import { EditorInspector, type NodeVerdict } from './EditorInspector.tsx';
 import { InsertMenu, NodeEntries } from './menus.tsx';
 import { Palette, paletteOf } from './Palette.tsx';
 import { INPUT_KIND, portsOf, refusal, type PortGrammar } from './ports.ts';
-import { useLayoutSaving, useSaving } from './persist.ts';
+import { asking, useLayoutSaving, useSaving } from './persist.ts';
 import { runUpTo } from './prefix.ts';
 import { isDirty, type FileInit, type SaveState } from './saving.ts';
 import { ExportPanel, SavePrompt } from './SavePrompt.tsx';
@@ -104,7 +104,18 @@ export function Editor({ client, title, stored = null, initial, layout, capabili
   const verdict = useValidation(client, doc);
   const [save, act] = useSaving(client, doc, verdict, file, onNamed);
   const written = save.file.etag === null ? null : save.file.name;
-  const layoutFailed = useLayoutSaving(client, written, state.layout, touched);
+  // While a prompt is up, or a save as a new file is out, the positions wait for the file chosen.
+  const holding = asking(save) || (save.phase.kind === 'saving' && save.phase.back !== null);
+  const layoutFailed = useLayoutSaving(client, written, state.layout, touched, holding);
+  const dirty = isDirty(save, doc);
+  // Leaving the page while something is not on disk asks the browser to confirm.
+  const unsaved = file !== undefined && (save.phase.kind !== 'idle' || dirty || (save.keep && save.file.name === null));
+  useEffect(() => {
+    if (!unsaved) return;
+    const onLeave = (event: BeforeUnloadEvent) => event.preventDefault();
+    window.addEventListener('beforeunload', onLeave);
+    return () => window.removeEventListener('beforeunload', onLeave);
+  }, [unsaved]);
   const [exporting, setExporting] = useState(false);
   const name = save.file.name ?? title;
   const fileName = save.file.name ?? (save.file.proposed === '' ? 'pipeline' : save.file.proposed);
@@ -322,8 +333,8 @@ export function Editor({ client, title, stored = null, initial, layout, capabili
         </p>
         {file === undefined ? null : (
           <div className="rg-editor__file">
-            <p className="rg-editor__save" data-testid="save-state">
-              {saveWords(save, isDirty(save, doc), verdict, errors)}
+            <p className="rg-editor__save" data-testid="save-state" role="status" aria-live="polite">
+              {saveWords(save, dirty, verdict, errors)}
             </p>
             {save.file.name === null && !save.keep ? (
               <Button size="s" onClick={() => act({ type: 'keep' })}>
@@ -339,7 +350,17 @@ export function Editor({ client, title, stored = null, initial, layout, capabili
           </div>
         )}
       </header>
-      <SavePrompt phase={save.phase} name={save.file.name ?? save.file.proposed} onReload={onReload} onRewrite={() => act({ type: 'rewrite' })} onSaveAs={(to) => act({ type: 'saveAs', doc, name: to })} />
+      <SavePrompt
+        phase={save.phase}
+        name={save.file.name ?? save.file.proposed}
+        valid={verdict.status === 'valid'}
+        onReload={onReload}
+        onRewrite={() => act({ type: 'rewrite' })}
+        onSaveAs={(to) => {
+          // A new file is written only from a document the server called valid, as every write is.
+          if (verdict.status === 'valid') act({ type: 'saveAs', doc, name: to });
+        }}
+      />
       {exporting && rendering !== null ? <ExportPanel name={fileName} rendering={rendering} /> : null}
       <div className="rg-editor__body">
         <Palette entries={sections} onPlace={(component, impl) => place(component, impl)} />

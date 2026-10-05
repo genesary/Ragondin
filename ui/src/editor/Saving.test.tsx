@@ -1,5 +1,5 @@
 /** @vitest-environment happy-dom */
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createApiClient } from '../api/client.ts';
@@ -67,7 +67,10 @@ const saveLine = () => screen.getByTestId('save-state');
 // Past the validation's debounce and its answer, then a little more: what a write would have needed to be sent.
 const settle = () => new Promise((resolve) => setTimeout(resolve, 600));
 
-afterEach(() => {
+afterEach(async () => {
+  // The editor flushes what it holds when it closes: let that land on the mocks before `fetch` is restored.
+  cleanup();
+  await new Promise((resolve) => setTimeout(resolve, 50));
   vi.unstubAllGlobals();
   window.sessionStorage.clear();
 });
@@ -172,6 +175,131 @@ describe('a file changed on disk', () => {
     place(/^concat/);
     await waitFor(() => expect(writes(api, 'hybrid-mine')).toHaveLength(2));
     expect(writes(api, 'hybrid-mine')[1]!.headers['If-Match']).toBe(`"${NEW_ETAG}"`);
+  });
+
+  it('never saves an invalid document as a new file, and says why', async () => {
+    const { api } = setup({ 'POST /pipelines/validate': [VALID, VALID, DANGLING], 'PUT /pipelines/{name}': STALE });
+    await waitFor(() => expect(validations(api)).toHaveLength(1));
+    place(/^rrf/);
+    const message = await screen.findByRole('region', { name: 'The file changed on disk' });
+    place(/^concat/);
+    await waitFor(() => expect(saveLine().textContent).toBe('Not saved: the file changed on disk'));
+    await waitFor(() => expect(within(message).getByRole('button', { name: 'Save as a new file' }).getAttribute('aria-disabled')).toBe('true'));
+    expect(message.textContent).toContain('Only a document the server calls valid is written');
+    fireEvent.change(within(message).getByRole('textbox', { name: 'New file name' }), { target: { value: 'hybrid-mine' } });
+    fireEvent.click(within(message).getByRole('button', { name: 'Save as a new file' }));
+    await settle();
+    expect(writes(api, 'hybrid-mine')).toEqual([]);
+  });
+
+  it('says that changes made while it asks are kept on the canvas and not written', async () => {
+    const { api } = setup({ 'PUT /pipelines/{name}': STALE });
+    await waitFor(() => expect(validations(api)).toHaveLength(1));
+    place(/^rrf/);
+    const message = await screen.findByRole('region', { name: 'The file changed on disk' });
+    expect(message.textContent).toContain('Changes made while this question is open stay on the canvas and are not written until you choose.');
+  });
+
+  it('pauses the layout while it asks, and writes it beside the file chosen', async () => {
+    const { api, container } = setup({ 'PUT /pipelines/{name}': [STALE, { body: { name: 'hybrid-mine', etag: NEW_ETAG, hash: HASH } }] });
+    await waitFor(() => expect(validations(api)).toHaveLength(1));
+    place(/^rrf/);
+    const message = await screen.findByRole('region', { name: 'The file changed on disk' });
+    await settle();
+    const layouts = () => api.requests.filter((r) => r.endsWith('/layout'));
+    const before = layouts().length;
+    const node = container.querySelector<HTMLElement>('.react-flow__node[data-id="lexical"]')!;
+    node.focus();
+    fireEvent.keyDown(node, { key: 'ArrowRight' });
+    await settle();
+    expect(layouts()).toHaveLength(before);
+    fireEvent.change(within(message).getByRole('textbox', { name: 'New file name' }), { target: { value: 'hybrid-mine' } });
+    fireEvent.click(within(message).getByRole('button', { name: 'Save as a new file' }));
+    await waitFor(() => expect(api.requests).toContain('PUT /api/v1/pipelines/hybrid-mine/layout'));
+    const moved = api.bodies[api.requests.lastIndexOf('PUT /api/v1/pipelines/hybrid-mine/layout')] as { nodes: Record<string, { x: number }> };
+    expect(moved.nodes.lexical!.x).toBe(304);
+    expect(layouts().filter((r) => r === 'PUT /api/v1/pipelines/hybrid/layout')).toHaveLength(before);
+  });
+});
+
+describe('leaving the editor', () => {
+  it('writes a change still inside the debounce, validated first, when the editor closes', async () => {
+    const { api, unmount } = setup({});
+    await waitFor(() => expect(validations(api)).toHaveLength(1));
+    place(/^rrf/);
+    unmount();
+    await waitFor(() => expect(writes(api)).toHaveLength(1));
+    expect(validations(api)).toHaveLength(2);
+    expect((writes(api)[0]!.body as { typed: WireDocument }).typed.pipeline.nodes.at(-1)?.id).toBe('rrf');
+    expect(writes(api)[0]!.headers['If-Match']).toBe(`"${ETAG}"`);
+  });
+
+  it('writes nothing invalid when the editor closes', async () => {
+    const { api, unmount } = setup({ 'POST /pipelines/validate': [VALID, DANGLING] });
+    await waitFor(() => expect(validations(api)).toHaveLength(1));
+    place(/^rrf/);
+    unmount();
+    await waitFor(() => expect(validations(api)).toHaveLength(2));
+    await settle();
+    expect(writes(api)).toEqual([]);
+  });
+
+  it('sends the newer document queued behind a write in flight, over the etag that write answers', async () => {
+    let answer: (reply: { body: { name: string; etag: string; hash: string } }) => void = () => {};
+    let calls = 0;
+    const { api, unmount } = setup({
+      'PUT /pipelines/{name}': () => {
+        calls += 1;
+        return calls === 1 ? new Promise((resolve) => (answer = resolve)) : { body: { name: 'hybrid', etag: 'a'.repeat(64), hash: HASH } };
+      },
+    });
+    await waitFor(() => expect(validations(api)).toHaveLength(1));
+    place(/^rrf/);
+    await waitFor(() => expect(writes(api)).toHaveLength(1));
+    place(/^concat/);
+    unmount();
+    answer({ body: { name: 'hybrid', etag: NEW_ETAG, hash: HASH } });
+    await waitFor(() => expect(writes(api)).toHaveLength(2));
+    expect(writes(api)[1]!.headers['If-Match']).toBe(`"${NEW_ETAG}"`);
+    expect((writes(api)[1]!.body as { typed: WireDocument }).typed.pipeline.nodes.at(-1)?.id).toBe('concat');
+  });
+
+  it('writes nothing held behind a prompt when the editor closes', async () => {
+    const { api, unmount } = setup({}, { file: { ...STORED, canonical: false } });
+    await waitFor(() => expect(validations(api)).toHaveLength(1));
+    place(/^rrf/);
+    await screen.findByRole('region', { name: 'This file was written by hand' });
+    unmount();
+    await settle();
+    expect(writes(api)).toEqual([]);
+  });
+
+  it('writes a position still inside its debounce when the editor closes', async () => {
+    const { api, container, unmount } = setup({});
+    await waitFor(() => expect(validations(api)).toHaveLength(1));
+    const node = container.querySelector<HTMLElement>('.react-flow__node[data-id="lexical"]')!;
+    node.focus();
+    fireEvent.keyDown(node, { key: 'ArrowRight' });
+    unmount();
+    await waitFor(() => expect(api.requests).toContain('PUT /api/v1/pipelines/hybrid/layout'));
+  });
+
+  it('asks the browser to confirm leaving the page while something is not saved', async () => {
+    const { api } = setup({ 'POST /pipelines/validate': [VALID, DANGLING] });
+    await waitFor(() => expect(validations(api)).toHaveLength(1));
+    const clean = new Event('beforeunload', { cancelable: true });
+    window.dispatchEvent(clean);
+    expect(clean.defaultPrevented).toBe(false);
+    place(/^rrf/);
+    await waitFor(() => expect(saveLine().textContent).toBe('Unsaved — 1 error'));
+    const dirty = new Event('beforeunload', { cancelable: true });
+    window.dispatchEvent(dirty);
+    expect(dirty.defaultPrevented).toBe(true);
+  });
+
+  it('says the save state politely to assistive technology', () => {
+    setup({});
+    expect(saveLine().getAttribute('role')).toBe('status');
   });
 });
 

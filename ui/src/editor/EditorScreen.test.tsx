@@ -1,5 +1,5 @@
 /** @vitest-environment happy-dom */
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createApiClient } from '../api/client.ts';
@@ -40,7 +40,10 @@ const ROUTES: MockRoutes = {
 const STORED_DETAIL: PipelineDetail = { name: 'hybrid', document: 'pipeline: …\n', etag: 'e'.repeat(64), hash: HASH, error: null, typed: HYBRID, canonical: true };
 const STORED: MockRoutes = { ...ROUTES, 'GET /pipelines/{name}': { body: STORED_DETAIL } };
 
-afterEach(() => {
+afterEach(async () => {
+  // The editor flushes what it holds when it closes: let that land on the mocks before `fetch` is restored.
+  cleanup();
+  await new Promise((resolve) => setTimeout(resolve, 50));
   vi.unstubAllGlobals();
   window.sessionStorage.clear();
 });

@@ -15,17 +15,22 @@ import type { Phase } from './saving.ts';
 export const DROPPED =
   'its comments, its formatting, its key order, expanded references (an anchor and its aliases are written out in full at each use), and keys the pipeline schema does not read';
 
-function NewName({ proposed, error, onSave }: { proposed: string; error: string | undefined; onSave: (name: string) => void }) {
+/** What every prompt says of the changes made while it is up. */
+export const HELD = 'Changes made while this question is open stay on the canvas and are not written until you choose.';
+
+const INVALID = 'Only a document the server calls valid is written: correct the errors the canvas shows first.';
+
+function NewName({ proposed, error, valid, onSave }: { proposed: string; error: string | undefined; valid: boolean; onSave: (name: string) => void }) {
   const id = useId();
   const [name, setName] = useState(proposed);
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    if (name.trim() !== '') onSave(name.trim());
+    if (valid && name.trim() !== '') onSave(name.trim());
   };
   return (
     <form className="rg-editor__new-name" onSubmit={submit}>
       <Input id={`${id}-name`} label="New file name" mono value={name} onChange={(e) => setName(e.target.value)} {...(error === undefined ? {} : { error })} />
-      <Button type="submit" {...(name.trim() === '' ? { disabled: true, disabledReason: 'Give the new file a name.' } : {})}>
+      <Button type="submit" {...(!valid ? { disabled: true, disabledReason: INVALID } : name.trim() === '' ? { disabled: true, disabledReason: 'Give the new file a name.' } : {})}>
         Save as a new file
       </Button>
     </form>
@@ -36,13 +41,15 @@ export type SavePromptProps = {
   phase: Phase;
   /** The file the editor writes, or the name proposed for it. */
   name: string;
+  /** Whether the server called the document as it stands valid: a new file is written from nothing else. */
+  valid: boolean;
   onReload: () => void;
   onRewrite: () => void;
   onSaveAs: (name: string) => void;
 };
 
 /** The prompt a phase waits on, or nothing. */
-export function SavePrompt({ phase, name, onReload, onRewrite, onSaveAs }: SavePromptProps) {
+export function SavePrompt({ phase, name, valid, onReload, onRewrite, onSaveAs }: SavePromptProps) {
   switch (phase.kind) {
     case 'conflict':
       return (
@@ -56,9 +63,9 @@ export function SavePrompt({ phase, name, onReload, onRewrite, onSaveAs }: SaveP
               </Button>
             }
           >
-            Reload it from disk, and your unsaved changes on the canvas are lost; or keep the canvas’s version as a new file, and {name}.yaml stays as it is on disk.
+            Reload it from disk, and your unsaved changes on the canvas are lost; or keep the canvas’s version as a new file, and {name}.yaml stays as it is on disk. {HELD}
           </InlineMessage>
-          <NewName proposed={`${name}-mine`} error={phase.error} onSave={onSaveAs} />
+          <NewName proposed={`${name}-mine`} error={phase.error} valid={valid} onSave={onSaveAs} />
         </section>
       );
     case 'handwritten':
@@ -69,18 +76,18 @@ export function SavePrompt({ phase, name, onReload, onRewrite, onSaveAs }: SaveP
             title={`${name}.yaml was written by hand. Nothing is written until you choose.`}
             action={<Button onClick={onRewrite}>Rewrite this file</Button>}
           >
-            Saving from the canvas rewrites it as the server renders it, and drops what that rendering does not keep: {DROPPED}. Or save the canvas as a new file, and {name}.yaml stays as it is.
+            Saving from the canvas rewrites it as the server renders it, and drops what that rendering does not keep: {DROPPED}. Or save the canvas as a new file, and {name}.yaml stays as it is. {HELD}
           </InlineMessage>
-          <NewName proposed={`${name}-canvas`} error={phase.error} onSave={onSaveAs} />
+          <NewName proposed={`${name}-canvas`} error={phase.error} valid={valid} onSave={onSaveAs} />
         </section>
       );
     case 'taken':
       return (
         <section className="rg-editor__prompt" aria-label="This name is taken">
           <InlineMessage tone="warning" title={`A pipeline named ${name} already exists. Nothing was written.`}>
-            Give this pipeline another name to write it.
+            Give this pipeline another name to write it. {HELD}
           </InlineMessage>
-          <NewName proposed={`${name}-2`} error={phase.error} onSave={onSaveAs} />
+          <NewName proposed={`${name}-2`} error={phase.error} valid={valid} onSave={onSaveAs} />
         </section>
       );
     default:
