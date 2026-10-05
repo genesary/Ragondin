@@ -124,8 +124,8 @@ describe('the run bar', () => {
     const items = within(screen.getByRole('list', { name: 'Runs compared' })).getAllByRole('listitem');
     expect(items.map((li) => li.querySelector('.rg-swatch')?.getAttribute('data-run'))).toEqual(['base', 'a', 'b']);
     expect(items[1]?.textContent).toContain('hybrid');
-    expect(within(items[0] as HTMLElement).getByRole('button', { name: 'Copy the hash of the baseline' })).toBeTruthy();
-    expect(within(items[1] as HTMLElement).getByRole('button', { name: 'Copy the hash of run A' }).getAttribute('title')).toBe(HYBRID);
+    expect(within(items[0] as HTMLElement).getByRole('button', { name: /^Copy \w{6}, the hash of the baseline$/ })).toBeTruthy();
+    expect(within(items[1] as HTMLElement).getByRole('button', { name: `Copy ${HYBRID.slice(0, 6)}, the hash of run A` }).getAttribute('title')).toBe(HYBRID);
     expect(screen.getByText('beir/scifact')).toBeTruthy();
   });
 
