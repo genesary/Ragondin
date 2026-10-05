@@ -54,6 +54,7 @@ function show(row: RunRow, over: Partial<JobRowOptions> = {}) {
     onCancel: vi.fn(),
     onMove: vi.fn(),
     onResubmit: vi.fn(),
+    onDismiss: vi.fn(),
     ...over,
   };
   const onOpen = vi.fn();
@@ -162,18 +163,37 @@ describe('a running row', () => {
 });
 
 describe('a failed row', () => {
-  it('names the failed node on its chip and in a sentence, and leads to the job', () => {
-    const { tr } = show(job({ state: 'failed', node: 'rerank', error: 'the reranker service did not answer' }));
+  it('names the failed node on its chip, and says the error once, its quoted names set as code', () => {
+    const { tr } = show(job({ state: 'failed', node: 'rerank', error: 'query `q1` failed: node `rerank`: the reranker service did not answer' }));
     expect(chip()?.getAttribute('data-state')).toBe('failed');
     expect(chip()?.textContent).toBe('failed at rerank');
-    expect(screen.getByText('rerank failed: the reranker service did not answer')).toBeTruthy();
+    const failure = tr.querySelector('.rg-runs__failure') as HTMLElement;
+    expect(failure.textContent).toBe('query q1 failed: node rerank: the reranker service did not answer');
+    expect([...failure.querySelectorAll('code')].map((c) => c.textContent)).toEqual(['q1', 'rerank']);
+    expect(tr.textContent).not.toContain('`');
     expect(tr.getAttribute('aria-label')).toBe('Run a1b2c3d4e5f6 on beir/scifact, failed at rerank');
   });
 
-  it('says the run failed without a node when the failure names none', () => {
-    show(job({ state: 'failed', node: null, error: 'interrupted' }));
+  it('says the error alone when the failure names no node', () => {
+    const { tr } = show(job({ state: 'failed', node: null, error: 'interrupted' }));
     expect(chip()?.textContent).toBe('failed');
-    expect(screen.getByText('The run failed: interrupted')).toBeTruthy();
+    expect((tr.querySelector('.rg-runs__failure') as HTMLElement).textContent).toBe('interrupted');
+  });
+
+  it('leads to the failing node in the editor', () => {
+    show(job({ state: 'failed', node: 'rerank', error: 'boom' }));
+    expect(screen.getByRole('link', { name: 'Fix rerank in the editor' }).getAttribute('href')).toBe('#editor/hybrid/node/rerank');
+  });
+
+  it('offers no way to the editor when no node failed', () => {
+    show(job({ state: 'failed', node: null, error: 'interrupted' }));
+    expect(screen.queryByRole('link', { name: /in the editor/ })).toBeNull();
+  });
+
+  it('offers Dismiss', () => {
+    const { onDismiss } = show(job({ state: 'failed', node: null, error: 'interrupted' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss run a1b2c3d4e5f6' }));
+    expect(onDismiss).toHaveBeenCalledTimes(1);
   });
 
   it('offers Resubmit: the same submission again', () => {
@@ -189,6 +209,12 @@ describe('a cancelled row', () => {
     expect(chip()?.getAttribute('data-state')).toBe('cancelled');
     fireEvent.click(within(screen.getAllByRole('row')[1] as HTMLElement).getByRole('button', { name: 'Resubmit run a1b2c3d4e5f6' }));
     expect(onResubmit).toHaveBeenCalledTimes(1);
+  });
+
+  it('offers Dismiss', () => {
+    const { onDismiss } = show(job({ state: 'cancelled' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss run a1b2c3d4e5f6' }));
+    expect(onDismiss).toHaveBeenCalledTimes(1);
   });
 });
 

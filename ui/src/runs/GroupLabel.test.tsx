@@ -44,6 +44,20 @@ function show(g: RunGroup, shape: ShapeNode[] | null = SHAPE) {
   render(<Table caption="runs" columns={[{ id: 'a', label: 'A' }]} rows={[{ kind: 'group', id: g.key, label: <GroupLabel group={g} shape={shape} /> }]} />);
 }
 
+const jobRow = (id: string): RunRow => ({ ...row(id), source: { kind: 'job', id, runId: HASH }, status: { state: 'failed', node: null, error: 'x' } });
+
+describe('the run count', () => {
+  it('counts the runs the store holds, never the jobs beside them', () => {
+    show(group({ rows: [row('1'), jobRow('j1'), jobRow('j2')] }));
+    expect(document.querySelector('.rg-runs__count')?.textContent).toBe('1 run');
+  });
+
+  it('draws no count for a group of jobs alone', () => {
+    show(group({ rows: [jobRow('j1')] }));
+    expect(document.querySelector('.rg-runs__count')).toBeNull();
+  });
+});
+
 describe('the group heading', () => {
   it('names the pipeline as a link to its Pipeline screen', () => {
     show(group());

@@ -155,12 +155,12 @@ describe('the launch panel', () => {
     expect(within(at).getByText(`run ${short(ANNOUNCED)}`)).toBeTruthy();
     expect(within(at).getByText('announced')).toBeTruthy();
 
-    // The queued row appears in the pipeline's group within one render of the event.
+    // The queued row appears in the Queue within one render of the event, naming its pipeline.
     send(stream, { event: 'queued', data: runJob('j1', QUEUED) });
     const row = jobRowOf();
     expect(within(row).getByText('queued, next')).toBeTruthy();
-    const group = row.closest('tbody') as HTMLElement;
-    expect(within(group).getByRole('row', { name: new RegExp(`^Run ${short(OLD)} on `) })).toBeTruthy();
+    expect(row.closest('table')?.getAttribute('aria-label') ?? row.closest('table')?.querySelector('caption')?.textContent).toBe('Queue');
+    expect(within(row).getByText('hybrid')).toBeTruthy();
   });
 
   it('a_conflict_is_shown_as_an_existing_run_or_job_to_open_not_as_an_error', async () => {
@@ -631,7 +631,7 @@ describe('the queue’s rows', () => {
     send(stream, { event: 'running', data: runJob('j2', running(1, 10), { runId: FAILED }) });
     send(stream, { event: 'failed', data: runJob('j2', failedAt('rerank', 'the reranker answered 503'), { runId: FAILED }) });
     const failedRow = jobRowOf(FAILED);
-    expect(within(failedRow).getByText('rerank failed: the reranker answered 503')).toBeTruthy();
+    expect(within(failedRow).getByText('the reranker answered 503')).toBeTruthy();
 
     const toasts = within(notifications());
     expect(toasts.getByRole('status').textContent).toContain('Run done');
@@ -646,7 +646,7 @@ describe('the queue’s rows', () => {
     connect(stream, [runJob('j2', failedAt('rerank', 'the reranker answered 503', 2), { runId: hex('b') })]);
     const job = await screen.findByRole('region', { name: 'Job j2' });
     expect(job.querySelector('.rg-status')?.textContent).toBe('failed at rerank');
-    expect(within(job).getByText('rerank failed: the reranker answered 503')).toBeTruthy();
+    expect(within(job).getByText('the reranker answered 503')).toBeTruthy();
     // The count, said as what it is: the traces the job kept, not a run in the store — and the way to Replay them.
     expect(within(job).getByText('It kept the traces of the 2 queries it executed before it failed, under jobs/j2/partial/ in the workspace, never in the store.')).toBeTruthy();
     expect(within(job).queryByText(/does not serve/)).toBeNull();
@@ -658,6 +658,46 @@ describe('the queue’s rows', () => {
     send(stream, { event: 'failed', data: runJob('j2', failedAt(null, 'interrupted', 0), { runId: hex('b') }) });
     expect(within(job).getByText('It kept no trace: a run keeps the traces of the queries it executed when it fails or is cancelled, and a crash keeps none it can vouch for.')).toBeTruthy();
     expect(within(job).queryByRole('link', { name: 'Replay the partial traces' })).toBeNull();
+  });
+
+  it('offers nothing to replay when no query completed before the failure', async () => {
+    const { stream } = await show('#runs/job/j2');
+    // One trace kept, of the query a node failed on: no query completed.
+    connect(stream, [runJob('j2', failedAt('rerank', 'the reranker answered 503', 1), { runId: hex('b') })]);
+    const job = await screen.findByRole('region', { name: 'Job j2' });
+    expect(within(job).getByText(/No query completed before it failed/)).toBeTruthy();
+    expect(within(job).queryByRole('link', { name: 'Replay the partial traces' })).toBeNull();
+  });
+
+  it('dismisses a failed job: the API is asked, and the row goes once the stream says so', async () => {
+    const failed = runJob('j2', failedAt('rerank', 'boom'), { runId: hex('b') });
+    const { api, stream } = await show('#runs', routes({ 'POST /jobs/{id}/dismiss': { body: { ...failed, dismissed_at_ms: 1_700_000_300_000 } } }));
+    connect(stream, [failed]);
+    fireEvent.click(within(jobRowOf(hex('b'))).getByRole('button', { name: `Dismiss run ${short(hex('b'))}` }));
+    await waitFor(() => expect(api.requests).toContain('POST /api/v1/jobs/j2/dismiss'));
+    send(stream, { event: 'dismissed', data: { ...failed, dismissed_at_ms: 1_700_000_300_000 } });
+    expect(screen.queryByRole('row', { name: new RegExp(`^Run ${short(hex('b'))} on `) })).toBeNull();
+  });
+
+  it('shows the live jobs in a Queue above the runs, in the order the worker takes them', async () => {
+    const { stream } = await show();
+    connect(stream, [
+      runJob('j3', QUEUED, { runId: hex('8'), position: 7 }),
+      runJob('j1', running(2, 10), { runId: hex('6') }),
+      runJob('j2', QUEUED, { runId: hex('7'), position: 3 }),
+      runJob('j4', failedAt(null, 'boom'), { runId: hex('4') }),
+    ]);
+    const queue = screen.getByRole('table', { name: 'Queue' });
+    const names = within(queue)
+      .getAllByRole('row')
+      .map((r) => r.getAttribute('aria-label'))
+      .filter((n) => n !== null);
+    expect(names.map((n) => n?.slice(0, 16))).toEqual([`Run ${short(hex('6'))}`, `Run ${short(hex('7'))}`, `Run ${short(hex('8'))}`]);
+    const runsTable = screen.getByRole('table', { name: 'Runs, grouped by pipeline' });
+    // The Queue comes first; an ended job stays with its pipeline's runs.
+    expect(queue.compareDocumentPosition(runsTable) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(runsTable).queryByRole('row', { name: new RegExp(`^Run ${short(hex('6'))}`) })).toBeNull();
+    expect(within(runsTable).getByRole('row', { name: new RegExp(`^Run ${short(hex('4'))}`) })).toBeTruthy();
   });
 
   it('a_fault_reported_during_a_job_shows_on_its_row_and_in_its_view_without_a_reload', async () => {

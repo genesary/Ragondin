@@ -7,7 +7,8 @@
 // pipeline that is not found, or be refused as a case alias. The shape and
 // whether each name is held come with the listing, so the heading is whole
 // when it is first drawn: nothing loads into it later, and nothing moves under
-// it.
+// it. The count is of the runs the store holds: a job beside them is not one
+// yet, and a group of jobs alone draws none.
 import { Fragment } from 'react';
 import { FAMILY_LABEL, FamilyTile } from '../../design/index.ts';
 import { formatHash } from '../routes.ts';
@@ -27,6 +28,7 @@ const NOT_HELD = { gone: 'no longer a document in this workspace', other_case: '
 const runs = (n: number) => `${n.toLocaleString('en-US')} run${n === 1 ? '' : 's'}`;
 
 export function GroupLabel({ group, shape }: GroupLabelProps) {
+  const stored = group.rows.filter((r) => r.source.kind === 'run').length;
   return (
     <span className="rg-runs__group">
       {group.names.length === 0 ? (
@@ -67,7 +69,7 @@ export function GroupLabel({ group, shape }: GroupLabelProps) {
           ))}
         </ol>
       )}
-      <span className="rg-runs__count">{runs(group.rows.length)}</span>
+      {stored === 0 ? null : <span className="rg-runs__count">{runs(stored)}</span>}
     </span>
   );
 }

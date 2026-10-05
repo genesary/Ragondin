@@ -82,7 +82,7 @@ const routes = (listing: MockRoutes['GET /runs'] = { body: LISTING }): MockRoute
 /** What the shell does: hands the screen the selection the address carries. */
 function Shell({ client }: { client: ApiClient }) {
   const route = useRoute();
-  return <RunsScreen client={client} sel={route?.screen === 'runs' ? (route.sel ?? []) : []} />;
+  return <RunsScreen client={client} sel={route?.screen === 'runs' ? (route.sel ?? []) : []} bench={route?.screen === 'runs' ? route.bench : undefined} />;
 }
 
 function show(hash: string, mocks: MockRoutes = routes()) {
@@ -125,6 +125,14 @@ describe('the states', () => {
     show('#runs', routes({ body: { runs: [], unreadable: [], shapes: {} } }));
     expect((await screen.findByRole('heading', { name: 'No runs yet' })).tagName).toBe('H3');
     expect(screen.getByRole('link', { name: 'Open Editor' }).getAttribute('href')).toBe('#editor');
+  });
+
+  it('draws the empty state’s two actions at one size', async () => {
+    show('#runs', routes({ body: { runs: [], unreadable: [], shapes: {} } }));
+    const open = await screen.findByRole('link', { name: 'Open Editor' });
+    const launch = screen.getByRole('button', { name: 'Launch…' });
+    expect(launch.className).toContain('rg-btn--l');
+    expect(open.className).toContain('rg-btn--l');
   });
 });
 
@@ -265,6 +273,22 @@ describe('over a listing with two benchmarks', () => {
     expect(rowOf(R2)).toBeTruthy();
     expect(screen.queryByRole('row', { name: new RegExp(`^Run ${short(R1)}`) })).toBeNull();
     expect(screen.queryByRole('link', { name: `pipeline ${short(DENSE)}` })).toBeNull();
+  });
+
+  it('keeps the filter in the address, in place, so a link or a reload shows the same rows', async () => {
+    show('#runs');
+    await loaded();
+    fireEvent.click(screen.getByRole('button', { name: /^dataset ffffffffffff/ }));
+    await waitFor(() => expect(window.location.hash).toBe(`#runs?bench=${FIQA}`));
+    fireEvent.click(screen.getByRole('button', { name: /^dataset ffffffffffff/ }));
+    await waitFor(() => expect(window.location.hash).toBe('#runs'));
+  });
+
+  it('filters by the benchmarks the address names', async () => {
+    show(`#runs?bench=${FIQA}`);
+    await screen.findByRole('row', { name: new RegExp(`^Run ${short(R2)} on `) });
+    expect(screen.queryByRole('row', { name: new RegExp(`^Run ${short(R1)}`) })).toBeNull();
+    expect(screen.getByRole('button', { name: /^dataset ffffffffffff/ }).getAttribute('aria-pressed')).toBe('true');
   });
 });
 

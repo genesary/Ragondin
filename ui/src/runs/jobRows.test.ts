@@ -28,6 +28,12 @@ const run = (id: string, over: Partial<RunSummary> = {}): RunSummary => ({
 const listing = (...runs: RunSummary[]): RunListing => ({ runs, unreadable: [], shapes: {} });
 
 describe('rowsFromJobs', () => {
+  it('leaves a dismissed job out', () => {
+    const dismissed = { ...runJob('f', failedAt('rerank', 'boom')), dismissed_at_ms: 1_700_000_200_000 };
+    const rows = rowsFromJobs(jobs(dismissed, runJob('c', CANCELLED, { runId: hex('b') })), []);
+    expect(rows.map((r) => r.source.id)).toEqual(['c']);
+  });
+
   it('draws a queued and a running run job as rows of the job queue, live work first, the queued in the order the worker takes them', () => {
     const rows = rowsFromJobs(jobs(runJob('q2', QUEUED, { position: 5 }), runJob('q1', QUEUED, { position: 2 }), runJob('r', running(3, 10, 2_500_000))), []);
     expect(rows.map((r) => r.source.id)).toEqual(['r', 'q1', 'q2']);
