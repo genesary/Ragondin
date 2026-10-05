@@ -252,6 +252,7 @@ const AMBIGUOUS: &[&str] = &[
     "?",
     "é",
     "1,2",
+    "/x",
 ];
 
 fn tricky() -> RawPipeline {

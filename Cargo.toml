@@ -74,7 +74,7 @@ ragondin-conformance = { path = "testkit/ragondin-conformance" }
 # the only dependency the core (`ragondin-types`) is permitted to ship; a
 # test-only dev-dependency is outside INV-4 and outside that rule.
 serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"                                 # JSONL datasets (ragondin-benchmarks); the API's bodies (ragondin-api); ragondin-config's render_document, the format's one writer; serde round-trip assertions in tests
+serde_json = "1.0"                                 # JSONL datasets (ragondin-benchmarks); the API's bodies (ragondin-api); serde round-trip assertions in tests
 serde_yaml = "0.9"                                 # the YAML config format: ragondin-config's parse_document is its one reader; golden fixtures in tests
 csv = "1.3"                                        # delimited-file reader for BEIR qrels TSV (ragondin-benchmarks)
 sha2 = "0.10"                                      # canonical logical-form hashing (ragondin-pipeline)

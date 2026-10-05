@@ -1069,8 +1069,9 @@ mod tests {
 
     #[test]
     fn a_document_that_states_no_version_validates() {
-        // A configuration writes `version:` only to pin one deliberately;
-        // saying nothing means the version this build writes. Deserialized
+        // A hand-written configuration may leave `version:` out, though a
+        // rendered one always writes it; saying nothing means the version
+        // this build writes. Deserialized
         // rather than built, so the default is exercised through the door a
         // real configuration comes in by.
         let raw: RawPipeline = serde_yaml::from_str(
