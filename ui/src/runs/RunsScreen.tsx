@@ -435,7 +435,7 @@ function Loaded({ client, listing, askedWith, refresh, sel, job, launch, bench, 
     if (launch !== undefined) navigate(runsRoute(sel, job, undefined, bench), { replace: true });
     setLaunching(false);
   };
-  const launchToggle = (size: 'm' | 'l' = 'm') => (
+  const launchToggle = (size: 's' | 'm' | 'l' = 'm') => (
     <Button ref={launchButton} size={size} aria-expanded={launching} aria-controls={launchId} onClick={() => (launching ? closeLaunch() : setLaunching(true))}>
       Launch…
     </Button>
@@ -471,7 +471,7 @@ function Loaded({ client, listing, askedWith, refresh, sel, job, launch, bench, 
       <Sheet>
         {unreadable}
         {launchPanel}
-        <EmptyState heading="No runs yet" steps={<FirstRunSteps counts={counts} refreshWorkspace={refreshWorkspace} launch={launchToggle()} />}>
+        <EmptyState heading="No runs yet" steps={<FirstRunSteps counts={counts} refreshWorkspace={refreshWorkspace} launch={launchToggle('s')} />}>
           A run is one pipeline on one benchmark. Three steps to the first:
         </EmptyState>
       </Sheet>

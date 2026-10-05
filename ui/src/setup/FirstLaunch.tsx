@@ -3,11 +3,11 @@
 // front-end design, § 3: the default path, made the obvious one).
 import { ButtonLink, Section } from '../../design/index.ts';
 import type { ApiProblem } from '../api/client.ts';
-import type { BenchmarkEntry, Capabilities, ServiceStatus } from '../api/types.ts';
+import type { BenchmarkEntry, Capabilities, Scorable, ServiceStatus } from '../api/types.ts';
 import { formatHash } from '../routes.ts';
 import { ActionSlot, DownloadControls, downloadWords, isLive, Licence, type Downloads } from './Benchmarks.tsx';
 import { ConnectForm, ImportForm, type ConnectFormProps } from './forms.tsx';
-import { firstBenchmark, formatSize, scorableLabel, serviceKey } from './model.ts';
+import { firstBenchmark, formatSize, serviceKey } from './model.ts';
 
 /**
  * Why a retrieval-only pipeline needs no service, from what this build
@@ -23,14 +23,16 @@ export function builtInSentence(capabilities: Capabilities | null): string | nul
 
 export type FirstLaunchProps = {
   benchmarks: readonly BenchmarkEntry[];
+  /** The listing's `scorable`, which the recommendation reads. */
+  scorable: Scorable;
   capabilities: Capabilities | null;
   onImport: (path: string, name: string) => Promise<ApiProblem | null>;
   downloads: Downloads;
   connect: ConnectFormProps;
 };
 
-export function FirstLaunch({ benchmarks, capabilities, onImport, downloads, connect }: FirstLaunchProps) {
-  const pick = firstBenchmark(benchmarks);
+export function FirstLaunch({ benchmarks, scorable, capabilities, onImport, downloads, connect }: FirstLaunchProps) {
+  const pick = firstBenchmark(benchmarks, scorable);
   const first = pick?.entry ?? null;
   const view = first === null ? null : downloads.view(first.name);
   const builtIn = builtInSentence(capabilities);
@@ -79,33 +81,33 @@ export function FirstLaunch({ benchmarks, capabilities, onImport, downloads, con
 /**
  * What the first launch leaves behind once it ends, so the way on is not
  * lost with it: what is now in place, and the next step — a pipeline in the
- * Editor, launched from Runs — or, when a service ended it, a benchmark.
+ * Editor, launched from Runs — or, while no benchmark is ready, a benchmark.
+ * `ready` is the workspace's count (`WorkspaceCounts.benchmarks_ready`), read
+ * after the write that ended the first launch.
  */
-export function NextStep({ benchmarks, services }: { benchmarks: readonly BenchmarkEntry[]; services: readonly ServiceStatus[] }) {
-  const ready = benchmarks.filter((b) => b.state.kind === 'ready' || b.state.kind === 'local');
-  const only = ready.length === 1 ? (ready[0] as BenchmarkEntry) : null;
+export function NextStep({ ready, services }: { ready: number; services: readonly ServiceStatus[] }) {
+  if (ready === 0) {
+    const bound = services.length === 0 ? 'No benchmark is ready yet.' : `${services.map(serviceKey).join(', ')} ${services.length === 1 ? 'is' : 'are'} bound.`;
+    return (
+      <Section heading="Next step">
+        <p className="rg-setup__lead">{bound} Next: add a benchmark below — a run is one pipeline on one benchmark.</p>
+      </Section>
+    );
+  }
   return (
     <Section heading="Next step">
-      {ready.length === 0 ? (
-        <p className="rg-setup__lead">
-          {services.map(serviceKey).join(', ')} {services.length === 1 ? 'is' : 'are'} bound. Next: add a benchmark below — a run is one pipeline on one benchmark.
-        </p>
-      ) : (
-        <>
-          <p className="rg-setup__lead">
-            {ready.map((b) => b.name).join(', ')} {ready.length === 1 ? 'is' : 'are'} ready{only?.scorable == null ? '.' : <>: it scores {scorableLabel(only.scorable)}.</>} Next: build a pipeline in the Editor, then launch it from{' '}
-            <a className="rg-setup__link" href={formatHash({ screen: 'runs' })}>
-              Runs
-            </a>
-            .
-          </p>
-          <div className="rg-setup__submit">
-            <ButtonLink kind="primary" href={formatHash({ screen: 'editor' })}>
-              Open Editor
-            </ButtonLink>
-          </div>
-        </>
-      )}
+      <p className="rg-setup__lead">
+        {ready} {ready === 1 ? 'benchmark is' : 'benchmarks are'} ready; the table below says which pipelines each scores. Next: build a pipeline in the Editor, then launch it from{' '}
+        <a className="rg-setup__link" href={formatHash({ screen: 'runs' })}>
+          Runs
+        </a>
+        .
+      </p>
+      <div className="rg-setup__submit">
+        <ButtonLink kind="primary" href={formatHash({ screen: 'editor' })}>
+          Open Editor
+        </ButtonLink>
+      </div>
     </Section>
   );
 }

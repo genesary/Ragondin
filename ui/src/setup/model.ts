@@ -5,7 +5,7 @@
 import { FAMILY_LABEL, familyOfComponent } from '../../design/index.ts';
 import type { ApiProblem } from '../api/client.ts';
 import type { Jobs } from '../api/jobs.ts';
-import type { BenchmarkEntry, GroundTruth, JobSummary, ScorablePipelines, ServiceStatus } from '../api/types.ts';
+import type { BenchmarkEntry, GroundTruth, JobSummary, Scorable, ServiceStatus } from '../api/types.ts';
 
 const UNITS = ['B', 'kB', 'MB', 'GB', 'TB'] as const;
 
@@ -34,14 +34,21 @@ const GROUND_TRUTH: Record<GroundTruth, string> = {
 /** What a benchmark's ground truth lets a run measure, in words. */
 export const groundTruthLabel = (truth: GroundTruth) => GROUND_TRUTH[truth];
 
+/** Whether a pipeline ending (or not) in an answer can be scored on `truth`: in the list `GET /benchmarks`' `scorable` serves for it. */
+const scoredBy = (scorable: Scorable, truth: GroundTruth, endsInAnswer: boolean) => scorable[endsInAnswer ? 'ending_in_answer' : 'ending_elsewhere'].includes(truth);
+
 /**
- * Which pipelines a benchmark scores, in words: the API's `scorable`, read
- * off `CarriedPieces::scorable`, said as it is — never decided here.
+ * Which pipelines a benchmark carrying `truth` scores, in words: read off the
+ * lists `GET /benchmarks` serves — `CarriedPieces::scorable` asked of each
+ * ground truth — never decided here. `none` is in neither list, so a
+ * benchmark carrying nothing scores no pipeline.
  */
-export function scorableLabel(scorable: ScorablePipelines): string {
-  if (scorable.ending_in_answer && scorable.ending_elsewhere) return 'any pipeline';
-  if (scorable.ending_in_answer) return 'only a pipeline that ends in an answer';
-  if (scorable.ending_elsewhere) return 'only a pipeline that does not end in an answer';
+export function scorableLabel(scorable: Scorable, truth: GroundTruth): string {
+  const answer = scoredBy(scorable, truth, true);
+  const elsewhere = scoredBy(scorable, truth, false);
+  if (answer && elsewhere) return 'any pipeline';
+  if (answer) return 'only a pipeline that ends in an answer';
+  if (elsewhere) return 'only a pipeline that does not end in an answer';
   return 'no pipeline';
 }
 
@@ -75,20 +82,16 @@ export function smallestAvailable(benchmarks: readonly BenchmarkEntry[]): Availa
 }
 
 /**
- * The benchmark of the front-end design's first-run journey (§ 3: download
- * SciFact, then the Editor's retrieval-only example, then Launch). Named
- * here because the manifest records no ground truth before a download, so
- * which entry that example is scored on cannot be read from the listing.
+ * The benchmark the first launch recommends. The front-end design's first-run
+ * journey (§ 3) downloads a benchmark, then launches the Editor's example
+ * pipeline, which is retrieval-only: so the smallest available benchmark a
+ * pipeline that does not end in an answer is scored on, read off the ground
+ * truth the listing serves before a download; otherwise the smallest
+ * available; null when none is.
  */
-export const FIRST_RUN_BENCHMARK = 'beir/scifact';
-
-/**
- * The benchmark the first launch recommends: the first-run journey's when the
- * manifest offers it, otherwise the smallest available; null when none is.
- */
-export function firstBenchmark(benchmarks: readonly BenchmarkEntry[]): { entry: Available; why: 'first-run' | 'smallest' } | null {
-  const named = benchmarks.filter(isAvailable).find((b) => b.name === FIRST_RUN_BENCHMARK);
-  if (named !== undefined) return { entry: named, why: 'first-run' };
+export function firstBenchmark(benchmarks: readonly BenchmarkEntry[], scorable: Scorable): { entry: Available; why: 'first-run' | 'smallest' } | null {
+  const retrievalOnly = smallestAvailable(benchmarks.filter((b) => b.ground_truth !== null && scoredBy(scorable, b.ground_truth, false)));
+  if (retrievalOnly !== null) return { entry: retrievalOnly, why: 'first-run' };
   const smallest = smallestAvailable(benchmarks);
   return smallest === null ? null : { entry: smallest, why: 'smallest' };
 }

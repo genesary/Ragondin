@@ -10,6 +10,7 @@ import type { SetupSection } from '../routes.ts';
 import { JobQueueProvider } from '../jobs/queue.tsx';
 import type { RequestState } from '../shell/states.tsx';
 import { parseRules } from '../../design/testing/css.ts';
+import { NextStep } from './FirstLaunch.tsx';
 import { SetupScreen, UNDO_WINDOW_MS } from './SetupScreen.tsx';
 
 const hex = (c: string) => c.repeat(64);
@@ -67,21 +68,18 @@ const entry = (name: string, state: BenchmarkEntry['state'], over: Partial<Bench
   name,
   format: name.split('/')[0] ?? 'beir',
   ground_truth: null,
-  scorable: null,
   licence: 'CC-BY-SA-4.0',
   licence_url: null,
   state,
   ...over,
 });
 
-/** What the API says a ground truth scores (`CarriedPieces::scorable`), as it sends it. */
-const ANY = { ending_in_answer: true, ending_elsewhere: true };
-const ANSWERS_ONLY = { ending_in_answer: true, ending_elsewhere: false };
-const READY = entry('beir/scifact', { kind: 'ready', dataset_version: hex('5') }, { ground_truth: 'qrels', scorable: ANY });
-const AVAILABLE = entry('beir/fiqa', { kind: 'available', size_bytes: 17_100_000 }, { licence_url: 'https://example.org/fiqa-terms' });
-const DIFFERS = entry('beir/nfcorpus', { kind: 'differs', expected: hex('a'), found: hex('b') }, { ground_truth: 'qrels', scorable: ANY });
+const READY = entry('beir/scifact', { kind: 'ready', dataset_version: hex('5') }, { ground_truth: 'qrels' });
+// The listing serves an available benchmark's ground truth, from its manifest entry, before the download.
+const AVAILABLE = entry('beir/fiqa', { kind: 'available', size_bytes: 17_100_000 }, { ground_truth: 'qrels', licence_url: 'https://example.org/fiqa-terms' });
+const DIFFERS = entry('beir/nfcorpus', { kind: 'differs', expected: hex('a'), found: hex('b') }, { ground_truth: 'qrels' });
 const UNREADABLE = entry('squad/squad', { kind: 'unreadable', error: 'corpus.jsonl line 4: expected `_id`' });
-const LOCAL = entry('mine', { kind: 'local', dataset_version: hex('c') }, { format: 'beir-qa', ground_truth: 'both', scorable: ANSWERS_ONLY, licence: null });
+const LOCAL = entry('mine', { kind: 'local', dataset_version: hex('c') }, { format: 'beir-qa', ground_truth: 'both', licence: null });
 const EVERY_STATE = [READY, AVAILABLE, DIFFERS, UNREADABLE, LOCAL];
 
 const service = (family: string, name: string, uri: string, over: Partial<ServiceStatus> = {}): ServiceStatus => ({ family, name, uri, connected: false, identity: null, ...over });
@@ -99,6 +97,18 @@ function Harness({ workspace = { status: 'loaded', value: WORKSPACE }, section, 
       <SetupScreen client={client} workspace={workspace} refreshWorkspace={refresh} retryWorkspace={refresh} section={section} />
     </JobQueueProvider>
   );
+}
+
+/**
+ * The Harness with the shell's workspace read again on each refresh, as the
+ * shell does, each read after the first counting `ready` benchmarks — so what the screen says
+ * from the counts follows the writes that changed them.
+ */
+function LiveHarness({ ready }: { ready: number }) {
+  const [workspace, setWorkspace] = useState<RequestState<Workspace>>({ status: 'loaded', value: { ...WORKSPACE, counts: { ...WORKSPACE.counts, benchmarks_ready: 0 } } });
+  // A read over the network, as the shell's is: its answer lands after the write's.
+  const refresh = () => void setTimeout(() => setWorkspace({ status: 'loaded', value: { ...WORKSPACE, counts: { ...WORKSPACE.counts, benchmarks_ready: ready } } }), 0);
+  return <Harness workspace={workspace} refresh={refresh} />;
 }
 
 const routes = (over: MockRoutes = {}): MockRoutes => ({
@@ -615,9 +625,9 @@ describe('the first launch', () => {
     expect(screen.queryByRole('region', { name: 'Services' })).toBeNull();
   });
 
-  it('recommends beir/scifact, the first-run benchmark the Editor’s retrieval-only example is scored on, though another is smaller', async () => {
-    const squad = entry('squad/dev', { kind: 'available', size_bytes: 4_854_279 });
-    const scifact = entry('beir/scifact', { kind: 'available', size_bytes: 8_172_614 });
+  it('recommends the smallest benchmark the Editor’s retrieval-only example is scored on, read off the ground truth served before download, though another is smaller', async () => {
+    const squad = entry('squad/dev', { kind: 'available', size_bytes: 4_854_279 }, { ground_truth: 'both' });
+    const scifact = entry('beir/scifact', { kind: 'available', size_bytes: 8_172_614 }, { ground_truth: 'qrels' });
     mockApi(routes({ 'GET /benchmarks': { body: { scorable: SCORABLE, benchmarks: [scifact, squad] } }, 'GET /services': { body: { services: [] } } }));
     render(<Harness />);
     const start = await screen.findByRole('region', { name: 'Get started' });
@@ -629,9 +639,9 @@ describe('the first launch', () => {
     expect(within(first).getByRole('button', { name: 'Download' }).getAttribute('aria-disabled')).toBeNull();
   });
 
-  it('points at the smallest benchmark the manifest pins when it does not offer beir/scifact', async () => {
-    const big = entry('beir/trec-covid', { kind: 'available', size_bytes: 230_000_000 });
-    const small = entry('beir/nfcorpus', { kind: 'available', size_bytes: 5_200_000 });
+  it('points at the smallest benchmark the manifest pins when no retrieval-only pipeline is scored on any', async () => {
+    const big = entry('beir/trec-covid', { kind: 'available', size_bytes: 230_000_000 }, { ground_truth: 'both' });
+    const small = entry('beir/nfcorpus', { kind: 'available', size_bytes: 5_200_000 }, { ground_truth: 'reference_answers' });
     mockApi(routes({ 'GET /benchmarks': { body: { scorable: SCORABLE, benchmarks: [big, small] } }, 'GET /services': { body: { services: [] } } }));
     render(<Harness />);
     const start = await screen.findByRole('region', { name: 'Get started' });
@@ -1122,34 +1132,105 @@ describe('the address', () => {
 describe('leading a new user to a first run', () => {
   const empty = routes({ 'GET /benchmarks': { body: { scorable: SCORABLE, benchmarks: [] } }, 'GET /services': { body: { services: [] } } });
 
-  it('says which pipelines each benchmark can score, from what the API says, and that an available one says so once downloaded', async () => {
+  it('says which pipelines each benchmark can score, from what the API says, an available one before its download', async () => {
     mockApi(routes());
     render(<Harness />);
     await within(await screen.findByRole('region', { name: 'Benchmarks' })).findByText('beir/scifact');
     expect(within(region('Benchmarks')).getByRole('columnheader', { name: 'Scores' })).toBeTruthy();
     expect(row('beir/scifact').textContent).toContain('any pipeline');
     expect(row('mine').textContent).toContain('only a pipeline that ends in an answer');
-    expect(row('beir/fiqa').textContent).toContain('known once downloaded');
+    expect(row('beir/fiqa').textContent).toContain('qrels');
+    expect(row('beir/fiqa').textContent).toContain('any pipeline');
+    expect(row('beir/fiqa').textContent).not.toContain('known once downloaded');
+  });
+
+  it('says a benchmark that carries no ground truth scores no pipeline, as the API’s lists say', async () => {
+    const bare = entry('beir/bare', { kind: 'local', dataset_version: hex('9') }, { ground_truth: 'none', licence: null });
+    mockApi(routes({ 'GET /benchmarks': { body: { scorable: SCORABLE, benchmarks: [READY, bare] } } }));
+    render(<Harness />);
+    await within(await screen.findByRole('region', { name: 'Benchmarks' })).findByText('beir/bare');
+    expect(row('beir/bare').textContent).toContain('no ground truth');
+    expect(row('beir/bare').textContent).toContain('no pipeline');
   });
 
   it('after the first launch ends with a benchmark ready, says so and offers the next step, the Editor', async () => {
-    const imported = entry('notes', { kind: 'local', dataset_version: hex('d') }, { licence: null, ground_truth: 'qrels', scorable: ANY });
+    const imported = entry('notes', { kind: 'local', dataset_version: hex('d') }, { licence: null, ground_truth: 'qrels' });
     mockApi({ ...empty, 'POST /benchmarks/import': { body: imported } });
-    render(<Harness />);
+    render(<LiveHarness ready={1} />);
     const start = within(await screen.findByRole('region', { name: 'Get started' }));
     fireEvent.change(start.getByLabelText('Corpus directory'), { target: { value: '/data/notes' } });
     fireEvent.change(start.getByLabelText('Import as'), { target: { value: 'notes' } });
     fireEvent.click(start.getByRole('button', { name: 'Import' }));
 
     const next = await screen.findByRole('region', { name: 'Next step' });
-    expect(next.textContent).toContain('notes is ready');
-    expect(next.textContent).toContain('scores any pipeline');
+    expect(next.textContent).toContain('1 benchmark is ready');
+    expect(next.textContent).toContain('which pipelines each scores');
     expect(within(next).getByRole('link', { name: 'Open Editor' }).getAttribute('href')).toBe('#editor');
     expect(within(next).getByRole('link', { name: 'Runs' }).getAttribute('href')).toBe('#runs');
   });
 
+  it('shows no Next step on a visit to a workspace that is already populated, even once a write reads its listing again', async () => {
+    const imported = entry('notes', { kind: 'local', dataset_version: hex('d') }, { licence: null, ground_truth: 'qrels' });
+    mockApi(routes({ 'POST /benchmarks/import': { body: imported } }));
+    render(<LiveHarness ready={3} />);
+    const benchmarks = within(await screen.findByRole('region', { name: 'Benchmarks' }));
+    await benchmarks.findByText('beir/scifact');
+    expect(screen.queryByRole('region', { name: 'Next step' })).toBeNull();
+    fireEvent.change(benchmarks.getByLabelText('Corpus directory'), { target: { value: '/data/notes' } });
+    fireEvent.change(benchmarks.getByLabelText('Import as'), { target: { value: 'notes' } });
+    fireEvent.click(benchmarks.getByRole('button', { name: 'Import' }));
+    await benchmarks.findByText('notes');
+    expect(screen.queryByRole('region', { name: 'Next step' })).toBeNull();
+  });
+
+  it('shows no Next step while the first launch lasts, and shows it once it ends', async () => {
+    const imported = entry('notes', { kind: 'local', dataset_version: hex('d') }, { licence: null, ground_truth: 'qrels' });
+    mockApi({ ...empty, 'POST /benchmarks/import': { body: imported } });
+    render(<LiveHarness ready={1} />);
+    const start = within(await screen.findByRole('region', { name: 'Get started' }));
+    expect(screen.queryByRole('region', { name: 'Next step' })).toBeNull();
+    fireEvent.change(start.getByLabelText('Corpus directory'), { target: { value: '/data/notes' } });
+    fireEvent.change(start.getByLabelText('Import as'), { target: { value: 'notes' } });
+    fireEvent.click(start.getByRole('button', { name: 'Import' }));
+    await screen.findByRole('region', { name: 'Next step' });
+  });
+
+  it('says, when the first launch ended with nothing ready and no service bound, that no benchmark is ready, naming no service', () => {
+    render(<NextStep ready={0} services={[]} />);
+    const next = screen.getByRole('region', { name: 'Next step' });
+    expect(next.textContent).toContain('No benchmark is ready yet. Next: add a benchmark below');
+    expect(next.textContent).not.toContain('bound');
+  });
+
+  it('names the services bound when the first launch ended with a service and no benchmark ready', () => {
+    render(<NextStep ready={0} services={[QWEN]} />);
+    expect(screen.getByRole('region', { name: 'Next step' }).textContent).toContain('generator/qwen is bound. Next: add a benchmark below');
+  });
+
+  it('keeps the family chosen in the first launch’s Connect form once a Connect ends the first launch', async () => {
+    const bge = service('reranker', 'bge', 'http://127.0.0.1:9090');
+    mockApi({
+      ...empty,
+      'PUT /services/{family}/{name}': { body: { services: [bge] } },
+      'POST /services/{family}/{name}/probe': { body: { identity: 'bge-reranker-v2-m3@sha256:1f2e' } },
+    });
+    render(<Harness />);
+    const start = within(await screen.findByRole('region', { name: 'Get started' }));
+    const connect = within(start.getByRole('form', { name: 'Connect a service' }));
+    fireEvent.change(connect.getByLabelText('Family'), { target: { value: 'reranker' } });
+    fireEvent.change(connect.getByLabelText('Name'), { target: { value: 'bge' } });
+    fireEvent.change(connect.getByLabelText('Address'), { target: { value: 'http://127.0.0.1:9090' } });
+    fireEvent.click(connect.getByRole('button', { name: 'Connect' }));
+
+    const services = within(await screen.findByRole('region', { name: 'Services' }));
+    await services.findByRole('listitem', { name: 'reranker/bge' });
+    const form = within(services.getByRole('form', { name: 'Connect a service' }));
+    await waitFor(() => expect((form.getByLabelText('Name') as HTMLInputElement).value).toBe(''));
+    expect((form.getByLabelText('Family') as HTMLSelectElement).value).toBe('reranker');
+  });
+
   it('keeps the family and the fields typed in the first launch’s Connect form once the first launch ends', async () => {
-    const imported = entry('notes', { kind: 'local', dataset_version: hex('d') }, { licence: null, ground_truth: 'qrels', scorable: ANY });
+    const imported = entry('notes', { kind: 'local', dataset_version: hex('d') }, { licence: null, ground_truth: 'qrels' });
     mockApi({ ...empty, 'POST /benchmarks/import': { body: imported } });
     render(<Harness />);
     const start = within(await screen.findByRole('region', { name: 'Get started' }));
@@ -1216,6 +1297,35 @@ describe('leading a new user to a first run', () => {
     expect(within(row('beir/fiqa')).queryByRole('button', { name: /Cancel/ })).toBeNull();
   });
 
+  it('brings Cancel back when the queue refuses the cancellation', async () => {
+    const api = mockApi(routes({ 'POST /benchmarks/{name}/download': { body: { job_id: '7-0' } }, 'DELETE /jobs/{id}': problem('job_finished', 409, 'Job 7-0 has already finished.') }));
+    render(<Harness />);
+    await within(await screen.findByRole('region', { name: 'Benchmarks' })).findByText('beir/fiqa');
+    send({ event: 'resync', data: { jobs: [], faults: [] } });
+    fireEvent.click(within(row('beir/fiqa')).getByRole('button', { name: 'Download' }));
+    await waitFor(() => expect(row('beir/fiqa').textContent).toContain('Queued'));
+    send({ event: 'running', data: download('7-0', running(1_000_000, 17_100_000)) });
+    fireEvent.click(within(row('beir/fiqa')).getByRole('button', { name: 'Cancel the download of beir/fiqa' }));
+    await waitFor(() => expect(api.requests).toContain('DELETE /api/v1/jobs/7-0'));
+    const cancel = await within(row('beir/fiqa')).findByRole('button', { name: 'Cancel the download of beir/fiqa' });
+    expect(cancel.getAttribute('aria-disabled')).toBeNull();
+    expect(row('beir/fiqa').textContent).not.toContain('Cancelling');
+  });
+
+  it('offers Cancel on a queued download, which cancels its job', async () => {
+    const api = mockApi(routes({ 'POST /benchmarks/{name}/download': { body: { job_id: '7-0' } }, 'DELETE /jobs/{id}': { body: download('7-0', { kind: 'queued' }) } }));
+    render(<Harness />);
+    await within(await screen.findByRole('region', { name: 'Benchmarks' })).findByText('beir/fiqa');
+    send({ event: 'resync', data: { jobs: [], faults: [] } });
+    fireEvent.click(within(row('beir/fiqa')).getByRole('button', { name: 'Download' }));
+    await waitFor(() => expect(row('beir/fiqa').textContent).toContain('Queued'));
+    fireEvent.click(within(row('beir/fiqa')).getByRole('button', { name: 'Cancel the download of beir/fiqa' }));
+    await waitFor(() => expect(api.requests).toContain('DELETE /api/v1/jobs/7-0'));
+    await waitFor(() => expect(row('beir/fiqa').textContent).toContain('Cancelling'));
+    send({ event: 'cancelled', data: download('7-0', { kind: 'cancelled', finished_at_ms: 4, partial_traces: 0 }) });
+    await waitFor(() => expect(within(row('beir/fiqa')).getByRole('button', { name: 'Retry' })).toBeTruthy());
+  });
+
   it('says what a service is in plain words', async () => {
     mockApi(routes());
     render(<Harness />);
@@ -1228,12 +1338,23 @@ describe('leading a new user to a first run', () => {
     mockApi(routes());
     render(<Harness />);
     await within(await screen.findByRole('region', { name: 'Benchmarks' })).findByText('beir/fiqa');
-    expect(screen.getByText('Setup', { selector: '.rg-setup__title' })).toBeTruthy();
     const link = within(row('beir/fiqa')).getByRole('link', { name: 'CC-BY-SA-4.0' });
     expect(link.classList.contains('rg-setup__link')).toBe(true);
     const css = (await import('./Setup.css?raw')).default;
     const rules = parseRules(css);
     expect(rules.some((r) => r.selector.includes('.rg-setup__link') && r.declarations.get('color') === 'var(--accent)' && r.declarations.get('text-decoration-line') === 'underline')).toBe(true);
+  });
+});
+
+describe('the screen’s name', () => {
+  it('is the shell’s level-one heading, shown, with no second copy hidden from assistive technology', async () => {
+    mockApi({ 'GET /workspace': { body: WORKSPACE }, ...routes() }, { build: BUILD });
+    render(<App client={createApiClient()} build={BUILD} reload={() => {}} />);
+    await screen.findByRole('region', { name: 'Benchmarks' });
+    const heading = screen.getByRole('heading', { level: 1 });
+    expect(heading.textContent).toBe('Setup');
+    expect(heading.classList.contains('rg-visually-hidden')).toBe(false);
+    expect(document.querySelectorAll('[aria-hidden="true"]').length === 0 || [...document.querySelectorAll('[aria-hidden="true"]')].every((el) => el.textContent !== 'Setup')).toBe(true);
   });
 });
 

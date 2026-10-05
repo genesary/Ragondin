@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { ApiProblem } from '../api/client.ts';
-import type { BenchmarkEntry, JobSummary } from '../api/types.ts';
+import { SCORABLE } from '../api/testing.ts';
+import type { BenchmarkEntry, GroundTruth, JobSummary } from '../api/types.ts';
 import { downloadView, familyLabel, finishedDownloads, firstBenchmark, formatSize, groundTruthLabel, isFirstLaunch, scorableLabel, shortDigest, smallestAvailable, splitBuild } from './model.ts';
 
-const entry = (name: string, state: BenchmarkEntry['state']): BenchmarkEntry => ({ name, format: 'beir', ground_truth: null, scorable: null, licence: null, licence_url: null, state });
+const entry = (name: string, state: BenchmarkEntry['state'], ground_truth: GroundTruth | null = null): BenchmarkEntry => ({ name, format: 'beir', ground_truth, licence: null, licence_url: null, state });
 
 describe('formatSize', () => {
   it.each([
@@ -119,12 +120,16 @@ describe('finishedDownloads', () => {
 
 describe('scorableLabel', () => {
   it.each([
-    [{ ending_in_answer: true, ending_elsewhere: true }, 'any pipeline'],
-    [{ ending_in_answer: true, ending_elsewhere: false }, 'only a pipeline that ends in an answer'],
-    [{ ending_in_answer: false, ending_elsewhere: true }, 'only a pipeline that does not end in an answer'],
-    [{ ending_in_answer: false, ending_elsewhere: false }, 'no pipeline'],
-  ])('says in words what the API says %j scores', (scorable, words) => {
-    expect(scorableLabel(scorable)).toBe(words);
+    ['qrels', 'any pipeline'],
+    ['reference_answers', 'only a pipeline that ends in an answer'],
+    ['both', 'only a pipeline that ends in an answer'],
+    // The API lists `none` under neither: nothing would score the run.
+    ['none', 'no pipeline'],
+  ] as const)('says in words which pipelines a benchmark carrying %s scores, as the API’s lists say', (truth, words) => {
+    expect(scorableLabel(SCORABLE, truth)).toBe(words);
+  });
+  it('reads the lists the API serves rather than a rule of its own', () => {
+    expect(scorableLabel({ ending_in_answer: [], ending_elsewhere: ['qrels'] }, 'qrels')).toBe('only a pipeline that does not end in an answer');
   });
 });
 
@@ -137,12 +142,16 @@ describe('familyLabel', () => {
 });
 
 describe('firstBenchmark', () => {
-  const available = (name: string, size_bytes: number) => entry(name, { kind: 'available', size_bytes });
-  it('is beir/scifact when the manifest offers it, whatever its size', () => {
-    expect(firstBenchmark([available('squad/dev', 1), available('beir/scifact', 9)])).toEqual({ entry: available('beir/scifact', 9), why: 'first-run' });
+  const available = (name: string, size_bytes: number, ground_truth: GroundTruth) => entry(name, { kind: 'available', size_bytes }, ground_truth);
+  it('is the smallest available benchmark a retrieval-only pipeline is scored on, read off its ground truth and the API’s lists', () => {
+    const squad = available('squad/dev', 1, 'both');
+    const scifact = available('beir/scifact', 9, 'qrels');
+    const other = available('beir/other', 4, 'qrels');
+    expect(firstBenchmark([squad, scifact], SCORABLE)).toEqual({ entry: scifact, why: 'first-run' });
+    expect(firstBenchmark([squad, scifact, other], SCORABLE)).toEqual({ entry: other, why: 'first-run' });
   });
   it('is the smallest available otherwise, and none when nothing is available', () => {
-    expect(firstBenchmark([available('beir/a', 5), available('beir/b', 2)])).toEqual({ entry: available('beir/b', 2), why: 'smallest' });
-    expect(firstBenchmark([entry('beir/scifact', { kind: 'ready', dataset_version: 'x' })])).toBeNull();
+    expect(firstBenchmark([available('squad/a', 5, 'both'), available('squad/b', 2, 'both')], SCORABLE)).toEqual({ entry: available('squad/b', 2, 'both'), why: 'smallest' });
+    expect(firstBenchmark([entry('beir/scifact', { kind: 'ready', dataset_version: 'x' })], SCORABLE)).toBeNull();
   });
 });

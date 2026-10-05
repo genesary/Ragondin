@@ -151,12 +151,11 @@ describe('the states', () => {
     expect(screen.getByRole('link', { name: 'Open Editor' }).getAttribute('href')).toBe('#editor');
   });
 
-  it('draws the empty state’s two actions at one size', async () => {
+  it('draws the actions of the empty state’s steps at one size', async () => {
     show('#runs', routes({ body: { runs: [], unreadable: [], shapes: {} } }));
-    const open = await screen.findByRole('link', { name: 'Open Editor' });
-    const launch = screen.getByRole('button', { name: 'Launch…' });
-    expect(launch.className).toContain('rg-btn--l');
-    expect(open.className).toContain('rg-btn--l');
+    const steps = await screen.findByRole('list', { name: 'Steps to a first run' });
+    const actions = [within(steps).getByRole('link', { name: 'Open Setup' }), within(steps).getByRole('link', { name: 'Open Editor' }), within(steps).getByRole('button', { name: 'Launch…' })];
+    for (const action of actions) expect(action.classList.contains('rg-btn--s'), action.textContent ?? '').toBe(true);
   });
 });
 

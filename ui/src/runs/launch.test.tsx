@@ -27,7 +27,7 @@ const pipeline = (name: string, over: Partial<PipelineSummary> = {}): PipelineSu
 // `hybrid` ends in a generator (HYBRID_DETAIL); `lexical` is retrieval only.
 const PIPELINES = { pipelines: [pipeline('hybrid', { ends_in_answer: true }), pipeline('lexical', { hash: hex('9') }), pipeline('broken', { hash: null, ends_in_answer: null, error: { detail: 'node `rerank` reads `fused`, which no node writes', location: { node: 'rerank', edge: null } } })] };
 
-const bench = (name: string, state: BenchmarkEntry['state'], truth: BenchmarkEntry['ground_truth'] = 'qrels'): BenchmarkEntry => ({ name, format: 'beir', ground_truth: truth, scorable: null, licence: null, licence_url: null, state });
+const bench = (name: string, state: BenchmarkEntry['state'], truth: BenchmarkEntry['ground_truth'] = 'qrels'): BenchmarkEntry => ({ name, format: 'beir', ground_truth: truth, licence: null, licence_url: null, state });
 const BENCHMARKS = {
   scorable: SCORABLE,
   benchmarks: [bench('beir/scifact', { kind: 'ready', dataset_version: SCIFACT }), bench('beir/fiqa', { kind: 'available', size_bytes: 1 }, null), bench('mine', { kind: 'local', dataset_version: hex('7') }, 'both')],

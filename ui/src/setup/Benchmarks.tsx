@@ -6,7 +6,7 @@
 import type { ReactNode, Ref } from 'react';
 import { Button, Section, StatusChip, Table, type Status, type TableRow } from '../../design/index.ts';
 import type { ApiProblem } from '../api/client.ts';
-import type { BenchmarkEntry } from '../api/types.ts';
+import type { BenchmarkEntry, Scorable } from '../api/types.ts';
 import { STREAM_DOWN, STREAM_DOWN_LIVE } from '../jobs/stream.ts';
 import { ErrorState, Resource, type RequestState } from '../shell/states.tsx';
 import { ImportForm } from './forms.tsx';
@@ -242,7 +242,7 @@ const COLUMNS = [
   { id: 'action', label: <span className="rg-visually-hidden">Action</span> },
 ];
 
-function rows(benchmarks: readonly BenchmarkEntry[], downloads: Downloads): TableRow[] {
+function rows(benchmarks: readonly BenchmarkEntry[], scorable: Scorable | null, downloads: Downloads): TableRow[] {
   return benchmarks.map((b) => {
     const view = b.state.kind === 'available' ? downloads.view(b.name) : null;
     return {
@@ -251,8 +251,8 @@ function rows(benchmarks: readonly BenchmarkEntry[], downloads: Downloads): Tabl
         <span className="rg-setup__name">{b.name}</span>,
         b.state.kind === 'available' && view !== null ? downloadChip(view, b.state.size_bytes) : <StatusChip state={CHIP[b.state.kind]}>{b.state.kind}</StatusChip>,
         <span className="rg-setup__detail">{detail(b, downloads)}</span>,
-        b.ground_truth !== null ? groundTruthLabel(b.ground_truth) : b.state.kind === 'available' ? <span className="rg-setup__absent">known once downloaded</span> : null,
-        b.scorable === null ? null : scorableLabel(b.scorable),
+        b.ground_truth === null ? null : groundTruthLabel(b.ground_truth),
+        b.ground_truth === null || scorable === null ? null : scorableLabel(scorable, b.ground_truth),
         <Licence entry={b} />,
         <ActionSlot benchmark={b.name}>{view === null ? null : <DownloadControls benchmark={b.name} view={view} downloads={downloads} />}</ActionSlot>,
       ],
@@ -262,6 +262,8 @@ function rows(benchmarks: readonly BenchmarkEntry[], downloads: Downloads): Tabl
 
 export type BenchmarksProps = {
   state: RequestState<readonly BenchmarkEntry[]>;
+  /** The listing's `scorable`: which ground truths each kind of pipeline is scored on; null before it is read. */
+  scorable: Scorable | null;
   /** A read of the listing in place that failed: the table stays, and this says why it is not newer. */
   stale: ApiProblem | null;
   onRetry: () => void;
@@ -272,7 +274,7 @@ export type BenchmarksProps = {
   anchor: Ref<HTMLElement>;
 };
 
-export function Benchmarks({ state, stale, onRetry, onRefresh, onImport, downloads, anchor }: BenchmarksProps) {
+export function Benchmarks({ state, scorable, stale, onRetry, onRefresh, onImport, downloads, anchor }: BenchmarksProps) {
   return (
     <Section heading="Benchmarks" caption="Pinned snapshots: a benchmark is ready when the dataset on disk digests to the version the manifest pins." anchor={anchor}>
       <Resource state={state} loading="Reading benchmarks" error={(problem) => <ErrorState problem={problem} onRetry={onRetry} />}>
@@ -281,7 +283,7 @@ export function Benchmarks({ state, stale, onRetry, onRefresh, onImport, downloa
             <p className="rg-setup__note">The registry lists no benchmark: this build’s manifest pins none, and nothing was imported.</p>
           ) : (
             <>
-              <Table caption="Benchmarks the registry knows" columns={COLUMNS} rows={rows(benchmarks, downloads)} />
+              <Table caption="Benchmarks the registry knows" columns={COLUMNS} rows={rows(benchmarks, scorable, downloads)} />
               {stale === null ? null : <ErrorState problem={stale} onRetry={onRefresh} />}
             </>
           )
