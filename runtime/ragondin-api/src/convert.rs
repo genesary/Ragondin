@@ -936,4 +936,33 @@ mod tests {
             assert_eq!(carried(ground_truth(carries)), carries);
         }
     }
+
+    fn component_row(node: &str, values: &[Option<&str>]) -> ragondin_experiments::ParameterRow {
+        ragondin_experiments::ParameterRow {
+            node: NodeId::new(node),
+            key: ParameterKey::Component,
+            values: values
+                .iter()
+                .map(|v| v.map(|family| ParamValue::String(family.to_owned())))
+                .collect(),
+        }
+    }
+
+    /// A node's `Component` row is also a row when every run holds the node
+    /// under different families: such a node is held by every run, so it is
+    /// no partial node.
+    #[test]
+    fn a_node_every_run_holds_under_different_families_is_not_partial() {
+        let rows = [
+            component_row("leg", &[Some("retriever"), Some("reranker")]),
+            component_row("rerank", &[None, Some("reranker")]),
+        ];
+        assert_eq!(
+            partial_nodes(&rows),
+            vec![PartialNode {
+                node: "rerank".to_owned(),
+                present: vec![false, true],
+            }]
+        );
+    }
 }
