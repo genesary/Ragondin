@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type KeyboardEvent } from 'react';
 import { Button, Inspector } from '../../design/index.ts';
 import type { ApiClient } from '../api/client.ts';
-import type { Capabilities, ServiceStatus } from '../api/types.ts';
+import type { Capabilities, ParameterValue, ServiceStatus } from '../api/types.ts';
 import { Canvas, edgeId, type CanvasPorts, type Position } from '../canvas/index.ts';
 import { danglingInputs, freshId, toGraph, type WireDocument } from './document.ts';
 import { EditorInspector, type NodeVerdict } from './EditorInspector.tsx';
+import { missingRequired, parametersOf, startingParams } from './parameters.ts';
 import { InsertMenu, NodeEntries } from './menus.tsx';
 import { Palette, paletteOf } from './Palette.tsx';
 import { INPUT_KIND, portsOf, refusal, type PortGrammar } from './ports.ts';
@@ -137,12 +138,23 @@ export function Editor({ client, title, stored = null, initial, layout, capabili
   // The server's words on the node and the edge it located, and on every
   // consumer an input of which names nothing.
   const dangling = useMemo(() => danglingInputs(doc), [doc]);
+  // What each node takes, from the served list; and the required keys a node lacks, said on the node as the server
+  // would refuse them at a save — under a dangling input, which is the more basic fault.
+  const takes = useCallback((component: string, impl: string, params: Readonly<Record<string, ParameterValue>>) => parametersOf(capabilities, services, component, impl, params), [capabilities, services]);
+  const missing = useMemo(() => {
+    const out: Record<string, string> = {};
+    for (const node of doc.pipeline.nodes) {
+      const lacking = missingRequired(takes(node.component, node.impl, node.params) ?? [], node.params);
+      if (lacking.length > 0) out[node.id] = `${lacking.map((k) => `\`${k}\``).join(', ')} ${lacking.length === 1 ? 'is' : 'are'} required: set ${lacking.length === 1 ? 'it' : 'them'} in the inspector.`;
+    }
+    return out;
+  }, [doc, takes]);
   const located = verdict.status === 'invalid' ? verdict.problem.location : null;
   const issues = useMemo(() => {
-    const out: Record<string, string> = { ...dangling };
+    const out: Record<string, string> = { ...missing, ...dangling };
     if (verdict.status === 'invalid' && located?.node != null) out[located.node] = verdict.problem.message;
     return out;
-  }, [dangling, verdict, located]);
+  }, [missing, dangling, verdict, located]);
   const invalidEdges = useMemo(() => (located?.edge == null ? [] : [edgeId(located.edge.from, located.edge.to, located.edge.port)]), [located]);
 
   const verdictOf = (id: string): NodeVerdict => {
@@ -158,7 +170,8 @@ export function Editor({ client, title, stored = null, initial, layout, capabili
     const beside = position === undefined && at !== undefined ? { x: at.x + BESIDE, y: at.y } : at;
     // The id the store gives it, from the same document.
     const id = freshId(doc, impl);
-    dispatch({ type: 'add', component, impl, ...(beside === undefined ? {} : { position: beside }) });
+    const params = startingParams(takes(component, impl, {}) ?? []);
+    dispatch({ type: 'add', component, impl, params, ...(beside === undefined ? {} : { position: beside }) });
     onSelect(id);
     setFocus({ node: id });
   };
@@ -247,6 +260,7 @@ export function Editor({ client, title, stored = null, initial, layout, capabili
         doc={doc}
         node={node}
         ports={portsOf(node, grammar)}
+        parameters={takes(node.component, node.impl, node.params)}
         verdict={verdictOf(id)}
         quiet={QUIET[verdict.status]}
         dispatch={dispatch}

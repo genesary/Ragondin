@@ -82,6 +82,14 @@ export type Capabilities = {
   remote: boolean;
 };
 
+/** The parameters one value of a [`ParameterChoice`]'s key adds. */
+export type ChoiceCase = {
+  /** The parameters it adds. */
+  parameters: Parameter[];
+  /** The value; `null` for any other non-empty one, a bound name. */
+  value: string | null;
+};
+
 /**
  * `POST /compare`: the runs to compare, the baseline among them, and
  * optionally a manual pairing to keep before comparing.
@@ -315,6 +323,11 @@ export type EdgeLocation = {
  */
 export type FamilyCapabilities = {
   /**
+   * The parameters a node takes under a name bound in the family with
+   * `--remote` or a service binding; empty for `embedder`.
+   */
+  bound: Parameter[];
+  /**
    * The family, spelled as `--remote` and a service binding spell it: a
    * node family as a configuration's `component:` value, or `embedder`,
    * which no node is and a `dense` node names with `embedder:`.
@@ -330,6 +343,11 @@ export type FamilyCapabilities = {
    * build and not in this one, each with what a build needs to carry it.
    */
   not_carried: NotCarried[];
+  /**
+   * The parameters a node takes under each name in `local`, in `local`'s
+   * order; empty for `embedder`, whose keys are a `dense` node's.
+   */
+  parameters: ImplementationParameters[];
   /**
    * The ports a node of the family declares, as the pipeline grammar
    * derives them from the family alone; `null` for `embedder`, which no
@@ -459,6 +477,20 @@ export type GraphNode = {
  * can compute.
  */
 export type GroundTruth = "none" | "qrels" | "reference_answers" | "both";
+
+/**
+ * The parameters a node takes under one implementation name: the keys the
+ * executor reads for its family and the keys its constructor reads, as the
+ * composition root declares them.
+ */
+export type ImplementationParameters = {
+  /** A key whose value adds further parameters, if it has one. */
+  choice: ParameterChoice | null;
+  /** The `impl:` name. */
+  name: string;
+  /** Its parameters, whatever the value of `choice`'s key. */
+  parameters: Parameter[];
+};
 
 /** `POST /benchmarks/import`: a corpus on disk, and the name to import it as. */
 export type ImportRequest = {
@@ -948,6 +980,43 @@ export type Pairing = {
 
 /** Where a stage's pairing comes from. */
 export type PairingSource = "automatic" | "manual";
+
+/** One parameter a node takes. */
+export type Parameter = {
+  /** What it is for, in a sentence. */
+  description: string;
+  /** The kind of value it holds. */
+  kind: ParameterKind;
+  /** The key, as a configuration writes it. */
+  name: string;
+  /**
+   * Whether a node must declare it: a node without it is refused before
+   * it is stored or run.
+   */
+  required: boolean;
+  /**
+   * The value the editor writes under it when a node is placed, or
+   * `null`. Only a required key with no component default has one, and
+   * nothing applies it to a node that lacks the key: it is written as an
+   * ordinary value, or not at all.
+   */
+  start: ParameterValue | null;
+};
+
+/** A key whose value adds parameters: a `dense` node's `embedder:`. */
+export type ParameterChoice = {
+  /**
+   * What each value adds. The first case whose `value` is the key's
+   * applies, else the case whose `value` is `null` when the key holds any
+   * other, non-empty text.
+   */
+  cases: ChoiceCase[];
+  /** The key. */
+  key: string;
+};
+
+/** The kind of value a parameter holds. */
+export type ParameterKind = "non_negative_integer" | "string" | "float";
 
 /** A node's parameter, as a configuration spells it. */
 export type ParameterName = {

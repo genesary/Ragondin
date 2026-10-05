@@ -352,6 +352,13 @@ describe('the keyboard', () => {
     expect(document.activeElement).toBe(nodeEl(container, 'dense'));
   });
 
+  it('places a node with the starting value of each required key, and nothing for an optional one', async () => {
+    const { api, container } = setup();
+    fireEvent.keyDown(container.querySelector('.react-flow')!, { key: '/' });
+    fireEvent.keyDown(document.activeElement!, { key: 'Enter' });
+    await waitFor(() => expect(nodesOf(validations(api).at(-1)!).find((n) => n.id === 'bm25')?.params).toEqual({ top_k: int('10') }));
+  });
+
   it('closes the insert list on Escape, placing nothing', () => {
     const { container } = setup();
     fireEvent.keyDown(container.querySelector('.react-flow')!, { key: '/' });
@@ -417,7 +424,57 @@ describe('the inspector in write mode', () => {
     const inspector = screen.getByRole('complementary', { name: 'vectors' });
     expect(within(inspector).getByText('retriever/dense')).toBeTruthy();
     expect((within(inspector).getByLabelText('Node id') as HTMLInputElement).value).toBe('vectors');
-    expect(within(inspector).getAllByRole('textbox').map((f) => f.getAttribute('id')?.split('-').at(-1))).toEqual(['id', 'embedder', 'top_k', 'key', 'value']);
+    expect(within(inspector).getAllByRole('textbox').map((f) => f.getAttribute('id')?.split('-param-').at(-1)?.split('-').at(-1))).toEqual([
+      'id',
+      'embedder',
+      'passage_prefix',
+      'query_prefix',
+      'served_model',
+      'top_k',
+      'key',
+      'value',
+    ]);
+  });
+
+  it('lists every parameter the implementation takes, the ones not set included, each with its kind and what it is for', () => {
+    setup(undefined, { start: 'vectors' });
+    const inspector = screen.getByRole('complementary', { name: 'vectors' });
+    const prefix = within(inspector).getByLabelText('query_prefix') as HTMLInputElement;
+    expect(prefix.value).toBe('');
+    expect(within(inspector).getByText('Text prepended to a query before it is embedded; absent, none. Never empty.')).toBeTruthy();
+    expect(within(inspector).getAllByText('Not set · text')).toHaveLength(2);
+    // The set ones say what they are for too.
+    expect(within(inspector).getByText('How many chunks the node returns, best first.')).toBeTruthy();
+  });
+
+  it('marks a required key the node does not set, from the served list, in the inspector and on the canvas', () => {
+    const { container } = setup(undefined, { initial: HYBRID_RAG, start: 'context' });
+    const inspector = screen.getByRole('complementary', { name: 'context' });
+    expect(within(inspector).getAllByText('Required: the pipeline cannot be saved or run without it.')).toHaveLength(2);
+    expect(nodeEl(container, 'context')!.querySelector('.rg-node')?.getAttribute('data-status')).toBe('invalid');
+    expect(within(nodeEl(container, 'context')!).getByText('`budget`, `separator` are required: set them in the inspector.')).toBeTruthy();
+    // A key it sets is not marked: the complete dense leg is clear.
+    expect(nodeEl(container, 'vectors')!.querySelector('.rg-node')?.getAttribute('data-status')).not.toBe('invalid');
+  });
+
+  it('sets a parameter not yet set, in the kind it is served with', async () => {
+    const { api } = setup(undefined, { initial: HYBRID_RAG, start: 'context' });
+    const field = screen.getByLabelText('budget');
+    fireEvent.change(field, { target: { value: '500' } });
+    fireEvent.blur(field);
+    await waitFor(() => expect(nodesOf(validations(api).at(-1)!).find((n) => n.id === 'context')?.params).toEqual({ budget: int('500') }));
+    const separator = screen.getByLabelText('separator');
+    fireEvent.change(separator, { target: { value: '12' } });
+    fireEvent.blur(separator);
+    await waitFor(() => expect(nodesOf(validations(api).at(-1)!).find((n) => n.id === 'context')?.params).toEqual({ budget: int('500'), separator: str('12') }));
+  });
+
+  it('refuses a value the served kind cannot carry, in words, and sets nothing', () => {
+    setup(undefined, { initial: HYBRID_RAG, start: 'context' });
+    const field = screen.getByLabelText('budget');
+    fireEvent.change(field, { target: { value: 'lots' } });
+    fireEvent.blur(field);
+    expect(screen.getByText('An integer is a whole number, such as 60: "lots" is not one.')).toBeTruthy();
   });
 
   it('sets a parameter, keeping its type', async () => {

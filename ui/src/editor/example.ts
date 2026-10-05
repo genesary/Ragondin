@@ -6,15 +6,20 @@
 // a tokenizer on disk, which a new workspace does not hold.
 // ARCHITECTURE.md § The editor.
 import type { Capabilities } from '../api/types.ts';
-import { int } from '../parameters.ts';
 import type { WireDocument } from './document.ts';
+import { parametersOf, startingParams } from './parameters.ts';
 
 const carries = (caps: Capabilities, family: string, impl: string) => caps.families.find((f) => f.family === family)?.local.includes(impl) === true;
 
-/** The lexical leg on the query, or null when the build carries no `bm25`. */
+/**
+ * The lexical leg on the query, placed as the palette places it — with the
+ * starting values the capabilities serve — or null when the build carries no
+ * `bm25`.
+ */
 export function exampleDocument(caps: Capabilities): WireDocument | null {
   if (!carries(caps, 'retriever', 'bm25')) return null;
-  return { pipeline: { inputs: ['query'], nodes: [{ id: 'lexical', component: 'retriever', impl: 'bm25', inputs: ['query'], params: { top_k: int('10') } }] } };
+  const params = startingParams(parametersOf(caps, [], 'retriever', 'bm25', {}) ?? []);
+  return { pipeline: { inputs: ['query'], nodes: [{ id: 'lexical', component: 'retriever', impl: 'bm25', inputs: ['query'], params }] } };
 }
 
 /**

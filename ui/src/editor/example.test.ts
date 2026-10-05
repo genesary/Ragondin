@@ -19,6 +19,18 @@ const LEXICAL = {
 };
 
 describe('the first-launch example', () => {
+  it('writes the starting value the capabilities serve for `top_k`, never one of its own', () => {
+    const served: Capabilities = {
+      ...WORKSPACE.capabilities,
+      families: WORKSPACE.capabilities.families.map((f) =>
+        f.family === 'retriever'
+          ? { ...f, parameters: f.parameters.map((i) => (i.name === 'bm25' ? { ...i, parameters: i.parameters.map((p) => (p.name === 'top_k' ? { ...p, start: int('25') } : p)) } : i)) }
+          : f,
+      ),
+    };
+    expect(exampleDocument(served)?.pipeline.nodes[0]?.params).toEqual({ top_k: int('25') });
+  });
+
   it('is the lexical leg alone, which runs without any service', () => {
     expect(exampleDocument(WORKSPACE.capabilities)).toEqual(LEXICAL);
   });

@@ -6,7 +6,7 @@ import type { Graph } from '../api/types.ts';
  * criterion's generation pipeline (bm25 and dense legs, rrf, a cross-encoder,
  * a context builder, a generator), lowered as the API lowers it — nodes sorted
  * by id, one edge per entry of a node's inputs in port order. The parameters
- * are trimmed, and `max_chunks` and `temperature` set, so that every family
+ * are trimmed, and `temperature` set, so that every family
  * shows its key parameter. The tests and the design-system preview draw it;
  * nothing in the bundle imports it.
  */
@@ -21,7 +21,7 @@ export const HYBRID_RERANK_GEN: Graph = {
     },
     { id: 'fused', family: 'fusion', implementation: 'rrf', parameters: { k: int('60') } },
     { id: 'lexical', family: 'retriever', implementation: 'bm25', parameters: { top_k: int('3') } },
-    { id: 'prompt', family: 'context_builder', implementation: 'concat', parameters: { max_chunks: int('5'), separator: str('\n') } },
+    { id: 'prompt', family: 'context_builder', implementation: 'concat', parameters: { budget: int('2000'), separator: str('\n') } },
     { id: 'reranked', family: 'reranker', implementation: 'cross_encoder', parameters: { top_k: int('10') } },
     { id: 'vectors', family: 'retriever', implementation: 'dense', parameters: { top_k: int('3'), embedder: str('onnx') } },
   ],

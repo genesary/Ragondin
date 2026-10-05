@@ -134,3 +134,6 @@
   .rg-editor__stage .rg-canvas__inspector { width: 100%; }
 }
 .rg-editor__import .rg-inline p { white-space: pre-line; }
+/* A parameter the node does not set: its kind where the kind picker would be, and what each served one is for under its row. */
+.rg-editor-inspector__unset { margin-top: 20px; min-height: var(--size-control); display: flex; align-items: center; font: var(--type-caption); color: var(--ink-3); }
+.rg-editor-inspector__about { margin: calc(-1 * var(--space-1)) 0 var(--space-2); font: var(--type-caption); color: var(--ink-3); }

@@ -1,6 +1,6 @@
 import { useEffect, useId, useState, type KeyboardEvent } from 'react';
 import { Button, Checkbox, Input, Inspector, Select, familyOfComponent } from '../../design/index.ts';
-import type { ParameterValue } from '../api/types.ts';
+import type { Parameter as Served, ParameterKind, ParameterValue } from '../api/types.ts';
 import { PORT_LABEL } from '../canvas/Port.tsx';
 import { bool, float, formatFloat, int, list, str } from '../parameters.ts';
 import { freshId, type WireDocument, type WireNode } from './document.ts';
@@ -15,6 +15,8 @@ export type EditorInspectorProps = {
   doc: WireDocument;
   node: WireNode;
   ports: NodePorts;
+  /** What the node takes, as `GET /workspace` serves it for its family and name; null when the capabilities say nothing about it. */
+  parameters: readonly Served[] | null;
   verdict: NodeVerdict;
   /** What the slot says when the server names nothing here: checking, clear, stopped elsewhere, or no verdict. */
   quiet: string;
@@ -155,6 +157,63 @@ function readOnlyReason(value: ParameterValue): string | null {
   return null;
 }
 
+// The kind a served parameter is typed in, and how its row names it while it is not set.
+const SERVED_KIND: Record<ParameterKind, { kind: Kind; label: string }> = {
+  non_negative_integer: { kind: 'int', label: 'integer, zero or more' },
+  string: { kind: 'string', label: 'text' },
+  float: { kind: 'float', label: 'float' },
+};
+const REQUIRED = 'Required: the pipeline cannot be saved or run without it.';
+
+/** What a served parameter is for, on a line of its own under its row, so an error on the field never hides it. */
+function About({ served }: { served: Served | undefined }) {
+  return served === undefined ? null : <p className="rg-editor-inspector__about">{served.description}</p>;
+}
+
+/**
+ * A parameter the implementation takes and the node does not set: an empty
+ * field, typed in the kind it is served with, that sets it once a value is
+ * entered; marked when it is required, since the server refuses to store or
+ * run the node without it.
+ */
+function Unset({ prefix, served, onSet }: { prefix: string; served: Served; onSet: (v: ParameterValue) => void }) {
+  const [text, setText] = useState('');
+  const [error, setError] = useState<string | undefined>(undefined);
+  const { kind, label } = SERVED_KIND[served.kind];
+  const commit = () => {
+    if (text.trim() === '' && kind !== 'string') return setError(undefined);
+    if (text === '') return setError(undefined);
+    const read = readAs(kind, text);
+    if ('error' in read) return setError(read.error);
+    setError(undefined);
+    setText('');
+    onSet(read.value);
+  };
+  const shown = error ?? (served.required ? REQUIRED : undefined);
+  return (
+    <>
+      <div className="rg-editor-inspector__param" data-unset>
+        <Input
+          id={`${prefix}-param-${served.name}`}
+          label={served.name}
+          mono
+          numeric={kind === 'int' || kind === 'float'}
+          value={text}
+          help=" "
+          {...(shown === undefined ? {} : { error: shown })}
+          onChange={(e) => setText(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') commit();
+          }}
+        />
+        <small className="rg-editor-inspector__unset">Not set · {label}</small>
+      </div>
+      <About served={served} />
+    </>
+  );
+}
+
 function Parameter({ prefix, name, value, onSet, onRemove }: { prefix: string; name: string; value: ParameterValue; onSet: (v: ParameterValue) => void; onRemove: () => void }) {
   const [text, setText] = useState(textOf(value));
   const [error, setError] = useState<string | undefined>(undefined);
@@ -243,7 +302,7 @@ const FROM_VALUE = '';
  * moves no field under the pointer; an edge it named is said again on that
  * port's row.
  */
-export function EditorInspector({ doc, node, ports, verdict, quiet, dispatch, onRenamed, run, onRunUpTo }: EditorInspectorProps) {
+export function EditorInspector({ doc, node, ports, parameters, verdict, quiet, dispatch, onRenamed, run, onRunUpTo }: EditorInspectorProps) {
   const prefix = useId();
   const [id, setId] = useState(node.id);
   const [idError, setIdError] = useState<string | undefined>(undefined);
@@ -281,7 +340,9 @@ export function EditorInspector({ doc, node, ports, verdict, quiet, dispatch, on
   };
 
   const family = familyOfComponent(node.component) ?? 'control';
-  const params = Object.keys(node.params).sort();
+  // Every key the node sets and every key it takes, set or not, in one key order.
+  const served = new Map((parameters ?? []).map((p) => [p.name, p]));
+  const params = [...new Set([...Object.keys(node.params), ...served.keys()])].sort();
   return (
     <Inspector
       family={family}
@@ -333,17 +394,18 @@ export function EditorInspector({ doc, node, ports, verdict, quiet, dispatch, on
         })}
       </ol>
       <h4 className="rg-editor-inspector__head">Parameters</h4>
-      {params.length === 0 ? <p className="rg-editor-inspector__none">No parameter set.</p> : null}
-      {params.map((name) => (
-        <Parameter
-          key={name}
-          prefix={prefix}
-          name={name}
-          value={node.params[name]!}
-          onSet={(v) => dispatch({ type: 'setParam', node: node.id, key: name, value: v })}
-          onRemove={() => dispatch({ type: 'removeParam', node: node.id, key: name })}
-        />
-      ))}
+      {params.length === 0 ? <p className="rg-editor-inspector__none">{parameters === null ? 'No parameter set.' : 'This implementation takes no parameter.'}</p> : null}
+      {params.map((name) => {
+        const value = node.params[name];
+        const set = (v: ParameterValue) => dispatch({ type: 'setParam', node: node.id, key: name, value: v });
+        if (value === undefined) return <Unset key={name} prefix={prefix} served={served.get(name)!} onSet={set} />;
+        return (
+          <div key={name}>
+            <Parameter prefix={prefix} name={name} value={value} onSet={set} onRemove={() => dispatch({ type: 'removeParam', node: node.id, key: name })} />
+            <About served={served.get(name)} />
+          </div>
+        );
+      })}
       <div className="rg-editor-inspector__add">
         <Input id={`${prefix}-key`} label="New parameter" mono value={key} onChange={(e) => setKey(e.target.value)} />
         <Select
