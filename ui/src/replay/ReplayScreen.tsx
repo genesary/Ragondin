@@ -472,6 +472,14 @@ function OpenInEditor({ listing, run, node }: { listing: Read<RunListing>; run: 
   // settled, so a blur the replacement itself causes does not count.
   const wrap = useRef<HTMLSpanElement>(null);
   const held = useRef(false);
+  const settling = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // A blur still settling when the control goes is dropped with it.
+  useEffect(
+    () => () => {
+      if (settling.current !== null) clearTimeout(settling.current);
+    },
+    [],
+  );
   useLayoutEffect(() => {
     const box = wrap.current;
     if (!held.current || box === null || box.contains(document.activeElement)) return;
@@ -485,7 +493,9 @@ function OpenInEditor({ listing, run, node }: { listing: Read<RunListing>; run: 
         held.current = true;
       }}
       onBlur={() => {
-        setTimeout(() => {
+        if (settling.current !== null) clearTimeout(settling.current);
+        settling.current = setTimeout(() => {
+          settling.current = null;
           held.current = wrap.current?.contains(document.activeElement) ?? false;
         });
       }}

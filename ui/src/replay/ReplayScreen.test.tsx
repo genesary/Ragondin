@@ -815,6 +815,31 @@ describe('side by side, while B is held', () => {
     expect(within(within(panel).getByRole('region', { name: 'A, dense-only' })).queryByText(/Not run/)).toBeNull();
   });
 
+  it('clears a node only B has when B is switched to another run that lacks it, once that run is read', async () => {
+    // A second dense-only run on the benchmark: it has no reranker.
+    const OTHER = '7'.repeat(64);
+    const listing: RunListing = { ...LISTING, runs: [...LISTING.runs, { ...LISTING.runs[1]!, id: OTHER, pipeline: OTHER, pipeline_names: ['dense-two'] }] };
+    let releaseOther: (reply: MockReply<QueryTrace>) => void = () => {};
+    api({
+      listing,
+      detail: (run) => (run === OTHER ? { body: { ...DENSE_DETAIL, id: OTHER } } : undefined),
+      queries: (run) => (run === OTHER ? { body: { ...DENSE_QUERIES, run: OTHER } } : undefined),
+      trace: (run, q) => (run === OTHER ? new Promise((r) => (releaseOther = r)) : traceOf(run === DENSE ? DENSE_TRACE : HYBRID_TRACE, q)),
+    });
+    const view = render(<Routed client={createApiClient()} run={DENSE} query="q1" with={HYBRID} />);
+    const b = await screen.findByRole('application', { name: /^Run B, hybrid-rerank-gen/ });
+    fireEvent.click(await drawn(b.parentElement!, 'rerank'));
+    await screen.findByRole('region', { name: 'B, hybrid-rerank-gen' });
+    view.rerender(<Routed client={createApiClient()} run={DENSE} query="q1" with={OTHER} />);
+    await screen.findByText(/Reading query q1 in B/);
+    // While the new B is read, the node waits for it.
+    expect(route()).toMatchObject({ node: 'rerank' });
+    await act(async () => releaseOther({ body: { ...DENSE_TRACE, run: OTHER, query: 'q1' } }));
+    await screen.findByRole('application', { name: /^Run B, dense-two/ });
+    await waitFor(() => expect(route()).toEqual({ screen: 'replay', run: DENSE, query: 'q1', with: OTHER }));
+    expect(await screen.findByText('Select a node to see what it produced for this query.')).toBeTruthy();
+  });
+
   it('keeps a node only B has, named in a reopened address, while B is first read, and shows it once B lands', async () => {
     let releaseB: (reply: MockReply<QueryTrace>) => void = () => {};
     api({ trace: (run, q) => (run === HYBRID ? new Promise((r) => (releaseB = r)) : traceOf(DENSE_TRACE, q)) });
