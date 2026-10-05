@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
-import { Button, Input, Inspector } from '../../design/index.ts';
+import { Button, InlineMessage, Input, Inspector } from '../../design/index.ts';
 import type { ApiClient } from '../api/client.ts';
 import type { Capabilities, ParameterValue, ServiceStatus } from '../api/types.ts';
 import { boundsOf, Canvas, clearSpot, edgeId, RANK_GAP, resolveLayout, toModel, type CanvasPorts, type Position } from '../canvas/index.ts';
@@ -434,6 +434,11 @@ export function Editor({ client, title, stored = null, initial, layout, capabili
       />
     );
 
+  const skipToCanvas = () => {
+    const canvas = root.current?.querySelector('.rg-canvas');
+    (canvas?.querySelector<HTMLElement>('.react-flow__node[tabindex="0"]') ?? canvas?.querySelector<HTMLElement>('button'))?.focus();
+  };
+
   const header = (() => {
     switch (verdict.status) {
       case 'checking':
@@ -465,6 +470,16 @@ export function Editor({ client, title, stored = null, initial, layout, capabili
 
   return (
     <div ref={root} className="rg-editor" onKeyDown={onKeyDown}>
+      {/* Past the bar and the palette in one press: the canvas's first node, or its toolbar when it has none. A
+          button, since a link's fragment would be read as an address by the router. */}
+      <button type="button" className="rg-skip" onClick={skipToCanvas}>
+        Skip to the canvas
+      </button>
+      <div className="rg-editor__narrow">
+        <InlineMessage tone="info" live={false} title="The editor is made for a wide screen.">
+          Here the palette sits above the canvas, and an edge is not drawn by finger: connect two nodes with "Connect output to…" in a node&apos;s menu.
+        </InlineMessage>
+      </div>
       <header className="rg-editor__bar">
         {file === undefined ? (
           <h2 className="rg-editor__title">{name}</h2>

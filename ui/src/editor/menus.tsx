@@ -53,7 +53,7 @@ export type NodeEntriesProps = {
   doc: WireDocument;
   grammar: PortGrammar | null;
   node: string;
-  /** A declared input: it has nothing to open, duplicate, run or delete, and is connected like any node. */
+  /** A declared input: it has nothing to open, duplicate, run or delete, so its entries are the ports it can feed. */
   input?: boolean;
   refuse: (from: string, to: string, port: number) => string | null;
   /** Whether the node can be run up to: open with what the prefix keeps and skips, or refused with why. */
@@ -73,6 +73,7 @@ export type NodeEntriesProps = {
  * into every input port of every other node, each open or refused with the
  * reason the drag would show — "Run up to this node", whose second line says
  * what the prefix keeps and skips, or why it is refused, and "Delete node".
+ * A declared input's entries are the port list alone.
  */
 export function NodeEntries({ doc, grammar, node, input = false, refuse, run = { kind: 'refused', reason: 'Only a node can be run up to.' }, close, onOpen, onDuplicate, onConnect, onDelete, onRunUpTo = () => {} }: NodeEntriesProps) {
   const [connecting, setConnecting] = useState(false);
@@ -85,28 +86,30 @@ export function NodeEntries({ doc, grammar, node, input = false, refuse, run = {
   const toggle = (
     <MenuItem key="connect" glyph="link" title={connecting ? 'Back to the node menu' : 'Connect output to…'} onChoose={() => setConnecting(!connecting)} />
   );
-  if (connecting) {
+  const ports = () => {
     const targets = doc.pipeline.nodes
       .filter((n) => n.id !== node)
       .flatMap((n) => portsOf(n, grammar).inputs.map((kind, port) => ({ to: n.id, port, kind })));
-    return [
-      toggle,
-      ...targets.map(({ to, port, kind }) => {
-        const reason = refuse(node, to, port);
-        return (
-          <MenuItem
-            key={`${to}:${port}`}
-            glyph="link"
-            title={`${to}, port ${port}${kind === 'opaque' ? '' : ` (${PORT_LABEL[kind]})`}`}
-            line={reason}
-            refused={reason !== null}
-            onChoose={act(() => onConnect(to, port))}
-          />
-        );
-      }),
-    ];
+    return targets.map(({ to, port, kind }) => {
+      const reason = refuse(node, to, port);
+      return (
+        <MenuItem
+          key={`${to}:${port}`}
+          glyph="link"
+          title={`${to}, port ${port}${kind === 'opaque' ? '' : ` (${PORT_LABEL[kind]})`}`}
+          line={reason}
+          refused={reason !== null}
+          onChoose={act(() => onConnect(to, port))}
+        />
+      );
+    });
+  };
+  if (connecting) return [toggle, ...ports()];
+  // A declared input can only be connected: its menu is the port list itself, never a menu of one entry leading to it.
+  if (input) {
+    const list = ports();
+    return list.length > 0 ? list : [<MenuItem key="none" glyph="link" title="No input port to connect to" line="Place a node from the palette first." refused onChoose={() => {}} />];
   }
-  if (input) return [toggle];
   return [
     <MenuItem key="open" glyph="split" title="Open parameters" onChoose={act(onOpen)} />,
     <MenuItem key="duplicate" glyph="copy" title="Duplicate" onChoose={act(onDuplicate)} />,

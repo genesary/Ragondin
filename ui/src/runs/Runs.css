@@ -167,6 +167,10 @@
   /* The stream line's longer sentence wraps to two lines here: both are held, empty or not. */
   .rg-runs__stream { min-height: calc(2 * var(--space-4)); }
   .rg-job__facts { grid-template-columns: minmax(0, 1fr); }
+  /* A row's figures stay on one line: squeezed to the screen they would stack one per line and make every row
+     several times as tall. The table scrolls sideways instead, its fade saying there is more. */
+  .rg-runs__metrics,
+  .rg-runs__family { flex-wrap: nowrap; }
 }
 /* The group's way to the editor, after its names. */
 .rg-runs__edit { font: var(--type-caption); color: var(--accent); }

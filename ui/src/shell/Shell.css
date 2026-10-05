@@ -3,12 +3,29 @@
 .rg-workspace {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  /* As wide as the bar's line at most, and unbroken: the path gives way, never the count. */
+  min-width: 0;
+  max-width: 100%;
+  white-space: nowrap;
+  /* The gap is the dot's alone (below): the count follows the path with no space the text does not hold. */
+  gap: 0;
   color: inherit;
   text-decoration: none;
   border-radius: var(--radius-s);
 }
 .rg-workspace:hover { color: var(--ink); }
+.rg-workspace > .rg-dot { margin-right: 6px; }
+/* The path is cut at its start with an ellipsis rather than broken letter by letter beside the count. */
+.rg-workspace__path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  /* Cut at the start: the box runs right to left, so it overflows on the left; the path inside it, isolated in its
+     `bdi`, still reads left to right, its leading slash included. */
+  direction: rtl;
+}
+.rg-workspace__path bdi { direction: ltr; }
 .rg-shell__main {
   display: grid;
   gap: var(--space-4);

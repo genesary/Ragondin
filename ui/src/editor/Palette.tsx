@@ -1,4 +1,4 @@
-import type { DragEvent } from 'react';
+import { useRef, useState, type DragEvent, type KeyboardEvent } from 'react';
 import { FAMILY_LABEL, FamilyTile, familyOfComponent, type Family } from '../../design/index.ts';
 import type { Capabilities, ServiceStatus } from '../api/types.ts';
 import { DROP_TYPE } from '../canvas/index.ts';
@@ -55,6 +55,9 @@ export function paletteOf(capabilities: Capabilities, services: readonly Service
   return [...sections, ...LATER];
 }
 
+// An entry's key, unique across the palette: a name may be both carried and bound, and appear in two families.
+const keyOf = (entry: PaletteEntry, section: PaletteSection) => `${section.label}/${entry.remote ? 'remote' : 'local'}/${entry.impl}`;
+
 export type PaletteProps = {
   entries: readonly PaletteSection[];
   /** A placeable entry was chosen, by click or by key. */
@@ -66,9 +69,23 @@ export type PaletteProps = {
  * design, § 3) — the user picks from what this build runs and never types an
  * `impl:` name. An entry is placed by a click, Enter or Space, or dragged
  * onto the canvas; one that cannot be placed stays visible and focusable, and
- * says why on its second line.
+ * says why on its second line. Its entries are one tab stop, as a table's rows
+ * are: the up and down arrows — stopping at either end — Home and End move
+ * between them, refused ones included, so Tab passes the palette in one press
+ * on the way to the canvas.
  */
 export function Palette({ entries, onPlace }: PaletteProps) {
+  const flat = entries.flatMap((section) => section.entries.map((entry) => keyOf(entry, section)));
+  const [active, setActive] = useState<string | null>(null);
+  const elements = useRef(new Map<string, HTMLButtonElement>());
+  const stop = active !== null && flat.includes(active) ? active : flat[0];
+  const onKeyDown = (key: string) => (event: KeyboardEvent<HTMLButtonElement>) => {
+    const at = flat.indexOf(key);
+    const to = event.key === 'ArrowDown' ? Math.min(at + 1, flat.length - 1) : event.key === 'ArrowUp' ? Math.max(at - 1, 0) : event.key === 'Home' ? 0 : event.key === 'End' ? flat.length - 1 : null;
+    if (to === null) return;
+    event.preventDefault();
+    elements.current.get(flat[to]!)?.focus();
+  };
   const drag = (entry: PaletteEntry) => (event: DragEvent<HTMLButtonElement>) => {
     event.dataTransfer.setData(DROP_TYPE, JSON.stringify({ component: entry.component, impl: entry.impl }));
     event.dataTransfer.effectAllowed = 'copy';
@@ -82,27 +99,37 @@ export function Palette({ entries, onPlace }: PaletteProps) {
             {section.label}
           </h3>
           {section.entries.length === 0 ? <p className="rg-palette__none">None in this build.</p> : null}
-          {section.entries.map((entry) => (
-            <button
-              key={`${entry.remote ? 'remote' : 'local'}/${entry.impl}`}
-              type="button"
-              className="rg-palette__entry"
-              draggable={entry.refused === null}
-              aria-disabled={entry.refused === null ? undefined : true}
-              onDragStart={entry.refused === null ? drag(entry) : undefined}
-              onClick={() => {
-                if (entry.refused === null) onPlace(entry.component, entry.impl);
-              }}
-            >
-              <b>{entry.impl}</b>
-              {entry.remote ? <span className="rg-palette__tag">Remote</span> : null}
-              {entry.refused === null ? null : (
-                <small>
-                  <Words text={entry.refused} />
-                </small>
-              )}
-            </button>
-          ))}
+          {section.entries.map((entry) => {
+            const key = keyOf(entry, section);
+            return (
+              <button
+                key={key}
+                ref={(el) => {
+                  if (el === null) elements.current.delete(key);
+                  else elements.current.set(key, el);
+                }}
+                type="button"
+                tabIndex={key === stop ? 0 : -1}
+                onFocus={() => setActive(key)}
+                onKeyDown={onKeyDown(key)}
+                className="rg-palette__entry"
+                draggable={entry.refused === null}
+                aria-disabled={entry.refused === null ? undefined : true}
+                onDragStart={entry.refused === null ? drag(entry) : undefined}
+                onClick={() => {
+                  if (entry.refused === null) onPlace(entry.component, entry.impl);
+                }}
+              >
+                <b>{entry.impl}</b>
+                {entry.remote ? <span className="rg-palette__tag">Remote</span> : null}
+                {entry.refused === null ? null : (
+                  <small>
+                    <Words text={entry.refused} />
+                  </small>
+                )}
+              </button>
+            );
+          })}
         </div>
       ))}
     </section>

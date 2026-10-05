@@ -1,3 +1,31 @@
+/* The frame around the scroll box: a fade on each side the table can still scroll towards (Table.tsx sets which),
+   drawn over the cells and the sticky headers, from the surface they sit on, letting the pointer through. */
+.rg-tableframe {
+  position: relative;
+  min-width: 0;
+}
+.rg-tableframe::before,
+.rg-tableframe::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 3;
+  width: var(--space-6);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity var(--duration-micro) var(--ease-standard);
+}
+.rg-tableframe::before { left: 0; }
+.rg-tableframe::after { right: 0; }
+.rg-tableframe[data-more-start]::before {
+  opacity: 1;
+  background: linear-gradient(to right, var(--surface), transparent);
+}
+.rg-tableframe[data-more-end]::after {
+  opacity: 1;
+  background: linear-gradient(to left, var(--surface), transparent);
+}
 .rg-tablewrap {
   /* Positioned, so the absolutely positioned hidden text of a cell is clipped by this scroll box rather than widening the page. */
   position: relative;

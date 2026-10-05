@@ -28,7 +28,11 @@ export function WorkspaceIndicator({ state }: { state: RequestState<Workspace> }
       {(workspace) => (
         <a className="rg-workspace" href={setup} data-connected="true">
           <StatusDot connected />
-          <span>{workspace.path}</span>, {count(workspace.settings.services.length, 'service')}
+          {/* Cut at its start when its line is too narrow, so the workspace's own folder stays in view; the whole path
+              is the link's name and the title. */}
+          <span className="rg-workspace__path" title={workspace.path}>
+            <bdi>{workspace.path}</bdi>
+          </span>, {count(workspace.settings.services.length, 'service')}
         </a>
       )}
     </Resource>

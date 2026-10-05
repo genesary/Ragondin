@@ -81,7 +81,7 @@ describe('Canvas in write mode, drawing', () => {
   it('describes each node by the keys write mode adds', () => {
     const { container } = renderWrite();
     const described = nodeEl(container, 'lexical').getAttribute('aria-describedby')!;
-    expect(document.getElementById(described)?.textContent).toBe('Enter selects, Shift+F10 opens the menu, the arrow keys move it, Delete removes it, Escape clears.');
+    expect(document.getElementById(described)?.textContent).toBe('Enter selects, Shift+F10 opens the menu, the arrow keys move it, Alt and the arrow keys move between nodes, Delete removes it, Escape clears.');
   });
 });
 
@@ -175,6 +175,17 @@ describe('Canvas in write mode, the keyboard', () => {
     const { container } = renderWrite({ onInsert });
     fireEvent.keyDown(container.querySelector('.react-flow') as HTMLElement, { key: '/' });
     expect(onInsert).toHaveBeenCalledTimes(1);
+  });
+
+  it('moves focus between the nodes with Alt and the arrow keys, moving no node', () => {
+    const { container, onMove } = renderWrite();
+    const order = [...container.querySelectorAll('.react-flow__node')].filter((el) => el.getAttribute('tabindex') === '0').map((el) => el.getAttribute('data-id')!);
+    act(() => nodeEl(container, order[0]!).focus());
+    fireEvent.keyDown(nodeEl(container, order[0]!), { key: 'ArrowRight', altKey: true });
+    expect(document.activeElement).toBe(nodeEl(container, order[1]!));
+    fireEvent.keyDown(nodeEl(container, order[1]!), { key: 'ArrowLeft', altKey: true });
+    expect(document.activeElement).toBe(nodeEl(container, order[0]!));
+    expect(onMove).not.toHaveBeenCalled();
   });
 
   it('moves nothing with the arrow keys in read mode', () => {

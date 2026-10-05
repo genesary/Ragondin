@@ -135,8 +135,8 @@ type LineEdge = Edge<{ port: number; kind: PortKind; invalid: boolean; selected:
 // no other. The library's default names Space, the arrow keys and Delete,
 // which the canvas binds itself, Delete in write mode only, or not at all.
 const NODE_DESCRIPTION: Record<CanvasMode, string> = {
-  read: 'Enter selects, Shift+F10 opens the menu, Escape clears.',
-  write: 'Enter selects, Shift+F10 opens the menu, the arrow keys move it, Delete removes it, Escape clears.',
+  read: 'Enter selects, the arrow keys move between nodes, Shift+F10 opens the menu, Escape clears.',
+  write: 'Enter selects, Shift+F10 opens the menu, the arrow keys move it, Alt and the arrow keys move between nodes, Delete removes it, Escape clears.',
 };
 // The id the library gives that description, suffixed with the flow's id.
 const KEYS_DESCRIPTION = 'react-flow__node-desc';
@@ -159,6 +159,8 @@ const handles = (node: CanvasNode): NodeHandle[] => [
 
 // A key's move, in grid steps: one, or four with Shift.
 const ARROWS: Record<string, [number, number]> = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
+// A key's step through the nodes in the order Tab walks: the next or the previous.
+const THROUGH: Record<string, 1 | -1> = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 };
 const snap = (v: number) => Math.round(v / GRID) * GRID;
 const WRITE_FIT = { maxZoom: 1 };
 // The library's own fit leaves a tenth of the pane around the graph; a frame keeps the same margin.
@@ -608,6 +610,14 @@ function Surface({
     } else if (editable && (event.key === 'Delete' || event.key === 'Backspace')) {
       event.preventDefault();
       onDelete?.(id);
+    } else if ((THROUGH[event.key] !== undefined && (!editable || event.altKey)) || event.key === 'Home' || event.key === 'End') {
+      // Focus moves through the nodes in the order Tab walks, stopping at either end; in write mode the plain arrows
+      // move the node, so Alt goes with them. Moving focus selects nothing.
+      event.preventDefault();
+      const order = model.nodes.map((n) => n.id);
+      const at = order.indexOf(id);
+      const to = event.key === 'Home' ? 0 : event.key === 'End' ? order.length - 1 : Math.min(Math.max(at + THROUGH[event.key]!, 0), order.length - 1);
+      root.current?.querySelector<HTMLElement>(`.react-flow__node[data-id="${CSS.escape(order[to]!)}"]`)?.focus();
     } else if (editable && ARROWS[event.key] !== undefined) {
       event.preventDefault();
       const [dx, dy] = ARROWS[event.key]!;

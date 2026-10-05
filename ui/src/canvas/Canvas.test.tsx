@@ -199,6 +199,31 @@ describe('Canvas keyboard and selection', () => {
     expect(card(container, 'vectors').getAttribute('data-selected')).toBe('true');
   });
 
+  it('moves focus between the nodes with the arrow keys, in the order Tab walks, stopping at either end, and Home and End', () => {
+    const onSelect = vi.fn();
+    const { container } = renderCanvas({ onSelect });
+    const at = (id: string) => nodeEl(container, id);
+    act(() => at('question').focus());
+    fireEvent.keyDown(at('question'), { key: 'ArrowRight' });
+    expect(document.activeElement).toBe(at('lexical'));
+    fireEvent.keyDown(at('lexical'), { key: 'ArrowDown' });
+    expect(document.activeElement).toBe(at('vectors'));
+    fireEvent.keyDown(at('vectors'), { key: 'ArrowLeft' });
+    expect(document.activeElement).toBe(at('lexical'));
+    fireEvent.keyDown(at('lexical'), { key: 'ArrowUp' });
+    expect(document.activeElement).toBe(at('question'));
+    fireEvent.keyDown(at('question'), { key: 'ArrowUp' });
+    expect(document.activeElement).toBe(at('question'));
+    fireEvent.keyDown(at('question'), { key: 'End' });
+    expect(document.activeElement).toBe(at('answer'));
+    fireEvent.keyDown(at('answer'), { key: 'ArrowRight' });
+    expect(document.activeElement).toBe(at('answer'));
+    fireEvent.keyDown(at('answer'), { key: 'Home' });
+    expect(document.activeElement).toBe(at('question'));
+    // Moving focus is not selecting.
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
   it('draws the focus ring on the focused node', () => {
     const rule = parseRules(nodeCss).find((r) => r.selector.includes('.react-flow__node:focus-visible > .rg-node'));
     expect(rule?.declarations.get('outline')).toBe('2px solid var(--focus-ring)');
@@ -228,10 +253,10 @@ describe('Canvas overlay', () => {
     const ids = nodeEl(container, 'reranked').getAttribute('aria-describedby')!.split(' ');
     expect(ids.map((id) => document.getElementById(id)?.textContent)).toEqual([
       "ndcg@10 0.8610. 2 gold passages in the top 10, at rank 1, 3. 349 ms, 85% of this query's time.",
-      'Enter selects, Shift+F10 opens the menu, Escape clears.',
+      'Enter selects, the arrow keys move between nodes, Shift+F10 opens the menu, Escape clears.',
     ]);
     const plain = nodeEl(container, 'fused').getAttribute('aria-describedby')!.split(' ');
-    expect(plain.map((id) => document.getElementById(id)?.textContent)).toEqual(['Enter selects, Shift+F10 opens the menu, Escape clears.']);
+    expect(plain.map((id) => document.getElementById(id)?.textContent)).toEqual(['Enter selects, the arrow keys move between nodes, Shift+F10 opens the menu, Escape clears.']);
   });
 
   it('keeps the descriptions of two canvases apart', () => {
@@ -311,7 +336,7 @@ describe('Canvas, round 1 of review', () => {
   it('describes each node by the keys that work in read mode', () => {
     const { container } = renderCanvas();
     const described = nodeEl(container, 'fused').getAttribute('aria-describedby')!;
-    expect(document.getElementById(described)?.textContent).toBe('Enter selects, Shift+F10 opens the menu, Escape clears.');
+    expect(document.getElementById(described)?.textContent).toBe('Enter selects, the arrow keys move between nodes, Shift+F10 opens the menu, Escape clears.');
   });
 
   it('names the graph region it hands its keys to', () => {
