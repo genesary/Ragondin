@@ -78,20 +78,38 @@ describe('the saving state machine', () => {
     expect(saveReducer(asking, { type: 'saveAs', doc: EDITED, name: 'mine' }).phase).toEqual({ kind: 'saving', doc: EDITED, name: 'mine', create: true, back: 'handwritten' });
   });
 
-  it('an unnamed document is not written until its first edit, then created under the proposed name', () => {
+  it('an unnamed document is not written until its first edit, then asks for its name before it writes', () => {
     const state = unnamed();
     expect(saveReducer(state, { type: 'valid', doc: HYBRID })).toBe(state);
-    expect(saveReducer(state, { type: 'valid', doc: EDITED }).phase).toEqual({ kind: 'saving', doc: EDITED, name: 'example', create: true, back: null });
+    const naming = saveReducer(state, { type: 'valid', doc: EDITED });
+    expect(naming.phase).toEqual({ kind: 'naming' });
+    // Changes made while the question is open are written once it is answered, not before.
+    expect(saveReducer(naming, { type: 'valid', doc: OTHER })).toBe(naming);
+    expect(saveReducer(naming, { type: 'saveAs', doc: OTHER, name: 'mine' }).phase).toEqual({ kind: 'saving', doc: OTHER, name: 'mine', create: true, back: 'naming' });
   });
 
-  it('“Keep this pipeline” creates an unedited document', () => {
+  it('“Keep this pipeline” asks for the name of an unedited document', () => {
     const kept = saveReducer(unnamed(), { type: 'keep' });
-    expect(saveReducer(kept, { type: 'valid', doc: HYBRID }).phase).toEqual({ kind: 'saving', doc: HYBRID, name: 'example', create: true, back: null });
+    expect(saveReducer(kept, { type: 'valid', doc: HYBRID }).phase).toEqual({ kind: 'naming' });
   });
 
-  it('a proposed name taken meanwhile asks for another', () => {
-    const saving = saveReducer(unnamed(), { type: 'valid', doc: EDITED });
-    expect(saveReducer(saving, { type: 'refused', problem: problem('precondition_failed') }).phase).toEqual({ kind: 'taken', error: 'A pipeline named `example` already exists: choose another name.' });
+  it('a name taken asks again, saying so', () => {
+    const naming = saveReducer(unnamed(), { type: 'valid', doc: EDITED });
+    const saving = saveReducer(naming, { type: 'saveAs', doc: EDITED, name: 'example' });
+    expect(saveReducer(saving, { type: 'refused', problem: problem('precondition_failed') }).phase).toEqual({ kind: 'naming', error: 'A pipeline named `example` already exists: choose another name.' });
+  });
+
+  it('a name proposed before the first write is the one the question offers', () => {
+    expect(saveReducer(unnamed(), { type: 'propose', name: 'lexical-only' }).file.proposed).toBe('lexical-only');
+    // A file already written is renamed, not proposed.
+    const state = stored();
+    expect(saveReducer(state, { type: 'propose', name: 'other' })).toBe(state);
+  });
+
+  it('a rename keeps the etag, since the bytes moved as they are, and writes on under the new name', () => {
+    const renamed = saveReducer(stored(), { type: 'renamed', name: 'lexical-only' });
+    expect(renamed.file).toEqual({ name: 'lexical-only', etag: ETAG, handwritten: false, proposed: 'hybrid' });
+    expect(saveReducer(renamed, { type: 'valid', doc: EDITED }).phase).toEqual({ kind: 'saving', doc: EDITED, name: 'lexical-only', create: false, back: null });
   });
 
   it('a write the server refuses otherwise is said, and not retried until the document changes', () => {

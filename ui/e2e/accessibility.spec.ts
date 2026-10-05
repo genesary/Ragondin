@@ -17,7 +17,7 @@ function screens(fixture: Fixture): { name: string; hash: string; ready: (page: 
       hash: `#replay/${dense}/q/q-greek/node/vectors?with=${hybrid}`,
       ready: (p) => expect(p.getByRole('complementary', { name: 'vectors' }).getByRole('region', { name: 'hybrid-rerank' })).toBeVisible(),
     },
-    { name: 'Editor', hash: '#editor/hybrid-rerank', ready: (p) => expect(p.getByRole('status').filter({ hasText: /^Saved$/ })).toBeVisible() },
+    { name: 'Editor', hash: '#editor/hybrid-rerank', ready: (p) => expect(p.getByRole('status').filter({ hasText: /^No changes since it was opened$/ })).toBeVisible() },
     { name: 'Setup', hash: '#setup', ready: (p) => expect(p.getByRole('region', { name: 'Benchmarks' })).toBeVisible() },
   ];
 }

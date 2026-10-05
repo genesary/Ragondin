@@ -10,7 +10,7 @@ use ragondin_pipeline::PipelineHash;
 use sha2::{Digest, Sha256};
 
 use super::{blocking, write_atomically, Workspace};
-use crate::backends::{case_alias, PipelineFile, PipelineSource, Precondition, Revision};
+use crate::backends::{case_alias, PipelineFile, PipelineSource, Precondition, Renamed, Revision};
 use crate::error::ApiError;
 use crate::response::{Layout, NodePair, Pairing};
 use crate::validation;
@@ -200,13 +200,7 @@ impl PipelineSource for FsPipelines {
         precondition: &Precondition,
     ) -> Result<PipelineFile, ApiError> {
         if !is_name(name) {
-            return Err(ApiError::RequestInvalid {
-                detail: format!(
-                    "`{name}` is not a pipeline name: one file name of letters, digits, `_`, \
-                     `-` and `.`, not starting with `.` nor ending with one, 64 bytes at most, \
-                     not a device name Windows reserves, and not `{RESERVED}`"
-                ),
-            });
+            return Err(not_a_name(name));
         }
         validation::check(document)?;
         let _writing = self.writing.lock().await;
@@ -261,6 +255,78 @@ impl PipelineSource for FsPipelines {
             this.load(&name)?.ok_or_else(|| ApiError::BackendFailed {
                 detail: format!("{}: written, then not found", path.display()),
             })
+        })
+        .await
+    }
+
+    async fn rename(
+        &self,
+        from: &str,
+        to: &str,
+        precondition: &Precondition,
+    ) -> Result<Renamed, ApiError> {
+        if !is_name(to) {
+            return Err(not_a_name(to));
+        }
+        if *precondition == Precondition::Absent {
+            return Err(ApiError::RequestInvalid {
+                detail: "a rename moves a stored document: it states `If-Match`, never \
+                         `If-None-Match: *`"
+                    .to_owned(),
+            });
+        }
+        let _writing = self.writing.lock().await;
+        let (this, from, to, precondition) = (
+            self.clone(),
+            from.to_owned(),
+            to.to_owned(),
+            precondition.clone(),
+        );
+        blocking(move || {
+            let stored = this.require(&from)?;
+            let refusal = match &precondition {
+                Precondition::Matches(expected) if *expected == stored.revision => None,
+                Precondition::Matches(expected) => Some(format!(
+                    "pipeline {from} changed since it was read: `If-Match` names {}, the stored \
+                     document is at {}",
+                    expected.as_str(),
+                    stored.revision.as_str()
+                )),
+                Precondition::Exists | Precondition::Absent => None,
+                Precondition::Unstated => Some(format!(
+                    "a rename of pipeline {from} states no `If-Match`; the stored document is \
+                     at {}",
+                    stored.revision.as_str()
+                )),
+            };
+            if let Some(reason) = refusal {
+                return Err(ApiError::PreconditionFailed {
+                    reason,
+                    current: Some(stored.revision.as_str().to_owned()),
+                });
+            }
+            if from == to {
+                return Ok(Renamed {
+                    file: stored,
+                    fault: None,
+                });
+            }
+            this.refuse_alias(&to)?;
+            if this.load(&to)?.is_some() {
+                return Err(ApiError::PipelineExists { name: to });
+            }
+            this.refuse_strays(&to)?;
+            let faults = this.move_pipeline(&from, &to)?;
+            let file = this.load(&to)?.ok_or_else(|| ApiError::BackendFailed {
+                detail: format!("{}: renamed, then not found", this.document(&to).display()),
+            })?;
+            let fault = (!faults.is_empty()).then(|| {
+                format!(
+                    "pipeline {from} is renamed {to}, but not all of it followed: {}",
+                    faults.join("; ")
+                )
+            });
+            Ok(Renamed { file, fault })
         })
         .await
     }
@@ -414,6 +480,125 @@ impl PipelineSource for FsPipelines {
 }
 
 impl FsPipelines {
+    /// Moves the pipeline `from` to `to`, which is free: its document, its
+    /// layout, its pairings — each file's own names rewritten, since a
+    /// pairing names both its pipelines inside — and every pairing another
+    /// pipeline keeps towards it. Every pairing is read before anything
+    /// moves, so one this build cannot read refuses the rename whole; the new
+    /// pairings are written before the document moves, and the old ones
+    /// removed after, so a failure leaves the document under one name with
+    /// its pairings readable under it. Once the document has moved the rename
+    /// is done: what fails after it is answered as faults, never as an error.
+    fn move_pipeline(&self, from: &str, to: &str) -> Result<Vec<String>, ApiError> {
+        // (path it is kept at now, path it moves to, the file rewritten)
+        let mut pairings: Vec<(PathBuf, PathBuf, PairingFile)> = Vec::new();
+        let own = self.directory.join(format!("{from}{PAIRING}"));
+        if own.is_dir() {
+            for entry in fs::read_dir(&own).map_err(|error| failed(&own, error))? {
+                let entry = entry.map_err(|error| failed(&own, error))?;
+                let file_name = entry.file_name();
+                let Some(other) = file_name
+                    .to_str()
+                    .and_then(|name| name.strip_suffix(".json"))
+                    .filter(|other| is_name(other))
+                else {
+                    continue;
+                };
+                if let Some(mut kept) = self.load_pairing_file(from, other)? {
+                    kept.pipeline = to.to_owned();
+                    pairings.push((self.pairing(from, other), self.pairing(to, other), kept));
+                }
+            }
+        }
+        let entries = fs::read_dir(self.directory.as_ref())
+            .map_err(|error| failed(&self.directory, error))?;
+        for entry in entries {
+            let entry = entry.map_err(|error| failed(&self.directory, error))?;
+            let file_name = entry.file_name();
+            let Some(pipeline) = file_name
+                .to_str()
+                .and_then(|name| name.strip_suffix(PAIRING))
+                .filter(|pipeline| is_name(pipeline) && *pipeline != from)
+            else {
+                continue;
+            };
+            if let Some(mut kept) = self.load_pairing_file(pipeline, from)? {
+                kept.other = to.to_owned();
+                pairings.push((
+                    self.pairing(pipeline, from),
+                    self.pairing(pipeline, to),
+                    kept,
+                ));
+            }
+        }
+
+        for (_, path, kept) in &pairings {
+            if let Some(directory) = path.parent() {
+                fs::create_dir_all(directory).map_err(|error| failed(directory, error))?;
+            }
+            let mut text =
+                serde_json::to_string_pretty(kept).map_err(|error| ApiError::BackendFailed {
+                    detail: format!("{}: {error}", path.display()),
+                })?;
+            text.push('\n');
+            write_atomically(path, text.as_bytes()).map_err(|error| failed(path, error))?;
+        }
+        let (document, moved) = (self.document(from), self.document(to));
+        if let Err(error) = fs::rename(&document, &moved) {
+            // The document stays where it was, so the pairings written for
+            // the new name go: nothing is left pairing a name nothing has.
+            for (_, path, _) in &pairings {
+                let _ = fs::remove_file(path);
+            }
+            let _ = fs::remove_dir(self.directory.join(format!("{to}{PAIRING}")));
+            return Err(failed(&document, error));
+        }
+        let old: Vec<PathBuf> = pairings.into_iter().map(|(path, _, _)| path).collect();
+        Ok(finish_move(&self.layout(from), &self.layout(to), &old))
+    }
+
+    /// Refuses a rename onto `to` when files a pipeline `to` would own are
+    /// there without it — its layout, its pairings, a pairing another pipeline
+    /// keeps towards it — left by a pipeline removed by hand: the rename would
+    /// adopt them, positions and pairs of another graph. They are named, and
+    /// left for the person to remove; nothing here deletes a file it did not
+    /// write.
+    fn refuse_strays(&self, to: &str) -> Result<(), ApiError> {
+        let mut strays = Vec::new();
+        for own in [format!("{to}{LAYOUT}"), format!("{to}{PAIRING}")] {
+            if fs::symlink_metadata(self.directory.join(&own)).is_ok() {
+                strays.push(own);
+            }
+        }
+        let entries = fs::read_dir(self.directory.as_ref())
+            .map_err(|error| failed(&self.directory, error))?;
+        for entry in entries {
+            let entry = entry.map_err(|error| failed(&self.directory, error))?;
+            let file_name = entry.file_name();
+            let Some(pipeline) = file_name
+                .to_str()
+                .and_then(|name| name.strip_suffix(PAIRING))
+                .filter(|pipeline| is_name(pipeline) && *pipeline != to)
+            else {
+                continue;
+            };
+            if fs::symlink_metadata(self.pairing(pipeline, to)).is_ok() {
+                strays.push(format!("{pipeline}{PAIRING}/{to}.json"));
+            }
+        }
+        if strays.is_empty() {
+            return Ok(());
+        }
+        strays.sort();
+        Err(ApiError::RequestInvalid {
+            detail: format!(
+                "pipelines/ holds {} with no pipeline `{to}`, which a rename to `{to}` would \
+                 adopt: remove them, or choose another name",
+                strays.join(", ")
+            ),
+        })
+    }
+
     fn pairing(&self, pipeline: &str, other: &str) -> PathBuf {
         self.directory
             .join(format!("{pipeline}{PAIRING}"))
@@ -425,6 +610,29 @@ impl FsPipelines {
     /// or the names inside are not the two its path gives — a file renamed
     /// by hand would otherwise pair nodes of another pipeline.
     fn load_pairing(&self, pipeline: &str, other: &str) -> Result<Option<Pairing>, ApiError> {
+        Ok(self
+            .load_pairing_file(pipeline, other)?
+            .map(|file| Pairing {
+                pipeline: file.pipeline,
+                other: file.other,
+                pairs: file
+                    .pairs
+                    .into_iter()
+                    .map(|pair| NodePair {
+                        node: pair.node,
+                        other: pair.other,
+                        label: pair.label,
+                    })
+                    .collect(),
+            }))
+    }
+
+    /// The file `load_pairing` reads, as it is kept, under the same refusals.
+    fn load_pairing_file(
+        &self,
+        pipeline: &str,
+        other: &str,
+    ) -> Result<Option<PairingFile>, ApiError> {
         let path = self.pairing(pipeline, other);
         let text = match fs::read_to_string(&path) {
             Ok(text) => text,
@@ -458,19 +666,7 @@ impl FsPipelines {
                 ),
             });
         }
-        Ok(Some(Pairing {
-            pipeline: file.pipeline,
-            other: file.other,
-            pairs: file
-                .pairs
-                .into_iter()
-                .map(|pair| NodePair {
-                    node: pair.node,
-                    other: pair.other,
-                    label: pair.label,
-                })
-                .collect(),
-        }))
+        Ok(Some(file))
     }
 
     /// Removes `pipelines/<pipeline>.pairing/<other>.json`, and the
@@ -553,6 +749,17 @@ fn is_device_name(name: &str) -> bool {
             && matches!(stem.as_bytes()[3], b'1'..=b'9'))
 }
 
+/// `request_invalid` for a name a pipeline cannot have, saying the rule.
+fn not_a_name(name: &str) -> ApiError {
+    ApiError::RequestInvalid {
+        detail: format!(
+            "`{name}` is not a pipeline name: one file name of letters, digits, `_`, `-` and \
+             `.`, not starting with `.` nor ending with one, 64 bytes at most, not a device \
+             name Windows reserves, and not `{RESERVED}`"
+        ),
+    }
+}
+
 fn not_found(name: &str) -> ApiError {
     ApiError::PipelineNotFound {
         name: name.to_owned(),
@@ -583,6 +790,36 @@ fn read_layout_file(path: &Path) -> Result<Option<Layout>, ApiError> {
     Ok(Some(layout))
 }
 
+/// What a rename does once its document has moved: the layout follows, and
+/// every old pairing in `old` goes, its directory with it once empty — each
+/// whatever became of the one before. Answers what failed, in words.
+fn finish_move(layout: &Path, moved: &Path, old: &[PathBuf]) -> Vec<String> {
+    let mut faults = Vec::new();
+    match fs::rename(layout, moved) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => faults.push(format!(
+            "its layout {} stays where it was: {error}",
+            layout.display()
+        )),
+    }
+    for path in old {
+        match fs::remove_file(path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => faults.push(format!(
+                "the pairing {} under the old name is not removed: {error}",
+                path.display()
+            )),
+        }
+        // Fails while another pairing is kept there, which is what is meant.
+        if let Some(directory) = path.parent() {
+            let _ = fs::remove_dir(directory);
+        }
+    }
+    faults
+}
+
 fn failed(path: &Path, error: io::Error) -> ApiError {
     ApiError::BackendFailed {
         detail: format!("{}: {error}", path.display()),
@@ -592,6 +829,49 @@ fn failed(path: &Path, error: io::Error) -> ApiError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A directory of its own under the system's temporary one, empty.
+    fn scratch(name: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "ragondin-api-fs-pipelines-{}-{name}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&path);
+        fs::create_dir_all(&path).unwrap();
+        path
+    }
+
+    #[test]
+    fn a_layout_that_cannot_follow_is_a_fault_and_the_old_pairings_go_regardless() {
+        let dir = scratch("finish");
+        let (layout, moved) = (dir.join("from.layout.json"), dir.join("to.layout.json"));
+        fs::write(&layout, "{}").unwrap();
+        // A directory holding a file: nothing can be renamed over it.
+        fs::create_dir_all(moved.join("held")).unwrap();
+        fs::create_dir_all(dir.join("from.pairing")).unwrap();
+        let old = dir.join("from.pairing/other.json");
+        fs::write(&old, "{}").unwrap();
+
+        let faults = finish_move(&layout, &moved, std::slice::from_ref(&old));
+
+        assert_eq!(faults.len(), 1, "{faults:?}");
+        assert!(faults[0].contains("from.layout.json"), "{faults:?}");
+        assert!(!old.exists());
+        assert!(!dir.join("from.pairing").exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_rename_with_no_layout_and_nothing_to_remove_finishes_with_no_fault() {
+        let dir = scratch("finish_none");
+        let faults = finish_move(
+            &dir.join("from.layout.json"),
+            &dir.join("to.layout.json"),
+            &[],
+        );
+        assert!(faults.is_empty(), "{faults:?}");
+        let _ = fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn the_revision_is_the_hex_sha256_of_the_bytes() {

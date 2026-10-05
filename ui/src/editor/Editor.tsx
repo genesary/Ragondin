@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type KeyboardEvent } from 'react';
-import { Button, Inspector } from '../../design/index.ts';
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { Button, Input, Inspector } from '../../design/index.ts';
 import type { ApiClient } from '../api/client.ts';
 import type { Capabilities, ParameterValue, ServiceStatus } from '../api/types.ts';
-import { Canvas, edgeId, type CanvasPorts, type Position } from '../canvas/index.ts';
+import { boundsOf, Canvas, clearSpot, edgeId, RANK_GAP, resolveLayout, toModel, type CanvasPorts, type Position } from '../canvas/index.ts';
 import { danglingInputs, freshId, toGraph, type WireDocument } from './document.ts';
 import { EditorInspector, type NodeVerdict } from './EditorInspector.tsx';
 import { missingRequired, parametersOf, startingParams } from './parameters.ts';
@@ -16,6 +16,7 @@ import { ExportPanel, SavePrompt } from './SavePrompt.tsx';
 import { canRedo, canUndo, editorReducer, initialEditor, type EditorAction, type EditorLayout } from './store.ts';
 import { useValidation, type Verdict } from './validation.ts';
 import { navigate } from '../routes.ts';
+import { Words } from '../words.tsx';
 import './Editor.css';
 
 // Where a node placed from the palette lands beside the selected one: a
@@ -47,14 +48,8 @@ export type EditorProps = {
   onNamed?: (name: string) => void;
   /** "Discard my changes and reload": the file read again from disk. */
   onReload?: () => void;
-};
-
-// What the inspector's verdict slot says of a node the server names nothing about.
-const QUIET: Record<'checking' | 'valid' | 'invalid' | 'failed', string> = {
-  checking: 'Checking with the server…',
-  valid: 'The server names no problem with this node.',
-  invalid: 'The server stopped at a problem elsewhere; it has not judged this node past it.',
-  failed: 'No verdict: the request to the server failed.',
+  /** The header's way to another pipeline, given the one written now, if any. */
+  picker?: (current: string | null) => ReactNode;
 };
 
 // A field with an undo of its own: text being typed. A checkbox, a radio or a
@@ -72,19 +67,121 @@ function saveWords(save: SaveState, dirty: boolean, verdict: Verdict, errors: nu
       return 'Not saved: the file changed on disk';
     case 'handwritten':
       return 'Not saved: waiting for your choice';
-    case 'taken':
-      return 'Not saved: the name is taken';
+    case 'naming':
+      return 'Not saved yet: name it to save it';
     case 'failed':
       return `Not saved: ${phase.problem.message}`;
     case 'idle':
       if (verdict.status === 'invalid') return `Unsaved — ${errors} ${errors === 1 ? 'error' : 'errors'}`;
       if (verdict.status === 'failed') return 'Unsaved: the server could not be asked';
       if (dirty || (save.keep && save.file.name === null)) return 'Unsaved changes';
-      return save.file.name === null ? 'Not written yet: the first change, or Keep this pipeline, writes it' : 'Saved';
+      if (save.file.name === null) return 'Not written yet: the first change, or Keep this pipeline, asks for its name';
+      // "Saved" only once this editor has written: a file just opened was saved by nobody here.
+      return save.wrote ? 'Saved' : 'No changes since it was opened';
   }
 }
 
 const shortRun = (id: string) => id.slice(0, 12);
+
+/**
+ * The pipeline's name, and its Rename: a field in its place while it is edited — Enter renames, Escape keeps the
+ * name — and the server's refusal under it, in words.
+ */
+function Title({ name, proposed, onRename }: { name: string; proposed: string; onRename: (to: string) => Promise<string | null> }) {
+  const [editing, setEditing] = useState(false);
+  const [text, setText] = useState(proposed);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const stop = () => {
+    setEditing(false);
+    setError(null);
+  };
+  const commit = async () => {
+    const to = text.trim();
+    if (to === '' || to === proposed) return stop();
+    setBusy(true);
+    const why = await onRename(to);
+    setBusy(false);
+    if (why === null) stop();
+    else setError(why);
+  };
+  if (!editing) {
+    return (
+      <div className="rg-editor__name">
+        <h2 className="rg-editor__title">{name}</h2>
+        <Button
+          kind="quiet"
+          size="s"
+          onClick={() => {
+            setText(proposed);
+            setEditing(true);
+          }}
+        >
+          Rename
+        </Button>
+      </div>
+    );
+  }
+  return (
+    <form
+      className="rg-editor__name"
+      onSubmit={(event) => {
+        event.preventDefault();
+        void commit();
+      }}
+    >
+      <Input
+        id="rg-editor-name"
+        label="Pipeline name"
+        mono
+        autoFocus
+        value={text}
+        {...(error === null ? {} : { error: <Words text={error} /> })}
+        onChange={(event) => setText(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') {
+            event.preventDefault();
+            stop();
+          } else if (event.key === 'Enter') {
+            event.preventDefault();
+            void commit();
+          }
+        }}
+      />
+      <Button type="submit" size="s" busy={busy} busyLabel="Renaming…">
+        Rename
+      </Button>
+      <Button kind="quiet" size="s" onClick={stop}>
+        Cancel
+      </Button>
+    </form>
+  );
+}
+
+/**
+ * The canonical hash, as the run it would name is shown elsewhere: its first twelve characters, the whole hash in its
+ * title, copied whole on a click — the identity a run of this document would carry.
+ */
+function HashButton({ hash }: { hash: string }) {
+  const [said, setSaid] = useState('');
+  const copy = () => {
+    void navigator.clipboard?.writeText(hash).then(
+      () => setSaid('Copied.'),
+      () => setSaid('The browser refused the copy.'),
+    );
+  };
+  return (
+    <>
+      <button type="button" className="rg-editor__hash" title={hash} onClick={copy}>
+        <code>{hash.slice(0, 12)}</code>
+        <span className="rg-visually-hidden">Copy the canonical hash, the identity a run of this document would carry</span>
+      </button>{' '}
+      <span className="rg-editor__copied" role="status">
+        {said}
+      </span>
+    </>
+  );
+}
 
 /**
  * The editor: the canvas in write mode over one wire-schema document, the
@@ -92,7 +189,7 @@ const shortRun = (id: string) => id.slice(0, 12);
  * server's verdict on the document as it stands, and — given the `file` it
  * writes — continuous saving (`persist.ts`, `saving.ts`) and the export.
  */
-export function Editor({ client, title, stored = null, initial, layout, capabilities, services, grammar, selected, onSelect, file, forkedFrom = null, onNamed = () => {}, onReload = () => {} }: EditorProps) {
+export function Editor({ client, title, stored = null, initial, layout, capabilities, services, grammar, selected, onSelect, file, forkedFrom = null, onNamed = () => {}, onReload = () => {}, picker }: EditorProps) {
   const [state, apply] = useReducer(editorReducer, undefined, () => initialEditor(initial, layout));
   // A position a step changed is the person's and is written; where the
   // canvas placed a node itself on opening is kept, and written with the next.
@@ -103,10 +200,12 @@ export function Editor({ client, title, stored = null, initial, layout, capabili
   }, []);
   const { doc } = state;
   const verdict = useValidation(client, doc);
-  const [save, act] = useSaving(client, doc, verdict, file, onNamed);
+  const [save, act, renameFile, { renaming, fault: renameFault }] = useSaving(client, doc, verdict, file, onNamed);
+  // A name typed in the title of a document never written: shown as its name, and offered at its first write.
+  const [proposedByPerson, setProposedByPerson] = useState(false);
   const written = save.file.etag === null ? null : save.file.name;
-  // While a prompt is up, or a save as a new file is out, the positions wait for the file chosen.
-  const holding = asking(save) || (save.phase.kind === 'saving' && save.phase.back !== null);
+  // While a prompt is up, a save as a new file or a rename is out, the positions wait for the file chosen.
+  const holding = asking(save) || renaming || (save.phase.kind === 'saving' && save.phase.back !== null);
   const layoutFailed = useLayoutSaving(client, written, state.layout, touched, holding);
   const dirty = isDirty(save, doc);
   // Leaving the page while something is not on disk asks the browser to confirm.
@@ -118,7 +217,7 @@ export function Editor({ client, title, stored = null, initial, layout, capabili
     return () => window.removeEventListener('beforeunload', onLeave);
   }, [unsaved]);
   const [exporting, setExporting] = useState(false);
-  const name = save.file.name ?? title;
+  const name = save.file.name ?? (proposedByPerson ? save.file.proposed : title);
   const fileName = save.file.name ?? (save.file.proposed === '' ? 'pipeline' : save.file.proposed);
   const root = useRef<HTMLDivElement>(null);
   const [inserting, setInserting] = useState<HTMLElement | null>(null);
@@ -182,9 +281,13 @@ export function Editor({ client, title, stored = null, initial, layout, capabili
     return dangling[id] === undefined ? null : { message: dangling[id], port: port < 0 ? null : port };
   };
 
+  // A node placed lands where it is dropped; otherwise beside the selected node, else right of the graph — and, either
+  // way, moved down the grid clear of every card, so it never lands on one.
   const place = (component: string, impl: string, position?: Position) => {
-    const at = position ?? (selected === null ? undefined : state.layout[selected]);
-    const beside = position === undefined && at !== undefined ? { x: at.x + BESIDE, y: at.y } : at;
+    const anchor = selected === null ? undefined : state.layout[selected];
+    const bounds = boundsOf(state.layout);
+    const wanted = anchor !== undefined ? { x: anchor.x + BESIDE, y: anchor.y } : Object.keys(state.layout).length === 0 ? undefined : { x: bounds.x + bounds.width + RANK_GAP, y: bounds.y };
+    const beside = position ?? (wanted === undefined ? undefined : clearSpot(state.layout, wanted));
     // The id the store gives it, from the same document.
     const id = freshId(doc, impl);
     const params = startingParams(takes(component, impl, {}) ?? []);
@@ -203,27 +306,25 @@ export function Editor({ client, title, stored = null, initial, layout, capabili
   });
 
   // A focus request waits for its target to be drawn, and expires once its
-  // target is gone, so a later redo bringing it back takes no focus.
+  // target is gone, so a later redo bringing it back takes no focus. The
+  // canvas library draws a node a frame after the render that adds it, so
+  // a target not drawn yet is looked for again on the next frame.
+  const [, setLookAgain] = useState(0);
   useEffect(() => {
     if (focus === null) return;
     if (('node' in focus && !exists(focus.node)) || ('inspector' in focus && focus.inspector !== selected)) {
       setFocus(null);
       return;
     }
-    if ('node' in focus) {
-      // The canvas's node element: the one place the editor reaches into the canvas's markup, to give focus to what it just placed.
-      const el = root.current?.querySelector<HTMLElement>(`.react-flow__node[data-id="${CSS.escape(focus.node)}"]`);
-      if (el != null) {
-        el.focus();
-        setFocus(null);
-      }
-    } else {
-      const field = root.current?.querySelector<HTMLElement>(`.rg-canvas__inspector input`);
-      if (field != null) {
-        field.focus();
-        setFocus(null);
-      }
+    // The canvas's node element: the one place the editor reaches into the canvas's markup, to give focus to what it just placed.
+    const target = 'node' in focus ? root.current?.querySelector<HTMLElement>(`.react-flow__node[data-id="${CSS.escape(focus.node)}"]`) : root.current?.querySelector<HTMLElement>(`.rg-canvas__inspector input`);
+    if (target != null) {
+      target.focus();
+      setFocus(null);
+      return;
     }
+    const frame = requestAnimationFrame(() => setLookAgain((n) => n + 1));
+    return () => cancelAnimationFrame(frame);
   });
 
   // Undo and redo from the keyboard: inside the editor, and with focus on
@@ -258,8 +359,25 @@ export function Editor({ client, title, stored = null, initial, layout, capabili
   const runUpToNode = (id: string) => {
     if (onDisk !== null) navigate({ screen: 'runs', launch: { pipeline: onDisk, upTo: id } });
   };
+  // "Launch…": the Runs launch panel on the whole pipeline, offered as "Run up to this node" is, on the file on disk.
+  const launchRefusal = onDisk === null ? 'Not a workspace pipeline yet: a run takes a stored document.' : !unchanged ? 'The canvas differs from the stored document, and a run takes the stored one: wait for it to be saved.' : null;
 
   const nodeOf = (id: string) => doc.pipeline.nodes.find((n) => n.id === id);
+  // A node removed — from its menu or by Delete — gives focus to a neighbour: what fed it, else the first input,
+  // rather than to the page with the node's element. A declared input is not removed.
+  const deleteNode = (id: string) => {
+    const node = nodeOf(id);
+    if (node === undefined) return;
+    const neighbour = node.inputs.find((i) => i !== id && (nodeOf(i) !== undefined || doc.pipeline.inputs.includes(i))) ?? doc.pipeline.inputs[0];
+    dispatch({ type: 'remove', node: id });
+    if (selected === id) onSelect(null);
+    if (neighbour !== undefined) setFocus({ node: neighbour });
+  };
+  // Only the last edge into a node is removed: removing an earlier one would slide the later inputs into its port.
+  const edgeRemoval = (_from: string, to: string, port: number) => {
+    const node = nodeOf(to);
+    return node === undefined || port === node.inputs.length - 1 ? null : `Only the last edge into \`${to}\` can be removed: removing this one would slide the inputs after it into its port.`;
+  };
   const inspector = (id: string) => {
     const node = nodeOf(id);
     // Neither a node nor an input: a selection about to be cleared draws nothing.
@@ -280,7 +398,7 @@ export function Editor({ client, title, stored = null, initial, layout, capabili
         parameters={takes(node.component, node.impl, node.params)}
         insisted={insisted}
         verdict={verdictOf(id)}
-        quiet={QUIET[verdict.status]}
+        quiet={verdict.status}
         dispatch={dispatch}
         onRenamed={onSelect}
         run={runOf(id)}
@@ -312,14 +430,7 @@ export function Editor({ client, title, stored = null, initial, layout, capabili
           onSelect(copy);
         }}
         onConnect={(to, port) => dispatch({ type: 'connect', from: id, to, port })}
-        onDelete={() => {
-          // Focus goes to a neighbour — what fed the node, else the first
-          // input — rather than to the page with the node's element.
-          const neighbour = nodeOf(id)!.inputs.find((i) => i !== id && (nodeOf(i) !== undefined || doc.pipeline.inputs.includes(i))) ?? doc.pipeline.inputs[0];
-          dispatch({ type: 'remove', node: id });
-          if (selected === id) onSelect(null);
-          if (neighbour !== undefined) setFocus({ node: neighbour });
-        }}
+        onDelete={() => deleteNode(id)}
       />
     );
 
@@ -330,13 +441,21 @@ export function Editor({ client, title, stored = null, initial, layout, capabili
       case 'valid':
         return (
           <span>
-            Canonical hash <code title="The identity a run of this document would carry">{verdict.hash}</code>
+            Canonical hash <HashButton hash={verdict.hash} />
           </span>
         );
       case 'invalid':
-        return <span data-invalid="true">Not valid: {verdict.problem.message}</span>;
+        return (
+          <span data-invalid="true">
+            Not valid: <Words text={verdict.problem.message} />
+          </span>
+        );
       case 'failed':
-        return <span data-invalid="true">Could not validate: {verdict.problem.message}</span>;
+        return (
+          <span data-invalid="true">
+            Could not validate: <Words text={verdict.problem.message} />
+          </span>
+        );
     }
   })();
   const rendering = verdict.status === 'valid' ? verdict.rendering : null;
@@ -347,18 +466,47 @@ export function Editor({ client, title, stored = null, initial, layout, capabili
   return (
     <div ref={root} className="rg-editor" onKeyDown={onKeyDown}>
       <header className="rg-editor__bar">
-        <h2 className="rg-editor__title">{name}</h2>
-        <div className="rg-editor__history" role="group" aria-label="History">
-          <Button kind="quiet" size="s" icon="undo" onClick={() => dispatch({ type: 'undo' })} {...(canUndo(state) ? {} : { disabled: true, disabledReason: 'Nothing to undo.' })}>
-            Undo
+        {file === undefined ? (
+          <h2 className="rg-editor__title">{name}</h2>
+        ) : (
+          <Title
+            name={name}
+            proposed={save.file.name ?? save.file.proposed}
+            onRename={async (to) => {
+              const why = await renameFile(to);
+              if (why === null && save.file.name === null) setProposedByPerson(true);
+              return why;
+            }}
+          />
+        )}
+        <div className="rg-editor__actions">
+          {picker?.(save.file.name ?? stored)}
+          <Button
+            kind="primary"
+            size="s"
+            icon="play"
+            onClick={() => {
+              if (onDisk !== null) navigate({ screen: 'runs', launch: { pipeline: onDisk } });
+            }}
+            {...(launchRefusal === null ? {} : { disabled: true, disabledReason: launchRefusal })}
+          >
+            Launch…
           </Button>
-          <Button kind="quiet" size="s" icon="redo" onClick={() => dispatch({ type: 'redo' })} {...(canRedo(state) ? {} : { disabled: true, disabledReason: 'Nothing to redo.' })}>
-            Redo
+          <div className="rg-editor__history" role="group" aria-label="History">
+            <Button kind="quiet" size="s" icon="undo" onClick={() => dispatch({ type: 'undo' })} {...(canUndo(state) ? {} : { disabled: true, disabledReason: 'Nothing to undo.' })}>
+              Undo
+            </Button>
+            <Button kind="quiet" size="s" icon="redo" onClick={() => dispatch({ type: 'redo' })} {...(canRedo(state) ? {} : { disabled: true, disabledReason: 'Nothing to redo.' })}>
+              Redo
+            </Button>
+          </div>
+          <Button kind="quiet" size="s" icon="fit" onClick={() => dispatch({ type: 'arrange', positions: resolveLayout(toModel(graph)).positions })}>
+            Tidy layout
+          </Button>
+          <Button kind="quiet" size="s" aria-expanded={exporting} onClick={() => setExporting(!exporting)} {...(rendering === null ? { disabled: true, disabledReason: 'Only a document the server calls valid is exported.' } : {})}>
+            Export
           </Button>
         </div>
-        <Button kind="quiet" size="s" aria-expanded={exporting} onClick={() => setExporting(!exporting)} {...(rendering === null ? { disabled: true, disabledReason: 'Only a document the server calls valid is exported.' } : {})}>
-          Export
-        </Button>
         <p className="rg-editor__verdict">{header}</p>
         <p className="rg-visually-hidden" role="status">
           {announced}
@@ -366,9 +514,9 @@ export function Editor({ client, title, stored = null, initial, layout, capabili
         {file === undefined ? null : (
           <div className="rg-editor__file">
             <p className="rg-editor__save" data-testid="save-state" role="status" aria-live="polite">
-              {saveWords(save, dirty, verdict, errors)}
+              <Words text={saveWords(save, dirty, verdict, errors)} />
             </p>
-            {save.file.name === null && !save.keep ? (
+            {save.file.name === null && !save.keep && save.phase.kind !== 'naming' ? (
               <Button size="s" onClick={() => act({ type: 'keep' })}>
                 Keep this pipeline
               </Button>
@@ -379,6 +527,7 @@ export function Editor({ client, title, stored = null, initial, layout, capabili
               </p>
             )}
             {layoutFailed === null ? null : <p className="rg-editor__layout-failed">The positions could not be saved: {layoutFailed.message}</p>}
+            {renameFault === null ? null : <p className="rg-editor__layout-failed">Renamed, with a fault: {renameFault}.</p>}
           </div>
         )}
       </header>
@@ -420,6 +569,9 @@ export function Editor({ client, title, stored = null, initial, layout, capabili
             issues={issues}
             todos={todos}
             invalidEdges={invalidEdges}
+            onDelete={deleteNode}
+            refuseRemoveEdge={edgeRemoval}
+            onRemoveEdge={(_from, to, port) => dispatch({ type: 'disconnect', node: to, port })}
           />
           {inserting === null ? null : (
             <InsertMenu

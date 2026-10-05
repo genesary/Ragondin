@@ -6,6 +6,11 @@ import { runUpTo } from './prefix.ts';
 const STORED = { name: 'hybrid-rag', unchanged: true };
 
 describe('runUpTo', () => {
+  it('refuses a node with no input yet: there is nothing for it to run on', () => {
+    const doc: WireDocument = { pipeline: { inputs: ['question'], nodes: [...HYBRID.pipeline.nodes, { id: 'rrf', component: 'fusion', impl: 'rrf', inputs: [], params: {} }] } };
+    expect(runUpTo(doc, 'rrf', STORED)).toEqual({ kind: 'refused', reason: 'This node has no input yet: connect one first.' });
+  });
+
   it('opens on a ranking node, naming what is kept, what is skipped, and the generation it saves', () => {
     expect(runUpTo(HYBRID_RAG, 'reranked', STORED)).toEqual({
       kind: 'open',

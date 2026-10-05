@@ -3,6 +3,7 @@ import { FamilyTile, Glyph, Progress, RankStrip, type Family } from '../../desig
 import { percent, type NodeOverlay, type PortKind } from './model.ts';
 import { PortMark, portTop, type PortProps } from './Port.tsx';
 import './NodeCard.css';
+import { Words } from '../words.tsx';
 
 /** What the node is doing, said in its head; the two failures also say why inside the card. */
 export type NodeStatus =
@@ -103,7 +104,9 @@ export function NodeCard({
       {shown?.kind === 'invalid' || shown?.kind === 'failed' ? (
         <div className="rg-node__msg">
           <Glyph name="alert" />
-          <span>{shown.message}</span>
+          <span>
+            <Words text={shown.message} />
+          </span>
         </div>
       ) : null}
       {todo === undefined || shown?.kind === 'invalid' || shown?.kind === 'failed' ? null : <div className="rg-node__todo">{todo}</div>}

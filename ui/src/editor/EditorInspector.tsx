@@ -1,8 +1,9 @@
-import { useEffect, useId, useState, type KeyboardEvent } from 'react';
+import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react';
 import { Button, Checkbox, Input, Inspector, Select, familyOfComponent } from '../../design/index.ts';
 import type { Parameter as Served, ParameterKind, ParameterValue } from '../api/types.ts';
 import { PORT_LABEL } from '../canvas/Port.tsx';
 import { bool, float, formatFloat, int, list, str } from '../parameters.ts';
+import { Words } from '../words.tsx';
 import { freshId, type WireDocument, type WireNode } from './document.ts';
 import type { NodePorts } from './ports.ts';
 import type { EditorAction } from './store.ts';
@@ -20,8 +21,8 @@ export type EditorInspectorProps = {
   /** Whether the server refused a save of this document: a required key still unset is then marked invalid, not only said to be required. */
   insisted: boolean;
   verdict: NodeVerdict;
-  /** What the slot says when the server names nothing here: checking, clear, stopped elsewhere, or no verdict. */
-  quiet: string;
+  /** Where the server's verdict stands when it names nothing here: checking, valid, stopped elsewhere, or no verdict. */
+  quiet: Quiet;
   dispatch: (action: EditorAction) => void;
   /** The node was renamed: the selection follows it. */
   onRenamed: (id: string) => void;
@@ -33,6 +34,20 @@ export type EditorInspectorProps = {
 
 type Kind = ParameterValue['kind'];
 
+/** Where the document's verdict stands, for a node the server names nothing about. */
+export type Quiet = 'checking' | 'valid' | 'invalid' | 'failed';
+
+// What the verdict slot says of a node the server names nothing about. Valid is a small mark, not a sentence: nothing
+// is wrong, so there is nothing to read.
+const QUIET: Record<Exclude<Quiet, 'valid'>, string> = {
+  checking: 'Checking with the server…',
+  invalid: 'The server stopped at a problem elsewhere; it has not judged this node past it.',
+  failed: 'No verdict: the request to the server failed.',
+};
+
+/** How long a value must rest while it is typed before it is committed: a pause, not every keystroke. */
+export const PARAM_DEBOUNCE_MS = 400;
+
 // Each kind ADR-C22's flat grammar has, as the person picks it. The order is
 // the one a configuration most often needs them in.
 const KINDS: readonly { value: Kind; label: string }[] = [
@@ -42,6 +57,8 @@ const KINDS: readonly { value: Kind; label: string }[] = [
   { value: 'bool', label: 'Flag' },
   { value: 'list', label: 'List' },
 ];
+
+const KIND_LABEL: Record<Kind, string> = Object.fromEntries(KINDS.map((k) => [k.value, k.label])) as Record<Kind, string>;
 
 /** A value as its field shows it: a float with its fractional part, a list's items separated by commas. */
 function textOf(value: ParameterValue): string {
@@ -166,6 +183,7 @@ const SERVED_KIND: Record<ParameterKind, { kind: Kind; label: string }> = {
   float: { kind: 'float', label: 'float' },
 };
 const REQUIRED = 'Required: the pipeline cannot be saved or run without it.';
+const servedKind = (served: Served | undefined): Kind | null => (served === undefined ? null : SERVED_KIND[served.kind].kind);
 
 /** What a served parameter is for, on a line of its own under its row, so an error on the field never hides it; its field names it in `aria-describedby`. */
 function About({ id, served }: { id: string; served: Served | undefined }) {
@@ -203,9 +221,10 @@ function Unset({ prefix, served, insisted, onSet }: { prefix: string; served: Se
   const id = `${prefix}-param-${served.name}`;
   const invalid = error ?? (served.required && insisted ? REQUIRED : undefined);
   const info = served.required && invalid === undefined ? 'Required.' : undefined;
+  const row = useErrorInView(error);
   return (
     <>
-      <div className="rg-editor-inspector__param" data-unset>
+      <div ref={row} className="rg-editor-inspector__param" data-unset>
         <Input
           id={id}
           label={served.name}
@@ -231,21 +250,59 @@ function Unset({ prefix, served, insisted, onSet }: { prefix: string; served: Se
   );
 }
 
-function Parameter({ prefix, name, value, about, onSet, onRemove }: { prefix: string; name: string; value: ParameterValue; about: boolean; onSet: (v: ParameterValue) => void; onRemove: () => void }) {
+/** Brings a field's row, its error line included, into view inside the inspector's scrolling body once an error lands on it. */
+function useErrorInView(error: unknown) {
+  const row = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (error !== undefined) row.current?.scrollIntoView?.({ block: 'nearest' });
+  }, [error]);
+  return row;
+}
+
+function Parameter({ prefix, name, value, served, onSet, onRemove }: { prefix: string; name: string; value: ParameterValue; served: Kind | null; onSet: (v: ParameterValue) => void; onRemove: () => void }) {
+  const about = served !== null;
   const [text, setText] = useState(textOf(value));
   const [error, setError] = useState<string | undefined>(undefined);
   const [kindError, setKindError] = useState<string | undefined>(undefined);
-  useEffect(() => setText(textOf(value)), [value]);
+  const shown = textOf(value);
+  // The text of the value this field itself last committed. Its coming back is not a change from outside, so the
+  // field keeps what is typed — "1." stays "1.", never "1.0" under the next digit — and only another value, an undo
+  // for one, replaces it.
+  const mine = useRef<string | null>(null);
+  useEffect(() => {
+    const own = mine.current === shown;
+    mine.current = null;
+    if (!own) setText(shown);
+  }, [shown]);
+  const row = useErrorInView(error ?? kindError);
   const readOnly = readOnlyReason(value);
-  const commit = () => {
+  // Leaving the field shows the value in its own form; a commit while it is typed leaves the text as typed.
+  const commit = (leaving: boolean) => {
     // Tabbing through a field, or Enter on it, changes nothing it was not asked to.
-    if (readOnly !== null || text === textOf(value)) return setError(undefined);
+    if (readOnly !== null || text === shown) return setError(undefined);
     const read = readAs(value.kind, text, value.kind === 'list' ? value.value : []);
     if ('error' in read) return setError(read.error);
     setError(undefined);
     setKindError(undefined);
-    onSet(read.value);
+    const next = textOf(read.value);
+    if (next !== shown) {
+      mine.current = next;
+      onSet(read.value);
+    }
+    if (leaving) setText(next);
   };
+  // While it is typed, a value its kind carries is committed once the typing rests; one it cannot carry waits for the
+  // field to be left, so a value half typed ("1e" on the way to "1e3") is never called wrong. Text that reads as the
+  // value already held — "1." once 1.0 is committed — has nothing to commit.
+  const latest = useRef(commit);
+  latest.current = commit;
+  useEffect(() => {
+    if (readOnly !== null || text === shown) return;
+    const read = readAs(value.kind, text, value.kind === 'list' ? value.value : []);
+    if ('error' in read || textOf(read.value) === shown) return;
+    const timer = setTimeout(() => latest.current(false), PARAM_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [text, value, shown, readOnly]);
   // The value as it reads in the kind picked; refused in words when it cannot, and the kind kept.
   const rekind = (kind: Kind) => {
     const read = readAs(kind, textOf(value));
@@ -255,17 +312,25 @@ function Parameter({ prefix, name, value, about, onSet, onRemove }: { prefix: st
     onSet(read.value);
   };
   const id = `${prefix}-param-${name}`;
-  const kind = (
-    <Select
-      id={`${id}-kind`}
-      label={`Kind of ${name}`}
-      options={KINDS}
-      value={value.kind}
-      disabled={readOnly !== null}
-      {...(kindError === undefined ? {} : { error: kindError })}
-      onChange={(e) => rekind(e.target.value as Kind)}
-    />
-  );
+  // A served key is typed in its served kind: no other is offered, except the kind its value is written in when that
+  // is another, so the value can be brought back to it.
+  const offered = served === null ? KINDS : [...new Set([value.kind, served])].map((k) => ({ value: k, label: KIND_LABEL[k] }));
+  const kind =
+    offered.length === 1 ? (
+      <span className="rg-editor-inspector__kind" title={`Kind of ${name}`}>
+        {KIND_LABEL[value.kind]}
+      </span>
+    ) : (
+      <Select
+        id={`${id}-kind`}
+        label={`Kind of ${name}`}
+        options={offered}
+        value={value.kind}
+        disabled={readOnly !== null}
+        {...(kindError === undefined ? {} : { error: kindError })}
+        onChange={(e) => rekind(e.target.value as Kind)}
+      />
+    );
   const remove = (
     <Button kind="quiet" size="s" icon="close" onClick={onRemove}>
       <span className="rg-visually-hidden">Remove {name}</span>
@@ -273,7 +338,7 @@ function Parameter({ prefix, name, value, about, onSet, onRemove }: { prefix: st
   );
   if (value.kind === 'bool') {
     return (
-      <div className="rg-editor-inspector__param">
+      <div ref={row} className="rg-editor-inspector__param">
         <Checkbox label={name} checked={value.value} onChange={(checked) => onSet(bool(checked))} />
         {kind}
         {remove}
@@ -281,7 +346,7 @@ function Parameter({ prefix, name, value, about, onSet, onRemove }: { prefix: st
     );
   }
   return (
-    <div className="rg-editor-inspector__param">
+    <div ref={row} className="rg-editor-inspector__param">
       <Input
         id={id}
         label={name}
@@ -292,13 +357,13 @@ function Parameter({ prefix, name, value, about, onSet, onRemove }: { prefix: st
         readOnly={readOnly !== null}
         // The line is always there, so an error replaces it rather than pushing the fields below down.
         help={readOnly ?? (value.kind === 'list' ? 'A list: items separated by commas.' : ' ')}
-        {...(error === undefined ? {} : { error })}
+        {...(error === undefined ? {} : { error: <Words text={error} /> })}
         onChange={(e) => {
           if (readOnly === null) setText(e.target.value);
         }}
-        onBlur={commit}
+        onBlur={() => commit(true)}
         onKeyDown={(e) => {
-          if (e.key === 'Enter') commit();
+          if (e.key === 'Enter') commit(false);
         }}
       />
       {kind}
@@ -379,10 +444,10 @@ export function EditorInspector({ doc, node, ports, parameters, insisted, verdic
         )
       }
     >
-      <div className="rg-editor-inspector__verdict" data-invalid={verdict === null ? undefined : true}>
-        {verdict === null ? quiet : verdict.message}
+      <div className="rg-editor-inspector__verdict" data-invalid={verdict === null ? undefined : true} data-valid={verdict === null && quiet === 'valid' ? true : undefined}>
+        {verdict !== null ? <Words text={verdict.message} /> : quiet === 'valid' ? 'Valid' : QUIET[quiet]}
       </div>
-      <Input id={`${prefix}-id`} label="Node id" mono value={id} help="Unique in the pipeline." {...(idError === undefined ? {} : { error: idError })} onChange={(e) => setId(e.target.value)} onBlur={rename} onKeyDown={onIdKey} />
+      <Input id={`${prefix}-id`} label="Node id" mono value={id} help="Unique in the pipeline." {...(idError === undefined ? {} : { error: <Words text={idError} /> })} onChange={(e) => setId(e.target.value)} onBlur={rename} onKeyDown={onIdKey} />
       <dl className="rg-editor-inspector__meta">
         <dt>Family</dt>
         <dd>{node.component}</dd>
@@ -394,15 +459,16 @@ export function EditorInspector({ doc, node, ports, parameters, insisted, verdic
         {ports.inputs.map((kind, port) => {
           const from = node.inputs[port];
           const named = verdict !== null && verdict.port === port;
-          const label = `port ${port}${kind === 'opaque' ? '' : ` (${PORT_LABEL[kind]})`}`;
+          // Counted from one, as a person counts; the server's own words keep its port numbers.
+          const label = `Input ${port + 1}${kind === 'opaque' ? '' : ` (${PORT_LABEL[kind]})`}`;
           return (
-            <li key={port} aria-label={`${label}, ${from === undefined ? 'empty' : `from ${from}`}`} data-invalid={named || undefined}>
+            <li key={port} aria-label={`${label}, ${from === undefined ? 'not connected' : `from ${from}`}`} data-invalid={named || undefined}>
               <span>
-                {label}: {from === undefined ? <i>empty</i> : <code>{from}</code>}
+                {label}: {from === undefined ? <i>not connected</i> : <code>{from}</code>}
               </span>
               {from === undefined || port !== node.inputs.length - 1 ? null : (
                 <Button kind="quiet" size="s" icon="close" onClick={() => dispatch({ type: 'disconnect', node: node.id, port })}>
-                  <span className="rg-visually-hidden">Remove the edge into port {port}</span>
+                  <span className="rg-visually-hidden">Remove the edge into input {port + 1}</span>
                 </Button>
               )}
               {/* Always there, one line: a verdict landing marks the row and moves nothing. The words are in the slot above. */}
@@ -419,7 +485,7 @@ export function EditorInspector({ doc, node, ports, parameters, insisted, verdic
         if (value === undefined) return <Unset key={name} prefix={prefix} served={served.get(name)!} insisted={insisted} onSet={set} />;
         return (
           <div key={name}>
-            <Parameter prefix={prefix} name={name} value={value} about={served.has(name)} onSet={set} onRemove={() => dispatch({ type: 'removeParam', node: node.id, key: name })} />
+            <Parameter prefix={prefix} name={name} value={value} served={servedKind(served.get(name))} onSet={set} onRemove={() => dispatch({ type: 'removeParam', node: node.id, key: name })} />
             <About id={`${prefix}-param-${name}-about`} served={served.get(name)} />
           </div>
         );

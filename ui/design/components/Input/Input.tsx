@@ -1,4 +1,4 @@
-import type { InputHTMLAttributes } from 'react';
+import type { InputHTMLAttributes, ReactNode } from 'react';
 import { Help } from '../../forms/Help.tsx';
 import './Input.css';
 
@@ -14,8 +14,8 @@ export type InputProps = {
   /** Parameters, paths, addresses and YAML. */
   mono?: boolean;
   help?: string;
-  /** What is wrong and what is allowed, with the numbers. Marks the field invalid. */
-  error?: string;
+  /** What is wrong and what is allowed, with the numbers — words, or words with code spans. Marks the field invalid. */
+  error?: ReactNode;
   /** The ids of other elements that describe the field, after its own unit and help line. */
   describedBy?: string;
 } & Omit<InputHTMLAttributes<HTMLInputElement>, 'id' | 'aria-describedby'>;

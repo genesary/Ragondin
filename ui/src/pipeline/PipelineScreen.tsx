@@ -133,6 +133,9 @@ function Loaded({ matrix, listing, launch }: { matrix: PipelineMatrix; listing: 
     <header className="rg-pipeline__head">
       <div className="rg-pipeline__bar">
         <PipelineSelect listing={listing} current={matrix.pipeline} />
+        <ButtonLink kind="secondary" href={formatHash({ screen: 'editor', name: matrix.pipeline })} aria-label={`Edit ${matrix.pipeline}`}>
+          Edit
+        </ButtonLink>
         {metrics.length === 0 ? null : (
           <Select id="rg-pipeline-metric" label="Ranking metric" value={metric} options={metrics.map((m) => ({ value: m, label: m }))} onChange={(event) => setChosen(event.target.value)} />
         )}

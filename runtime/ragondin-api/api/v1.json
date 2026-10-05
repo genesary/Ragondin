@@ -3290,6 +3290,65 @@
         ],
         "type": "object"
       },
+      "PipelineRenamed": {
+        "description": "`POST /pipelines/{name}/rename`: the pipeline as the listing describes it\nunder its new name, and what did not follow it.",
+        "properties": {
+          "ends_in_answer": {
+            "description": "Whether its output is an answer, as the listing says it; `null` when\nit does not validate.",
+            "nullable": true,
+            "type": "boolean"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PipelineError"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "Why it does not validate, when it does not."
+          },
+          "etag": {
+            "description": "The digest of its bytes, unchanged by the rename.",
+            "type": "string"
+          },
+          "fault": {
+            "description": "What could not follow the document once it had moved — its layout\nleft under the old name, a pairing not removed — in words; `null` when\nthe pipeline moved whole. The rename is done either way.",
+            "nullable": true,
+            "type": "string"
+          },
+          "hash": {
+            "description": "The content hash of its canonical logical form, when it validates.",
+            "nullable": true,
+            "type": "string"
+          },
+          "modified_ms": {
+            "description": "When its file was last modified, in milliseconds since the Unix\nepoch; `null` for a time before the epoch, which is unknown, never\n`0`.",
+            "format": "uint64",
+            "minimum": 0,
+            "nullable": true,
+            "type": "integer"
+          },
+          "name": {
+            "description": "Its new name.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ends_in_answer",
+          "error",
+          "etag",
+          "fault",
+          "hash",
+          "modified_ms",
+          "name"
+        ],
+        "type": "object"
+      },
       "PipelineSummary": {
         "description": "A pipeline, as the listing shows it.",
         "properties": {
@@ -3490,7 +3549,8 @@
               "prefix_node_not_found",
               "prefix_is_whole_pipeline",
               "prefix_ends_in_context",
-              "prefix_not_scorable"
+              "prefix_not_scorable",
+              "pipeline_exists"
             ],
             "type": "string"
           },
@@ -3659,6 +3719,20 @@
           "run",
           "scores",
           "text"
+        ],
+        "type": "object"
+      },
+      "RenameRequest": {
+        "additionalProperties": false,
+        "description": "`POST /pipelines/{name}/rename`: the name the pipeline takes.",
+        "properties": {
+          "to": {
+            "description": "The new name: one file name, under the rule every pipeline name\nfollows, that no stored pipeline has in any case.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "to"
         ],
         "type": "object"
       },
@@ -5765,6 +5839,63 @@
           }
         },
         "summary": "A pipeline's node × benchmark matrix over its runs: per benchmark the most recent run of its current form or of a prefix of it, each node's figure with its gain over the previous stage, or why the cell is empty."
+      }
+    },
+    "/pipelines/{name}/rename": {
+      "post": {
+        "description": "A rename states `If-Match`: the etag it read, or `*`. A stale etag, or none, is precondition_failed (412), with the current etag, and nothing moved. A `to` that is not a pipeline name, or that differs from a stored name only in case, is request_invalid; so is a `to` with a layout or a pairing kept under it and no pipeline, which the rename would otherwise adopt; a `to` a stored pipeline has is pipeline_exists (409). Once the document has moved the rename is done: what could not follow it — the layout, an old pairing not removed — is said in `fault`, never answered as a failure. The etag is unchanged, since the bytes are, and is also the response's `ETag` header. A run keeps the name it was launched as: its launch record is never rewritten.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "`\"<etag>\"`: the stored document must be at that etag — a weak `W/` tag\nreads as its strong form — or `*`, at any.",
+            "in": "header",
+            "name": "If-Match",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RenameRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PipelineRenamed"
+                }
+              }
+            },
+            "description": "Renames a pipeline document: the file moves byte for byte, its layout and its pairings with it, and every pairing another pipeline keeps towards it follows."
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "An error, as application/problem+json."
+          }
+        },
+        "summary": "Renames a pipeline document: the file moves byte for byte, its layout and its pairings with it, and every pairing another pipeline keeps towards it follows."
       }
     },
     "/runs": {

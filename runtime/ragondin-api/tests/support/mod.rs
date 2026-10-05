@@ -22,9 +22,9 @@ use axum::http::{Request, Response};
 use ragondin_api::{
     content_type_for, router, ApiError, Asset, Assets, Backends, BenchmarkEntry, Cancellation,
     Capabilities, FamilyCapabilities, Launcher, LauncherError, Layout, LoadedDataset, Pairing,
-    PinnedBenchmark, PipelineFile, PipelineSource, Precondition, ProgressSink, Registry, Revision,
-    RunDataset, RunObserver, Server, ServerConfig, ServiceBinding, ServiceIdentity, Settings,
-    Submission, WorkspaceSettings,
+    PinnedBenchmark, PipelineFile, PipelineSource, Precondition, ProgressSink, Registry, Renamed,
+    Revision, RunDataset, RunObserver, Server, ServerConfig, ServiceBinding, ServiceIdentity,
+    Settings, Submission, WorkspaceSettings,
 };
 use ragondin_benchmarks::identity::dataset_version;
 use ragondin_benchmarks::Benchmark;
@@ -334,6 +334,18 @@ impl PipelineSource for FakePipelines {
         })
     }
 
+    async fn rename(
+        &self,
+        from: &str,
+        to: &str,
+        precondition: &Precondition,
+    ) -> Result<Renamed, ApiError> {
+        let _ = (to, precondition);
+        Err(ApiError::PipelineNotFound {
+            name: from.to_owned(),
+        })
+    }
+
     async fn read_layout(&self, name: &str) -> Result<Option<Layout>, ApiError> {
         Err(ApiError::PipelineNotFound {
             name: name.to_owned(),
@@ -463,6 +475,15 @@ impl PipelineSource for HeldPipelines {
         FakePipelines.write(name, document, precondition).await
     }
 
+    async fn rename(
+        &self,
+        from: &str,
+        to: &str,
+        precondition: &Precondition,
+    ) -> Result<Renamed, ApiError> {
+        FakePipelines.rename(from, to, precondition).await
+    }
+
     async fn read_layout(&self, name: &str) -> Result<Option<Layout>, ApiError> {
         FakePipelines.read_layout(name).await
     }
@@ -524,6 +545,15 @@ impl PipelineSource for UnlistablePipelines {
         precondition: &Precondition,
     ) -> Result<PipelineFile, ApiError> {
         FakePipelines.write(name, document, precondition).await
+    }
+
+    async fn rename(
+        &self,
+        from: &str,
+        to: &str,
+        precondition: &Precondition,
+    ) -> Result<Renamed, ApiError> {
+        FakePipelines.rename(from, to, precondition).await
     }
 
     async fn read_layout(&self, name: &str) -> Result<Option<Layout>, ApiError> {
@@ -602,6 +632,15 @@ impl<P: PipelineSource> PipelineSource for ListCounted<P> {
         precondition: &Precondition,
     ) -> Result<PipelineFile, ApiError> {
         self.inner.write(name, document, precondition).await
+    }
+
+    async fn rename(
+        &self,
+        from: &str,
+        to: &str,
+        precondition: &Precondition,
+    ) -> Result<Renamed, ApiError> {
+        self.inner.rename(from, to, precondition).await
     }
 
     async fn read_layout(&self, name: &str) -> Result<Option<Layout>, ApiError> {

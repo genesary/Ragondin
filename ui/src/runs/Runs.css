@@ -168,3 +168,5 @@
   .rg-runs__stream { min-height: calc(2 * var(--space-4)); }
   .rg-job__facts { grid-template-columns: minmax(0, 1fr); }
 }
+/* The group's way to the editor, after its names. */
+.rg-runs__edit { font: var(--type-caption); color: var(--accent); }

@@ -11,6 +11,7 @@ import { EditorScreen } from './EditorScreen.tsx';
 import { exampleDocument } from './example.ts';
 import { HYBRID, SERVICES, WORKSPACE } from './fixtures.ts';
 import { rememberFork } from './session.ts';
+import { recentPipelines, rememberPipeline } from './recent.ts';
 
 const HASH = 'c'.repeat(64);
 /** The recorded workspace before its first pipeline: the first launch. */
@@ -63,6 +64,7 @@ afterEach(async () => {
   await new Promise((resolve) => setTimeout(resolve, 50));
   vi.unstubAllGlobals();
   window.sessionStorage.clear();
+  window.localStorage.clear();
 });
 
 describe('the Editor screen', () => {
@@ -75,7 +77,7 @@ describe('the Editor screen', () => {
     const palette = await screen.findByRole('region', { name: 'Palette' });
     expect(within(palette).getByRole('button', { name: /^qwen/ })).toBeTruthy();
     expect(api.requests).toContain('GET /api/v1/services');
-    expect(await screen.findByText(HASH)).toBeTruthy();
+    expect(await screen.findByText(HASH.slice(0, 12))).toBeTruthy();
   });
 
   it('judges kinds during the drag with the ports the capabilities serve', async () => {
@@ -101,7 +103,7 @@ describe('the Editor screen', () => {
     expect(api.requests).toContain('GET /api/v1/pipelines/hybrid');
     await waitFor(() => expect(api.requests).toContain('POST /api/v1/pipelines/validate'), { timeout: SLOW });
     expect(api.bodies[api.requests.indexOf('POST /api/v1/pipelines/validate')]).toEqual({ typed: HYBRID });
-    expect(await screen.findByText(HASH)).toBeTruthy();
+    expect(await screen.findByText(HASH.slice(0, 12))).toBeTruthy();
   });
 
   it('opens a stored pipeline that does not validate, with the server’s words on it', async () => {
@@ -166,7 +168,7 @@ describe('the Editor screen', () => {
     expect(await screen.findByText(/Forked from run/, undefined, { timeout: SLOW })).toBeTruthy();
   });
 
-  it('on a workspace with no pipeline, opens on the example, writes no file until the first edit, and keeps editing once it is written', async () => {
+  it('on a workspace with no pipeline, opens on the example, writes no file until the first edit, and keeps editing once it is written', { timeout: 3 * SLOW }, async () => {
     const api = mockApi({
       ...ROUTES,
       'GET /pipelines': { body: { pipelines: [] } },
@@ -182,6 +184,11 @@ describe('the Editor screen', () => {
     await new Promise((resolve) => setTimeout(resolve, 600));
     expect(api.requests.filter((r) => r.startsWith('PUT'))).toEqual([]);
     fireEvent.click(within(screen.getByRole('region', { name: 'Palette' })).getByRole('button', { name: /^rrf/ }));
+    // The first write asks the name, offering the one proposed.
+    const prompt = await screen.findByRole('region', { name: 'Name this pipeline' }, { timeout: SLOW });
+    expect((within(prompt).getByRole('textbox', { name: 'Pipeline name' }) as HTMLInputElement).value).toBe('example');
+    await waitFor(() => expect(within(prompt).getByRole('button', { name: 'Save' }).getAttribute('aria-disabled')).toBeNull(), { timeout: SLOW });
+    fireEvent.click(within(prompt).getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(window.location.hash).toBe('#editor/example'), { timeout: SLOW });
     expect(api.headers[api.requests.indexOf('PUT /api/v1/pipelines/example')]!['If-None-Match']).toBe('*');
     // The same editor, its history kept: the address naming the file it wrote does not reopen it.
@@ -213,3 +220,34 @@ describe('the Editor screen', () => {
     expect(api.requests.filter((r) => r === 'GET /api/v1/services')).toHaveLength(2);
   });
 });
+
+describe('opening a pipeline from the editor', () => {
+  const LISTED: MockRoutes = { ...ROUTES, 'GET /pipelines': { body: { pipelines: ['hybrid', 'lexical', 'rag'].map((name) => ({ name, etag: 'e'.repeat(64), modified_ms: null, hash: HASH, error: null, ends_in_answer: true })) } } };
+
+  it('offers the recent pipelines first, then every pipeline, from the empty state', async () => {
+    rememberPipeline('rag');
+    rememberPipeline('lexical');
+    mockApi(LISTED);
+    render(<Harness />);
+    const recent = await screen.findByRole('list', { name: 'Recent pipelines' });
+    expect(within(recent).getAllByRole('link').map((a) => [a.textContent, a.getAttribute('href')])).toEqual([
+      ['lexical', '#editor/lexical'],
+      ['rag', '#editor/rag'],
+    ]);
+    const picker = screen.getByRole('combobox', { name: 'Open a pipeline' }) as HTMLSelectElement;
+    expect([...picker.options].filter((o) => !o.disabled).map((o) => o.value)).toEqual(['lexical', 'rag', 'hybrid']);
+    fireEvent.change(picker, { target: { value: 'hybrid' } });
+    expect(window.location.hash).toBe('#editor/hybrid');
+  });
+
+  it('remembers a pipeline opened, and offers the others from the editor’s header', async () => {
+    mockApi({ ...LISTED, 'GET /pipelines/{name}': { body: STORED_DETAIL } });
+    render(<Harness name="hybrid" />);
+    const picker = (await screen.findByRole('combobox', { name: 'Open a pipeline' }, { timeout: SLOW })) as HTMLSelectElement;
+    expect(picker.value).toBe('hybrid');
+    expect(recentPipelines()).toEqual(['hybrid']);
+    fireEvent.change(picker, { target: { value: 'rag' } });
+    expect(window.location.hash).toBe('#editor/rag');
+  });
+});
+

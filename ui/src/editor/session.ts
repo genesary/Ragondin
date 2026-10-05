@@ -15,3 +15,10 @@ export const chooseRewrite = (name: string) => void writeStored('session', REWRI
 /** The run `name` was forked from this session, if it was. */
 export const forkedFrom = (name: string) => readStored('session', FORKED(name));
 export const rememberFork = (name: string, run: string) => void writeStored('session', FORKED(name), run);
+
+/** `from` was renamed `to`: what the session remembers of it follows. */
+export function renameSession(from: string, to: string): void {
+  if (rewriteChosen(from)) chooseRewrite(to);
+  const run = forkedFrom(from);
+  if (run !== null) rememberFork(to, run);
+}

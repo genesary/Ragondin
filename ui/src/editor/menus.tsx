@@ -5,6 +5,7 @@ import type { WireDocument } from './document.ts';
 import type { RunUpTo } from './prefix.ts';
 import type { PaletteSection } from './Palette.tsx';
 import { portsOf, type PortGrammar } from './ports.ts';
+import { Words } from '../words.tsx';
 
 type ItemProps = { glyph?: GlyphName; title: string; line?: string | null; refused?: boolean; onChoose: () => void };
 
@@ -38,7 +39,11 @@ export function MenuItem({ glyph, title, line = null, refused = false, onChoose 
       {glyph === undefined ? <span /> : <Glyph name={glyph} />}
       <span className="rg-menu__text">
         <b>{title}</b>
-        {line === null ? null : <small>{line}</small>}
+        {line === null ? null : (
+          <small>
+            <Words text={line} />
+          </small>
+        )}
       </span>
     </button>
   );

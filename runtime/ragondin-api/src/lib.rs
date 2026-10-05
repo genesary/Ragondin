@@ -92,7 +92,7 @@ pub use assets::{content_type_for, Asset, Assets, NoAssets};
 pub use backends::{
     Backends, Cancellation, DownloadProgress, Launcher, LauncherError, LoadedDataset,
     PinnedBenchmark, PipelineFile, PipelineSource, Precondition, ProgressSink, QueryProgress,
-    Registry, Revision, RunDataset, RunObserver, ServiceIdentity, Settings, Submission,
+    Registry, Renamed, Revision, RunDataset, RunObserver, ServiceIdentity, Settings, Submission,
     WorkspaceSettings,
 };
 pub use convert::family_ports;

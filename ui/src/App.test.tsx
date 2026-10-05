@@ -315,7 +315,8 @@ describe('the workspace indicator', () => {
     expect(link?.textContent).toBe('/home/ada/ragondin-ws, 2 services');
     expect(link?.getAttribute('data-connected')).toBe('true');
     expect(link?.querySelector('.rg-dot')).toBeTruthy();
-    expect(requests).toEqual(['GET /api/v1/workspace']);
+    // The editor's empty state lists the pipelines it offers to open; the shell reads the workspace once.
+    expect(requests.filter((r) => r.endsWith('/workspace'))).toEqual(['GET /api/v1/workspace']);
   });
 
   it('counts one service in the singular', async () => {
@@ -346,7 +347,7 @@ describe('the workspace indicator', () => {
     fireEvent.click(within(alert).getByRole('button', { name: 'Retry' }));
     await screen.findByText(WORKSPACE.path);
     expect(within(main()).queryByRole('alert')).toBeNull();
-    expect(requests).toHaveLength(2);
+    expect(requests.filter((r) => r.endsWith('/workspace'))).toHaveLength(2);
   });
 
   it('renders a problem the API answers, with its code and hint', async () => {
@@ -453,7 +454,7 @@ describe('the connection state', () => {
     act(() => FakeEventSource.latest().fail());
     act(() => FakeEventSource.latest().open());
     await waitFor(() => expect(reload).toHaveBeenCalledTimes(1));
-    expect(requests).toEqual(['GET /api/v1/workspace', 'GET /api/v1/workspace']);
+    expect(requests.filter((r) => r.endsWith('/workspace'))).toEqual(['GET /api/v1/workspace', 'GET /api/v1/workspace']);
   });
 
   it('closes its stream when the shell unmounts', async () => {
@@ -470,7 +471,7 @@ describe('the connection state', () => {
     await screen.findByText(WORKSPACE.path);
     rerender(<App client={client} build={BUILD} reload={vi.fn()} followJobs />);
     await act(async () => {});
-    expect(requests).toEqual(['GET /api/v1/workspace']);
+    expect(requests.filter((r) => r.endsWith('/workspace'))).toEqual(['GET /api/v1/workspace']);
     expect(FakeEventSource.instances).toHaveLength(1);
   });
 

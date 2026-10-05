@@ -16,7 +16,7 @@ use axum::http::StatusCode;
 use ragondin_api::fs::{FsPipelines, Workspace};
 use ragondin_api::{
     router, ApiError, Backends, Layout, NoAssets, Pairing, PipelineFile, PipelineSource,
-    Precondition, Server, ServerConfig,
+    Precondition, Renamed, Server, ServerConfig,
 };
 use ragondin_benchmarks::{Benchmark, Qrels};
 use ragondin_experiments::{Run, RunProvenance, Trace, TraceChunk};
@@ -1502,6 +1502,15 @@ impl PipelineSource for CountedListings {
         precondition: &Precondition,
     ) -> Result<PipelineFile, ApiError> {
         self.inner.write(name, document, precondition).await
+    }
+
+    async fn rename(
+        &self,
+        from: &str,
+        to: &str,
+        precondition: &Precondition,
+    ) -> Result<Renamed, ApiError> {
+        self.inner.rename(from, to, precondition).await
     }
 
     async fn read_layout(&self, name: &str) -> Result<Option<Layout>, ApiError> {

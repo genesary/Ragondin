@@ -209,7 +209,7 @@ describe('over a listing with two benchmarks', () => {
     show('#runs', routes({ body: both }));
     await loaded();
     const heading = screen.getByText('hybrid-copy').closest('th') as HTMLElement;
-    expect(within(heading).getAllByRole('link').map((a) => a.textContent)).toEqual(['hybrid-copy']);
+    expect(within(heading).getAllByRole('link').filter((a) => !a.classList.contains('rg-runs__edit')).map((a) => a.textContent)).toEqual(['hybrid-copy']);
     expect(heading.textContent?.match(/refused: another spelling differs only in case/g)).toHaveLength(2);
   });
 

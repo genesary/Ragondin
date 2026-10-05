@@ -32,6 +32,10 @@ test('first run: an empty workspace to a completed run', async ({ page, fixture 
   await page.getByRole('navigation', { name: 'Screens' }).getByRole('link', { name: 'Editor' }).click();
   await expect(page.getByRole('application', { name: /^Pipeline/ }).getByRole('group', { name: /lexical, retriever\/bm25/ })).toBeVisible();
   await page.getByRole('button', { name: 'Keep this pipeline' }).click();
+  // Its first write asks its name, offering the one proposed.
+  const naming = page.getByRole('region', { name: 'Name this pipeline' });
+  await expect(naming.getByRole('textbox', { name: 'Pipeline name' })).toHaveValue('example');
+  await naming.getByRole('button', { name: 'Save' }).click();
   await expect(page).toHaveURL(/#editor\/example$/);
   await expect(page.getByRole('status').filter({ hasText: /^Saved$/ })).toBeVisible();
 

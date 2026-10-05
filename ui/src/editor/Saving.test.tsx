@@ -65,6 +65,13 @@ const writes = (api: ReturnType<typeof mockApi>, name = 'hybrid') => api.request
 const validations = (api: ReturnType<typeof mockApi>) => api.requests.flatMap((r, i) => (r === 'POST /api/v1/pipelines/validate' ? [i] : []));
 const place = (impl: RegExp) => fireEvent.click(within(screen.getByRole('region', { name: 'Palette' })).getByRole('button', { name: impl }));
 const saveLine = () => screen.getByTestId('save-state');
+/** Answers the question a first write asks: the name offered, or `name` typed over it. */
+const nameIt = async (name?: string) => {
+  const prompt = await screen.findByRole('region', { name: 'Name this pipeline' });
+  if (name !== undefined) fireEvent.change(within(prompt).getByRole('textbox', { name: 'Pipeline name' }), { target: { value: name } });
+  await waitFor(() => expect(within(prompt).getByRole('button', { name: 'Save' }).getAttribute('aria-disabled')).toBeNull());
+  fireEvent.click(within(prompt).getByRole('button', { name: 'Save' }));
+};
 // Past the validation's debounce and its answer, then a little more: what a write would have needed to be sent.
 const settle = () => new Promise((resolve) => setTimeout(resolve, 600));
 
@@ -98,7 +105,8 @@ describe('continuous saving', () => {
     await waitFor(() => expect(validations(api)).toHaveLength(1));
     await settle();
     expect(writes(api)).toEqual([]);
-    expect(saveLine().textContent).toBe('Saved');
+    // Nothing was saved: the file is as it was opened.
+    expect(saveLine().textContent).toBe('No changes since it was opened');
   });
 
   it('writes a valid change after the debounce, validated first, over the etag it read, as the typed document', async () => {
@@ -115,7 +123,7 @@ describe('continuous saving', () => {
     // The validation of that very document came first.
     expect(validations(api).at(-1)!).toBeLessThan(write!.at);
     await waitFor(() => expect(saveLine().textContent).toBe('Saved'));
-    expect(screen.getByText(HASH)).toBeTruthy();
+    expect(screen.getByText(HASH.slice(0, 12))).toBeTruthy();
     // The next write names the etag the last one answered.
     place(/^concat/);
     await waitFor(() => expect(writes(api)).toHaveLength(2));
@@ -153,6 +161,12 @@ describe('continuous saving', () => {
     const exported = screen.getByRole('textbox', { name: 'The document as the server renders it' }) as HTMLTextAreaElement;
     expect(exported.value).toBe(RENDERING);
     expect(screen.getByRole('button', { name: 'Download hybrid.yaml' })).toBeTruthy();
+    // Read-only, said so, and selected whole when focused, ready to copy.
+    expect(exported.readOnly).toBe(true);
+    expect(exported.getAttribute('aria-readonly')).toBe('true');
+    const select = vi.spyOn(exported, 'select');
+    fireEvent.focus(exported);
+    expect(select).toHaveBeenCalled();
   });
 });
 
@@ -270,6 +284,7 @@ describe('the layout and the file it is written beside', () => {
     await settle();
     expect(api.requests.filter((r) => r.endsWith('/layout'))).toEqual([]);
     fireEvent.click(screen.getByRole('button', { name: 'Keep this pipeline' }));
+    await nameIt();
     await waitFor(() => expect(api.requests).toContain('PUT /api/v1/pipelines/example/layout'));
     expect(api.requests.indexOf('PUT /api/v1/pipelines/example')).toBeLessThan(api.requests.indexOf('PUT /api/v1/pipelines/example/layout'));
   });
@@ -395,6 +410,27 @@ describe('a file written by hand', () => {
     expect(screen.queryByRole('region', { name: 'This file was written by hand' })).toBeNull();
   });
 
+  it('says no change before any, never “Saved” for a file it has not written', async () => {
+    const { api } = setup({}, { file: HAND });
+    await waitFor(() => expect(validations(api)).toHaveLength(1));
+    await settle();
+    expect(saveLine().textContent).toBe('No changes since it was opened');
+  });
+
+  it('asks in a short message, its two choices side by side, what the rewrite drops one click away', async () => {
+    const { api } = setup({}, { file: HAND });
+    await waitFor(() => expect(validations(api)).toHaveLength(1));
+    place(/^rrf/);
+    const message = await screen.findByRole('region', { name: 'This file was written by hand' });
+    const rewrite = within(message).getByRole('button', { name: 'Rewrite this file' });
+    const saveAs = within(message).getByRole('button', { name: 'Save as a new file' });
+    expect(rewrite.closest('.rg-editor__choices')).not.toBeNull();
+    expect(rewrite.closest('.rg-editor__choices')).toBe(saveAs.closest('.rg-editor__choices'));
+    const details = message.querySelector('details');
+    expect(details?.querySelector('summary')?.textContent).toBe('What a rewrite drops');
+    expect(message.querySelector('.rg-inline p')?.textContent).not.toContain('key order');
+  });
+
   it('“Save as a new file” leaves the original untouched', async () => {
     const onNamed = vi.fn();
     const { api } = setup({ 'PUT /pipelines/{name}': { body: { name: 'mine', etag: NEW_ETAG, hash: HASH } } }, { file: HAND, onNamed });
@@ -428,17 +464,31 @@ describe('a file written by hand', () => {
 describe('a document never written', () => {
   const UNNAMED: FileInit = { name: null, etag: null, canonical: true, proposed: 'example' };
 
-  it('writes no file until “Keep this pipeline”, then creates it under the proposed name', async () => {
+  it('writes no file until “Keep this pipeline”, then asks its name and creates it under the one offered', async () => {
     const onNamed = vi.fn();
     const { api } = setup({ 'PUT /pipelines/{name}': { body: { name: 'example', etag: NEW_ETAG, hash: HASH } } }, { file: UNNAMED, onNamed });
     await waitFor(() => expect(validations(api)).toHaveLength(1));
     await settle();
     expect(api.requests.filter((r) => r.startsWith('PUT'))).toEqual([]);
-    expect(saveLine().textContent).toBe('Not written yet: the first change, or Keep this pipeline, writes it');
+    expect(saveLine().textContent).toBe('Not written yet: the first change, or Keep this pipeline, asks for its name');
     fireEvent.click(screen.getByRole('button', { name: 'Keep this pipeline' }));
+    const prompt = await screen.findByRole('region', { name: 'Name this pipeline' });
+    expect((within(prompt).getByRole('textbox', { name: 'Pipeline name' }) as HTMLInputElement).value).toBe('example');
+    expect(api.requests.filter((r) => r.startsWith('PUT'))).toEqual([]);
+    await nameIt();
     await waitFor(() => expect(writes(api, 'example')).toHaveLength(1));
     expect(writes(api, 'example')[0]!.headers['If-None-Match']).toBe('*');
     await waitFor(() => expect(onNamed).toHaveBeenCalledWith('example'));
+  });
+
+  it('creates itself under the name offered when the editor closes while its name is asked, never over another file', async () => {
+    const { api, unmount } = setup({ 'PUT /pipelines/{name}': { body: { name: 'example', etag: NEW_ETAG, hash: HASH } } }, { file: UNNAMED });
+    await waitFor(() => expect(validations(api)).toHaveLength(1));
+    fireEvent.click(screen.getByRole('button', { name: 'Keep this pipeline' }));
+    await screen.findByRole('region', { name: 'Name this pipeline' });
+    unmount();
+    await waitFor(() => expect(writes(api, 'example')).toHaveLength(1));
+    expect(writes(api, 'example')[0]!.headers['If-None-Match']).toBe('*');
   });
 
   it('offers “Run up to this node” once it is on disk, launching the file it wrote', async () => {
@@ -451,6 +501,7 @@ describe('a document never written', () => {
     expect(runEntry().getAttribute('aria-disabled')).toBe('true');
     fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
     fireEvent.click(screen.getByRole('button', { name: 'Keep this pipeline' }));
+    await nameIt();
     await waitFor(() => expect(saveLine().textContent).toBe('Saved'));
     const run = runEntry();
     expect(run.getAttribute('aria-disabled')).toBeNull();
@@ -458,11 +509,33 @@ describe('a document never written', () => {
     expect(window.location.hash).toBe('#runs?launch=example&up_to=fused');
   });
 
-  it('is created at its first change', async () => {
-    const { api } = setup({ 'PUT /pipelines/{name}': { body: { name: 'example', etag: NEW_ETAG, hash: HASH } } }, { file: UNNAMED });
+  it('asks its name at its first change, and is created under the name given', async () => {
+    const onNamed = vi.fn();
+    const { api } = setup({ 'PUT /pipelines/{name}': { body: { name: 'lexical-only', etag: NEW_ETAG, hash: HASH } } }, { file: UNNAMED, onNamed });
     await waitFor(() => expect(validations(api)).toHaveLength(1));
     place(/^rrf/);
-    await waitFor(() => expect(writes(api, 'example')).toHaveLength(1));
+    await screen.findByRole('region', { name: 'Name this pipeline' });
+    expect(saveLine().textContent).toBe('Not saved yet: name it to save it');
+    await settle();
+    expect(api.requests.filter((r) => r.startsWith('PUT'))).toEqual([]);
+    await nameIt('lexical-only');
+    await waitFor(() => expect(writes(api, 'lexical-only')).toHaveLength(1));
+    expect(writes(api, 'lexical-only')[0]!.headers['If-None-Match']).toBe('*');
+    await waitFor(() => expect(onNamed).toHaveBeenCalledWith('lexical-only'));
+  });
+
+  it('takes a name typed in its title as the one its first write offers', async () => {
+    const { api } = setup({}, { file: UNNAMED });
+    await waitFor(() => expect(validations(api)).toHaveLength(1));
+    fireEvent.click(screen.getByRole('button', { name: 'Rename' }));
+    const field = screen.getByRole('textbox', { name: 'Pipeline name' });
+    fireEvent.change(field, { target: { value: 'mine' } });
+    fireEvent.keyDown(field, { key: 'Enter' });
+    expect(await screen.findByRole('heading', { name: 'mine' })).toBeTruthy();
+    expect(api.requests.filter((r) => r.includes('/rename'))).toEqual([]);
+    place(/^rrf/);
+    const prompt = await screen.findByRole('region', { name: 'Name this pipeline' });
+    expect((within(prompt).getByRole('textbox', { name: 'Pipeline name' }) as HTMLInputElement).value).toBe('mine');
   });
 });
 
@@ -472,3 +545,68 @@ describe('a fork', () => {
     expect(screen.getByText(/Forked from run/).textContent).toContain('aaaaaaaa');
   });
 });
+
+describe('renaming a file from its title', () => {
+  const RENAMED = { body: { name: 'lexical-only', etag: ETAG, modified_ms: null, hash: HASH, error: null, ends_in_answer: true, fault: null as string | null } };
+  const rename = (to: string) => {
+    fireEvent.click(screen.getByRole('button', { name: 'Rename' }));
+    const field = screen.getByRole('textbox', { name: 'Pipeline name' });
+    fireEvent.change(field, { target: { value: to } });
+    fireEvent.keyDown(field, { key: 'Enter' });
+  };
+
+  it('moves the file on disk over the etag held, then writes on under the new name', async () => {
+    const onNamed = vi.fn();
+    const { api } = setup({ 'POST /pipelines/{name}/rename': RENAMED, 'PUT /pipelines/{name}': { body: { name: 'lexical-only', etag: NEW_ETAG, hash: HASH } } }, { onNamed });
+    await waitFor(() => expect(validations(api)).toHaveLength(1));
+    rename('lexical-only');
+    expect(await screen.findByRole('heading', { name: 'lexical-only' })).toBeTruthy();
+    const at = api.requests.indexOf('POST /api/v1/pipelines/hybrid/rename');
+    expect(api.bodies[at]).toEqual({ to: 'lexical-only' });
+    expect(api.headers[at]!['If-Match']).toBe(`"${ETAG}"`);
+    await waitFor(() => expect(onNamed).toHaveBeenCalledWith('lexical-only'));
+    place(/^rrf/);
+    await waitFor(() => expect(writes(api, 'lexical-only')).toHaveLength(1));
+    expect(writes(api, 'lexical-only')[0]!.headers['If-Match']).toBe(`"${ETAG}"`);
+    expect(writes(api)).toEqual([]);
+  });
+
+  it('holds the document and its positions while the rename is out, then writes them under the new name', async () => {
+    let answer: (reply: typeof RENAMED) => void = () => {};
+    const out = new Promise<typeof RENAMED>((resolve) => (answer = resolve));
+    const { api } = setup({ 'POST /pipelines/{name}/rename': () => out, 'PUT /pipelines/{name}': { body: { name: 'lexical-only', etag: NEW_ETAG, hash: HASH } } });
+    await waitFor(() => expect(validations(api)).toHaveLength(1));
+    rename('lexical-only');
+    await waitFor(() => expect(api.requests).toContain('POST /api/v1/pipelines/hybrid/rename'));
+    place(/^rrf/);
+    await settle();
+    expect(api.requests.filter((r) => r.startsWith('PUT'))).toEqual([]);
+    answer(RENAMED);
+    await waitFor(() => expect(writes(api, 'lexical-only')).toHaveLength(1));
+    await waitFor(() => expect(api.requests).toContain('PUT /api/v1/pipelines/lexical-only/layout'));
+    expect(api.requests.filter((r) => r.startsWith('PUT /api/v1/pipelines/hybrid'))).toEqual([]);
+  });
+
+  it('takes a rename the server did but could not finish as done, and says what did not follow', async () => {
+    const fault = 'pipeline hybrid is renamed lexical-only, but not all of it followed: its layout hybrid.layout.json stays where it was';
+    const { api } = setup({ 'POST /pipelines/{name}/rename': { body: { ...RENAMED.body, fault } }, 'PUT /pipelines/{name}': { body: { name: 'lexical-only', etag: NEW_ETAG, hash: HASH } } });
+    await waitFor(() => expect(validations(api)).toHaveLength(1));
+    rename('lexical-only');
+    expect(await screen.findByRole('heading', { name: 'lexical-only' })).toBeTruthy();
+    expect(screen.getByText(fault, { exact: false })).toBeTruthy();
+  });
+
+  it('says why a rename was refused, and keeps the name', async () => {
+    const { api } = setup({ 'POST /pipelines/{name}/rename': problem('pipeline_exists', 409, 'a pipeline named lexical already exists') });
+    await waitFor(() => expect(validations(api)).toHaveLength(1));
+    rename('lexical');
+    const field = await screen.findByRole('textbox', { name: 'Pipeline name' });
+    await waitFor(() => expect(field.getAttribute('aria-invalid')).toBe('true'));
+    const help = document.getElementById(`${field.id}-help`)!;
+    expect(help.querySelector('code')?.textContent).toBe('lexical');
+    expect(help.textContent).toBe('A pipeline named lexical already exists: choose another name.');
+    fireEvent.keyDown(field, { key: 'Escape' });
+    expect(screen.getByRole('heading', { name: 'hybrid' })).toBeTruthy();
+  });
+});
+

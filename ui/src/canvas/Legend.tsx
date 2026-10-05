@@ -21,7 +21,8 @@ export function Legend({ model, autoPlaced }: { model: CanvasModel; autoPlaced: 
       {kinds.map((kind) => (
         <span key={kind} data-legend="port">
           <PortSwatch kind={kind} />
-          {PORT_LABEL[kind]}
+          {/* "port", so the query port is told from the query family beside it. */}
+          {PORT_LABEL[kind]} port
         </span>
       ))}
       {autoPlaced === 0 ? null : (

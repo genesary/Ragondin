@@ -81,7 +81,7 @@ describe('Canvas in write mode, drawing', () => {
   it('describes each node by the keys write mode adds', () => {
     const { container } = renderWrite();
     const described = nodeEl(container, 'lexical').getAttribute('aria-describedby')!;
-    expect(document.getElementById(described)?.textContent).toBe('Enter selects, Shift+F10 opens the menu, the arrow keys move it, Escape clears.');
+    expect(document.getElementById(described)?.textContent).toBe('Enter selects, Shift+F10 opens the menu, the arrow keys move it, Delete removes it, Escape clears.');
   });
 });
 
@@ -102,7 +102,8 @@ describe('Canvas in write mode, an edge drawn by drag', () => {
     fireEvent.pointerDown(outPort(container, 'question'), { button: 0 });
     expect(status.textContent).toBe('Connecting from question. Drop on an open port; Escape cancels.');
     fireEvent.pointerEnter(inPort(container, 'reranked', 1));
-    expect(status.textContent).toBe('`question` feeds `reranked` at port 1: expected chunks, found query.');
+    expect(status.textContent).toBe('question feeds reranked at port 1: expected chunks, found query.');
+    expect(status.querySelector('code')?.textContent).toBe('question');
   });
 
   it('creates nothing when dropped on a refused port, and the edge when dropped on an open one', () => {
@@ -220,5 +221,96 @@ describe('Canvas in write mode, a node dropped from the palette', () => {
     fireEvent.dragOver(pane, { dataTransfer });
     fireEvent.drop(pane, { dataTransfer, clientX: 10, clientY: 10 });
     expect(onDropItem).toHaveBeenCalledWith('{"component":"fusion","impl":"rrf"}', expect.objectContaining({ x: expect.any(Number), y: expect.any(Number) }));
+  });
+});
+
+describe('Canvas in write mode, deleting by key and selecting an edge', () => {
+  const edgeEl = (root: HTMLElement, to: string) => root.querySelector(`path.rg-edge[data-from="question"][data-to="${to}"]`)!;
+
+  it('hands Delete or Backspace on a focused node to onDelete', () => {
+    const onDelete = vi.fn();
+    const { container } = renderWrite({ onDelete });
+    fireEvent.keyDown(nodeEl(container, 'lexical'), { key: 'Delete' });
+    fireEvent.keyDown(nodeEl(container, 'vectors'), { key: 'Backspace' });
+    expect(onDelete.mock.calls).toEqual([['lexical'], ['vectors']]);
+  });
+
+  it('deletes nothing by key in read mode', () => {
+    const onDelete = vi.fn();
+    const { container } = render(
+      <div style={{ width: 1200, height: 600 }}>
+        <Canvas graph={GRAPH} label="Pipeline" mode="read" onDelete={onDelete} />
+      </div>,
+    );
+    fireEvent.keyDown(nodeEl(container, 'lexical'), { key: 'Delete' });
+    expect(onDelete).not.toHaveBeenCalled();
+  });
+
+  it('selects an edge on a click, says so, and offers to remove it', () => {
+    const onRemoveEdge = vi.fn();
+    const { container } = renderWrite({ onRemoveEdge, refuseRemoveEdge: () => null });
+    fireEvent.click(edgeEl(container, 'reranked'));
+    expect(edgeEl(container, 'reranked').getAttribute('data-selected')).toBe('true');
+    expect(edgeEl(container, 'lexical').hasAttribute('data-selected')).toBe(false);
+    expect(within(container).getByRole('status').textContent).toBe('Edge question → reranked, input 1, selected: Delete removes it, Escape clears.');
+    fireEvent.click(within(container).getByRole('button', { name: 'Remove the edge question → reranked' }));
+    expect(onRemoveEdge).toHaveBeenCalledWith('question', 'reranked', 0);
+  });
+
+  it('removes the selected edge on Delete, and clears it on Escape', () => {
+    const onRemoveEdge = vi.fn();
+    const { container } = renderWrite({ onRemoveEdge, refuseRemoveEdge: () => null });
+    fireEvent.click(edgeEl(container, 'lexical'));
+    fireEvent.keyDown(container.querySelector('.rg-canvas')!, { key: 'Delete' });
+    expect(onRemoveEdge).toHaveBeenCalledWith('question', 'lexical', 0);
+    fireEvent.click(edgeEl(container, 'reranked'));
+    fireEvent.keyDown(container.querySelector('.rg-canvas')!, { key: 'Escape' });
+    expect(edgeEl(container, 'reranked').hasAttribute('data-selected')).toBe(false);
+    expect(within(container).queryByRole('button', { name: /Remove the edge/ })).toBeNull();
+  });
+
+  it('draws the Remove button inside the viewport, so it follows a pan and a zoom', () => {
+    const { container } = renderWrite({ onRemoveEdge: vi.fn(), refuseRemoveEdge: () => null });
+    fireEvent.click(edgeEl(container, 'reranked'));
+    const remove = within(container).getByRole('button', { name: 'Remove the edge question → reranked' });
+    expect(remove.closest('.react-flow__viewport-portal')).not.toBeNull();
+  });
+
+  it('removes the focused node on Delete, not the selected edge', () => {
+    const onDelete = vi.fn();
+    const onRemoveEdge = vi.fn();
+    const { container } = renderWrite({ onDelete, onRemoveEdge, refuseRemoveEdge: () => null });
+    fireEvent.click(edgeEl(container, 'reranked'));
+    fireEvent.keyDown(nodeEl(container, 'vectors'), { key: 'Delete' });
+    expect(onDelete).toHaveBeenCalledWith('vectors');
+    expect(onRemoveEdge).not.toHaveBeenCalled();
+  });
+
+  it('lets go of the selected edge when a node is selected', () => {
+    const { container } = renderWrite({ onRemoveEdge: vi.fn(), refuseRemoveEdge: () => null });
+    fireEvent.click(edgeEl(container, 'reranked'));
+    fireEvent.click(nodeEl(container, 'lexical'));
+    expect(edgeEl(container, 'reranked').hasAttribute('data-selected')).toBe(false);
+    expect(within(container).queryByRole('button', { name: /Remove the edge/ })).toBeNull();
+  });
+
+  it('never deletes by key from a text field, the inspector’s included', () => {
+    const onDelete = vi.fn();
+    const { container } = renderWrite({ onDelete, selected: 'lexical', inspector: () => <input aria-label="Node id" defaultValue="lexical" /> });
+    const field = within(container).getByLabelText('Node id');
+    fireEvent.keyDown(field, { key: 'Backspace' });
+    fireEvent.keyDown(field, { key: 'Delete' });
+    expect(onDelete).not.toHaveBeenCalled();
+  });
+
+  it('refuses to remove an edge the editor refuses, saying why, and Delete does nothing', () => {
+    const onRemoveEdge = vi.fn();
+    const { container } = renderWrite({ onRemoveEdge, refuseRemoveEdge: () => 'Only the last edge into `reranked` can be removed.' });
+    fireEvent.click(edgeEl(container, 'reranked'));
+    const remove = within(container).getByRole('button', { name: /Remove the edge question → reranked/ });
+    expect(remove.getAttribute('aria-disabled')).toBe('true');
+    fireEvent.click(remove);
+    fireEvent.keyDown(container.querySelector('.rg-canvas')!, { key: 'Delete' });
+    expect(onRemoveEdge).not.toHaveBeenCalled();
   });
 });

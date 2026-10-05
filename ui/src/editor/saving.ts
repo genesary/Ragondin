@@ -2,9 +2,10 @@
 // document to `pipelines/<name>.yaml`, and what it waits for. There is no Save
 // button: a document the server called valid is written once it differs from
 // what was last read or written, over the etag of that read or write; an
-// invalid one never is (ADR-016 § 3). Two things stop the writing until the
-// person chooses: a stale etag — the file changed on disk — and a file whose
-// text is not the server's own rendering (ADR-016 § 5). Nothing here makes a
+// invalid one never is (ADR-016 § 3). Three things stop the writing until the
+// person chooses: a stale etag — the file changed on disk — a file whose
+// text is not the server's own rendering (ADR-016 § 5), and a document never
+// written, whose name is asked for at its first write. Nothing here makes a
 // request: `Editor.tsx` turns a `saving` phase into a `PUT` and hands the
 // answer back. ARCHITECTURE.md § The editor.
 import type { ApiProblem } from '../api/client.ts';
@@ -23,7 +24,7 @@ export type FileInit = {
 };
 
 /** Where a write asking for a new name goes back to when it is refused. */
-export type Choice = 'conflict' | 'handwritten' | 'taken';
+export type Choice = 'conflict' | 'handwritten' | 'naming';
 
 export type Phase =
   /** Nothing to write, or waiting for the next valid document. */
@@ -34,8 +35,8 @@ export type Phase =
   | { kind: 'conflict'; error?: string }
   /** The file was written by hand: rewrite it, or save the canvas as a new file. */
   | { kind: 'handwritten'; error?: string }
-  /** The name proposed for a new document was taken meanwhile: give another. */
-  | { kind: 'taken'; error?: string }
+  /** A document never written is about to be: its name is asked for, the proposed one offered. */
+  | { kind: 'naming'; error?: string }
   /** The server refused the write of `doc` otherwise; the next different document is tried again. */
   | { kind: 'failed'; doc: WireDocument; problem: ApiProblem };
 
@@ -45,6 +46,8 @@ export type SaveState = {
   saved: string;
   /** "Keep this pipeline": write an unnamed document though it is unedited. */
   keep: boolean;
+  /** Whether this editor has written the file yet: until it has, nothing it shows was saved by it. */
+  wrote: boolean;
   phase: Phase;
 };
 
@@ -60,7 +63,11 @@ export type SaveEvent =
   /** "Save as a new file": `doc` written under `name`, which must not exist. */
   | { type: 'saveAs'; doc: WireDocument; name: string }
   /** "Keep this pipeline". */
-  | { type: 'keep' };
+  | { type: 'keep' }
+  /** The name a document never written is offered under, edited before its first write. */
+  | { type: 'propose'; name: string }
+  /** The file was renamed on disk (`POST /pipelines/{name}/rename`): the same bytes, so the same etag, under `name`. */
+  | { type: 'renamed'; name: string };
 
 const json = (doc: WireDocument) => JSON.stringify(doc);
 
@@ -70,6 +77,7 @@ export function initialSave(doc: WireDocument, file: FileInit, rewrite: boolean)
     file: { name: file.name, etag: file.etag, handwritten: file.name !== null && !file.canonical && !rewrite, proposed: file.proposed },
     saved: json(doc),
     keep: false,
+    wrote: false,
     phase: { kind: 'idle' },
   };
 }
@@ -86,27 +94,33 @@ export function saveReducer(state: SaveState, event: SaveEvent): SaveState {
       if (phase.kind === 'failed' && json(phase.doc) === json(event.doc)) return state;
       if (unchanged && !(file.name === null && state.keep)) return phase.kind === 'idle' ? state : { ...state, phase: { kind: 'idle' } };
       if (file.handwritten) return { ...state, phase: { kind: 'handwritten' } };
+      // A first write asks for the name, offering the proposed one: nothing is created under a name nobody chose.
+      if (file.name === null) return { ...state, phase: { kind: 'naming' } };
       const create = file.etag === null;
       return { ...state, phase: { kind: 'saving', doc: event.doc, name: file.name ?? file.proposed, create, back: null } };
     }
     case 'written':
       if (phase.kind !== 'saving') return state;
-      return { file: { ...file, name: event.name, etag: event.etag, handwritten: false }, saved: json(event.doc), keep: false, phase: { kind: 'idle' } };
+      return { file: { ...file, name: event.name, etag: event.etag, handwritten: false }, saved: json(event.doc), keep: false, wrote: true, phase: { kind: 'idle' } };
     case 'refused': {
       if (phase.kind !== 'saving') return state;
       const precondition = event.problem.code === 'precondition_failed';
       if (phase.back !== null) return { ...state, phase: { kind: phase.back, error: precondition ? taken(phase.name) : event.problem.message } };
-      if (precondition) return { ...state, phase: phase.create ? { kind: 'taken', error: taken(phase.name) } : { kind: 'conflict' } };
+      if (precondition) return { ...state, phase: phase.create ? { kind: 'naming', error: taken(phase.name) } : { kind: 'conflict' } };
       return { ...state, phase: { kind: 'failed', doc: phase.doc, problem: event.problem } };
     }
     case 'rewrite':
       if (phase.kind !== 'handwritten') return state;
       return { ...state, file: { ...file, handwritten: false }, phase: { kind: 'idle' } };
     case 'saveAs':
-      if (phase.kind !== 'conflict' && phase.kind !== 'handwritten' && phase.kind !== 'taken') return state;
+      if (phase.kind !== 'conflict' && phase.kind !== 'handwritten' && phase.kind !== 'naming') return state;
       return { ...state, phase: { kind: 'saving', doc: event.doc, name: event.name, create: true, back: phase.kind } };
     case 'keep':
       return file.name === null ? { ...state, keep: true } : state;
+    case 'propose':
+      return file.name === null ? { ...state, file: { ...file, proposed: event.name } } : state;
+    case 'renamed':
+      return file.name === null ? state : { ...state, file: { ...file, name: event.name } };
   }
 }
 

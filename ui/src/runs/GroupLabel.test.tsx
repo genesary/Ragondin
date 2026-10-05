@@ -59,6 +59,16 @@ describe('the run count', () => {
 });
 
 describe('the group heading', () => {
+  it('offers to edit the pipeline its name holds, in the editor', () => {
+    show(group({ names: ['hybrid', 'hybrid-copy'] }));
+    expect(screen.getByRole('link', { name: 'Edit hybrid' }).getAttribute('href')).toBe('#editor/hybrid');
+  });
+
+  it('offers no edit for a name the workspace no longer holds', () => {
+    show(group({ names: ['hybrid-old'], held: ['gone'] }));
+    expect(screen.queryByRole('link', { name: /^Edit/ })).toBeNull();
+  });
+
   it('names the pipeline as a link to its Pipeline screen', () => {
     show(group());
     expect(screen.getByRole('link', { name: 'hybrid' }).getAttribute('href')).toBe('#pipeline/hybrid');
@@ -99,7 +109,8 @@ describe('the group heading', () => {
 
   it('links each hash match the workspace holds exactly and no other, each saying why for itself', () => {
     show(group({ key: 'names:x', names: ['Hybrid', 'hybrid', 'hybrid-copy'], held: ['other_case', 'other_case', 'exactly'] }));
-    expect(screen.getAllByRole('link').map((a) => a.textContent)).toEqual(['hybrid-copy']);
+    expect(screen.getAllByRole('link').filter((a) => !a.classList.contains('rg-runs__edit')).map((a) => a.textContent)).toEqual(['hybrid-copy']);
+    expect(screen.getByRole('link', { name: 'Edit hybrid-copy' })).toBeTruthy();
     const header = document.querySelector('th[scope="rowgroup"]') as HTMLElement;
     expect(header.textContent?.match(/refused: another spelling differs only in case/g)).toHaveLength(2);
   });
