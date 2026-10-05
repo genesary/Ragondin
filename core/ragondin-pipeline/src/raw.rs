@@ -6,8 +6,10 @@
 //! hand-maintained to match `docs/system-architecture.md` §5.1, and the
 //! internal [`LogicalPipeline`](crate::node) types are never derived into the
 //! wire format. A refactor of the logical model must not silently invalidate
-//! every stored configuration, and a change to the stored format must be a
-//! deliberate version bump here.
+//! every stored configuration, and a change to the stored format must be
+//! deliberate and recorded here: a version bump once the first release is
+//! made, and a row in the crate's schema-version history before it (see
+//! [`SchemaVersion`]).
 //!
 //! The separation is forced, not stylistic: a configuration writes
 //! `top_k: 50`, and [`crate::ParamValue`] is externally tagged, so it cannot
@@ -45,9 +47,9 @@
 //! needs, since what a version bump puts in doubt is meaning.
 //!
 //! An **absent** version reads as the version this build writes: nothing has
-//! ever been serialized in an earlier one, so there is no older document for
-//! a default to be wrong about, and a configuration that says nothing is
-//! current by definition.
+//! been released in an earlier one, so there is no older document for a
+//! default to be wrong about, and a configuration that says nothing is current
+//! by definition.
 //!
 //! A **parameter that is not a scalar or a list of scalars** — a nested map,
 //! a null — fails to parse. That is now a decided limit rather than an
@@ -58,8 +60,9 @@
 //! which omitting the key already says. A **nested map** is refused only until
 //! a configuration demands one: both enums are extensible by design, so the
 //! variant is additive *on the Rust boundary* when that day comes — it still
-//! bumps [`SchemaVersion`] under INV-9, and still owes the content hash a
-//! canonicalization one level deeper. A metadata filter
+//! bumps [`SchemaVersion`] under INV-9 once the first release is made (before
+//! it, it is a row in the schema-version history), and still owes the content
+//! hash a canonicalization one level deeper. A metadata filter
 //! (`params: { filters: { lang: fr } }`) is the shape that will ask for it,
 //! and it is not expressible today.
 //!
@@ -82,33 +85,30 @@ use serde::{Deserialize, Deserializer, Serialize};
 /// file that states no version is written in the one this build writes. A
 /// version this build does not understand is refused rather than guessed at.
 ///
-/// ADR-C18 bumped the supported version to 2 when it added `inputs` to
-/// [`RawGraph`], because a change to the wire schema's shape never leaves
-/// this type untouched (INV-9). It does **not** follow that an absent version
-/// means 1: nothing has ever been serialized in version 1, so guarding
-/// against documents that do not exist would only cost every configuration a
-/// `version:` line. The mechanism is here and versioned; what it discriminates
-/// between starts mattering when a version is actually in use somewhere.
+/// **Until the first release, a change to the wire schema's shape does not
+/// change this type**: the version stays at 1, and the change is recorded as a
+/// row with no number in `ARCHITECTURE.md`'s schema-version history. Nothing
+/// has been released, so no document exists that a bump would protect. The
+/// first release is the commit at which `[workspace.package] version` in the
+/// root `Cargo.toml` stops being `0.0.0`, and a test in `tests/first_release.rs`
+/// fails there. From then on INV-9's bump rule applies, starting from 1.
 ///
-/// ADR-C31 § 3 bumped it to 3 when [`RawNode::component`] began accepting
-/// `context_builder` and `generator`. No struct changed shape — `component`
-/// is a `String` either way — but the vocabulary a configuration may name
-/// widened, and that is a change to the schema all the same. What the bump
-/// buys is on the other side of it: a build that reads only version 2, handed
-/// a document that states `version: 3`, refuses it here, by the version gate,
-/// for what it is — a schema that build does not have — rather than reading on
-/// and reporting `generator` as an unknown component. A document that states
-/// no version still falls through to that unknown-component refusal there,
-/// since an absent version reads as the reader's own. That this build now
-/// refuses a document stating `version: 2` is a consequence of reading exactly
-/// one version, not the purpose of the bump.
+/// ADR-C18 and ADR-C31 § 3 each bumped this version, to 2 and then to 3. The
+/// schema returned to 1 by an owner decision recorded in that history table,
+/// which retires both numbers: no reader of either exists, and a document
+/// stating one is refused like any other version this build does not read.
+///
+/// An absent version does **not** mean some earlier one. Guarding against
+/// documents that were never written would only cost every configuration a
+/// `version:` line; what the mechanism discriminates between starts mattering
+/// when a released version is in use somewhere.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 #[serde(transparent)]
 pub struct SchemaVersion(u32);
 
 impl SchemaVersion {
     /// The only schema version this build can read.
-    pub const SUPPORTED: u32 = 3;
+    pub const SUPPORTED: u32 = 1;
 
     /// [`SchemaVersion::SUPPORTED`] as a value, and what
     /// [`RawPipeline::version`] defaults to.
@@ -499,45 +499,48 @@ mod tests {
     #[test]
     fn the_supported_version_is_accepted_when_stated() {
         let doc: RawPipeline =
-            serde_json::from_str(r#"{"version":3,"pipeline":{"nodes":[]}}"#).unwrap();
+            serde_json::from_str(r#"{"version":1,"pipeline":{"nodes":[]}}"#).unwrap();
         assert_eq!(doc.version.get(), SchemaVersion::SUPPORTED);
     }
 
     #[test]
-    fn the_supported_version_is_three() {
-        // ADR-C31 § 3 sanctions this bump by name, for `component:` accepting
-        // `context_builder` and `generator`; that the vocabulary itself
-        // lowers is tested in `validate`.
-        assert_eq!(SchemaVersion::SUPPORTED, 3);
+    fn the_supported_version_is_one() {
+        // Until the first release the wire schema stays at version 1, whatever
+        // its shape does (`ARCHITECTURE.md` § Schema-version history).
+        assert_eq!(SchemaVersion::SUPPORTED, 1);
     }
 
     #[test]
-    fn a_configuration_stating_the_previous_version_is_refused() {
-        // A build reads exactly one version, so moving it to 3 means a
-        // document stating `version: 2` is refused at the gate — the
-        // consequence of the bump, pinned so it cannot change silently.
-        assert_eq!(
-            SchemaVersion::new(2),
-            Err(UnsupportedSchemaVersion { found: 2 })
-        );
-        let text = "version: 2\npipeline:\n  inputs: [question]\n  nodes: []\n";
-        match peek_schema_version(serde_yaml::Deserializer::from_str(text)) {
-            Err(SchemaVersionPeekError::Unsupported(unsupported)) => {
-                assert_eq!(unsupported.found(), 2);
+    fn a_configuration_stating_a_retired_version_is_refused() {
+        // 2 and 3 were stated by builds before the schema returned to 1, and
+        // no reader of either exists: a document stating one is refused at
+        // the gate like any other unsupported version, by the peek and by the
+        // full parse alike.
+        for retired in [2, 3] {
+            assert_eq!(
+                SchemaVersion::new(retired),
+                Err(UnsupportedSchemaVersion { found: retired })
+            );
+            let text =
+                format!("version: {retired}\npipeline:\n  inputs: [question]\n  nodes: []\n");
+            match peek_schema_version(serde_yaml::Deserializer::from_str(&text)) {
+                Err(SchemaVersionPeekError::Unsupported(unsupported)) => {
+                    assert_eq!(unsupported.found(), retired);
+                }
+                other => panic!("version {retired} must be refused as unsupported, got {other:?}"),
             }
-            other => panic!("version 2 must be refused as unsupported, got {other:?}"),
+            assert!(
+                serde_yaml::from_str::<RawPipeline>(&text).is_err(),
+                "the full parse must refuse version {retired} as well"
+            );
         }
-        assert!(
-            serde_yaml::from_str::<RawPipeline>(text).is_err(),
-            "the full parse must refuse version 2 as well"
-        );
     }
 
     #[test]
-    fn an_absent_version_reads_as_the_generation_schema() {
+    fn an_absent_version_reads_as_version_one() {
         let doc: RawPipeline =
             serde_yaml::from_str("pipeline:\n  inputs: [question]\n  nodes: []\n").unwrap();
-        assert_eq!(doc.version.get(), 3);
+        assert_eq!(doc.version.get(), 1);
     }
 
     #[test]
@@ -609,7 +612,7 @@ mod tests {
         );
 
         let yaml = peek_schema_version(serde_yaml::Deserializer::from_str(
-            "version: 3\n\tnodes: []\n",
+            "version: 1\n\tnodes: []\n",
         ))
         .expect_err("a tab where YAML expects indentation is a syntax error");
         assert!(
@@ -733,7 +736,7 @@ mod tests {
         // A peek that disagreed with `Deserialize` would refuse documents the
         // parser accepts, or wave through ones it refuses.
         let stated = peek_schema_version(&mut serde_json::Deserializer::from_str(
-            r#"{"version":3,"pipeline":{"nodes":[]}}"#,
+            r#"{"version":1,"pipeline":{"nodes":[]}}"#,
         ))
         .expect("the supported version must peek");
         assert_eq!(stated, SchemaVersion::CURRENT);
@@ -893,7 +896,7 @@ mod tests {
     #[test]
     fn the_wire_form_round_trips() {
         let doc: RawPipeline = serde_json::from_str(
-            r#"{"version":3,"pipeline":{"inputs":["question"],"nodes":[{"id":"d","component":"retriever","impl":"bm25","inputs":["t"],"params":{"top_k":50,"alpha":0.5}}]}}"#,
+            r#"{"version":1,"pipeline":{"inputs":["question"],"nodes":[{"id":"d","component":"retriever","impl":"bm25","inputs":["t"],"params":{"top_k":50,"alpha":0.5}}]}}"#,
         )
         .unwrap();
         let back: RawPipeline =

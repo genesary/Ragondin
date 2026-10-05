@@ -14,7 +14,7 @@ import type { EditorLayout } from './store.ts';
 const HASH = 'b'.repeat(64);
 const ETAG = 'e'.repeat(64);
 const NEW_ETAG = 'f'.repeat(64);
-const RENDERING = 'version: 3\npipeline:\n  inputs: [question]\n';
+const RENDERING = 'version: 1\npipeline:\n  inputs: [question]\n';
 const VALID: { body: PipelineValidated } = { body: { hash: HASH, rendering: RENDERING } };
 // Every node of the hybrid placed, so the canvas lays nothing out itself.
 const LAYOUT: EditorLayout = { question: { x: 0, y: 0 }, lexical: { x: 288, y: 0 }, vectors: { x: 288, y: 160 }, fused: { x: 576, y: 0 }, reranked: { x: 864, y: 0 } };

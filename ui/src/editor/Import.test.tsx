@@ -56,7 +56,7 @@ describe('importing a pipeline', () => {
 
   it('writes the text as it was given, under the name given, creating it', async () => {
     const { api, onImported } = setup({
-      'POST /pipelines/validate': { body: { hash: 'c'.repeat(64), rendering: 'version: 3\n' } },
+      'POST /pipelines/validate': { body: { hash: 'c'.repeat(64), rendering: 'version: 1\n' } },
       'PUT /pipelines/{name}': { body: { name: 'mine', etag: 'e'.repeat(64), hash: 'c'.repeat(64) } },
     });
     fill(HAND, 'mine');

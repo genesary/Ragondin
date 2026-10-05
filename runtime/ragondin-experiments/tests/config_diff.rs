@@ -310,7 +310,7 @@ fn a_stored_document_that_does_not_lower_says_why_in_the_same_words() {
     assert_eq!(
         lower("version: 99\npipeline:\n  inputs: [q]\n  nodes: []\n"),
         "stored under a schema version this build cannot read: \
-         unsupported pipeline schema version 99: this build reads version 3"
+         unsupported pipeline schema version 99: this build reads version 1"
     );
     assert_eq!(
         lower("pipeline:\n  inputs: [q]\n"),
