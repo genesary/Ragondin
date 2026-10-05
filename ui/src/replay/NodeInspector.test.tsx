@@ -145,7 +145,7 @@ describe('the inspector, side by side', () => {
   it("shows both runs' outputs in two columns, each headed by its run", () => {
     render(<NodeInspector node="dense" from="A" sides={[A, B]} metric="ndcg@10" />);
     const columns = screen.getAllByRole('region');
-    expect(columns.map((c) => c.getAttribute('aria-label'))).toEqual(['A, hybrid-rerank-gen', 'B, dense-only']);
+    expect(columns.map((c) => c.getAttribute('aria-label'))).toEqual(['hybrid-rerank-gen', 'dense-only']);
     expect(within(columns[0]!).getByRole('list', { name: 'Ranked by dense, 5 chunks' })).toBeTruthy();
     expect(within(columns[1]!).getByRole('list', { name: 'Ranked by dense, 5 chunks' })).toBeTruthy();
   });
@@ -154,8 +154,8 @@ describe('the inspector, side by side', () => {
     render(<NodeInspector node="rerank" from="A" sides={[A, B]} metric="ndcg@10" />);
     const [a, b] = screen.getAllByRole('region') as [HTMLElement, HTMLElement];
     expect(within(a).getByRole('list', { name: 'Ranked by rerank, 4 chunks' })).toBeTruthy();
-    expect(within(b).getByText('No such node in B.')).toBeTruthy();
-    expect(within(b).getByRole('heading', { name: "B's final output: dense" })).toBeTruthy();
+    expect(within(b).getByText('No such node in dense-only.')).toBeTruthy();
+    expect(within(b).getByRole('heading', { name: 'Final output of dense-only: dense' })).toBeTruthy();
     expect(within(b).getByRole('list', { name: 'Ranked by dense, 5 chunks' })).toBeTruthy();
   });
 
@@ -166,7 +166,7 @@ describe('the inspector, side by side', () => {
 
   it("compares the two runs in the verdict on the selected run's final node", () => {
     render(<NodeInspector node="answer" from="A" sides={[A, B]} metric="ndcg@10" />);
-    expect(screen.getByText('ndcg@10 is 0.8610 in A and 0.6131 in B, 0.2479 higher in A; the first gold document is at document rank 1 in A and 3 in B.')).toBeTruthy();
+    expect(screen.getByText('ndcg@10 is 0.8610 in hybrid-rerank-gen and 0.6131 in dense-only, 0.2479 higher in hybrid-rerank-gen; the first gold document is at document rank 1 in hybrid-rerank-gen and 3 in dense-only.')).toBeTruthy();
   });
 });
 

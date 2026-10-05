@@ -221,9 +221,9 @@ describe('NodeCard with an overlay (replay)', () => {
   });
 
   it('the dashed absent state, with its tag in words', () => {
-    for (const card of inThemes(<NodeCard {...BASE} overlay={{ onlyHere: 'only in B' }} />)) {
+    for (const card of inThemes(<NodeCard {...BASE} overlay={{ onlyHere: 'only in dense-only' }} />)) {
       expect(card.getAttribute('data-only-here')).toBe('true');
-      expect(within(card).getByText('only in B')).toBeTruthy();
+      expect(within(card).getByText('only in dense-only')).toBeTruthy();
     }
     expect(declared(css, '.rg-node[data-only-here="true"]', 'border')).toBe('1.5px dashed var(--accent)');
   });

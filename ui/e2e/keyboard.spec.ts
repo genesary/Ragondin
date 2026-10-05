@@ -32,8 +32,8 @@ test('keyboard only: Runs → Compare → Replay → a node and its menu', async
   await expect(page).toHaveURL(new RegExp(`#replay/${dense}/q/[^/?]+\\?with=${hybrid}$`));
 
   // Replay: a node selected on the canvas, then its menu.
-  const node = page.getByRole('application', { name: /^Run B/ }).getByRole('group', { name: /^reranker reranked/ });
-  await tabTo(page, node, 'the reranker on run B');
+  const node = page.getByRole('application', { name: /^hybrid-rerank, / }).getByRole('group', { name: /^reranker reranked/ });
+  await tabTo(page, node, 'the reranker on hybrid-rerank');
   await page.keyboard.press('Enter');
   await expect(page).toHaveURL(/\/node\/reranked\?/);
   await expect(page.getByRole('complementary', { name: 'reranked' })).toBeVisible();

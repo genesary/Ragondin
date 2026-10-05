@@ -38,7 +38,7 @@ export type NodeOverlay = {
   discarded?: number;
   /** The node failed, with this message. */
   error?: string;
-  /** The node is absent from the run beside this one: the tag the card wears, e.g. "only in B". */
+  /** The node is absent from the run beside this one: the tag the card wears, e.g. "only in dense-only". */
   onlyHere?: string;
   /** The node never ran for this query: an earlier node failed. */
   notRun?: true;

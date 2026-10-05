@@ -148,10 +148,10 @@ export type OverlayInput = {
   trace: ReplayTrace;
   /** The per-node metric chosen in the toolbar. */
   metric: string | null;
-  /** This run's letter in side by side: A, or B for the run beside. */
-  letter?: string;
+  /** This run's name, which side by side tags the nodes the run beside lacks. */
+  name?: string;
   /** The run beside, whose nodes this run's are tagged against. */
-  other?: { graph: Graph; letter: string };
+  other?: { graph: Graph };
 };
 
 /**
@@ -159,15 +159,16 @@ export type OverlayInput = {
  * query's time, the chosen metric, the gold ranks as the rank strip's cells,
  * the discarded count, a failure; a node of the graph absent from the trace
  * did not run. A declared input has none. Side by side, a node the other run
- * lacks wears "only in <letter>".
+ * lacks wears "only in <name>": a run is named, never lettered, on every
+ * screen (decided in #489).
  */
-export function overlayOf({ graph, trace, metric, letter = 'A', other }: OverlayInput): Record<string, NodeOverlay> {
+export function overlayOf({ graph, trace, metric, name = 'this run', other }: OverlayInput): Record<string, NodeOverlay> {
   const total = trace.nodes.reduce((sum, n) => sum + n.duration_nanos, 0);
   const elsewhere = other === undefined ? null : new Set([...other.graph.inputs.map((i) => i.id), ...other.graph.nodes.map((n) => n.id)]);
   const out: Record<string, NodeOverlay> = {};
   for (const node of graph.nodes) {
     const ran = trace.nodes.find((n) => n.node === node.id);
-    const tag = elsewhere !== null && !elsewhere.has(node.id) ? { onlyHere: `only in ${letter}` } : {};
+    const tag = elsewhere !== null && !elsewhere.has(node.id) ? { onlyHere: `only in ${name}` } : {};
     if (ran === undefined) {
       out[node.id] = { notRun: true, ...tag };
       continue;
@@ -205,6 +206,8 @@ export function counterpart(id: string, other: { graph: Graph; trace: ReplayTrac
 
 /** One run's reading for the verdict: its score on the metric at its output, and its ranking node's gold ranks. */
 export type Reading = { score: number | undefined; gold: readonly number[] | null };
+/** A reading side by side, with the run's name the sentence says. */
+export type NamedReading = Reading & { name: string };
 
 const firstGold = (gold: readonly number[] | null) => (gold === null || gold.length === 0 ? null : Math.min(...gold));
 const inTop = (gold: readonly number[]) => gold.filter((r) => r >= 1 && r <= 10).length;
@@ -216,7 +219,7 @@ const inTop = (gold: readonly number[]) => gold.filter((r) => r >= 1 && r <= 10)
  * ranks count documents, chunks folded by first occurrence, so the sentence
  * says "document rank": the list's ranks count chunks.
  */
-export function verdict({ metric, a, b }: { metric: string; a: Reading; b?: Reading }): string {
+export function verdict({ metric, a, b }: { metric: string; a: Reading; b?: undefined } | { metric: string; a: NamedReading; b: NamedReading }): string {
   if (a.score === undefined) return `This query is not scored on ${metric}, so there is no verdict.`;
   if (b === undefined) {
     const first = firstGold(a.gold);
@@ -224,19 +227,29 @@ export function verdict({ metric, a, b }: { metric: string; a: Reading; b?: Read
     const n = inTop(a.gold ?? []);
     return `${metric} is ${formatScore(a.score)} on this query, with ${n} gold document${n === 1 ? '' : 's'} in the top 10, the first at document rank ${first}.`;
   }
-  if (b.score === undefined) return `${metric} is ${formatScore(a.score)} in A; B is not scored on it for this query.`;
+  if (b.score === undefined) return `${metric} is ${formatScore(a.score)} in ${a.name}; ${b.name} is not scored on it for this query.`;
   const diff = a.score - b.score;
-  const compared = Math.abs(diff) < 5e-5 ? 'the same in both' : `${formatScore(Math.abs(diff))} higher in ${diff > 0 ? 'A' : 'B'}`;
+  const compared = Math.abs(diff) < 5e-5 ? 'the same in both' : `${formatScore(Math.abs(diff))} higher in ${diff > 0 ? a.name : b.name}`;
   const [fa, fb] = [firstGold(a.gold), firstGold(b.gold)];
   const gold =
     fa === null && fb === null
       ? 'neither ranks a gold document'
       : fa === null
-        ? `the first gold document is at document rank ${fb} in B, and A ranks none`
+        ? `the first gold document is at document rank ${fb} in ${b.name}, and ${a.name} ranks none`
         : fb === null
-          ? `the first gold document is at document rank ${fa} in A, and B ranks none`
-          : `the first gold document is at document rank ${fa} in A and ${fb} in B`;
-  return `${metric} is ${formatScore(a.score)} in A and ${formatScore(b.score)} in B, ${compared}; ${gold}.`;
+          ? `the first gold document is at document rank ${fa} in ${a.name}, and ${b.name} ranks none`
+          : `the first gold document is at document rank ${fa} in ${a.name} and ${fb} in ${b.name}`;
+  return `${metric} is ${formatScore(a.score)} in ${a.name} and ${formatScore(b.score)} in ${b.name}, ${compared}; ${gold}.`;
+}
+
+/**
+ * The names two runs side by side go by: each run's own, and, when the two
+ * share one, each followed by its short id, so neither sentence nor canvas
+ * reads one run's name as the other's.
+ */
+export function sideNames(a: { id: string; name: string }, b: { id: string; name: string }): [string, string] {
+  if (a.name !== b.name) return [a.name, b.name];
+  return [`${a.name} · ${a.id.slice(0, 12)}`, `${b.name} · ${b.id.slice(0, 12)}`];
 }
 
 /** The runs that can stand beside `run`: those of the listing on its benchmark, itself excluded. */

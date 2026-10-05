@@ -15,6 +15,12 @@ export type RunSwatchProps = {
   onCopyHash?: (hash: string) => void;
   /** Which run the hash button copies, in words ("run A"), when several sit side by side; it names the button. */
   copyLabel?: string;
+  /**
+   * No letter, seen or heard: for a screen that names its runs by name alone
+   * (Replay), where a slot's letter would not be the letter Compare gave the
+   * same run. The name then carries the identity, the ink and position beside it.
+   */
+  unlettered?: boolean;
 };
 
 /**
@@ -22,7 +28,7 @@ export type RunSwatchProps = {
  * neutral outline), its name and its hash. Letter, fill and position: never
  * colour alone. Run inks are a separate set from the family pigments.
  */
-export function RunSwatch({ slot, name, hash, small = false, onCopyHash, copyLabel }: RunSwatchProps) {
+export function RunSwatch({ slot, name, hash, small = false, onCopyHash, copyLabel, unlettered = false }: RunSwatchProps) {
   const letter = slot === 'base' ? 'baseline' : slot.toUpperCase();
   const hidden = slot === 'base' || small;
   const short = hash?.slice(0, 6);
@@ -32,7 +38,7 @@ export function RunSwatch({ slot, name, hash, small = false, onCopyHash, copyLab
   return (
     <span className="rg-runlabel">
       <span className={small ? 'rg-swatch rg-swatch--s' : 'rg-swatch'} data-run={slot}>
-        {hidden ? <span className="rg-visually-hidden">{letter}</span> : letter}
+        {unlettered ? null : hidden ? <span className="rg-visually-hidden">{letter}</span> : letter}
       </span>
       {name === undefined ? null : <span className="rg-runlabel__name">{name}</span>}
       {hash === undefined ? null : (

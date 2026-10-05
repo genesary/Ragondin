@@ -17,7 +17,7 @@ import { formatHash, navigate, type ReplaySet } from '../routes.ts';
 import { prefixText } from '../runs/model.ts';
 import { ErrorState, Loading, type RequestState } from '../shell/states.tsx';
 import { defaultMetric } from '../metrics.ts';
-import { byNumber, candidates, editorTarget, firstJudged, fromPartial, overlayOf, passagesBanner, runName, type ReplayTrace } from './model.ts';
+import { byNumber, candidates, editorTarget, firstJudged, fromPartial, overlayOf, passagesBanner, runName, sideNames, type ReplayTrace } from './model.ts';
 import { NodeInspector, type Side } from './NodeInspector.tsx';
 import { QueryList } from './QueryList.tsx';
 import './Replay.css';
@@ -233,7 +233,9 @@ function RunReplay({ client, run, query, node, with: other, set }: RunSource) {
   );
 
   const graph = loaded(detail)?.graph;
-  const nameA = nameOf(runs, run);
+  // Each run goes by its name, never a letter, as on every screen (decided
+  // in #489); two runs of one name are told apart by their short ids.
+  const [nameA, nameB] = beside === null ? [nameOf(runs, run), ''] : sideNames({ id: run, name: nameOf(runs, run) }, { id: beside, name: nameOf(runs, beside) });
   const shownTrace = trace.state.status === 'loaded' ? trace.state.value : trace.shown?.run === run ? trace.shown : null;
   const otherGraph = loaded(otherDetail)?.graph;
   // B is drawn as current only on the query A shows: an older answer of B's
@@ -247,7 +249,7 @@ function RunReplay({ client, run, query, node, with: other, set }: RunSource) {
       ? []
       : [
           { letter: 'A', name: nameA, graph, trace: shownTrace, queries: listed },
-          ...(beside !== null && otherFailure === undefined && otherGraph !== undefined && shownOther !== null ? [{ letter: 'B' as const, name: nameOf(runs, beside), graph: otherGraph, trace: shownOther, queries: loaded(otherQueries) }] : []),
+          ...(beside !== null && otherFailure === undefined && otherGraph !== undefined && shownOther !== null ? [{ letter: 'B' as const, name: nameB, graph: otherGraph, trace: shownOther, queries: loaded(otherQueries) }] : []),
         ];
   // The B last drawn is remembered, so that while B reads a newer query its
   // canvas stays where it was — the same canvas, its pan and zoom kept —
@@ -323,17 +325,17 @@ function RunReplay({ client, run, query, node, with: other, set }: RunSource) {
   // only B has is no node of the document A ran.
   const nodeA = selected !== null && has(graph, selected.node) ? selected.node : null;
   // What the stage draws: the sides, and B's kept canvas while B is stale.
-  const drawn: Side[] = stale === null ? sides : [...sides, { letter: 'B', name: nameOf(runs, stale.run), graph: stale.graph, trace: stale.trace, queries: null }];
+  const drawn: Side[] = stale === null ? sides : [...sides, { letter: 'B', name: nameB, graph: stale.graph, trace: stale.trace, queries: null }];
   const held: Held | null =
     beside === null || drawn.length === 2
       ? null
-      : { name: nameOf(runs, beside), failure: otherFailure !== undefined && otherFailure.state.status === 'error' ? { problem: otherFailure.state.problem, retry: otherFailure.retry } : null };
+      : { name: nameB, failure: otherFailure !== undefined && otherFailure.state.status === 'error' ? { problem: otherFailure.state.problem, retry: otherFailure.retry } : null };
   const filtering = missing && missed.state.status === 'loading';
   const reading =
     trace.state.status === 'loading' && shownTrace !== null
       ? `Reading query ${query}…`
       : beside !== null && otherTrace.state.status === 'loading'
-        ? `Reading query ${query} in B…`
+        ? `Reading query ${query} in ${nameB}…`
         : filtering
           ? `Finding the queries with no gold in the top ${MISS_AT}…`
           : '';
@@ -348,7 +350,7 @@ function RunReplay({ client, run, query, node, with: other, set }: RunSource) {
   return (
     <div className="rg-replay">
       <div className="rg-replay__bar">
-        <RunSwatch slot="a" name={nameA} hash={run} onCopyHash={copy} copyLabel="run A" />
+        <RunSwatch unlettered slot="a" name={nameA} hash={run} onCopyHash={copy} copyLabel={nameA} />
         <ForkButton client={client} run={run} size="s" node={nodeA} />
         <OpenInEditor listing={listing} run={run} node={nodeA} />
         <SegmentedControl
@@ -425,7 +427,7 @@ function RunReplay({ client, run, query, node, with: other, set }: RunSource) {
             <p className="rg-replay__placeholder">Select a node to see what it produced for this query.</p>
           ) : sides.length === 1 && !has(graph, selected.node) ? (
             // A node only B has, selected on B's kept canvas while B reads this query.
-            <p className="rg-replay__placeholder">No such node in A.</p>
+            <p className="rg-replay__placeholder">No such node in {nameA}.</p>
           ) : (
             <NodeInspector node={selected.node} from={sides.length === 2 ? selected.from : 'A'} sides={sides} held={beside !== null && sides.length === 1} metric={metric} onClose={() => select(null)} />
           )}
@@ -639,21 +641,21 @@ type StageProps = {
   labelOf?: (side: Side, stale: boolean) => string;
 };
 
-const runLabel = (side: Side, stale: boolean) => `Run ${side.letter}, ${side.name}, query ${side.trace.query}${stale ? ', stale' : ''}`;
+const runLabel = (side: Side, stale: boolean) => `${side.name}, query ${side.trace.query}${stale ? ', stale' : ''}`;
 
 /** The query's head, the banner, and the canvas — or two, stacked, with their run labels. */
 function Stage({ sides, stale, held, trace, onRetry, metric, selected, onSelect, labelOf = runLabel }: StageProps) {
   const a = sides[0]!;
   const b = sides[1];
   const overlays = useMemo(
-    () => sides.map((side, i) => overlayOf({ graph: side.graph, trace: side.trace, metric, letter: side.letter, ...(sides.length === 2 ? { other: { graph: sides[1 - i]!.graph, letter: sides[1 - i]!.letter } } : {}) })),
+    () => sides.map((side, i) => overlayOf({ graph: side.graph, trace: side.trace, metric, name: side.name, ...(sides.length === 2 ? { other: { graph: sides[1 - i]!.graph } } : {}) })),
     [sides, metric],
   );
   // Each run's passages are checked on their own: B's dataset may differ where A's does not.
   const banners = sides.flatMap((side) => {
     const banner = side.trace.passages === null ? null : passagesBanner(side.trace.passages);
     if (banner === null) return [];
-    return [{ ...banner, letter: side.letter, title: sides.length === 2 ? `Run ${side.letter}: ${banner.title.charAt(0).toLowerCase()}${banner.title.slice(1)}` : banner.title }];
+    return [{ ...banner, letter: side.letter, title: sides.length === 2 ? `${side.name}: ${banner.title.charAt(0).toLowerCase()}${banner.title.slice(1)}` : banner.title }];
   });
   const failed = a.trace.nodes.find((n) => n.error !== null);
   // Two canvases are framed alike — the larger graph's extent — so they share
@@ -685,7 +687,7 @@ function Stage({ sides, stale, held, trace, onRetry, metric, selected, onSelect,
           // The key is the letter, whether B is current or kept: B's canvas stays mounted across queries.
           return (
             <div key={side.letter} className="rg-replay__canvas" data-stale={old || undefined}>
-              {b === undefined && held === null ? null : <RunSwatch slot={side.letter === 'A' ? 'a' : 'b'} name={side.name} />}
+              {b === undefined && held === null ? null : <RunSwatch unlettered slot={side.letter === 'A' ? 'a' : 'b'} name={side.name} />}
               <Canvas
                 graph={side.graph}
                 frame={frame}
@@ -705,7 +707,7 @@ function Stage({ sides, stale, held, trace, onRetry, metric, selected, onSelect,
         })}
         {held === null ? null : (
           <div className="rg-replay__canvas">
-            <RunSwatch slot="b" name={held.name} />
+            <RunSwatch unlettered slot="b" name={held.name} />
             <div className="rg-replay__waiting">{held.failure === null ? <Loading label={`Reading ${held.name}`} /> : <ErrorState problem={held.failure.problem} onRetry={held.failure.retry} />}</div>
           </div>
         )}

@@ -92,8 +92,8 @@ describe('the shell’s screens', () => {
       { build: BUILD },
     );
     show(`#replay/${replay.HYBRID}/q/q1?with=${replay.DENSE}`);
-    expect(await within(main()).findByRole('application', { name: 'Run A, hybrid-rerank-gen, query q1' })).toBeTruthy();
-    expect(await within(main()).findByRole('application', { name: 'Run B, dense-only, query q1' })).toBeTruthy();
+    expect(await within(main()).findByRole('application', { name: 'hybrid-rerank-gen, query q1' })).toBeTruthy();
+    expect(await within(main()).findByRole('application', { name: 'dense-only, query q1' })).toBeTruthy();
     expect(within(main()).getByRole('heading', { level: 1 }).textContent).toBe('Replay');
   });
 

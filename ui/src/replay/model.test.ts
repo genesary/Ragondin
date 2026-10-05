@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { DENSE, DENSE_GRAPH, DENSE_TRACE, FAILED_TRACE, HYBRID, HYBRID_GRAPH, HYBRID_QUERIES, HYBRID_TRACE, LISTING, withPassages } from './fixtures.ts';
-import { candidates, counterpart, editorTarget, byNumber, firstJudged, formatMs, listOf, matching, overlayOf, passagesBanner, runName, terminalOf, verdict } from './model.ts';
+import { candidates, counterpart, sideNames, editorTarget, byNumber, firstJudged, formatMs, listOf, matching, overlayOf, passagesBanner, runName, terminalOf, verdict } from './model.ts';
 
 describe('overlayOf, building the canvas overlay from a trace', () => {
   const overlay = overlayOf({ graph: HYBRID_GRAPH, trace: HYBRID_TRACE, metric: 'ndcg@10' });
@@ -41,11 +41,11 @@ describe('overlayOf, building the canvas overlay from a trace', () => {
     expect(failed['rrf']?.ranks).toEqual([1, 2]);
   });
 
-  it('tags the nodes absent from the run beside it with that run’s letter', () => {
-    const beside = overlayOf({ graph: HYBRID_GRAPH, trace: HYBRID_TRACE, metric: 'ndcg@10', other: { graph: DENSE_GRAPH, letter: 'B' } });
-    for (const id of ['bm25', 'rrf', 'rerank', 'context', 'answer']) expect(beside[id]?.onlyHere, id).toBe('only in A');
+  it('tags the nodes absent from the run beside it with this run’s name, never a letter', () => {
+    const beside = overlayOf({ graph: HYBRID_GRAPH, trace: HYBRID_TRACE, metric: 'ndcg@10', name: 'hybrid-rerank-gen', other: { graph: DENSE_GRAPH } });
+    for (const id of ['bm25', 'rrf', 'rerank', 'context', 'answer']) expect(beside[id]?.onlyHere, id).toBe('only in hybrid-rerank-gen');
     expect(beside['dense']?.onlyHere).toBeUndefined();
-    const dense = overlayOf({ graph: DENSE_GRAPH, trace: DENSE_TRACE, metric: 'ndcg@10', other: { graph: HYBRID_GRAPH, letter: 'A' }, letter: 'B' });
+    const dense = overlayOf({ graph: DENSE_GRAPH, trace: DENSE_TRACE, metric: 'ndcg@10', name: 'dense-only', other: { graph: HYBRID_GRAPH } });
     expect(dense['dense']?.onlyHere).toBeUndefined();
   });
 });
@@ -140,13 +140,23 @@ describe('verdict, the final node’s sentence', () => {
   });
 
   it('compares the two runs side by side: both scores, the difference, and both first gold ranks', () => {
-    expect(verdict({ metric: 'ndcg@10', a: { score: 0.861, gold: [1, 2] }, b: { score: 0.6131, gold: [3] } })).toBe(
-      'ndcg@10 is 0.8610 in A and 0.6131 in B, 0.2479 higher in A; the first gold document is at document rank 1 in A and 3 in B.',
+    const a = { name: 'hybrid', score: 0.861, gold: [1, 2] };
+    const b = { name: 'dense-only', score: 0.6131, gold: [3] };
+    expect(verdict({ metric: 'ndcg@10', a, b })).toBe(
+      'ndcg@10 is 0.8610 in hybrid and 0.6131 in dense-only, 0.2479 higher in hybrid; the first gold document is at document rank 1 in hybrid and 3 in dense-only.',
     );
-    expect(verdict({ metric: 'ndcg@10', a: { score: 0.5, gold: [2] }, b: { score: 0.5, gold: [] } })).toBe(
-      'ndcg@10 is 0.5000 in A and 0.5000 in B, the same in both; the first gold document is at document rank 2 in A, and B ranks none.',
+    expect(verdict({ metric: 'ndcg@10', a: { ...a, score: 0.5, gold: [2] }, b: { ...b, score: 0.5, gold: [] } })).toBe(
+      'ndcg@10 is 0.5000 in hybrid and 0.5000 in dense-only, the same in both; the first gold document is at document rank 2 in hybrid, and dense-only ranks none.',
     );
-    expect(verdict({ metric: 'ndcg@10', a: { score: 0.2, gold: [9] }, b: { score: undefined, gold: null } })).toBe('ndcg@10 is 0.2000 in A; B is not scored on it for this query.');
+    expect(verdict({ metric: 'ndcg@10', a: { ...a, gold: null }, b: { ...b, gold: [4] } })).toContain('the first gold document is at document rank 4 in dense-only, and hybrid ranks none');
+    expect(verdict({ metric: 'ndcg@10', a: { ...a, score: 0.2, gold: [9] }, b: { ...b, score: undefined, gold: null } })).toBe('ndcg@10 is 0.2000 in hybrid; dense-only is not scored on it for this query.');
+  });
+});
+
+describe('sideNames', () => {
+  it('names the two runs by their names, and tells two runs of one name apart by their short ids', () => {
+    expect(sideNames({ id: 'a'.repeat(64), name: 'hybrid' }, { id: 'b'.repeat(64), name: 'dense-only' })).toEqual(['hybrid', 'dense-only']);
+    expect(sideNames({ id: 'a'.repeat(64), name: 'hybrid' }, { id: 'b'.repeat(64), name: 'hybrid' })).toEqual([`hybrid · ${'a'.repeat(12)}`, `hybrid · ${'b'.repeat(12)}`]);
   });
 });
 
