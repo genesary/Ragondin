@@ -585,7 +585,8 @@ function Surface({
       select(null);
       return;
     }
-    if (editable && pickedEdge !== null && (event.key === 'Delete' || event.key === 'Backspace') && target.closest('[role="menu"]') === null) {
+    // A focused node is what Delete removes, whatever edge is selected; the edge only when no node has the focus.
+    if (editable && pickedEdge !== null && (event.key === 'Delete' || event.key === 'Backspace') && target.closest('[role="menu"]') === null && target.closest('.react-flow__node') === null) {
       event.preventDefault();
       removeEdge();
       return;
@@ -705,7 +706,10 @@ function Surface({
           <Background id="minor" className="rg-canvas__grid" variant={BackgroundVariant.Dots} gap={16} size={1} />
           <Background id="major" className="rg-canvas__grid-major" variant={BackgroundVariant.Dots} gap={128} size={1.5} />
           {pickedEdge === null ? null : (
-            <EdgeRemove ends={pickedEdge} at={edgeMiddle(positionOf(pickedEdge.from), positionOf(pickedEdge.to), pickedEdge.port)} refused={removal} onRemove={removeEdge} />
+            // In graph coordinates, so inside the viewport: it follows a pan and a zoom as its edge does.
+            <ViewportPortal>
+              <EdgeRemove ends={pickedEdge} at={edgeMiddle(positionOf(pickedEdge.from), positionOf(pickedEdge.to), pickedEdge.port)} refused={removal} onRemove={removeEdge} />
+            </ViewportPortal>
           )}
           {source === null || drawing?.pointer == null ? null : (
             <ViewportPortal>

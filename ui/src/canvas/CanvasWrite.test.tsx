@@ -269,6 +269,40 @@ describe('Canvas in write mode, deleting by key and selecting an edge', () => {
     expect(within(container).queryByRole('button', { name: /Remove the edge/ })).toBeNull();
   });
 
+  it('draws the Remove button inside the viewport, so it follows a pan and a zoom', () => {
+    const { container } = renderWrite({ onRemoveEdge: vi.fn(), refuseRemoveEdge: () => null });
+    fireEvent.click(edgeEl(container, 'reranked'));
+    const remove = within(container).getByRole('button', { name: 'Remove the edge question → reranked' });
+    expect(remove.closest('.react-flow__viewport-portal')).not.toBeNull();
+  });
+
+  it('removes the focused node on Delete, not the selected edge', () => {
+    const onDelete = vi.fn();
+    const onRemoveEdge = vi.fn();
+    const { container } = renderWrite({ onDelete, onRemoveEdge, refuseRemoveEdge: () => null });
+    fireEvent.click(edgeEl(container, 'reranked'));
+    fireEvent.keyDown(nodeEl(container, 'vectors'), { key: 'Delete' });
+    expect(onDelete).toHaveBeenCalledWith('vectors');
+    expect(onRemoveEdge).not.toHaveBeenCalled();
+  });
+
+  it('lets go of the selected edge when a node is selected', () => {
+    const { container } = renderWrite({ onRemoveEdge: vi.fn(), refuseRemoveEdge: () => null });
+    fireEvent.click(edgeEl(container, 'reranked'));
+    fireEvent.click(nodeEl(container, 'lexical'));
+    expect(edgeEl(container, 'reranked').hasAttribute('data-selected')).toBe(false);
+    expect(within(container).queryByRole('button', { name: /Remove the edge/ })).toBeNull();
+  });
+
+  it('never deletes by key from a text field, the inspector’s included', () => {
+    const onDelete = vi.fn();
+    const { container } = renderWrite({ onDelete, selected: 'lexical', inspector: () => <input aria-label="Node id" defaultValue="lexical" /> });
+    const field = within(container).getByLabelText('Node id');
+    fireEvent.keyDown(field, { key: 'Backspace' });
+    fireEvent.keyDown(field, { key: 'Delete' });
+    expect(onDelete).not.toHaveBeenCalled();
+  });
+
   it('refuses to remove an edge the editor refuses, saying why, and Delete does nothing', () => {
     const onRemoveEdge = vi.fn();
     const { container } = renderWrite({ onRemoveEdge, refuseRemoveEdge: () => 'Only the last edge into `reranked` can be removed.' });
