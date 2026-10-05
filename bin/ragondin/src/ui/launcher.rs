@@ -3,7 +3,9 @@
 //! The one path from the UI to the data plane (INV-12): `ragondin-api` holds
 //! an `Arc<dyn Launcher>` and never names a component; this module, in the
 //! only crate that knows them, answers for it. Everything here reuses what
-//! `bench` already runs: the capabilities are [`wiring::carried`], a binding's
+//! `bench` already runs: the capabilities are [`wiring::carried`], with each
+//! name's parameters from [`wiring::implementation_parameters`] and their
+//! starting values from [`wiring::starting_value`], a binding's
 //! check is [`binding::check`] — `--remote`'s refusals, in its words — the
 //! probe is [`wiring::service_identity`], the read `bench` makes before a run,
 //! and a run is [`execution`]'s preparation and execution, the steps `bench`
@@ -28,14 +30,15 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use ragondin_api::{
-    ApiError, Cancellation, Capabilities, FamilyCapabilities, Launcher, LauncherError, Location,
-    NotCarried, QueryProgress, RunObserver, ServiceBinding, ServiceIdentity, Submission,
+    ApiError, Cancellation, Capabilities, ChoiceCase, FamilyCapabilities, ImplementationParameters,
+    Launcher, LauncherError, Location, NotCarried, Parameter, ParameterChoice, ParameterKind,
+    ParameterValue, QueryProgress, RunObserver, ServiceBinding, ServiceIdentity, Submission,
 };
 use ragondin_contracts::ComponentError;
-use ragondin_engine::ExecError;
+use ragondin_engine::{ExecError, ParamKind, ParamSpec};
 use ragondin_experiments::{PrefixOf, Run, RunId, RunProvenance};
 use ragondin_harness::HarnessError;
-use ragondin_pipeline::LogicalPipeline;
+use ragondin_pipeline::{LogicalPipeline, ParamValue};
 
 use crate::binding::{self, Binding, Bindings, Family};
 use crate::execution::{self, Pipeline, Prepared, Refusal};
@@ -70,7 +73,8 @@ impl Launcher for BinaryLauncher {
     /// Every family `--remote` names, in [`Family::ALL`]'s order, with the
     /// `Local` names this build carries in it — none, for a family whose every
     /// implementation is feature-gated off — those it does not carry with the
-    /// features that would, the family's ports, and whether it carries
+    /// features that would, the family's ports, the parameters a node takes
+    /// under each carried name and under a bound one, and whether it carries
     /// `remote`.
     fn capabilities(&self) -> Capabilities {
         Capabilities {
@@ -90,6 +94,11 @@ impl Launcher for BinaryLauncher {
                             reason: needs(features),
                         })
                         .collect(),
+                    parameters: wiring::carried()
+                        .filter(|(of, _)| *of == family)
+                        .filter_map(|(_, name)| implementation(family, name))
+                        .collect(),
+                    bound: parameters(family, &wiring::bound_parameters(family)),
                 })
                 .collect(),
             remote: cfg!(feature = "remote"),
@@ -443,6 +452,50 @@ async fn read_identity(
     })
 }
 
+/// The parameters `family`/`name` takes, as the API serves them: its own,
+/// and its choice's; `None` for an embedder, whose keys are a `dense` node's.
+fn implementation(family: Family, name: &str) -> Option<ImplementationParameters> {
+    let declared = wiring::implementation_parameters(family, name)?;
+    Some(ImplementationParameters {
+        name: name.to_owned(),
+        parameters: parameters(family, &declared),
+        choice: wiring::implementation_choice(family, name).map(|choice| ParameterChoice {
+            key: choice.key.to_owned(),
+            cases: choice
+                .cases
+                .iter()
+                .map(|case| ChoiceCase {
+                    value: case.value.map(str::to_owned),
+                    parameters: parameters(family, case.keys),
+                })
+                .collect(),
+        }),
+    })
+}
+
+/// Each of `specs` as the API serves it, with the starting value the
+/// composition root gives it on a node of `family`, if any.
+fn parameters(family: Family, specs: &[ParamSpec]) -> Vec<Parameter> {
+    specs
+        .iter()
+        .map(|spec| Parameter {
+            name: spec.name.to_owned(),
+            kind: match spec.kind {
+                ParamKind::NonNegativeInteger => ParameterKind::NonNegativeInteger,
+                ParamKind::String => ParameterKind::String,
+                ParamKind::Float => ParameterKind::Float,
+            },
+            required: spec.required,
+            description: spec.description.to_owned(),
+            start: wiring::starting_value(family, spec).map(|value| match value {
+                ParamValue::Int(n) => ParameterValue::Int(n),
+                ParamValue::String(text) => ParameterValue::String(text),
+                other => unreachable!("no starting value is a {other:?}"),
+            }),
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -522,6 +575,55 @@ mod tests {
                 "embedder"
             ]
         );
+    }
+
+    /// Every name a family carries serves its parameters, in `local`'s
+    /// order, as the composition root declares them; a bound name serves its
+    /// family's list; and a starting value is served exactly where
+    /// `wiring::starting_value` gives one.
+    #[test]
+    fn every_carried_name_serves_its_parameters_with_their_starting_values() {
+        let capabilities = launcher().capabilities();
+        for entry in &capabilities.families {
+            let family = Family::ALL
+                .into_iter()
+                .find(|family| family.name() == entry.family)
+                .expect("a family `--remote` names");
+            if family == Family::Embedder {
+                assert!(entry.parameters.is_empty() && entry.bound.is_empty());
+                continue;
+            }
+            let names: Vec<&str> = entry.parameters.iter().map(|p| p.name.as_str()).collect();
+            assert_eq!(names, entry.local, "{family}");
+            for served in &entry.parameters {
+                let declared =
+                    wiring::implementation_parameters(family, &served.name).expect("a Local name");
+                assert_eq!(
+                    served.parameters,
+                    parameters(family, &declared),
+                    "{family}/{}",
+                    served.name
+                );
+            }
+            assert_eq!(
+                entry.bound,
+                parameters(family, &wiring::bound_parameters(family)),
+                "{family}"
+            );
+        }
+        let retriever = capabilities
+            .families
+            .iter()
+            .find(|entry| entry.family == "retriever")
+            .expect("listed");
+        let top_k = retriever
+            .bound
+            .iter()
+            .find(|parameter| parameter.name == "top_k")
+            .expect("a retriever takes `top_k`");
+        assert_eq!(top_k.kind, ParameterKind::NonNegativeInteger);
+        assert!(top_k.required);
+        assert_eq!(top_k.start, Some(ParameterValue::Int(10)));
     }
 
     /// The ports each node family serves, read back against what

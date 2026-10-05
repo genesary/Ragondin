@@ -324,7 +324,7 @@ pub enum LogicalNode {
 
 ### 6.3 The logical-to-physical seam
 
-**Physical planning** takes a `LogicalPipeline` plus an `EngineContext` (the registry) and produces a `PhysicalPipeline`: it resolves each `impl: "bm25"` into a constructed component (`Local` or `Remote`), handing that constructor the node's whole parameter map, and verifies end-to-end type compatibility. It applies no defaults of its own, deliberately: a component is the only thing that knows its own, so a default filled in here could only be a second copy of it, free to disagree.
+**Physical planning** takes a `LogicalPipeline` plus an `EngineContext` (the registry) and produces a `PhysicalPipeline`: it resolves each `impl: "bm25"` into a constructed component (`Local` or `Remote`), handing that constructor the node's whole parameter map, and verifies end-to-end type compatibility. It applies no defaults of its own, deliberately: a component is the only thing that knows its own, so a default filled in here could only be a second copy of it, free to disagree. The same holds after planning: the executor's per-call keys are published as one table (`ragondin_engine::per_call_params`), which the composition root unions with its constructors' keys to say what a node takes, and the starting values the editor writes into a placed node are ordinary values in the document — nothing applies one to an absent key.
 
 The whole path, from a configuration file to a trace, is below. It is one diagram rather than three because the two things worth seeing only exist *between* the stages: ADR-C16's two kind checks are **two call sites of one derivation**, and the trace is returned by the same call that returns the failure.
 

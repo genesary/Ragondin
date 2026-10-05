@@ -13,8 +13,9 @@
 //! The tests are split by the feature that carries the components they need
 //! (ADR-C14): the lean build registers no retriever and no generator, so `just
 //! test` compiles those tests away and `just test-features` is where they run.
-//! The three refusals at the top — an unknown benchmark format, an extension
-//! node, a generator no build registers — need no component this build lacks,
+//! The four refusals at the top — an unknown benchmark format, an extension
+//! node, a generator no build registers, a node missing a required key — need
+//! no component this build lacks,
 //! since each is refused before anything runs, so they run in both. So does
 //! the refusal of a malformed `--remote` argument.
 //!
@@ -145,6 +146,32 @@ fn a_generator_this_build_does_not_register_is_refused_naming_family_and_name() 
         error.contains("no generator implementation is registered under `vllm`"),
         "{error}"
     );
+    assert!(!store.exists(), "a refused configuration records no run");
+}
+
+/// A node missing a required key is refused before the benchmark loads, in
+/// every build: the key check runs before anything is read, so a benchmark
+/// that does not exist is never reached.
+#[test]
+fn a_node_without_its_required_top_k_is_refused_before_the_benchmark_loads() {
+    let store = store("missing-top-k");
+
+    let output = ragondin(&[
+        "bench",
+        &fixture("missing-top-k.yaml"),
+        "--benchmark",
+        "beir/no-such-benchmark",
+        "--datasets",
+        path(&fixtures()),
+        "--store",
+        path(&store),
+    ]);
+
+    assert!(!output.status.success(), "{}", stdout(&output));
+    let error = stderr(&output);
+    assert!(error.contains("node `search`"), "{error}");
+    assert!(error.contains("`top_k` is required"), "{error}");
+    assert!(!error.contains("no-such-benchmark"), "{error}");
     assert!(!store.exists(), "a refused configuration records no run");
 }
 

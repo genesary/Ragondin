@@ -39,7 +39,7 @@ use std::path::PathBuf;
 
 use anyhow::{bail, Context, Result};
 use ragondin_contracts::EmbeddedChunk;
-use ragondin_engine::EngineContext;
+use ragondin_engine::{per_call_params, ComponentFamily, EngineContext, ParamKind, ParamSpec};
 use ragondin_pipeline::{LogicalNode, LogicalPipeline, ParamValue, Params};
 use ragondin_types::Chunk;
 
@@ -72,19 +72,53 @@ const ONNX_EMBEDDER: &str = "onnx";
 /// Each entry carries its [`Gate`], the features any one of which carries it,
 /// in its own row, so an entry cannot be added without saying what carries
 /// it. Each feature is named once there: whether this build has it is read
-/// from the name by [`feature_on`].
-const LOCAL: [(Family, &str, Gate); 7] = [
-    (Family::Retriever, BM25, Gate::any_of(&["bm25"])),
+/// from the name by [`feature_on`]. And each carries its [`Reads`], the keys
+/// its constructor reads, so an entry cannot be added without saying what a
+/// node of it takes either.
+const LOCAL: [(Family, &str, Gate, Reads); 7] = [
+    (
+        Family::Retriever,
+        BM25,
+        Gate::any_of(&["bm25"]),
+        Reads::NOTHING,
+    ),
     // Carried by a build that can construct an embedder for it, `onnx` or
     // `remote`, which is when [`register`] can register it.
-    (Family::Retriever, DENSE, Gate::any_of(&["onnx", "remote"])),
+    (
+        Family::Retriever,
+        DENSE,
+        Gate::any_of(&["onnx", "remote"]),
+        DENSE_READS,
+    ),
     // A normal dependency, in every build.
-    (Family::Fusion, RRF, Gate::ALWAYS),
-    (Family::Reranker, CROSS_ENCODER, Gate::any_of(&["onnx"])),
+    (Family::Fusion, RRF, Gate::ALWAYS, Reads::keys(&[RRF_K])),
+    (
+        Family::Reranker,
+        CROSS_ENCODER,
+        Gate::any_of(&["onnx"]),
+        CROSS_ENCODER_READS,
+    ),
     // A normal dependency, in every build.
-    (Family::ContextBuilder, CONCAT, Gate::ALWAYS),
-    (Family::Generator, STUB_GENERATOR, Gate::any_of(&["stub"])),
-    (Family::Embedder, ONNX_EMBEDDER, Gate::any_of(&["onnx"])),
+    (
+        Family::ContextBuilder,
+        CONCAT,
+        Gate::ALWAYS,
+        Reads::keys(&[SEPARATOR]),
+    ),
+    (
+        Family::Generator,
+        STUB_GENERATOR,
+        Gate::any_of(&["stub"]),
+        Reads::keys(&[STUB_SERVED_MODEL]),
+    ),
+    // An embedder is no node: its keys are a `dense` node's, in
+    // [`DENSE_READS`]'s choice.
+    (
+        Family::Embedder,
+        ONNX_EMBEDDER,
+        Gate::any_of(&["onnx"]),
+        Reads::NOTHING,
+    ),
 ];
 
 /// What carries a [`LOCAL`] entry: any one of `features`, and whether this
@@ -135,7 +169,7 @@ const fn feature_on(name: &str) -> bool {
 pub fn is_local(family: Family, name: &str) -> bool {
     LOCAL
         .iter()
-        .any(|(of, local, _)| *of == family && *local == name)
+        .any(|(of, local, _, _)| *of == family && *local == name)
 }
 
 /// An `impl:` name this build constructs nothing under: neither a `Local`
@@ -193,14 +227,14 @@ pub fn refuse_not_in_build(
         }
         match LOCAL
             .iter()
-            .find(|(of, local, _)| *of == family && *local == name)
+            .find(|(of, local, _, _)| *of == family && *local == name)
         {
-            Some((_, _, gate)) if gate.on => {}
+            Some((_, _, gate, _)) if gate.on => {}
             gated => {
                 return Err(NotInBuild {
                     family,
                     name: name.to_owned(),
-                    features: gated.map_or(&[], |(_, _, gate)| gate.features),
+                    features: gated.map_or(&[], |(_, _, gate, _)| gate.features),
                 })
             }
         }
@@ -247,7 +281,7 @@ impl std::fmt::Display for AtNode {
 fn service_of(node: &LogicalNode, bindings: &Bindings) -> Option<String> {
     let (family, name) = match node {
         LogicalNode::Retriever(node) if node.implementation == DENSE => {
-            match node.params.get("embedder") {
+            match node.params.get(EMBEDDER.name) {
                 Some(ParamValue::String(embedder)) => (Family::Embedder, embedder.as_str()),
                 _ => return None,
             }
@@ -266,8 +300,8 @@ fn service_of(node: &LogicalNode, bindings: &Bindings) -> Option<String> {
 pub fn carried() -> impl Iterator<Item = (Family, &'static str)> {
     LOCAL
         .into_iter()
-        .filter(|(_, _, gate)| gate.on)
-        .map(|(family, name, _)| (family, name))
+        .filter(|(_, _, gate, _)| gate.on)
+        .map(|(family, name, _, _)| (family, name))
 }
 
 /// The `Local` components this build does **not** carry, by family, in
@@ -277,20 +311,331 @@ pub fn carried() -> impl Iterator<Item = (Family, &'static str)> {
 pub fn not_carried() -> impl Iterator<Item = (Family, &'static str, &'static [&'static str])> {
     LOCAL
         .into_iter()
-        .filter(|(_, _, gate)| !gate.on)
-        .map(|(family, name, gate)| (family, name, gate.features))
+        .filter(|(_, _, gate, _)| !gate.on)
+        .map(|(family, name, gate, _)| (family, name, gate.features))
 }
 
-/// The keys every `dense` node may carry, whatever embedder it names
-/// (ADR-C32 § 1). `top_k` is the executor's; the rest are this file's.
-const DENSE_KEYS: [&str; 4] = ["top_k", "embedder", "query_prefix", "passage_prefix"];
+// The keys this composition root's constructors read, each declared once in
+// the engine's shape, next to the code that reads it. A node's parameters are
+// these, unioned by name with the engine's per-call table for its family
+// ([`implementation_parameters`]).
+
+/// `rrf`'s constant.
+const RRF_K: ParamSpec = ParamSpec {
+    name: "k",
+    kind: ParamKind::NonNegativeInteger,
+    required: false,
+    description: "The constant added to each rank before it is inverted; absent, the component's own default.",
+};
+/// `concat`'s separator: required, and may be empty ([`concat`]).
+const SEPARATOR: ParamSpec = ParamSpec {
+    name: "separator",
+    kind: ParamKind::String,
+    required: true,
+    description: "The text placed between two chunks; may be empty.",
+};
+/// The model name `stub_generator` serves: the engine's generator key, read
+/// by the constructor as well.
+const STUB_SERVED_MODEL: ParamSpec = ParamSpec {
+    name: "served_model",
+    kind: ParamKind::String,
+    required: true,
+    description: "The model name the stub generator reports as its identity.",
+};
+/// The embedder a `dense` node retrieves through (ADR-C32 § 1): no default.
+const EMBEDDER: ParamSpec = ParamSpec {
+    name: "embedder",
+    kind: ParamKind::String,
+    required: true,
+    description: "The embedder: `onnx`, or a name bound in the embedder family.",
+};
+/// Prepended to a query: absence is the only spelling of "none" ([`prefix`]).
+const QUERY_PREFIX: ParamSpec = ParamSpec {
+    name: "query_prefix",
+    kind: ParamKind::String,
+    required: false,
+    description: "Text prepended to a query before it is embedded; absent, none. Never empty.",
+};
+/// Prepended to a passage, as [`QUERY_PREFIX`] is to a query.
+const PASSAGE_PREFIX: ParamSpec = ParamSpec {
+    name: "passage_prefix",
+    kind: ParamKind::String,
+    required: false,
+    description: "Text prepended to a passage before it is embedded; absent, none. Never empty.",
+};
+/// An ONNX model file ([`model_of`]).
+const MODEL: ParamSpec = ParamSpec {
+    name: "model",
+    kind: ParamKind::String,
+    required: true,
+    description: "The ONNX model file.",
+};
+/// Its `tokenizer.json` ([`model_of`]).
+const TOKENIZER: ParamSpec = ParamSpec {
+    name: "tokenizer",
+    kind: ParamKind::String,
+    required: true,
+    description: "The model's tokenizer.json.",
+};
+/// The token budget ([`model_of`]): absent, the component's own default.
+const MAX_SEQUENCE_LENGTH: ParamSpec = ParamSpec {
+    name: "max_sequence_length",
+    kind: ParamKind::NonNegativeInteger,
+    required: false,
+    description:
+        "The longest text the model is given, in tokens; absent, the component's own default.",
+};
+/// The name a service serves its model under, which a node over a bound
+/// embedder or reranker requires: a service has no loaded model for `None`
+/// to name (ADR-C32 § 1).
+const SERVED_MODEL: ParamSpec = ParamSpec {
+    name: "served_model",
+    kind: ParamKind::String,
+    required: true,
+    description: "The name the service serves its model under.",
+};
+
 /// The keys an ONNX model-bearing node adds: the model, its tokenizer and its
 /// token budget. Shared by a `dense` node over the ONNX embedder and a
 /// `cross_encoder` node, which read the same three.
-const ONNX_KEYS: [&str; 3] = ["model", "tokenizer", "max_sequence_length"];
-/// The key a node over a bound embedder or reranker adds, and requires: the
-/// name its service serves the model under (ADR-C32 § 1).
-const SERVED_MODEL: &str = "served_model";
+const ONNX_KEYS: [ParamSpec; 3] = [MODEL, TOKENIZER, MAX_SEQUENCE_LENGTH];
+
+/// A `dense` node: the embedder and its prefixes, and by the embedder its
+/// `embedder:` names, the ONNX keys or a bound embedder's served model.
+const DENSE_READS: Reads = Reads {
+    keys: &[EMBEDDER, QUERY_PREFIX, PASSAGE_PREFIX],
+    refuses: &[],
+    choice: Some(Choice {
+        key: EMBEDDER.name,
+        cases: &[
+            Case {
+                value: Some(ONNX_EMBEDDER),
+                keys: &ONNX_KEYS,
+            },
+            Case {
+                value: None,
+                keys: &[SERVED_MODEL],
+            },
+        ],
+    }),
+};
+
+/// A `cross_encoder` node: the ONNX keys, and never the engine's optional
+/// `served_model` — the ONNX reranker answers only for the model it loaded,
+/// so the key would be hashed as inert.
+const CROSS_ENCODER_READS: Reads = Reads {
+    keys: &ONNX_KEYS,
+    refuses: &[SERVED_MODEL.name],
+    choice: None,
+};
+
+/// What one implementation's constructor reads, beside the engine's per-call
+/// keys for its family: its own keys, the engine keys it refuses, and a key
+/// whose value decides further keys.
+pub struct Reads {
+    /// The constructor's keys. One that shares a name with an engine key
+    /// replaces its description and may make it required, never optional;
+    /// the two agree on its kind (a test says so).
+    pub keys: &'static [ParamSpec],
+    /// Keys of the engine's table this implementation refuses.
+    pub refuses: &'static [&'static str],
+    /// A key whose value picks further keys, if any.
+    pub choice: Option<Choice>,
+}
+
+impl Reads {
+    /// A constructor that reads no key.
+    const NOTHING: Reads = Reads::keys(&[]);
+
+    /// A constructor that reads `keys`, and refuses and chooses nothing.
+    const fn keys(keys: &'static [ParamSpec]) -> Reads {
+        Reads {
+            keys,
+            refuses: &[],
+            choice: None,
+        }
+    }
+}
+
+/// A key whose value picks further keys: a `dense` node's `embedder:`.
+pub struct Choice {
+    /// The key.
+    pub key: &'static str,
+    /// The keys each value adds, in order: the first case naming the value
+    /// applies, else the case with no value when the value is not empty.
+    pub cases: &'static [Case],
+}
+
+/// The keys one value of a [`Choice`] adds.
+pub struct Case {
+    /// The value; `None` for any other, non-empty one — a name bound with
+    /// `--remote`.
+    pub value: Option<&'static str>,
+    /// The keys it adds, beyond the implementation's own.
+    pub keys: &'static [ParamSpec],
+}
+
+impl Choice {
+    /// The case `value` selects, if any.
+    fn case(&self, value: Option<&str>) -> Option<&'static Case> {
+        let value = value.filter(|value| !value.is_empty())?;
+        self.cases
+            .iter()
+            .find(|case| case.value == Some(value))
+            .or_else(|| self.cases.iter().find(|case| case.value.is_none()))
+    }
+}
+
+/// The keys a node under a name bound in `family` reads beyond the engine's:
+/// one list per family, since the `Remote` adapter reads no parameter and
+/// the executor hands it the per-call keys. A bound reranker requires
+/// `served_model`, which the engine leaves optional (ADR-C32 § 1).
+fn bound_keys(family: Family) -> &'static [ParamSpec] {
+    match family {
+        Family::Reranker => &[SERVED_MODEL],
+        _ => &[],
+    }
+}
+
+/// The engine's family for a node family; `None` for the embedder.
+fn engine_family(family: Family) -> Option<ComponentFamily> {
+    Some(match family {
+        Family::Retriever => ComponentFamily::Retriever,
+        Family::Fusion => ComponentFamily::Fusion,
+        Family::Reranker => ComponentFamily::Reranker,
+        Family::ContextBuilder => ComponentFamily::ContextBuilder,
+        Family::Generator => ComponentFamily::Generator,
+        Family::Embedder => return None,
+    })
+}
+
+/// The engine's per-call keys for `family`, but `refuses`, unioned by name
+/// with `keys`: a key in both takes `keys`' description, and is required if
+/// either says so.
+fn union(family: Family, keys: &[ParamSpec], refuses: &[&str]) -> Vec<ParamSpec> {
+    let engine = engine_family(family).map_or(&[][..], per_call_params);
+    let mut out: Vec<ParamSpec> = engine
+        .iter()
+        .filter(|spec| !refuses.contains(&spec.name))
+        .copied()
+        .collect();
+    for key in keys {
+        match out.iter_mut().find(|spec| spec.name == key.name) {
+            Some(seen) => {
+                *seen = ParamSpec {
+                    required: seen.required || key.required,
+                    ..*key
+                }
+            }
+            None => out.push(*key),
+        }
+    }
+    out
+}
+
+/// What the `Local` implementation `family`/`name` reads in any build: the
+/// engine's keys for its family and its constructor's, before any choice.
+/// `None` for a name no build gives a `Local` component, and for an
+/// embedder, which no node is.
+pub fn implementation_parameters(family: Family, name: &str) -> Option<Vec<ParamSpec>> {
+    engine_family(family)?;
+    LOCAL
+        .iter()
+        .find(|(of, local, _, _)| *of == family && *local == name)
+        .map(|(_, _, _, reads)| union(family, reads.keys, reads.refuses))
+}
+
+/// The choice the `Local` implementation `family`/`name` makes, if any.
+pub fn implementation_choice(family: Family, name: &str) -> Option<&'static Choice> {
+    LOCAL
+        .iter()
+        .find(|(of, local, _, _)| *of == family && *local == name)
+        .and_then(|(_, _, _, reads)| reads.choice.as_ref())
+}
+
+/// What a node under a name bound in `family` reads.
+pub fn bound_parameters(family: Family) -> Vec<ParamSpec> {
+    match engine_family(family) {
+        Some(_) => union(family, bound_keys(family), &[]),
+        None => Vec::new(),
+    }
+}
+
+/// The value the editor writes under `spec` when a node of `family` is
+/// placed, if it has one. Set per family, so a bound implementation is
+/// placed exactly as a `Local` one; given only to a required key with no
+/// component default, and only where the value makes sense on any
+/// deployment — never a model, a path or a served model.
+///
+/// **Nothing applies it to an absent key**: it is written into the
+/// document as an ordinary value, hashed as any other, and an absent key is
+/// still refused (ADR-C22 has no defaults mechanism).
+#[cfg(any(feature = "ui", test))]
+pub fn starting_value(family: Family, spec: &ParamSpec) -> Option<ParamValue> {
+    if !spec.required {
+        return None;
+    }
+    Some(match (family, spec.name) {
+        (Family::Retriever | Family::Reranker, "top_k") => ParamValue::Int(10),
+        (Family::ContextBuilder, "budget") => ParamValue::Int(2000),
+        (Family::ContextBuilder, "separator") => ParamValue::String("\n\n".to_owned()),
+        (Family::Generator, "template") => ParamValue::String(
+            "Answer the question from the context.\n\nContext:\n{context}\n\nQuestion: {query}\nAnswer:"
+                .to_owned(),
+        ),
+        _ => return None,
+    })
+}
+
+/// The parameters `node` reads, by its `impl:` name: a bound name's
+/// family list, or a `Local` name's with its choice resolved by the node's
+/// value; `None` for a name neither, which planning refuses, and for an
+/// extension node.
+fn node_parameters(node: &LogicalNode, bindings: &Bindings) -> Option<Vec<ParamSpec>> {
+    let (family, name) = family_of(node)?;
+    if bindings.binds(family, name) {
+        return Some(bound_parameters(family));
+    }
+    let mut parameters = implementation_parameters(family, name)?;
+    if let Some(choice) = implementation_choice(family, name) {
+        let value = match params_of(node)?.get(choice.key) {
+            Some(ParamValue::String(value)) => Some(value.as_str()),
+            _ => None,
+        };
+        if let Some(case) = choice.case(value) {
+            parameters.extend_from_slice(case.keys);
+        }
+    }
+    Some(parameters)
+}
+
+/// A node's parameter map; `None` for an extension node.
+fn params_of(node: &LogicalNode) -> Option<&Params> {
+    Some(match node {
+        LogicalNode::Retriever(node) => &node.params,
+        LogicalNode::Fusion(node) => &node.params,
+        LogicalNode::Reranker(node) => &node.params,
+        LogicalNode::ContextBuilder(node) => &node.params,
+        LogicalNode::Generator(node) => &node.params,
+        LogicalNode::Extension(_) => return None,
+    })
+}
+
+/// Refuses a key [`node_parameters`] marks required and `node` does not
+/// declare, naming it.
+fn refuse_missing_required(node: &LogicalNode, bindings: &Bindings) -> Result<()> {
+    let (Some(parameters), Some(params)) = (node_parameters(node, bindings), params_of(node))
+    else {
+        return Ok(());
+    };
+    match parameters
+        .iter()
+        .find(|spec| spec.required && !params.contains_key(spec.name))
+    {
+        Some(spec) => bail!("`{}` is required", spec.name),
+        None => Ok(()),
+    }
+}
 
 /// The role an embedder's model plays in run identity
 /// (`docs/system-architecture.md` §7.1). Only a build that can construct an
@@ -500,7 +845,7 @@ pub fn register(
     ctx.register_fusion(
         RRF,
         Box::new(|params| {
-            let k = optional_usize(params, "k")?;
+            let k = optional_usize(params, RRF_K.name)?;
             Ok(Box::new(match k {
                 Some(k) => ragondin_fusion_rrf::ReciprocalRankFusion::new(k),
                 None => ragondin_fusion_rrf::ReciprocalRankFusion::default(),
@@ -702,7 +1047,7 @@ fn onnx_reranker(params: &Params) -> Result<ragondin_reranker_onnx::OnnxReranker
 /// builder has no default of its own for this file to defer to.
 fn concat(params: &Params) -> Result<ragondin_context_concat::ConcatContextBuilder> {
     Ok(ragondin_context_concat::ConcatContextBuilder::new(
-        required_string(params, "separator")?,
+        required_string(params, SEPARATOR.name)?,
     ))
 }
 
@@ -712,7 +1057,7 @@ fn concat(params: &Params) -> Result<ragondin_context_concat::ConcatContextBuild
 fn stub_generator(params: &Params) -> Result<ragondin_stub::StubGenerator> {
     Ok(ragondin_stub::StubGenerator::new(required_string(
         params,
-        SERVED_MODEL,
+        SERVED_MODEL.name,
     )?))
 }
 
@@ -812,8 +1157,14 @@ impl KeyRefusal {
 /// of [`check_nodes`] that holds in every build: a `dense` node's keys by the
 /// nature of the embedder it names, a `cross_encoder` node's, a bound
 /// reranker's, and the agreement of every `dense` node on one embedder
-/// (ADR-C32 § 1). `ragondin ui` asks it of a document before storing it, so
-/// what is stored is what `bench` would accept.
+/// (ADR-C32 § 1). And every node's required keys: a node under a `Local`
+/// name or a bound one must declare each key [`implementation_parameters`]
+/// or [`bound_parameters`] marks required — the executor's and its
+/// constructor's — so a missing `top_k` is refused here rather than at the
+/// first query. A name neither `Local` nor bound is left to planning.
+/// `ragondin ui` asks it of a document before storing it, and `bench` before
+/// the benchmark loads, so what is stored is what `bench` would accept.
+/// `ragondin validate` makes none of these checks: it stays structural.
 pub fn check_keys(pipeline: &LogicalPipeline, bindings: &Bindings) -> Result<(), KeyRefusal> {
     for node in pipeline.nodes() {
         let checked = match node {
@@ -829,7 +1180,8 @@ pub fn check_keys(pipeline: &LogicalPipeline, bindings: &Bindings) -> Result<(),
                 bound_reranker_of(&node.params, &node.implementation).map(drop)
             }
             _ => Ok(()),
-        };
+        }
+        .and_then(|()| refuse_missing_required(node, bindings));
         checked.map_err(|error| KeyRefusal {
             node: Some(node.id().as_str().to_owned()),
             error,
@@ -969,7 +1321,7 @@ async fn identity_of(
                 .bindings()
                 .binds(Family::Reranker, &node.implementation) =>
         {
-            let served_model = required_string(&node.params, SERVED_MODEL)?;
+            let served_model = required_string(&node.params, SERVED_MODEL.name)?;
             (
                 RERANKER_ROLE,
                 service_identity(
@@ -1004,7 +1356,7 @@ async fn identity_of(
         {
             // Required, and refused here rather than sent: ADR-C31 § 4 has the
             // composition root refuse an absent `served_model` itself.
-            let served_model = required_string(&node.params, SERVED_MODEL)?;
+            let served_model = required_string(&node.params, SERVED_MODEL.name)?;
             (
                 GENERATOR_ROLE,
                 service_identity(
@@ -1019,7 +1371,7 @@ async fn identity_of(
         #[cfg(feature = "stub")]
         LogicalNode::Generator(node) if node.implementation == STUB_GENERATOR => {
             use ragondin_contracts::Generator;
-            let served_model = required_string(&node.params, SERVED_MODEL)?;
+            let served_model = required_string(&node.params, SERVED_MODEL.name)?;
             let generator = stub_generator(&node.params)?;
             (
                 GENERATOR_ROLE,
@@ -1089,13 +1441,13 @@ pub async fn service_identity(
     })
 }
 
-/// Refuses every key of `params` that is not in one of `allowed`, naming it.
+/// Refuses every key of `params` that is not in `allowed`, naming it.
 ///
 /// `reader` says who would have read it, so the refusal says what the node
 /// is: the same key is fine on one nature and inert on another (ADR-C32 § 1).
-fn refuse_keys_outside(params: &Params, allowed: &[&[&str]], reader: &str) -> Result<()> {
+fn refuse_keys_outside(params: &Params, allowed: &[ParamSpec], reader: &str) -> Result<()> {
     for key in params.keys() {
-        if !allowed.iter().any(|set| set.contains(&key.as_str())) {
+        if !allowed.iter().any(|spec| spec.name == key.as_str()) {
             bail!("`{key}` is not a key {reader} reads: refused rather than hashed as inert");
         }
     }
@@ -1105,15 +1457,23 @@ fn refuse_keys_outside(params: &Params, allowed: &[&[&str]], reader: &str) -> Re
 /// The model, tokenizer and token budget a node configures.
 fn model_of(params: &Params) -> Result<ModelSpec> {
     Ok(ModelSpec {
-        model: PathBuf::from(required_string(params, "model")?),
-        tokenizer: PathBuf::from(required_string(params, "tokenizer")?),
-        max_sequence_length: optional_usize(params, "max_sequence_length")?,
+        model: PathBuf::from(required_string(params, MODEL.name)?),
+        tokenizer: PathBuf::from(required_string(params, TOKENIZER.name)?),
+        max_sequence_length: optional_usize(params, MAX_SEQUENCE_LENGTH.name)?,
     })
 }
 
 /// The model a `cross_encoder` node configures, once its keys are checked.
 fn reranker_of(params: &Params) -> Result<ModelSpec> {
-    refuse_keys_outside(params, &[&["top_k"], &ONNX_KEYS], "the ONNX cross-encoder")?;
+    refuse_keys_outside(
+        params,
+        &union(
+            Family::Reranker,
+            CROSS_ENCODER_READS.keys,
+            CROSS_ENCODER_READS.refuses,
+        ),
+        "the ONNX cross-encoder",
+    )?;
     model_of(params)
 }
 
@@ -1123,29 +1483,29 @@ fn reranker_of(params: &Params) -> Result<ModelSpec> {
 fn bound_reranker_of(params: &Params, name: &str) -> Result<String> {
     refuse_keys_outside(
         params,
-        &[&["top_k", SERVED_MODEL]],
+        &bound_parameters(Family::Reranker),
         &format!("the bound reranker `{name}`"),
     )?;
-    required_string(params, SERVED_MODEL)
+    required_string(params, SERVED_MODEL.name)
 }
 
 /// The embedder a `dense` node configures, resolved from its `embedder:` name:
 /// `onnx`, or a name `bindings` binds in the `embedder` family.
 fn embedder_of(params: &Params, bindings: &Bindings) -> Result<EmbedderSpec> {
-    let name = required_string(params, "embedder")?;
+    let name = required_string(params, EMBEDDER.name)?;
     if name.is_empty() {
         bail!("`embedder` must name an embedder, and an empty name names none");
     }
     if name == ONNX_EMBEDDER {
         refuse_keys_outside(
             params,
-            &[&DENSE_KEYS, &ONNX_KEYS],
+            &dense_keys(&ONNX_KEYS),
             "a dense node over the `onnx` embedder",
         )?;
         return Ok(EmbedderSpec::Onnx {
             model: model_of(params)?,
-            query_prefix: prefix(params, "query_prefix")?,
-            passage_prefix: prefix(params, "passage_prefix")?,
+            query_prefix: prefix(params, QUERY_PREFIX.name)?,
+            passage_prefix: prefix(params, PASSAGE_PREFIX.name)?,
         });
     }
     if !bindings.binds(Family::Embedder, &name) {
@@ -1156,15 +1516,22 @@ fn embedder_of(params: &Params, bindings: &Bindings) -> Result<EmbedderSpec> {
     }
     refuse_keys_outside(
         params,
-        &[&DENSE_KEYS, &[SERVED_MODEL]],
+        &dense_keys(&[SERVED_MODEL]),
         &format!("a dense node over the bound embedder `{name}`"),
     )?;
     Ok(EmbedderSpec::Bound {
-        served_model: required_string(params, SERVED_MODEL)?,
-        query_prefix: prefix(params, "query_prefix")?,
-        passage_prefix: prefix(params, "passage_prefix")?,
+        served_model: required_string(params, SERVED_MODEL.name)?,
+        query_prefix: prefix(params, QUERY_PREFIX.name)?,
+        passage_prefix: prefix(params, PASSAGE_PREFIX.name)?,
         name,
     })
+}
+
+/// The keys a `dense` node reads over an embedder whose nature adds `case`.
+fn dense_keys(case: &[ParamSpec]) -> Vec<ParamSpec> {
+    let mut keys = union(Family::Retriever, DENSE_READS.keys, DENSE_READS.refuses);
+    keys.extend_from_slice(case);
+    keys
 }
 
 /// A prefix, where absence is the only spelling of "no prefix".
@@ -1306,7 +1673,7 @@ mod tests {
     #[test]
     fn every_feature_a_local_gate_names_is_declared_in_the_manifest() {
         let declared = manifest_features();
-        for (family, name, gate) in LOCAL {
+        for (family, name, gate, _) in LOCAL {
             for feature in gate.features {
                 assert!(
                     declared.contains(feature),
@@ -1330,7 +1697,7 @@ mod tests {
     /// Each gate is on exactly when one of the features it names is on.
     #[test]
     fn a_gate_is_on_when_any_feature_it_names_is() {
-        for (family, name, gate) in LOCAL {
+        for (family, name, gate, _) in LOCAL {
             let any = gate.features.iter().any(|feature| feature_on(feature));
             assert_eq!(
                 gate.on,
@@ -2073,6 +2440,325 @@ mod tests {
         assert!(
             chain(&error).contains("`served_model` is required"),
             "{error:#}"
+        );
+    }
+
+    /// A node of `family` under `name`, with `params` in flow style, inside
+    /// a pipeline that feeds each of its ports: what placing it on the canvas
+    /// and saving would store.
+    fn placed(family: Family, name: &str, params: &[(&str, ParamValue)]) -> String {
+        let flow = params
+            .iter()
+            .map(|(key, value)| match value {
+                ParamValue::Int(n) => format!("{key}: {n}"),
+                ParamValue::String(text) => format!(
+                    "{key}: {}",
+                    serde_json::to_string(text).expect("a string serializes")
+                ),
+                other => panic!("no starting value is a {other:?}"),
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        let (component, inputs, feeds) = match family {
+            Family::Retriever => ("retriever", "[question]", String::new()),
+            Family::Fusion => (
+                "fusion",
+                "[lexical, lexical2]",
+                format!(
+                    "{}    - id: lexical2\n      component: retriever\n      impl: bm25\n      \
+                     inputs: [question]\n      params: {{ top_k: 10 }}\n",
+                    bm25_node()
+                ),
+            ),
+            Family::Reranker => ("reranker", "[question, lexical]", bm25_node()),
+            Family::ContextBuilder => ("context_builder", "[question, lexical]", bm25_node()),
+            Family::Generator => (
+                "generator",
+                "[question, prompt]",
+                format!(
+                    "{}{}",
+                    bm25_node(),
+                    concat_node("prompt", "{ budget: 100, separator: \"\\n\" }")
+                ),
+            ),
+            Family::Embedder => unreachable!("no node is an embedder"),
+        };
+        wrap(&format!(
+            "{feeds}    - id: placed\n      component: {component}\n      impl: {name}\n      \
+             inputs: {inputs}\n      params: {{ {flow} }}\n"
+        ))
+    }
+
+    /// The starting values of `parameters`, as the editor writes them into a
+    /// placed node.
+    fn starting(family: Family, parameters: &[ParamSpec]) -> Vec<(&'static str, ParamValue)> {
+        parameters
+            .iter()
+            .filter_map(|spec| starting_value(family, spec).map(|value| (spec.name, value)))
+            .collect()
+    }
+
+    /// The constructor keys an implementation declares, its choice's
+    /// included, beside the engine's table for its family.
+    fn declared(reads: &Reads) -> Vec<ParamSpec> {
+        let mut keys = reads.keys.to_vec();
+        if let Some(choice) = &reads.choice {
+            for case in choice.cases {
+                keys.extend_from_slice(case.keys);
+            }
+        }
+        keys
+    }
+
+    #[test]
+    fn every_constructor_key_agrees_with_the_engine_on_its_kind() {
+        let mut checked = 0;
+        for (family, name, _, reads) in LOCAL {
+            let Some(of) = engine_family(family) else {
+                continue;
+            };
+            for key in declared(&reads).iter().chain(bound_keys(family).iter()) {
+                if let Some(engine) = per_call_params(of)
+                    .iter()
+                    .find(|spec| spec.name == key.name)
+                {
+                    assert_eq!(engine.kind, key.kind, "{family}/{name} `{}`", key.name);
+                    checked += 1;
+                }
+            }
+        }
+        // `stub_generator`'s `served_model` is the engine's key as well.
+        assert!(checked > 0);
+    }
+
+    #[test]
+    fn an_implementation_serves_the_engines_keys_and_its_constructors() {
+        let names = |family, name| {
+            implementation_parameters(family, name)
+                .expect("a Local name")
+                .iter()
+                .map(|spec| (spec.name, spec.required))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(names(Family::Retriever, BM25), [("top_k", true)]);
+        assert_eq!(names(Family::Fusion, RRF), [("k", false)]);
+        assert_eq!(
+            names(Family::Reranker, CROSS_ENCODER),
+            [
+                ("top_k", true),
+                ("model", true),
+                ("tokenizer", true),
+                ("max_sequence_length", false)
+            ],
+            "the cross-encoder refuses the engine's optional `served_model`"
+        );
+        assert_eq!(
+            names(Family::ContextBuilder, CONCAT),
+            [("budget", true), ("separator", true)]
+        );
+        assert_eq!(
+            names(Family::Generator, STUB_GENERATOR),
+            [
+                ("served_model", true),
+                ("template", true),
+                ("temperature", false),
+                ("seed", false),
+                ("max_tokens", false)
+            ]
+        );
+        assert_eq!(
+            names(Family::Retriever, DENSE),
+            [
+                ("top_k", true),
+                ("embedder", true),
+                ("query_prefix", false),
+                ("passage_prefix", false)
+            ]
+        );
+        assert_eq!(
+            implementation_parameters(Family::Retriever, "nothing"),
+            None
+        );
+    }
+
+    #[test]
+    fn a_bound_name_serves_its_familys_list() {
+        let names = |family| {
+            bound_parameters(family)
+                .iter()
+                .map(|spec| (spec.name, spec.required))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(names(Family::Retriever), [("top_k", true)]);
+        assert_eq!(names(Family::Fusion), []);
+        assert_eq!(
+            names(Family::Reranker),
+            [("top_k", true), ("served_model", true)],
+            "a bound reranker requires the engine's optional `served_model`"
+        );
+        assert_eq!(names(Family::ContextBuilder), [("budget", true)]);
+        assert_eq!(names(Family::Embedder), []);
+    }
+
+    #[test]
+    fn a_starting_value_is_given_only_to_a_required_key_and_in_its_kind() {
+        let mut lists: Vec<(Family, Vec<ParamSpec>)> = Vec::new();
+        for (family, name, _, reads) in LOCAL {
+            if let Some(base) = implementation_parameters(family, name) {
+                lists.push((family, base));
+            }
+            if let Some(choice) = &reads.choice {
+                for case in choice.cases {
+                    lists.push((family, case.keys.to_vec()));
+                }
+            }
+        }
+        for family in Family::ALL {
+            lists.push((family, bound_parameters(family)));
+        }
+        let mut started = 0;
+        for (family, list) in lists {
+            for spec in &list {
+                let Some(value) = starting_value(family, spec) else {
+                    continue;
+                };
+                started += 1;
+                assert!(spec.required, "{family} `{}` is optional", spec.name);
+                let kind = match value {
+                    ParamValue::Int(n) if n >= 0 => ParamKind::NonNegativeInteger,
+                    ParamValue::String(_) => ParamKind::String,
+                    ParamValue::Float(_) => ParamKind::Float,
+                    other => panic!("{family} `{}` starts as {other:?}", spec.name),
+                };
+                assert_eq!(kind, spec.kind, "{family} `{}`", spec.name);
+            }
+        }
+        assert!(started > 0);
+        for (family, key) in [
+            (Family::Fusion, "k"),
+            (Family::Reranker, "max_sequence_length"),
+            (Family::Generator, "temperature"),
+            (Family::Generator, "seed"),
+            (Family::Generator, "max_tokens"),
+            (Family::Generator, "served_model"),
+            (Family::Retriever, "embedder"),
+            (Family::Reranker, "model"),
+        ] {
+            assert!(
+                starting_value(
+                    family,
+                    &ParamSpec {
+                        name: key,
+                        kind: ParamKind::String,
+                        required: true,
+                        description: "",
+                    }
+                )
+                .is_none(),
+                "{family} `{key}` has no starting value"
+            );
+        }
+    }
+
+    /// Acceptance: an implementation whose required keys all have starting
+    /// values is placed as a node `check_keys` accepts; every other is
+    /// refused at save naming a required key it lacks.
+    #[test]
+    fn a_placed_node_is_accepted_exactly_when_every_required_key_starts() {
+        let mut accepted = Vec::new();
+        for (family, name, _, _) in LOCAL {
+            let Some(parameters) = implementation_parameters(family, name) else {
+                continue;
+            };
+            let values = starting(family, &parameters);
+            let yaml = placed(family, name, &values);
+            let lacking = parameters
+                .iter()
+                .find(|spec| spec.required && starting_value(family, spec).is_none());
+            match (check_keys(&pipeline(&yaml), &unbound()), lacking) {
+                (Ok(()), None) => accepted.push(name),
+                (Err(refusal), Some(spec)) => {
+                    assert_eq!(refusal.node.as_deref(), Some("placed"), "{name}");
+                    assert!(
+                        refusal
+                            .error
+                            .to_string()
+                            .contains(&format!("`{}`", spec.name)),
+                        "{name}: {:#}",
+                        refusal.error
+                    );
+                }
+                (outcome, lacking) => {
+                    panic!(
+                        "{name}: {:?} with {lacking:?} lacking",
+                        outcome.err().map(|r| r.error)
+                    )
+                }
+            }
+        }
+        assert_eq!(accepted, [BM25, RRF, CONCAT]);
+    }
+
+    #[test]
+    fn a_node_missing_a_required_key_is_refused_by_the_key_check() {
+        let yaml = wrap(
+            "    - id: lexical\n      component: retriever\n      impl: bm25\n      \
+             inputs: [question]\n      params: {}\n",
+        );
+
+        let refusal = check_keys(&pipeline(&yaml), &unbound()).expect_err("`top_k` is required");
+
+        assert_eq!(refusal.node.as_deref(), Some("lexical"));
+        assert!(
+            refusal.error.to_string().contains("`top_k` is required"),
+            "{:#}",
+            refusal.error
+        );
+    }
+
+    #[test]
+    fn a_dense_node_over_onnx_requires_the_onnx_keys() {
+        let yaml = wrap(&dense_node(
+            "vectors",
+            "{ top_k: 10, embedder: onnx, tokenizer: t.json }",
+        ));
+
+        let refusal = check_keys(&pipeline(&yaml), &unbound()).expect_err("`model` is required");
+
+        assert!(
+            refusal.error.to_string().contains("`model`"),
+            "{:#}",
+            refusal.error
+        );
+    }
+
+    #[test]
+    fn a_name_no_build_gives_a_local_component_is_left_to_planning() {
+        let yaml = wrap(
+            "    - id: lexical\n      component: retriever\n      impl: nothing\n      \
+             inputs: [question]\n      params: {}\n",
+        );
+
+        check_keys(&pipeline(&yaml), &unbound()).expect("an unknown name has no list to check");
+    }
+
+    #[cfg(feature = "remote")]
+    #[test]
+    fn a_bound_node_missing_a_required_key_is_refused_by_the_key_check() {
+        let bindings = bound(&[format!("generator/vllm={}", remote::unreachable_uri())]);
+        let yaml = placed(
+            Family::Generator,
+            "vllm",
+            &[("served_model", ParamValue::String("m".to_owned()))],
+        );
+
+        let refusal = check_keys(&pipeline(&yaml), &bindings).expect_err("`template` is required");
+
+        assert_eq!(refusal.node.as_deref(), Some("placed"));
+        assert!(
+            refusal.error.to_string().contains("`template` is required"),
+            "{:#}",
+            refusal.error
         );
     }
 }

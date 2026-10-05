@@ -314,11 +314,40 @@ release.
   `concat` node's `separator` is required and may be empty — this crate's own
   choice, for the reason `embedder:` has no default: a default would make an
   absent key and its value two spellings of one builder with two hashes, and
-  `ConcatContextBuilder` has no default of its own to defer to. Its absence is
-  refused in step two, where the builder is first constructed to read its
-  identity, as is a generator node's missing `served_model`. `validate`
-  checks none of this: it never plans, so a configuration it hashes may still
-  be refused by `bench`.
+  `ConcatContextBuilder` has no default of its own to defer to. **Every
+  required key of every node under a `Local` or a bound name is checked in
+  step one too** — a missing `top_k`, `budget`, `separator`, `template` or
+  `served_model` is refused by `wiring::check_keys`, naming the node and the
+  key, before the benchmark loads rather than at the first query. A name
+  neither `Local` nor bound is left to `refuse_not_in_build` and planning.
+  `validate` checks none of this: it stays structural and never plans, so a
+  configuration it hashes may still be refused by `bench`.
+- **A node's parameters are declared once, as the engine's `ParamSpec`s
+ .** The executor's per-call keys are `ragondin_engine::per_call_params`;
+  each constructor's own keys are a `Reads` beside the code that reads them,
+  carried by the implementation's `LOCAL` row, so no row can be added without
+  saying what a node of it takes. `wiring::implementation_parameters` unions
+  the two by name — a constructor key of the same name replaces the
+  description and may make the engine's key required, never optional, and a
+  `Reads` may refuse an engine key outright (`cross_encoder` refuses
+  `served_model`); a unit test fails on a kind the two disagree on. A key set
+  that depends on a value is a `Choice`: a `dense` node's `embedder:` adds the
+  ONNX keys for `onnx` and `served_model` for any bound name. A name bound in
+  a family takes one list per family, `wiring::bound_parameters`. The key-set
+  refusals above read these declarations, so the binary holds no literal copy
+  of an engine key. `GET /workspace` serves them through the launcher.
+- **Starting values are the binary's, set per family.**
+  `wiring::starting_value` gives one only to a required key with no component
+  default whose value makes sense on any deployment — `top_k` (10) on a
+  retriever or a reranker, `budget` (2000) and `separator` on a context
+  builder, `template` on a generator — so a bound implementation is placed
+  exactly as a `Local` one. An optional key gets none (`k`,
+  `max_sequence_length`, `temperature`, `seed`, `max_tokens`), and neither
+  does a model, a path, an embedder or a served model: no placeholder is ever
+  written. **Nothing applies a starting value to an absent key**: the editor
+  writes it into the document as an ordinary value, hashed as any other, and
+  an absent key is still refused, so ADR-C22's "no defaults mechanism" holds
+  and no hash changes.
 - **Every component's identity is read from the component, before the run
   (ADR-C32 § 4; ADR-C31 § 4).** `bench` runs six steps in a fixed order: load
   the configuration and check its keys; read every identity; load the
@@ -715,7 +744,12 @@ API crate holds it as an `Arc<dyn Launcher>` and names no component.
   (`wiring::not_carried`, the complement over the same table: "needs the
   `onnx` feature", "needs the `onnx` or the `remote` feature"), the family's
   ports (`ragondin_api::family_ports`, which reads `ragondin-pipeline`'s
-  `produced_kind` and `consumed_kinds`; `null` for `embedder`), and whether
+  `produced_kind` and `consumed_kinds`; `null` for `embedder`), the
+  parameters a node takes under each carried name (`parameters`, from
+  `wiring::implementation_parameters` and `wiring::implementation_choice`)
+  and under a bound name (`bound`, from `wiring::bound_parameters`), each with
+  its kind, whether it is required, its description and its starting value
+  (`wiring::starting_value`), both empty for `embedder`, and whether
   `remote` is on. `embedder` is listed though it is not a `component:` value,
   because `onnx` is a `Local` implementation a `dense` node names. A family
   whose every implementation is gated off is listed with none carried.
@@ -744,7 +778,7 @@ API crate holds it as an `Arc<dyn Launcher>` and names no component.
 - **`check_document(pipeline, bindings)`**: `wiring::check_keys`, the part
   of `bench`'s `check_nodes` that holds in every build — a `dense` node's
   keys by the nature of its embedder, a `cross_encoder`'s, a bound
-  reranker's, one embedder per pipeline — with the workspace's bindings
+  reranker's, one embedder per pipeline, every node's required keys — with the workspace's bindings
   deciding which names are bound. **Only the bindings a node of the document
   uses count** (`binding::used_by`, the use `refuse_unused` looks for), as
   `bench` would be given only those: startup does not check the bindings in

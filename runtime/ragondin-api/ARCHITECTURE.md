@@ -781,6 +781,19 @@ What the launcher returns, served as it returns it. Per family:
   and refuses a mis-kinded edge during a drag, from this — never from a table
   of its own. It does not depend on the build, so it is the same in every
   build; the launcher fills it because the response type is one value.
+- **The parameters a node takes**, under each carried name (`parameters`,
+  one `ImplementationParameters` per name in `local`'s order) and under a
+  name bound in the family (`bound`): each `Parameter`'s name, kind
+  (`non_negative_integer`, `string` or `float`), whether it is required, a
+  one-sentence description, and its `start`, the value the editor writes
+  under it when a node is placed, or `null`. An implementation whose key set
+  depends on a value carries a `choice`: the key, and per value the
+  parameters it adds — `value: null` for any other non-empty value, a bound
+  name. Both lists are empty for `embedder`. **They are the composition
+  root's** — the engine's per-call table unioned with its constructors' keys,
+  and its starting values (`bin/ragondin/ARCHITECTURE.md`): this crate
+  serves them and restates none. A `start` is never applied to an absent
+  key; it is written into the document as an ordinary value.
 
 ## The job queue
 
@@ -1285,7 +1298,8 @@ when it can be null: `launched_as` on `RunDetail` and `RunSummary`, the two time
 and `RunSummary`, `RunSummary::median_query_latency_nanos`,
 `QueryScores::text` and `QueryScores::duration_nanos`,
 `MetricRow::direction`, `PipelineSummary::modified_ms`,
-`FamilyCapabilities::ports`, `Location::node`,
+`FamilyCapabilities::ports`, `ImplementationParameters::choice`,
+`ChoiceCase::value`, `Parameter::start`, `Location::node`,
 `Location::edge`, and the pipeline matrix's `MatrixColumn`, `FeedingRun`,
 `LaunchedAs`, `MissingCells` and `MatrixCell`'s `measured` variant carry a
 `transform` that lists every property as required,

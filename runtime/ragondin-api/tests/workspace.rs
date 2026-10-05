@@ -4,7 +4,10 @@
 mod support;
 
 use axum::http::StatusCode;
-use ragondin_api::{family_ports, Capabilities, FamilyCapabilities, NotCarried};
+use ragondin_api::{
+    family_ports, Capabilities, ChoiceCase, FamilyCapabilities, ImplementationParameters,
+    NotCarried, Parameter, ParameterChoice, ParameterKind, ParameterValue,
+};
 use serde_json::json;
 use support::{app, app_with, get, json, send, FakeLauncher, FakeRunStore, BUILD};
 
@@ -40,18 +43,64 @@ async fn the_workspace_reports_the_capabilities_the_launcher_returns() {
                         name: "cross_encoder".to_owned(),
                         reason: "needs the `onnx` feature".to_owned(),
                     }],
+                    parameters: Vec::new(),
+                    bound: vec![Parameter {
+                        name: "top_k".to_owned(),
+                        kind: ParameterKind::NonNegativeInteger,
+                        required: true,
+                        description: "How many chunks.".to_owned(),
+                        start: Some(ParameterValue::Int(10)),
+                    }],
                 },
                 FamilyCapabilities {
                     family: "fusion".to_owned(),
                     local: vec!["rrf".to_owned()],
                     ports: family_ports("fusion"),
                     not_carried: Vec::new(),
+                    parameters: vec![ImplementationParameters {
+                        name: "rrf".to_owned(),
+                        parameters: vec![Parameter {
+                            name: "k".to_owned(),
+                            kind: ParameterKind::NonNegativeInteger,
+                            required: false,
+                            description: "The constant.".to_owned(),
+                            start: None,
+                        }],
+                        choice: None,
+                    }],
+                    bound: Vec::new(),
+                },
+                FamilyCapabilities {
+                    family: "retriever".to_owned(),
+                    local: vec!["dense".to_owned()],
+                    ports: family_ports("retriever"),
+                    not_carried: Vec::new(),
+                    parameters: vec![ImplementationParameters {
+                        name: "dense".to_owned(),
+                        parameters: Vec::new(),
+                        choice: Some(ParameterChoice {
+                            key: "embedder".to_owned(),
+                            cases: vec![ChoiceCase {
+                                value: None,
+                                parameters: vec![Parameter {
+                                    name: "served_model".to_owned(),
+                                    kind: ParameterKind::String,
+                                    required: true,
+                                    description: "The served model.".to_owned(),
+                                    start: None,
+                                }],
+                            }],
+                        }),
+                    }],
+                    bound: Vec::new(),
                 },
                 FamilyCapabilities {
                     family: "embedder".to_owned(),
                     local: vec![],
                     ports: family_ports("embedder"),
                     not_carried: Vec::new(),
+                    parameters: Vec::new(),
+                    bound: Vec::new(),
                 },
             ],
             remote: false,
@@ -80,6 +129,16 @@ async fn the_workspace_reports_the_capabilities_the_launcher_returns() {
                     "not_carried": [
                         { "name": "cross_encoder", "reason": "needs the `onnx` feature" },
                     ],
+                    "parameters": [],
+                    "bound": [
+                        {
+                            "name": "top_k",
+                            "kind": "non_negative_integer",
+                            "required": true,
+                            "description": "How many chunks.",
+                            "start": { "kind": "int", "value": "10" },
+                        },
+                    ],
                 },
                 {
                     "family": "fusion",
@@ -89,8 +148,64 @@ async fn the_workspace_reports_the_capabilities_the_launcher_returns() {
                         "consumes": { "shape": "variadic", "kind": "chunks" },
                     },
                     "not_carried": [],
+                    "parameters": [
+                        {
+                            "name": "rrf",
+                            "parameters": [
+                                {
+                                    "name": "k",
+                                    "kind": "non_negative_integer",
+                                    "required": false,
+                                    "description": "The constant.",
+                                    "start": null,
+                                },
+                            ],
+                            "choice": null,
+                        },
+                    ],
+                    "bound": [],
                 },
-                { "family": "embedder", "local": [], "ports": null, "not_carried": [] },
+                {
+                    "family": "retriever",
+                    "local": ["dense"],
+                    "ports": {
+                        "produces": "chunks",
+                        "consumes": { "shape": "fixed", "kinds": ["query"] },
+                    },
+                    "not_carried": [],
+                    "parameters": [
+                        {
+                            "name": "dense",
+                            "parameters": [],
+                            "choice": {
+                                "key": "embedder",
+                                "cases": [
+                                    {
+                                        "value": null,
+                                        "parameters": [
+                                            {
+                                                "name": "served_model",
+                                                "kind": "string",
+                                                "required": true,
+                                                "description": "The served model.",
+                                                "start": null,
+                                            },
+                                        ],
+                                    },
+                                ],
+                            },
+                        },
+                    ],
+                    "bound": [],
+                },
+                {
+                    "family": "embedder",
+                    "local": [],
+                    "ports": null,
+                    "not_carried": [],
+                    "parameters": [],
+                    "bound": [],
+                },
             ],
             "remote": false,
         })

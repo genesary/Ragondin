@@ -40,7 +40,10 @@
 //! node's whole map to the constructor, which reads what configures the
 //! implementation, and the executor reads the per-call keys from the same
 //! map. Nothing splits the map — the two readers pick different keys out of
-//! it. The keys the executor reads, by node:
+//! it. The keys the executor reads, by node — published as a value by
+//! [`per_call_params`], one [`ParamSpec`] per key, which is what every read
+//! below goes through, so a composition root that serves a node's parameters
+//! reads them from there rather than restating them:
 //!
 //! | node | required | optional |
 //! |---|---|---|
@@ -54,7 +57,7 @@
 //! that is absent, and any declared key whose value is of another kind or a
 //! negative count, is refused as [`ExecError::InvalidParam`] before the
 //! component is called; an absent optional key reaches the component as
-//! `None`. **No default is invented here**: what a component does without a
+//! `None`. **No default is invented here**, and the table carries none: what a component does without a
 //! parameter is the component's to decide (§8.1), and a default applied here
 //! could only be a second, disagreeing copy of it. **Nor is a value judged**:
 //! a zero count or an empty string reaches the component, which refuses it
@@ -70,7 +73,7 @@ use ragondin_contracts::{
 use ragondin_pipeline::{ExtensionNode, LogicalNode, NodeId, ParamValue, Params, ValueKind};
 use ragondin_types::{Answer, Context, Query, ScoredChunk};
 
-use crate::error::{ExecError, ParamKind};
+use crate::error::{ComponentFamily, ExecError, ParamKind};
 use crate::plan::{PhysicalNode, PhysicalPipeline, ResolvedComponent};
 use crate::trace::{ExecutionTrace, NodeTrace, ValueSummary};
 
@@ -129,15 +132,95 @@ impl NodeValue {
 /// The value each producer has produced so far, keyed by its id.
 type Table = HashMap<NodeId, NodeValue>;
 
-// The per-call keys this build reads. See the module documentation for which
-// node reads which, and for the rule.
-const TOP_K: &str = "top_k";
-const BUDGET: &str = "budget";
-const SERVED_MODEL: &str = "served_model";
-const TEMPLATE: &str = "template";
-const TEMPERATURE: &str = "temperature";
-const SEED: &str = "seed";
-const MAX_TOKENS: &str = "max_tokens";
+/// One parameter a node reads: its key, the kind of value it holds, whether
+/// a node must declare it, and what it is for, in a sentence a person
+/// configuring the node reads.
+///
+/// The shape of [`per_call_params`]'s table, and the shape a composition
+/// root declares its constructors' keys in, so that the two can be put side
+/// by side. It carries **no default**: an absent key is either refused or
+/// left to the component (see the module documentation).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ParamSpec {
+    /// The key, as a configuration writes it.
+    pub name: &'static str,
+    /// The kind of value it holds.
+    pub kind: ParamKind,
+    /// Whether a node must declare it.
+    pub required: bool,
+    /// What it is for.
+    pub description: &'static str,
+}
+
+// The per-call keys this build reads, each once: the tables below are made of
+// these, and every read in this module goes through one of them.
+const TOP_K: ParamSpec = ParamSpec {
+    name: "top_k",
+    kind: ParamKind::NonNegativeInteger,
+    required: true,
+    description: "How many chunks the node returns, best first.",
+};
+const BUDGET: ParamSpec = ParamSpec {
+    name: "budget",
+    kind: ParamKind::NonNegativeInteger,
+    required: true,
+    description: "The cap on the size of the context, in the unit the implementation counts.",
+};
+const RERANK_SERVED_MODEL: ParamSpec = ParamSpec {
+    name: "served_model",
+    kind: ParamKind::String,
+    required: false,
+    description: "The name the reranker's service serves its model under.",
+};
+const GENERATE_SERVED_MODEL: ParamSpec = ParamSpec {
+    name: "served_model",
+    kind: ParamKind::String,
+    required: true,
+    description: "The name the generator's service serves its model under.",
+};
+const TEMPLATE: ParamSpec = ParamSpec {
+    name: "template",
+    kind: ParamKind::String,
+    required: true,
+    description: "The prompt, placing the question with {query} and the context with {context}.",
+};
+const TEMPERATURE: ParamSpec = ParamSpec {
+    name: "temperature",
+    kind: ParamKind::Float,
+    required: false,
+    description: "The sampling temperature; absent, the generator's own.",
+};
+const SEED: ParamSpec = ParamSpec {
+    name: "seed",
+    kind: ParamKind::NonNegativeInteger,
+    required: false,
+    description: "The sampling seed; absent, the generator's own.",
+};
+const MAX_TOKENS: ParamSpec = ParamSpec {
+    name: "max_tokens",
+    kind: ParamKind::NonNegativeInteger,
+    required: false,
+    description: "The longest answer, in tokens; absent, the generator's own.",
+};
+
+/// The per-call keys the executor reads from a node of `family`, in the
+/// order it reads them: the module documentation's table, as a value. A
+/// fusion reads none.
+pub fn per_call_params(family: ComponentFamily) -> &'static [ParamSpec] {
+    match family {
+        ComponentFamily::Retriever => &[TOP_K],
+        ComponentFamily::Fusion => &[],
+        ComponentFamily::Reranker => &[TOP_K, RERANK_SERVED_MODEL],
+        ComponentFamily::ContextBuilder => &[BUDGET],
+        ComponentFamily::Generator => &[
+            GENERATE_SERVED_MODEL,
+            TEMPLATE,
+            TEMPERATURE,
+            SEED,
+            MAX_TOKENS,
+        ],
+    }
+}
 
 /// The executor.
 ///
@@ -417,13 +500,9 @@ async fn call(node: &PhysicalNode, table: &Table) -> Result<NodeValue, ExecError
             let query = query_at(&logical.id, &logical.inputs, 0, table)?;
             let chunks = chunks_at(&logical.id, &logical.inputs, 1, table)?.to_vec();
             let mut params = RerankParams::new(per_call_top_k(&logical.id, &logical.params)?);
-            if let Some(served_model) = optional(
-                &logical.id,
-                &logical.params,
-                SERVED_MODEL,
-                ParamKind::String,
-                string,
-            )? {
+            if let Some(served_model) =
+                read(&logical.id, &logical.params, &RERANK_SERVED_MODEL, string)?
+            {
                 params = params.with_served_model(served_model);
             }
             let reranked = component
@@ -443,8 +522,7 @@ async fn call(node: &PhysicalNode, table: &Table) -> Result<NodeValue, ExecError
             let params = ContextParams::new(required(
                 &logical.id,
                 &logical.params,
-                BUDGET,
-                ParamKind::NonNegativeInteger,
+                &BUDGET,
                 non_negative,
             )?);
             let context = component
@@ -573,81 +651,62 @@ fn value_of<'t>(producer: &NodeId, table: &'t Table) -> &'t NodeValue {
 /// The per-call `top_k` a node declares. See the module documentation for the
 /// rule, including why no default is applied here.
 fn per_call_top_k(node: &NodeId, params: &Params) -> Result<usize, ExecError> {
-    required(
-        node,
-        params,
-        TOP_K,
-        ParamKind::NonNegativeInteger,
-        non_negative,
-    )
+    required(node, params, &TOP_K, non_negative)
 }
 
 /// The per-call params of a generator node: two required strings and three
 /// optional settings (ADR-C31 § 2).
 fn generate_params(node: &NodeId, params: &Params) -> Result<GenerateParams, ExecError> {
-    let served_model = required(node, params, SERVED_MODEL, ParamKind::String, string)?;
-    let template = required(node, params, TEMPLATE, ParamKind::String, string)?;
+    let served_model = required(node, params, &GENERATE_SERVED_MODEL, string)?;
+    let template = required(node, params, &TEMPLATE, string)?;
     let mut call = GenerateParams::new(served_model, template);
-    if let Some(temperature) = optional(node, params, TEMPERATURE, ParamKind::Float, float)? {
+    if let Some(temperature) = read(node, params, &TEMPERATURE, float)? {
         call = call.with_temperature(temperature);
     }
-    if let Some(seed) = optional(
-        node,
-        params,
-        SEED,
-        ParamKind::NonNegativeInteger,
-        non_negative,
-    )? {
+    if let Some(seed) = read(node, params, &SEED, non_negative)? {
         call = call.with_seed(seed);
     }
-    if let Some(max_tokens) = optional(
-        node,
-        params,
-        MAX_TOKENS,
-        ParamKind::NonNegativeInteger,
-        non_negative,
-    )? {
+    if let Some(max_tokens) = read(node, params, &MAX_TOKENS, non_negative)? {
         call = call.with_max_tokens(max_tokens);
     }
     Ok(call)
 }
 
-/// Reads a key the node must declare: absent is refused, as is a value `read`
-/// cannot turn into a `T`.
+/// Reads a key `spec` marks required, as a `T`: absent is refused, as is a
+/// value `read_as` cannot turn into a `T`.
 fn required<T>(
     node: &NodeId,
     params: &Params,
-    key: &'static str,
-    expected: ParamKind,
-    read: fn(&ParamValue) -> Option<T>,
+    spec: &ParamSpec,
+    read_as: fn(&ParamValue) -> Option<T>,
 ) -> Result<T, ExecError> {
-    optional(node, params, key, expected, read)?.ok_or_else(|| ExecError::InvalidParam {
+    debug_assert!(spec.required, "`{}` is read as required", spec.name);
+    read(node, params, spec, read_as)?.ok_or_else(|| ExecError::InvalidParam {
         node: node.clone(),
-        key,
-        expected,
+        key: spec.name,
+        expected: spec.kind,
         found: None,
     })
 }
 
-/// Reads a key the node may omit: absent is `None`, and a declared value
-/// `read` cannot turn into a `T` is refused — "optional" never means
+/// Reads the key `spec` names: absent is `None`, and a declared value
+/// `read_as` cannot turn into a `T` is refused — "optional" never means
 /// "unreadable reads as absent".
-fn optional<T>(
+fn read<T>(
     node: &NodeId,
     params: &Params,
-    key: &'static str,
-    expected: ParamKind,
-    read: fn(&ParamValue) -> Option<T>,
+    spec: &ParamSpec,
+    read_as: fn(&ParamValue) -> Option<T>,
 ) -> Result<Option<T>, ExecError> {
-    let Some(found) = params.get(key) else {
+    let Some(found) = params.get(spec.name) else {
         return Ok(None);
     };
-    read(found)
+    read_as(found)
         .map(Some)
         .ok_or_else(|| ExecError::InvalidParam {
             node: node.clone(),
-            key,
-            expected,
+            key: spec.name,
+            expected: spec.kind,
             found: Some(found.clone()),
         })
 }
@@ -1592,6 +1651,50 @@ mod tests {
         );
     }
 
+    /// The table each family publishes is the module documentation's, key
+    /// for key: what a composition root serves as a node's parameters.
+    #[test]
+    fn each_family_publishes_the_per_call_keys_its_executor_reads() {
+        let keys = |family| {
+            per_call_params(family)
+                .iter()
+                .map(|spec| (spec.name, spec.kind, spec.required))
+                .collect::<Vec<_>>()
+        };
+        use ParamKind::{Float, NonNegativeInteger as Count, String as Text};
+        assert_eq!(keys(ComponentFamily::Retriever), [("top_k", Count, true)]);
+        assert_eq!(keys(ComponentFamily::Fusion), []);
+        assert_eq!(
+            keys(ComponentFamily::Reranker),
+            [("top_k", Count, true), ("served_model", Text, false)]
+        );
+        assert_eq!(
+            keys(ComponentFamily::ContextBuilder),
+            [("budget", Count, true)]
+        );
+        assert_eq!(
+            keys(ComponentFamily::Generator),
+            [
+                ("served_model", Text, true),
+                ("template", Text, true),
+                ("temperature", Float, false),
+                ("seed", Count, false),
+                ("max_tokens", Count, false),
+            ]
+        );
+        for family in [
+            ComponentFamily::Retriever,
+            ComponentFamily::Fusion,
+            ComponentFamily::Reranker,
+            ComponentFamily::ContextBuilder,
+            ComponentFamily::Generator,
+        ] {
+            for spec in per_call_params(family) {
+                assert!(!spec.description.is_empty(), "{family}/{}", spec.name);
+            }
+        }
+    }
+
     #[tokio::test]
     async fn a_node_without_its_per_call_parameter_is_refused() {
         // No default is invented here: what a component does without a
@@ -2128,9 +2231,16 @@ mod tests {
 
     #[tokio::test]
     async fn a_generator_missing_a_required_parameter_is_refused_before_the_call() {
-        // No default: an absent `served_model` or `template` is refused, and
-        // the component is never called with an invented one.
-        for missing in ["served_model", "template"] {
+        // No default: every key the generator table marks required is
+        // refused when absent, and the component is never called with an
+        // invented one.
+        let required: Vec<&str> = per_call_params(ComponentFamily::Generator)
+            .iter()
+            .filter(|spec| spec.required)
+            .map(|spec| spec.name)
+            .collect();
+        assert_eq!(required, ["served_model", "template"]);
+        for missing in required {
             let calls = Arc::new(AtomicUsize::new(0));
             let counter = Arc::clone(&calls);
             let mut ctx = generation_context();
