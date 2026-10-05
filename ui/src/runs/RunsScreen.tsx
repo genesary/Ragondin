@@ -443,7 +443,7 @@ function Loaded({ client, listing, askedWith, refresh, sel, job, launch, store, 
         </div>
       </div>
       {launchPanel}
-      {job === undefined ? null : <JobPanel client={client} id={job} closeHref={formatHash({ screen: 'runs', sel: [...sel] })} anchor={jobAnchor} />}
+      {job === undefined ? null : <JobPanel key={job} client={client} id={job} closeHref={formatHash({ screen: 'runs', sel: [...sel] })} anchor={jobAnchor} />}
       {unreadable}
       {/* Present while the page follows the queue, one line high, so the rows never move as the stream drops and comes back. */}
       {connection === null ? null : (

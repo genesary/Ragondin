@@ -28,13 +28,15 @@ const when = (ms: number | null) => (ms === null ? null : new Date(ms).toLocaleS
  * The faults reported beside the job, each with when. A warning, never an
  * alert: a fault did not stop the job. The polite region is rendered empty
  * before the first fault, because a live region inserted already filled may
- * go unannounced; the warning inside it is a status too, and the nearest
- * region governs, so a fault is announced once. Nothing is read again for it.
+ * go unannounced. It is the one live region here — the warning inside it is
+ * not one of its own — and it is not atomic, so a new fault is announced
+ * once, as what was added, never the whole list again. Nothing is read
+ * again for it.
  */
 function Faults({ job }: { job: JobSummary }) {
   const count = job.faults.length;
   return (
-    <div className="rg-job__faults" role="status">
+    <div className="rg-job__faults" role="status" aria-atomic="false">
       {count === 0 ? null : <FaultList job={job} count={count} />}
     </div>
   );
@@ -42,7 +44,7 @@ function Faults({ job }: { job: JobSummary }) {
 
 function FaultList({ job, count }: { job: JobSummary; count: number }) {
   return (
-    <InlineMessage tone="warning" title={`${count.toLocaleString('en-US')} ${count === 1 ? 'fault' : 'faults'} beside this job; it did not stop it`}>
+    <InlineMessage tone="warning" live={false} title={`${count.toLocaleString('en-US')} ${count === 1 ? 'fault' : 'faults'} beside this job; it did not stop it`}>
       {job.faults.map((fault, i) => {
         const at = when(fault.at_ms);
         return (

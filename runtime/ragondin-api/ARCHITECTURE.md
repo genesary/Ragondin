@@ -1007,12 +1007,19 @@ its fault on the job it could not write, as any other fault.
 is the record a restart reads the queue back from, and a fault that vanished
 on restart would leave a run whose fork silently lacks its layout with
 nothing saying why. A file written before faults were recorded on the job
-reads as having none. Those still held in memory only when the process
-stops are lost on restart, and that loss is what each of them says: the next start meets its cause again —
-the job found running, or queued — and recovers it as § The state machine
-says. The fault of a job whose file recorded no count of partial traces and
-whose traces file does not read is in memory only as well: the job counts
-none, and each start finds the file again and reports it again.
+reads as having none. A fault still held in memory only when the process
+stops is lost on restart, and that loss is what its clause says. Two kinds
+differ in what follows. One that accompanies a transition comes back in
+substance: the next start meets its cause again — the job found running, or
+queued — and recovers the job as § The state machine says. One reported on
+its own (`Queue::report`) — a layout not copied, latencies left out of the
+median, partial traces not written — whose write failed is lost for good
+unless a later write of the job carried it first: nothing at the next start
+re-derives it. The fault of a job whose file recorded no count of partial
+traces and whose traces file does not read is in memory only as well: the
+job counts none, and each start finds the file again and reports it again,
+so its time is that of the start that found it, and changes from one start
+to the next.
 
 ### The partial traces, served
 

@@ -204,14 +204,15 @@ impl Queue {
                 });
                 // Not running either way: a failed write is reported, and the
                 // next start finds it `Running` and fails it again.
-                match file::write(&dir, &job) {
-                    Ok(()) => job.written(),
-                    Err(reason) => job.faults.push(Fault::held(
+                // A job read from its file holds no fault in memory only, so a
+                // write that succeeds has nothing to clear.
+                if let Err(reason) = file::write(&dir, &job) {
+                    job.faults.push(Fault::held(
                         reason,
                         "its recovery is held in memory only, and the next start recovers it \
                          again"
                             .to_owned(),
-                    )),
+                    ));
                 }
             }
             recount(&dir, &mut job);
@@ -1021,7 +1022,8 @@ impl RunObserver for Forward {
 /// Sets the count of partial traces of a failed or cancelled job whose file
 /// was written before the count was recorded, from the traces it kept: none
 /// when there is no file. A file that does not read counts none, and is
-/// reported against the job, in memory — never repaired.
+/// reported against the job, in memory — never repaired. Each start finds it
+/// again, so the fault's time is that start's.
 fn recount(dir: &std::path::Path, job: &mut Job) {
     let (JobState::Failed { partial_traces, .. } | JobState::Cancelled { partial_traces, .. }) =
         &mut job.state
