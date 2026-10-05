@@ -847,6 +847,18 @@ describe('the Launch action', () => {
     expect(window.location.hash).toBe('#runs?launch=hybrid');
   });
 
+  it('is refused, saying why, while the canvas differs from the stored pipeline', async () => {
+    window.location.hash = '';
+    setup(undefined, { initial: HYBRID, stored: 'hybrid' });
+    const launch = screen.getByRole('button', { name: /^Launch…/ });
+    await waitFor(() => expect(launch.getAttribute('aria-disabled')).toBeNull());
+    fireEvent.click(within(screen.getByRole('region', { name: 'Palette' })).getByRole('button', { name: /^rrf/ }));
+    await waitFor(() => expect(launch.getAttribute('aria-disabled')).toBe('true'));
+    expect(document.getElementById(launch.getAttribute('aria-describedby')!)?.textContent).toBe('The canvas differs from the stored document, and a run takes the stored one: wait for it to be saved.');
+    fireEvent.click(launch);
+    expect(window.location.hash).not.toBe('#runs?launch=hybrid');
+  });
+
   it('is refused, saying why, for a document not yet in the workspace or changed since', () => {
     setup(undefined, { initial: HYBRID });
     const launch = screen.getByRole('button', { name: /^Launch…/ });

@@ -217,6 +217,11 @@ function Stored({ client, name, current, node, workspace, ...callbacks }: { clie
   // The address names the file the editor writes now: a save as a new file changes it.
   const at = current ?? name;
   const onSelect = useCallback((id: string | null) => navigate(id === null ? { screen: 'editor', name: at } : { screen: 'editor', name: at, node: id }, { replace: true }), [at]);
+  // A pipeline the canvas opens is remembered as recent once it is drawn, never by a render React may throw away.
+  const opened = detail.status === 'loaded' && detail.value.typed !== null ? detail.value.name : null;
+  useEffect(() => {
+    if (opened !== null) rememberPipeline(opened);
+  }, [opened]);
   if (layout.status === 'loading') return <Loading label={`Reading ${name}`} />;
   return (
     <Resource state={detail} loading={`Reading ${name}`} error={(problem) => <ErrorState problem={problem} onRetry={retry} />}>
@@ -238,7 +243,6 @@ function Stored({ client, name, current, node, workspace, ...callbacks }: { clie
           );
         }
         const stored = layoutOf(layout);
-        rememberPipeline(pipeline.name);
         const opening: Opening = {
           title: name,
           doc: pipeline.typed,

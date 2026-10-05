@@ -96,9 +96,11 @@ export function Palette({ entries, onPlace }: PaletteProps) {
             >
               <b>{entry.impl}</b>
               {entry.remote ? <span className="rg-palette__tag">Remote</span> : null}
-              {entry.refused === null ? null : <small>
-            <Words text={entry.refused} />
-          </small>}
+              {entry.refused === null ? null : (
+                <small>
+                  <Words text={entry.refused} />
+                </small>
+              )}
             </button>
           ))}
         </div>

@@ -92,7 +92,12 @@ export function ImportPanel({ client, onImported, onCancel }: ImportPanelProps) 
           </label>
           <textarea id={`${id}-text`} className="rg-editor__import-text" rows={12} spellCheck={false} value={text} onChange={(e) => setText(e.target.value)} />
         </div>
-        <Input id={`${id}-name`} label="Pipeline name" mono value={name} onChange={(e) => {
+        <Input
+          id={`${id}-name`}
+          label="Pipeline name"
+          mono
+          value={name}
+          onChange={(e) => {
             setName(e.target.value);
             setNamed(true);
           }}
