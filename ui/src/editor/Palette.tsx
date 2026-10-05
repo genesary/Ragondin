@@ -45,7 +45,7 @@ export function paletteOf(capabilities: Capabilities, services: readonly Service
         label: FAMILY_LABEL[tile],
         tile,
         entries: [
-          ...f.local.map((impl) => ({ component: f.family, impl, remote: false, refused: null })),
+          ...f.parameters.map(({ name }) => ({ component: f.family, impl: name, remote: false, refused: null })),
           ...f.not_carried.map(({ name, reason }) => ({ component: f.family, impl: name, remote: false, refused: `Not in this build: ${reason}.` })),
           ...services.filter((s) => s.family === f.family).map((s) => ({ component: f.family, impl: s.name, remote: true, refused: capabilities.remote ? null : NO_REMOTE })),
         ],

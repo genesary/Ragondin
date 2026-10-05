@@ -25,7 +25,7 @@ export const HYBRID_GRAPH: Graph = {
   nodes: [
     { id: 'answer', family: 'generator', implementation: 'answerer', parameters: { temperature: float(0) } },
     { id: 'bm25', family: 'retriever', implementation: 'bm25', parameters: { top_k: int('5') } },
-    { id: 'context', family: 'context_builder', implementation: 'concat', parameters: { max_chunks: int('3') } },
+    { id: 'context', family: 'context_builder', implementation: 'concat', parameters: { budget: int('2000') } },
     { id: 'dense', family: 'retriever', implementation: 'dense', parameters: { top_k: int('5') } },
     { id: 'rerank', family: 'reranker', implementation: 'cross_encoder', parameters: { top_k: int('4') } },
     { id: 'rrf', family: 'fusion', implementation: 'rrf', parameters: { k: int('60') } },

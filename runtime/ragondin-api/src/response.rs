@@ -73,7 +73,7 @@ pub struct ServiceBinding {
 
 /// What this build can run: the local implementations of each family, and
 /// whether it can call a `Remote` one.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
 pub struct Capabilities {
     /// One entry per family, as the launcher lists them.
     pub families: Vec<FamilyCapabilities>,
@@ -82,17 +82,15 @@ pub struct Capabilities {
 }
 
 /// One family: its ports, the local implementations this build carries in
-/// it, and those it does not carry and why.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+/// it with their parameters, those it does not carry and why, and what a
+/// bound name takes.
+#[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
 #[schemars(transform = every_property_required)]
 pub struct FamilyCapabilities {
     /// The family, spelled as `--remote` and a service binding spell it: a
     /// node family as a configuration's `component:` value, or `embedder`,
     /// which no node is and a `dense` node names with `embedder:`.
     pub family: String,
-    /// The names this build gives a `Local` component in it: `impl:` values,
-    /// or for `embedder`, `embedder:` values.
-    pub local: Vec<String>,
     /// The ports a node of the family declares, as the pipeline grammar
     /// derives them from the family alone; `null` for `embedder`, which no
     /// node is.
@@ -100,6 +98,81 @@ pub struct FamilyCapabilities {
     /// The names the binary gives a `Local` component of the family in some
     /// build and not in this one, each with what a build needs to carry it.
     pub not_carried: Vec<NotCarried>,
+    /// The names this build gives a `Local` component in it — `impl:`
+    /// values, or for `embedder`, `embedder:` values — each with the
+    /// parameters a node takes under it. An embedder takes none: its keys
+    /// are a `dense` node's, in that node's choice.
+    pub parameters: Vec<ImplementationParameters>,
+    /// The parameters a node takes under a name bound in the family with
+    /// `--remote` or a service binding; empty for `embedder`.
+    pub bound: Vec<Parameter>,
+}
+
+/// One implementation this build carries, and the parameters a node takes
+/// under its name: the keys the executor reads for its family and the keys
+/// its constructor reads, as the composition root declares them.
+#[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
+#[schemars(transform = every_property_required)]
+pub struct ImplementationParameters {
+    /// The `impl:` name.
+    pub name: String,
+    /// Its parameters, whatever the value of `choice`'s key.
+    pub parameters: Vec<Parameter>,
+    /// A key whose value adds further parameters, if it has one.
+    pub choice: Option<ParameterChoice>,
+}
+
+/// A key whose value adds parameters: a `dense` node's `embedder:`.
+#[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
+pub struct ParameterChoice {
+    /// The key.
+    pub key: String,
+    /// What each value adds. The first case whose `value` is the key's
+    /// applies, else the case whose `value` is `null` when the key holds any
+    /// other, non-empty text.
+    pub cases: Vec<ChoiceCase>,
+}
+
+/// The parameters one value of a [`ParameterChoice`]'s key adds.
+#[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
+#[schemars(transform = every_property_required)]
+pub struct ChoiceCase {
+    /// The value; `null` for any other non-empty one, a bound name.
+    pub value: Option<String>,
+    /// The parameters it adds.
+    pub parameters: Vec<Parameter>,
+}
+
+/// One parameter a node takes.
+#[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
+#[schemars(transform = every_property_required)]
+pub struct Parameter {
+    /// The key, as a configuration writes it.
+    pub name: String,
+    /// The kind of value it holds.
+    pub kind: ParameterKind,
+    /// Whether a node must declare it: a node without it is refused before
+    /// it is stored or run.
+    pub required: bool,
+    /// What it is for, in a sentence.
+    pub description: String,
+    /// The value the editor writes under it when a node is placed, or
+    /// `null`. Only a required key with no component default has one, and
+    /// nothing applies it to a node that lacks the key: it is written as an
+    /// ordinary value, or not at all.
+    pub start: Option<ParameterValue>,
+}
+
+/// The kind of value a parameter holds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ParameterKind {
+    /// An integer of zero or more.
+    NonNegativeInteger,
+    /// Text, the empty one included unless the description says otherwise.
+    String,
+    /// A finite floating-point number, never an integer.
+    Float,
 }
 
 /// The ports of a node family: the kind it puts on its output edge, and

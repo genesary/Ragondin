@@ -121,6 +121,14 @@ refused is this crate's.
   a conversion applied above the component, which is the same kind of second
   copy the no-default rule refuses, and the flat parameter grammar keeps `Int`
   and `Float` apart for a configuration to choose between.
+- **The per-call keys are published as a table.** `per_call_params(family)`
+  returns those keys as `ParamSpec`s — name, `ParamKind`, required, a
+  one-sentence description — and every read in `src/execute.rs` goes through
+  one of them, so the table cannot drift from what the executor refuses. A
+  composition root serving a node's parameters reads the table rather than
+  restating the keys. It carries no default and no starting value, for the
+  reason above. It is the one addition this crate makes to its public surface
+  for that purpose: one type and one function.
 
 ## The extension node is refused, not planned
 

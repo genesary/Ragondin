@@ -77,6 +77,22 @@ afterEach(async () => {
 });
 
 describe('continuous saving', () => {
+  it('marks a required key the node lacks once the server refuses the save, in the inspector and on the card', async () => {
+    const MISSING = problem('pipeline_invalid', 422, 'the pipeline is refused: node `dense`: `embedder` is required', { node: 'dense', edge: null });
+    const { api, container } = setup({ 'PUT /pipelines/{name}': MISSING });
+    await waitFor(() => expect(validations(api)).toHaveLength(1));
+    place(/^dense/);
+    const field = await screen.findByLabelText('embedder');
+    expect(field.getAttribute('aria-invalid')).toBeNull();
+    expect(container.querySelector('.react-flow__node[data-id="dense"] .rg-node__todo')?.textContent).toBe('1 parameter to set');
+    await waitFor(() => expect(writes(api)).toHaveLength(1));
+    await waitFor(() => expect(screen.getByLabelText('embedder').getAttribute('aria-invalid')).toBe('true'));
+    expect(screen.getByText('Required: the pipeline cannot be saved or run without it.')).toBeTruthy();
+    const card = container.querySelector('.react-flow__node[data-id="dense"] .rg-node');
+    expect(card?.getAttribute('data-status')).toBe('invalid');
+    expect(container.querySelector('.react-flow__node[data-id="dense"] .rg-node__todo')).toBeNull();
+  });
+
   it('writes nothing for the document it opened', async () => {
     const { api } = setup({});
     await waitFor(() => expect(validations(api)).toHaveLength(1));

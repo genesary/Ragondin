@@ -99,9 +99,10 @@ pub use convert::family_ports;
 pub use error::ApiError;
 pub use layers::BUILD_HEADER;
 pub use response::{
-    BenchmarkEntry, BenchmarkState, Capabilities, ConsumedPorts, EdgeKind, EdgeLocation,
-    FamilyCapabilities, FamilyPorts, GroundTruth, Layout, Location, NodePair, NotCarried, Pairing,
-    Position, Problem, ServiceBinding,
+    BenchmarkEntry, BenchmarkState, Capabilities, ChoiceCase, ConsumedPorts, EdgeKind,
+    EdgeLocation, FamilyCapabilities, FamilyPorts, GroundTruth, ImplementationParameters, Layout,
+    Location, NodePair, NotCarried, Pairing, Parameter, ParameterChoice, ParameterKind,
+    ParameterValue, Position, Problem, ServiceBinding,
 };
 
 /// What the binary fixes when it builds the router.

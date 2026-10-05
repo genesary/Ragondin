@@ -22,7 +22,7 @@ export const HYBRID: WireDocument = {
     inputs: ['question'],
     nodes: [
       { id: 'lexical', component: 'retriever', impl: 'bm25', inputs: ['question'], params: { top_k: int('100') } },
-      { id: 'vectors', component: 'retriever', impl: 'dense', inputs: ['question'], params: { top_k: int('100'), embedder: str('bge') } },
+      { id: 'vectors', component: 'retriever', impl: 'dense', inputs: ['question'], params: { top_k: int('100'), embedder: str('bge'), served_model: str('bge-small') } },
       { id: 'fused', component: 'fusion', impl: 'rrf', inputs: ['lexical', 'vectors'], params: { k: int('60') } },
       { id: 'reranked', component: 'reranker', impl: 'cross_encoder', inputs: ['question', 'fused'], params: { top_k: int('10') } },
     ],
@@ -77,7 +77,7 @@ export const TWO_INPUTS: WireDocument = {
 
 /**
  * A recorded `GET /workspace` answer: the capabilities a build with `ui`,
- * `bm25` and `remote`, and without `onnx` or `stub`, served on 2026-10-03
+ * `bm25` and `remote`, and without `onnx` or `stub`, served on 2026-10-05
  * (`cargo build -p ragondin --features ui,bm25,remote`), copied verbatim. A
  * `remote` build carries `dense`; `cross_encoder`, the ONNX embedder and
  * `stub_generator` are what it does not carry, each with the binary's reason.
@@ -88,12 +88,216 @@ export const WORKSPACE: Workspace = {
   settings: { datasets: '/home/ada/ragondin-ws/datasets', services: [] },
   capabilities: {
     families: [
-      { family: 'retriever', local: ['bm25', 'dense'], ports: { produces: 'chunks', consumes: { shape: 'fixed', kinds: ['query'] } }, not_carried: [] },
-      { family: 'fusion', local: ['rrf'], ports: { produces: 'chunks', consumes: { shape: 'variadic', kind: 'chunks' } }, not_carried: [] },
-      { family: 'reranker', local: [], ports: { produces: 'chunks', consumes: { shape: 'fixed', kinds: ['query', 'chunks'] } }, not_carried: [{ name: 'cross_encoder', reason: 'needs the `onnx` feature' }] },
-      { family: 'context_builder', local: ['concat'], ports: { produces: 'context', consumes: { shape: 'fixed', kinds: ['query', 'chunks'] } }, not_carried: [] },
-      { family: 'generator', local: [], ports: { produces: 'answer', consumes: { shape: 'fixed', kinds: ['query', 'context'] } }, not_carried: [{ name: 'stub_generator', reason: 'needs the `stub` feature' }] },
-      { family: 'embedder', local: [], ports: null, not_carried: [{ name: 'onnx', reason: 'needs the `onnx` feature' }] },
+      {
+        family: 'retriever',
+        ports: { produces: 'chunks', consumes: { shape: 'fixed', kinds: ['query'] } },
+        not_carried: [],
+        parameters: [
+          {
+            name: 'bm25',
+            parameters: [
+              {
+                name: 'top_k',
+                kind: 'non_negative_integer',
+                required: true,
+                description: 'How many chunks the node returns, best first.',
+                start: { kind: 'int', value: '10' },
+              },
+            ],
+            choice: null,
+          },
+          {
+            name: 'dense',
+            parameters: [
+              {
+                name: 'top_k',
+                kind: 'non_negative_integer',
+                required: true,
+                description: 'How many chunks the node returns, best first.',
+                start: { kind: 'int', value: '10' },
+              },
+              {
+                name: 'embedder',
+                kind: 'string',
+                required: true,
+                description: 'The embedder: `onnx`, or a name bound in the embedder family.',
+                start: null,
+              },
+              {
+                name: 'query_prefix',
+                kind: 'string',
+                required: false,
+                description: 'Text prepended to a query before it is embedded; absent, none. Never empty.',
+                start: null,
+              },
+              {
+                name: 'passage_prefix',
+                kind: 'string',
+                required: false,
+                description: 'Text prepended to a passage before it is embedded; absent, none. Never empty.',
+                start: null,
+              },
+            ],
+            choice: {
+              key: 'embedder',
+              cases: [
+                {
+                  value: 'onnx',
+                  parameters: [
+                    { name: 'model', kind: 'string', required: true, description: 'The ONNX model file.', start: null },
+                    { name: 'tokenizer', kind: 'string', required: true, description: 'The model\'s tokenizer.json.', start: null },
+                    {
+                      name: 'max_sequence_length',
+                      kind: 'non_negative_integer',
+                      required: false,
+                      description: 'The longest text the model is given, in tokens; absent, the component\'s own default.',
+                      start: null,
+                    },
+                  ],
+                },
+                {
+                  value: null,
+                  parameters: [
+                    {
+                      name: 'served_model',
+                      kind: 'string',
+                      required: true,
+                      description: 'The name the service serves its model under.',
+                      start: null,
+                    },
+                  ],
+                },
+              ],
+            },
+          },
+        ],
+        bound: [
+          {
+            name: 'top_k',
+            kind: 'non_negative_integer',
+            required: true,
+            description: 'How many chunks the node returns, best first.',
+            start: { kind: 'int', value: '10' },
+          },
+        ],
+      },
+      {
+        family: 'fusion',
+        ports: { produces: 'chunks', consumes: { shape: 'variadic', kind: 'chunks' } },
+        not_carried: [],
+        parameters: [
+          {
+            name: 'rrf',
+            parameters: [
+              {
+                name: 'k',
+                kind: 'non_negative_integer',
+                required: false,
+                description: 'The constant added to each rank before it is inverted; absent, the component\'s own default.',
+                start: null,
+              },
+            ],
+            choice: null,
+          },
+        ],
+        bound: [],
+      },
+      {
+        family: 'reranker',
+        ports: { produces: 'chunks', consumes: { shape: 'fixed', kinds: ['query', 'chunks'] } },
+        not_carried: [{ name: 'cross_encoder', reason: 'needs the `onnx` feature' }],
+        parameters: [],
+        bound: [
+          {
+            name: 'top_k',
+            kind: 'non_negative_integer',
+            required: true,
+            description: 'How many chunks the node returns, best first.',
+            start: { kind: 'int', value: '10' },
+          },
+          { name: 'served_model', kind: 'string', required: true, description: 'The name the service serves its model under.', start: null },
+        ],
+      },
+      {
+        family: 'context_builder',
+        ports: { produces: 'context', consumes: { shape: 'fixed', kinds: ['query', 'chunks'] } },
+        not_carried: [],
+        parameters: [
+          {
+            name: 'concat',
+            parameters: [
+              {
+                name: 'budget',
+                kind: 'non_negative_integer',
+                required: true,
+                description: 'The cap on the size of the context, in the unit the implementation counts.',
+                start: { kind: 'int', value: '2000' },
+              },
+              {
+                name: 'separator',
+                kind: 'string',
+                required: true,
+                description: 'The text placed between two chunks; may be empty.',
+                start: { kind: 'string', value: '\n\n' },
+              },
+            ],
+            choice: null,
+          },
+        ],
+        bound: [
+          {
+            name: 'budget',
+            kind: 'non_negative_integer',
+            required: true,
+            description: 'The cap on the size of the context, in the unit the implementation counts.',
+            start: { kind: 'int', value: '2000' },
+          },
+        ],
+      },
+      {
+        family: 'generator',
+        ports: { produces: 'answer', consumes: { shape: 'fixed', kinds: ['query', 'context'] } },
+        not_carried: [{ name: 'stub_generator', reason: 'needs the `stub` feature' }],
+        parameters: [],
+        bound: [
+          {
+            name: 'served_model',
+            kind: 'string',
+            required: true,
+            description: 'The name the generator\'s service serves its model under.',
+            start: null,
+          },
+          {
+            name: 'template',
+            kind: 'string',
+            required: true,
+            description: 'The prompt, placing the question with {query} and the context with {context}.',
+            start: { kind: 'string', value: 'Answer the question from the context.\n\nContext:\n{context}\n\nQuestion: {query}\nAnswer:' },
+          },
+          {
+            name: 'temperature',
+            kind: 'float',
+            required: false,
+            description: 'The sampling temperature; absent, the generator\'s own.',
+            start: null,
+          },
+          {
+            name: 'seed',
+            kind: 'non_negative_integer',
+            required: false,
+            description: 'The sampling seed; absent, the generator\'s own.',
+            start: null,
+          },
+          {
+            name: 'max_tokens',
+            kind: 'non_negative_integer',
+            required: false,
+            description: 'The longest answer, in tokens; absent, the generator\'s own.',
+            start: null,
+          },
+        ],
+      },
+      { family: 'embedder', ports: null, not_carried: [{ name: 'onnx', reason: 'needs the `onnx` feature' }], parameters: [], bound: [] },
     ],
     remote: true,
   },

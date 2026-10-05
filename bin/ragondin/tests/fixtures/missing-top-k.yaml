@@ -1,0 +1,11 @@
+# A retriever that declares no `top_k`: the executor requires one and invents
+# none, so `bench` refuses the configuration before the benchmark loads,
+# naming the node and the key — rather than at the first query.
+pipeline:
+  inputs: [question]
+  nodes:
+    - id: search
+      component: retriever
+      impl: bm25
+      inputs: [question]
+      params: {}

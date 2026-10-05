@@ -14,7 +14,8 @@ type Snapshot = { doc: WireDocument; layout: EditorLayout };
 export type EditorState = Snapshot & { past: readonly Snapshot[]; future: readonly Snapshot[] };
 
 export type EditorAction =
-  | { type: 'add'; component: string; impl: string; position?: Position }
+  /** A node placed from the palette, with the parameters it is placed with: its required keys' starting values. */
+  | { type: 'add'; component: string; impl: string; position?: Position; params?: Readonly<Record<string, ParameterValue>> }
   | { type: 'connect'; from: string; to: string; port: number }
   | { type: 'disconnect'; node: string; port: number }
   | { type: 'setParam'; node: string; key: string; value: ParameterValue }
@@ -46,7 +47,7 @@ function apply(state: Snapshot, action: Exclude<EditorAction, { type: 'undo' | '
   switch (action.type) {
     case 'add': {
       const id = freshId(doc, action.impl);
-      const node: WireNode = { id, component: action.component, impl: action.impl, inputs: [], params: {} };
+      const node: WireNode = { id, component: action.component, impl: action.impl, inputs: [], params: { ...action.params } };
       return { doc: withNodes(doc, [...doc.pipeline.nodes, node]), layout: action.position === undefined ? layout : { ...layout, [id]: action.position } };
     }
     case 'connect': {

@@ -40,6 +40,6 @@ pub use context::{
     RetrieverCtor,
 };
 pub use error::{ComponentFamily, ConstructionError, ExecError, ParamKind, PlanError};
-pub use execute::{Engine, Output};
+pub use execute::{per_call_params, Engine, Output, ParamSpec};
 pub use plan::{plan_physical, PhysicalPipeline};
 pub use trace::{ExecutionTrace, NodeTrace, RankedChunk, ValueSummary};

@@ -82,7 +82,7 @@ const KEY_PARAMETER: Partial<Record<Family, string>> = {
   retriever: 'top_k',
   reranker: 'top_k',
   fusion: 'k',
-  context: 'max_chunks',
+  context: 'budget',
   generator: 'temperature',
 };
 

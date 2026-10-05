@@ -128,7 +128,7 @@ const CARDS: [string, NodeCardProps][] = [
   ['selected', { ...RERANKER, selected: true }],
   ['invalid', { ...RERANKER, param: { name: 'top_k', value: '0' }, status: { kind: 'invalid', message: 'top_k must be at least 1. Launch waits for this fix.' } }],
   ['running', { family: 'generator', name: 'answer', impl: 'generator/answerer', inputs: ['query', 'context'], output: 'answer', status: { kind: 'running', value: 3982, total: 10570, label: '3,982 / 10,570' } }],
-  ['queued', { family: 'context', name: 'prompt', impl: 'context_builder/concat', param: { name: 'max_chunks', value: '5' }, inputs: ['query', 'chunks'], output: 'context', status: { kind: 'queued' } }],
+  ['queued', { family: 'context', name: 'prompt', impl: 'context_builder/concat', param: { name: 'budget', value: '2000' }, inputs: ['query', 'chunks'], output: 'context', status: { kind: 'queued' } }],
   ['dragging', { family: 'fusion', name: 'fused', impl: 'fusion/rrf', param: { name: 'k', value: '60' }, inputs: ['chunks', 'chunks'], output: 'chunks', dragging: true }],
   ['ghost drop target', { ...RERANKER, name: 'Drop to add', variant: 'ghost', output: null }],
   ['not in this build', { family: 'generator', name: 'local-llama', impl: 'not in this build', inputs: ['context'], output: 'answer', variant: 'unavailable' }],

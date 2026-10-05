@@ -32,6 +32,8 @@
 .rg-node__progress { margin: 0 12px 10px; }
 .rg-node__progress .rg-progress__track { height: 3px; }
 .rg-node__msg { margin: 0 6px 6px; padding: 6px 8px; border-radius: 6px; background: var(--critical-wash); color: var(--ink); font-size: 12px; line-height: 16px; display: flex; gap: 6px; }
+/* Information, never a state: a neutral wash and ordinary ink, no alert glyph. */
+.rg-node__todo { margin: 0 6px 6px; padding: 4px 8px; border-radius: 6px; background: var(--surface-2); color: var(--ink-2); font-size: 12px; line-height: 16px; }
 .rg-node__msg .rg-glyph { width: 14px; height: 14px; color: var(--critical); flex: none; margin-top: 1px; }
 
 /* States. */

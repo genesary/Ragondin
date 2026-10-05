@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { emptyDocument, validationRequest } from './document.ts';
 import { HYBRID } from './fixtures.ts';
-import { float, int } from '../parameters.ts';
+import { float, int, str } from '../parameters.ts';
 import { canRedo, canUndo, editorReducer, initialEditor, type EditorAction, type EditorState } from './store.ts';
 
 const run = (state: EditorState, ...actions: EditorAction[]) => actions.reduce(editorReducer, state);
@@ -21,6 +21,12 @@ describe('the editor store', () => {
     const state = run(initialEditor(HYBRID), { type: 'add', component: 'retriever', impl: 'bm25', position: { x: 32, y: 48 } });
     expect(node(state, 'bm25')).toEqual({ id: 'bm25', component: 'retriever', impl: 'bm25', inputs: [], params: {} });
     expect(state.layout['bm25']).toEqual({ x: 32, y: 48 });
+  });
+
+  it('adds a node with the parameters it is placed with, as one step', () => {
+    const state = run(initialEditor(HYBRID), { type: 'add', component: 'retriever', impl: 'bm25', params: { top_k: int('10') } });
+    expect(node(state, 'bm25')?.params).toEqual({ top_k: int('10') });
+    expect(state.past).toHaveLength(1);
   });
 
   it('connects a producer to the next port of a consumer', () => {
@@ -70,7 +76,7 @@ describe('the editor store', () => {
 
   it('removes a parameter', () => {
     const state = run(initialEditor(HYBRID), { type: 'removeParam', node: 'vectors', key: 'embedder' });
-    expect(node(state, 'vectors')?.params).toEqual({ top_k: int('100') });
+    expect(node(state, 'vectors')?.params).toEqual({ top_k: int('100'), served_model: str('bge-small') });
   });
 
   it('renames a node, and every input naming it and its position follow', () => {

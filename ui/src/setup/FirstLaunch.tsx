@@ -14,7 +14,7 @@ import { formatSize, smallestAvailable } from './model.ts';
  * has none.
  */
 export function builtInSentence(capabilities: Capabilities | null): string | null {
-  const has = (family: string) => (capabilities?.families.find((f) => f.family === family)?.local.length ?? 0) > 0;
+  const has = (family: string) => (capabilities?.families.find((f) => f.family === family)?.parameters.length ?? 0) > 0;
   const parts = [has('retriever') ? 'retrievers' : null, has('reranker') ? 'a reranker' : null].filter((p) => p !== null);
   if (parts.length === 0) return null;
   return `A retrieval-only pipeline needs no service: this build has ${parts.join(' and ')} built in.`;

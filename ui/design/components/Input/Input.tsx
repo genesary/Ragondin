@@ -16,14 +16,16 @@ export type InputProps = {
   help?: string;
   /** What is wrong and what is allowed, with the numbers. Marks the field invalid. */
   error?: string;
-} & Omit<InputHTMLAttributes<HTMLInputElement>, 'id'>;
+  /** The ids of other elements that describe the field, after its own unit and help line. */
+  describedBy?: string;
+} & Omit<InputHTMLAttributes<HTMLInputElement>, 'id' | 'aria-describedby'>;
 
-export function Input({ id, label, unit, numeric = false, mono = false, help, error, className, ...rest }: InputProps) {
+export function Input({ id, label, unit, numeric = false, mono = false, help, error, describedBy: more, className, ...rest }: InputProps) {
   const line = error ?? help;
   const helpId = `${id}-help`;
   const unitId = `${id}-unit`;
   // The unit is part of what the value means ("30" is "30 s"), so it describes the field.
-  const describedBy = [unit === undefined ? '' : unitId, line === undefined ? '' : helpId].filter(Boolean).join(' ');
+  const describedBy = [unit === undefined ? '' : unitId, line === undefined ? '' : helpId, more ?? ''].filter(Boolean).join(' ');
   const classes = ['rg-input', numeric ? 'rg-input--num' : '', mono ? 'rg-input--mono' : '', className ?? ''].filter(Boolean).join(' ');
   const input = (
     <input

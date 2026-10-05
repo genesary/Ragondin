@@ -51,7 +51,7 @@ describe('toModel', () => {
     expect(byId(HYBRID_RERANK_GEN, 'lexical').param).toEqual({ name: 'top_k', value: '3' });
     expect(byId(HYBRID_RERANK_GEN, 'reranked').param).toEqual({ name: 'top_k', value: '10' });
     expect(byId(HYBRID_RERANK_GEN, 'fused').param).toEqual({ name: 'k', value: '60' });
-    expect(byId(HYBRID_RERANK_GEN, 'prompt').param).toEqual({ name: 'max_chunks', value: '5' });
+    expect(byId(HYBRID_RERANK_GEN, 'prompt').param).toEqual({ name: 'budget', value: '2000' });
     expect(byId(HYBRID_RERANK_GEN, 'answer').param).toEqual({ name: 'temperature', value: '0.2' });
     const bare: Graph = {
       inputs: [],
