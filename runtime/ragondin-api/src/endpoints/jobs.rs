@@ -16,6 +16,13 @@
 //! record's `prefix_of` (ADR-C39 § 1, § 3). A cut that cannot be a prefix,
 //! or that the chosen benchmark could not score, is refused before the
 //! launcher is asked anything.
+//!
+//! The pipeline's layout is read beside the document, before anything is
+//! queued, and written once the job is, under the canonical hash of the
+//! document the job runs — the cut's, for a prefix run — for a fork of the run
+//! to find (`PipelineSource::read_layout_bytes`, `write_launched_layout`). A
+//! layout that cannot be read or written is a fault of the job, never a
+//! refusal of it.
 
 use std::collections::BTreeMap;
 
@@ -49,18 +56,21 @@ pub(crate) async fn submit(
     }): ApiJson<RunRequest>,
 ) -> Result<(StatusCode, Json<RunAccepted>), ApiError> {
     let file = state.backends.pipelines.read(&pipeline).await?;
+    // Read with the document, so the layout copied is the one beside what
+    // runs, short of an edit landing between these two reads.
+    let layout = state.backends.pipelines.read_layout_bytes(&file.name).await;
     // A prefix run is an ordinary run of the cut document: the job snapshots
     // the cut, and the parent is its name and hash, provenance beside it.
-    let (document, parent_pipeline_hash) = match &up_to {
+    let (document, hash, parent_pipeline_hash) = match &up_to {
         None => {
-            validation::lower(&file.document)?;
-            (file.document, None)
+            let hash = validation::lower(&file.document)?.content_hash();
+            (file.document, hash, None)
         }
         Some(node) => {
             let cut = prefix::cut(&file.name, &file.document, node)?;
             let entry = state.backends.registry.verify(&benchmark).await?;
             prefix::scorable(node, cut.output, &entry)?;
-            (cut.document, Some(cut.parent_hash))
+            (cut.document, cut.hash, Some(cut.parent_hash))
         }
     };
     let bindings = state.backends.settings.read().await?.services;
@@ -78,7 +88,35 @@ pub(crate) async fn submit(
         .identity(&submission)
         .await
         .map_err(|error| refusal(&state, error))?;
+    let name = submission.pipeline_name.clone();
     let job_id = state.jobs.submit_run(submission, run_id).await?;
+    // Only once accepted: a refused submission writes nothing. The layout
+    // follows what runs, under the hash a fork reads it by — for a prefix run
+    // the cut's, carrying the parent's positions. Presentation only: a copy
+    // that fails is reported, and the run goes ahead.
+    let copied = match layout {
+        Ok(Some(bytes)) => {
+            state
+                .backends
+                .pipelines
+                .write_launched_layout(&hash, &bytes)
+                .await
+        }
+        Ok(None) => Ok(()),
+        Err(error) => Err(error),
+    };
+    if let Err(error) = copied {
+        state
+            .jobs
+            .report(
+                &job_id,
+                format!(
+                    "the layout of pipeline {name} could not be copied at launch, so a fork of \
+                     its run starts without one: {error}"
+                ),
+            )
+            .await;
+    }
     Ok((
         StatusCode::ACCEPTED,
         Json(RunAccepted {

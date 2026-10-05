@@ -1319,10 +1319,10 @@
         ]
       },
       "JobFault": {
-        "description": "A job file the queue could not read, or a write of it that failed.",
+        "description": "A job file the queue could not read, a write of it that failed, or what\nwent wrong beside a job without stopping it.",
         "properties": {
           "path": {
-            "description": "The file.",
+            "description": "The file — for a fault beside a job, the job's own file.",
             "type": "string"
           },
           "reason": {
@@ -1340,7 +1340,7 @@
         "description": "`GET /jobs`: every job, in its place, and every fault of the queue's\nrecord.",
         "properties": {
           "faults": {
-            "description": "A job file that does not read, or a write of the queue's record that\nfailed — reported, never repaired.",
+            "description": "A job file that does not read, a write of the queue's record that\nfailed, or what went wrong beside a job without stopping it — a\nlayout not copied at launch, latencies left out of its median —\nreported, never repaired.",
             "items": {
               "$ref": "#/components/schemas/JobFault"
             },

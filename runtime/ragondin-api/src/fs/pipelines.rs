@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use ragondin_pipeline::PipelineHash;
 use sha2::{Digest, Sha256};
 
 use super::{blocking, write_atomically, Workspace};
@@ -71,6 +72,13 @@ impl FsPipelines {
 
     fn layout(&self, name: &str) -> PathBuf {
         self.directory.join(format!("{name}{LAYOUT}"))
+    }
+
+    /// `layouts/<hash>.json`: the layout launched under the canonical hash
+    /// `hash`. The one place that path is written: the copy at launch writes
+    /// it and a fork's read reads it.
+    fn launched_layout(&self, hash: &str) -> PathBuf {
+        self.launched.join(format!("{hash}.json"))
     }
 
     /// The document `name` as stored, or `None` when there is none.
@@ -272,8 +280,36 @@ impl PipelineSource for FsPipelines {
         if hash.is_empty() || !hash.bytes().all(|byte| byte.is_ascii_hexdigit()) {
             return Ok(None);
         }
-        let path = self.launched.join(format!("{hash}.json"));
+        let path = self.launched_layout(hash);
         blocking(move || read_layout_file(&path)).await
+    }
+
+    async fn read_layout_bytes(&self, name: &str) -> Result<Option<Vec<u8>>, ApiError> {
+        if !is_name(name) {
+            return Err(not_found(name));
+        }
+        let path = self.layout(name);
+        // The bytes as stored, never parsed: the copy is the file, and a
+        // fork's read checks its version as it reads any.
+        blocking(move || match fs::read(&path) {
+            Ok(bytes) => Ok(Some(bytes)),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(failed(&path, error)),
+        })
+        .await
+    }
+
+    async fn write_launched_layout(
+        &self,
+        hash: &PipelineHash,
+        bytes: &[u8],
+    ) -> Result<(), ApiError> {
+        // Serialised with every other write of this backend: two launches of
+        // one hash would otherwise stage beside the same file at once.
+        let _writing = self.writing.lock().await;
+        let (path, bytes) = (self.launched_layout(&hash.to_string()), bytes.to_vec());
+        blocking(move || write_atomically(&path, &bytes).map_err(|error| failed(&path, error)))
+            .await
     }
 
     async fn write_layout(&self, name: &str, layout: &Layout) -> Result<(), ApiError> {

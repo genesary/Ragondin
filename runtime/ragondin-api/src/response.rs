@@ -1789,8 +1789,10 @@ pub struct JobListing {
     /// The jobs, by position: the order accepted and as reordered; each
     /// lane's queued jobs in the order its worker takes them.
     pub jobs: Vec<JobSummary>,
-    /// A job file that does not read, or a write of the queue's record that
-    /// failed — reported, never repaired.
+    /// A job file that does not read, a write of the queue's record that
+    /// failed, or what went wrong beside a job without stopping it — a
+    /// layout not copied at launch, latencies left out of its median —
+    /// reported, never repaired.
     pub faults: Vec<JobFault>,
 }
 
@@ -1817,10 +1819,11 @@ pub enum JobEvent {
     Resync(JobListing),
 }
 
-/// A job file the queue could not read, or a write of it that failed.
+/// A job file the queue could not read, a write of it that failed, or what
+/// went wrong beside a job without stopping it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct JobFault {
-    /// The file.
+    /// The file — for a fault beside a job, the job's own file.
     pub path: String,
     /// What went wrong, and what the queue did about it.
     pub reason: String,

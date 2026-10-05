@@ -371,7 +371,7 @@ and every path derived from it.
   pipelines/<name>.yaml         a pipeline document, the source of truth
   pipelines/<name>.layout.json  its layout, never in its hash
   pipelines/<name>.pairing/     its manual pairings, one file per other pipeline — never hashed (§ Compare)
-  layouts/                      layouts copied at launch, `<hash>.json` — created here and read by `GET /runs/{id}/layout`; written at launch by the launcher's copy, #470
+  layouts/                      layouts copied at launch, `<hash>.json` — written by `POST /runs`, read by `GET /runs/{id}/layout`
   runs/                         the run store, as `bench --store <root>/runs` writes it
   jobs/                         the queue's state: `<id>.json` per job, `<id>/partial/` — § The job queue
   cache/                        derived data — created here, written by #343
@@ -578,8 +578,38 @@ in `tests/workspace_toml.rs`:
   run's launch, `layouts/<hash>.json` by the run's canonical pipeline hash,
   in the same format, or `null` — what a fork from the run copies beside
   its new document (`PipelineSource::read_launched_layout`). A hash that is
-  not hex names no file and answers `null`, never a path. Writing one at
-  launch is #470's, the launcher's copy of the layout.
+  not hex names no file and answers `null`, never a path.
+- **The copy at launch** (`PipelineSource::read_layout_bytes`, then
+  `write_launched_layout`): `POST /runs` reads the layout beside the
+  submitted pipeline right after the document, before anything is checked or
+  queued, and writes it only once the job is accepted — a refused submission,
+  `run_exists` included, writes nothing — to `layouts/<hash>.json`, `hash`
+  being the canonical hash of the document the job runs: the hash its run is
+  stored under, and so the one `GET /runs/{id}/layout` reads by. The copy is
+  the file's bytes, never parsed and re-serialized, replacing any copy of the
+  same hash: two documents with one canonical form are one graph, and the
+  last launch's positions are as good as the first's. The write takes the
+  backend's write lock, like every other write of `FsPipelines`, since
+  `write_atomically` stages beside the target under a name that two
+  concurrent writes could share. `FsPipelines::launched_layout` is the one
+  place the path is written, for the copy and the read alike. A pipeline
+  with no layout copies nothing, and that is not an error; a layout that
+  cannot be read, or a copy that cannot be written, is listed among
+  `GET /jobs`' `faults` against the job, naming the pipeline, and the run
+  goes ahead: the positions are presentation, and a fork without them is
+  laid out by the canvas. The layout never reaches the hash (INV-8): the
+  hash is computed from the document and names the file, nothing more.
+  **One window is left:** the document and the layout are two files read one
+  after the other, so an edit saved between the two reads pairs the run with
+  the layout of the newer document. The editor saves the two separately
+  anyway, and the cost is a position, never a pipeline.
+- **A prefix run's layout is its parent's** — a choice made here. A prefix
+  run's pipeline is the cut, so its layout is copied under the cut's hash;
+  the cut has no layout of its own, and its nodes keep the parent's ids, so
+  the parent's layout is copied whole, the positions of the nodes the cut
+  dropped included. They are kept for the reason any absent node's are
+  (above), and a fork of the prefix run opens laid out as the parent was.
+  Nothing is copied under the parent's hash: the parent was not what ran.
 
 ### Validation, in the CLI's words
 
@@ -925,7 +955,9 @@ only, the disk still says `queued`, and a restart runs the job; the fault
 says which happened. A terminal state whose write fails is applied in memory
 anyway — the job has ended — and the next start finds it running, and fails
 it as interrupted unless its run is stored under the announced id. A job file that does not read is left out of the
-queue, left on disk, and listed as a fault: reported, never repaired.
+queue, left on disk, and listed as a fault: reported, never repaired. A
+layout that could not be copied at submission is listed there too, against
+the job, which it does not stop (§ The pipelines).
 
 A run that fails or is cancelled leaves **the traces of the queries it
 executed** in `jobs/<id>/partial/traces.json`, a map by query id — the shape

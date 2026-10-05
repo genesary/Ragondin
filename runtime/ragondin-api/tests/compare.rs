@@ -20,6 +20,7 @@ use ragondin_api::{
 };
 use ragondin_benchmarks::{Benchmark, Qrels};
 use ragondin_experiments::{Run, RunProvenance, Trace, TraceChunk};
+use ragondin_pipeline::PipelineHash;
 use ragondin_types::{DocId, Document, Query, QueryId};
 use serde_json::{json, Value};
 use support::datasets::scratch;
@@ -1498,6 +1499,18 @@ impl PipelineSource for CountedListings {
 
     async fn read_launched_layout(&self, hash: &str) -> Result<Option<Layout>, ApiError> {
         self.inner.read_launched_layout(hash).await
+    }
+
+    async fn read_layout_bytes(&self, name: &str) -> Result<Option<Vec<u8>>, ApiError> {
+        self.inner.read_layout_bytes(name).await
+    }
+
+    async fn write_launched_layout(
+        &self,
+        hash: &PipelineHash,
+        bytes: &[u8],
+    ) -> Result<(), ApiError> {
+        self.inner.write_launched_layout(hash, bytes).await
     }
 
     async fn write_layout(&self, name: &str, layout: &Layout) -> Result<(), ApiError> {
