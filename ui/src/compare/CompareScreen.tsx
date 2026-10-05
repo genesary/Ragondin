@@ -53,13 +53,10 @@ export function CompareScreen({ client, ids, baseline }: CompareScreenProps) {
   return <Resolving client={client} ids={ids} baseline={known} />;
 }
 
-/** An id written in full: a run's id is the 64 hex digits of its digest. */
-const isFull = (id: string) => /^[0-9a-f]{64}$/.test(id);
-
 /**
  * The runs the address names, read back to their full ids: an address writes
  * a run by its 12-character prefix where that names one run (`addressIds`),
- * so a prefix waits for `GET /runs` before anything is compared. One the
+ * so every id waits for `GET /runs` before anything is compared. One the
  * listing cannot resolve — or a listing that fails — is compared as written,
  * and the API says what it names.
  */
@@ -75,7 +72,9 @@ function Resolving({ client, ids, baseline }: { client: ApiClient; ids: readonly
   }, [readListing]);
 
   const known = useMemo(() => (listing.status === 'loaded' ? listing.value.runs.map((r) => r.id) : []), [listing]);
-  const waiting = listing.status === 'loading' && ![...ids, baseline].every(isFull);
+  // Every id waits for the listing, whatever its shape: the listing, not a
+  // guess at what an id looks like, says which run a prefix names.
+  const waiting = listing.status === 'loading';
   const [full, fullBaseline] = useMemo(() => {
     const resolved = resolveAddressIds([...ids, baseline], known);
     return [resolved.slice(0, -1), resolved.at(-1) ?? baseline] as const;

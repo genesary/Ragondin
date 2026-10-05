@@ -117,11 +117,22 @@ describe('the address', () => {
   it('reloads into the same view: the runs and the baseline it names are what is compared', async () => {
     const api = show(THREE);
     await loaded();
-    expect(api.bodies[0]).toEqual({ run_ids: [DENSE, HYBRID, RERANK], baseline: DENSE });
+    expect(api.bodies.find((b) => b !== undefined)).toEqual({ run_ids: [DENSE, HYBRID, RERANK], baseline: DENSE });
   });
 
   it('reads runs the address names by their 12-character prefixes, and compares the runs they name', async () => {
     const api = show(`#compare/${short(DENSE)}+${short(HYBRID)}+${short(RERANK)}?baseline=${short(DENSE)}`);
+    await loaded();
+    expect(api.bodies.find((b) => b !== undefined)).toEqual({ run_ids: [DENSE, HYBRID, RERANK], baseline: DENSE });
+  });
+
+  it('reads every id the address names back against GET /runs before comparing, whatever its length', async () => {
+    let release: (reply: { body: RunListing }) => void = () => {};
+    const api = show(THREE, { ...routes(), 'GET /runs': () => new Promise((resolve) => (release = resolve)) });
+    await waitFor(() => expect(api.requests).toContain('GET /api/v1/runs'));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(api.requests).not.toContain('POST /api/v1/compare');
+    release({ body: LISTING });
     await loaded();
     expect(api.bodies.find((b) => b !== undefined)).toEqual({ run_ids: [DENSE, HYBRID, RERANK], baseline: DENSE });
   });
