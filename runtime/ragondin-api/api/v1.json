@@ -1571,7 +1571,7 @@
             "type": "integer"
           },
           "faults": {
-            "description": "What went wrong beside it without stopping it — a layout not copied\nat launch, latencies left out of its median, a write of its record\nthat failed — in the order reported. Written into the job's file with\nit, so a restart reads them back; one that could not be written says\nit is held in memory only.",
+            "description": "What went wrong beside it without stopping it — a layout not copied\nat launch, latencies left out of its median, a write of its record\nthat failed — in the order reported. Written into the job's file with\nit, so a restart reads them back; one that could not be written says\nit is held in memory only, until a later write of the job carries it.",
             "items": {
               "$ref": "#/components/schemas/ReportedFault"
             },

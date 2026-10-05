@@ -1851,7 +1851,7 @@ pub struct JobSummary {
     /// at launch, latencies left out of its median, a write of its record
     /// that failed — in the order reported. Written into the job's file with
     /// it, so a restart reads them back; one that could not be written says
-    /// it is held in memory only.
+    /// it is held in memory only, until a later write of the job carries it.
     pub faults: Vec<ReportedFault>,
 }
 

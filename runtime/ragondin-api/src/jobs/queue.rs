@@ -204,11 +204,14 @@ impl Queue {
                 });
                 // Not running either way: a failed write is reported, and the
                 // next start finds it `Running` and fails it again.
-                if let Err(reason) = file::write(&dir, &job) {
-                    job.faults.push(Fault::now(format!(
-                        "{reason}; its recovery is held in memory only, and the next start \
-                         recovers it again"
-                    )));
+                match file::write(&dir, &job) {
+                    Ok(()) => job.written(),
+                    Err(reason) => job.faults.push(Fault::held(
+                        reason,
+                        "its recovery is held in memory only, and the next start recovers it \
+                         again"
+                            .to_owned(),
+                    )),
                 }
             }
             recount(&dir, &mut job);
@@ -388,17 +391,14 @@ impl Queue {
     /// Records `reason` against the job at `index` as every transition is
     /// recorded: written into its file, then applied in memory, then
     /// published — a `fault` event carrying the job. A write that fails
-    /// leaves the fault in memory only, and the fault says so. Called under
-    /// the lock.
+    /// leaves the fault in memory only, and the fault says so until a later
+    /// write of the job carries it. Called under the lock.
     async fn attach(&self, state: &mut State, index: usize, reason: String) {
         let mut job = state.jobs[index].job.clone();
         job.faults.push(Fault::now(reason));
-        if let Err(error) = self.write(&job).await {
+        if let Err(error) = self.write(&mut job).await {
             if let Some(fault) = job.faults.last_mut() {
-                fault.reason = format!(
-                    "{}; this fault is held in memory only: {error}",
-                    fault.reason
-                );
+                fault.unwritten = Some(format!("this fault is held in memory only: {error}"));
             }
         }
         let view = summary(&job);
@@ -432,7 +432,7 @@ impl Queue {
             }
         };
         let lane = Lane::of(&work);
-        let job = Job {
+        let mut job = Job {
             id: id.clone(),
             position: state
                 .jobs
@@ -449,7 +449,7 @@ impl Queue {
             }],
             faults: Vec::new(),
         };
-        self.write(&job)
+        self.write(&mut job)
             .await
             .map_err(|detail| ApiError::BackendFailed { detail })?;
         state.jobs.push(Entry {
@@ -481,7 +481,7 @@ impl Queue {
                     state: job.state.name().to_owned(),
                     at,
                 });
-                self.write(&job)
+                self.write(&mut job)
                     .await
                     .map_err(|detail| ApiError::BackendFailed { detail })?;
                 let view = summary(&job);
@@ -528,7 +528,7 @@ impl Queue {
             .unwrap_or(usize::MAX)
             .min(queued.len());
         queued.insert(at, index);
-        let changed: Vec<(usize, Job)> = queued
+        let mut changed: Vec<(usize, Job)> = queued
             .iter()
             .zip(places)
             .filter(|(&i, place)| state.jobs[i].job.position != *place)
@@ -538,7 +538,7 @@ impl Queue {
                 (i, job)
             })
             .collect();
-        for (i, job) in &changed {
+        for (i, job) in &mut changed {
             if let Err(detail) = self.write(job).await {
                 let reason = format!(
                     "{detail}; the reorder was refused, and the files written before it keep their new positions, so two jobs on disk may now share a position until the next reorder"
@@ -627,12 +627,15 @@ impl Queue {
         let _ = self.events.send(event);
     }
 
-    /// Writes `job`'s file on a blocking thread.
-    async fn write(&self, job: &Job) -> Result<(), String> {
-        let (dir, job) = (self.dir.clone(), job.clone());
-        tokio::task::spawn_blocking(move || file::write(&dir, &job))
+    /// Writes `job`'s file on a blocking thread; once written, none of its
+    /// faults is held in memory only.
+    async fn write(&self, job: &mut Job) -> Result<(), String> {
+        let (dir, copy) = (self.dir.clone(), job.clone());
+        tokio::task::spawn_blocking(move || file::write(&dir, &copy))
             .await
-            .map_err(|error| format!("writing the job's file did not complete: {error}"))?
+            .map_err(|error| format!("writing the job's file did not complete: {error}"))??;
+        job.written();
+        Ok(())
     }
 
     /// Starts `lane`'s worker when it has a queued job and none runs.
@@ -679,7 +682,7 @@ impl Queue {
                 state: job.state.name().to_owned(),
                 at,
             });
-            match self.write(&job).await {
+            match self.write(&mut job).await {
                 Ok(()) => {
                     let cancel = state.jobs[index].cancel.clone();
                     state.jobs[index].job = job.clone();
@@ -707,12 +710,12 @@ impl Queue {
                     failed.faults.push(Fault::now(format!(
                         "{reason}; the job was failed without running"
                     )));
-                    if let Err(again) = self.write(&failed).await {
+                    if let Err(again) = self.write(&mut failed).await {
                         if let Some(fault) = failed.faults.last_mut() {
-                            fault.reason = format!(
-                                "{reason}; the job was failed without running, in memory only \
-                                 ({again}): a restart finds it queued and runs it"
-                            );
+                            fault.unwritten = Some(format!(
+                                "its failure is held in memory only ({again}): a restart finds \
+                                 it queued and runs it"
+                            ));
                         }
                     }
                     let event = transition(&failed);
@@ -982,10 +985,11 @@ impl Queue {
             at,
         });
         // The fault is on the job, and the terminal event carries it.
-        if let Err(reason) = self.write(&job).await {
-            job.faults.push(Fault::now(format!(
-                "{reason}; its end is held in memory only: a restart finds it running, and fails it as interrupted unless its run is stored under the announced id"
-            )));
+        if let Err(reason) = self.write(&mut job).await {
+            job.faults.push(Fault::held(
+                reason,
+                "its end is held in memory only: a restart finds it running, and fails it as interrupted unless its run is stored under the announced id".to_owned(),
+            ));
         }
         let event = transition(&job);
         state.jobs[index].job = job;

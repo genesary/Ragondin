@@ -26,12 +26,21 @@ const when = (ms: number | null) => (ms === null ? null : new Date(ms).toLocaleS
 
 /**
  * The faults reported beside the job, each with when. A warning, never an
- * alert: a fault did not stop the job. Its status role announces it politely
- * as the stream brings it, and nothing is read again for it.
+ * alert: a fault did not stop the job. The polite region is rendered empty
+ * before the first fault, because a live region inserted already filled may
+ * go unannounced; the warning inside it is a status too, and the nearest
+ * region governs, so a fault is announced once. Nothing is read again for it.
  */
 function Faults({ job }: { job: JobSummary }) {
   const count = job.faults.length;
-  if (count === 0) return null;
+  return (
+    <div className="rg-job__faults" role="status">
+      {count === 0 ? null : <FaultList job={job} count={count} />}
+    </div>
+  );
+}
+
+function FaultList({ job, count }: { job: JobSummary; count: number }) {
   return (
     <InlineMessage tone="warning" title={`${count.toLocaleString('en-US')} ${count === 1 ? 'fault' : 'faults'} beside this job; it did not stop it`}>
       {job.faults.map((fault, i) => {

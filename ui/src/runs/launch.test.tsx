@@ -352,16 +352,20 @@ describe('the queue’s rows', () => {
     const { api, stream } = await show('#runs/job/j1');
     connect(stream, [runJob('j1', running(3, 10))]);
     const job = await screen.findByRole('region', { name: 'Job j1' });
-    expect(within(job).queryByRole('status')).toBeNull();
+    // The polite region is there, empty, before any fault: one inserted already filled may go unannounced.
+    const live = job.querySelector('.rg-job__faults') as HTMLElement;
+    expect(live.getAttribute('role')).toBe('status');
+    expect(live.textContent).toBe('');
     const reads = api.requests.length;
 
     const reason = 'the layout of pipeline hybrid could not be copied at launch, so a fork of its run starts without one';
     send(stream, { event: 'fault', data: runJob('j1', running(3, 10), { faults: [reason] }) });
 
     // Said politely, beside the job, which goes on: a warning, never an alert.
-    const warning = within(job).getByRole('status');
-    expect(warning.textContent).toContain('1 fault beside this job; it did not stop it');
-    expect(warning.textContent).toContain(reason);
+    expect(job.querySelector('.rg-job__faults')).toBe(live);
+    expect(live.textContent).toContain('1 fault beside this job; it did not stop it');
+    expect(live.textContent).toContain(reason);
+    expect(within(live).getByRole('img', { name: 'Warning' })).toBeTruthy();
     expect(within(job).queryByRole('alert')).toBeNull();
     expect(job.querySelector('.rg-status')?.textContent).toBe('running 3 / 10');
     expect(jobRowOf().getAttribute('aria-label')).toBe(`Run ${short(ANNOUNCED)} on beir/scifact, running, 1 fault`);

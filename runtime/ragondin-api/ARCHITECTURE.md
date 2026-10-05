@@ -992,7 +992,10 @@ reported, not at its next resync, and nothing reads the job again for it.
 Writing the file then also writes the job's latest progress, which a tick
 leaves in memory only; a restart fails a running job whatever its count, so
 that number is never read back. A write of the fault that fails leaves it in
-memory only, and the fault says so. A fault that accompanies a transition —
+memory only, and the fault says so: a clause the API appends to its reason
+(`Fault::unwritten`), never written, and dropped by the job's next write that
+succeeds — which carries the fault to disk, so the clause would be false
+there. A fault that accompanies a transition —
 a `running` that could not be written, so the job is failed without running;
 an end that could not be written; a recovery at start-up that could not be
 written — is put on the job with that transition, written with it when the
@@ -1004,8 +1007,8 @@ its fault on the job it could not write, as any other fault.
 is the record a restart reads the queue back from, and a fault that vanished
 on restart would leave a run whose fork silently lacks its layout with
 nothing saying why. A file written before faults were recorded on the job
-reads as having none. Those held in memory only are lost on restart, and
-that loss is what each of them says: the next start meets its cause again —
+reads as having none. Those still held in memory only when the process
+stops are lost on restart, and that loss is what each of them says: the next start meets its cause again —
 the job found running, or queued — and recovers it as § The state machine
 says. The fault of a job whose file recorded no count of partial traces and
 whose traces file does not read is in memory only as well: the job counts
@@ -1105,6 +1108,11 @@ stream's.
 - **The live median re-sorts every latency so far on each tick** — `lower_median`
   takes the values by value — which is O(n log n) per query, negligible
   beside a query's execution at the benchmarks' sizes.
+- **A fault reported at submission can follow the job's end.** The layout is
+  copied once the job is accepted, and the worker may take the job before
+  then; a run that fails at once publishes `failed` before the layout's
+  `fault`, so whatever reads the job at its end — the UI's end toast — counts
+  the faults it had then. The job and its file carry the fault either way.
 - **Jobs are never pruned**: every ended job stays in `jobs/` and in memory,
   and `GET /jobs` lists them all, until a later issue gives them a lifetime.
 
