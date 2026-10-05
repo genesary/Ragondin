@@ -277,16 +277,30 @@ async fn verifying_one_import_reads_no_other_import() {
         .unwrap();
     assert!(made.success());
 
-    let verified = tokio::time::timeout(
-        std::time::Duration::from_secs(10),
+    let answered = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
         registry.verify("beir/second"),
     )
-    .await
-    .expect("verifying `second` does not read `first`")
-    .expect("`second` is known");
+    .await;
 
+    // Release any reader before asserting: a verify that wrongly read `first`
+    // is blocked in `open` on the pipe, on a blocking thread the runtime
+    // waits for when it drops — so the test would hang rather than fail.
+    // Opening the pipe for writing unblocks that `open` (read and write, so
+    // this side never blocks itself, whether or not a reader is there), and
+    // closing it gives the reader end of file.
+    drop(
+        fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&corpus)
+            .unwrap(),
+    );
+    fs::remove_file(&corpus).unwrap();
+
+    let verified = answered
+        .expect("verifying `second` does not read `first`")
+        .expect("`second` is known");
     assert_eq!(verified.name, "beir/second");
     assert_eq!(verified.ground_truth, Some(GroundTruth::Qrels));
-    // A blocked reader left behind would hold the runtime: free the pipe.
-    fs::remove_file(&corpus).unwrap();
 }
