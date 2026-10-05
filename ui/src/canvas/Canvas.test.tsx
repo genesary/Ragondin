@@ -262,6 +262,7 @@ describe('Two canvases on one page', () => {
     );
     const a = container.querySelector('[data-side="a"]') as HTMLElement;
     const b = container.querySelector('[data-side="b"]') as HTMLElement;
+    expect(screen.getAllByRole('toolbar').map((t) => t.getAttribute('aria-label'))).toEqual(['Canvas, A', 'Canvas, B']);
     fireEvent.click(nodeEl(a, 'fused'));
     expect(card(a, 'fused').getAttribute('data-selected')).toBe('true');
     expect(card(b, 'fused').getAttribute('data-selected')).toBeNull();
@@ -340,6 +341,27 @@ describe('Canvas, round 1 of review', () => {
   it('announces nothing on its own as the zoom changes', () => {
     const { container } = renderCanvas();
     expect(container.querySelector('.rg-canvas__zoom')?.hasAttribute('aria-live')).toBe(false);
+  });
+
+  it('hides the grids and the wrapper the library puts round each edge, and keeps each edge named', async () => {
+    const { container } = renderCanvas();
+    const grids = [...container.querySelectorAll('svg.react-flow__background')];
+    expect(grids).toHaveLength(2);
+    // Each edge's wrapper is set after the library has drawn it.
+    await act(async () => {});
+    const wrappers = [...container.querySelectorAll('.react-flow__edge')].map((edge) => edge.parentElement as Element);
+    expect(wrappers).toHaveLength(HYBRID_RERANK_GEN.edges.length);
+    for (const grid of grids) expect(grid.getAttribute('aria-hidden')).toBe('true');
+    for (const wrapper of wrappers) {
+      expect(wrapper.tagName.toLowerCase()).toBe('svg');
+      expect(wrapper.getAttribute('role')).toBe('none');
+    }
+    expect(screen.getAllByRole('img', { name: /^Edge from / })).toHaveLength(HYBRID_RERANK_GEN.edges.length);
+    // No SVG under the canvas is left both unnamed and exposed.
+    for (const svg of container.querySelectorAll('svg')) {
+      const quiet = svg.closest('[aria-hidden="true"]') !== null || svg.getAttribute('role') === 'none';
+      expect(quiet || (svg.getAttribute('aria-label') ?? '') !== '', svg.outerHTML.slice(0, 120)).toBe(true);
+    }
   });
 
   it('puts the toolbar first in the tab order, before the nodes', () => {
