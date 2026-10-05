@@ -140,11 +140,11 @@ export function ConnectForm({ families, initialFamily, remote, draft, onDraft, o
       ) : null}
       <div className="rg-setup__fields">
         {families.length === 0 ? (
-          <Input id={`${id}-family`} label="Family" placeholder="generator" disabled={off} value={family} onChange={(e) => set({ family: e.target.value })} />
+          <Input id={`${id}-family`} label="Family" placeholder={off ? undefined : 'generator'} disabled={off} value={family} onChange={(e) => set({ family: e.target.value })} />
         ) : (
           <Select id={`${id}-family`} label="Family" disabled={off} value={family} onChange={(e) => set({ family: e.target.value })} options={families.map((f) => ({ value: f, label: familyLabel(f) }))} />
         )}
-        <Input id={`${id}-name`} label="Name" placeholder="qwen" disabled={off} value={name} onChange={(e) => set({ name: e.target.value })} help="The implementation name a node uses." />
+        <Input id={`${id}-name`} label="Name" placeholder={off ? undefined : 'qwen'} disabled={off} value={name} onChange={(e) => set({ name: e.target.value })} help="The implementation name a node uses." />
         <Input
           id={`${id}-uri`}
           label="Address"
@@ -155,7 +155,7 @@ export function ConnectForm({ families, initialFamily, remote, draft, onDraft, o
           help="The scheme http, then a host and an optional port: where the model server listens."
           {...(refused === null ? {} : { error: words(refused) })}
         />
-        <Input id={`${id}-model`} label="Served model" mono placeholder="qwen2.5-7b-instruct" disabled={off} value={servedModel} onChange={(e) => set({ servedModel: e.target.value })} help="The model the server serves; an embedder, a reranker or a generator needs it to say which model answered." />
+        <Input id={`${id}-model`} label="Served model" mono placeholder={off ? undefined : 'qwen2.5-7b-instruct'} disabled={off} value={servedModel} onChange={(e) => set({ servedModel: e.target.value })} help="The model the server serves; an embedder, a reranker or a generator needs it to say which model answered." />
       </div>
       <div className="rg-setup__submit">
         {off ? (

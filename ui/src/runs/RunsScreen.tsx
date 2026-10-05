@@ -81,9 +81,16 @@ function FirstRunSteps({ counts, refreshWorkspace, launch }: { counts: Workspace
     <ol className="rg-runs__steps" aria-label="Steps to a first run">
       {steps.map((step) => (
         <li key={step.title} className="rg-runs__step" data-done={step.done ? 'true' : undefined}>
-          <span className="rg-runs__tick">{step.done ? <Glyph name="check" label="Done" /> : null}</span>
-          <b>{step.title}</b>
-          {step.body}
+          {/* The row is a flex box inside the item, so the item keeps its list marker, its number. */}
+          <span className="rg-runs__step-row">
+            <b>{step.title}</b>
+            {step.done ? (
+              <span className="rg-runs__tick">
+                <Glyph name="check" label="Done" />
+              </span>
+            ) : null}
+            {step.body}
+          </span>
         </li>
       ))}
     </ol>
