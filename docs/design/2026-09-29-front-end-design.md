@@ -1,6 +1,6 @@
 # The front end — design
 
-**Status: design, approved on 2026-09-29; decided on 2026-09-30.** This document records what the front end is, how it is built and why. Decision issue #327 resolved into ADR-C36, which decides the answers of § 10 and the invariant INV-12; ADR-016 supersedes ADR-014; the roadmap change is governance and has no ADR. Where this document and an ADR differ, the ADR wins — the amendments the decision brought are folded in below. `AGENTS.md` § Rules of engagement applies: an agent implementing from this document does not get to reopen its choices, and does not get to make the ones it leaves to the decider.
+**Status: design, approved on 2026-09-29; decided on 2026-09-30; its exit criterion (§ 2) mechanised on 2026-10-05**, by `bin/ragondin/tests/ui_parity.rs` for parity, the journeys under `ui/e2e/` (`just test-ui-e2e`) on the real binary over the fixture workspace of § 9, and the ignored `bin/ragondin/tests/journey_scifact.rs` (`just journey-scifact`) over SciFact itself. This document records what the front end is, how it is built and why. Decision issue #327 resolved into ADR-C36, which decides the answers of § 10 and the invariant INV-12; ADR-016 supersedes ADR-014; the roadmap change is governance and has no ADR. Where this document and an ADR differ, the ADR wins — the amendments the decision brought are folded in below. `AGENTS.md` § Rules of engagement applies: an agent implementing from this document does not get to reopen its choices, and does not get to make the ones it leaves to the decider.
 
 Two artifacts accompany it and are not repeated here:
 
@@ -209,7 +209,7 @@ The `run_id` is **announced at submission and decided at execution**: computing 
 - Generated types current (CI).
 - Components (Vitest, Testing Library): the node card in **every** state, the table, the chips, the inline error.
 - Contract: MSW mocks derived from the OpenAPI examples; and a **fixture workspace** — runs recorded from the repository's calibration fixtures — that the dev server serves *and* the Rust tests use. One truth on both sides.
-- **Playwright against the real binary** with that workspace: the three journeys of § 3 (first run with the stub components, fork and compare, investigate down to side-by-side replay); axe for accessibility; one keyboard-only journey across the canvas.
+- **Playwright against the real binary** with that workspace: the three journeys of § 3 (first run with the stub components, fork and compare, investigate down to side-by-side replay); axe for accessibility (in the event, `accessibility-checker-engine`: axe's MPL-2.0 is off `deny.toml`'s allow list); one keyboard-only journey across the canvas.
 - No visual diffing at first (brittle); revisit.
 
 ### CI and governance

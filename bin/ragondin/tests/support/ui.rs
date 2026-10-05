@@ -3,7 +3,10 @@
 //! The client is a `GET` over `std::net::TcpStream` with `Connection: close`,
 //! read to the end: the server answers one request per connection this way,
 //! and no HTTP client crate is a dependency of this binary for a test to
-//! borrow. Shared by `tests/ui.rs` only.
+//! borrow. Shared by `tests/ui.rs`, `tests/ui_parity.rs` and
+//! `tests/fixture_workspace.rs`, and by `support/workspace.rs`.
+
+#![allow(dead_code)] // each includer uses the part it needs
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;

@@ -101,9 +101,24 @@ just check-ui
 # are stale. Needs Node.
 just gen-ui-types
 
+# The M4 journeys end to end (ui/ARCHITECTURE.md § The end-to-end journeys):
+# the UI built, the fixture workspace written by the binary's own test, then
+# the journeys and the accessibility pass driven in Chromium against that
+# binary. Needs Node, and Chromium as `npx playwright install chromium` fetches
+# it (below).
+just test-ui-e2e
+
 # All of the above — run this before declaring any work complete. It needs
-# Node, because it runs `build-ui` and `check-ui`. It builds ui/dist/ once,
-# before the feature-gated Rust tests that embed it.
+# Node, because it runs `build-ui`, `check-ui` and `test-ui-e2e`, and the
+# Chromium the journeys drive: `test-ui-e2e` runs `npx playwright install
+# chromium`, which downloads it once per machine into the runner's cache
+# (~/.cache/ms-playwright on Linux, ~/Library/Caches/ms-playwright on macOS)
+# and is a no-op after that. On Linux the browser needs system libraries:
+# `npx playwright install-deps chromium` installs them, as CI's
+# `--with-deps` does. Offline or air-gapped: install the browser once while
+# connected, or point PLAYWRIGHT_BROWSERS_PATH at a directory holding it; the
+# journeys themselves use no network. It builds ui/dist/ once, before the
+# feature-gated Rust tests that embed it.
 just check
 ```
 

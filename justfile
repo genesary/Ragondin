@@ -206,6 +206,29 @@ calibrate-generation:
     RAGONDIN_GENERATOR_SERVICE_BIN="{{ env_var_or_default("CARGO_TARGET_DIR", justfile_directory() / "target") }}/debug/ragondin-generator-service" \
         cargo test --release -p ragondin --features bm25,onnx,stub,remote --test calibration_generation -- --ignored --nocapture --test-threads=1
 
+# The M4 journey on real data (bin/ragondin/tests/journey_scifact.rs): `ragondin
+# ui` with no argument on an empty home workspace, SciFact downloaded through
+# the API from the manifest's pinned URLs, a hybrid and a dense-only pipeline
+# composed as the editor composes them, both launched, compared, and one query
+# replayed in both. Needs the network, once, for SciFact, and the two exported
+# models `calibrate` uses, named by RAGONDIN_CALIBRATION_MODELS; about half an
+# hour of CPU, so it is ignored by default and deliberately not part of
+# `check`. The record of the run it was accepted on is in
+# bin/ragondin/ARCHITECTURE.md § The M4 exit criterion.
+journey-scifact:
+    cargo test -p ragondin --features ui,bm25,onnx --test journey_scifact -- --ignored --nocapture --test-threads=1
+
+# Write the fixture workspace (bin/ragondin/tests/support/workspace.rs) into
+# DIR: the exit criterion's pipelines and their layouts, the fixture benchmark
+# imported, four runs — two of them the cases decision #390 shows: a run
+# without a launch record, and one whose recorded name's content has changed —
+# beside `corpus/`, the fixture corpus to import, and `fixture.json`, which
+# names each run. The Rust tests build the same workspace for themselves; this
+# writes it for the UI's dev server and end-to-end tests. Runs the binary the
+# test builds, `ui,bm25,onnx`, which `test-ui-e2e` then drives.
+fixture-workspace dir=(env_var_or_default("CARGO_TARGET_DIR", justfile_directory() / "target") / "e2e-fixture"):
+    RAGONDIN_FIXTURE_WORKSPACE="{{ absolute_path(dir) }}" cargo test -p ragondin --features ui,bm25,onnx --test fixture_workspace -- --ignored --exact write_the_fixture_workspace
+
 # Install exactly the lockfile and build ui/dist/, the folder bin/ragondin's
 # `ui` feature embeds. `check` runs it before `test-features`, the first recipe
 # that compiles that feature, so the Rust tests embed this tree's UI and never
@@ -216,11 +239,11 @@ build-ui: check-node
 
 # The front end's gates: install exactly the lockfile, then lint, typecheck,
 # test, build, re-check the notices and audit it (ui/ARCHITECTURE.md § The
-# gates). It, `build-ui` and `gen-ui-types` are the recipes here that need
-# Node -- the version pinned in ui/.node-version. No cargo recipe does, and
-# none may: the Rust build stays Rust-only (ADR-C36 § 5), so everything above
-# runs on a machine without Node, and only `check`, which covers both worlds,
-# needs it.
+# gates). It, `build-ui`, `gen-ui-types`, `test-ui-e2e` and `ui-dev-fixture`
+# are the recipes here that need Node -- the version pinned in
+# ui/.node-version. No cargo recipe does, and none may: the Rust build stays
+# Rust-only (ADR-C36 § 5), so every other recipe runs on a machine without
+# Node, and only `check`, which covers both worlds, needs it.
 #
 # The install and the build are `build-ui`'s, a dependency, so `check`, which
 # names both, builds once: just runs a recipe once per invocation. The other
@@ -239,8 +262,30 @@ check-ui: build-ui
 check-node:
     @command -v npm >/dev/null 2>&1 || { echo "error: build-ui and check-ui need Node $(cat ui/.node-version) (the major pinned in ui/.node-version), with npm."; exit 1; }
 
+# The M4 journeys end to end (ui/e2e/, ui/ARCHITECTURE.md § The end-to-end
+# journeys): first run, iterate, investigate, the keyboard-only journey, the
+# two launch records of decision #390, and the accessibility pass, in Chromium,
+# against the real binary over copies of the fixture workspace, with every
+# request to another origin refused. Builds the UI first, so the binary embeds
+# this tree's; then the fixture workspace, whose generation builds the binary
+# with `ui,bm25,onnx`; then installs the browser the runner drives, if it is
+# missing — the one step that may use the network — and runs the journeys.
+# Needs Node, like `check-ui`.
+test-ui-e2e: build-ui fixture-workspace
+    cd ui && npx playwright install chromium
+    cd ui && RAGONDIN_E2E_BINARY="{{ env_var_or_default("CARGO_TARGET_DIR", justfile_directory() / "target") }}/debug/ragondin" RAGONDIN_E2E_FIXTURE="{{ env_var_or_default("CARGO_TARGET_DIR", justfile_directory() / "target") }}/e2e-fixture" npx playwright test
+
+# The dev server against the fixture workspace, served by the real binary:
+# `npm run dev:fixture` with the binary and the workspace `test-ui-e2e` uses.
+# A run launched from the page is filed in that workspace; `just
+# fixture-workspace` writes it afresh. Needs Node.
+ui-dev-fixture: fixture-workspace
+    cd ui && RAGONDIN_E2E_BINARY="{{ env_var_or_default("CARGO_TARGET_DIR", justfile_directory() / "target") }}/debug/ragondin" RAGONDIN_E2E_FIXTURE="{{ env_var_or_default("CARGO_TARGET_DIR", justfile_directory() / "target") }}/e2e-fixture" npm run dev:fixture
+
 # Everything CI runs, in one command. Run this before declaring work done. It
-# needs Node, for `build-ui` and `check-ui`, and checks for it first; every
-# other recipe it runs is cargo or Python. `build-ui` runs before
-# `test-features`, the first recipe that embeds ui/dist/.
-check: check-node fmt build test build-ui test-features clippy check-features doc test-check-invariants check-invariants test-check-doc-links check-doc-links check-adr-index test-gen-rust-notices check-rust-notices check-deny check-ui
+# needs Node, for `build-ui`, `check-ui` and `test-ui-e2e`, and checks for it
+# first; every other recipe it runs is cargo or Python. `build-ui` runs before
+# `test-features`, the first recipe that embeds ui/dist/, and once: just runs
+# a recipe once per invocation, so `test-ui-e2e`'s dependency on it does not
+# build again.
+check: check-node fmt build test build-ui test-features clippy check-features doc test-check-invariants check-invariants test-check-doc-links check-doc-links check-adr-index test-gen-rust-notices check-rust-notices check-deny check-ui test-ui-e2e

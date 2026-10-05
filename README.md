@@ -65,13 +65,13 @@ just check             # build + test + clippy + fmt + architecture invariants
 ## Status
 
 **Pre-alpha.** Milestones M0 — *Foundations* — M1 — *Core contracts & engine
-skeleton* — and M2 — *First defensible deliverable (BEIR retrieval bench)* —
-have every one of their issues closed. M3 — *Generation & end-to-end RAG* — is
-the current milestone, and its exit criterion is asserted by
-`bin/ragondin/tests/exit_criterion_generation.rs` (below). The issues open
-outside any milestone are decisions reserved for a human, work blocked on one of
-those decisions, ADR follow-ups, documentation defects, and one dependency
-advisory exception.
+skeleton* — M2 — *First defensible deliverable (BEIR retrieval bench)* — and
+M3 — *Generation & end-to-end RAG* — have every one of their issues closed. M4 —
+*The front end* — is the current milestone, and its exit criterion is asserted
+by `bin/ragondin/tests/ui_parity.rs` and the journeys under `ui/e2e/` (below).
+The issues open outside any milestone are decisions reserved for a human, work
+blocked on one of those decisions, ADR follow-ups, documentation defects, and
+one dependency advisory exception.
 
 M2's exit criterion is asserted mechanically rather than claimed:
 `bin/ragondin/tests/exit_criterion.rs` drives the binary over a curated fixture
@@ -87,6 +87,21 @@ with a reference answer per question, through a context builder and a `Remote`
 generator served in-process by the test, and requires the hybrid pipeline with
 reranking to answer more questions than the dense-only one — on exact match and
 token F1 — reproducibly.
+
+M4's exit criterion is asserted mechanically in the same way, in its two
+halves. `bin/ragondin/tests/ui_parity.rs` starts `ragondin ui` and requires
+that a pipeline composed through the editor's path and exported hashes, under
+`ragondin validate`, to the hash the editor showed, that both refuse a
+mis-wired pipeline on the same edge, and that a run submitted through the API
+on each of the three benchmark formats — with a `Remote` generator bound, too —
+is the run `ragondin bench` records. And `just test-ui-e2e` drives the real
+binary in a browser over a fixture workspace the Rust tests share
+(`bin/ragondin/tests/support/workspace.rs`), through the journeys the design
+names — first run, iterate, investigate — a keyboard-only journey and an
+accessibility pass on every screen. Beside them,
+`bin/ragondin/tests/journey_scifact.rs` — ignored by default, run by
+`just journey-scifact` — makes the same journey over BEIR SciFact itself,
+downloaded through the API.
 
 **Four of the five subcommands are implemented**, `ui` behind its `ui` feature.
 `bin/ragondin/ARCHITECTURE.md` § What lives here carries the current list and what each one does; `serve` is the one that parses

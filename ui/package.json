@@ -17,7 +17,9 @@
     "types:check": "node scripts/check-api-types.mjs",
     "notices": "node scripts/check-notices.mjs",
     "audit": "node scripts/check-font-licenses.mjs && node scripts/check-licenses.mjs && node scripts/check-advisories.mjs",
-    "check": "npm run types:check && npm run lint && npm run typecheck && npm run test && npm run build && npm run notices && npm run audit"
+    "check": "npm run types:check && npm run lint && npm run typecheck && npm run test && npm run build && npm run notices && npm run audit",
+    "e2e": "playwright test",
+    "dev:fixture": "node scripts/dev-fixture.mjs"
   },
   "dependencies": {
     "@dagrejs/dagre": "^3.1.1",
@@ -27,11 +29,13 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.63.0",
     "@testing-library/dom": "^10.4.2",
     "@testing-library/react": "^16.3.3",
     "@types/node": "^24.19.0",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
+    "accessibility-checker-engine": "^4.0.34",
     "eslint": "^10.11.0",
     "globals": "^17.12.0",
     "happy-dom": "^20.14.5",
