@@ -1245,7 +1245,7 @@ mod tests {
         // key order in the source text is what differs, not two
         // already-equal maps.
         let forward = r#"
-version: 3
+version: 1
 pipeline:
   inputs: [question]
   nodes:
@@ -1272,7 +1272,7 @@ pipeline:
         // Same nodes, listed in reverse, each with its `params` keys written
         // in the opposite order.
         let reversed = r#"
-version: 3
+version: 1
 pipeline:
   inputs: [question]
   nodes:

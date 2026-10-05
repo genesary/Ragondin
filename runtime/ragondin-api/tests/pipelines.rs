@@ -810,7 +810,7 @@ async fn validate_refuses_every_branch_with_the_problem_body_it_always_has() {
     let cases = [
         (
             "version: 99\npipeline:\n  inputs: [q]\n  nodes: []\n".to_owned(),
-            "the configuration is written in a schema version this build cannot read: unsupported pipeline schema version 99: this build reads version 3",
+            "the configuration is written in a schema version this build cannot read: unsupported pipeline schema version 99: this build reads version 1",
             unlocated.clone(),
         ),
         (
@@ -913,7 +913,7 @@ const KINDS: &str = "pipeline:\n  inputs: [question]\n  nodes:\n    - id: lexica
 /// `KINDS` as the editor holds it.
 fn kinds_typed() -> Value {
     json!({
-        "version": 3,
+        "version": 1,
         "pipeline": {
             "inputs": ["question"],
             "nodes": [{
@@ -1152,7 +1152,7 @@ async fn a_body_that_is_neither_form_is_request_invalid() {
         json!({ "document": KINDS, "typed": kinds_typed() }),
         json!({ "typed": KINDS }),
         json!({ "typed": { "pipeline": { "inputs": [], "nodes": [] }, "extra": 1 } }),
-        json!({ "typed": { "version": 3 } }),
+        json!({ "typed": { "version": 1 } }),
     ] {
         let (status, problem) = validate(&workspace, &body).await;
 

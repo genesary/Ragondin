@@ -539,7 +539,7 @@ fn an_empty_list_is_written_as_brackets() {
     };
     assert_eq!(
         render_document(&empty).unwrap(),
-        "version: 3\npipeline:\n  inputs: []\n  nodes: []\n"
+        "version: 1\npipeline:\n  inputs: []\n  nodes: []\n"
     );
 
     let mut lonely = node("n", vec![("l", RawParamValue::List(vec![]))]);

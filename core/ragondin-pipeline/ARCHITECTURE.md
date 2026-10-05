@@ -43,13 +43,24 @@ fed another generator's answer, fails validation by name.
 
 | `SchemaVersion::SUPPORTED` | What changed on the wire | Decided in |
 |---|---|---|
-| 2 | `RawGraph` gained `inputs` — a pipeline declares its inputs | [ADR-C18](../../docs/adr/ADR-C18-a-pipeline-declares-its-inputs.md) |
-| 3 | `RawNode.component` accepts `context_builder` and `generator` | [ADR-C31](../../docs/adr/ADR-C31-generation-contracts-template-and-served-model-per-call.md) § 3 |
+| 2 *(retired)* | `RawGraph` gained `inputs` — a pipeline declares its inputs | [ADR-C18](../../docs/adr/ADR-C18-a-pipeline-declares-its-inputs.md) |
+| 3 *(retired)* | `RawNode.component` accepts `context_builder` and `generator` | [ADR-C31](../../docs/adr/ADR-C31-generation-contracts-template-and-served-model-per-call.md) § 3 |
+| 1 | The schema returns to version 1, with every change above kept; 2 and 3 are retired, and no reader of either exists. Until the first release a change to the schema's shape leaves the version at 1 and is recorded here as a row with no number | Owner decision, 2026-10-05 (#493) |
 
-A build reads exactly one version: a document stating an earlier one is
-refused as `UnsupportedSchemaVersion`, and a document stating none reads as the
-current one. The reason for each bump is recorded again on `SchemaVersion`
-itself, in `src/raw.rs`.
+**Until the first release, the version is not bumped.** Nothing has been
+released, so no document exists that a bump would protect. The first release
+is the commit at which `[workspace.package] version` in the root `Cargo.toml`
+stops being `0.0.0`; `tests/first_release.rs` fails on that commit, and its
+message says what is owed: a row here recording version 1 as released, and the
+test's deletion. From the first release, INV-9's bump rule applies, starting
+from 1. ADR-C18 and ADR-C31 are not superseded: their bumps stand as history,
+and only the numbers they chose are retired. The version is not part of the
+canonical logical form, so returning to 1 changed no hash and no run id.
+
+A build reads exactly one version: a document stating any other — 2 and 3
+included — is refused as `UnsupportedSchemaVersion`, and a document stating
+none reads as the current one. The reasoning is recorded again on
+`SchemaVersion` itself, in `src/raw.rs`.
 
 `LogicalNode` reserves **no `Branch` or `Loop` variant today**, and `src/node.rs`
 says so where someone about to add one will read it. That control flow belongs
@@ -116,8 +127,9 @@ actually look like is not settled, so neither variant exists yet.
   **nested map is rejected** — not forever, but until a configuration actually
   demands one, because with the two enums extensible a `Map` variant added
   later is additive **on the Rust boundary** rather than breaking. Only there:
-  such a variant still bumps `SchemaVersion` under INV-9, and still owes the
-  content hash a canonicalization one level deeper. A
+  such a variant still bumps `SchemaVersion` under INV-9 once the first
+  release is made (before it, it is a row in the history above), and still
+  owes the content hash a canonicalization one level deeper. A
   **null is rejected permanently**: a
   null parameter means *absent*, which the grammar already expresses by
   omitting the key, and two spellings of one configuration on a

@@ -90,7 +90,8 @@ impl NodeId {
 ///   forever. This enum is extensible by design, so the `Map` variant a real
 ///   configuration eventually demands is additive on this boundary rather than
 ///   breaking, and it waits for that demand rather than being guessed at here.
-///   Additive here only: the wire counterpart still bumps its schema version,
+///   Additive here only: the wire counterpart still changes its schema — a
+///   version bump once the first release is made, a recorded row before it —
 ///   and the content hash still owes a nested value a canonical ordering.
 /// - A **null** is rejected permanently. It means *absent*, which [`Params`]
 ///   already expresses by omitting the key, and two spellings of one
