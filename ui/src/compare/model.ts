@@ -4,7 +4,7 @@
 // run takes, which metrics share the bars' 0–1 scale, how a bound or a delta
 // is written, and the verdict sentence. ARCHITECTURE.md § The Compare screen.
 import { familyOfComponent, type Family, type HistogramBin, type RunSeries, type RunSlot, type StackSegment } from '../../design/index.ts';
-import type { Comparison, MetricDeltas, MetricDirection, MetricRow, NodePair, ParameterRow, ParameterValue, StageName, UnplacedPair } from '../api/types.ts';
+import type { Comparison, ConfigurationMatrix, MetricDeltas, MetricDirection, MetricRow, NodePair, ParameterRow, ParameterValue, StageName, UnplacedPair } from '../api/types.ts';
 import { formatParameter as formatValueOf } from '../parameters.ts';
 import { shortHash } from '../runs/model.ts';
 
@@ -73,6 +73,38 @@ export function departures(row: ParameterRow): boolean[] {
 
 /** A parameter's name as a configuration spells it. */
 export const parameterName = (key: ParameterRow['key']) => (key.kind === 'param' ? key.name : key.kind);
+
+/** The words for the runs holding a node: "only in baseline", "only in A and B". */
+export function onlyIn(present: readonly boolean[]): string {
+  const names = present.flatMap((held, i) => (held ? [i === 0 ? 'baseline' : letterOf(i)] : []));
+  const words = names.length < 2 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names.at(-1) ?? ''}`;
+  return `only in ${words}`;
+}
+
+/**
+ * A row of the configuration table: a node some run lacks, as one row with
+ * which runs hold it — the API's `partial_nodes` — or a parameter. A
+ * parameter of such a node is kept only where the runs holding it disagree,
+ * and carries which runs hold the node, so a run without it reads as lacking
+ * the node rather than as leaving the parameter unset.
+ */
+export type ConfigurationRow = { kind: 'node'; node: string; present: boolean[] } | { kind: 'param'; row: ParameterRow; present: boolean[] | null };
+
+export function configurationRows(matrix: Extract<ConfigurationMatrix, { kind: 'compared' }>): ConfigurationRow[] {
+  const partial = new Map(matrix.partial_nodes.map((p) => [p.node, p.present]));
+  const out: ConfigurationRow[] = [];
+  for (const row of matrix.parameters) {
+    const present = partial.get(row.node) ?? null;
+    if (present === null) {
+      out.push({ kind: 'param', row, present: null });
+      continue;
+    }
+    if (!out.some((r) => r.kind === 'node' && r.node === row.node)) out.push({ kind: 'node', node: row.node, present });
+    const held = new Set(row.values.filter((_, i) => present[i]).map((v) => JSON.stringify(v ?? null)));
+    if (held.size > 1) out.push({ kind: 'param', row, present });
+  }
+  return out;
+}
 
 const STAGE_LABEL: Record<StageName, string> = {
   retrieval_legs: 'retrieval legs',
@@ -185,6 +217,17 @@ export function verdict(md: MetricDeltas, run: string): string {
 export function noVerdict(c: Comparison, run: string): string {
   if (c.ground_truth.status === 'verified') return `${run} and the baseline share no ranking metric, so no query can be compared.`;
   return `No query of ${run} can be compared with the baseline: ${c.ground_truth.detail}.`;
+}
+
+/** Whether any query compared changed at all: with none, there is nothing to open in Replay. */
+export const hasChange = (md: MetricDeltas) => sum(md, (b) => isWorse(b) || isBetter(b)) > 0;
+
+const natural = new Intl.Collator('en', { numeric: true });
+
+/** A bin's queries, the largest change first, ties in natural order (q9 before q10). */
+export function queriesByDelta(queries: readonly string[], deltas: readonly { query: string; delta: number }[]): string[] {
+  const size = new Map(deltas.map((d) => [d.query, Math.abs(d.delta)]));
+  return [...queries].sort((a, b) => (size.get(b) ?? 0) - (size.get(a) ?? 0) || natural.compare(a, b));
 }
 
 /**

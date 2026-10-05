@@ -7,8 +7,13 @@ import {
   barMetrics,
   binsOf,
   deltaOf,
+  configurationRows,
   departures,
   formatParameter,
+  hasChange,
+  onlyIn,
+  parameterName,
+  queriesByDelta,
   formatValue,
   latencyBars,
   manualPairs,
@@ -75,10 +80,11 @@ describe('deltaOf', () => {
 
 describe('departures', () => {
   it('marks each value that differs from the baseline\'s, an unset one included', () => {
-    const [bm25, dense, component] = COMPARISON.configuration.kind === 'compared' ? COMPARISON.configuration.parameters : [];
-    expect(departures(bm25!)).toEqual([false, true, true]);
-    expect(departures(dense!)).toEqual([false, false, true]);
-    expect(departures(component!)).toEqual([false, false, true]);
+    const rows = COMPARISON.configuration.kind === 'compared' ? COMPARISON.configuration.parameters : [];
+    const at = (node: string, key: string) => rows.find((r) => r.node === node && parameterName(r.key) === key)!;
+    expect(departures(at('bm25', 'top_k'))).toEqual([false, true, true]);
+    expect(departures(at('dense', 'top_k'))).toEqual([false, false, true]);
+    expect(departures(at('rerank', 'component'))).toEqual([false, false, true]);
   });
 
   it('writes a value as a configuration does, and an unset one in words', () => {
@@ -92,6 +98,36 @@ describe('departures', () => {
     const row = { node: 'fused', key: { kind: 'param' as const, name: 'k' }, values: [int('60'), float(60)] };
     expect(row.values.map(formatParameter)).toEqual(['60', '60.0']);
     expect(departures(row)).toEqual([false, true]);
+  });
+});
+
+describe('configurationRows', () => {
+  const matrix = COMPARISON.configuration.kind === 'compared' ? COMPARISON.configuration : null;
+
+  it('draws a node some run lacks as one row saying which runs hold it, never as rows of unset parameters', () => {
+    const rows = configurationRows(matrix!);
+    expect(rows.map((r) => (r.kind === 'node' ? `${r.node} — ${onlyIn(r.present)}` : `${r.row.node}/${parameterName(r.row.key)}`))).toEqual([
+      'bm25 — only in A and B',
+      'dense/top_k',
+      'rerank — only in B',
+      'rrf — only in A and B',
+      'rrf/k',
+    ]);
+  });
+
+  it('keeps a parameter of such a node only where the runs holding it disagree, and says which runs lack the node', () => {
+    const k = configurationRows(matrix!).find((r) => r.kind === 'param' && r.row.node === 'rrf');
+    expect(k?.kind === 'param' ? k.present : null).toEqual([false, true, true]);
+    const top = configurationRows(matrix!).find((r) => r.kind === 'param' && r.row.node === 'dense');
+    expect(top?.kind === 'param' ? top.present : undefined).toBeNull();
+  });
+});
+
+describe('onlyIn', () => {
+  it('names the runs holding a node by their letters, the baseline in words', () => {
+    expect(onlyIn([true, false])).toBe('only in baseline');
+    expect(onlyIn([false, true, false])).toBe('only in A');
+    expect(onlyIn([true, true, false, true])).toBe('only in baseline, A and C');
   });
 });
 
@@ -184,6 +220,27 @@ describe('verdict', () => {
 
   it('says when no query could be compared', () => {
     expect(verdict(metricDeltas('ndcg@10', [0, 0, 0, 0, 0, 0, 0]), 'A')).toBe('On ndcg@10, no query of A could be compared with the baseline.');
+  });
+});
+
+describe('hasChange', () => {
+  it('is false when every query compared is unchanged, or none was', () => {
+    expect(hasChange(metricDeltas('ndcg@10', [0, 0, 0, 12, 0, 0, 0]))).toBe(false);
+    expect(hasChange(metricDeltas('ndcg@10', [0, 0, 0, 0, 0, 0, 0]))).toBe(false);
+    expect(hasChange(metricDeltas('ndcg@10', [0, 0, 0, 12, 1, 0, 0]))).toBe(true);
+    expect(hasChange(metricDeltas('ndcg@10', [0, 1, 0, 12, 0, 0, 0]))).toBe(true);
+  });
+});
+
+describe('queriesByDelta', () => {
+  it('orders a bin\'s queries by the size of their change, the largest first, ties in natural order', () => {
+    const deltas = [
+      { query: 'q10', delta: -0.2 },
+      { query: 'q9', delta: -0.2 },
+      { query: 'q2', delta: -0.5 },
+      { query: 'q1', delta: -0.12 },
+    ];
+    expect(queriesByDelta(['q1', 'q10', 'q2', 'q9'], deltas)).toEqual(['q2', 'q9', 'q10', 'q1']);
   });
 });
 

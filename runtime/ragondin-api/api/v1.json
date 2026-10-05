@@ -445,6 +445,13 @@
                 },
                 "type": "array"
               },
+              "partial_nodes": {
+                "description": "Every node some run lacks, sorted by id, with which runs hold\nit: what lets a node only one pipeline has read as one fact\nrather than as a row of unset parameters.",
+                "items": {
+                  "$ref": "#/components/schemas/PartialNode"
+                },
+                "type": "array"
+              },
               "same_logical_form": {
                 "description": "Whether every canonical logical form hashes equal: runs that\ndiffer only in their wiring have no row, and are still not one\nconfiguration.",
                 "type": "boolean"
@@ -453,7 +460,8 @@
             "required": [
               "kind",
               "parameters",
-              "same_logical_form"
+              "same_logical_form",
+              "partial_nodes"
             ],
             "type": "object"
           },
@@ -2927,6 +2935,27 @@
             "type": "object"
           }
         ]
+      },
+      "PartialNode": {
+        "description": "A node not every run compared holds.",
+        "properties": {
+          "node": {
+            "description": "The node's id.",
+            "type": "string"
+          },
+          "present": {
+            "description": "Whether each run holds it, in the order of the runs compared.",
+            "items": {
+              "type": "boolean"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "node",
+          "present"
+        ],
+        "type": "object"
       },
       "PartialQueries": {
         "description": "`GET /jobs/{id}/queries`: the queries a failed or cancelled run job\nexecuted before it stopped — the one a failed run stopped on included,\nits failing node last — whose traces it kept under\n`jobs/<id>/partial/` — never in the store, which holds a run complete or\nnot at all.\n\nNothing here is scored, and no query or passage text is read: a run\nrecords the digests of the dataset it was evaluated on, and the ground\ntruth and the text are read only against a dataset that digests to them\n(ADR-C36 § 4); a job's partial traces record none.",

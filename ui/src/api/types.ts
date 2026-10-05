@@ -203,6 +203,12 @@ export type ConfigurationMatrix = {
    */
   parameters: ParameterRow[];
   /**
+   * Every node some run lacks, sorted by id, with which runs hold
+   * it: what lets a node only one pipeline has read as one fact
+   * rather than as a row of unset parameters.
+   */
+  partial_nodes: PartialNode[];
+  /**
    * Whether every canonical logical form hashes equal: runs that
    * differ only in their wiring have no row, and are still not one
    * configuration.
@@ -1086,6 +1092,14 @@ export type ParameterValue = {
 } | {
   kind: "list";
   value: ParameterValue[];
+};
+
+/** A node not every run compared holds. */
+export type PartialNode = {
+  /** The node's id. */
+  node: string;
+  /** Whether each run holds it, in the order of the runs compared. */
+  present: boolean[];
 };
 
 /**

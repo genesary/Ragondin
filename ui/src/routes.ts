@@ -24,7 +24,9 @@ export type Route =
   | { screen: 'pipeline'; name?: string }
   /**
    * `#compare/<id>+<id>…?baseline=<id>`: runs side by side, against a
-   * baseline; `#compare`, with no ids, before any is chosen.
+   * baseline; `#compare`, with no ids, before any is chosen. A run is
+   * written by its 12-character prefix where that names one run, which the
+   * screen reads back against `GET /runs`; the router takes either as text.
    */
   | { screen: 'compare'; ids: string[]; baseline?: string }
   /** `#replay`: before a run is chosen. */

@@ -29,9 +29,9 @@ use crate::response::{
     BenchmarkEntry, BenchmarkState, ConfigurationMatrix, ConsumedPorts, DatasetCheck,
     DatasetStatus, DatasetVersions, EdgeKind, FamilyPorts, FoundVersions, Graph, GraphEdge,
     GraphInput, GraphNode, GroundTruth, LaunchedAs, LaunchedPrefix, MetricDirection, MetricFamily,
-    MetricRow, NameHeld, NodeMetrics, ParameterName, ParameterRow, ParameterValue, PrefixOf,
-    RunDetail, RunInputs, RunSummary, ServiceBinding, TraceNodeView, TracePassage, TraceValue,
-    TypedDocument, TypedGraph, TypedNode,
+    MetricRow, NameHeld, NodeMetrics, ParameterName, ParameterRow, ParameterValue, PartialNode,
+    PrefixOf, RunDetail, RunInputs, RunSummary, ServiceBinding, TraceNodeView, TracePassage,
+    TraceValue, TypedDocument, TypedGraph, TypedNode,
 };
 
 /// One run, as the listing shows it, with the names the request found for
@@ -384,6 +384,7 @@ pub(crate) fn configuration_matrix(
                 })
                 .collect(),
             same_logical_form: *same_logical_form,
+            partial_nodes: partial_nodes(parameters),
         },
         ragondin_experiments::ConfigurationMatrix::Unavailable { run, reason, .. } => {
             ConfigurationMatrix::Unavailable {
@@ -392,6 +393,22 @@ pub(crate) fn configuration_matrix(
             }
         }
     }
+}
+
+/// The nodes some run lacks. Every node of a configuration names its
+/// `component:` family, so a node's `Component` row is unset exactly in the
+/// runs that do not hold it — and it is a row at all only when some run
+/// lacks the node or holds it as another family. The rows come sorted by
+/// node, so the answer is too.
+fn partial_nodes(parameters: &[ragondin_experiments::ParameterRow]) -> Vec<PartialNode> {
+    parameters
+        .iter()
+        .filter(|row| row.key == ParameterKey::Component && row.values.iter().any(Option::is_none))
+        .map(|row| PartialNode {
+            node: row.node.as_str().to_owned(),
+            present: row.values.iter().map(Option::is_some).collect(),
+        })
+        .collect()
 }
 
 /// A lowered parameter, with its kind. Every float in a `LogicalPipeline` is

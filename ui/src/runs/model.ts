@@ -342,6 +342,32 @@ export function otherFact(row: Pick<RunRow, 'launchedAs' | 'launchRecorded' | 'p
 /** A hash as the screen prints it: its first twelve digits. */
 export const shortHash = (hash: string) => hash.slice(0, 12);
 
+/**
+ * Runs as an address writes them: each by its short hash when no other run in
+ * `known` starts with it, else in full — so an address stays short and still
+ * names one run. With no run known, every id is written in full.
+ */
+export function addressIds(ids: readonly string[], known: readonly string[]): string[] {
+  return ids.map((id) => {
+    const prefix = shortHash(id);
+    const sharing = known.filter((k) => k.startsWith(prefix));
+    return sharing.length === 1 && sharing[0] === id ? prefix : id;
+  });
+}
+
+/**
+ * The runs an address names, read back against `known`: a known id as
+ * itself, a prefix as the one known run it starts — and anything else as
+ * written, so the API, not a guess, says what it names.
+ */
+export function resolveAddressIds(ids: readonly string[], known: readonly string[]): string[] {
+  return ids.map((id) => {
+    if (known.includes(id)) return id;
+    const matches = known.filter((k) => k.startsWith(id));
+    return matches.length === 1 ? (matches[0] as string) : id;
+  });
+}
+
 /** The benchmark in words: every name pinned to it, else its short dataset digest. */
 export const benchmarkLabel = (row: Pick<RunRow, 'benchmark' | 'benchmarkNames'>) =>
   row.benchmarkNames.length === 0 ? `dataset ${shortHash(row.benchmark)}` : row.benchmarkNames.join(', ');

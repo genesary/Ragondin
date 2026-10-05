@@ -1,11 +1,13 @@
 // The run bar: the runs compared, each by its slot, pipeline and short id;
 // the baseline selector; "+ add a run", which offers only runs of the same
-// benchmark and lets the API refuse a sixth; and "Replay side by side".
+// benchmark, each by its pipeline's name, and lets the API refuse a sixth;
+// and "Replay side by side".
 import { useState } from 'react';
 import { Button, RunSwatch, Select } from '../../design/index.ts';
 import type { ApiProblem } from '../api/client.ts';
 import type { Comparison, RunListing } from '../api/types.ts';
-import { navigate } from '../routes.ts';
+import { navigate, type Route } from '../routes.ts';
+import { runName } from '../replay/model.ts';
 import { prefixText, shortHash } from '../runs/model.ts';
 import { ErrorState, type RequestState } from '../shell/states.tsx';
 import { pipelineName, runSeries } from './model.ts';
@@ -20,6 +22,8 @@ export type RunBarProps = {
   onRetryListing: () => void;
   /** Compares with one more run; the API's refusal, or null once the address names it. */
   onAdd: (id: string) => Promise<ApiProblem | null>;
+  /** The address of a comparison of `ids` against `baseline`, its runs as an address writes them. */
+  addressOf: (ids: readonly string[], baseline: string) => Route;
 };
 
 /** Copies a run's full id; a browser that refuses the clipboard leaves the id in the hash's tooltip. */
@@ -27,7 +31,7 @@ const copy = (hash: string) => {
   void navigator.clipboard?.writeText(hash).catch(() => {});
 };
 
-export function RunBar({ comparison, ids, baseline, listing, onRetryListing, onAdd }: RunBarProps) {
+export function RunBar({ comparison, ids, baseline, listing, onRetryListing, onAdd, addressOf }: RunBarProps) {
   const series = runSeries(comparison);
   const [chosen, setChosen] = useState('');
   const [adding, setAdding] = useState(false);
@@ -70,7 +74,7 @@ export function RunBar({ comparison, ids, baseline, listing, onRetryListing, onA
                   kind="quiet"
                   icon="close"
                   aria-label={`Remove run ${letter}`}
-                  onClick={() => navigate({ screen: 'compare', ids: ids.filter((id) => id !== run.id), baseline })}
+                  onClick={() => navigate(addressOf(ids.filter((id) => id !== run.id), baseline))}
                 >
                   {null}
                 </Button>
@@ -90,14 +94,14 @@ export function RunBar({ comparison, ids, baseline, listing, onRetryListing, onA
           value={baseline}
           options={comparison.runs.map((run) => ({ value: run.id, label: withPrefix(run.id, `${pipelineName(run)} · run ${shortHash(run.id)}`) }))}
           // A new baseline is state within this view: written in place, as Runs writes its selection.
-          onChange={(e) => navigate({ screen: 'compare', ids: [...ids], baseline: e.target.value }, { replace: true })}
+          onChange={(e) => navigate(addressOf(ids, e.target.value), { replace: true })}
         />
         <div className="rg-compare__add">
           <Select
             id="compare-add"
             label="Add a run"
             value={chosen}
-            options={[{ value: '', label: placeholder }, ...candidates.map((r) => ({ value: r.id, label: withPrefix(r.id, `run ${shortHash(r.id)} · pipeline ${shortHash(r.pipeline)}`) }))]}
+            options={[{ value: '', label: placeholder }, ...candidates.map((r) => ({ value: r.id, label: withPrefix(r.id, `${runName(r) ?? `pipeline ${shortHash(r.pipeline)}`} · run ${shortHash(r.id)}`) }))]}
             onChange={(e) => {
               setChosen(e.target.value);
               setProblem(null);

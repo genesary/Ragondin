@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Graph, RunListing, RunSummary } from '../api/types.ts';
-import { benchmarkLabel, formatLatency, formatMetric, groupRows, metricLabel, openRoute, otherFact, rowKey, rowsFromListing, runningLabel, shapeOf, shortHash, type RunRow } from './model.ts';
+import { addressIds, benchmarkLabel, formatLatency, formatMetric, groupRows, metricLabel, openRoute, otherFact, rowKey, resolveAddressIds, rowsFromListing, runningLabel, shapeOf, shortHash, type RunRow } from './model.ts';
 
 const hex = (c: string) => c.repeat(64);
 
@@ -402,5 +402,31 @@ describe('shapeOf', () => {
   it('keeps a family the design system draws no tile for as its own word', () => {
     const graph: Graph = { inputs: [], nodes: [node('x', 'extension')], edges: [] };
     expect(shapeOf(graph)).toEqual([{ node: 'x', family: null, word: 'extension' }]);
+  });
+});
+
+describe('a run in an address', () => {
+  const A = `${'a'.repeat(12)}${'1'.repeat(52)}`;
+  const A2 = `${'a'.repeat(12)}${'2'.repeat(52)}`;
+  const B = hex('b');
+
+  it('is written by its 12-character prefix when no other known run shares it', () => {
+    expect(addressIds([B], [A, B])).toEqual(['b'.repeat(12)]);
+  });
+
+  it('is written in full when another known run shares its prefix, so the address names one run', () => {
+    expect(addressIds([A, B], [A, A2, B])).toEqual([A, 'b'.repeat(12)]);
+  });
+
+  it('is written in full when the runs are not known yet', () => {
+    expect(addressIds([B], [])).toEqual([B]);
+  });
+
+  it('is read back as the one known run its prefix names, a full id as itself', () => {
+    expect(resolveAddressIds(['b'.repeat(12), A], [A, A2, B])).toEqual([B, A]);
+  });
+
+  it('is kept as written when no known run, or several, start with it: the API says what it names', () => {
+    expect(resolveAddressIds(['a'.repeat(12), 'c'.repeat(12)], [A, A2, B])).toEqual(['a'.repeat(12), 'c'.repeat(12)]);
   });
 });

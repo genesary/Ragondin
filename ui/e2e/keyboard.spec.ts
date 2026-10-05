@@ -22,7 +22,8 @@ test('keyboard only: Runs → Compare → Replay → a node and its menu', async
   await page.keyboard.press('Enter');
 
   // Compare: a regressed bin, then one of its queries, into Replay.
-  await expect(page).toHaveURL(new RegExp(`#compare/${hybrid}\\+${dense}\\?baseline=${hybrid}$`));
+  // Each run by its 12-character prefix, which names one run of the workspace.
+  await expect(page).toHaveURL(new RegExp(`#compare/${hybrid.slice(0, 12)}\\+${dense.slice(0, 12)}\\?baseline=${hybrid.slice(0, 12)}$`));
   const worst = page.getByRole('button', { name: /^much worse, [1-9][\d,]* quer(y|ies), change below −0\.3$/ });
   await tabTo(page, worst, 'the regressed bin');
   await page.keyboard.press('Enter');

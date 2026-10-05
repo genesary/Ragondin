@@ -123,7 +123,7 @@ export const SINCE_CHANGED: FeedingRun = {
   prefix_of: null,
   content_since_changed: {
     launched: 'as_pipeline',
-    difference: { kind: 'compared', same_logical_form: false, parameters: [{ node: 'dense', key: { kind: 'param', name: 'top_k' }, values: [int('50'), int('100')] }] },
+    difference: { kind: 'compared', same_logical_form: false, parameters: [{ node: 'dense', key: { kind: 'param', name: 'top_k' }, values: [int('50'), int('100')] }], partial_nodes: [] },
   },
 };
 

@@ -2,12 +2,13 @@
 // from `POST /compare` (the front-end design, § 3). Its state is the address,
 // `#compare/<id>+<id>…?baseline=<id>`; it owns nothing else but what is shown
 // open. ARCHITECTURE.md § The Compare screen.
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ButtonLink, EmptyState, Sheet } from '../../design/index.ts';
 import type { ApiClient, ApiProblem } from '../api/client.ts';
 import type { CompareRequest, Comparison, Pairing, RunListing } from '../api/types.ts';
 import type { PairOutcome } from './PairingPanel.tsx';
-import { formatHash, navigate } from '../routes.ts';
+import { formatHash, navigate, type Route } from '../routes.ts';
+import { addressIds, resolveAddressIds } from '../runs/model.ts';
 import { ErrorState, Loading, type RequestState } from '../shell/states.tsx';
 import { ComparisonView } from './ComparisonView.tsx';
 import './Compare.css';
@@ -49,7 +50,44 @@ export function CompareScreen({ client, ids, baseline }: CompareScreenProps) {
     );
   }
   if (known === undefined) return null;
-  return <Comparing client={client} ids={ids} baseline={known} />;
+  return <Resolving client={client} ids={ids} baseline={known} />;
+}
+
+/** An id written in full: a run's id is the 64 hex digits of its digest. */
+const isFull = (id: string) => /^[0-9a-f]{64}$/.test(id);
+
+/**
+ * The runs the address names, read back to their full ids: an address writes
+ * a run by its 12-character prefix where that names one run (`addressIds`),
+ * so a prefix waits for `GET /runs` before anything is compared. One the
+ * listing cannot resolve — or a listing that fails — is compared as written,
+ * and the API says what it names.
+ */
+function Resolving({ client, ids, baseline }: { client: ApiClient; ids: readonly string[]; baseline: string }) {
+  const [listing, setListing] = useState<RequestState<RunListing>>({ status: 'loading' });
+  const readListing = useCallback(async () => {
+    setListing({ status: 'loading' });
+    const result = await client.get('/runs');
+    setListing(result.ok ? { status: 'loaded', value: result.value } : { status: 'error', problem: result.problem });
+  }, [client]);
+  useEffect(() => {
+    void readListing();
+  }, [readListing]);
+
+  const known = useMemo(() => (listing.status === 'loaded' ? listing.value.runs.map((r) => r.id) : []), [listing]);
+  const waiting = listing.status === 'loading' && ![...ids, baseline].every(isFull);
+  const [full, fullBaseline] = useMemo(() => {
+    const resolved = resolveAddressIds([...ids, baseline], known);
+    return [resolved.slice(0, -1), resolved.at(-1) ?? baseline] as const;
+  }, [ids, baseline, known]);
+  if (waiting) {
+    return (
+      <Sheet>
+        <Loading label={`Comparing ${runs(ids.length)}`} />
+      </Sheet>
+    );
+  }
+  return <Comparing client={client} ids={full} baseline={fullBaseline} listing={listing} onRetryListing={() => void readListing()} known={known} />;
 }
 
 /** The key of one comparison: what the address names. */
@@ -57,10 +95,22 @@ const keyOf = (ids: readonly string[], baseline: string) => `${ids.join('+')}?${
 
 type Read = { state: RequestState<Comparison>; key: string; shown: Comparison | null };
 
-function Comparing({ client, ids, baseline }: { client: ApiClient; ids: readonly string[]; baseline: string }) {
+type ComparingProps = {
+  client: ApiClient;
+  /** The runs compared, by their full ids. */
+  ids: readonly string[];
+  baseline: string;
+  listing: RequestState<RunListing>;
+  onRetryListing: () => void;
+  /** Every run the listing holds, by id: what an address's prefixes are unique among. */
+  known: readonly string[];
+};
+
+function Comparing({ client, ids, baseline, listing, onRetryListing, known }: ComparingProps) {
   const key = keyOf(ids, baseline);
   const [read, setRead] = useState<Read>({ state: { status: 'loading' }, key, shown: null });
-  const [listing, setListing] = useState<RequestState<RunListing>>({ status: 'loading' });
+  const [texts, setTexts] = useState<ReadonlyMap<string, string> | null>(null);
+  const textsAsked = useRef(false);
   // Answers already in hand, by key: a run added or a pairing kept was
   // compared before the address moved, and is not asked for twice.
   const answered = useRef(new Map<string, Comparison>());
@@ -107,15 +157,26 @@ function Comparing({ client, ids, baseline }: { client: ApiClient; ids: readonly
   // The screen going cancels the read it leaves behind.
   useEffect(() => supersede, []);
 
-  const readListing = useCallback(async () => {
-    setListing({ status: 'loading' });
-    const result = await client.get('/runs');
-    setListing(result.ok ? { status: 'loaded', value: result.value } : { status: 'error', problem: result.problem });
-  }, [client]);
+  // The address of a comparison, each run by its prefix where that names one
+  // run among the listing's and the runs compared.
+  const addressOf = useCallback(
+    (runIds: readonly string[], base: string): Route => {
+      const among = [...new Set([...known, ...runIds])];
+      const [b = base, ...rest] = addressIds([base, ...runIds], among);
+      return { screen: 'compare', ids: rest, baseline: b };
+    },
+    [known],
+  );
 
-  useEffect(() => {
-    void readListing();
-  }, [readListing]);
+  // A query's text is the dataset's, the same in every run of the benchmark:
+  // read once, from the baseline, the first time a bar's list opens.
+  const onWantTexts = useCallback(() => {
+    if (textsAsked.current) return;
+    textsAsked.current = true;
+    void client.get('/runs/{id}/queries', { id: request.current.baseline }).then((result) => {
+      if (result.ok) setTexts(new Map(result.value.queries.flatMap((q) => (q.text === null ? [] : [[q.id, q.text] as const]))));
+    });
+  }, [client]);
 
   const onAdd = async (id: string): Promise<ApiProblem | null> => {
     const asked = { run_ids: [...request.current.run_ids, id], baseline: request.current.baseline };
@@ -125,7 +186,7 @@ function Comparing({ client, ids, baseline }: { client: ApiClient; ids: readonly
     // The address may have moved while the run was being compared — a new
     // baseline, a run removed: the run joins the address as it stands now.
     const now = request.current;
-    navigate({ screen: 'compare', ids: now.run_ids.includes(id) ? now.run_ids : [...now.run_ids, id], baseline: now.baseline });
+    navigate(addressOf(now.run_ids.includes(id) ? now.run_ids : [...now.run_ids, id], now.baseline));
     return null;
   };
 
@@ -193,9 +254,12 @@ function Comparing({ client, ids, baseline }: { client: ApiClient; ids: readonly
       baseline={baseline}
       busy={state.status === 'loading'}
       listing={listing}
-      onRetryListing={() => void readListing()}
+      onRetryListing={onRetryListing}
       onAdd={onAdd}
       onPair={onPair}
+      addressOf={addressOf}
+      texts={texts}
+      onWantTexts={onWantTexts}
     />
   );
 }

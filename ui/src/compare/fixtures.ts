@@ -3,7 +3,7 @@
 // runtime/ragondin-api builds it (ARCHITECTURE.md there, § Compare). Test
 // data only; no application module imports it.
 import type { Comparison, DeltaBin, DeltaBinName, MetricDeltas, StageCell, StageNode } from '../api/types.ts';
-import { int, str } from '../parameters.ts';
+import { float, int, str } from '../parameters.ts';
 
 const hex = (c: string) => c.repeat(64);
 export const DENSE = hex('d');
@@ -88,10 +88,20 @@ export const COMPARISON: Comparison = {
     kind: 'compared',
     same_logical_form: false,
     parameters: [
+      { node: 'bm25', key: { kind: 'component' }, values: [null, str('retriever'), str('retriever')] },
+      { node: 'bm25', key: { kind: 'impl' }, values: [null, str('bm25'), str('bm25')] },
       { node: 'bm25', key: { kind: 'param', name: 'top_k' }, values: [null, int('100'), int('100')] },
       { node: 'dense', key: { kind: 'param', name: 'top_k' }, values: [int('100'), int('100'), int('50')] },
       { node: 'rerank', key: { kind: 'component' }, values: [null, null, str('reranker')] },
       { node: 'rerank', key: { kind: 'impl' }, values: [null, null, str('cross_encoder')] },
+      { node: 'rrf', key: { kind: 'component' }, values: [null, str('fusion'), str('fusion')] },
+      { node: 'rrf', key: { kind: 'impl' }, values: [null, str('rrf'), str('rrf')] },
+      { node: 'rrf', key: { kind: 'param', name: 'k' }, values: [null, int('60'), float(60)] },
+    ],
+    partial_nodes: [
+      { node: 'bm25', present: [false, true, true] },
+      { node: 'rerank', present: [false, false, true] },
+      { node: 'rrf', present: [false, true, true] },
     ],
   },
   stages: [

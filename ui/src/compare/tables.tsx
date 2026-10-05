@@ -3,8 +3,8 @@
 // alternative. Every number is the API's; these only lay it out.
 import type { ReactNode } from 'react';
 import { Delta, RunSwatch, Table, type HistogramBin, type RunSeries, type StackSegment, type TableRow } from '../../design/index.ts';
-import type { Comparison, ConfigurationMatrix, MetricRow } from '../api/types.ts';
-import { deltaOf, departures, formatParameter, formatValue, NO_STAGE, parameterName, stageLabel } from './model.ts';
+import type { Comparison, ConfigurationMatrix, MetricRow, ParameterRow } from '../api/types.ts';
+import { configurationRows, deltaOf, departures, formatParameter, formatValue, NO_STAGE, onlyIn, parameterName, stageLabel } from './model.ts';
 
 /** A run's column heading: its swatch, then its letter and pipeline in words. */
 const runColumn = (s: RunSeries) => ({
@@ -22,6 +22,12 @@ const runColumn = (s: RunSeries) => ({
 
 /** The column indices of a row's best runs, by the API's `best`. */
 const bestColumns = (c: Comparison, row: MetricRow) => row.best.map((id) => c.runs.findIndex((r) => r.id === id) + 1).filter((i) => i > 0);
+
+/** The metric table's caption, which the grouped bars name as their table. */
+export const metricsCaption = (c: Comparison) => `Metrics of ${c.runs.length} runs against the baseline`;
+
+/** The stage table's caption, which the stage line names as its table. */
+export const STAGES_CAPTION = 'Stages of each run';
 
 /**
  * The metric table: each run's value, the best of each row in bold, each
@@ -56,10 +62,18 @@ export function MetricsTable({ comparison, series }: { comparison: Comparison; s
       }),
     ],
   }));
-  return <Table region caption={`Metrics of ${comparison.runs.length} runs against the baseline`} columns={[{ id: 'metric', label: 'Metric' }, ...series.map(runColumn)]} rows={rows} />;
+  return <Table region caption={metricsCaption(comparison)} columns={[{ id: 'metric', label: 'Metric' }, ...series.map(runColumn)]} rows={rows} />;
 }
 
-/** The parameter × run matrix: only what differs across the runs, as the API lists it, each departure from the baseline marked. */
+/** The words for a run without a node, in the configuration table. */
+const NO_NODE = 'no such node';
+
+/**
+ * The parameter × run matrix: only what differs across the runs, as the API
+ * lists it, each departure from the baseline marked — and a node some run
+ * lacks as one row saying which runs hold it, never as rows of unset
+ * parameters.
+ */
 export function ParameterMatrix({ configuration, series }: { configuration: ConfigurationMatrix; series: readonly RunSeries[] }) {
   if (configuration.kind === 'unavailable') {
     return (
@@ -71,24 +85,33 @@ export function ParameterMatrix({ configuration, series }: { configuration: Conf
   if (configuration.parameters.length === 0) {
     return <p className="rg-compare__note">{configuration.same_logical_form ? 'Every run has the same configuration.' : 'No parameter differs: the runs differ only in how their nodes are wired.'}</p>;
   }
-  const rows: TableRow[] = configuration.parameters.map((row) => {
+  const departed = (text: string, off: boolean): ReactNode =>
+    off ? (
+      <mark className="rg-compare__departure">
+        {text}
+        <span className="rg-visually-hidden"> (differs from the baseline)</span>
+      </mark>
+    ) : (
+      text
+    );
+  const lacking = <span className="rg-compare__absent">{NO_NODE}</span>;
+  // A node some run lacks: what it is where it is held — its family and implementation — and the words where it is not.
+  const heldAs = (node: string, run: number) => {
+    const value = (key: ParameterRow['key']['kind']) => configuration.parameters.find((r) => r.node === node && r.key.kind === key)?.values[run] ?? null;
+    return [value('component'), value('impl')].flatMap((v) => (v === null ? [] : [formatParameter(v)])).join(' · ');
+  };
+  const rows: TableRow[] = configurationRows(configuration).map((entry) => {
+    if (entry.kind === 'node') {
+      return {
+        id: `${entry.node}/`,
+        cells: [entry.node, onlyIn(entry.present), ...entry.present.map((held, i) => (held ? departed(heldAs(entry.node, i), i !== 0 && held !== entry.present[0]) : lacking))],
+      };
+    }
+    const { row, present } = entry;
     const off = departures(row);
     return {
       id: `${row.node}/${parameterName(row.key)}`,
-      cells: [
-        row.node,
-        parameterName(row.key),
-        ...row.values.map((v, i): ReactNode =>
-          off[i] ? (
-            <mark className="rg-compare__departure">
-              {formatParameter(v)}
-              <span className="rg-visually-hidden"> (differs from the baseline)</span>
-            </mark>
-          ) : (
-            formatParameter(v)
-          ),
-        ),
-      ],
+      cells: [row.node, parameterName(row.key), ...row.values.map((v, i): ReactNode => (present !== null && !present[i] ? lacking : departed(formatParameter(v), off[i] === true && (present === null || present[0] === true))))],
     };
   });
   return (
@@ -122,49 +145,7 @@ export function StageTable({ comparison, series, metric }: { comparison: Compari
       ],
     };
   });
-  return <Table region caption="Stages of each run" columns={[{ id: 'stage', label: 'Stage' }, ...series.map(runColumn)]} rows={rows} />;
-}
-
-/** A chart's values as a table: one row per position, one column per run, a gap in its words. */
-export function ValuesTable({
-  caption,
-  first,
-  rows,
-  series,
-  values,
-  format,
-  gap,
-  best,
-}: {
-  caption: string;
-  first: string;
-  rows: readonly { id: string; label: string }[];
-  series: readonly RunSeries[];
-  /** `values[row][series]`. */
-  values: (row: number, series: number) => number | null;
-  format: (v: number) => string;
-  gap: (row: number, series: number) => string;
-  /** Whether a value is its row's best — the chart's star — so the table says "(best)" for it too. */
-  best?: (row: number, series: number) => boolean;
-}) {
-  return (
-    <Table
-      region
-      caption={caption}
-      columns={[{ id: 'row', label: first }, ...series.map((s) => ({ id: s.id, label: s.label, numeric: true }))]}
-      rows={rows.map((r, i) => ({
-        id: r.id,
-        bestColumn: best === undefined ? [] : series.flatMap((_, s) => (best(i, s) && values(i, s) !== null ? [s + 1] : [])),
-        cells: [
-          r.label,
-          ...series.map((_, s) => {
-            const v = values(i, s);
-            return v === null ? <span className="rg-compare__absent">{gap(i, s)}</span> : format(v);
-          }),
-        ],
-      }))}
-    />
-  );
+  return <Table region caption={STAGES_CAPTION} columns={[{ id: 'stage', label: 'Stage' }, ...series.map(runColumn)]} rows={rows} />;
 }
 
 /** The latency chart as a table: each run's nodes with their median and family. */
