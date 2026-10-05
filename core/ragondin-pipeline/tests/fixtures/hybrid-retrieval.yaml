@@ -12,10 +12,11 @@
 # (INV-1), which is a deliberate act, not a patch. Tracked separately.
 #
 # The `inputs:` declaration arrived with ADR-C18. Note there is still no
-# `version:` key: adding `inputs` did bump `SchemaVersion` (INV-9 — a change to
-# the wire schema's shape never leaves it untouched), but an absent version
-# reads as the one this build writes, so a hand-written configuration may leave
-# it out (a rendered one always states it). Note also that `query_transform` is a component
+# `version:` key: adding `inputs` bumped `SchemaVersion` at the time, a number
+# since retired (before the first release the version stays at 1 and a change
+# to the wire schema's shape is recorded in the crate's schema-version history
+# instead), and an absent version reads as the one this build writes, so a
+# hand-written configuration may leave it out (a rendered one always states it). Note also that `query_transform` is a component
 # family with no `LogicalNode` variant — this level accepts it, because
 # rejecting it is validation's job, not the parser's.
 pipeline:
