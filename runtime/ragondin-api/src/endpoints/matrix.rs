@@ -436,10 +436,7 @@ async fn filled_column(
         }
     };
     let qrels = matches!(ground_truth, GroundTruth::Qrels | GroundTruth::Both);
-    let answers = matches!(
-        ground_truth,
-        GroundTruth::ReferenceAnswers | GroundTruth::Both
-    );
+    let answers = convert::carried(ground_truth).scores_answers();
     let stages = Stages::of(pipeline);
     let figure_of = |id: &NodeId| -> Option<&NodeFigures> {
         figures

@@ -182,10 +182,11 @@ impl CarriedPieces {
     /// Whether a run over this benchmark computes the generation metrics
     /// against reference: whether reference answers are carried.
     pub fn scores_answers(self) -> bool {
-        matches!(
-            self,
-            Self::ReferenceAnswersOnly | Self::QrelsAndReferenceAnswers
-        )
+        // Exhaustive rather than `matches!`: a fifth variant must be placed here.
+        match self {
+            Self::Neither | Self::QrelsOnly => false,
+            Self::ReferenceAnswersOnly | Self::QrelsAndReferenceAnswers => true,
+        }
     }
 
     /// Whether a pipeline can be scored on this benchmark, given whether it

@@ -619,8 +619,8 @@ pub(crate) fn ground_truth(carries: CarriedPieces) -> GroundTruth {
 }
 
 /// The pieces a listed ground truth stands for: [`ground_truth`] read back,
-/// so `prefix::scorable` can ask `CarriedPieces::scorable` rather than
-/// restate it.
+/// so `prefix::scorable` and the pipeline matrix ask `CarriedPieces` rather
+/// than restate ADR-C30 § 5.
 pub(crate) fn carried(ground_truth: GroundTruth) -> CarriedPieces {
     match ground_truth {
         GroundTruth::None => CarriedPieces::Neither,
