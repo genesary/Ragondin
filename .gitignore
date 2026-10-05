@@ -36,3 +36,6 @@ __pycache__/
 # assets; how the binary handles a missing ui/dist/ is the embedding's concern.
 ui/node_modules/
 ui/dist/
+
+# macOS Finder metadata
+.DS_Store
