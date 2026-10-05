@@ -37,6 +37,7 @@ ui/
 │   ├── App.tsx          # the shell: top bar, workspace read, build handshake, the screen the address shows
 │   ├── metrics.ts       # the metric a view opens on, one rule for every screen
 │   ├── parameters.ts    # a parameter value, one rule for every screen: built and drawn with its kind
+│   ├── words.tsx        # text written with backticks, drawn with code spans: one rule for every screen
 │   ├── routes.ts        # the URL state contract: the six screens and what each carries in the hash
 │   ├── build-identity.d.ts  # declares the build identity vite.config.ts bakes in
 │   ├── shell/           # the shell's parts: screens' empty states, the four states, workspace, theme, storage, handshake
@@ -46,7 +47,7 @@ ui/
 │   ├── compare/         # the Compare screen: what it draws from one comparison, the run bar, the tables, the pairing panel, the screen
 │   ├── replay/          # the Replay screen: what it draws from a trace, the query selector, the inspector, the screen, and the run picker before a run is chosen
 │   ├── setup/           # the Setup screen: the workspace, the benchmarks, the services, this build, the first launch, its two forms
-│   ├── editor/          # the Editor screen: the typed document, the store with undo, the port rules, live validation, saving and its prompts, import, export, fork, the first-launch example, what each node takes, the palette, the inspector, the menus
+│   ├── editor/          # the Editor screen: the typed document, the store with undo, the port rules, live validation, saving and its prompts, import, export, fork, the first-launch example, what each node takes, the palette, the inspector, the menus, the pipeline picker and the recent pipelines
 │   ├── canvas/          # the pipeline canvas: node card, ports, edges, legend, layout; the only importer of the canvas library
 │   └── api/             # the only module that may touch the network
 │       ├── base.ts      # the API's base address, '/api/v1'
