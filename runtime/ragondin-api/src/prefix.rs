@@ -229,6 +229,80 @@ pipeline:
         );
     }
 
+    /// A true diamond: one leg read by two rerankers, whose rankings a fusion
+    /// joins, then a context and an answer.
+    const DIAMOND: &str = "\
+pipeline:
+  inputs: [question]
+  nodes:
+    - id: lexical
+      component: retriever
+      impl: bm25
+      inputs: [question]
+    - id: first
+      component: reranker
+      impl: cross_encoder
+      inputs: [question, lexical]
+    - id: second
+      component: reranker
+      impl: cross_encoder
+      inputs: [question, lexical]
+    - id: fused
+      component: fusion
+      impl: rrf
+      inputs: [first, second]
+    - id: concat
+      component: context_builder
+      impl: concat
+      inputs: [question, fused]
+    - id: generate
+      component: generator
+      impl: answerer
+      inputs: [question, concat]
+";
+
+    #[test]
+    fn a_node_two_kept_nodes_read_is_kept_once_in_a_diamond() {
+        assert_eq!(
+            node_ids(&cut_at(DIAMOND, "fused")),
+            ["lexical", "first", "second", "fused"]
+        );
+        assert_eq!(node_ids(&cut_at(DIAMOND, "first")), ["lexical", "first"]);
+    }
+
+    #[test]
+    fn the_truncation_keeps_every_declared_input_however_many() {
+        // The wire schema reads two declared inputs; validation then refuses
+        // them, so the cut of such a document is refused as the document is.
+        // The truncation itself drops none of them.
+        let raw = validation::read(
+            "\
+pipeline:
+  inputs: [question, filter]
+  nodes:
+    - id: lexical
+      component: retriever
+      impl: bm25
+      inputs: [question]
+    - id: filtered
+      component: retriever
+      impl: bm25
+      inputs: [filter]
+    - id: fused
+      component: fusion
+      impl: rrf
+      inputs: [lexical, filtered]
+",
+        )
+        .expect("the wire schema reads two inputs");
+
+        let cut = truncate(&raw, "lexical");
+
+        assert_eq!(cut.pipeline.inputs, ["question", "filter"]);
+        let ids: Vec<&str> = cut.pipeline.nodes.iter().map(|n| n.id.as_str()).collect();
+        assert_eq!(ids, ["lexical"]);
+    }
+
     #[test]
     fn the_four_refusals_name_the_node() {
         let refused = |up_to: &str| cut("p", HYBRID_RERANK_GEN, up_to).unwrap_err();
