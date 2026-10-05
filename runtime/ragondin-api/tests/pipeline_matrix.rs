@@ -232,6 +232,17 @@ fn app(test: &str, documents: &[(&str, &str)], runs: Vec<Run>) -> Server {
 /// [`app`] over the workspace `workspace`, which a test may have given a
 /// `jobs/` directory first.
 fn app_in(workspace: &std::path::Path, documents: &[(&str, &str)], runs: Vec<Run>) -> Server {
+    app_pinning(workspace, documents, runs, &[])
+}
+
+/// [`app_in`] with the benchmarks `also` pinned beside the three, under
+/// names of their own.
+fn app_pinning(
+    workspace: &std::path::Path,
+    documents: &[(&str, &str)],
+    runs: Vec<Run>,
+    also: &[(&str, Benchmark)],
+) -> Server {
     let mut backends = fakes(FakeRunStore::holding(runs));
     backends.pipelines = Arc::new(HeldPipelines {
         files: documents
@@ -239,11 +250,16 @@ fn app_in(workspace: &std::path::Path, documents: &[(&str, &str)], runs: Vec<Run
             .map(|(name, document)| ((*name).to_owned(), (*document).to_owned()))
             .collect(),
     });
-    backends.registry = Arc::new(FixtureRegistry::holding([
+    let mut pinned = vec![
         ("beir/scifact".to_owned(), scifact()),
         ("squad/dev".to_owned(), squad()),
         ("beir/nq".to_owned(), nq()),
-    ]));
+    ];
+    pinned.extend(
+        also.iter()
+            .map(|(name, benchmark)| ((*name).to_owned(), benchmark.clone())),
+    );
+    backends.registry = Arc::new(FixtureRegistry::holding(pinned));
     router_over(backends, workspace)
 }
 
@@ -1027,6 +1043,18 @@ async fn a_pipeline_ending_in_an_answer_reads_no_dataset_it_never_ran_on() {
 /// A run job of `document` on `benchmark`, created at `created`, in `state`,
 /// as the queue writes it under `jobs/`.
 fn job(id: &str, created: u64, document: &str, benchmark: &str, state: Value) -> Value {
+    job_up_to(id, created, document, benchmark, state, None)
+}
+
+/// [`job`], run up to the node `up_to` when it names one.
+fn job_up_to(
+    id: &str,
+    created: u64,
+    document: &str,
+    benchmark: &str,
+    state: Value,
+    up_to: Option<&str>,
+) -> Value {
     serde_json::json!({
         "id": id,
         "position": created,
@@ -1038,7 +1066,7 @@ fn job(id: &str, created: u64, document: &str, benchmark: &str, state: Value) ->
             "pipeline": document,
             "benchmark": benchmark,
             "bindings": [],
-            "up_to": null,
+            "up_to": up_to,
         },
         "state": state,
         "history": [{ "state": state["kind"], "at": created }],
@@ -1119,4 +1147,188 @@ async fn a_benchmark_whose_last_attempt_of_the_current_form_failed_names_that_jo
         cell(&body, column(&body, "beir/nq"), "rerank")["kind"],
         "not_run_yet"
     );
+}
+
+/// The workspace `test`, its `jobs/` directory holding `jobs`.
+fn workspace_with_jobs(test: &str, jobs: &[Value]) -> std::path::PathBuf {
+    let workspace = scratch(test);
+    let directory = workspace.join("jobs");
+    std::fs::create_dir_all(&directory).unwrap();
+    for job in jobs {
+        std::fs::write(
+            directory.join(format!("{}.json", job["id"].as_str().unwrap())),
+            serde_json::to_vec(job).unwrap(),
+        )
+        .unwrap();
+    }
+    workspace
+}
+
+#[tokio::test]
+async fn a_benchmark_a_run_of_the_whole_current_form_measured_names_no_failed_attempt() {
+    // The failure is the most recent attempt, and still the run that measured
+    // the benchmark is what the column says. A prefix run measures it only up
+    // to its stop, so there the failed attempt of the whole form is named.
+    let workspace = workspace_with_jobs(
+        "matrix-failed-after-measured",
+        &[
+            job(
+                "sci-failed",
+                5_000,
+                HYBRID_RERANK_GEN,
+                "beir/scifact",
+                failed("later"),
+            ),
+            job(
+                "nq-failed",
+                5_000,
+                HYBRID_RERANK_GEN,
+                "beir/nq",
+                failed("later"),
+            ),
+        ],
+    );
+    let body = matrix_of(app_in(
+        &workspace,
+        &[(NAME, HYBRID_RERANK_GEN)],
+        vec![
+            run(1, HYBRID_RERANK_GEN, &scifact(), "sci", Some(1_000)),
+            launched(
+                run(2, UP_TO_RERANK, &nq(), "nq", Some(1_000)),
+                RunProvenance::prefix(NAME, PrefixOf::new("rerank", hash_of(HYBRID_RERANK_GEN))),
+            ),
+        ],
+    ))
+    .await;
+
+    let scifact = column(&body, "beir/scifact");
+    assert_eq!(scifact["run"], id(1));
+    assert_eq!(scifact["failed_attempt"], Value::Null);
+    let nq = column(&body, "beir/nq");
+    assert_eq!(nq["run"], id(2));
+    assert_eq!(nq["failed_attempt"]["job"], "nq-failed");
+}
+
+#[tokio::test]
+async fn only_a_job_running_the_whole_pipeline_is_a_failed_attempt() {
+    // A failed "Run up to this node" is a prefix's failure, not an attempt of
+    // the whole current form.
+    let workspace = workspace_with_jobs(
+        "matrix-failed-prefix-job",
+        &[job_up_to(
+            "nq-prefix-failed",
+            5_000,
+            HYBRID_RERANK_GEN,
+            "beir/nq",
+            failed("the reranker failed"),
+            Some("rerank"),
+        )],
+    );
+    let body = matrix(
+        app_in(&workspace, &[(NAME, HYBRID_RERANK_GEN)], vec![]),
+        &format!("/api/v1/pipelines/{NAME}/matrix?include_available=true"),
+    )
+    .await;
+
+    assert_eq!(column(&body, "beir/nq")["failed_attempt"], Value::Null);
+}
+
+#[tokio::test]
+async fn a_benchmark_with_only_earlier_content_runs_a_pipeline_cannot_be_scored_on_reads_not_scorable(
+) {
+    let earlier = UP_TO_RERANK.replace("top_k: 50", "top_k: 10");
+    let body = matrix(
+        app(
+            "matrix-since-changed-not-scorable",
+            &[(RETRIEVAL_ONLY, UP_TO_RERANK)],
+            vec![
+                launched(
+                    run(1, &earlier, &squad(), "sq", Some(1_000)),
+                    RunProvenance::named(RETRIEVAL_ONLY),
+                ),
+                launched(
+                    run(2, &earlier, &nq(), "nq", Some(1_000)),
+                    RunProvenance::named(RETRIEVAL_ONLY),
+                ),
+            ],
+        ),
+        &format!("/api/v1/pipelines/{RETRIEVAL_ONLY}/matrix"),
+    )
+    .await;
+
+    // Not scorable on squad/dev whatever ran there before: never missing.
+    for cell in column(&body, "squad/dev")["cells"].as_array().unwrap() {
+        assert_eq!(cell, &serde_json::json!({"kind": "not_scorable"}));
+    }
+    // On a benchmark it can be scored on, the earlier run is linked.
+    assert_eq!(
+        cell(&body, column(&body, "beir/nq"), "rerank"),
+        &serde_json::json!({"kind": "not_run_on_this_version", "run": id(2)})
+    );
+    let missing: Vec<&Value> = body["missing"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|missing| &missing["benchmark"])
+        .collect();
+    assert_eq!(missing, ["beir/nq"]);
+}
+
+#[tokio::test]
+async fn a_column_of_two_names_takes_the_most_recent_attempt_under_either() {
+    // scifact is pinned also as `alias/scifact`, nq also as `alias/nq`: one
+    // column each, whose attempt is the most recent under either name.
+    let workspace = workspace_with_jobs(
+        "matrix-failed-two-names",
+        &[
+            // scifact: the later attempt failed, under the name sorted first.
+            job(
+                "sci-alias-ok",
+                5_000,
+                HYBRID_RERANK_GEN,
+                "alias/scifact",
+                serde_json::json!({ "kind": "cancelled", "finished_at": 5_500, "partial_traces": 0 }),
+            ),
+            job(
+                "sci-failed",
+                6_000,
+                HYBRID_RERANK_GEN,
+                "beir/scifact",
+                failed("the reranker failed"),
+            ),
+            // nq: the later attempt did not fail, under the name sorted second.
+            job(
+                "nq-alias-failed",
+                5_000,
+                HYBRID_RERANK_GEN,
+                "alias/nq",
+                failed("old"),
+            ),
+            job(
+                "nq-cancelled",
+                6_000,
+                HYBRID_RERANK_GEN,
+                "beir/nq",
+                serde_json::json!({ "kind": "cancelled", "finished_at": 6_500, "partial_traces": 0 }),
+            ),
+        ],
+    );
+    let body = matrix(
+        app_pinning(
+            &workspace,
+            &[(NAME, HYBRID_RERANK_GEN)],
+            vec![],
+            &[("alias/scifact", scifact()), ("alias/nq", nq())],
+        ),
+        &format!("/api/v1/pipelines/{NAME}/matrix?include_available=true"),
+    )
+    .await;
+
+    let scifact = column(&body, "alias/scifact");
+    assert_eq!(
+        scifact["benchmark_names"],
+        serde_json::json!(["alias/scifact", "beir/scifact"])
+    );
+    assert_eq!(scifact["failed_attempt"]["job"], "sci-failed");
+    assert_eq!(column(&body, "alias/nq")["failed_attempt"], Value::Null);
 }
