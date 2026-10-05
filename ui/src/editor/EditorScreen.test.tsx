@@ -18,6 +18,23 @@ const EMPTY_WORKSPACE: Workspace = { ...WORKSPACE, counts: { ...WORKSPACE.counts
 // The editor's chunk loads lazily, then validation waits out its debounce: under a loaded test run that can pass a second.
 const SLOW = 5000;
 
+/**
+ * A node's card on `canvas`, once the library has drawn it. The canvas holds
+ * its own `ReactFlowProvider`, so the library takes the nodes into its store
+ * in an effect: the canvas's region is in the document a commit before its
+ * cards are, and a query made the moment the region appears can find none.
+ */
+function findNode(canvas: HTMLElement, id: string): Promise<HTMLElement> {
+  return waitFor(
+    () => {
+      const node = canvas.querySelector<HTMLElement>(`.react-flow__node[data-id="${id}"]`);
+      if (node === null) throw new Error(`no card for \`${id}\` on the canvas yet`);
+      return node;
+    },
+    { timeout: SLOW },
+  );
+}
+
 function Harness({ name, node, workspace = { status: 'loaded', value: WORKSPACE } }: { name?: string; node?: string; workspace?: RequestState<Workspace> }) {
   const [client] = useState(() => createApiClient());
   return <EditorScreen client={client} name={name} node={node} workspace={workspace} />;
@@ -54,8 +71,7 @@ describe('the Editor screen', () => {
     render(<Harness />);
     expect(await screen.findByRole('heading', { name: 'No pipeline open' })).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Start a new pipeline' }));
-    expect(await screen.findByRole('application', { name: 'Pipeline New pipeline' })).toBeTruthy();
-    expect(screen.getByRole('application', { name: 'Pipeline New pipeline' }).querySelector('.react-flow__node[data-id="query"]')).toBeTruthy();
+    expect(await findNode(await screen.findByRole('application', { name: 'Pipeline New pipeline' }), 'query')).toBeTruthy();
     const palette = await screen.findByRole('region', { name: 'Palette' });
     expect(within(palette).getByRole('button', { name: /^qwen/ })).toBeTruthy();
     expect(api.requests).toContain('GET /api/v1/services');
@@ -81,7 +97,7 @@ describe('the Editor screen', () => {
     const api = mockApi(STORED);
     render(<Harness name="hybrid" />);
     const canvas = await screen.findByRole('application', { name: 'Pipeline hybrid' }, { timeout: SLOW });
-    expect(canvas.querySelector('.react-flow__node[data-id="fused"]')).toBeTruthy();
+    expect(await findNode(canvas, 'fused')).toBeTruthy();
     expect(api.requests).toContain('GET /api/v1/pipelines/hybrid');
     await waitFor(() => expect(api.requests).toContain('POST /api/v1/pipelines/validate'), { timeout: SLOW });
     expect(api.bodies[api.requests.indexOf('POST /api/v1/pipelines/validate')]).toEqual({ typed: HYBRID });
@@ -105,7 +121,7 @@ describe('the Editor screen', () => {
     render(<Harness name="hybrid" node="lexical" />);
     expect(await screen.findByRole('complementary', { name: 'lexical' }, { timeout: SLOW })).toBeTruthy();
     const canvas = screen.getByRole('application', { name: 'Pipeline hybrid' });
-    fireEvent.click(canvas.querySelector('.react-flow__node[data-id="vectors"]')!);
+    fireEvent.click(await findNode(canvas, 'vectors'));
     await waitFor(() => expect(window.location.hash).toBe('#editor/hybrid/node/vectors'), { timeout: SLOW });
   });
 
@@ -129,7 +145,7 @@ describe('the Editor screen', () => {
     render(<Harness name="hybrid" />);
     const canvas = await screen.findByRole('application', { name: 'Pipeline hybrid' }, { timeout: SLOW });
     expect(api.requests).toContain('GET /api/v1/pipelines/hybrid/layout');
-    expect(canvas.querySelector<HTMLElement>('.react-flow__node[data-id="lexical"]')!.style.transform).toContain('1600px');
+    expect((await findNode(canvas, 'lexical')).style.transform).toContain('1600px');
     fireEvent.click(within(screen.getByRole('region', { name: 'Palette' })).getByRole('button', { name: /^rrf/ }));
     await waitFor(() => expect(api.requests).toContain('PUT /api/v1/pipelines/hybrid'), { timeout: SLOW });
     expect(api.headers[api.requests.indexOf('PUT /api/v1/pipelines/hybrid')]!['If-Match']).toBe(`"${'e'.repeat(64)}"`);
@@ -160,7 +176,7 @@ describe('the Editor screen', () => {
     window.location.hash = '#editor';
     render(<Routed />);
     const canvas = await screen.findByRole('application', { name: 'Pipeline Example pipeline' }, { timeout: SLOW });
-    expect(canvas.querySelector('.react-flow__node[data-id="lexical"]')).toBeTruthy();
+    expect(await findNode(canvas, 'lexical')).toBeTruthy();
     await waitFor(() => expect(api.requests).toContain('POST /api/v1/pipelines/validate'), { timeout: SLOW });
     expect((api.bodies[api.requests.indexOf('POST /api/v1/pipelines/validate')] as { typed: unknown }).typed).toEqual(exampleDocument(WORKSPACE.capabilities));
     await new Promise((resolve) => setTimeout(resolve, 600));
