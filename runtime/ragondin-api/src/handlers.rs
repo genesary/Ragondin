@@ -25,8 +25,8 @@ use crate::fs::jobs_of;
 use crate::jobs::Queue;
 use crate::request::{MissingGoldAt, RunQueriesParameters};
 use crate::response::{
-    BenchmarkState, QueryScores, QueryTrace, RunDetail, RunListing, RunQueries, SettingsSummary,
-    UnreadableRun, Workspace, WorkspaceCounts,
+    BenchmarkState, PrefixOf, QueryScores, QueryTrace, RunDetail, RunListing, RunQueries,
+    SettingsSummary, UnreadableRun, Workspace, WorkspaceCounts,
 };
 use crate::{cache, convert, lineage, ServerConfig};
 
@@ -146,11 +146,18 @@ pub(crate) async fn runs(
             shapes: BTreeMap::new(),
             cache_error: None,
         };
+        // One canonical hash is one canonical form: each pipeline is lowered
+        // once, from the first of its runs whose document lowers, and its
+        // shape and its prefix relation are read off that one lowering.
+        let mut prefixes: HashMap<String, Vec<PrefixOf>> = HashMap::new();
         for run in runs {
             let hash = run.inputs.pipeline.to_string();
-            if !listing.shapes.contains_key(&hash) {
-                if let Some(shape) = convert::shape(&run) {
-                    listing.shapes.insert(hash.clone(), shape);
+            if !prefixes.contains_key(&hash) {
+                if let Ok(pipeline) = lower_configuration(&run.config) {
+                    listing
+                        .shapes
+                        .insert(hash.clone(), convert::graph(&pipeline));
+                    prefixes.insert(hash.clone(), convert::prefixes(&index, &pipeline));
                 }
             }
             let (latency, failure) = latency(&workspace, &build, &run);
@@ -159,6 +166,7 @@ pub(crate) async fn runs(
                 &run,
                 &index,
                 index.by_hash.get(&hash).cloned().unwrap_or_default(),
+                prefixes.get(&hash).cloned().unwrap_or_default(),
                 benchmarks
                     .get(&run.inputs.dataset_version)
                     .cloned()

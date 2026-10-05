@@ -193,6 +193,16 @@ pub struct RunSummary {
     /// never resolved with [`pipeline_names`](Self::pipeline_names) into one
     /// name.
     pub launched_as: Option<LaunchedAs>,
+    /// Every current workspace document the run's pipeline is a structural
+    /// prefix of — its declared inputs the same, each of its nodes one of the
+    /// document's, equal in canonical form, and fewer of them — each with the
+    /// node the run stops at, sorted by name; empty when it is a prefix of
+    /// none, or its stored document no longer lowers. A content fact like
+    /// [`pipeline_names`](Self::pipeline_names), asked of every run whatever
+    /// [`launched_as`](Self::launched_as) records (ADR-C39 § 5), so a prefix
+    /// written by hand and run from the command line is one too; the pipeline
+    /// matrix counts a prefix by the same test.
+    pub prefix_of_documents: Vec<PrefixOf>,
     /// The benchmark dataset's version.
     pub dataset_version: String,
     /// Every registry entry pinned to [`dataset_version`](Self::dataset_version)
@@ -275,7 +285,9 @@ pub struct RunDetail {
     /// The run's launch record, as [`RunSummary::launched_as`] serves it;
     /// `null` for a run stored without one. A prefix run says what it was
     /// cut from here, in the record's `prefix_of`: the parent's name, the
-    /// node it stops at and the parent's canonical hash.
+    /// node it stops at and the parent's canonical hash. A prefix written by
+    /// hand, with no such record, shows only through `GET /runs`'
+    /// `prefix_of_documents`.
     pub launched_as: Option<LaunchedAs>,
 }
 
@@ -1832,8 +1844,15 @@ pub enum JobWork {
         benchmark: String,
         /// The `Remote` bindings in force at submission.
         bindings: Vec<ServiceBinding>,
-        /// The node a prefix run stops after; `null` for a whole run.
+        /// The node a prefix run stops at; `null` for a whole run. The
+        /// pipeline is then the parent's name, and the job ran the parent's
+        /// document cut at this node.
         up_to: Option<String>,
+        /// For a prefix run, the canonical hash of the parent document the
+        /// cut was made from at submission; `null` for a whole run. Beside
+        /// `up_to`, the prefix's provenance, never part of the run's
+        /// identity.
+        parent_pipeline_hash: Option<String>,
     },
     /// A benchmark download, on the download lane.
     Download {

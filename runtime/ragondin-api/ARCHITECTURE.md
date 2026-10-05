@@ -36,7 +36,8 @@ the response types, the typed errors, and the traits the service consumes.
 | `cache` | The workspace's `cache/`: those derived figures, reconstructible, never a truth |
 | `endpoints` | The handlers of the workspace's endpoints — pipelines, benchmarks, services — and of `POST /compare` and `GET /pipelines/{name}/matrix` |
 | `stages` | A pipeline's stages, derived from its nodes' kinds and positions, by which a comparison aligns runs |
-| `lineage` | The current workspace documents whose canonical hash is a run's — ADR-C39 § 4's content fact, served beside the run's launch record by `GET /runs` and the pipeline matrix — and the structural prefix test, `is_prefix` |
+| `lineage` | The current workspace documents whose canonical hash is a run's — ADR-C39 § 4's content fact, served beside the run's launch record by `GET /runs` and the pipeline matrix — and the structural prefix test, `is_prefix`, with `Index::prefixes`, every current document a run is a prefix of |
+| `prefix` | "Run up to a node": a workspace document cut at a node on the wire schema, the refusals of a cut that cannot be a prefix, and whether a benchmark can score it (§ Prefix runs) |
 | `comparison` | The runs aligned by stage with the pairs drawn by hand, the pairs a run cannot place, the best node of a stage per metric, a node's gain over the previous stage, and the bins of the per-query deltas |
 | `matrix` | The most-recent-run rule and the topological order of the pipeline matrix's rows |
 | `validation` | A pipeline document checked as `ragondin validate` checks a file |
@@ -573,8 +574,10 @@ in `tests/workspace_toml.rs`:
 which `LocalFile` calls on a file's contents: the version peeked, the document
 parsed into `RawPipeline` (INV-9: the wire schema, never an internal type),
 `validate` — and renders `content_hash` over the canonical logical form
-(INV-8). It is the one place this crate renders a document's hash: the
-listing, a write and `lineage.rs` all read it there. `bin/ragondin`'s
+(INV-8). The listing and a write read a document's hash there; a reader
+that needs the lowered form as well — `lineage.rs`'s index, the pipeline
+matrix, a prefix cut — calls `validation::lower` and takes `content_hash` of
+what it returns: the same load, so the same hash. `bin/ragondin`'s
 `tests/ui.rs` posts every fixture configuration under `bin/ragondin/tests`,
 and one document per refusal the load can make, and compares the answer with
 what `ragondin validate` prints for the same file: the hash, or the refusal
@@ -782,11 +785,94 @@ lock, so two submissions of one id cannot both be accepted. Otherwise the
 answer is `202 {job_id, run_id}`. The job stores the announced id beside the
 pipeline snapshot, as it was announced — it never computes one (INV-8).
 
+With `up_to`, the document is cut at that node first, and the cut is what is
+validated, announced and snapshotted (§ Prefix runs).
+
 When `execute` returns, the worker files the `Run` with `RunStore::save`, as
 one block, **under the id the run carries** — the one the harness computed
 from what ran. When it is not the announced one, the job's `done` state
 records both (`id_mismatch: {announced, decided}`), and no run is filed under
 the announced id (ADR-C36 § 1, P4).
+
+### Prefix runs
+
+"Run up to a node" (ADR-C36 § 7) is an ordinary run of an ordinary pipeline:
+the workspace document cut at that node. `POST /runs` with `up_to` (`prefix.rs`):
+
+- **The cut is made on the wire schema** (INV-9): the document is read into
+  `RawPipeline` (`validation::read`, the load's first half), and the cut
+  keeps the node, every node it reads transitively — in the document's
+  order — and the declared inputs; every other node goes, a node read only by
+  dropped nodes included. It is rendered by `ragondin-config`'s
+  `render_document` and loaded back through the one load, so the hash the
+  launcher announces is the canonical form of exactly the text the job
+  snapshots, the one `ragondin validate` prints for that text in a file
+  (INV-8). Nothing beyond `ragondin-pipeline`'s public surface is used
+  (INV-1).
+- **Which node it stops at is read off the parent's lowered graph**, and
+  three cuts are refused, each a 422 naming the node in `location`:
+  `prefix_node_not_found` for a node the document does not have — a declared
+  input is not a node; `prefix_is_whole_pipeline` for the pipeline's output,
+  `ragondin_experiments::terminal`, the node no other node reads; and
+  `prefix_ends_in_context` for a context builder, since a context is scored
+  by nothing unless a generator follows (ADR-C30 § 3).
+- **A cut whose output is not an answer is refused on a benchmark that
+  carries reference answers**, `prefix_not_scorable`. This restates ADR-C30
+  § 5 — the rule the harness applies once a run starts — from the same two
+  facts the harness reads: the benchmark's `carries()`, through
+  `ragondin-benchmarks`' `CarriedPieces`, and the cut node's
+  `ragondin-pipeline` `produced_kind`. The ground truth is
+  `Registry::verify`'s, read off the loaded dataset; the file backend finds
+  an import by its record and verifies it alone, reading no other
+  benchmark's files. The harness itself is not a dependency (INV-12), and
+  this is a second statement of its rule, not a call into it (below). A
+  benchmark the registry does not know is `benchmark_not_found`; one whose
+  ground truth was not read — nothing on disk loaded — is left to the
+  launcher, which reads the dataset itself.
+- **The parent is provenance, never identity** (ADR-C39). The `Submission`
+  keeps `pipeline_name` as the parent's name and `up_to`, and carries
+  `parent_pipeline_hash`, the canonical hash of the parent document at
+  submission; the job records both beside the cut (`jobs/<id>.json`'s
+  `parent_pipeline_hash`, read as absent from a file written before it, and
+  `JobWork::Run`'s), and the binary copies them into the run's launch record
+  as `prefix_of` on the shared execution path — this crate stamps nothing.
+  The run id is the cut's own, so two prefixes of different parents that are
+  the same document are one run, and the second is `run_exists`.
+
+**The prefix relation** a screen reads is the recorded one and the structural
+one, never resolved into one: the run's `launched_as.prefix_of` (ADR-C39
+§ 1), and `GET /runs`' `prefix_of_documents`, every current document the
+run's pipeline is a prefix of by `lineage::is_prefix` — asked of every run,
+whatever its record says (ADR-C39 § 5), so a prefix written by hand and run
+from the command line is one too, and a run recorded as a prefix of one
+parent is listed under another document it is also a prefix of. The pipeline
+matrix counts a prefix by the same test (§ The pipeline matrix).
+
+Choices made here:
+
+- **`GET /runs/{id}` serves the record alone**, not `prefix_of_documents`:
+  it lists no `pipelines/`, so it stays one run's read that a broken
+  document cannot fail — the rule its `launched_as.held: unchecked` follows.
+  Every screen that labels a prefix reads `GET /runs` already.
+- **The structural test is computed on each `GET /runs`, not cached** under
+  `cache/`. Its cost is one lowering per workspace document — which the
+  listing makes anyway for its hash matches — one lowering per distinct
+  pipeline hash among the runs, shared with that hash's shape, and a
+  comparison of lowered nodes per pair of the two: it grows with pipelines,
+  not with runs. Not measured against a large store; a cache would be one
+  more key to keep right, and is the remedy if it shows.
+- **The scorability rule is restated here, not reached through
+  `Launcher`.** #357's INV-12 line asked that the check at submission reuse
+  the harness's rule as `Launcher` reports it, not a copy of the harness;
+  `Launcher` reports no such rule, and the binary was out of the issue's
+  scope beyond one copy. So `prefix::scorable` states ADR-C30 § 5 again from
+  the same `carries()` and `produced_kind` the harness reads — a second
+  statement of one rule, which the repository owner accepted on #357, until
+  #468 gives the rule a single definition both read.
+- **The benchmark check runs for a prefix run only.** A whole pipeline ending
+  in chunks on a benchmark with reference answers is the same refusal, but
+  it is the harness's to make for a document a person wrote whole; the
+  check is here because the cut is this crate's.
 
 ### Persistence: `jobs/` is the write-ahead record
 
@@ -930,7 +1016,7 @@ Recorded as `AGENTS.md` § Rules of engagement asks of a choice that does not
 escalate:
 
 - **The submission carries no bindings.** `POST /runs` takes the pipeline's
-  name, the benchmark and `up_to`; the bindings are the workspace's in force,
+  name, the benchmark and `up_to` (§ Prefix runs); the bindings are the workspace's in force,
   the ones `GET /services` lists, snapshotted into the job. The UI shows
   them read-only (#354), so sending them back would be a second source of
   the same fact. The document is snapshotted the same way: an edit after
@@ -987,10 +1073,11 @@ producer, consumer, port and the kind of value its producer puts on it — the
 query for a declared input, and otherwise `produced_kind` of the producing
 node. The nodes come in the canonical order (by id), the edges grouped by
 consuming node, in port order. A prefix run says what it was cut from in
-`launched_as.prefix_of` (below), the one place it is said: ADR-C39 § 2 makes
-a prefix a cut of a pipeline's version — the parent's name, the node it
-stops at and the parent's canonical hash — never a relation between two
-runs.
+`launched_as.prefix_of` (below), the one place its launch says it: ADR-C39
+§ 2 makes a prefix a cut of a pipeline's version — the parent's name, the
+node it stops at and the parent's canonical hash — never a relation between
+two runs. The listing adds the content fact beside it, `prefix_of_documents`
+(below).
 
 **A run the store lists and cannot load** is listed in `GET /runs` under
 `unreadable`, with the store's reason, rather than dropped or failing the whole
@@ -1039,6 +1126,15 @@ listing — reported, never repaired.
   fail — Replay reads it — and sends `unchecked`, a value of its own, so
   `null` keeps its one meaning. A fact about the name, never the
   content.
+- `prefix_of_documents`: every current workspace document the run's lowered
+  graph is a structural prefix of (`lineage::Index::prefixes`, over
+  `is_prefix`), each `{pipeline, up_to}` — the node the run stops at, its
+  output — sorted by name; empty when none is, or when none of the stored
+  documents of its canonical hash lowers. Read off the one lowering per
+  canonical hash the listing makes for the shapes (below): one canonical
+  form, one relation. Read from the same listing of `pipelines/` as
+  `pipeline_names`, and asked of every run whatever its record says
+  (§ Prefix runs).
 - `benchmark_names`: every registry entry pinned to the run's
   `dataset_version`, a manifest entry or an import, sorted — the pinning
   `Registry::dataset` locates by, read through `Registry::pinned`, which
@@ -1060,11 +1156,12 @@ listing — reported, never repaired.
   preparation too.
 
 `RunListing::shapes` carries each listed pipeline's graph once, keyed by its
-canonical hash, by the conversion `GET /runs/{id}` serves (`convert::shape`
-and `convert::detail` share `graph`), so a screen draws every group's shape
+canonical hash, by the conversion `GET /runs/{id}` serves (`convert::graph`,
+which `convert::detail` calls too), so a screen draws every group's shape
 from the listing. One canonical hash is one canonical form and so one graph;
-it is lowered from the first of its runs whose document lowers, and a
-pipeline none of whose documents lowers has no entry. The workspace's
+it is lowered once, from the first of its runs whose document lowers — the
+lowering its runs' `prefix_of_documents` are read off too — and a pipeline
+none of whose documents lowers has no entry. The workspace's
 pipelines and the registry's pins are each read once per request, and a
 failure of either fails the listing, by design, rather than answering with
 every name list silently empty. A cache that fails does not: its first
@@ -1218,7 +1315,7 @@ ADR-C37 decides:
 `ApiError` is typed with `thiserror` (ADR-C13); `anyhow` is not a dependency.
 Each variant renders as `application/problem+json` — `type`
 (`urn:ragondin:problem:<code>`), `title`, `status`, `detail`, `code`, `hint`,
-`location` for a validation failure, and `name` for a `parameter_invalid`
+`location` for a validation failure or a refused prefix cut, and `name` for a `parameter_invalid`
 whose parameter is known — absent otherwise, never guessed (§ Request input
 goes through one extractor module). `ApiError::CODES` lists them. A code
 no handler raises yet still exists, so a later endpoint adds a handler, not a
@@ -1258,6 +1355,10 @@ code.
 | `job_finished` | 409 | a cancellation of a job that already ended | `DELETE /jobs/{id}` |
 | `job_not_ended` | 409 | a read of the partial traces of a job still queued or running; the detail names its state | `GET /jobs/{id}/queries`, `GET /jobs/{id}/trace/{query}` |
 | `no_partial_traces` | 404 | a read of the partial traces of a job that has none: done, a download, or a run that kept none — interrupted by a crash, stopped before its first query, or whose traces could not be written; the detail says which | `GET /jobs/{id}/queries`, `GET /jobs/{id}/trace/{query}` |
+| `prefix_node_not_found` | 422 | a prefix run's `up_to` names no node of the document — a declared input is not a node; `location` names it | `POST /runs` |
+| `prefix_is_whole_pipeline` | 422 | a prefix run's `up_to` is the pipeline's output: the prefix would be the whole pipeline; `location` names it | `POST /runs` |
+| `prefix_ends_in_context` | 422 | a prefix run's `up_to` is a context builder, whose context nothing scores; `location` names it | `POST /runs` |
+| `prefix_not_scorable` | 422 | a prefix run whose output is not an answer, on a benchmark that carries reference answers — ADR-C30 § 5 restated at submission from the same `carries()` and `produced_kind` the harness reads; `location` names the node | `POST /runs` |
 
 Choices made here (`AGENTS.md` § Rules of engagement), since the design
 document § 8 lists seven codes and leaves the rest to the implementation:
@@ -1329,6 +1430,13 @@ document § 8 lists seven codes and leaves the rest to the implementation:
   `query_not_found` itself is shared with the run endpoints, its `owner` and
   `listing` naming whose traces were looked in and where to pick a query:
   the client's action is the same.
+- **Four codes for a prefix run's cut** (§ Prefix runs), 422s like
+  `pipeline_invalid` — the request names something the document or the
+  benchmark refuses — and four rather than one because each is a different
+  correction: another node, the whole pipeline, the node before the context
+  builder, another benchmark. Each names its node in `location`, as a
+  validation failure does, so the launch panel says where without parsing
+  the detail.
 - **`runs_not_comparable` for `POST /compare`**, a 409 as the issue that
   added it asked: `pipeline_invalid` would tell the client a document is
   wrong, and `request_invalid` that the body is — here the request is

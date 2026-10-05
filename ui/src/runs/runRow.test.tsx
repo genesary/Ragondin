@@ -23,6 +23,7 @@ const done = (over: Partial<RunRow> = {}): RunRow => ({
   latencyMs: null,
   startedAt: null,
   prefix: null,
+  contentPrefix: null,
   job: null,
   announced: null,
   ...over,
@@ -156,9 +157,15 @@ describe('a done run', () => {
     expect(within(tr).getAllByRole('cell')).toHaveLength(4);
   });
 
-  it('labels a prefix run with the node it stops at', () => {
-    show(done({ launchedAs: 'hybrid', prefix: { parent: 'hybrid', upTo: 'rerank' } }));
-    expect(screen.getByText('prefix up to rerank')).toBeTruthy();
+  it('labels a prefix run with its parent and the node it stops at', () => {
+    show(done({ launchedAs: 'hybrid', prefix: { parents: ['hybrid'], upTo: 'rerank' } }));
+    expect(screen.getByText('prefix of hybrid, up to rerank')).toBeTruthy();
+  });
+
+  it('says beside the recorded prefix what its content is a prefix of, when that differs', () => {
+    show(done({ launchedAs: 'hybrid', prefix: { parents: ['hybrid'], upTo: 'rerank' }, contentPrefix: { parents: ['fork'], upTo: 'rerank' } }));
+    expect(screen.getByText('prefix of hybrid, up to rerank')).toBeTruthy();
+    expect(screen.getByText('content: prefix of fork, up to rerank')).toBeTruthy();
   });
 
   it('writes the fact its group is not headed by beside its hash, in words', () => {

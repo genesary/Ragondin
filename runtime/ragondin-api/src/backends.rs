@@ -28,7 +28,7 @@ use ragondin_experiments::{Run, RunId, RunStore, TraceDocument};
 use ragondin_types::QueryId;
 
 use crate::error::ApiError;
-use ragondin_pipeline::LogicalPipeline;
+use ragondin_pipeline::{LogicalPipeline, PipelineHash};
 
 use crate::response::{BenchmarkEntry, Capabilities, Layout, Pairing, ServiceBinding};
 
@@ -642,8 +642,15 @@ pub struct Submission {
     pub benchmark: String,
     /// The `Remote` bindings to run it with.
     pub bindings: Vec<ServiceBinding>,
-    /// The node to stop after, for a prefix run.
+    /// The node a prefix run stops at, for a prefix run: then
+    /// [`pipeline`](Self::pipeline) is the workspace document cut at it, and
+    /// [`pipeline_name`](Self::pipeline_name) the parent's name.
     pub up_to: Option<String>,
+    /// For a prefix run, the canonical hash of the parent document the cut
+    /// was made from, at submission: with [`up_to`](Self::up_to), the launch
+    /// record's `prefix_of` (ADR-C39 § 1, § 3). Provenance, never identity:
+    /// the run id is the cut's own (INV-8).
+    pub parent_pipeline_hash: Option<PipelineHash>,
 }
 
 #[cfg(test)]

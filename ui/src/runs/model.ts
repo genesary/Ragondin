@@ -5,7 +5,7 @@
 // than add a second row shape. A field the listing does not carry stays null
 // and its column or label is not drawn: nothing here is invented to fill a
 // cell. ARCHITECTURE.md § The Runs screen.
-import { familyOfComponent, type Family } from '../../design/index.ts';
+import { familyOfComponent, prefixWords, type Family } from '../../design/index.ts';
 import type { Graph, MetricFamily, NameHeld, RunListing, RunRequest, RunSummary } from '../api/types.ts';
 import type { Route } from '../routes.ts';
 
@@ -88,10 +88,21 @@ export type RunRow = {
   /** When the run started, as an ISO 8601 instant, when the source reports one. */
   startedAt: string | null;
   /**
-   * The pipeline this run is a prefix of, by the name its launch record
-   * gives the parent, and the node it stops at.
+   * The pipelines this run is a prefix of, and the node it stops at: the
+   * parent its launch record names, when the record carries `prefix_of`;
+   * otherwise every current document the listing says it is structurally a
+   * prefix of (`prefix_of_documents`) — a prefix written by hand and run from
+   * the command line is one too. A job's is the parent it was submitted from.
    */
-  prefix: { parent: string; upTo: string | null } | null;
+  prefix: { parents: string[]; upTo: string } | null;
+  /**
+   * What the structural test says the run's content is a prefix of, when its
+   * launch record names a prefix and the test names other documents: ADR-C39
+   * § 4's other fact, drawn beside the recorded one and never merged into it.
+   * Null otherwise — with no recorded prefix, the structural relation is
+   * `prefix` itself.
+   */
+  contentPrefix: { parents: string[]; upTo: string } | null;
   /** What the queue says of a job's row; null for a run of the store. */
   job: JobFacts | null;
   /**
@@ -196,8 +207,9 @@ function metricGroups(run: RunSummary): MetricGroup[] {
  * listing gives; the recorded name is the launch record's, or null; the start
  * time is the run's own record, or null; the metrics are grouped by the
  * family the listing gives each; the latency is the listing's median query
- * latency, or null. A run is a prefix when its launch record says so and
- * names the parent; nothing else makes it one.
+ * latency, or null. A run is a prefix of the parent its launch record names,
+ * or, with no such record, of every current document the listing says it is
+ * structurally a prefix of.
  */
 export function rowsFromListing(listing: RunListing): RunRow[] {
   return [...listing.runs].sort(byMostRecent).map((run) => {
@@ -216,32 +228,65 @@ export function rowsFromListing(listing: RunListing): RunRow[] {
       latencyMs: run.median_query_latency_nanos === null ? null : run.median_query_latency_nanos / 1e6,
       startedAt: run.started_at_ms === null ? null : new Date(run.started_at_ms).toISOString(),
       prefix: prefixOf(run),
+      contentPrefix: contentPrefixOf(run),
       job: null,
       announced: null,
     };
   });
 }
 
-/** A recorded prefix: the parent its launch record names, and the node it stops at; null for any other run. */
-function prefixOf(run: RunSummary): RunRow['prefix'] {
+/**
+ * A run's prefix relation: the parent its launch record names, and the node
+ * it stops at; else the documents the structural test finds (ADR-C39 § 5),
+ * all stopping at the run's one output; null for any other run.
+ */
+export function prefixOf(run: Pick<RunSummary, 'launched_as' | 'prefix_of_documents'>): RunRow['prefix'] {
   const record = run.launched_as;
-  if (record?.name == null || record.prefix_of === null) return null;
-  return { parent: record.name, upTo: record.prefix_of.up_to };
+  if (record?.name != null && record.prefix_of !== null) return { parents: [record.name], upTo: record.prefix_of.up_to };
+  const [first] = run.prefix_of_documents;
+  if (first === undefined) return null;
+  return { parents: run.prefix_of_documents.map((d) => d.pipeline), upTo: first.up_to };
+}
+
+/**
+ * The structural relation beside a recorded prefix, when it names other
+ * documents than the record's parent; null otherwise.
+ */
+function contentPrefixOf(run: RunSummary): RunRow['contentPrefix'] {
+  const record = run.launched_as;
+  const [first] = run.prefix_of_documents;
+  if (record?.name == null || record.prefix_of === null || first === undefined) return null;
+  const parents = run.prefix_of_documents.map((d) => d.pipeline);
+  if (parents.length === 1 && parents[0] === record.name) return null;
+  return { parents, upTo: first.up_to };
+}
+
+/**
+ * A run's prefix relation as one selector option's words — "prefix of
+ * hybrid, up to rerank" — or null for a run that is no prefix: Compare's and
+ * Replay's run selectors name it as Runs' label does.
+ */
+export function prefixText(run: Pick<RunSummary, 'launched_as' | 'prefix_of_documents'>): string | null {
+  const prefix = prefixOf(run);
+  return prefix === null ? null : prefixWords(prefix.parents, prefix.upTo);
 }
 
 /**
  * Where a row is grouped (ADR-C39 § 4): under the name its launch record
- * gives, when it has one; otherwise under its hash matches, every one; and
- * otherwise under its canonical hash. One name is one group whichever fact
- * gave it, so a run without a record whose one match is `hybrid` sits with
- * the runs launched as `hybrid`. A prefix run's record names its parent, so
- * it sits in the parent's group. The kinds are kept apart in the key, so a
- * document named like a hash is never that hash.
+ * gives, when it has one; otherwise under its hash matches, every one;
+ * otherwise, for a prefix the structural test found, under the documents it
+ * is a prefix of; and otherwise under its canonical hash. One name is one
+ * group whichever fact gave it, so a run without a record whose one match is
+ * `hybrid` sits with the runs launched as `hybrid`. A prefix run's record
+ * names its parent, so it sits in the parent's group, and so does a prefix
+ * run from the command line, which no document holds. The kinds are kept
+ * apart in the key, so a document named like a hash is never that hash.
  */
 function groupOf(row: RunRow): { key: string; names: string[] } {
   if (row.launchedAs !== null) return { key: `name:${row.launchedAs}`, names: [row.launchedAs] };
-  if (row.pipelineNames.length === 1) return { key: `name:${row.pipelineNames[0]}`, names: row.pipelineNames };
-  if (row.pipelineNames.length > 1) return { key: `names:${JSON.stringify(row.pipelineNames)}`, names: row.pipelineNames };
+  const names = row.pipelineNames.length > 0 ? row.pipelineNames : (row.prefix?.parents ?? []);
+  if (names.length === 1) return { key: `name:${names[0]}`, names };
+  if (names.length > 1) return { key: `names:${JSON.stringify(names)}`, names };
   return { key: `hash:${row.pipeline}`, names: [] };
 }
 

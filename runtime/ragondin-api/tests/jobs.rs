@@ -17,8 +17,8 @@ use axum::http::StatusCode;
 use futures_util::StreamExt;
 use ragondin_api::{
     ApiError, BenchmarkEntry, BenchmarkState, Cancellation, Capabilities, DownloadProgress,
-    Launcher, LauncherError, PinnedBenchmark, ProgressSink, QueryProgress, Registry, RunDataset,
-    RunObserver, Server, ServiceBinding, ServiceIdentity, Submission,
+    GroundTruth, Launcher, LauncherError, PinnedBenchmark, ProgressSink, QueryProgress, Registry,
+    RunDataset, RunObserver, Server, ServiceBinding, ServiceIdentity, Submission,
 };
 use ragondin_experiments::{
     FileSystemRunStore, Run, RunId, RunStore, Trace, TraceDocument, TraceNode,
@@ -324,9 +324,23 @@ impl Registry for DownloadingRegistry {
         Ok(Vec::new())
     }
 
+    /// [`BENCHMARK`] carries qrels alone, so a prefix run may stop before
+    /// the generator on it; every other name is unknown.
     async fn verify(&self, name: &str) -> Result<BenchmarkEntry, ApiError> {
-        Err(ApiError::BenchmarkNotFound {
+        if name != BENCHMARK {
+            return Err(ApiError::BenchmarkNotFound {
+                name: name.to_owned(),
+            });
+        }
+        Ok(BenchmarkEntry {
             name: name.to_owned(),
+            format: "beir".to_owned(),
+            state: BenchmarkState::Ready {
+                dataset_version: "digest".to_owned(),
+            },
+            ground_truth: Some(GroundTruth::Qrels),
+            licence: None,
+            licence_url: None,
         })
     }
 
@@ -423,6 +437,7 @@ fn submission(pipeline: &str) -> Submission {
         benchmark: BENCHMARK.to_owned(),
         bindings: Vec::new(),
         up_to: None,
+        parent_pipeline_hash: None,
     }
 }
 
@@ -937,7 +952,7 @@ async fn reordering_a_queued_job_changes_the_worker_s_order() {
     let fixture_up_to = write_request(
         "POST",
         "/api/v1/runs",
-        &json!({ "pipeline": PIPELINE, "benchmark": BENCHMARK, "up_to": "context" }),
+        &json!({ "pipeline": PIPELINE, "benchmark": BENCHMARK, "up_to": "fused" }),
         &[],
     );
     let response = send(app.clone(), fixture_up_to).await;
@@ -1022,6 +1037,7 @@ fn stored_job(id: &str, position: u64, state: Value, history: &[&str]) -> Value 
             "pipeline": document(),
             "benchmark": BENCHMARK,
             "bindings": [],
+            // Written before a prefix's parent hash was recorded: absent.
             "up_to": null,
         },
         "state": state,

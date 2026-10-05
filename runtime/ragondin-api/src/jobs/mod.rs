@@ -14,6 +14,7 @@
 //! reconnects. `ARCHITECTURE.md` § The job queue holds the state machine.
 
 use ragondin_experiments::UnixMillis;
+use ragondin_pipeline::PipelineHash;
 use serde::{Deserialize, Serialize};
 
 use crate::backends::Submission;
@@ -64,9 +65,15 @@ pub enum Work {
         benchmark: String,
         /// The `Remote` bindings in force at submission.
         bindings: Vec<ServiceBinding>,
-        /// The node to stop after, for a prefix run, passed to the launcher
-        /// untouched.
+        /// The node a prefix run stops at; then `pipeline` is the cut, and
+        /// `pipeline_name` the parent's name.
         up_to: Option<String>,
+        /// For a prefix run, the canonical hash of the parent document the
+        /// cut was made from: with `up_to`, the prefix's provenance, outside
+        /// the run's identity. Absent in a file written before it was
+        /// recorded.
+        #[serde(default)]
+        parent_pipeline_hash: Option<PipelineHash>,
     },
     /// A benchmark the manifest names, downloaded and verified, on the
     /// download lane.
@@ -86,6 +93,7 @@ impl Work {
                 benchmark,
                 bindings,
                 up_to,
+                parent_pipeline_hash,
                 ..
             } => Some(Submission {
                 pipeline_name: pipeline_name.clone(),
@@ -93,6 +101,7 @@ impl Work {
                 benchmark: benchmark.clone(),
                 bindings: bindings.clone(),
                 up_to: up_to.clone(),
+                parent_pipeline_hash: *parent_pipeline_hash,
             }),
             Self::Download { .. } => None,
         }
@@ -221,6 +230,7 @@ pub(crate) fn summary(job: &Job) -> JobSummary {
                 benchmark,
                 bindings,
                 up_to,
+                parent_pipeline_hash,
                 ..
             } => JobWork::Run {
                 run_id: run_id.clone(),
@@ -228,6 +238,7 @@ pub(crate) fn summary(job: &Job) -> JobSummary {
                 benchmark: benchmark.clone(),
                 bindings: bindings.clone(),
                 up_to: up_to.clone(),
+                parent_pipeline_hash: parent_pipeline_hash.map(|hash| hash.to_string()),
             },
             Work::Download { benchmark } => JobWork::Download {
                 benchmark: benchmark.clone(),

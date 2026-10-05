@@ -65,12 +65,7 @@
   color: var(--ink-3);
 }
 .rg-runs__prefix {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
   margin-left: var(--space-2);
-  font: var(--type-caption);
-  color: var(--ink-3);
 }
 .rg-runs__metrics {
   display: inline-flex;

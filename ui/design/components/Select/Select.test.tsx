@@ -28,6 +28,23 @@ describe('Select at rest', () => {
   });
 });
 
+describe('Select described by more than its help', () => {
+  it('keeps its help line and adds the description the caller names', () => {
+    render(
+      <>
+        <Select id="bench" label="Benchmark" options={options} help="Ready ones only." aria-describedby="note" />
+        <p id="note">Not offered: squad/dev.</p>
+      </>,
+    );
+    expect(screen.getByLabelText('Benchmark').getAttribute('aria-describedby')).toBe('bench-help note');
+  });
+
+  it('is described by the caller’s description alone when it has no help', () => {
+    render(<Select id="bench" label="Benchmark" options={options} aria-describedby="note" />);
+    expect(screen.getByLabelText('Benchmark').getAttribute('aria-describedby')).toBe('note');
+  });
+});
+
 describe('Select focus', () => {
   it('takes focus and draws the ring', () => {
     render(<Select id="b" label="Benchmark" options={options} />);

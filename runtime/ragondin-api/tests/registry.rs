@@ -253,3 +253,54 @@ async fn the_names_an_import_may_not_take_are_those_of_the_registry_s_own_manife
         .await
         .expect("scifact is not reserved here");
 }
+
+/// Verifying one import reads that import alone: `POST /runs` up to a node
+/// verifies the chosen benchmark, and a workspace holding many imports must
+/// not load them all for it. Another import's corpus is a named pipe no one
+/// writes, so reading it would block; the verify answers regardless.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn verifying_one_import_reads_no_other_import() {
+    let datasets = scratch("registry_verify_one");
+    let registry = FsRegistry::new(datasets.clone(), Vec::new());
+    for name in ["first", "second"] {
+        registry
+            .import(name, &benchmark_fixture("beir-mini"))
+            .await
+            .expect("the fixture imports");
+    }
+    let corpus = datasets.join("first/corpus.jsonl");
+    fs::remove_file(&corpus).unwrap();
+    let made = std::process::Command::new("mkfifo")
+        .arg(&corpus)
+        .status()
+        .unwrap();
+    assert!(made.success());
+
+    let answered = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        registry.verify("beir/second"),
+    )
+    .await;
+
+    // Release any reader before asserting: a verify that wrongly read `first`
+    // is blocked in `open` on the pipe, on a blocking thread the runtime
+    // waits for when it drops — so the test would hang rather than fail.
+    // Opening the pipe for writing unblocks that `open` (read and write, so
+    // this side never blocks itself, whether or not a reader is there), and
+    // closing it gives the reader end of file.
+    drop(
+        fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&corpus)
+            .unwrap(),
+    );
+    fs::remove_file(&corpus).unwrap();
+
+    let verified = answered
+        .expect("verifying `second` does not read `first`")
+        .expect("`second` is known");
+    assert_eq!(verified.name, "beir/second");
+    assert_eq!(verified.ground_truth, Some(GroundTruth::Qrels));
+}

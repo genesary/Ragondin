@@ -11,7 +11,7 @@ import type { Jobs } from '../api/jobs.ts';
 import type { RunListing } from '../api/types.ts';
 import { useJobEvents, useJobs } from '../jobs/queue.tsx';
 import { STREAM_DOWN, STREAM_DOWN_LIVE } from '../jobs/stream.ts';
-import { formatHash, navigate } from '../routes.ts';
+import { formatHash, navigate, type Route } from '../routes.ts';
 import { ErrorState, Loading, type RequestState } from '../shell/states.tsx';
 import { GroupLabel } from './GroupLabel.tsx';
 import { JobPanel } from './JobPanel.tsx';
@@ -31,10 +31,20 @@ export type RunsScreenProps = {
   job?: string | undefined;
   /** The workspace's root, where the store is, as the shell read it; null before. */
   store?: string | null;
+  /** The launch panel the address opens (`#runs?launch=<pipeline>&up_to=<node>`), if any. */
+  launch?: { pipeline: string; upTo?: string } | undefined;
 };
 
-/** Writes a selection to the address in place, keeping the job shown: checking a box is state within the view, not a move Back should undo. */
-const selectWith = (job: string | undefined) => (sel: string[]) => navigate(job === undefined ? { screen: 'runs', sel } : { screen: 'runs', sel, job }, { replace: true });
+/** The Runs address with this selection, job and launch panel, each left out when absent. */
+const runsRoute = (sel: readonly string[], job: string | undefined, launch: RunsScreenProps['launch']): Extract<Route, { screen: 'runs' }> => ({
+  screen: 'runs',
+  ...(sel.length === 0 ? {} : { sel: [...sel] }),
+  ...(job === undefined ? {} : { job }),
+  ...(launch === undefined ? {} : { launch }),
+});
+
+/** Writes a selection to the address in place, keeping the job shown and the launch panel: checking a box is state within the view, not a move Back should undo. */
+const selectWith = (job: string | undefined, launch: RunsScreenProps['launch']) => (sel: string[]) => navigate({ ...runsRoute([], job, launch), sel }, { replace: true });
 
 const runs = (n: number) => `${n.toLocaleString('en-US')} run${n === 1 ? '' : 's'}`;
 
@@ -45,7 +55,7 @@ const runs = (n: number) => `${n.toLocaleString('en-US')} run${n === 1 ? '' : 's
  */
 type Read = { listing: RequestState<RunListing>; askedWith: ReadonlySet<string>; refresh: ApiProblem | null };
 
-export function RunsScreen({ client, sel, job, store = null }: RunsScreenProps) {
+export function RunsScreen({ client, sel, job, store = null, launch }: RunsScreenProps) {
   const [read, setRead] = useState<Read>({ listing: { status: 'loading' }, askedWith: new Set(), refresh: null });
   const latest = useRef(0);
   // The listing read in flight, cancelled once a newer read overtakes it.
@@ -98,7 +108,7 @@ export function RunsScreen({ client, sel, job, store = null }: RunsScreenProps) 
       return <ErrorState problem={read.listing.problem} onRetry={retry} />;
     case 'loaded':
       return (
-        <Loaded client={client} listing={read.listing.value} askedWith={read.askedWith} refresh={read.refresh} sel={sel} job={job} store={store} reread={() => void fetchListing()} />
+        <Loaded client={client} listing={read.listing.value} askedWith={read.askedWith} refresh={read.refresh} sel={sel} job={job} launch={launch} store={store} reread={() => void fetchListing()} />
       );
   }
 }
@@ -112,6 +122,8 @@ type LoadedProps = {
   refresh: ApiProblem | null;
   sel: readonly string[];
   job: string | undefined;
+  /** The launch panel the address opens, if any. */
+  launch: RunsScreenProps['launch'];
   store: string | null;
   /** Reads the listing again, keeping this one on screen meanwhile. */
   reread: () => void;
@@ -133,8 +145,12 @@ function withPositions(jobs: Jobs, positions: ReadonlyMap<string, number> | null
   return new Map([...jobs].map(([id, j]) => [id, j.state.kind === 'queued' && positions.has(id) ? { ...j, position: positions.get(id) as number } : j]));
 }
 
-function Loaded({ client, listing, askedWith, refresh, sel, job, store, reread }: LoadedProps) {
-  const select = useMemo(() => selectWith(job), [job]);
+function Loaded({ client, listing, askedWith, refresh, sel, job, launch, store, reread }: LoadedProps) {
+  const [launchPipeline, launchUpTo] = [launch?.pipeline, launch?.upTo];
+  const select = useMemo(
+    () => selectWith(job, launchPipeline === undefined ? undefined : launchUpTo === undefined ? { pipeline: launchPipeline } : { pipeline: launchPipeline, upTo: launchUpTo }),
+    [job, launchPipeline, launchUpTo],
+  );
   const { jobs, connection } = useJobs();
   const stored = useMemo(() => rowsFromListing(listing), [listing]);
   // A reorder's answer is the queue in its new order; the stream's `reordered` events then say it too, and win.
@@ -178,8 +194,13 @@ function Loaded({ client, listing, askedWith, refresh, sel, job, store, reread }
     if (selection.join(',') !== sel.join(',')) select(selection);
   }, [selection, sel, select]);
 
-  // The launch panel, opened from the bar; focus moves to it as it opens.
-  const [launching, setLaunching] = useState(false);
+  // The launch panel, opened from the bar or by the address — the editor's "Run up to this node" lands here; focus moves
+  // to it as it opens.
+  const [launching, setLaunching] = useState(launch !== undefined);
+  const launchKey = launch === undefined ? null : `${launch.pipeline}\u0000${launch.upTo ?? ''}`;
+  useEffect(() => {
+    if (launchKey !== null) setLaunching(true);
+  }, [launchKey]);
   const launchId = useId();
   const launchAnchor = useRef<HTMLElement>(null);
   useEffect(() => {
@@ -284,13 +305,31 @@ function Loaded({ client, listing, askedWith, refresh, sel, job, store, reread }
     );
 
   const launchToggle = (
-    <Button aria-expanded={launching} aria-controls={launchId} onClick={() => setLaunching(!launching)}>
+    <Button
+      aria-expanded={launching}
+      aria-controls={launchId}
+      onClick={() => {
+        // Closing a panel the address opened takes it out of the address, so a reload does not open it again.
+        if (launching && launch !== undefined) navigate(runsRoute(sel, job, undefined), { replace: true });
+        setLaunching(!launching);
+      }}
+    >
       Launch…
     </Button>
   );
   const launchPanel = (
     <div id={launchId} hidden={!launching}>
-      {launching ? <LaunchPanel client={client} store={store} anchor={launchAnchor} /> : null}
+      {launching ? (
+        <LaunchPanel
+          key={launchKey ?? ''}
+          client={client}
+          store={store}
+          anchor={launchAnchor}
+          pipeline={launch?.pipeline}
+          upTo={launch?.upTo ?? null}
+          onWhole={launch === undefined ? undefined : () => navigate(runsRoute(sel, job, { pipeline: launch.pipeline }), { replace: true })}
+        />
+      ) : null}
     </div>
   );
 

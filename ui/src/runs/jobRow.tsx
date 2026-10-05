@@ -5,7 +5,7 @@
 // native button in the tab order; the row itself takes the table's keys, and
 // Enter opens the job (`#runs/job/<id>`). ARCHITECTURE.md § The Runs screen.
 import { useEffect, useState, type ReactNode } from 'react';
-import { Button, Glyph, StatusChip, type TableRow } from '../../design/index.ts';
+import { Button, PrefixLabel, StatusChip, type TableRow } from '../../design/index.ts';
 import { formatHash } from '../routes.ts';
 import { benchmarkLabel, formatLatency, rowKey, runningLabel, shortHash, type RunRow } from './model.ts';
 import type { RowColumns } from './runRow.tsx';
@@ -178,8 +178,7 @@ export function jobRow(row: RunRow, { columns, stale, cancelling, onCancel, onMo
       <span className="rg-runs__fact">announced</span>
       {row.prefix === null ? null : (
         <span className="rg-runs__prefix">
-          <Glyph name="prefix" />
-          {row.prefix.upTo === null ? 'prefix' : `prefix up to ${row.prefix.upTo}`}
+          <PrefixLabel parents={row.prefix.parents} upTo={row.prefix.upTo} />
         </span>
       )}
     </>

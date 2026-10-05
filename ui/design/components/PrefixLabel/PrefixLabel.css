@@ -1,0 +1,3 @@
+/* A prefix run's label: quiet caption text, the glyph in line with it. */
+.rg-prefix { display: inline-flex; align-items: center; gap: var(--space-1); font: var(--type-caption); color: var(--ink-3); }
+.rg-prefix svg { flex: none; }

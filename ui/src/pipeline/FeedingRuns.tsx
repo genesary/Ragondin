@@ -4,7 +4,7 @@
 // and ADR-C39 § 4's two facts — what it was launched as, and which current
 // documents its content is — side by side, never resolved into one name.
 // ARCHITECTURE.md § The Pipeline screen.
-import { Glyph, Table, type TableRow } from '../../design/index.ts';
+import { PrefixLabel, Table, type TableRow } from '../../design/index.ts';
 import type { ConfigurationMatrix, FeedingRun } from '../api/types.ts';
 import { formatParameter, parameterName } from '../compare/model.ts';
 import { formatHash } from '../routes.ts';
@@ -55,8 +55,7 @@ export function FeedingRuns({ runs, pipeline }: { runs: readonly FeedingRun[]; p
               {run.started_at_ms === null ? null : <time dateTime={new Date(run.started_at_ms).toISOString()}>{started(run.started_at_ms)}</time>}
               {run.prefix_of === null ? null : (
                 <span className="rg-pipeline__label">
-                  <Glyph name="prefix" />
-                  prefix up to {run.prefix_of.up_to}
+                  <PrefixLabel parents={[run.prefix_of.pipeline]} upTo={run.prefix_of.up_to} />
                 </span>
               )}
               {changed === null ? null : <span className="rg-pipeline__label">{changed}</span>}

@@ -8,7 +8,7 @@ import { useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createApiClient } from '../api/client.ts';
 import { FakeEventSource, installFakeEventSource, mockApi, type MockRoutes } from '../api/testing.ts';
-import type { BenchmarkEntry, JobListing, JobSummary, PipelineSummary, Problem, RunListing, RunSummary } from '../api/types.ts';
+import type { BenchmarkEntry, JobListing, JobSummary, PipelineDetail, PipelineSummary, Problem, RunListing, RunSummary } from '../api/types.ts';
 import { CANCELLED, connect, doneAs, failedAt, hex, QUEUED, runJob, running, send } from '../jobs/fixtures.ts';
 import { JobQueueProvider } from '../jobs/queue.tsx';
 import { JobToasts } from '../jobs/Toasts.tsx';
@@ -36,7 +36,7 @@ const run = (id: string, over: Partial<RunSummary> = {}): RunSummary => ({
   id,
   pipeline: HYBRID,
   pipeline_names: ['hybrid'],
-  refused_pipeline_names: [],
+  refused_pipeline_names: [], prefix_of_documents: [],
   launched_as: { name: 'hybrid', held: 'exactly', prefix_of: null },
   dataset_version: SCIFACT,
   benchmark_names: ['beir/scifact'],
@@ -56,8 +56,34 @@ const problem = (code: Problem['code'], status: number, detail: string, hint: st
   problem: { type: `urn:ragondin:problem:${code}`, title: code, status, detail, code, hint, ...over },
 });
 
+/**
+ * `hybrid` as `GET /pipelines/{name}` serves it: a reranker, then a generator
+ * whose answer a judge reads — so a cut at the generator ends in an answer.
+ */
+const node = (id: string, component: string, inputs: string[]) => ({ id, component, impl: component, inputs, params: {} });
+const HYBRID_DETAIL: PipelineDetail = {
+  name: 'hybrid',
+  document: 'pipeline: …',
+  etag: 'e',
+  hash: HYBRID,
+  error: null,
+  typed: {
+    pipeline: {
+      inputs: ['question'],
+      nodes: [
+        node('bm25', 'retriever', ['question']),
+        node('rerank', 'reranker', ['question', 'bm25']),
+        node('context', 'context_builder', ['question', 'rerank']),
+        node('generate', 'generator', ['question', 'context']),
+        node('judge', 'extension', ['generate']),
+      ],
+    },
+  },
+};
+
 const routes = (over: MockRoutes = {}): MockRoutes => ({
   'GET /runs': { body: LISTING },
+  'GET /pipelines/{name}': { body: HYBRID_DETAIL },
   'GET /pipelines': { body: PIPELINES },
   'GET /benchmarks': { body: BENCHMARKS },
   'GET /services': { body: SERVICES },
@@ -71,7 +97,7 @@ function Shell() {
   const runs = route?.screen === 'runs' ? route : { screen: 'runs' as const };
   return (
     <JobQueueProvider>
-      <RunsScreen client={client} sel={runs.sel ?? []} job={runs.job} store="/work/ws" />
+      <RunsScreen client={client} sel={runs.sel ?? []} job={runs.job} launch={runs.launch} store="/work/ws" />
       <JobToasts />
     </JobQueueProvider>
   );
@@ -191,6 +217,64 @@ describe('the launch panel', () => {
     const missing = await within(at).findByText(/which this build does not carry/);
     expect(missing.textContent).toContain('Rebuild with the feature, or bind a Remote under this name.');
     expect(pipelineField.getAttribute('aria-invalid')).toBe('true');
+  });
+});
+
+describe('the launch panel up to a node', () => {
+  const PREFIX = '#runs?launch=hybrid&up_to=rerank';
+
+  it('opens on the pipeline cut at the node, offers only benchmarks the prefix can be scored on, and says why the others are absent', async () => {
+    const { api, stream } = await show(PREFIX, routes({ 'POST /runs': { body: { job_id: 'j1', run_id: ANNOUNCED } } }));
+    connect(stream);
+    const at = await within(panel()).findByText('prefix of hybrid, up to rerank');
+    const sheet = at.closest('section') as HTMLElement;
+    const benchmark = within(sheet).getByLabelText('Benchmark') as HTMLSelectElement;
+    // `mine` carries reference answers: a prefix ending before the generator produces no answer to score.
+    expect([...benchmark.options].map((o) => o.textContent)).toEqual(['beir/scifact — qrels']);
+    const absent = within(sheet).getByText(/Not offered: mine, which carries reference answers/);
+    // The note describes the field it explains.
+    expect(benchmark.getAttribute('aria-describedby')?.split(' ')).toContain(absent.id);
+    // The identity is the cut's, announced by the API: the parent's hash is not shown as if it were the run's.
+    expect(within(sheet).queryByText(`pipeline ${short(HYBRID)}`)).toBeNull();
+    expect(within(sheet).getByText(/identity is announced when it is queued/)).toBeTruthy();
+
+    fireEvent.click(within(sheet).getByRole('button', { name: 'Launch' }));
+    await within(sheet).findByRole('button', { name: 'Queued' });
+    expect(api.bodies[api.requests.indexOf('POST /api/v1/runs')]).toEqual({ pipeline: 'hybrid', benchmark: 'beir/scifact', up_to: 'rerank' });
+    expect(within(sheet).getByText(`run ${short(ANNOUNCED)}`)).toBeTruthy();
+  });
+
+  it('offers a benchmark with reference answers to a cut that ends in an answer', async () => {
+    const { stream } = await show('#runs?launch=hybrid&up_to=generate');
+    connect(stream);
+    await within(panel()).findByText('prefix of hybrid, up to generate');
+    const benchmark = within(panel()).getByLabelText('Benchmark') as HTMLSelectElement;
+    await waitFor(() => expect([...benchmark.options].map((o) => o.textContent)).toEqual(['beir/scifact — qrels', 'mine — qrels and reference answers']));
+    expect(within(panel()).queryByText(/Not offered/)).toBeNull();
+  });
+
+  it('goes back to the whole pipeline, every ready benchmark offered again', async () => {
+    const { stream } = await show(PREFIX);
+    connect(stream);
+    await within(panel()).findByText('prefix of hybrid, up to rerank');
+    fireEvent.click(within(panel()).getByRole('button', { name: 'Run the whole pipeline' }));
+    await waitFor(() => expect(window.location.hash).toBe('#runs?launch=hybrid'));
+    const benchmark = (await within(panel()).findByLabelText('Benchmark')) as HTMLSelectElement;
+    await waitFor(() => expect(benchmark.options).toHaveLength(2));
+    expect(within(panel()).queryByText('prefix of hybrid, up to rerank')).toBeNull();
+  });
+
+  it('shows a refused cut on the pipeline field, naming the node', async () => {
+    const refused = problem('prefix_is_whole_pipeline', 422, '`rerank` is the pipeline’s output: the prefix would be the whole pipeline', 'Launch the whole pipeline instead.', {
+      location: { node: 'rerank', edge: null },
+    });
+    const { stream } = await show(PREFIX, routes({ 'POST /runs': refused }));
+    connect(stream);
+    await within(panel()).findByText('prefix of hybrid, up to rerank');
+    fireEvent.click(within(panel()).getByRole('button', { name: 'Launch' }));
+    const words = await within(panel()).findByText(/the prefix would be the whole pipeline/);
+    expect(words.textContent).toContain('At node rerank.');
+    expect((within(panel()).getByLabelText('Pipeline') as HTMLElement).getAttribute('aria-invalid')).toBe('true');
   });
 });
 

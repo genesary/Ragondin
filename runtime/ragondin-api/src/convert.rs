@@ -29,9 +29,9 @@ use crate::response::{
     BenchmarkEntry, BenchmarkState, ConfigurationMatrix, ConsumedPorts, DatasetCheck,
     DatasetStatus, DatasetVersions, EdgeKind, FamilyPorts, FoundVersions, Graph, GraphEdge,
     GraphInput, GraphNode, GroundTruth, LaunchedAs, LaunchedPrefix, MetricDirection, MetricFamily,
-    MetricRow, NameHeld, NodeMetrics, ParameterName, ParameterRow, ParameterValue, RunDetail,
-    RunInputs, RunSummary, ServiceBinding, TraceNodeView, TracePassage, TraceValue, TypedDocument,
-    TypedGraph, TypedNode,
+    MetricRow, NameHeld, NodeMetrics, ParameterName, ParameterRow, ParameterValue, PrefixOf,
+    RunDetail, RunInputs, RunSummary, ServiceBinding, TraceNodeView, TracePassage, TraceValue,
+    TypedDocument, TypedGraph, TypedNode,
 };
 
 /// One run, as the listing shows it, with the names the request found for
@@ -43,6 +43,7 @@ pub(crate) fn summary(
     run: &Run,
     index: &lineage::Index,
     mut pipeline_names: Vec<String>,
+    prefix_of_documents: Vec<PrefixOf>,
     mut benchmark_names: Vec<String>,
     median_query_latency_nanos: Option<u64>,
 ) -> RunSummary {
@@ -65,6 +66,7 @@ pub(crate) fn summary(
             .provenance
             .as_ref()
             .map(|record| launched_as(record, Some(index))),
+        prefix_of_documents,
         dataset_version: run.inputs.dataset_version.clone(),
         benchmark_names,
         index_version: run.inputs.index_version.clone(),
@@ -100,12 +102,14 @@ fn times(run: &Run) -> (Option<u64>, Option<u64>) {
     }
 }
 
-/// The shape `GET /runs/{id}` serves for `run`: the graph lowered from its
-/// stored document; `None` when the document no longer lowers.
-pub(crate) fn shape(run: &Run) -> Option<Graph> {
-    lower_configuration(&run.config)
-        .ok()
-        .map(|pipeline| graph(&pipeline))
+/// Every current document `pipeline` is a structural prefix of, with the
+/// node it stops at, as `RunSummary::prefix_of_documents` serves them.
+pub(crate) fn prefixes(index: &lineage::Index, pipeline: &LogicalPipeline) -> Vec<PrefixOf> {
+    index
+        .prefixes(pipeline)
+        .into_iter()
+        .map(|(pipeline, up_to)| PrefixOf { pipeline, up_to })
+        .collect()
 }
 
 /// One run, whole: its stored fields and the graph lowered from its stored

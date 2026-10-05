@@ -18,7 +18,7 @@ const R5 = hex('6');
 const R6 = hex('7');
 const FIQA_RUN = hex('8');
 
-const summary = (id: string, dataset: string): RunSummary => ({ id, pipeline: hex('9'), dataset_version: dataset, index_version: hex('0'), engine_version: '0.0.0', metrics: {}, pipeline_names: [], refused_pipeline_names: [], launched_as: null, benchmark_names: [], started_at_ms: null, finished_at_ms: null, metric_families: {}, median_query_latency_nanos: null });
+const summary = (id: string, dataset: string): RunSummary => ({ id, pipeline: hex('9'), dataset_version: dataset, index_version: hex('0'), engine_version: '0.0.0', metrics: {}, pipeline_names: [], refused_pipeline_names: [], prefix_of_documents: [], launched_as: null, benchmark_names: [], started_at_ms: null, finished_at_ms: null, metric_families: {}, median_query_latency_nanos: null });
 const LISTING: RunListing = {
   runs: [summary(DENSE, SCIFACT), summary(HYBRID, SCIFACT), summary(RERANK, SCIFACT), summary(R4, SCIFACT), summary(R5, SCIFACT), summary(R6, SCIFACT), summary(FIQA_RUN, OTHER_BENCH)],
   unreadable: [],
@@ -136,6 +136,22 @@ describe('the run bar', () => {
     await waitFor(() => expect(select.options.length).toBeGreaterThan(1));
     const offered = [...select.options].map((o) => o.value).filter((v) => v !== '');
     expect(offered).toEqual([R4, R5, R6]);
+  });
+
+  it('labels a prefix run in both run selectors, by its record or by structure', async () => {
+    const recorded = { ...summary(R4, SCIFACT), launched_as: { name: 'hybrid', prefix_of: { up_to: 'rrf', parent_pipeline_hash: hex('e') }, held: 'exactly' as const } };
+    const structural = { ...summary(HYBRID, SCIFACT), prefix_of_documents: [{ pipeline: 'hybrid-rerank', up_to: 'rrf' }] };
+    const listing = { ...LISTING, runs: LISTING.runs.map((r) => (r.id === R4 ? recorded : r.id === HYBRID ? structural : r)) };
+    show(THREE, { ...routes(), 'GET /runs': { body: listing } });
+    await loaded();
+    const add = (await screen.findByLabelText('Add a run')) as HTMLSelectElement;
+    await waitFor(() => expect(add.options.length).toBeGreaterThan(1));
+    const option = (select: HTMLSelectElement, id: string) => [...select.options].find((o) => o.value === id)?.textContent;
+    expect(option(add, R4)).toContain('prefix of hybrid, up to rrf');
+    expect(option(add, R5)).not.toContain('prefix');
+    const baseline = screen.getByLabelText('Baseline') as HTMLSelectElement;
+    expect(option(baseline, HYBRID)).toContain('prefix of hybrid-rerank, up to rrf');
+    expect(option(baseline, DENSE)).not.toContain('prefix');
   });
 
   it('adds a run: compares with it, then writes it to the address', async () => {

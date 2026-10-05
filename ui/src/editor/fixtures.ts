@@ -29,6 +29,52 @@ export const HYBRID: WireDocument = {
   },
 };
 
+/** {@link HYBRID} with a context builder and a generator after the reranker. */
+export const HYBRID_RAG: WireDocument = {
+  pipeline: {
+    inputs: ['question'],
+    nodes: [
+      ...HYBRID.pipeline.nodes,
+      { id: 'context', component: 'context_builder', impl: 'concat', inputs: ['question', 'reranked'], params: {} },
+      { id: 'answer', component: 'generator', impl: 'qwen', inputs: ['question', 'context'], params: {} },
+    ],
+  },
+};
+
+/**
+ * A true diamond: one retrieval leg read by two rerankers, whose rankings a
+ * fusion joins, then a context and an answer.
+ */
+export const DIAMOND: WireDocument = {
+  pipeline: {
+    inputs: ['question'],
+    nodes: [
+      { id: 'lexical', component: 'retriever', impl: 'bm25', inputs: ['question'], params: {} },
+      { id: 'first', component: 'reranker', impl: 'cross_encoder', inputs: ['question', 'lexical'], params: {} },
+      { id: 'second', component: 'reranker', impl: 'cross_encoder', inputs: ['question', 'lexical'], params: {} },
+      { id: 'fused', component: 'fusion', impl: 'rrf', inputs: ['first', 'second'], params: {} },
+      { id: 'context', component: 'context_builder', impl: 'concat', inputs: ['question', 'fused'], params: {} },
+      { id: 'answer', component: 'generator', impl: 'qwen', inputs: ['question', 'context'], params: {} },
+    ],
+  },
+};
+
+/**
+ * Two declared inputs, which the server refuses — a pipeline declares exactly
+ * one — and a document being edited can hold anyway.
+ */
+export const TWO_INPUTS: WireDocument = {
+  pipeline: {
+    inputs: ['question', 'filter'],
+    nodes: [
+      { id: 'lexical', component: 'retriever', impl: 'bm25', inputs: ['question'], params: {} },
+      { id: 'filtered', component: 'retriever', impl: 'bm25', inputs: ['filter'], params: {} },
+      { id: 'fused', component: 'fusion', impl: 'rrf', inputs: ['lexical', 'filtered'], params: {} },
+      { id: 'reranked', component: 'reranker', impl: 'cross_encoder', inputs: ['question', 'fused'], params: {} },
+    ],
+  },
+};
+
 /**
  * A recorded `GET /workspace` answer: the capabilities a build with `ui`,
  * `bm25` and `remote`, and without `onnx` or `stub`, served on 2026-10-03

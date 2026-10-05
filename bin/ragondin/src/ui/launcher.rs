@@ -33,7 +33,7 @@ use ragondin_api::{
 };
 use ragondin_contracts::ComponentError;
 use ragondin_engine::ExecError;
-use ragondin_experiments::{Run, RunId, RunProvenance};
+use ragondin_experiments::{PrefixOf, Run, RunId, RunProvenance};
 use ragondin_harness::HarnessError;
 use ragondin_pipeline::LogicalPipeline;
 
@@ -159,7 +159,8 @@ impl Launcher for BinaryLauncher {
 
     /// The submission prepared again, then executed — steps 4–6 — with its
     /// times stamped by this preparation and its launch record named after
-    /// the submitted pipeline. Each query reaches `observer` as it completes,
+    /// the submitted pipeline, and for a prefix run, cut from its parent at
+    /// the submitted node and hash. Each query reaches `observer` as it completes,
     /// and `cancel` is read between two queries.
     async fn execute(
         &self,
@@ -168,9 +169,16 @@ impl Launcher for BinaryLauncher {
         cancel: Cancellation,
     ) -> Result<Run, LauncherError> {
         let job = Job::of(submission, &self.datasets);
-        // The record's `prefix_of` waits for the parent's hash on the
-        // submission; until then a launch records its name alone.
-        let provenance = RunProvenance::named(&submission.pipeline_name);
+        // A prefix run's submission names its parent, the node it was cut
+        // at and the parent's hash: the record says what it was cut from
+        // (ADR-C39 § 2). Any other launch records its name alone.
+        let provenance = match (&submission.up_to, submission.parent_pipeline_hash) {
+            (Some(up_to), Some(parent)) => RunProvenance::prefix(
+                &submission.pipeline_name,
+                PrefixOf::new(up_to.as_str(), parent),
+            ),
+            _ => RunProvenance::named(&submission.pipeline_name),
+        };
         on_own_thread(move || async move {
             let prepared = job.prepare().await?;
             let flag = cancel.flag();
@@ -687,6 +695,7 @@ mod tests {
             benchmark: benchmark.to_owned(),
             bindings,
             up_to: None,
+            parent_pipeline_hash: None,
         }
     }
 
@@ -766,6 +775,7 @@ mod tests {
 
         use ragondin_api::QueryProgress;
         use ragondin_experiments::{FileSystemRunStore, UnixMillis};
+        use ragondin_pipeline::PipelineHash;
 
         use super::*;
 
@@ -944,6 +954,28 @@ mod tests {
                 .load(&run.id)
                 .expect("bench filed the same id");
             assert_eq!(filed.provenance, None);
+
+            // A prefix run: the API hands the cut as the document, the
+            // parent's name, the node and the parent's hash. The record says
+            // what it was cut from; the run's id is still the document's.
+            let parent = PipelineHash::from_digest([0x5e; 32]);
+            let prefix = Submission {
+                up_to: Some("lexical".to_owned()),
+                parent_pipeline_hash: Some(parent),
+                ..lexical()
+            };
+            let cut = launcher()
+                .execute(&prefix, Arc::new(Unobserved), Cancellation::new())
+                .await
+                .expect("the lexical fixture runs");
+            assert_eq!(
+                cut.provenance,
+                Some(RunProvenance::prefix(
+                    "hybrid",
+                    PrefixOf::new("lexical", parent)
+                ))
+            );
+            assert_eq!(cut.id, run.id, "the record is outside identity");
         }
 
         #[tokio::test]

@@ -11,6 +11,7 @@ import type { ApiClient, ApiProblem, ApiResult } from '../api/client.ts';
 import type { Graph, JobSummary, PartialQueries, PartialTrace, QueryTrace, RunDetail, RunListing, RunQueries } from '../api/types.ts';
 import { Canvas } from '../canvas/index.ts';
 import { formatHash, navigate } from '../routes.ts';
+import { prefixText } from '../runs/model.ts';
 import { ErrorState, Loading, type RequestState } from '../shell/states.tsx';
 import { defaultMetric } from '../metrics.ts';
 import { candidates, firstJudged, fromPartial, overlayOf, passagesBanner, runName, type ReplayTrace } from './model.ts';
@@ -254,7 +255,10 @@ function RunReplay({ client, run, query, with: other }: RunSource) {
           ]}
         />
         {beside === null ? null : (
-          <Select id="replay-beside" label="Beside" value={beside} onChange={(e) => go(query, e.target.value)} options={offered.map((r) => ({ value: r.id, label: `${runName(r) ?? 'run'} · ${short(r.id)}` }))} />
+          <Select id="replay-beside" label="Beside" value={beside} onChange={(e) => go(query, e.target.value)} options={offered.map((r) => {
+              const prefix = prefixText(r);
+              return { value: r.id, label: `${runName(r) ?? 'run'} · ${short(r.id)}${prefix === null ? '' : ` · ${prefix}`}` };
+            })} />
         )}
         {listed.metrics.length === 0 ? null : (
           <Select id="replay-metric" label="Metric" value={metric ?? ''} onChange={(e) => setMetric(e.target.value)} options={listed.metrics.map((m) => ({ value: m, label: m }))} />

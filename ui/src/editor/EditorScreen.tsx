@@ -51,7 +51,7 @@ function useOnce<T>(read: ((signal: AbortSignal) => Promise<ApiResult<T>>) | nul
 }
 
 /** The editor over `initial`, once the services are read. */
-function Editing({ client, workspace, title, initial, selected, onSelect }: { client: ApiClient; workspace: Workspace; title: string; initial: WireDocument; selected: string | null; onSelect: (id: string | null) => void }) {
+function Editing({ client, workspace, title, stored = null, initial, selected, onSelect }: { client: ApiClient; workspace: Workspace; title: string; stored?: string | null; initial: WireDocument; selected: string | null; onSelect: (id: string | null) => void }) {
   const [services, retry] = useOnce<ServiceListing>((signal) => client.get('/services', { signal }));
   const grammar = useMemo(() => grammarOf(workspace.capabilities), [workspace.capabilities]);
   return (
@@ -61,6 +61,7 @@ function Editing({ client, workspace, title, initial, selected, onSelect }: { cl
         <Editor
           client={client}
           title={title}
+          stored={stored}
           initial={initial}
           capabilities={workspace.capabilities}
           services={listing.services}
@@ -113,7 +114,7 @@ function Stored({ client, name, node, workspace }: { client: ApiClient; name: st
         if (workspace.status === 'loading') return <Loading label="Reading this build's capabilities" />;
         // A failed workspace read is the shell's to show, with Retry, above the screen.
         if (workspace.status === 'error') return null;
-        return <Editing client={client} workspace={workspace.value} title={name} initial={pipeline.typed} selected={node ?? null} onSelect={onSelect} />;
+        return <Editing client={client} workspace={workspace.value} title={name} stored={name} initial={pipeline.typed} selected={node ?? null} onSelect={onSelect} />;
       }}
     </Resource>
   );

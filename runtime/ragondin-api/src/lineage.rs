@@ -16,11 +16,13 @@
 //!
 //! The structural prefix test, [`is_prefix`], is here too: the other content
 //! fact ADR-C39 § 5 asks of every run, by which the pipeline matrix counts a
-//! run cut from a pipeline among that pipeline's runs.
+//! run cut from a pipeline among that pipeline's runs, and by which `GET
+//! /runs` lists every current document a run is a prefix of
+//! ([`Index::prefixes`]) — one relation, read the same way by both.
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use ragondin_experiments::Run;
+use ragondin_experiments::{terminal, Run};
 use ragondin_pipeline::LogicalPipeline;
 
 use crate::backends::{case_alias, PipelineSource};
@@ -37,6 +39,9 @@ pub(crate) struct Index {
     /// Every name the listing held, a document that does not validate
     /// included, stored exactly as given.
     pub(crate) names: BTreeSet<String>,
+    /// Every document that validates, lowered, by name: what [`is_prefix`]
+    /// is asked against for [`Index::prefixes`].
+    pub(crate) lowered: BTreeMap<String, LogicalPipeline>,
 }
 
 /// The workspace's pipelines, listed once: by canonical hash, and every name.
@@ -51,16 +56,18 @@ pub(crate) async fn index(source: &dyn PipelineSource) -> Result<Index, ApiError
     let mut index = Index {
         by_hash: BTreeMap::new(),
         names: BTreeSet::new(),
+        lowered: BTreeMap::new(),
     };
     for file in source.list().await? {
         // A document that does not validate has no canonical form, so no
-        // run can be a run of it.
-        if let Ok(hash) = validation::check(&file.document) {
+        // run can be a run of it, nor a prefix of it.
+        if let Ok(pipeline) = validation::lower(&file.document) {
             index
                 .by_hash
-                .entry(hash)
+                .entry(pipeline.content_hash().to_string())
                 .or_default()
                 .push(file.name.clone());
+            index.lowered.insert(file.name.clone(), pipeline);
         }
         index.names.insert(file.name);
     }
@@ -68,6 +75,24 @@ pub(crate) async fn index(source: &dyn PipelineSource) -> Result<Index, ApiError
 }
 
 impl Index {
+    /// Every current document `run` is a structural prefix of
+    /// ([`is_prefix`]), by name, with the node it stops at — its output,
+    /// `ragondin_experiments::terminal`. Asked of every run, whatever its
+    /// launch record says (ADR-C39 § 5): a run recorded as a prefix of one
+    /// parent can be a prefix of another document too, and a prefix written
+    /// by hand and run from the command line is one as much as a cut. A run
+    /// with no single output stops at no node, and is a prefix of nothing.
+    pub(crate) fn prefixes(&self, run: &LogicalPipeline) -> Vec<(String, String)> {
+        let Some(output) = terminal(run) else {
+            return Vec::new();
+        };
+        self.lowered
+            .iter()
+            .filter(|(_, of)| is_prefix(run, of))
+            .map(|(name, _)| (name.clone(), output.id().as_str().to_owned()))
+            .collect()
+    }
+
     /// Whether the listing holds `name` as the backend would answer a read of
     /// it: a case alias of a stored name first ([`case_alias`]), since the
     /// backend refuses the name then even when it is also stored as given;

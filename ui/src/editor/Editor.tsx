@@ -9,7 +9,9 @@ import { InsertMenu, NodeEntries } from './menus.tsx';
 import { Palette, paletteOf } from './Palette.tsx';
 import { INPUT_KIND, portsOf, refusal, type PortGrammar } from './ports.ts';
 import { canRedo, canUndo, editorReducer, initialEditor, type EditorLayout } from './store.ts';
+import { runUpTo } from './prefix.ts';
 import { useValidation } from './validation.ts';
+import { navigate } from '../routes.ts';
 import './Editor.css';
 
 // Where a node placed from the palette lands beside the selected one: a
@@ -20,6 +22,8 @@ export type EditorProps = {
   client: ApiClient;
   /** The pipeline's name, or what stands for it. */
   title: string;
+  /** The workspace pipeline the editor opened, by name; null or absent for a new document, which no run can take yet. */
+  stored?: string | null;
   /** The wire-schema document the editor opens on. */
   initial: WireDocument;
   layout?: EditorLayout;
@@ -52,7 +56,7 @@ const isTextField = (el: Element | null) => (el instanceof HTMLInputElement && !
  * the server's verdict on the document as it stands. It holds the document in
  * state and writes nothing: saving is not here.
  */
-export function Editor({ client, title, initial, layout, capabilities, services, grammar, selected, onSelect }: EditorProps) {
+export function Editor({ client, title, stored = null, initial, layout, capabilities, services, grammar, selected, onSelect }: EditorProps) {
   const [state, dispatch] = useReducer(editorReducer, undefined, () => initialEditor(initial, layout));
   const { doc } = state;
   const verdict = useValidation(client, doc);
@@ -155,6 +159,14 @@ export function Editor({ client, title, initial, layout, capabilities, services,
     return () => document.removeEventListener('keydown', onPage);
   }, []);
 
+  // "Run up to this node" launches the stored document cut at the node, so it is offered only while the canvas still
+  // holds that document unchanged: the editor writes no file, and a run takes the one on disk.
+  const unchanged = useMemo(() => JSON.stringify(doc) === JSON.stringify(initial), [doc, initial]);
+  const runOf = (id: string) => runUpTo(doc, id, { name: stored, unchanged });
+  const runUpToNode = (id: string) => {
+    if (stored !== null) navigate({ screen: 'runs', launch: { pipeline: stored, upTo: id } });
+  };
+
   const nodeOf = (id: string) => doc.pipeline.nodes.find((n) => n.id === id);
   const inspector = (id: string) => {
     const node = nodeOf(id);
@@ -167,7 +179,20 @@ export function Editor({ client, title, initial, layout, capabilities, services,
         </Inspector>
       );
     }
-    return <EditorInspector key={id} doc={doc} node={node} ports={portsOf(node, grammar)} verdict={verdictOf(id)} quiet={QUIET[verdict.status]} dispatch={dispatch} onRenamed={onSelect} />;
+    return (
+      <EditorInspector
+        key={id}
+        doc={doc}
+        node={node}
+        ports={portsOf(node, grammar)}
+        verdict={verdictOf(id)}
+        quiet={QUIET[verdict.status]}
+        dispatch={dispatch}
+        onRenamed={onSelect}
+        run={runOf(id)}
+        onRunUpTo={() => runUpToNode(id)}
+      />
+    );
   };
   const menu = (id: string, close: () => void) =>
     nodeOf(id) === undefined ? (
@@ -180,6 +205,8 @@ export function Editor({ client, title, initial, layout, capabilities, services,
         grammar={grammar}
         node={id}
         refuse={refuse}
+        run={runOf(id)}
+        onRunUpTo={() => runUpToNode(id)}
         close={close}
         onOpen={() => {
           onSelect(id);

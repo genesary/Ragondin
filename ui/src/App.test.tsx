@@ -98,7 +98,7 @@ describe('the shell’s screens', () => {
 
   it('hands Runs the selection its address carries', async () => {
     const id = (c: string) => c.repeat(64);
-    const run = (c: string) => ({ id: id(c), pipeline: id('p'), dataset_version: id('d'), index_version: id('i'), engine_version: '0.0.0', metrics: {}, pipeline_names: [], refused_pipeline_names: [], launched_as: null, benchmark_names: [], started_at_ms: null, finished_at_ms: null, metric_families: {}, median_query_latency_nanos: null });
+    const run = (c: string) => ({ id: id(c), pipeline: id('p'), dataset_version: id('d'), index_version: id('i'), engine_version: '0.0.0', metrics: {}, pipeline_names: [], refused_pipeline_names: [], prefix_of_documents: [], launched_as: null, benchmark_names: [], started_at_ms: null, finished_at_ms: null, metric_families: {}, median_query_latency_nanos: null });
     mockApi({ 'GET /workspace': { body: WORKSPACE }, 'GET /runs': { body: { runs: [run('1'), run('2'), run('3')], unreadable: [], shapes: {} } } }, { build: BUILD });
     show(`#runs?sel=${id('2')},${id('1')}`);
     await within(main()).findAllByRole('checkbox');
@@ -177,7 +177,7 @@ describe('the shell’s screens', () => {
 
   describe('state within a screen', () => {
     const id = (c: string) => c.repeat(64);
-    const run = (c: string, dataset = id('d')) => ({ id: id(c), pipeline: id('p'), dataset_version: dataset, index_version: id('i'), engine_version: '0.0.0', metrics: {}, pipeline_names: [], refused_pipeline_names: [], launched_as: null, benchmark_names: [], started_at_ms: null, finished_at_ms: null, metric_families: {}, median_query_latency_nanos: null });
+    const run = (c: string, dataset = id('d')) => ({ id: id(c), pipeline: id('p'), dataset_version: dataset, index_version: id('i'), engine_version: '0.0.0', metrics: {}, pipeline_names: [], refused_pipeline_names: [], prefix_of_documents: [], launched_as: null, benchmark_names: [], started_at_ms: null, finished_at_ms: null, metric_families: {}, median_query_latency_nanos: null });
     const runsRoutes = () =>
       mockApi({ 'GET /workspace': { body: WORKSPACE }, 'GET /runs': { body: { runs: [run('1'), run('2'), run('3', id('e'))], unreadable: [], shapes: {} } } }, { build: BUILD });
     const row = (c: string) => within(main()).getByRole('row', { name: new RegExp(`^Run ${id(c).slice(0, 12)} on `) });
@@ -426,7 +426,7 @@ describe('the connection state', () => {
     await screen.findByText(WORKSPACE.path);
     expect(FakeEventSource.instances).toHaveLength(1);
     expect(FakeEventSource.latest().url).toBe('/api/v1/jobs/events');
-    const job = (state: JobSummary['state']): JobSummary => ({ id: 'j1', created_at_ms: 1, position: 0, state, work: { kind: 'run', pipeline: 'hybrid', benchmark: 'beir/scifact', run_id: 'a'.repeat(64), up_to: null, bindings: [] } });
+    const job = (state: JobSummary['state']): JobSummary => ({ id: 'j1', created_at_ms: 1, position: 0, state, work: { kind: 'run', pipeline: 'hybrid', benchmark: 'beir/scifact', run_id: 'a'.repeat(64), up_to: null, parent_pipeline_hash: null, bindings: [] } });
     act(() => FakeEventSource.latest().open());
     act(() => FakeEventSource.latest().emit(JSON.stringify({ jobs: [job({ kind: 'running', done: 1, total: 2, started_at_ms: 1, median_latency_nanos: null })], faults: [] }), 'resync'));
     act(() => FakeEventSource.latest().emit(JSON.stringify(job({ kind: 'failed', at_node: 'rerank', error: 'boom', finished_at_ms: 2, partial_traces: 0 })), 'failed'));

@@ -3,7 +3,7 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createApiClient } from '../api/client.ts';
 import { mockApi, type MockReply } from '../api/testing.ts';
-import type { PartialQueries, Problem, QueryTrace, RunDetail, RunQueries } from '../api/types.ts';
+import type { PartialQueries, Problem, QueryTrace, RunDetail, RunListing, RunQueries } from '../api/types.ts';
 import { parseHash } from '../routes.ts';
 import {
   DENSE,
@@ -44,9 +44,10 @@ function api({
   trace,
   queries,
   detail,
-}: { traces?: Record<string, QueryTrace>; trace?: (run: string, query: string) => MockReply<QueryTrace> | Promise<MockReply<QueryTrace>>; queries?: Override<RunQueries>; detail?: Override<RunDetail> } = {}) {
+  listing = LISTING,
+}: { listing?: RunListing; traces?: Record<string, QueryTrace>; trace?: (run: string, query: string) => MockReply<QueryTrace> | Promise<MockReply<QueryTrace>>; queries?: Override<RunQueries>; detail?: Override<RunDetail> } = {}) {
   return mockApi({
-    'GET /runs': { body: LISTING },
+    'GET /runs': { body: listing },
     'GET /runs/{id}': (_q, path) => detail?.(segment(path, 4)) ?? (DETAILS[segment(path, 4)] === undefined ? { problem: problem('run_not_found', 404, 'no such run') } : { body: DETAILS[segment(path, 4)]! }),
     'GET /runs/{id}/queries': (query, path) => {
       const run = segment(path, 4);
@@ -223,6 +224,16 @@ describe('Replay side by side', () => {
     expect(offered).toContain(FAILED);
     expect(offered).not.toContain(ELSEWHERE);
     expect(offered).not.toContain(HYBRID);
+  });
+
+  it('labels a prefix run among the runs offered beside it', async () => {
+    const prefixed = LISTING.runs.map((r) => (r.id === FAILED ? { ...r, prefix_of_documents: [{ pipeline: 'hybrid-rerank-gen', up_to: 'rrf' }] } : r));
+    api({ listing: { ...LISTING, runs: prefixed } });
+    show({ query: 'q1', with: DENSE });
+    const beside = (await screen.findByLabelText('Beside')) as HTMLSelectElement;
+    const label = (id: string) => [...beside.options].find((o) => o.value === id)?.textContent;
+    expect(label(FAILED)).toContain('prefix of hybrid-rerank-gen, up to rrf');
+    expect(label(DENSE)).not.toContain('prefix');
   });
 
   it('refuses a run on another benchmark named in the address, says why, and replays the one run', async () => {

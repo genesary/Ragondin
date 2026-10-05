@@ -1610,6 +1610,11 @@
                 ],
                 "type": "string"
               },
+              "parent_pipeline_hash": {
+                "description": "For a prefix run, the canonical hash of the parent document the\ncut was made from at submission; `null` for a whole run. Beside\n`up_to`, the prefix's provenance, never part of the run's\nidentity.",
+                "nullable": true,
+                "type": "string"
+              },
               "pipeline": {
                 "description": "The pipeline's name in the workspace.",
                 "type": "string"
@@ -1619,7 +1624,7 @@
                 "type": "string"
               },
               "up_to": {
-                "description": "The node a prefix run stops after; `null` for a whole run.",
+                "description": "The node a prefix run stops at; `null` for a whole run. The\npipeline is then the parent's name, and the job ran the parent's\ndocument cut at this node.",
                 "nullable": true,
                 "type": "string"
               }
@@ -1628,6 +1633,7 @@
               "benchmark",
               "bindings",
               "kind",
+              "parent_pipeline_hash",
               "pipeline",
               "run_id",
               "up_to"
@@ -3131,7 +3137,11 @@
               "job_not_queued",
               "job_finished",
               "job_not_ended",
-              "no_partial_traces"
+              "no_partial_traces",
+              "prefix_node_not_found",
+              "prefix_is_whole_pipeline",
+              "prefix_ends_in_context",
+              "prefix_not_scorable"
             ],
             "type": "string"
           },
@@ -3411,7 +3421,7 @@
                 "nullable": true
               }
             ],
-            "description": "The run's launch record, as [`RunSummary::launched_as`] serves it;\n`null` for a run stored without one. A prefix run says what it was\ncut from here, in the record's `prefix_of`: the parent's name, the\nnode it stops at and the parent's canonical hash."
+            "description": "The run's launch record, as [`RunSummary::launched_as`] serves it;\n`null` for a run stored without one. A prefix run says what it was\ncut from here, in the record's `prefix_of`: the parent's name, the\nnode it stops at and the parent's canonical hash. A prefix written by\nhand, with no such record, shows only through `GET /runs`'\n`prefix_of_documents`."
           },
           "metrics": {
             "additionalProperties": {
@@ -3721,6 +3731,13 @@
             },
             "type": "array"
           },
+          "prefix_of_documents": {
+            "description": "Every current workspace document the run's pipeline is a structural\nprefix of — its declared inputs the same, each of its nodes one of the\ndocument's, equal in canonical form, and fewer of them — each with the\nnode the run stops at, sorted by name; empty when it is a prefix of\nnone, or its stored document no longer lowers. A content fact like\n[`pipeline_names`](Self::pipeline_names), asked of every run whatever\n[`launched_as`](Self::launched_as) records (ADR-C39 § 5), so a prefix\nwritten by hand and run from the command line is one too; the pipeline\nmatrix counts a prefix by the same test.",
+            "items": {
+              "$ref": "#/components/schemas/PrefixOf"
+            },
+            "type": "array"
+          },
           "refused_pipeline_names": {
             "description": "The names among [`pipeline_names`](Self::pipeline_names) the backend\nrefuses to read, sorted; empty when it refuses none. A name is refused\nwhen another stored name is a case alias of it — the same name in\nanother ASCII case, `request_invalid` on a read — as two documents can\nbe on a filesystem that keeps case; each of the two is then refused.\nRead from the same listing of `pipelines/` as `pipeline_names`, by the\nrule [`NameHeld::OtherCase`] reads a recorded name by.",
             "items": {
@@ -3749,6 +3766,7 @@
           "metrics",
           "pipeline",
           "pipeline_names",
+          "prefix_of_documents",
           "refused_pipeline_names",
           "started_at_ms"
         ],

@@ -71,6 +71,28 @@ describe('#runs/job/<id>', () => {
   });
 });
 
+describe('#runs?launch=<pipeline>&up_to=<node>', () => {
+  it('carries the launch panel opened on a pipeline, cut at a node, and restores it from the hash on load', () => {
+    const route: Route = { screen: 'runs', launch: { pipeline: 'hybrid-rerank-gen', upTo: 'rerank' } };
+    expect(formatHash(route)).toBe('#runs?launch=hybrid-rerank-gen&up_to=rerank');
+    expect(load('#runs?launch=hybrid-rerank-gen&up_to=rerank')).toEqual(route);
+  });
+
+  it('opens the panel on a whole pipeline without up_to, and keeps the selection beside it', () => {
+    const route: Route = { screen: 'runs', sel: ['r1'], launch: { pipeline: 'a&b' } };
+    expect(formatHash(route)).toBe('#runs?sel=r1&launch=a%26b');
+    expect(parseHash(formatHash(route))).toEqual(route);
+  });
+
+  it.each(['#runs?up_to=rerank', '#runs?launch=', '#runs?launch=p&up_to=', '#runs?launch=..'])('names no launch at %s, and so no route', (hash) => {
+    expect(parseHash(hash)).toBeNull();
+  });
+
+  it('is state within the Runs view', () => {
+    expect(viewOf({ screen: 'runs', launch: { pipeline: 'p', upTo: 'n' } })).toBe('#runs');
+  });
+});
+
 describe('#pipeline', () => {
   it('is the screen before a pipeline is chosen', () => {
     expect(formatHash({ screen: 'pipeline' })).toBe('#pipeline');

@@ -33,6 +33,7 @@ const job = (status: RunRow['status'], over: Partial<JobFacts> = {}): RunRow => 
   latencyMs: null,
   startedAt: null,
   prefix: null,
+  contentPrefix: null,
   job: facts(over),
   announced: null,
 });
