@@ -2,7 +2,7 @@ import dagre from '@dagrejs/dagre';
 import { describe, expect, it, vi } from 'vitest';
 import tokensCss from '../../design/tokens.css?raw';
 import { HYBRID_RERANK_GEN } from './fixtures.ts';
-import { GRID, NODE_HEIGHT, NODE_WIDTH, RANK_GAP, nodeSize, resolveLayout } from './layout.ts';
+import { GRID, NODE_HEIGHT, NODE_WIDTH, RANK_GAP, boundsOf, extentOf, fitArea, nodeSize, resolveLayout } from './layout.ts';
 import { toModel } from './model.ts';
 
 const model = toModel(HYBRID_RERANK_GEN);
@@ -84,5 +84,23 @@ describe('resolveLayout', () => {
 
   it('is never fed anything but the graph and positions: the same input gives the same layout', () => {
     expect(resolveLayout(model)).toEqual(resolveLayout(model));
+  });
+});
+
+describe('the area a view is fitted to', () => {
+  const placed = { a: { x: 32, y: 16 }, b: { x: 320, y: 160 } };
+
+  it('is the box around every card, from the top-left card corner', () => {
+    expect(boundsOf(placed)).toEqual({ x: 32, y: 16, width: 320 - 32 + NODE_WIDTH, height: 160 - 16 + NODE_HEIGHT });
+  });
+
+  it('grows to a shared frame from the same corner, so two canvases given one frame share one zoom and one origin', () => {
+    const bounds = boundsOf(placed);
+    expect(fitArea(bounds, { width: 2000, height: 100 })).toEqual({ x: 32, y: 16, width: 2000, height: bounds.height });
+    expect(fitArea(bounds)).toEqual(bounds);
+  });
+
+  it('is measured on the automatic layout alone, for a graph, so a screen can frame two graphs alike', () => {
+    expect(extentOf(HYBRID_RERANK_GEN)).toEqual({ width: boundsOf(resolveLayout(model).positions).width, height: boundsOf(resolveLayout(model).positions).height });
   });
 });

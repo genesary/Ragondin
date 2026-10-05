@@ -21,7 +21,7 @@ import { memo, useCallback, useEffect, useId, useMemo, useRef, useState, type Dr
 import type { Graph } from '../api/types.ts';
 import { Button, FAMILY_LABEL, Glyph } from '../../design/index.ts';
 import { EdgeLine, edgePath } from './Edge.tsx';
-import { GRID, NODE_WIDTH, nodeSize, resolveLayout, type Position, type StoredLayout } from './layout.ts';
+import { GRID, NODE_WIDTH, boundsOf, fitArea, nodeSize, resolveLayout, type Box, type Position, type StoredLayout } from './layout.ts';
 import { Legend } from './Legend.tsx';
 import { describeOverlay, toModel, type CanvasNode, type NodeOverlay, type PortKind } from './model.ts';
 import { NodeCard, type NodeStatus } from './NodeCard.tsx';
@@ -55,6 +55,13 @@ export type CanvasProps = {
   layout?: StoredLayout | undefined;
   /** Per node, what the caller knows of its execution for one query. It never moves a node. */
   overlay?: Readonly<Record<string, NodeOverlay>> | undefined;
+  /**
+   * In read mode, the extent the view is fitted to: at least this, from the
+   * graph's top-left card, so canvases of one size given one frame — two
+   * graphs side by side — share a zoom and an origin and line up. Absent,
+   * the view is fitted to the graph alone.
+   */
+  frame?: { width: number; height: number } | undefined;
   /** The selected node. Pass it to control the selection; leave it out and the canvas keeps its own. */
   selected?: string | null;
   onSelect?: (id: string | null) => void;
@@ -141,6 +148,8 @@ const handles = (node: CanvasNode): NodeHandle[] => [
 const ARROWS: Record<string, [number, number]> = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
 const snap = (v: number) => Math.round(v / GRID) * GRID;
 const WRITE_FIT = { maxZoom: 1 };
+// The library's own fit leaves a tenth of the pane around the graph; a frame keeps the same margin.
+const FRAME_FIT = { padding: 0.1 };
 
 function accessibleName(node: CanvasNode, selected: boolean, overlay: NodeOverlay | undefined, issue: string | undefined): string {
   return [
@@ -241,7 +250,7 @@ const EDGE_TYPES = { line: Line };
  * demand, never announced. Named after its canvas, so two toolbars side by
  * side are told apart.
  */
-function Toolbar({ label }: { label: string }) {
+function Toolbar({ label, onFit }: { label: string; onFit: () => void }) {
   const flow = useReactFlow();
   const { zoom } = useViewport();
   const hidden = (text: string) => <span className="rg-visually-hidden">{text}</span>;
@@ -254,7 +263,7 @@ function Toolbar({ label }: { label: string }) {
       <Button kind="quiet" size="s" icon="plus" onClick={() => void flow.zoomIn()}>
         {hidden('Zoom in')}
       </Button>
-      <Button kind="quiet" size="s" icon="fit" onClick={() => void flow.fitView()}>
+      <Button kind="quiet" size="s" icon="fit" onClick={onFit}>
         {hidden('Fit graph')}
       </Button>
     </div>
@@ -289,6 +298,7 @@ function Surface({
   mode = 'read',
   layout,
   overlay = NO_OVERLAY,
+  frame,
   selected: controlled,
   onSelect,
   onAutoPlaced,
@@ -421,6 +431,19 @@ function Surface({
   useEffect(() => {
     if (editable) void flow.fitView(WRITE_FIT);
   }, [editable, count, paneWidth, paneHeight, flow]);
+
+  // Read mode with a frame: the view is fitted to the frame from the graph's
+  // corner, once the pane has a size and again whenever it or the frame
+  // changes — not as the overlay changes, so the reader's pan and zoom stay
+  // across queries.
+  const framed = !editable && frame !== undefined;
+  const bounds = useMemo(() => boundsOf(resolved.positions), [resolved]);
+  const area: Box | null = framed ? fitArea(bounds, frame) : null;
+  const [ax, ay, aw, ah] = area === null ? [0, 0, 0, 0] : [area.x, area.y, area.width, area.height];
+  useEffect(() => {
+    if (framed && paneWidth > 0 && paneHeight > 0) void flow.fitBounds({ x: ax, y: ay, width: aw, height: ah }, FRAME_FIT);
+  }, [framed, ax, ay, aw, ah, paneWidth, paneHeight, flow]);
+  const fit = () => void (area === null ? flow.fitView() : flow.fitBounds(area, FRAME_FIT));
 
   const positionOf = useCallback((id: string) => dragged[id] ?? resolved.positions[id]!, [dragged, resolved]);
 
@@ -558,7 +581,7 @@ function Surface({
     <div className="rg-canvas-frame">
       <div ref={root} className="rg-canvas" data-mode={mode} data-drawing={drawing === null ? undefined : true} onKeyDown={onKeyDown} onDragOver={onDragOver} onDrop={onDrop}>
         {/* First in the tab order, before the nodes. */}
-        <Toolbar label={label} />
+        <Toolbar label={label} onFit={fit} />
         {/* Its height is kept whether or not it speaks, so nothing moves when it does. */}
         {editable ? (
           <p className="rg-canvas__status" role="status">
@@ -587,7 +610,7 @@ function Surface({
             setDragged((d) => Object.fromEntries(Object.entries(d).filter(([k]) => k !== node.id)));
             onMove?.(node.id, { x: snap(node.position.x), y: snap(node.position.y) });
           }}
-          fitView
+          fitView={!framed}
           {...(editable ? { fitViewOptions: WRITE_FIT } : {})}
           // The library's floor of 0.5 cannot fit a seven-column graph into a
           // half-width pane, the side-by-side case.

@@ -36,6 +36,9 @@
 .rg-replay__rank { color: var(--ink-3); font-variant-numeric: tabular-nums; text-align: right; }
 .rg-replay__star { color: var(--ink); }
 .rg-replay__passage { display: grid; gap: var(--space-1); min-width: 0; overflow-wrap: anywhere; }
+/* A passage reads in three lines; its control shows the rest. */
+.rg-replay__clamp[data-clamped] { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
+.rg-replay__more { justify-self: start; }
 .rg-replay__ids { display: inline-flex; flex-wrap: wrap; gap: var(--space-2); min-width: 0; }
 .rg-replay__chunk { font: var(--type-hash); letter-spacing: var(--type-hash-tracking); color: var(--ink); }
 .rg-replay__doc { font: var(--type-hash); letter-spacing: var(--type-hash-tracking); color: var(--ink-3); }
@@ -70,6 +73,15 @@
 .rg-replay__qid { font: var(--type-hash); letter-spacing: var(--type-hash-tracking); color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rg-replay__qscore { font: var(--type-caption); color: var(--ink-2); font-variant-numeric: tabular-nums; text-align: right; }
 .rg-replay__qtext { grid-column: 1 / -1; font: var(--type-caption); color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* A set kept from Compare, what it is and the way out of it; Previous and Next through what the list holds, with where the query shown stands. */
+.rg-replay__set { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: var(--space-2); }
+.rg-replay__set p { margin: 0; font: var(--type-caption); color: var(--ink-2); }
+.rg-replay__steps { display: flex; align-items: center; gap: var(--space-2); }
+.rg-replay__where { flex: 1; font: var(--type-caption); color: var(--ink-2); font-variant-numeric: tabular-nums; text-align: center; }
+/* The list folds behind its control at phone width only: wider, the control is hidden and the list always shown. */
+.rg-replay__fold { display: grid; gap: var(--space-3); min-width: 0; }
+.rg-replay__fold-toggle { display: none; }
 
 /* The screen: the toolbar, a status line whose height is reserved, then three columns — the queries, the stage, the inspector — whose widths never depend on what is selected or read, so nothing moves under the pointer. */
 .rg-replay { display: grid; gap: var(--space-3); min-width: 0; }
@@ -115,6 +127,16 @@
   .rg-replay__body[data-columns="2"] { grid-template-columns: minmax(0, 1fr); }
   .rg-replay__body[data-columns="2"] .rg-replay__panel { grid-column: auto; }
 }
+
+/* At phone width the list of queries, hundreds of rows, folds behind one control, so the trace comes first. */
+@media (max-width: 640px) {
+  .rg-replay__fold-toggle { display: inline-flex; justify-self: start; }
+  .rg-replay__fold[data-folded] { display: none; }
+}
+
+/* The run picker, in the empty state's action slot: the run, then the action that opens it. */
+.rg-replay__pick { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: center; gap: var(--space-3); max-width: 100%; }
+.rg-replay__pick select { max-width: min(480px, 100%); }
 
 /* Open in the editor: a wrapper that only follows focus, laid out as if absent. */
 .rg-replay__open {

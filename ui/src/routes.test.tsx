@@ -211,6 +211,29 @@ describe('#replay/<run>/q/<query>/node/<id>?with=<run>', () => {
   });
 });
 
+describe('#replay/<run>/q/<query>?with=<run>&set=regressions&metric=<name>', () => {
+  it('carries the set of regressions against the run beside on one metric, and restores it from the hash on load', () => {
+    const route: Route = { screen: 'replay', run: 'aaa', query: '7', node: 'rerank', with: 'bbb', set: { kind: 'regressions', metric: 'ndcg@10' } };
+    expect(formatHash(route)).toBe('#replay/aaa/q/7/node/rerank?with=bbb&set=regressions&metric=ndcg%4010');
+    expect(load('#replay/aaa/q/7/node/rerank?with=bbb&set=regressions&metric=ndcg%4010')).toEqual(route);
+  });
+
+  it("is state within the run's view, as the query is", () => {
+    expect(viewOf({ screen: 'replay', run: 'aaa', query: '7', with: 'bbb', set: { kind: 'regressions', metric: 'ndcg@10' } })).toBe('#replay/aaa');
+  });
+
+  it.each([
+    '#replay/aaa/q/7?set=regressions&metric=ndcg%4010',
+    '#replay/aaa/q/7?with=bbb&set=regressions',
+    '#replay/aaa/q/7?with=bbb&metric=ndcg%4010',
+    '#replay/aaa/q/7?with=bbb&set=improvements&metric=ndcg%4010',
+    '#replay/aaa/q/7?with=bbb&set=regressions&metric=',
+    '#replay/aaa?with=bbb&set=regressions&metric=ndcg%4010',
+  ])('reads %s as no route', (hash) => {
+    expect(parseHash(hash)).toBeNull();
+  });
+});
+
 describe('#replay/job/<id>/q/<query>/node/<id>', () => {
   it("carries the node selected on a job's query, and restores it from the hash on load", () => {
     const route: Route = { screen: 'replay', job: 'j2', query: 'q1', node: 'rerank' };

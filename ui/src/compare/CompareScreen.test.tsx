@@ -415,7 +415,7 @@ describe('the tables', () => {
 });
 
 describe('the verdict', () => {
-  it('ends the page: the sentence, then the one primary action, to the worst regression beside the baseline', async () => {
+  it('ends the page: the sentence, then the one primary action, to the worst regression beside the baseline, keeping the set of regressions', async () => {
     show(THREE);
     await loaded();
     fireEvent.change(screen.getByLabelText('Per-query metric'), { target: { value: 'mrr@10' } });
@@ -425,7 +425,7 @@ describe('the verdict', () => {
     const primary = document.querySelectorAll('.rg-btn--primary');
     expect(primary).toHaveLength(1);
     expect(primary[0]?.textContent).toBe('Replay the 61 regressions');
-    expect(primary[0]?.getAttribute('href')).toBe(`#replay/${RERANK}/q/q1?with=${DENSE}`);
+    expect(primary[0]?.getAttribute('href')).toBe(`#replay/${RERANK}/q/q1?with=${DENSE}&set=regressions&metric=mrr%4010`);
     // Nothing follows the action on the page.
     const sheet = section.closest('.rg-sheet') as HTMLElement;
     expect(sheet.lastElementChild).toBe(section);

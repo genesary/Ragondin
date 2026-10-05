@@ -1,6 +1,6 @@
 import dagre from '@dagrejs/dagre';
-import type { Layout, Position } from '../api/types.ts';
-import type { CanvasModel, CanvasNode } from './model.ts';
+import type { Graph, Layout, Position } from '../api/types.ts';
+import { toModel, type CanvasModel, type CanvasNode } from './model.ts';
 
 export type { Position };
 
@@ -88,4 +88,33 @@ export function resolveLayout(model: CanvasModel, stored?: StoredLayout): Resolv
     placed.push(box);
   }
   return { positions, autoPlaced: missing.map((n) => n.id) };
+}
+
+/** A box in the graph's coordinates. */
+export type Box = { x: number; y: number; width: number; height: number };
+
+/** The box around every card at `positions`, from the top-left card corner. */
+export function boundsOf(positions: Readonly<Record<string, Position>>): Box {
+  const { width, height } = nodeSize();
+  const at = Object.values(positions);
+  if (at.length === 0) return { x: 0, y: 0, width: 0, height: 0 };
+  const x = Math.min(...at.map((p) => p.x));
+  const y = Math.min(...at.map((p) => p.y));
+  return { x, y, width: Math.max(...at.map((p) => p.x)) + width - x, height: Math.max(...at.map((p) => p.y)) + height - y };
+}
+
+/**
+ * The area a view is fitted to: the cards' box, grown to `frame` from the
+ * same top-left corner. Two canvases of one size fitted to one frame share
+ * a zoom and an origin, so their graphs line up rank by rank.
+ */
+export function fitArea(bounds: Box, frame?: { width: number; height: number }): Box {
+  if (frame === undefined) return bounds;
+  return { ...bounds, width: Math.max(bounds.width, frame.width), height: Math.max(bounds.height, frame.height) };
+}
+
+/** The size of a graph's automatic layout: what a screen frames two graphs alike by. */
+export function extentOf(graph: Graph): { width: number; height: number } {
+  const { width, height } = boundsOf(resolveLayout(toModel(graph)).positions);
+  return { width, height };
 }

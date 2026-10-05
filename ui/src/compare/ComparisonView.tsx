@@ -322,12 +322,12 @@ export function ComparisonView({ comparison: c, ids, baseline, busy, listing, on
         <Section heading="Verdict">
           <p className="rg-compare__verdict">{sentence}</p>
           <div className="rg-compare__action">
-            {lost !== null && lost.worst !== null ? (
+            {md !== null && lost !== null && lost.worst !== null ? (
               <>
-                <ButtonLink kind="primary" size="l" icon="play" href={replayOf(lost.worst)}>
+                <ButtonLink kind="primary" size="l" icon="play" href={formatHash({ screen: 'replay', run: run?.id ?? '', query: lost.worst, with: baseline, set: { kind: 'regressions', metric: md.metric } })}>
                   {`Replay the ${lost.count.toLocaleString('en-US')} regression${lost.count === 1 ? '' : 's'}`}
                 </ButtonLink>
-                <span className="rg-compare__note">Opens the largest regression, {lost.worst}, beside the baseline.</span>
+                <span className="rg-compare__note">Opens the largest regression, {lost.worst}, beside the baseline, with the others one step away.</span>
               </>
             ) : (
               <ButtonLink kind="primary" size="l" icon="play" href={formatHash({ screen: 'replay', run: run?.id ?? '' })}>
