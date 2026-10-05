@@ -182,4 +182,4 @@ export function mockApi(routes: MockRoutes, { build = 'test-build' }: { build?: 
  * pipeline can be scored on by what it ends in. A test listing carries it as
  * the server would, never a rule of its own.
  */
-export const SCORABLE: Scorable = { ending_in_answer: ['none', 'qrels', 'reference_answers', 'both'], ending_elsewhere: ['none', 'qrels'] };
+export const SCORABLE: Scorable = { ending_in_answer: ['qrels', 'reference_answers', 'both'], ending_elsewhere: ['qrels'] };

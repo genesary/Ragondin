@@ -1,5 +1,6 @@
 /** @vitest-environment happy-dom */
 import { fireEvent, render, screen } from '@testing-library/react';
+import { createRef } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { declared } from '../../testing/css.ts';
 import css from './Button.css?raw';
@@ -121,6 +122,14 @@ describe('Button disabled, its reason shown', () => {
     expect(button.getAttribute('aria-describedby')).toBe(reason.id);
     expect(reason.className).toBe('rg-btn__reason');
     expect(declared(css, '.rg-btn__reason', 'color')).toBe('var(--ink-2)');
+  });
+});
+
+describe('Button by reference', () => {
+  it('hands its ref to the native button, so a screen can return focus to it', () => {
+    const ref = createRef<HTMLButtonElement>();
+    render(<Button ref={ref}>Launch…</Button>);
+    expect(ref.current).toBe(screen.getByRole('button', { name: 'Launch…' }));
   });
 });
 

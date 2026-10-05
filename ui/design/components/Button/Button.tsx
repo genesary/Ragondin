@@ -1,4 +1,4 @@
-import { useId, type AnchorHTMLAttributes, type ButtonHTMLAttributes, type ReactNode } from 'react';
+import { useId, type AnchorHTMLAttributes, type ButtonHTMLAttributes, type ReactNode, type Ref } from 'react';
 import { Glyph, type GlyphName } from '../../glyphs/Glyph.tsx';
 import './Button.css';
 
@@ -20,6 +20,8 @@ export type ButtonProps = {
   busy?: boolean;
   busyLabel?: string;
   children: ReactNode;
+  /** The native button, for a screen that returns focus to it. */
+  ref?: Ref<HTMLButtonElement>;
 } & Disabled &
   Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'disabled' | 'children'>;
 

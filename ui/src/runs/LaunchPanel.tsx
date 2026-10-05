@@ -20,7 +20,7 @@ import { useCallback, useEffect, useId, useRef, useState, type Ref } from 'react
 import { Button, ButtonLink, InlineMessage, PrefixLabel, Section, Select } from '../../design/index.ts';
 import type { ApiClient, ApiProblem } from '../api/client.ts';
 import { useJobs } from '../jobs/queue.tsx';
-import type { BenchmarkEntry, BenchmarkListing, PipelineDetail, PipelineListing, RunRequest, Scorable, ServiceListing } from '../api/types.ts';
+import type { BenchmarkEntry, BenchmarkListing, GroundTruth, PipelineDetail, PipelineListing, RunRequest, Scorable, ServiceListing } from '../api/types.ts';
 import { formatHash, type Route } from '../routes.ts';
 import { groundTruthLabel } from '../setup/model.ts';
 import { ErrorState, Loading, type RequestState } from '../shell/states.tsx';
@@ -72,32 +72,33 @@ function outcomeCounts(outcomes: readonly Submission[]): string {
 const PIPELINE_CODES = new Set(['pipeline_invalid', 'impl_not_in_build', 'pipeline_not_found', 'prefix_node_not_found', 'prefix_is_whole_pipeline', 'prefix_ends_in_context']);
 const BENCHMARK_CODES = new Set(['benchmark_not_found', 'dataset_absent', 'dataset_differs', 'prefix_not_scorable']);
 
+/** The ground truths `GET /benchmarks`' `scorable` lists for what is launched, by whether it ends in an answer. */
+const scorableFor = (scorable: Scorable, endsInAnswer: boolean): readonly GroundTruth[] => scorable[endsInAnswer ? 'ending_in_answer' : 'ending_elsewhere'];
+
 /**
  * Whether a pipeline can be scored on a benchmark, given whether it ends in an
- * answer: the benchmark carries a ground truth, and the API lists it among
- * those such a pipeline can be scored on — `CarriedPieces::scorable`, served
- * in `GET /benchmarks`' `scorable` and never restated here. A benchmark that
- * carries none has nothing to score the run on.
+ * answer: the API lists the benchmark's ground truth among those such a
+ * pipeline can be scored on — `CarriedPieces::scorable`, served in
+ * `GET /benchmarks`' `scorable`, which leaves out a benchmark that carries
+ * nothing to score — and nothing is restated here.
  */
-const scoredOn = (scorable: Scorable, endsInAnswer: boolean) => (b: BenchmarkEntry) =>
-  b.ground_truth !== null && b.ground_truth !== 'none' && scorable[endsInAnswer ? 'ending_in_answer' : 'ending_elsewhere'].includes(b.ground_truth);
+const scoredOn = (scorable: Scorable, endsInAnswer: boolean) => (b: BenchmarkEntry) => (scorableFor(scorable, endsInAnswer) as readonly (GroundTruth | null)[]).includes(b.ground_truth);
+
+/** Words joined as a sentence lists them: "a", "a or b", "a, b or c". */
+const either = (words: readonly string[]) => (words.length < 2 ? words.join('') : `${words.slice(0, -1).join(', ')} or ${words[words.length - 1] as string}`);
 
 /**
  * Why the benchmarks a pipeline — or a prefix — cannot be scored on are not
- * offered, in one sentence; null when every one is. A benchmark left out that
- * carries a ground truth is one the API refuses for want of an answer.
+ * offered, in one sentence; null when every one is. Worded from what the API
+ * serves alone: each benchmark's ground truth, and the ground truths what is
+ * launched can be scored on, by what it ends in.
  */
-function notOffered(absent: readonly BenchmarkEntry[], prefix: boolean): string | null {
+function notOffered(absent: readonly BenchmarkEntry[], prefix: boolean, endsInAnswer: boolean, scorable: Scorable): string | null {
   if (absent.length === 0) return null;
-  const nothing = absent.filter((b) => b.ground_truth === null || b.ground_truth === 'none').map((b) => b.name);
-  const answers = absent.filter((b) => !nothing.includes(b.name)).map((b) => b.name);
-  const clause = (names: string[], what: string) => `${names.join(', ')}, which ${names.length === 1 ? 'carries' : 'carry'} ${what}`;
-  const what = prefix ? 'a prefix that stops before the generator' : 'a pipeline that does not end in a generator';
-  const parts = [
-    ...(answers.length === 0 ? [] : [`${clause(answers, 'reference answers')}: ${what} produces no answer to score`]),
-    ...(nothing.length === 0 ? [] : [`${clause(nothing, 'no ground truth')}: nothing would score the run`]),
-  ];
-  return `Not offered: ${parts.join('; ')}.`;
+  const which = absent.map((b) => `${b.name}, which carries ${b.ground_truth === null ? 'a ground truth not yet read' : groundTruthLabel(b.ground_truth)}`).join('; ');
+  const what = `a ${prefix ? 'prefix' : 'pipeline'} that ${endsInAnswer ? 'ends' : 'does not end'} in an answer`;
+  const on = scorableFor(scorable, endsInAnswer).map(groundTruthLabel);
+  return `Not offered: ${which}: ${what} can be scored ${on.length === 0 ? 'on no benchmark' : `only on a benchmark whose ground truth is ${either(on)}`}.`;
 }
 const BINDING_CODES = new Set(['service_unreachable', 'binding_refused', 'service_not_found']);
 
@@ -203,7 +204,7 @@ export function LaunchPanel({ client, store, anchor, pipeline: opened, upTo = nu
   const [pipelines, retryPipelines] = useListing<PipelineListing>((signal) => client.get('/pipelines', { signal }));
   const [benchmarks, retryBenchmarks] = useListing<BenchmarkListing>((signal) => client.get('/benchmarks', { signal }));
   const [services, retryServices] = useListing<ServiceListing>((signal) => client.get('/services', { signal }));
-  // Up to a node, the stored document says what the node is: a cut at a generator ends in an answer.
+  // Up to a node, the API says what the cut there ends in (`GET /pipelines/{name}`' `ends_in_answer_up_to`).
   const [detail] = useListing<PipelineDetail | null>((signal) =>
     upTo === null || opened === undefined ? Promise.resolve({ ok: true as const, value: null }) : client.get('/pipelines/{name}', { name: opened }, { signal }),
   );
@@ -221,14 +222,14 @@ export function LaunchPanel({ client, store, anchor, pipeline: opened, upTo = nu
   const pipeline = docs.find((p) => p.name === chosenPipeline) ?? docs.find((p) => p.hash !== null) ?? docs[0] ?? null;
   // Ready ones only: a benchmark on disk whose digest is the one expected of it, and that what is launched can be scored on.
   const onDisk = benchmarks.status === 'loaded' ? benchmarks.value.benchmarks.filter((b) => b.state.kind === 'ready' || b.state.kind === 'local') : [];
-  // Until the document is read — or when it cannot be — the cut is taken to end in a ranking, the narrower offer.
-  const cutNode = detail.status === 'loaded' ? detail.value?.typed?.pipeline.nodes.find((n) => n.id === upTo) : undefined;
-  // What is launched ends in an answer: the listing says it of a whole pipeline; a cut ends in one at a generator. A
-  // pipeline that does not validate says nothing, and is refused whatever the benchmark.
-  const endsInAnswer = upTo === null ? (pipeline?.ends_in_answer ?? null) : cutNode?.component === 'generator';
+  // What is launched ends in an answer, as the API says it: `GET /pipelines`' `ends_in_answer` of a whole pipeline,
+  // `GET /pipelines/{name}`' `ends_in_answer_up_to` of a cut. A whole pipeline that does not validate says nothing,
+  // and is refused whatever the benchmark; until the cut's answer is read — or when it cannot be — the cut is taken
+  // to end elsewhere, the narrower offer.
+  const endsInAnswer = upTo === null ? (pipeline?.ends_in_answer ?? null) : detail.status === 'loaded' ? (detail.value?.ends_in_answer_up_to?.[upTo] ?? false) : false;
   const scores = benchmarks.status !== 'loaded' || endsInAnswer === null ? () => true : scoredOn(benchmarks.value.scorable, endsInAnswer);
   const ready = onDisk.filter(scores);
-  const absent = notOffered(onDisk.filter((b) => !scores(b)), upTo !== null);
+  const absent = benchmarks.status !== 'loaded' || endsInAnswer === null ? null : notOffered(onDisk.filter((b) => !scores(b)), upTo !== null, endsInAnswer, benchmarks.value.scorable);
   // The benchmark the address named, while it is still the one chosen and is not offered: refused, never replaced.
   // Why it is not offered: the workspace does not know it, it is not on disk as expected, or the cut cannot be scored on it.
   const standing = (name: string): Standing | null =>

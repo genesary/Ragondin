@@ -239,6 +239,8 @@ function Loaded({ client, listing, askedWith, refresh, sel, job, launch, bench, 
   const launchId = useId();
   const queueId = useId();
   const launchAnchor = useRef<HTMLElement>(null);
+  // Launch…, drawn in the bar or beside the empty state's action, one at a time.
+  const launchButton = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     if (launching) launchAnchor.current?.focus();
   }, [launching]);
@@ -318,12 +320,31 @@ function Loaded({ client, listing, askedWith, refresh, sel, job, launch, bench, 
     if (kept) focusNext.current = { want: { job: result.value.job_id, control: 'cancel' }, from: { job: row.source.id, control: 'resubmit' } };
   };
 
+  // A Dismiss that had focus goes with its row: focus moves to the row after it in its table, or to the table's
+  // heading when it was the last, rather than to nothing.
+  const runsHeading = useRef<HTMLHeadingElement>(null);
+  const dismissedFrom = useRef<{ job: string; next: HTMLElement | null } | null>(null);
+  useLayoutEffect(() => {
+    const from = dismissedFrom.current;
+    if (from === null || findControl({ job: from.job, control: 'dismiss' }) !== null) return;
+    dismissedFrom.current = null;
+    const at = document.activeElement;
+    // Only if focus was dropped with the row: never taken from where the person moved it meanwhile.
+    if (at !== null && at !== document.body && document.contains(at)) return;
+    (from.next !== null && document.contains(from.next) ? from.next : runsHeading.current)?.focus();
+  });
   const dismiss = async (row: RunRow) => {
     setRefused(null);
-    // Focus goes with the row: to the table, which takes the keys, rather than to nothing.
-    if (holding(row.source.id, 'dismiss')) focusNext.current = null;
-    const result = await client.post('/jobs/{id}/dismiss', undefined, { id: row.source.id });
-    if (!result.ok) setRefused(result.problem);
+    const id = row.source.id;
+    if (holding(id, 'dismiss')) {
+      const own = document.activeElement?.closest('tr') ?? null;
+      const rows = [...(own?.closest('table')?.querySelectorAll<HTMLElement>('tr[tabindex]') ?? [])];
+      dismissedFrom.current = { job: id, next: own === null ? null : (rows[rows.indexOf(own) + 1] ?? null) };
+    }
+    const result = await client.post('/jobs/{id}/dismiss', undefined, { id });
+    if (result.ok) return;
+    dismissedFrom.current = null;
+    setRefused(result.problem);
   };
 
   const benchmarks = useMemo(() => {
@@ -354,7 +375,7 @@ function Loaded({ client, listing, askedWith, refresh, sel, job, launch, bench, 
     setLaunching(false);
   };
   const launchToggle = (size: 'm' | 'l' = 'm') => (
-    <Button size={size} aria-expanded={launching} aria-controls={launchId} onClick={() => (launching ? closeLaunch() : setLaunching(true))}>
+    <Button ref={launchButton} size={size} aria-expanded={launching} aria-controls={launchId} onClick={() => (launching ? closeLaunch() : setLaunching(true))}>
       Launch…
     </Button>
   );
@@ -372,7 +393,7 @@ function Loaded({ client, listing, askedWith, refresh, sel, job, launch, bench, 
           onClose={() => {
             closeLaunch();
             // The control that closed it goes with the panel: focus returns to the one that opens it.
-            [...document.querySelectorAll<HTMLElement>('[aria-controls]')].find((el) => el.getAttribute('aria-controls') === launchId)?.focus();
+            launchButton.current?.focus();
           }}
           onWhole={
             launch === undefined
@@ -518,6 +539,10 @@ function Loaded({ client, listing, askedWith, refresh, sel, job, launch, bench, 
           <Table caption="Queue" columns={queueHeader} rows={queueRows} onOpen={onOpen} />
         </section>
       )}
+      {/* Where focus lands when a dismissed row was the table's last: a heading a screen reader names, out of the tab order. */}
+      <h2 ref={runsHeading} tabIndex={-1} className="rg-visually-hidden">
+        Runs
+      </h2>
       {tableRows.length === 0 ? null : <Table caption="Runs, grouped by pipeline" columns={header} rows={tableRows} onOpen={onOpen} onToggle={onToggle} />}
       {/* Below the table: what comes and goes as boxes are checked must not move the rows under the pointer. */}
       {refresh === null && rules.length === 0 && refused === null ? null : (

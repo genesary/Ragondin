@@ -3,7 +3,7 @@
 // stream: the launch panel, the queue's rows, cancel and reorder, the stream
 // down and back, and the outcomes as toasts. Each test is one the issue that
 // built the flow requires, under its name.
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createApiClient } from '../api/client.ts';
@@ -70,6 +70,8 @@ const HYBRID_DETAIL: PipelineDetail = {
   hash: HYBRID,
   error: null,
   canonical: false,
+  // What each cut ends in, as the API serves it: only the generator's ends in an answer.
+  ends_in_answer_up_to: { bm25: false, rerank: false, context: false, generate: true, judge: false },
   typed: {
     pipeline: {
       inputs: ['question'],
@@ -100,7 +102,7 @@ function Shell() {
   const runs = route?.screen === 'runs' ? route : { screen: 'runs' as const };
   return (
     <JobQueueProvider>
-      <RunsScreen client={client} sel={runs.sel ?? []} job={runs.job} launch={runs.launch} store="/work/ws" />
+      <RunsScreen client={client} sel={runs.sel ?? []} job={runs.job} launch={runs.launch} bench={runs.bench} store="/work/ws" />
       <JobToasts />
     </JobQueueProvider>
   );
@@ -235,8 +237,28 @@ describe('the launch panel, as the UX audit left it', () => {
 
     fireEvent.change(within(at).getByLabelText('Pipeline'), { target: { value: 'lexical' } });
     expect([...benchmark.options].map((o) => o.value)).toEqual(['beir/scifact']);
-    const absent = within(at).getByText(/Not offered: mine, which carries reference answers: a pipeline that does not end in a generator produces no answer to score/);
+    // Worded from what the API serves — the benchmark's ground truth, and the ones this output can be scored on — never a rule of its own.
+    const absent = within(at).getByText('Not offered: mine, which carries qrels and reference answers: a pipeline that does not end in an answer can be scored only on a benchmark whose ground truth is qrels.');
     expect(benchmark.getAttribute('aria-describedby')?.split(' ')).toContain(absent.id);
+  });
+
+  it('offers exactly the ground truths the API lists, and applies no rule of its own to a benchmark that carries none', async () => {
+    const withNone = [...BENCHMARKS.benchmarks, bench('empty', { kind: 'ready', dataset_version: hex('6') }, 'none')];
+    // As the API serves it, a benchmark with nothing to score is in neither list: it is not offered, and the note says why.
+    const { stream } = await show('#runs', routes({ 'GET /benchmarks': { body: { ...BENCHMARKS, benchmarks: withNone } } }));
+    connect(stream);
+    const at = await openPanel();
+    const benchmark = within(at).getByLabelText('Benchmark') as HTMLSelectElement;
+    expect([...benchmark.options].map((o) => o.value)).toEqual(['beir/scifact', 'mine']);
+    expect(within(at).getByText(/Not offered: empty, which carries no ground truth: a pipeline that ends in an answer can be scored only on a benchmark whose ground truth is qrels, reference answers or qrels and reference answers\./)).toBeTruthy();
+    cleanup();
+
+    // Were the API to list it, the panel would offer it: the list is the rule, read and never restated.
+    const lists = { ...BENCHMARKS, benchmarks: withNone, scorable: { ending_in_answer: [...SCORABLE.ending_in_answer, 'none' as const], ending_elsewhere: SCORABLE.ending_elsewhere } };
+    const again = await show('#runs', routes({ 'GET /benchmarks': { body: lists } }));
+    connect(again.stream);
+    const offered = within(await openPanel()).getByLabelText('Benchmark') as HTMLSelectElement;
+    expect([...offered.options].map((o) => o.value)).toEqual(['beir/scifact', 'mine', 'empty']);
   });
 
   it('says why Launch is refused in words on the page, not only to a screen reader', async () => {
@@ -285,6 +307,8 @@ describe('the launch panel, as the UX audit left it', () => {
     expect(screen.queryByRole('region', { name: 'Launch a run' })).toBeNull();
     await waitFor(() => expect(window.location.hash).toBe('#runs'));
     expect(screen.getByRole('button', { name: 'Launch…' }).getAttribute('aria-expanded')).toBe('false');
+    // The control that closed it went with the panel: focus is back on the one that opens it.
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Launch…' }));
   });
 
   it('labels the hash as the content hash, and a conflict names the run by its short id', async () => {
@@ -312,7 +336,7 @@ describe('the launch panel up to a node', () => {
     const benchmark = within(sheet).getByLabelText('Benchmark') as HTMLSelectElement;
     // `mine` carries reference answers: a prefix ending before the generator produces no answer to score.
     expect([...benchmark.options].map((o) => o.textContent)).toEqual(['beir/scifact — qrels']);
-    const absent = within(sheet).getByText(/Not offered: mine, which carries reference answers/);
+    const absent = within(sheet).getByText('Not offered: mine, which carries qrels and reference answers: a prefix that does not end in an answer can be scored only on a benchmark whose ground truth is qrels.');
     // The note describes the field it explains.
     expect(benchmark.getAttribute('aria-describedby')?.split(' ')).toContain(absent.id);
     // The identity is the cut's, announced by the API: the parent's hash is not shown as if it were the run's.
@@ -332,6 +356,16 @@ describe('the launch panel up to a node', () => {
     const benchmark = within(panel()).getByLabelText('Benchmark') as HTMLSelectElement;
     await waitFor(() => expect([...benchmark.options].map((o) => o.textContent)).toEqual(['beir/scifact — qrels', 'mine — qrels and reference answers']));
     expect(within(panel()).queryByText(/Not offered/)).toBeNull();
+  });
+
+  it('judges a cut by what the API says it ends in, never by the family of the node it stops at', async () => {
+    // A cut the API says ends in an answer, at a node whose family is no generator: the served fact is the one read.
+    const served: PipelineDetail = { ...HYBRID_DETAIL, ends_in_answer_up_to: { ...HYBRID_DETAIL.ends_in_answer_up_to, rerank: true } };
+    const { stream } = await show(PREFIX, routes({ 'GET /pipelines/{name}': { body: served } }));
+    connect(stream);
+    await within(panel()).findByText('prefix of hybrid, up to rerank');
+    const benchmark = within(panel()).getByLabelText('Benchmark') as HTMLSelectElement;
+    await waitFor(() => expect([...benchmark.options].map((o) => o.value)).toEqual(['beir/scifact', 'mine']));
   });
 
   it('goes back to the whole pipeline, every ready benchmark offered again', async () => {
@@ -686,6 +720,41 @@ describe('the queue’s rows', () => {
     await waitFor(() => expect(api.requests).toContain('POST /api/v1/jobs/j2/dismiss'));
     send(stream, { event: 'dismissed', data: { ...failed, dismissed_at_ms: 1_700_000_300_000 } });
     expect(screen.queryByRole('row', { name: new RegExp(`^Run ${short(hex('b'))} on `) })).toBeNull();
+  });
+
+  it('hands focus to the next row when the row whose Dismiss had it goes', async () => {
+    const failed = runJob('j2', failedAt('rerank', 'boom'), { runId: hex('b') });
+    const { stream } = await show('#runs', routes({ 'POST /jobs/{id}/dismiss': { body: { ...failed, dismissed_at_ms: 1 } } }));
+    connect(stream, [failed]);
+    const table = screen.getByRole('table', { name: 'Runs, grouped by pipeline' });
+    const rows = [...table.querySelectorAll<HTMLElement>('tr[tabindex]')];
+    const at = rows.indexOf(jobRowOf(hex('b')));
+    const next = rows[at + 1] as HTMLElement;
+    expect(next).toBeTruthy();
+    const dismiss = within(jobRowOf(hex('b'))).getByRole('button', { name: `Dismiss run ${short(hex('b'))}` });
+    dismiss.focus();
+    fireEvent.click(dismiss);
+    await act(async () => {});
+    send(stream, { event: 'dismissed', data: { ...failed, dismissed_at_ms: 1 } });
+    expect(document.activeElement).toBe(next);
+  });
+
+  it('hands focus to the table heading when the row whose Dismiss had it was the last', async () => {
+    const failed = runJob('j9', failedAt('rerank', 'boom'), { runId: hex('b'), benchmark: 'nf/corpus' });
+    const { stream } = await show('#runs', routes({ 'POST /jobs/{id}/dismiss': { body: { ...failed, dismissed_at_ms: 1 } } }));
+    connect(stream, [failed]);
+    // Filtered to its benchmark, the job's row is the table's last.
+    fireEvent.click(screen.getByRole('button', { name: /^nf\/corpus/ }));
+    await waitFor(() => expect(screen.queryByRole('row', { name: new RegExp(`^Run ${short(OLD)} on `) })).toBeNull());
+    const row = screen.getByRole('row', { name: new RegExp(`^Run ${short(hex('b'))} on nf/corpus, `) });
+    const table = screen.getByRole('table', { name: 'Runs, grouped by pipeline' });
+    expect([...table.querySelectorAll<HTMLElement>('tr[tabindex]')].at(-1)).toBe(row);
+    const dismiss = within(row).getByRole('button', { name: `Dismiss run ${short(hex('b'))}` });
+    dismiss.focus();
+    fireEvent.click(dismiss);
+    await act(async () => {});
+    send(stream, { event: 'dismissed', data: { ...failed, dismissed_at_ms: 1 } });
+    expect(document.activeElement).toBe(screen.getByRole('heading', { name: 'Runs' }));
   });
 
   it('shows the live jobs in a Queue above the runs, in the order the worker takes them', async () => {
