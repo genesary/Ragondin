@@ -27,8 +27,9 @@ use ragondin_pipeline::{
     produced_kind, LogicalNode, PipelineHash, RawGraph, RawPipeline, ValueKind,
 };
 
+use crate::convert::carried;
 use crate::error::ApiError;
-use crate::response::{BenchmarkEntry, GroundTruth, Location};
+use crate::response::{BenchmarkEntry, Location};
 use crate::validation;
 
 /// A workspace document cut at a node.
@@ -127,19 +128,19 @@ fn truncate(raw: &RawPipeline, up_to: &str) -> RawPipeline {
 ///
 /// # Errors
 ///
-/// `prefix_not_scorable`, naming the node: ADR-C30 § 5 restated from the
-/// same `carries()` and `produced_kind` the harness reads (#468 gives the
-/// rule one definition).
+/// `prefix_not_scorable`, naming the node: the rule is
+/// `CarriedPieces::scorable`, the one definition the harness's `NoAnswer`
+/// refusal reads too, asked of the pieces `carries()` reported through the
+/// registry and of the cut node's `produced_kind`.
 pub(crate) fn scorable(
     up_to: &str,
     output: ValueKind,
     benchmark: &BenchmarkEntry,
 ) -> Result<(), ApiError> {
-    let answers = matches!(
-        benchmark.ground_truth,
-        Some(GroundTruth::ReferenceAnswers | GroundTruth::Both)
-    );
-    if answers && output != ValueKind::Answer {
+    let Some(ground_truth) = benchmark.ground_truth else {
+        return Ok(());
+    };
+    if !carried(ground_truth).scorable(output == ValueKind::Answer) {
         return Err(ApiError::PrefixNotScorable {
             node: up_to.to_owned(),
             benchmark: benchmark.name.clone(),
@@ -152,7 +153,7 @@ pub(crate) fn scorable(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::response::BenchmarkState;
+    use crate::response::{BenchmarkState, GroundTruth};
     use crate::stages::tests::{HYBRID, HYBRID_RERANK, HYBRID_RERANK_GEN};
 
     /// [`HYBRID_RERANK_GEN`] with a retriever, `side`, that only a second

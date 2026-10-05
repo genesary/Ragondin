@@ -618,6 +618,18 @@ pub(crate) fn ground_truth(carries: CarriedPieces) -> GroundTruth {
     }
 }
 
+/// The pieces a listed ground truth stands for: [`ground_truth`] read back,
+/// so `prefix::scorable` and the pipeline matrix ask `CarriedPieces` rather
+/// than restate ADR-C30 § 5.
+pub(crate) fn carried(ground_truth: GroundTruth) -> CarriedPieces {
+    match ground_truth {
+        GroundTruth::None => CarriedPieces::Neither,
+        GroundTruth::Qrels => CarriedPieces::QrelsOnly,
+        GroundTruth::ReferenceAnswers => CarriedPieces::ReferenceAnswersOnly,
+        GroundTruth::Both => CarriedPieces::QrelsAndReferenceAnswers,
+    }
+}
+
 /// A refused download, as the API reports it. Every refusal left nothing on
 /// disk. What the source or the network did is `download_failed`; a
 /// directory already there, a cancellation, and a defect of this build or its
@@ -887,5 +899,24 @@ pub(crate) fn node_metrics(figures: &NodeFigures) -> NodeMetrics {
         produces_ranking: figures.produces_ranking,
         judged_queries: figures.judged_queries,
         metrics: figures.metrics.clone(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The submission check reads ADR-C30 § 5 off the listing's ground
+    /// truth, so the way back must lose nothing the way there kept.
+    #[test]
+    fn the_ground_truth_maps_back_to_the_pieces_it_was_built_from() {
+        for carries in [
+            CarriedPieces::Neither,
+            CarriedPieces::QrelsOnly,
+            CarriedPieces::ReferenceAnswersOnly,
+            CarriedPieces::QrelsAndReferenceAnswers,
+        ] {
+            assert_eq!(carried(ground_truth(carries)), carries);
+        }
     }
 }

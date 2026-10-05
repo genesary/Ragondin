@@ -153,7 +153,12 @@ family, both, or neither. A family the benchmark does not carry is absent from
   generator returned it; there is no extraction step (ADR-C30 § 1).
 - **A benchmark carrying reference answers, run through a pipeline that
   produces no answer**, is refused with `HarnessError::NoAnswer`, never
-  reported on its retrieval metrics alone. `NothingToScore` keeps its meaning:
+  reported on its retrieval metrics alone. **The rule is not defined here**:
+  it is `ragondin-benchmarks`' `CarriedPieces::scorable`, asked of whether
+  the query's terminal entry holds an answer, and the generation half of the
+  regime is `CarriedPieces::scores_answers` — `ragondin-api` refuses a prefix
+  run by the same definition at submission, and may not depend on this
+  crate (INV-12). `NothingToScore` keeps its meaning:
   no family scored any query, which only a benchmark carrying neither piece
   reaches.
 

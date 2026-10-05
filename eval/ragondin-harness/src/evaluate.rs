@@ -177,12 +177,15 @@ where
 
     // ADR-8: the regime follows the pieces the benchmark carries, never a
     // flag, and is decided once for the whole run.
-    let (retrieval, generation) = match evaluation.benchmark.carries() {
-        CarriedPieces::Neither => (false, false),
-        CarriedPieces::QrelsOnly => (true, false),
-        CarriedPieces::ReferenceAnswersOnly => (false, true),
-        CarriedPieces::QrelsAndReferenceAnswers => (true, true),
+    // The generation half is `CarriedPieces::scores_answers`, the definition
+    // `ragondin-api` reads too; the retrieval half stays an exhaustive match,
+    // so a fifth regime is not absorbed silently.
+    let carried = evaluation.benchmark.carries();
+    let retrieval = match carried {
+        CarriedPieces::Neither | CarriedPieces::ReferenceAnswersOnly => false,
+        CarriedPieces::QrelsOnly | CarriedPieces::QrelsAndReferenceAnswers => true,
     };
+    let generation = carried.scores_answers();
 
     let mut traces = BTreeMap::new();
     let mut retrieval_scores = RetrievalScores::default();
@@ -222,14 +225,16 @@ where
         // Both checks run for every query once the benchmark carries the
         // piece, judged or not, so a refusal never depends on which queries
         // happen to hold a judgment or a reference.
-        if generation {
-            let Some(answer) = answer(evaluation.pipeline, &trace) else {
-                return Err(HarnessError::NoAnswer {
-                    query: query.id.clone(),
-                    trace: document,
-                    kind: kind(&output),
-                });
-            };
+        let answer = answer(evaluation.pipeline, &trace);
+        // ADR-C30 § 5, as `CarriedPieces::scorable` defines it once.
+        if !carried.scorable(answer.is_some()) {
+            return Err(HarnessError::NoAnswer {
+                query: query.id.clone(),
+                trace: document,
+                kind: kind(&output),
+            });
+        }
+        if let (true, Some(answer)) = (generation, answer) {
             // A query with no reference is unjudged for this family (ADR-C30
             // § 1): the metrics are undefined over an empty reference list.
             if !references.is_empty() {

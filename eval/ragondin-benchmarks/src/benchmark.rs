@@ -178,6 +178,31 @@ pub enum CarriedPieces {
     QrelsAndReferenceAnswers,
 }
 
+impl CarriedPieces {
+    /// Whether a run over this benchmark computes the generation metrics
+    /// against reference: whether reference answers are carried.
+    pub fn scores_answers(self) -> bool {
+        // Exhaustive rather than `matches!`: a fifth variant must be placed here.
+        match self {
+            Self::Neither | Self::QrelsOnly => false,
+            Self::ReferenceAnswersOnly | Self::QrelsAndReferenceAnswers => true,
+        }
+    }
+
+    /// Whether a pipeline can be scored on this benchmark, given whether it
+    /// ends in an answer: not when reference answers are carried and it does
+    /// not (ADR-C30 § 5).
+    ///
+    /// The rule's one definition. The harness asks it of what a query
+    /// returned and refuses with `NoAnswer`; `ragondin-api`, which cannot
+    /// reach the harness (ADR-C36 § 3), asks it of a prefix's cut node at
+    /// submission. Taking a `bool` rather than a value kind keeps this crate
+    /// off `ragondin-pipeline`.
+    pub fn scorable(self, ends_in_answer: bool) -> bool {
+        !self.scores_answers() || ends_in_answer
+    }
+}
+
 /// A loaded benchmark: a corpus, a query set, the judgments linking them, and
 /// the reference answers to the queries.
 ///
@@ -498,6 +523,23 @@ mod tests {
             .with_reference_answers(references(&[("q-elsewhere", &["an answer"])]));
 
         assert_eq!(benchmark.carries(), CarriedPieces::Neither);
+    }
+
+    /// ADR-C30 § 5 over every regime and both kinds of pipeline end: the one
+    /// table the harness's refusal and the API's submission check share.
+    #[test]
+    fn only_a_benchmark_carrying_reference_answers_needs_a_pipeline_ending_in_an_answer() {
+        let table = [
+            (CarriedPieces::Neither, false, true, true),
+            (CarriedPieces::QrelsOnly, false, true, true),
+            (CarriedPieces::ReferenceAnswersOnly, true, true, false),
+            (CarriedPieces::QrelsAndReferenceAnswers, true, true, false),
+        ];
+        for (carried, answers, ending_in_answer, ending_elsewhere) in table {
+            assert_eq!(carried.scores_answers(), answers, "{carried:?}");
+            assert_eq!(carried.scorable(true), ending_in_answer, "{carried:?}");
+            assert_eq!(carried.scorable(false), ending_elsewhere, "{carried:?}");
+        }
     }
 
     #[test]
