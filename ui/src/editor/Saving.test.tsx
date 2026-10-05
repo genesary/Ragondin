@@ -222,6 +222,42 @@ describe('a file changed on disk', () => {
   });
 });
 
+describe('the layout and the file it is written beside', () => {
+  it('writes positions already written beside one file again beside a new file saved from it', async () => {
+    const { api, container } = setup({ 'PUT /pipelines/{name}': [STALE, { body: { name: 'hybrid-mine', etag: NEW_ETAG, hash: HASH } }] });
+    await waitFor(() => expect(validations(api)).toHaveLength(1));
+    const node = container.querySelector<HTMLElement>('.react-flow__node[data-id="lexical"]')!;
+    node.focus();
+    fireEvent.keyDown(node, { key: 'ArrowRight' });
+    await waitFor(() => expect(api.requests).toContain('PUT /api/v1/pipelines/hybrid/layout'));
+    const beside = api.bodies[api.requests.lastIndexOf('PUT /api/v1/pipelines/hybrid/layout')];
+    // A change the file refuses: the positions stay as they were written.
+    fireEvent.click(within(screen.getByRole('region', { name: 'Palette' })).getByRole('button', { name: /^bm25/ }));
+    const message = await screen.findByRole('region', { name: 'The file changed on disk' });
+    await settle();
+    const written = api.requests.filter((r) => r === 'PUT /api/v1/pipelines/hybrid/layout').length;
+    fireEvent.change(within(message).getByRole('textbox', { name: 'New file name' }), { target: { value: 'hybrid-mine' } });
+    fireEvent.click(within(message).getByRole('button', { name: 'Save as a new file' }));
+    await waitFor(() => expect(api.requests).toContain('PUT /api/v1/pipelines/hybrid-mine/layout'));
+    const copied = api.bodies[api.requests.lastIndexOf('PUT /api/v1/pipelines/hybrid-mine/layout')] as { nodes: Record<string, unknown> };
+    expect(copied.nodes.lexical).toEqual((beside as { nodes: Record<string, unknown> }).nodes.lexical);
+    expect(api.requests.filter((r) => r === 'PUT /api/v1/pipelines/hybrid/layout')).toHaveLength(written);
+  });
+
+  it('writes no positions for a document not yet on disk, and writes them beside it once it is', async () => {
+    const { api, container } = setup({ 'PUT /pipelines/{name}': { body: { name: 'example', etag: NEW_ETAG, hash: HASH } } }, { file: { name: null, etag: null, canonical: true, proposed: 'example' } });
+    await waitFor(() => expect(validations(api)).toHaveLength(1));
+    const node = container.querySelector<HTMLElement>('.react-flow__node[data-id="lexical"]')!;
+    node.focus();
+    fireEvent.keyDown(node, { key: 'ArrowRight' });
+    await settle();
+    expect(api.requests.filter((r) => r.endsWith('/layout'))).toEqual([]);
+    fireEvent.click(screen.getByRole('button', { name: 'Keep this pipeline' }));
+    await waitFor(() => expect(api.requests).toContain('PUT /api/v1/pipelines/example/layout'));
+    expect(api.requests.indexOf('PUT /api/v1/pipelines/example')).toBeLessThan(api.requests.indexOf('PUT /api/v1/pipelines/example/layout'));
+  });
+});
+
 describe('leaving the editor', () => {
   it('writes a change still inside the debounce, validated first, when the editor closes', async () => {
     const { api, unmount } = setup({});
@@ -262,6 +298,25 @@ describe('leaving the editor', () => {
     await waitFor(() => expect(writes(api)).toHaveLength(2));
     expect(writes(api)[1]!.headers['If-Match']).toBe(`"${NEW_ETAG}"`);
     expect((writes(api)[1]!.body as { typed: WireDocument }).typed.pipeline.nodes.at(-1)?.id).toBe('concat');
+  });
+
+  it('stops the flush when the write in flight answers a stale etag', async () => {
+    let answer: (reply: typeof STALE) => void = () => {};
+    let calls = 0;
+    const { api, unmount } = setup({
+      'PUT /pipelines/{name}': () => {
+        calls += 1;
+        return calls === 1 ? new Promise((resolve) => (answer = resolve)) : WRITTEN;
+      },
+    });
+    await waitFor(() => expect(validations(api)).toHaveLength(1));
+    place(/^rrf/);
+    await waitFor(() => expect(writes(api)).toHaveLength(1));
+    place(/^concat/);
+    unmount();
+    answer(STALE);
+    await settle();
+    expect(writes(api)).toHaveLength(1);
   });
 
   it('writes nothing held behind a prompt when the editor closes', async () => {
