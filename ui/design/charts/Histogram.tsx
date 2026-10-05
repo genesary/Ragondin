@@ -81,7 +81,8 @@ export function Histogram({ label, bins, halves, active, onActivate, controls }:
                 Name); the bin's words are read, not shown. */}
             <span className="rg-visually-hidden">{`${bin.label}, `}</span>
             <span className="rg-hist__count">{bin.count.toLocaleString('en-US')}</span>
-            <span className="rg-visually-hidden">{` ${noun(bin.count)}, `}</span>
+            {/* "change" says what the range measures, so a bare "0" is never read alone. */}
+            <span className="rg-visually-hidden">{` ${noun(bin.count)}, change `}</span>
             <span className="rg-hist__track">
               <span className="rg-hist__bar" data-tone={bin.tone} style={{ height: `${max === 0 ? 0 : (bin.count / max) * 100}%` }} />
             </span>

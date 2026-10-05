@@ -364,6 +364,43 @@ describe('Canvas, round 1 of review', () => {
     }
   });
 
+  it('makes the wrapper of an edge the graph gains after the first render presentational too', async () => {
+    const fewer = { ...HYBRID_RERANK_GEN, edges: HYBRID_RERANK_GEN.edges.slice(1) };
+    const { container, rerender } = render(
+      <div style={{ width: 1200, height: 600 }}>
+        <Canvas graph={fewer} label="Pipeline hybrid-rerank-gen" />
+      </div>,
+    );
+    await act(async () => {});
+    expect(container.querySelectorAll('.react-flow__edge')).toHaveLength(fewer.edges.length);
+    rerender(
+      <div style={{ width: 1200, height: 600 }}>
+        <Canvas graph={HYBRID_RERANK_GEN} label="Pipeline hybrid-rerank-gen" />
+      </div>,
+    );
+    await act(async () => {});
+    const wrappers = [...container.querySelectorAll('.react-flow__edge')].map((edge) => edge.parentElement as Element);
+    expect(wrappers).toHaveLength(HYBRID_RERANK_GEN.edges.length);
+    for (const wrapper of wrappers) expect(wrapper.getAttribute('role')).toBe('none');
+  });
+
+  it("stops watching for the library's SVGs once it is unmounted", () => {
+    const observe = vi.spyOn(MutationObserver.prototype, 'observe');
+    const disconnect = vi.spyOn(MutationObserver.prototype, 'disconnect');
+    try {
+      const { unmount } = renderCanvas();
+      const at = observe.mock.calls.findIndex(([target]) => target instanceof HTMLElement && target.classList.contains('rg-canvas'));
+      expect(at).toBeGreaterThanOrEqual(0);
+      const watcher = observe.mock.contexts[at];
+      expect(disconnect.mock.contexts).not.toContain(watcher);
+      unmount();
+      expect(disconnect.mock.contexts).toContain(watcher);
+    } finally {
+      observe.mockRestore();
+      disconnect.mockRestore();
+    }
+  });
+
   it('puts the toolbar first in the tab order, before the nodes', () => {
     const { container } = renderCanvas();
     const stops = [...container.querySelectorAll<HTMLElement>('button, a[href], [tabindex]')].filter((el) => el.tabIndex >= 0);
