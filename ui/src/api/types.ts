@@ -309,6 +309,16 @@ export type EdgeLocation = {
   to: string;
 };
 
+/** A run job that failed, as a matrix column names it. */
+export type FailedAttempt = {
+  /** The node that failed, when one did. */
+  at_node: string | null;
+  /** What failed. */
+  error: string;
+  /** The job's id, as `GET /jobs/{id}` serves it. */
+  job: string;
+};
+
 /**
  * One family: its ports, the local implementations this build carries in
  * it, and those it does not carry and why.
@@ -732,6 +742,8 @@ export type MatrixCell = {
 } | {
   kind: "no_figure";
 } | {
+  kind: "not_scorable";
+} | {
   kind: "not_run_on_this_version";
   /** That run's id, listed among the feeding runs. */
   run: string;
@@ -754,9 +766,18 @@ export type MatrixColumn = {
   /** The digest of the benchmark's dataset, as runs over it record it. */
   dataset_version: string;
   /**
+   * The most recent run job of the whole current form on this benchmark,
+   * when it failed and no run of the whole current form measured the
+   * benchmark; `null` otherwise — no attempt, or a later one that did not
+   * fail.
+   */
+  failed_attempt: FailedAttempt | null;
+  /**
    * The ground truth it carries: read off the dataset when it verified,
-   * otherwise off the metrics the run recorded; `null` for a benchmark no
-   * run measured.
+   * otherwise off the metrics the run recorded; for a benchmark no run of
+   * the current content measured, read off its dataset only when the
+   * pipeline does not end in an answer — to say whether it can be scored
+   * there — and `null` otherwise.
    */
   ground_truth: GroundTruth | null;
   /**

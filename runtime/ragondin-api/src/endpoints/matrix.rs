@@ -34,17 +34,21 @@ use axum::Json;
 use ragondin_experiments::{compare_runs, terminal, ConfigDocument, Run};
 use ragondin_pipeline::{produced_kind, LogicalPipeline, NodeId, ValueKind};
 
+use ragondin_benchmarks::CarriedPieces;
+
 use crate::backends::RunDataset;
 use crate::comparison::{self, Gain};
 use crate::derived::{Metrics, NodeFigures, Outputs};
 use crate::error::ApiError;
 use crate::extract::{ApiPath, ApiQuery};
 use crate::handlers::{self, AppState};
+use crate::jobs::{Job, JobState, Work};
 use crate::matrix::{most_recent_first, topological, Recency};
 use crate::request::{IncludeAvailable, PipelineMatrixParameters};
 use crate::response::{
-    ConfigurationMatrix, ContentSinceChanged, FeedingRun, GroundTruth, MatrixCell, MatrixColumn,
-    MatrixGain, MatrixRow, MissingCells, PipelineMatrix, PrefixOf, SinceChangedLaunch,
+    ConfigurationMatrix, ContentSinceChanged, FailedAttempt, FeedingRun, GroundTruth, MatrixCell,
+    MatrixColumn, MatrixGain, MatrixRow, MissingCells, PipelineMatrix, PrefixOf,
+    SinceChangedLaunch,
 };
 use crate::stages::Stages;
 use crate::{cache, convert, lineage, validation};
@@ -137,7 +141,11 @@ pub(crate) async fn matrix(
         slot.entry(version).or_insert(index);
     }
     let mut filling = prefixes;
-    filling.extend(whole);
+    filling.extend(
+        whole
+            .iter()
+            .map(|(version, index)| (version.clone(), *index)),
+    );
 
     let order = topological(&current);
     let rows: Vec<MatrixRow> = order
@@ -149,6 +157,12 @@ pub(crate) async fn matrix(
         })
         .collect();
     let names_of = |version: &str| pinned.get(version).cloned().unwrap_or_default();
+    // Whether the pipeline can be scored is ADR-C30 § 5's question, asked of
+    // a column no run of the current content fills: it is never a question
+    // for a pipeline ending in an answer, so only another reads a dataset no
+    // run of it used.
+    let ends_in_answer =
+        terminal(&current).is_some_and(|node| produced_kind(node) == ValueKind::Answer);
 
     let mut columns = Vec::new();
     let mut cache_errors = Vec::new();
@@ -167,20 +181,17 @@ pub(crate) async fn matrix(
         if filling.contains_key(version) {
             continue;
         }
-        columns.push(MatrixColumn {
-            dataset_version: version.clone(),
-            benchmark_names: names_of(version),
-            ground_truth: None,
-            run: None,
-            up_to: None,
-            dataset_check: None,
-            cells: order
-                .iter()
-                .map(|_| MatrixCell::NotRunOnThisVersion {
-                    run: counted[*index].id.clone(),
-                })
-                .collect(),
-        });
+        let carried = carried_when_asked(&state, version, ends_in_answer).await?;
+        columns.push(unfilled_column(
+            version,
+            names_of(version),
+            carried,
+            ends_in_answer,
+            order.len(),
+            MatrixCell::NotRunOnThisVersion {
+                run: counted[*index].id.clone(),
+            },
+        ));
     }
     if include_available {
         for (version, names) in &pinned {
@@ -188,20 +199,15 @@ pub(crate) async fn matrix(
                 continue;
             }
             let benchmark = names[0].clone();
-            columns.push(MatrixColumn {
-                dataset_version: version.clone(),
-                benchmark_names: names.clone(),
-                ground_truth: None,
-                run: None,
-                up_to: None,
-                dataset_check: None,
-                cells: order
-                    .iter()
-                    .map(|_| MatrixCell::NotRunYet {
-                        benchmark: benchmark.clone(),
-                    })
-                    .collect(),
-            });
+            let carried = carried_when_asked(&state, version, ends_in_answer).await?;
+            columns.push(unfilled_column(
+                version,
+                names.clone(),
+                carried,
+                ends_in_answer,
+                order.len(),
+                MatrixCell::NotRunYet { benchmark },
+            ));
         }
     }
     columns.sort_by(|a, b| {
@@ -214,6 +220,18 @@ pub(crate) async fn matrix(
         };
         key(a).cmp(&key(b))
     });
+    let attempts = failed_attempts(&state.jobs.jobs().await, &hash);
+    for column in &mut columns {
+        if whole.contains_key(&column.dataset_version) {
+            continue;
+        }
+        column.failed_attempt = column
+            .benchmark_names
+            .iter()
+            .filter_map(|name| attempts.get(name))
+            .max_by_key(|(recency, _)| *recency)
+            .and_then(|(_, failed)| failed.clone());
+    }
 
     let missing = columns
         .iter()
@@ -515,7 +533,104 @@ async fn filled_column(
             up_to: up_to.as_ref().map(|up_to| up_to.as_str().to_owned()),
             dataset_check: Some(check),
             cells,
+            failed_attempt: None,
         },
         failure,
     ))
+}
+
+/// The pieces the benchmark pinned to `version` carries, read off its
+/// dataset — only for a pipeline that does not end in an answer, the one
+/// kind `CarriedPieces::scorable` can refuse; `None` for one that does, and
+/// for a dataset that does not verify, whose pieces are unknown.
+async fn carried_when_asked(
+    state: &AppState,
+    version: &str,
+    ends_in_answer: bool,
+) -> Result<Option<CarriedPieces>, ApiError> {
+    if ends_in_answer {
+        return Ok(None);
+    }
+    Ok(match state.backends.registry.dataset(version).await? {
+        RunDataset::Verified { dataset, .. } => Some(dataset.benchmark().carries()),
+        _ => None,
+    })
+}
+
+/// A column no run of the current content fills: every cell `waiting`, or
+/// `not_scorable` where the pieces `carried` say the pipeline cannot be
+/// scored there (ADR-C30 § 5) — a run there would be refused, so nothing
+/// waits for one.
+fn unfilled_column(
+    version: &str,
+    benchmark_names: Vec<String>,
+    carried: Option<CarriedPieces>,
+    ends_in_answer: bool,
+    rows: usize,
+    waiting: MatrixCell,
+) -> MatrixColumn {
+    let scorable = carried.is_none_or(|carried| carried.scorable(ends_in_answer));
+    let cell = if scorable {
+        waiting
+    } else {
+        MatrixCell::NotScorable
+    };
+    MatrixColumn {
+        dataset_version: version.to_owned(),
+        benchmark_names,
+        ground_truth: carried.map(convert::ground_truth),
+        run: None,
+        up_to: None,
+        dataset_check: None,
+        cells: vec![cell; rows],
+        failed_attempt: None,
+    }
+}
+
+/// When a job was accepted, as the most recent attempt is chosen by: its
+/// acceptance time, an unknown one first, then its position.
+type Accepted = (Option<u64>, u64);
+
+/// Per benchmark name, the most recent run job of the whole current form —
+/// its snapshotted document lowering to `hash`, the matrix's own content
+/// test, whatever name it was launched under — and the failure it ended in,
+/// or `None` when it did not fail: queued, running, done or cancelled.
+fn failed_attempts(
+    jobs: &[Job],
+    hash: &str,
+) -> BTreeMap<String, (Accepted, Option<FailedAttempt>)> {
+    let mut latest: BTreeMap<String, (Accepted, Option<FailedAttempt>)> = BTreeMap::new();
+    for job in jobs {
+        let Work::Run {
+            pipeline,
+            benchmark,
+            up_to: None,
+            ..
+        } = &job.work
+        else {
+            continue;
+        };
+        let current = validation::lower(pipeline)
+            .is_ok_and(|lowered| lowered.content_hash().to_string() == hash);
+        if !current {
+            continue;
+        }
+        let accepted = (job.created_at.map(|at| at.get()), job.position);
+        if latest
+            .get(benchmark)
+            .is_some_and(|(newest, _)| *newest >= accepted)
+        {
+            continue;
+        }
+        let failure = match &job.state {
+            JobState::Failed { error, at_node, .. } => Some(FailedAttempt {
+                job: job.id.clone(),
+                error: error.clone(),
+                at_node: at_node.clone(),
+            }),
+            _ => None,
+        };
+        latest.insert(benchmark.clone(), (accepted, failure));
+    }
+    latest
 }

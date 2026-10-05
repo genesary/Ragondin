@@ -14,7 +14,7 @@ import { ErrorState, Loading, type RequestState } from '../shell/states.tsx';
 import { FeedingRuns } from './FeedingRuns.tsx';
 import { rememberPipeline } from './last.ts';
 import { Matrix, type Launch } from './Matrix.tsx';
-import { columnLabel, launchableCount, rankingMetrics, verdict } from './model.ts';
+import { columnLabel, launchableBenchmarks, rankingMetrics, verdict } from './model.ts';
 import './Pipeline.css';
 
 export type PipelineScreenProps = {
@@ -125,8 +125,8 @@ function Loaded({ matrix, listing, launch }: { matrix: PipelineMatrix; listing: 
   // Every metric a ranking row reads is a ranking metric, so no family is passed: ndcg@10, else the first.
   const metric = chosen !== null && metrics.includes(chosen) ? chosen : (defaultMetric(metrics, {}) ?? '');
   const empty = matrix.feeding_runs.length === 0 && matrix.columns.every((c) => c.run === null);
-  // The action counts what it can launch; the verdict says what it cannot.
-  const missing = launchableCount(matrix);
+  // The action counts the runs it launches, one per benchmark; the verdict counts the cells and says what it cannot launch.
+  const toLaunch = launchableBenchmarks(matrix);
   const unverified = matrix.columns.filter((c) => c.dataset_check !== null && c.dataset_check.status !== 'verified');
 
   const head = (
@@ -136,12 +136,19 @@ function Loaded({ matrix, listing, launch }: { matrix: PipelineMatrix; listing: 
         {metrics.length === 0 ? null : (
           <Select id="rg-pipeline-metric" label="Ranking metric" value={metric} options={metrics.map((m) => ({ value: m, label: m }))} onChange={(event) => setChosen(event.target.value)} />
         )}
-        <ol className="rg-pipeline__shape" aria-label="Shape">
+      </div>
+      <div className="rg-pipeline__shapebar">
+        <span id="rg-pipeline-shape" className="rg-pipeline__note">
+          Shape, node by node
+        </span>
+        <ol className="rg-pipeline__shape" aria-labelledby="rg-pipeline-shape">
           {matrix.rows.map((row) => {
             const family = familyOfComponent(row.family);
+            // The glyph is drawn beside its family in words, so it is hidden from assistive technology rather than said twice.
             return (
-              <li key={row.node} title={`${row.node}: ${family === null ? row.family : FAMILY_LABEL[family]}`}>
-                {family === null ? <span className="rg-pipeline__note">{row.family}</span> : <FamilyTile family={family} labelled />}
+              <li key={row.node} className="rg-pipeline__step">
+                {family === null ? null : <FamilyTile family={family} />}
+                <span className="rg-pipeline__stepname">{row.node}</span> <span className="rg-pipeline__note">{family === null ? row.family : FAMILY_LABEL[family]}</span>
               </li>
             );
           })}
@@ -174,8 +181,6 @@ function Loaded({ matrix, listing, launch }: { matrix: PipelineMatrix; listing: 
   }
 
   // Every launchable column's benchmark goes to the panel at once; a column no name is pinned to is said, not launched.
-  // Two columns may carry one name (two digests pinned under it): it is one run, handed once.
-  const toLaunch = [...new Set(matrix.missing.flatMap((column) => (column.benchmark === null ? [] : [column.benchmark])))];
   const unlaunchable = matrix.missing.filter((column) => column.benchmark === null);
 
   return (
@@ -222,9 +227,9 @@ function Loaded({ matrix, listing, launch }: { matrix: PipelineMatrix; listing: 
       </Section>
       <div className="rg-pipeline__verdict">
         <p>{verdict(matrix)}</p>
-        {missing === 0 ? null : (
+        {toLaunch.length === 0 ? null : (
           <Button kind="primary" onClick={() => launch({ pipeline: matrix.pipeline, benchmarks: toLaunch })}>
-            Run the {missing} missing {missing === 1 ? 'cell' : 'cells'}
+            {toLaunch.length === 1 ? 'Launch the missing run' : `Launch the ${toLaunch.length} missing runs`}
           </Button>
         )}
       </div>

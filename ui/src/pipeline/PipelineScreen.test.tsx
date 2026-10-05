@@ -95,11 +95,13 @@ describe('the header', () => {
     expect(window.location.hash).toBe('#pipeline/dense-only');
   });
 
-  it('draws the pipeline’s shape as family tiles in pipeline order, each named', async () => {
+  it('draws the pipeline’s shape as family tiles in pipeline order, each with its family in words beside it', async () => {
     show(`#pipeline/${NAME}`);
     await loaded();
-    const shape = screen.getByRole('list', { name: 'Shape' });
-    expect(within(shape).getAllByRole('img').map((i) => i.getAttribute('aria-label'))).toEqual(['retriever', 'retriever', 'fusion', 'reranker', 'context builder', 'generator']);
+    const shape = screen.getByRole('list', { name: 'Shape, node by node' });
+    expect(within(shape).getAllByRole('listitem').map((li) => li.textContent)).toEqual(['bm25 retriever', 'dense retriever', 'rrf fusion', 'rerank reranker', 'concat context builder', 'generate generator']);
+    // The label is on screen, not only announced.
+    expect(screen.getByText('Shape, node by node').tagName).not.toBe('OL');
   });
 
   it('says the matrix is derived from runs, and from how many', async () => {
@@ -174,8 +176,8 @@ describe('the runs that feed it', () => {
     await loaded();
     const prefix = within(runs()).getAllByRole('listitem').find((li) => li.textContent?.includes(RUN_PREFIX.slice(0, 12))) as HTMLElement;
     expect(within(prefix).getByText(`prefix of ${NAME}, up to rerank`)).toBeTruthy();
-    expect(within(prefix).getByText(`Launched as a prefix of ${NAME}, up to rerank`)).toBeTruthy();
-    expect(within(prefix).getByText('Content: no current pipeline document')).toBeTruthy();
+    expect(within(prefix).getByText(`Run as a prefix of ${NAME}, up to rerank`)).toBeTruthy();
+    expect(within(prefix).getByText('Configuration matches no pipeline in the workspace now')).toBeTruthy();
   });
 
   it('says a run whose content changed since its launch, with its parameter difference, and that it fills nothing', async () => {
@@ -213,11 +215,11 @@ describe('the verdict and the one primary action', () => {
     expect(screen.getByText('Measured on 3 of 3 benchmarks, 1 of them only up to rerank. 2 cells wait for a run of the whole pipeline.')).toBeTruthy();
   });
 
-  it('offers “Run the N missing cells” with the API’s count, which opens the launch panel on the one column missing', async () => {
+  it('offers “Launch the missing run”, counting runs — one per benchmark — not cells, which opens the launch panel on the one column missing', async () => {
     const launch = vi.fn();
     show(`#pipeline/${NAME}`, routes({ body: WITH_FIQA }), launch);
     await loaded();
-    const action = screen.getByRole('button', { name: 'Run the 6 missing cells' });
+    const action = screen.getByRole('button', { name: 'Launch the missing run' });
     expect(action.classList.contains('rg-btn--primary')).toBe(true);
     expect(action.hasAttribute('aria-disabled')).toBe(false);
     fireEvent.click(action);
@@ -227,16 +229,16 @@ describe('the verdict and the one primary action', () => {
   it('is absent when no cell is missing', async () => {
     show(`#pipeline/${NAME}`);
     await loaded();
-    expect(screen.queryByRole('button', { name: /missing cell/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /missing run/ })).toBeNull();
   });
 
-  it('hands “Run the N missing cells” every launchable column’s benchmark at once, and lists the columns it cannot launch with why', async () => {
+  it('hands “Launch the N missing runs” every launchable column’s benchmark at once, and lists the columns it cannot launch with why', async () => {
     const launch = vi.fn();
     const both: PipelineMatrix = { ...WITH_FIQA, missing: [...WITH_FIQA.missing, ...PREFIXED.missing, { benchmark: null, dataset_version: '0'.repeat(64), nodes: ['bm25'] }] };
     show(`#pipeline/${NAME}`, routes({ body: both }), launch);
     await loaded();
     // The column with no benchmark name cannot be launched, and is not counted in the action.
-    const action = screen.getByRole('button', { name: 'Run the 8 missing cells' });
+    const action = screen.getByRole('button', { name: 'Launch the 2 missing runs' });
     expect(action.hasAttribute('aria-disabled')).toBe(false);
     fireEvent.click(action);
     expect(launch.mock.calls).toEqual([[{ pipeline: NAME, benchmarks: ['beir/fiqa', 'beir/nfcorpus'] }]]);
@@ -248,15 +250,15 @@ describe('the verdict and the one primary action', () => {
     const twice: PipelineMatrix = { ...WITH_FIQA, missing: [...WITH_FIQA.missing, { benchmark: 'beir/fiqa', dataset_version: '1'.repeat(64), nodes: ['bm25'] }] };
     show(`#pipeline/${NAME}`, routes({ body: twice }), launch);
     await loaded();
-    fireEvent.click(screen.getByRole('button', { name: 'Run the 7 missing cells' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Launch the missing run' }));
     expect(launch.mock.calls).toEqual([[{ pipeline: NAME, benchmarks: ['beir/fiqa'] }]]);
   });
 
-  it('opens Runs’ launch panel on every missing benchmark from “Run the N missing cells”', async () => {
+  it('opens Runs’ launch panel on every missing benchmark from “Launch the N missing runs”', async () => {
     const both: PipelineMatrix = { ...WITH_FIQA, missing: [...WITH_FIQA.missing, ...PREFIXED.missing] };
     show(`#pipeline/${NAME}`, routes({ body: both }));
     await loaded();
-    fireEvent.click(screen.getByRole('button', { name: 'Run the 8 missing cells' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Launch the 2 missing runs' }));
     await screen.findByText(`elsewhere #runs?launch=${NAME}&benchmark=beir%2Ffiqa&benchmark=beir%2Fnfcorpus`);
   });
 

@@ -16,7 +16,7 @@ export type Route =
    * editor's "Run up to this node" lands — or, without `up_to`, on the whole
    * pipeline; `&benchmark=<name>` opens it on that benchmark too — where the
    * Pipeline screen's Run lands — and the key repeated, one value each, on
-   * several, in order — where "Run the N missing cells" lands. Beside a
+   * several, in order — where "Launch the N missing runs" lands. Beside a
    * selection or a job.
    */
   | { screen: 'runs'; sel?: string[]; job?: string; launch?: { pipeline: string; upTo?: string; benchmarks?: string[] } }

@@ -1547,8 +1547,10 @@ pub struct MatrixColumn {
     /// it pins none.
     pub benchmark_names: Vec<String>,
     /// The ground truth it carries: read off the dataset when it verified,
-    /// otherwise off the metrics the run recorded; `null` for a benchmark no
-    /// run measured.
+    /// otherwise off the metrics the run recorded; for a benchmark no run of
+    /// the current content measured, read off its dataset only when the
+    /// pipeline does not end in an answer — to say whether it can be scored
+    /// there — and `null` otherwise.
     pub ground_truth: Option<GroundTruth>,
     /// The run that fills the column — the most recent run of the whole
     /// current form on this benchmark, or, with none, the most recent prefix
@@ -1561,6 +1563,23 @@ pub struct MatrixColumn {
     pub dataset_check: Option<DatasetCheck>,
     /// One cell per row, in the rows' order.
     pub cells: Vec<MatrixCell>,
+    /// The most recent run job of the whole current form on this benchmark,
+    /// when it failed and no run of the whole current form measured the
+    /// benchmark; `null` otherwise — no attempt, or a later one that did not
+    /// fail.
+    pub failed_attempt: Option<FailedAttempt>,
+}
+
+/// A run job that failed, as a matrix column names it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+#[schemars(transform = every_property_required)]
+pub struct FailedAttempt {
+    /// The job's id, as `GET /jobs/{id}` serves it.
+    pub job: String,
+    /// What failed.
+    pub error: String,
+    /// The node that failed, when one did.
+    pub at_node: Option<String>,
 }
 
 /// One node on one benchmark: its figure, or why it has none.
@@ -1607,6 +1626,10 @@ pub enum MatrixCell {
     /// Measurable and run, and no figure: the node ranked no judged query —
     /// it failed — or the run recorded no answer metric.
     NoFigure,
+    /// The pipeline cannot be scored on this benchmark: it does not end in
+    /// an answer, and the benchmark carries reference answers (ADR-C30 § 5,
+    /// `CarriedPieces::scorable`), so a run there is refused. Never missing.
+    NotScorable,
     /// Not run on this version: the only runs on this benchmark were launched
     /// as this pipeline before its content changed (ADR-C39 § 6). They fill
     /// no cell; the most recent of them is linked.

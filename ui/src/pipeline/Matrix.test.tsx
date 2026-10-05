@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { MatrixCell, MatrixColumn, PipelineMatrix } from '../api/types.ts';
 import { declared } from '../../design/testing/css.ts';
 import css from './Pipeline.css?raw';
-import { MATRIX, NAME, PREFIXED, ROWS, RUN_OLD, WITH_FIQA } from './fixtures.ts';
+import { FAILED_JOB, FIQA_FAILED, MATRIX, NAME, PREFIXED, RETRIEVAL, RETRIEVAL_ONLY, ROWS, RUN_OLD, WITH_FIQA } from './fixtures.ts';
 import { Matrix } from './Matrix.tsx';
 
 const show = (matrix: PipelineMatrix = MATRIX, metric = 'ndcg@10', launch: (request: { pipeline: string; benchmarks: string[] }) => void = () => {}) =>
@@ -127,9 +127,9 @@ describe('a ranking cell', () => {
     expect(cell.querySelector('.rg-matrix__gain')?.textContent).toContain('+0.0216');
   });
 
-  it('emphasises the gain, never the value', () => {
+  it('emphasises the gain over the value beside it', () => {
     expect(declared(css, '.rg-matrix__gain', 'color')).toBe('var(--ink)');
-    expect(declared(css, '.rg-matrix__value', 'color')).toBe('var(--ink-3)');
+    expect(declared(css, '.rg-matrix__value[data-quiet]', 'color')).toBe('var(--ink-3)');
   });
 
   it('sets the best gain of the row in bold and says so, and never the best value', () => {
@@ -148,6 +148,15 @@ describe('a ranking cell', () => {
     show();
     expect(cellAt('bm25', 'beir/scifact').textContent).toBe('0.6650 first stage — nothing before it to gain over');
     expect(cellAt('bm25', 'beir/scifact').querySelector('[data-best]')).toBeNull();
+  });
+
+  it('reads the value in ink when no gain stands beside it, and quiet only beside a gain', () => {
+    show();
+    // A retrieval leg: the value is the cell's one figure, so it is not the quiet line.
+    expect(cellAt('bm25', 'beir/scifact').querySelector('.rg-matrix__value')?.hasAttribute('data-quiet')).toBe(false);
+    expect(cellAt('rerank', 'beir/scifact').querySelector('.rg-matrix__value')?.hasAttribute('data-quiet')).toBe(true);
+    expect(declared(css, '.rg-matrix__value', 'color')).toBe('var(--ink)');
+    expect(declared(css, '.rg-matrix__value[data-quiet]', 'color')).toBe('var(--ink-3)');
   });
 
   it('gives no number where the stages are a guess', () => {
@@ -265,5 +274,51 @@ describe('the table for assistive technology', () => {
     expect(declared(css, '.rg-matrix__cell', 'min-height')).toBe('calc(2 * var(--space-5))');
     // No width is claimed: the table's automatic layout shares the width out again on every change.
     expect(declared(css, '.rg-matrix__cell', 'min-width')).toBeUndefined();
+  });
+});
+
+describe('a benchmark the pipeline cannot be scored on', () => {
+  it('says so in every cell, hatched, and offers no Run', () => {
+    show(RETRIEVAL_ONLY);
+    for (const node of ['bm25', 'dense', 'rrf', 'rerank']) {
+      const cell = cellAt(node, 'squad/dev');
+      expect(cell.textContent).toBe(`cannot be scored — ${RETRIEVAL} does not end in an answer, and this benchmark is scored on its reference answers`);
+      expect(cell.querySelector('[data-never]')).toBeTruthy();
+    }
+    expect(screen.queryByRole('button', { name: /^Run on/ })).toBeNull();
+  });
+
+  it('says it in the column’s status, with what its ground truth carries', () => {
+    show(RETRIEVAL_ONLY);
+    const squad = screen.getByRole('columnheader', { name: /squad\/dev/ });
+    expect(squad.textContent).toContain('cannot be scored');
+    expect(squad.textContent).not.toContain('not run yet');
+    expect(squad.textContent).toContain('qrels, reference answers');
+  });
+
+  it('keeps the context builder’s row one sentence beside it', () => {
+    const base = WITH_FIQA;
+    show({ ...base, columns: base.columns.map((c, i) => (i === 0 ? { ...c, cells: c.cells.map(() => ({ kind: 'not_scorable' as const })) } : c)) });
+    const row = screen.getByRole('rowheader', { name: /concat/ }).closest('tr') as HTMLElement;
+    expect(within(row).getAllByRole('cell')).toHaveLength(1);
+  });
+});
+
+describe('a benchmark whose last attempt failed', () => {
+  it('says the last attempt failed in its cells, not that it was never run, and keeps the one Run to try again', () => {
+    show(FIQA_FAILED);
+    expect(cellAt('dense', 'beir/fiqa').textContent).toBe('last attempt failed');
+    const first = cellAt('bm25', 'beir/fiqa');
+    expect(first.textContent).toContain('last attempt failed');
+    expect(within(first).getByRole('button', { name: 'Run on beir/fiqa' })).toBeTruthy();
+  });
+
+  it('marks the column failed, with the way to open the failed job', () => {
+    show(FIQA_FAILED);
+    const fiqa = screen.getByRole('columnheader', { name: /beir\/fiqa/ });
+    expect(fiqa.querySelector('.rg-status[data-state="failed"]')?.textContent).toContain('last attempt failed');
+    const open = within(fiqa).getByRole('link', { name: /^open/ });
+    expect(open.getAttribute('href')).toBe(`#runs/job/${FAILED_JOB}`);
+    expect(open.textContent).toBe('open the failed attempt on beir/fiqa');
   });
 });

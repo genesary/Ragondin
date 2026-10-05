@@ -226,6 +226,12 @@ fn id(byte: u8) -> String {
 /// `beir/scifact`, `squad/dev` and `beir/nq`, caching under `test`'s scratch
 /// directory.
 fn app(test: &str, documents: &[(&str, &str)], runs: Vec<Run>) -> Server {
+    app_in(&scratch(test), documents, runs)
+}
+
+/// [`app`] over the workspace `workspace`, which a test may have given a
+/// `jobs/` directory first.
+fn app_in(workspace: &std::path::Path, documents: &[(&str, &str)], runs: Vec<Run>) -> Server {
     let mut backends = fakes(FakeRunStore::holding(runs));
     backends.pipelines = Arc::new(HeldPipelines {
         files: documents
@@ -238,7 +244,7 @@ fn app(test: &str, documents: &[(&str, &str)], runs: Vec<Run>) -> Server {
         ("squad/dev".to_owned(), squad()),
         ("beir/nq".to_owned(), nq()),
     ]));
-    router_over(backends, &scratch(test))
+    router_over(backends, workspace)
 }
 
 async fn matrix(app: Server, path: &str) -> Value {
@@ -960,4 +966,157 @@ pipeline:
 
     assert_eq!(body["columns"], serde_json::json!([]));
     assert_eq!(body["feeding_runs"], serde_json::json!([]));
+}
+
+/// [`UP_TO_RERANK`] as a pipeline of its own: one that ends in chunks.
+const RETRIEVAL_ONLY: &str = "hybrid-rerank";
+
+#[tokio::test]
+async fn a_benchmark_a_pipeline_cannot_be_scored_on_reads_not_scorable_and_is_never_missing() {
+    // ADR-C30 § 5, as `CarriedPieces::scorable` defines it: a pipeline that
+    // ends in chunks is not scored on a benchmark carrying reference answers,
+    // so offering to run it there offers a run the harness refuses.
+    let body = matrix(
+        app(
+            "matrix-not-scorable",
+            &[(RETRIEVAL_ONLY, UP_TO_RERANK)],
+            vec![run(1, UP_TO_RERANK, &scifact(), "sci", Some(1_000))],
+        ),
+        &format!("/api/v1/pipelines/{RETRIEVAL_ONLY}/matrix?include_available=true"),
+    )
+    .await;
+
+    let squad = column(&body, "squad/dev");
+    assert_eq!(squad["run"], Value::Null);
+    assert_eq!(
+        squad["ground_truth"], "both",
+        "read off the dataset to decide"
+    );
+    for cell in squad["cells"].as_array().unwrap() {
+        assert_eq!(cell, &serde_json::json!({"kind": "not_scorable"}));
+    }
+    // A benchmark without reference answers stays launchable.
+    let nq = column(&body, "beir/nq");
+    assert_eq!(cell(&body, nq, "rerank")["kind"], "not_run_yet");
+    let missing: Vec<&Value> = body["missing"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|missing| &missing["benchmark"])
+        .collect();
+    assert_eq!(missing, ["beir/nq"]);
+}
+
+#[tokio::test]
+async fn a_pipeline_ending_in_an_answer_reads_no_dataset_it_never_ran_on() {
+    let body = matrix(
+        app(
+            "matrix-scorable-unread",
+            &[(NAME, HYBRID_RERANK_GEN)],
+            vec![],
+        ),
+        &format!("/api/v1/pipelines/{NAME}/matrix?include_available=true"),
+    )
+    .await;
+
+    let squad = column(&body, "squad/dev");
+    assert_eq!(squad["ground_truth"], Value::Null);
+    assert_eq!(cell(&body, squad, "generate")["kind"], "not_run_yet");
+}
+
+/// A run job of `document` on `benchmark`, created at `created`, in `state`,
+/// as the queue writes it under `jobs/`.
+fn job(id: &str, created: u64, document: &str, benchmark: &str, state: Value) -> Value {
+    serde_json::json!({
+        "id": id,
+        "position": created,
+        "created_at": created,
+        "work": {
+            "kind": "run",
+            "run_id": format!("announced-{id}"),
+            "pipeline_name": NAME,
+            "pipeline": document,
+            "benchmark": benchmark,
+            "bindings": [],
+            "up_to": null,
+        },
+        "state": state,
+        "history": [{ "state": state["kind"], "at": created }],
+    })
+}
+
+fn failed(error: &str) -> Value {
+    serde_json::json!({
+        "kind": "failed",
+        "error": error,
+        "at_node": "rerank",
+        "finished_at": 9_000,
+        "partial_traces": 0,
+    })
+}
+
+#[tokio::test]
+async fn a_benchmark_whose_last_attempt_of_the_current_form_failed_names_that_job() {
+    let workspace = scratch("matrix-failed-attempt");
+    let jobs = workspace.join("jobs");
+    std::fs::create_dir_all(&jobs).unwrap();
+    let cancelled =
+        serde_json::json!({ "kind": "cancelled", "finished_at": 9_500, "partial_traces": 0 });
+    for job in [
+        // beir/nq: the one attempt failed.
+        job(
+            "nq-failed",
+            5_000,
+            HYBRID_RERANK_GEN,
+            "beir/nq",
+            failed("the reranker failed"),
+        ),
+        // squad/dev: a failure, then a later attempt that did not fail.
+        job(
+            "sq-failed",
+            5_000,
+            HYBRID_RERANK_GEN,
+            "squad/dev",
+            failed("old"),
+        ),
+        job(
+            "sq-cancelled",
+            6_000,
+            HYBRID_RERANK_GEN,
+            "squad/dev",
+            cancelled,
+        ),
+        // beir/scifact: a failure of other content, which is not this pipeline.
+        job(
+            "sci-other",
+            5_000,
+            &other_generator(),
+            "beir/scifact",
+            failed("other"),
+        ),
+    ] {
+        std::fs::write(
+            jobs.join(format!("{}.json", job["id"].as_str().unwrap())),
+            serde_json::to_vec(&job).unwrap(),
+        )
+        .unwrap();
+    }
+
+    let body = matrix(
+        app_in(&workspace, &[(NAME, HYBRID_RERANK_GEN)], vec![]),
+        &format!("/api/v1/pipelines/{NAME}/matrix?include_available=true"),
+    )
+    .await;
+
+    assert_eq!(
+        column(&body, "beir/nq")["failed_attempt"],
+        serde_json::json!({"job": "nq-failed", "error": "the reranker failed", "at_node": "rerank"})
+    );
+    assert_eq!(column(&body, "squad/dev")["failed_attempt"], Value::Null);
+    assert_eq!(column(&body, "beir/scifact")["failed_attempt"], Value::Null);
+    // The cells still wait for a run: a failure fills nothing.
+    assert_eq!(
+        cell(&body, column(&body, "beir/nq"), "rerank")["kind"],
+        "not_run_yet"
+    );
 }

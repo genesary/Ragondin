@@ -2117,10 +2117,23 @@ runs that fill nothing.
   `not_run_on_this_version`, with the run of earlier content it links;
   `prefix_stops`, with the
   node the column's prefix run stops at — "not run: the prefix run stops at"
-  that node.
+  that node; `not_scorable`, every cell of a column no run of the current
+  content fills, when the pipeline does not end in an answer and the
+  benchmark carries reference answers — ADR-C30 § 5, asked of
+  `CarriedPieces::scorable`, the rule's one definition, which the harness's
+  `NoAnswer` refusal and `prefix::scorable` call too. A run there would be
+  refused, so such a column is never in `missing`.
+- **A failed attempt** (`failed_attempt`, a column's). A failed run job
+  leaves no run, so its cells still read `not_run_yet`; the column names the
+  job when the most recent run job of the whole current form on one of its
+  benchmarks — the job's snapshotted document lowering to *H*, whatever name
+  it was launched under, by the job queue's own records — failed, and no run
+  of the whole current form measured the benchmark. A later attempt that did
+  not fail, queued, running, done or cancelled, clears it. "Most recent" is
+  the job's acceptance time, an unknown one first, then its queue position.
 
 `missing` lists, per column, the nodes reading `not_run_yet`,
-`prefix_stops` or `not_run_on_this_version`: what a run of the whole pipeline
+`prefix_stops` or `not_run_on_this_version` — never `not_scorable`: what a run of the whole pipeline
 on that benchmark would fill, named by the benchmark to launch it on. Each
 appears only on a benchmark with no run of the whole current form, by the
 column rule above. Nothing here launches.
@@ -2143,7 +2156,18 @@ Choices made here (`AGENTS.md` § Rules of engagement):
 - **A benchmark never run reads `not_run_yet` in every row**, its
   `ground_truth` `null`: saying `no_qrels` there would mean loading a dataset
   no run used, for every benchmark the registry knows — the cost the loaded
-  datasets' bound exists to keep down.
+  datasets' bound exists to keep down. **One exception**: for a pipeline that
+  does not end in an answer, the one kind `CarriedPieces::scorable` can
+  refuse, the dataset of a column no run of the current content fills is
+  read through `Registry::dataset` — the loaded datasets, bounded as ever —
+  so that a benchmark carrying reference answers reads `not_scorable` rather
+  than offering a run the harness refuses; its `ground_truth` is then served.
+  A dataset that does not verify — not downloaded, or differing — leaves the
+  question open: its column reads `not_run_yet`. A pipeline ending in an
+  answer is scorable everywhere and loads nothing more. Such a column that
+  only runs of earlier content measured loses its link to the most recent of
+  them, which stays listed among the feeding runs: the column is never
+  launchable, which is what the cells say.
 - **A run the store cannot load** is listed in `unreadable`, with the store's
   reason, as `GET /runs` lists it, rather than counted or dropped.
 

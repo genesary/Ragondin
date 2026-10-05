@@ -1,6 +1,6 @@
 // The Pipeline screen's Run buttons, end to end: a `not run yet` cell's
 // "Run on <benchmark>" opens Runs' launch panel with that benchmark chosen,
-// the launch files a run, and the cell fills; "Run the N missing cells" opens
+// the launch files a run, and the cell fills; "Launch the N missing runs" opens
 // it with every missing benchmark, and one confirmation launches one run per
 // column the panel can launch.
 //
@@ -61,7 +61,7 @@ test('the Pipeline screen launches the missing cells through Runs’ launch pane
 
   // Every missing cell: the panel lists each benchmark, says why the two not
   // on disk are not launched, and one confirmation launches the other two.
-  await page.getByRole('button', { name: /^Run the \d+ missing cells$/ }).click();
+  await page.getByRole('button', { name: 'Launch the 4 missing runs' }).click();
   await expect(page).toHaveURL(/#runs\?launch=hybrid-rerank(&benchmark=[^&]+){4}$/);
   const list = panel.getByRole('list', { name: 'Benchmarks' });
   await expect(list.getByRole('listitem')).toHaveText([

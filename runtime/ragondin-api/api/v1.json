@@ -828,6 +828,30 @@
         ],
         "type": "object"
       },
+      "FailedAttempt": {
+        "description": "A run job that failed, as a matrix column names it.",
+        "properties": {
+          "at_node": {
+            "description": "The node that failed, when one did.",
+            "nullable": true,
+            "type": "string"
+          },
+          "error": {
+            "description": "What failed.",
+            "type": "string"
+          },
+          "job": {
+            "description": "The job's id, as `GET /jobs/{id}` serves it.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "at_node",
+          "error",
+          "job"
+        ],
+        "type": "object"
+      },
       "FamilyCapabilities": {
         "description": "One family: its ports, the local implementations this build carries in\nit, and those it does not carry and why.",
         "properties": {
@@ -1964,6 +1988,21 @@
             "type": "object"
           },
           {
+            "description": "The pipeline cannot be scored on this benchmark: it does not end in\nan answer, and the benchmark carries reference answers (ADR-C30 § 5,\n`CarriedPieces::scorable`), so a run there is refused. Never missing.",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "not_scorable"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
             "description": "Not run on this version: the only runs on this benchmark were launched\nas this pipeline before its content changed (ADR-C39 § 6). They fill\nno cell; the most recent of them is linked.",
             "properties": {
               "kind": {
@@ -2020,6 +2059,20 @@
             "description": "The digest of the benchmark's dataset, as runs over it record it.",
             "type": "string"
           },
+          "failed_attempt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FailedAttempt"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "The most recent run job of the whole current form on this benchmark,\nwhen it failed and no run of the whole current form measured the\nbenchmark; `null` otherwise — no attempt, or a later one that did not\nfail."
+          },
           "ground_truth": {
             "anyOf": [
               {
@@ -2032,7 +2085,7 @@
                 "nullable": true
               }
             ],
-            "description": "The ground truth it carries: read off the dataset when it verified,\notherwise off the metrics the run recorded; `null` for a benchmark no\nrun measured."
+            "description": "The ground truth it carries: read off the dataset when it verified,\notherwise off the metrics the run recorded; for a benchmark no run of\nthe current content measured, read off its dataset only when the\npipeline does not end in an answer — to say whether it can be scored\nthere — and `null` otherwise."
           },
           "run": {
             "description": "The run that fills the column — the most recent run of the whole\ncurrent form on this benchmark, or, with none, the most recent prefix\nof it; `null` when neither ran on it.",
@@ -2050,6 +2103,7 @@
           "cells",
           "dataset_check",
           "dataset_version",
+          "failed_attempt",
           "ground_truth",
           "run",
           "up_to"

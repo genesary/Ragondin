@@ -9,7 +9,7 @@ import type { DatasetStatus, MatrixCell, MatrixColumn, MatrixRow, PipelineMatrix
 import { formatHash } from '../routes.ts';
 import { formatMetric, metricLabel, shortHash } from '../runs/model.ts';
 import './Pipeline.css';
-import { answerMetrics, bestGainColumns, columnLabel, groundTruthLabel, signedGain, spansRow } from './model.ts';
+import { answerMetrics, bestGainColumns, columnLabel, gainOn, groundTruthLabel, signedGain, spansRow } from './model.ts';
 
 /** What the launcher is handed: run this pipeline, whole, on each of these benchmarks. */
 export type LaunchRequest = { pipeline: string; benchmarks: string[] };
@@ -75,7 +75,7 @@ function gainLine(cell: Extract<MatrixCell, { kind: 'measured' }>, metric: strin
   }
 }
 
-function cellContent(m: PipelineMatrix, row: MatrixRow, cell: MatrixCell, metric: string, best: boolean, runHere: boolean, launch: Launch): ReactNode {
+function cellContent(m: PipelineMatrix, row: MatrixRow, cell: MatrixCell, metric: string, best: boolean, runHere: boolean, failed: boolean, launch: Launch): ReactNode {
   switch (cell.kind) {
     case 'measured': {
       if (row.produces === 'answer') {
@@ -86,10 +86,17 @@ function cellContent(m: PipelineMatrix, row: MatrixRow, cell: MatrixCell, metric
         return <Cell state="measured" first={<span className="rg-matrix__value">{figures}</span>} second={gainLine(cell, metric, false)} />;
       }
       const value = cell.metrics[metric];
+      // The value is the quiet line only beside a gain, which is what is read
+      // first; with no gain beside it, it is the cell's one figure.
+      const quiet = gainOn(cell, metric) !== null;
       return (
         <Cell
           state="measured"
-          first={<span className="rg-matrix__value">{value === undefined ? `no ${metric} figure` : formatMetric('ranking', value)}</span>}
+          first={
+            <span className="rg-matrix__value" data-quiet={quiet ? true : undefined}>
+              {value === undefined ? `no ${metric} figure` : formatMetric('ranking', value)}
+            </span>
+          }
           second={gainLine(cell, metric, best)}
         />
       );
@@ -99,14 +106,17 @@ function cellContent(m: PipelineMatrix, row: MatrixRow, cell: MatrixCell, metric
     case 'no_reference_answers':
       return <Cell state={cell.kind} never first={said('no reference answers', ' — never measurable on this benchmark')} />;
     case 'not_run_yet': {
+      // A failed attempt fills nothing, so the cell still waits for a run; it
+      // says the attempt failed rather than that none was made.
+      const words = failed ? 'last attempt failed' : 'not run yet';
       // One Run control per benchmark not run, in its first such cell: the
       // others say it in words, so a dozen benchmarks are not dozens of tab stops.
-      if (!runHere) return <Cell state={cell.kind} first="not run yet" />;
+      if (!runHere) return <Cell state={cell.kind} first={words} />;
       const name = `Run on ${cell.benchmark}`;
       return (
         <Cell
           state={cell.kind}
-          first="not run yet"
+          first={words}
           second={
             <Button size="s" aria-label={name} onClick={() => launch({ pipeline: m.pipeline, benchmarks: [cell.benchmark] })}>
               Run
@@ -133,6 +143,8 @@ function cellContent(m: PipelineMatrix, row: MatrixRow, cell: MatrixCell, metric
       return <Cell state={cell.kind} first={said('unverified', ' — the run’s dataset is not verified on disk')} />;
     case 'not_scored':
       return <Cell state={cell.kind} first={said('not scored', ' — no metric reads this node’s output')} />;
+    case 'not_scorable':
+      return <Cell state={cell.kind} never first={said('cannot be scored', ` — ${m.pipeline} does not end in an answer, and this benchmark is scored on its reference answers`)} />;
     case 'no_figure':
       return <Cell state={cell.kind} first={said('no figure', ' — run here, and no figure came out')} />;
   }
@@ -149,8 +161,23 @@ const NOT_VERIFIED: Record<Exclude<DatasetStatus, 'verified'>, string> = {
 /** A column's status in words: measured, how far a prefix run reached, or why nothing measured it. */
 function columnStatus(column: MatrixColumn): ReactNode {
   if (column.run !== null) return <StatusChip state="done">{column.up_to === null ? 'measured' : `up to ${column.up_to}`}</StatusChip>;
+  if (column.cells.length > 0 && column.cells.every((c) => c.kind === 'not_scorable')) return <span className="rg-matrix__note">cannot be scored</span>;
   if (column.cells.length > 0 && column.cells.every((c) => c.kind === 'not_run_on_this_version')) return <StatusChip state="warning">earlier version only</StatusChip>;
   return <span className="rg-matrix__note">not run yet</span>;
+}
+
+/** The API's most recent attempt of the whole pipeline here, when it failed: said, with the way to the job. */
+function failedAttempt(column: MatrixColumn): ReactNode {
+  if (column.failed_attempt === null) return null;
+  return (
+    <>
+      {' '}
+      <StatusChip state="failed">last attempt failed</StatusChip>{' '}
+      <a className="rg-matrix__run" href={formatHash({ screen: 'runs', job: column.failed_attempt.job })}>
+        open<span className="rg-visually-hidden"> the failed attempt on {columnLabel(column)}</span>
+      </a>
+    </>
+  );
 }
 
 function columnHeader(column: MatrixColumn) {
@@ -159,7 +186,8 @@ function columnHeader(column: MatrixColumn) {
     <span className="rg-matrix__col">
       <span className="rg-matrix__bench">{columnLabel(column)}</span>{' '}
       <span className="rg-matrix__status">
-        {columnStatus(column)}
+        {column.run === null && column.failed_attempt !== null ? null : columnStatus(column)}
+        {failedAttempt(column)}
         {check === 'verified' ? null : (
           <>
             {' '}
@@ -214,7 +242,7 @@ export function Matrix({ matrix, metric, launch }: MatrixProps) {
     const best = row.produces === 'chunks' ? bestGainColumns(matrix, r, metric) : [];
     return {
       id: row.node,
-      cells: [rowHeader(matrix, row, metric), ...matrix.columns.map((column, c) => cellContent(matrix, row, column.cells[r] as MatrixCell, metric, best.includes(c), runRow[c] === r, launch))],
+      cells: [rowHeader(matrix, row, metric), ...matrix.columns.map((column, c) => cellContent(matrix, row, column.cells[r] as MatrixCell, metric, best.includes(c), runRow[c] === r, column.failed_attempt !== null, launch))],
     };
   });
   return (
