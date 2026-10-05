@@ -133,3 +133,4 @@
   .rg-editor__stage .rg-canvas { min-height: 420px; }
   .rg-editor__stage .rg-canvas__inspector { width: 100%; }
 }
+.rg-editor__import .rg-inline p { white-space: pre-line; }
