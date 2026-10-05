@@ -206,4 +206,18 @@ describe('StackedBarChart', () => {
     expect([...container.querySelectorAll('.rg-chart__total')].map((t) => t.textContent)).toEqual(['10 ms', '30 ms']);
     expect(container.querySelectorAll('.rg-chart__axis')).toHaveLength(1);
   });
+
+  it('keeps each total inside the plot, even for the bar that reaches its end or past it', () => {
+    // The 30 ms bar ends at the domain's end; a bar pushed by narrow segments ends past it.
+    const pushed: StackedBarChartProps = { ...PROPS, segments: [PROPS.segments[0]!, [...Array.from({ length: 20 }, (_, i) => ({ id: `t${i}`, label: `t${i}`, value: 0.0001, family: 'fusion' as const })), ...PROPS.segments[1]!]] };
+    for (const props of [PROPS, pushed]) {
+      const { container, unmount } = render(<StackedBarChart {...props} />);
+      for (const total of container.querySelectorAll('.rg-chart__total')) {
+        // At least 0.66 em of 11px per character: a lower bound of the text's width.
+        const width = (total.textContent ?? '').length * 0.66 * 11;
+        expect(Number(total.getAttribute('x')) + width).toBeLessThanOrEqual(PLOT.width - PLOT.right);
+      }
+      unmount();
+    }
+  });
 });

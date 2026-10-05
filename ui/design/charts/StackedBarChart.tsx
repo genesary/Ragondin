@@ -29,7 +29,7 @@ export type StackedBarChartProps = {
  */
 const LABEL_SIZE = 11;
 /**
- * An upper bound on the width of `name` in that type, in SVG units: per
+ * An upper bound on the width of `name` — a segment's name or a bar's total — in that type, in SVG units: per
  * character, at least the advance the shipped Wix Madefor Text Medium gives
  * it — m, w, their capitals, @ and % 1.06 em, another capital 0.86 em,
  * anything else 0.66 em — so a name judged to fit does, and is never clipped
@@ -144,7 +144,8 @@ export function StackedBarChart({ label, bars, segments, format }: StackedBarCha
                   );
                 })}
               </g>
-              <text className="rg-chart__total" x={x(totals[b] ?? 0) + pushed + 6} y={barY(b) + thickness / 2} dominantBaseline="middle">
+              {/* At the bar's end, but never past the plot's: a bar reaching the end, or pushed past it, has its total drawn over its last segment. */}
+              <text className="rg-chart__total" x={Math.min(x(totals[b] ?? 0) + pushed + 6, PLOT.width - PLOT.right - nameWidth(format(totals[b] ?? 0)))} y={barY(b) + thickness / 2} dominantBaseline="middle">
                 {format(totals[b] ?? 0)}
               </text>
               <rect
