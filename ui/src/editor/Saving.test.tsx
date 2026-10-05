@@ -1,0 +1,257 @@
+/** @vitest-environment happy-dom */
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { useState } from 'react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createApiClient } from '../api/client.ts';
+import { mockApi, type MockRoutes } from '../api/testing.ts';
+import type { PipelineValidated, Problem } from '../api/types.ts';
+import type { WireDocument } from './document.ts';
+import { Editor } from './Editor.tsx';
+import { GRAMMAR, HYBRID, SERVICES, WORKSPACE } from './fixtures.ts';
+import type { FileInit } from './saving.ts';
+import type { EditorLayout } from './store.ts';
+
+const HASH = 'b'.repeat(64);
+const ETAG = 'e'.repeat(64);
+const NEW_ETAG = 'f'.repeat(64);
+const RENDERING = 'version: 3\npipeline:\n  inputs: [question]\n';
+const VALID: { body: PipelineValidated } = { body: { hash: HASH, rendering: RENDERING } };
+// Every node of the hybrid placed, so the canvas lays nothing out itself.
+const LAYOUT: EditorLayout = { question: { x: 0, y: 0 }, lexical: { x: 288, y: 0 }, vectors: { x: 288, y: 160 }, fused: { x: 576, y: 0 }, reranked: { x: 864, y: 0 } };
+const STORED: FileInit = { name: 'hybrid', etag: ETAG, canonical: true, proposed: 'hybrid' };
+
+const problem = (code: Problem['code'], status: number, detail: string, location: Problem['location'] = null): { problem: Problem } => ({
+  problem: { type: `urn:ragondin:problem:${code}`, title: code, status, detail, code, hint: 'Do something.', location },
+});
+const DANGLING = problem('pipeline_invalid', 422, 'the pipeline does not validate: `fused` names `nowhere`', { node: 'fused', edge: null });
+const STALE = problem('precondition_failed', 412, 'the stored document is at another etag');
+
+type Props = { file?: FileInit; initial?: WireDocument; forkedFrom?: string | null; onNamed?: (name: string) => void; onReload?: () => void };
+
+function Harness({ file = STORED, initial = HYBRID, forkedFrom = null, onNamed = () => {}, onReload = () => {} }: Props) {
+  const [client] = useState(() => createApiClient());
+  const [selected, setSelected] = useState<string | null>(null);
+  return (
+    <div style={{ width: 1400, height: 800 }}>
+      <Editor
+        client={client}
+        title="New pipeline"
+        initial={initial}
+        layout={LAYOUT}
+        capabilities={WORKSPACE.capabilities}
+        services={SERVICES.services}
+        grammar={GRAMMAR}
+        selected={selected}
+        onSelect={setSelected}
+        file={file}
+        forkedFrom={forkedFrom}
+        onNamed={onNamed}
+        onReload={onReload}
+      />
+    </div>
+  );
+}
+
+const WRITTEN: MockRoutes['PUT /pipelines/{name}'] = { body: { name: 'hybrid', etag: NEW_ETAG, hash: HASH } };
+
+function setup(routes: MockRoutes, props: Props = {}) {
+  const api = mockApi({ 'POST /pipelines/validate': VALID, 'PUT /pipelines/{name}': WRITTEN, 'PUT /pipelines/{name}/layout': { body: { layout: null } }, ...routes });
+  const view = render(<Harness {...props} />);
+  return { ...view, api };
+}
+
+const writes = (api: ReturnType<typeof mockApi>, name = 'hybrid') => api.requests.flatMap((r, i) => (r === `PUT /api/v1/pipelines/${name}` ? [{ body: api.bodies[i], headers: api.headers[i]!, at: i }] : []));
+const validations = (api: ReturnType<typeof mockApi>) => api.requests.flatMap((r, i) => (r === 'POST /api/v1/pipelines/validate' ? [i] : []));
+const place = (impl: RegExp) => fireEvent.click(within(screen.getByRole('region', { name: 'Palette' })).getByRole('button', { name: impl }));
+const saveLine = () => screen.getByTestId('save-state');
+// Past the validation's debounce and its answer, then a little more: what a write would have needed to be sent.
+const settle = () => new Promise((resolve) => setTimeout(resolve, 600));
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  window.sessionStorage.clear();
+});
+
+describe('continuous saving', () => {
+  it('writes nothing for the document it opened', async () => {
+    const { api } = setup({});
+    await waitFor(() => expect(validations(api)).toHaveLength(1));
+    await settle();
+    expect(writes(api)).toEqual([]);
+    expect(saveLine().textContent).toBe('Saved');
+  });
+
+  it('writes a valid change after the debounce, validated first, over the etag it read, as the typed document', async () => {
+    const { api } = setup({});
+    await waitFor(() => expect(validations(api)).toHaveLength(1));
+    place(/^rrf/);
+    await waitFor(() => expect(writes(api)).toHaveLength(1));
+    const [write] = writes(api);
+    expect(write!.headers['If-Match']).toBe(`"${ETAG}"`);
+    expect(write!.headers['If-None-Match']).toBeUndefined();
+    const sent = write!.body as { typed: WireDocument };
+    expect(Object.keys(sent)).toEqual(['typed']);
+    expect(sent.typed.pipeline.nodes.at(-1)?.id).toBe('rrf');
+    // The validation of that very document came first.
+    expect(validations(api).at(-1)!).toBeLessThan(write!.at);
+    await waitFor(() => expect(saveLine().textContent).toBe('Saved'));
+    expect(screen.getByText(HASH)).toBeTruthy();
+    // The next write names the etag the last one answered.
+    place(/^concat/);
+    await waitFor(() => expect(writes(api)).toHaveLength(2));
+    expect(writes(api)[1]!.headers['If-Match']).toBe(`"${NEW_ETAG}"`);
+  });
+
+  it('never writes a document the server calls invalid, and says it is unsaved with its error count', async () => {
+    const { api } = setup({ 'POST /pipelines/validate': [VALID, DANGLING] });
+    await waitFor(() => expect(validations(api)).toHaveLength(1));
+    place(/^rrf/);
+    await waitFor(() => expect(saveLine().textContent).toBe('Unsaved — 1 error'));
+    await settle();
+    expect(writes(api)).toEqual([]);
+  });
+
+  it('writes the layout when a node moves, and leaves the document alone', async () => {
+    const { api, container } = setup({});
+    await waitFor(() => expect(validations(api)).toHaveLength(1));
+    const node = container.querySelector<HTMLElement>('.react-flow__node[data-id="lexical"]')!;
+    node.focus();
+    fireEvent.keyDown(node, { key: 'ArrowRight' });
+    await waitFor(() => expect(api.requests).toContain('PUT /api/v1/pipelines/hybrid/layout'));
+    const body = api.bodies[api.requests.indexOf('PUT /api/v1/pipelines/hybrid/layout')] as { version: number; nodes: Record<string, { x: number; y: number }> };
+    expect(body.version).toBe(1);
+    expect(body.nodes.lexical).toEqual({ x: 304, y: 0 });
+    await settle();
+    expect(writes(api)).toEqual([]);
+  });
+
+  it('can export the server’s rendering of the document, and nothing else', async () => {
+    const { api } = setup({});
+    await waitFor(() => expect(validations(api)).toHaveLength(1));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Export' }).getAttribute('aria-disabled')).not.toBe('true'));
+    fireEvent.click(screen.getByRole('button', { name: 'Export' }));
+    const exported = screen.getByRole('textbox', { name: 'The document as the server renders it' }) as HTMLTextAreaElement;
+    expect(exported.value).toBe(RENDERING);
+    expect(screen.getByRole('button', { name: 'Download hybrid.yaml' })).toBeTruthy();
+  });
+});
+
+describe('a file changed on disk', () => {
+  it('stops saving on a stale etag, writes nothing until a choice is made, and offers reload or a new file', async () => {
+    const onReload = vi.fn();
+    const { api } = setup({ 'PUT /pipelines/{name}': (body) => ('typed' in body ? STALE : WRITTEN) }, { onReload });
+    await waitFor(() => expect(validations(api)).toHaveLength(1));
+    place(/^rrf/);
+    const message = await screen.findByRole('region', { name: 'The file changed on disk' });
+    expect(within(message).getByText(/unsaved changes on the canvas are lost/)).toBeTruthy();
+    expect(saveLine().textContent).toBe('Not saved: the file changed on disk');
+    place(/^concat/);
+    await settle();
+    expect(writes(api)).toHaveLength(1);
+    fireEvent.click(within(message).getByRole('button', { name: 'Discard my changes and reload' }));
+    expect(onReload).toHaveBeenCalledOnce();
+  });
+
+  it('keeps the canvas as a new file under the name given, created, and goes on writing it', async () => {
+    const onNamed = vi.fn();
+    const { api } = setup(
+      {
+        'PUT /pipelines/{name}': [STALE, { body: { name: 'hybrid-mine', etag: NEW_ETAG, hash: HASH } }, { body: { name: 'hybrid-mine', etag: 'a'.repeat(64), hash: HASH } }],
+      },
+      { onNamed },
+    );
+    await waitFor(() => expect(validations(api)).toHaveLength(1));
+    place(/^rrf/);
+    const message = await screen.findByRole('region', { name: 'The file changed on disk' });
+    fireEvent.change(within(message).getByRole('textbox', { name: 'New file name' }), { target: { value: 'hybrid-mine' } });
+    fireEvent.click(within(message).getByRole('button', { name: 'Save as a new file' }));
+    await waitFor(() => expect(writes(api, 'hybrid-mine')).toHaveLength(1));
+    expect(writes(api, 'hybrid-mine')[0]!.headers['If-None-Match']).toBe('*');
+    await waitFor(() => expect(onNamed).toHaveBeenCalledWith('hybrid-mine'));
+    expect(screen.getByRole('heading', { name: 'hybrid-mine' })).toBeTruthy();
+    place(/^concat/);
+    await waitFor(() => expect(writes(api, 'hybrid-mine')).toHaveLength(2));
+    expect(writes(api, 'hybrid-mine')[1]!.headers['If-Match']).toBe(`"${NEW_ETAG}"`);
+  });
+});
+
+describe('a file written by hand', () => {
+  const HAND: FileInit = { ...STORED, canonical: false };
+
+  it('asks once before its first write, naming everything the rendering drops, and writes nothing meanwhile', async () => {
+    const { api } = setup({}, { file: HAND });
+    await waitFor(() => expect(validations(api)).toHaveLength(1));
+    place(/^rrf/);
+    const message = await screen.findByRole('region', { name: 'This file was written by hand' });
+    for (const dropped of ['comments', 'formatting', 'key order', 'expanded references', 'keys the pipeline schema does not read']) expect(message.textContent).toContain(dropped);
+    await settle();
+    expect(writes(api)).toEqual([]);
+    fireEvent.click(within(message).getByRole('button', { name: 'Rewrite this file' }));
+    await waitFor(() => expect(writes(api)).toHaveLength(1));
+    expect(writes(api)[0]!.headers['If-Match']).toBe(`"${ETAG}"`);
+    // Asked once: the next change is written without a word.
+    place(/^concat/);
+    await waitFor(() => expect(writes(api)).toHaveLength(2));
+    expect(screen.queryByRole('region', { name: 'This file was written by hand' })).toBeNull();
+  });
+
+  it('“Save as a new file” leaves the original untouched', async () => {
+    const onNamed = vi.fn();
+    const { api } = setup({ 'PUT /pipelines/{name}': { body: { name: 'mine', etag: NEW_ETAG, hash: HASH } } }, { file: HAND, onNamed });
+    await waitFor(() => expect(validations(api)).toHaveLength(1));
+    place(/^rrf/);
+    const message = await screen.findByRole('region', { name: 'This file was written by hand' });
+    fireEvent.change(within(message).getByRole('textbox', { name: 'New file name' }), { target: { value: 'mine' } });
+    fireEvent.click(within(message).getByRole('button', { name: 'Save as a new file' }));
+    await waitFor(() => expect(onNamed).toHaveBeenCalledWith('mine'));
+    expect(writes(api, 'mine')[0]!.headers['If-None-Match']).toBe('*');
+    expect(writes(api)).toEqual([]);
+  });
+
+  it('remembers “Rewrite this file” for the file for the session', async () => {
+    const first = setup({}, { file: HAND });
+    await waitFor(() => expect(validations(first.api)).toHaveLength(1));
+    place(/^rrf/);
+    fireEvent.click(within(await screen.findByRole('region', { name: 'This file was written by hand' })).getByRole('button', { name: 'Rewrite this file' }));
+    await waitFor(() => expect(writes(first.api)).toHaveLength(1));
+    first.unmount();
+    vi.unstubAllGlobals();
+
+    const again = setup({}, { file: HAND });
+    await waitFor(() => expect(validations(again.api)).toHaveLength(1));
+    place(/^rrf/);
+    await waitFor(() => expect(writes(again.api)).toHaveLength(1));
+    expect(screen.queryByRole('region', { name: 'This file was written by hand' })).toBeNull();
+  });
+});
+
+describe('a document never written', () => {
+  const UNNAMED: FileInit = { name: null, etag: null, canonical: true, proposed: 'example' };
+
+  it('writes no file until “Keep this pipeline”, then creates it under the proposed name', async () => {
+    const onNamed = vi.fn();
+    const { api } = setup({ 'PUT /pipelines/{name}': { body: { name: 'example', etag: NEW_ETAG, hash: HASH } } }, { file: UNNAMED, onNamed });
+    await waitFor(() => expect(validations(api)).toHaveLength(1));
+    await settle();
+    expect(api.requests.filter((r) => r.startsWith('PUT'))).toEqual([]);
+    expect(saveLine().textContent).toBe('Not written yet: the first change, or Keep this pipeline, writes it');
+    fireEvent.click(screen.getByRole('button', { name: 'Keep this pipeline' }));
+    await waitFor(() => expect(writes(api, 'example')).toHaveLength(1));
+    expect(writes(api, 'example')[0]!.headers['If-None-Match']).toBe('*');
+    await waitFor(() => expect(onNamed).toHaveBeenCalledWith('example'));
+  });
+
+  it('is created at its first change', async () => {
+    const { api } = setup({ 'PUT /pipelines/{name}': { body: { name: 'example', etag: NEW_ETAG, hash: HASH } } }, { file: UNNAMED });
+    await waitFor(() => expect(validations(api)).toHaveLength(1));
+    place(/^rrf/);
+    await waitFor(() => expect(writes(api, 'example')).toHaveLength(1));
+  });
+});
+
+describe('a fork', () => {
+  it('names the run it was forked from in the header', () => {
+    setup({}, { forkedFrom: 'a'.repeat(64) });
+    expect(screen.getByText(/Forked from run/).textContent).toContain('aaaaaaaa');
+  });
+});

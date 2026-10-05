@@ -111,7 +111,8 @@ const pattern = (template: string) => new RegExp(`^${API_BASE}${template.replace
  * build identity `build` unless the reply names its own. A request no route
  * matches is answered as the server answers one: `route_not_found`. Returns
  * the requests made, as `GET /api/v1/…`, and beside each the JSON body it
- * sent, parsed — undefined for none — and the signal it was sent with. A
+ * sent, parsed — undefined for none — the headers it was sent with, and the
+ * signal it was sent with. A
  * request whose signal aborts before its answer is rejected with an
  * `AbortError`, as `fetch` rejects one. `vi.unstubAllGlobals()` restores
  * `fetch`.
@@ -120,6 +121,7 @@ export function mockApi(routes: MockRoutes, { build = 'test-build' }: { build?: 
   const requests: string[] = [];
   const bodies: unknown[] = [];
   const signals: (AbortSignal | undefined)[] = [];
+  const headers: Record<string, string>[] = [];
   // A function is handed the request's query string and path for a GET, its parsed body (and, for a PATCH, its path) otherwise.
   type Reply = (sent: unknown, path?: string) => MockReply<unknown> | Promise<MockReply<unknown>>;
   type Replies = MockReply<unknown>[] | Reply;
@@ -148,6 +150,7 @@ export function mockApi(routes: MockRoutes, { build = 'test-build' }: { build?: 
     requests.push(`${method} ${url}`);
     bodies.push(sent);
     signals.push(init?.signal ?? undefined);
+    headers.push({ ...((init?.headers ?? {}) as Record<string, string>) });
     return unlessAborted(init?.signal ?? undefined, respond(method, url, sent));
   });
 
@@ -171,5 +174,5 @@ export function mockApi(routes: MockRoutes, { build = 'test-build' }: { build?: 
     if ('problem' in reply) return answer(reply.problem.status, 'application/problem+json', reply.problem, reply.build ?? build);
     return answer(200, 'application/json', reply.body, reply.build ?? build);
   }
-  return { requests, bodies, signals };
+  return { requests, bodies, signals, headers };
 }
