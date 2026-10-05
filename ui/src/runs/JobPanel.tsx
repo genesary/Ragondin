@@ -11,6 +11,7 @@ import type { JobSummary } from '../api/types.ts';
 import { useJobs } from '../jobs/queue.tsx';
 import { formatHash } from '../routes.ts';
 import { ErrorState, Loading, type RequestState } from '../shell/states.tsx';
+import { ErrorWords } from './jobRow.tsx';
 import { shortHash } from './model.ts';
 
 export type JobPanelProps = {
@@ -108,10 +109,18 @@ function Facts({ job }: { job: JobSummary }) {
         </dd>
       </dl>
       <Faults job={job} />
-      {state.kind === 'failed' ? <p className="rg-runs__failure">{state.at_node === null ? `The run failed: ${state.error}` : `${state.at_node} failed: ${state.error}`}</p> : null}
+      {/* Said once: the chip above names the node, and the error is the launcher's own sentence. */}
+      {state.kind === 'failed' ? (
+        <p className="rg-runs__failure">
+          <ErrorWords error={state.error} />
+        </p>
+      ) : null}
       {state.kind === 'failed' || state.kind === 'cancelled' ? (
         state.partial_traces === 0 ? (
           <p className="rg-job__partial">It kept no trace: a run keeps the traces of the queries it executed when it fails or is cancelled, and a crash keeps none it can vouch for.</p>
+        ) : state.kind === 'failed' && state.at_node !== null && state.partial_traces === 1 ? (
+          // The traces kept count the query a node failed on: one alone is that query, and nothing completed to replay.
+          <p className="rg-job__partial">No query completed before it failed at {state.at_node}: the one trace kept, under jobs/{job.id}/partial/ in the workspace, is of the query it failed on.</p>
         ) : (
           <p className="rg-job__partial">
             <span>

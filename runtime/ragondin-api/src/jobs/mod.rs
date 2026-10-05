@@ -51,6 +51,11 @@ pub struct Job {
     /// Absent in a file written before faults were recorded on the job.
     #[serde(default)]
     pub faults: Vec<Fault>,
+    /// When a person dismissed it, once it had ended: it is then left out of
+    /// what a client shows, and nothing else about it changes. Absent in a
+    /// file written before dismissals were recorded, and while it is not.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dismissed_at: Option<UnixMillis>,
 }
 
 /// A fault beside a job: what went wrong without changing its state, and
@@ -353,6 +358,7 @@ pub(crate) fn summary(job: &Job) -> JobSummary {
                 at_ms: millis(fault.at),
             })
             .collect(),
+        dismissed_at_ms: millis(job.dismissed_at),
     }
 }
 
@@ -371,6 +377,7 @@ mod tests {
             state: JobState::Queued,
             history: Vec::new(),
             faults: vec![fault],
+            dismissed_at: None,
         }
     }
 

@@ -336,7 +336,7 @@ export function groupRows(rows: readonly RunRow[]): RunGroup[] {
 export function otherFact(row: Pick<RunRow, 'launchedAs' | 'launchRecorded' | 'pipelineNames'>): string | null {
   if (row.launchedAs === null) return row.launchRecorded ? 'launch recorded without a name' : 'launch not recorded';
   if (row.pipelineNames.length === 1 && row.pipelineNames[0] === row.launchedAs) return null;
-  return row.pipelineNames.length === 0 ? 'no current document has this content' : `content held by ${row.pipelineNames.join(', ')}`;
+  return row.pipelineNames.length === 0 ? 'no pipeline in the workspace matches this run now' : `content held by ${row.pipelineNames.join(', ')}`;
 }
 
 /** A hash as the screen prints it: its first twelve digits. */

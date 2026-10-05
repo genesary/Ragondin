@@ -174,6 +174,11 @@ describe('a done run', () => {
     expect(run.textContent).toContain('content held by hybrid-fork');
   });
 
+  it('keeps its words apart from its hash when the text is read or copied', () => {
+    const { tr } = show(done({ launchedAs: 'hybrid', pipelineNames: [] }));
+    expect((within(tr).getAllByRole('cell')[1] as HTMLElement).textContent).toBe('a1b2c3d4e5f6 no pipeline in the workspace matches this run now');
+  });
+
   it('says a run without a record has none, rather than nothing', () => {
     const { tr } = show(done());
     expect((within(tr).getAllByRole('cell')[1] as HTMLElement).textContent).toContain('launch not recorded');

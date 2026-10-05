@@ -2,8 +2,10 @@
 // (the front-end design, § 3), most recent first, with the job queue's run
 // jobs in their pipeline's group. It reads `GET /runs` — each pipeline's
 // shape comes with the listing — and the queue the shell follows; it owns the
-// benchmark filter and the launch panel; the selection it hands to Compare,
-// and the job it shows, live in the address. ARCHITECTURE.md § The Runs screen.
+// launch panel; the benchmark filter, the selection it hands to Compare, and
+// the job it shows, live in the address. The live jobs — running, then queued
+// in the order the worker takes them — are a Queue of their own above the
+// runs. ARCHITECTURE.md § The Runs screen.
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Button, ButtonLink, EmptyState, FilterChip, InlineMessage, Sheet, Table, type TableRow } from '../../design/index.ts';
 import type { ApiClient, ApiProblem } from '../api/client.ts';
@@ -34,23 +36,26 @@ export type RunsScreenProps = {
   store?: string | null;
   /** The launch panel the address opens (`#runs?launch=<pipeline>&up_to=<node>&benchmark=<name>…`), if any. */
   launch?: { pipeline: string; upTo?: string; benchmarks?: string[] } | undefined;
+  /** The benchmark filter the address carries (`#runs?bench=<key>…`): the benchmarks whose rows are shown, all when absent. */
+  bench?: readonly string[] | undefined;
 };
 
-/** The Runs address with this selection, job and launch panel, each left out when absent. */
-const runsRoute = (sel: readonly string[], job: string | undefined, launch: RunsScreenProps['launch']): Extract<Route, { screen: 'runs' }> => ({
+/** The Runs address with this selection, job, launch panel and filter, each left out when absent. */
+const runsRoute = (sel: readonly string[], job: string | undefined, launch: RunsScreenProps['launch'], bench: readonly string[] = []): Extract<Route, { screen: 'runs' }> => ({
   screen: 'runs',
   ...(sel.length === 0 ? {} : { sel: [...sel] }),
   ...(job === undefined ? {} : { job }),
   ...(launch === undefined ? {} : { launch }),
+  ...(bench.length === 0 ? {} : { bench: [...bench] }),
 });
 
-/** Writes a selection to the address in place, keeping the job shown and the launch panel: checking a box is state within the view, not a move Back should undo. */
-const selectWith = (job: string | undefined, launch: RunsScreenProps['launch']) => (sel: string[]) => navigate({ ...runsRoute([], job, launch), sel }, { replace: true });
+/** Writes a selection to the address in place, keeping the job shown, the launch panel and the filter: checking a box is state within the view, not a move Back should undo. */
+const selectWith = (job: string | undefined, launch: RunsScreenProps['launch'], bench: readonly string[]) => (sel: string[]) => navigate({ ...runsRoute([], job, launch, bench), sel }, { replace: true });
 
 // Which events say the queue's order, one entry per name of the generated
 // union: a name added to `JobEvent` does not compile until it is decided here.
 // A fault, a tick and a transition move no job among the queued.
-const SAYS_ORDER: Record<JobEvent['event'], boolean> = { queued: false, running: false, done: false, failed: false, cancelled: false, fault: false, reordered: true, resync: true };
+const SAYS_ORDER: Record<JobEvent['event'], boolean> = { queued: false, running: false, done: false, failed: false, cancelled: false, fault: false, dismissed: false, reordered: true, resync: true };
 
 const runs = (n: number) => `${n.toLocaleString('en-US')} run${n === 1 ? '' : 's'}`;
 
@@ -61,7 +66,7 @@ const runs = (n: number) => `${n.toLocaleString('en-US')} run${n === 1 ? '' : 's
  */
 type Read = { listing: RequestState<RunListing>; askedWith: ReadonlySet<string>; refresh: ApiProblem | null };
 
-export function RunsScreen({ client, sel, job, store = null, launch }: RunsScreenProps) {
+export function RunsScreen({ client, sel, job, store = null, launch, bench }: RunsScreenProps) {
   const [read, setRead] = useState<Read>({ listing: { status: 'loading' }, askedWith: new Set(), refresh: null });
   const latest = useRef(0);
   // The listing read in flight, cancelled once a newer read overtakes it.
@@ -114,7 +119,18 @@ export function RunsScreen({ client, sel, job, store = null, launch }: RunsScree
       return <ErrorState problem={read.listing.problem} onRetry={retry} />;
     case 'loaded':
       return (
-        <Loaded client={client} listing={read.listing.value} askedWith={read.askedWith} refresh={read.refresh} sel={sel} job={job} launch={launch} store={store} reread={() => void fetchListing()} />
+        <Loaded
+          client={client}
+          listing={read.listing.value}
+          askedWith={read.askedWith}
+          refresh={read.refresh}
+          sel={sel}
+          job={job}
+          launch={launch}
+          bench={bench ?? []}
+          store={store}
+          reread={() => void fetchListing()}
+        />
       );
   }
 }
@@ -130,6 +146,8 @@ type LoadedProps = {
   job: string | undefined;
   /** The launch panel the address opens, if any. */
   launch: RunsScreenProps['launch'];
+  /** The benchmark filter the address carries. */
+  bench: readonly string[];
   store: string | null;
   /** Reads the listing again, keeping this one on screen meanwhile. */
   reread: () => void;
@@ -151,9 +169,10 @@ function withPositions(jobs: Jobs, positions: ReadonlyMap<string, number> | null
   return new Map([...jobs].map(([id, j]) => [id, j.state.kind === 'queued' && positions.has(id) ? { ...j, position: positions.get(id) as number } : j]));
 }
 
-function Loaded({ client, listing, askedWith, refresh, sel, job, launch, store, reread }: LoadedProps) {
+function Loaded({ client, listing, askedWith, refresh, sel, job, launch, bench, store, reread }: LoadedProps) {
   // The benchmarks as one string, so a new array of the same names is the same address.
   const [launchPipeline, launchUpTo, launchBenchmarks] = [launch?.pipeline, launch?.upTo, launch?.benchmarks?.join('\u0000')];
+  const benchKey = bench.join('\u0000');
   const select = useMemo(
     () =>
       selectWith(
@@ -161,8 +180,9 @@ function Loaded({ client, listing, askedWith, refresh, sel, job, launch, store, 
         launchPipeline === undefined
           ? undefined
           : { pipeline: launchPipeline, ...(launchUpTo === undefined ? {} : { upTo: launchUpTo }), ...(launchBenchmarks === undefined ? {} : { benchmarks: launchBenchmarks.split('\u0000') }) },
+        benchKey === '' ? [] : benchKey.split('\u0000'),
       ),
-    [job, launchPipeline, launchUpTo, launchBenchmarks],
+    [job, launchPipeline, launchUpTo, launchBenchmarks, benchKey],
   );
   const { jobs, connection } = useJobs();
   const stored = useMemo(() => rowsFromListing(listing), [listing]);
@@ -177,7 +197,9 @@ function Loaded({ client, listing, askedWith, refresh, sel, job, launch, store, 
   });
   const queue = useMemo(() => withPositions(jobs, positions), [jobs, positions]);
   const rows = useMemo<RunRow[]>(() => [...rowsFromJobs(queue, stored), ...withAnnounced(stored, jobs)], [queue, stored, jobs]);
-  const [filter, setFilter] = useState<readonly string[]>([]);
+  // The filter is the address's, written in place: a link or a reload shows the same rows.
+  const filter = bench;
+  const setFilter = (next: readonly string[]) => navigate(runsRoute(sel, job, launch, next), { replace: true });
   const shapes = useMemo(() => new Map(Object.entries(listing.shapes).map(([hash, graph]) => [hash, shapeOf(graph)])), [listing]);
 
   // An id the listing lacks is either gone or newer than the listing. The
@@ -215,7 +237,10 @@ function Loaded({ client, listing, askedWith, refresh, sel, job, launch, store, 
     if (launchKey !== null) setLaunching(true);
   }, [launchKey]);
   const launchId = useId();
+  const queueId = useId();
   const launchAnchor = useRef<HTMLElement>(null);
+  // Launch…, drawn in the bar or beside the empty state's action, one at a time.
+  const launchButton = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     if (launching) launchAnchor.current?.focus();
   }, [launching]);
@@ -295,6 +320,33 @@ function Loaded({ client, listing, askedWith, refresh, sel, job, launch, store, 
     if (kept) focusNext.current = { want: { job: result.value.job_id, control: 'cancel' }, from: { job: row.source.id, control: 'resubmit' } };
   };
 
+  // A Dismiss that had focus goes with its row: focus moves to the row after it in its table, or to the table's
+  // heading when it was the last, rather than to nothing.
+  const runsHeading = useRef<HTMLHeadingElement>(null);
+  const dismissedFrom = useRef<{ job: string; next: HTMLElement | null } | null>(null);
+  useLayoutEffect(() => {
+    const from = dismissedFrom.current;
+    if (from === null || findControl({ job: from.job, control: 'dismiss' }) !== null) return;
+    dismissedFrom.current = null;
+    const at = document.activeElement;
+    // Only if focus was dropped with the row: never taken from where the person moved it meanwhile.
+    if (at !== null && at !== document.body && document.contains(at)) return;
+    (from.next !== null && document.contains(from.next) ? from.next : runsHeading.current)?.focus();
+  });
+  const dismiss = async (row: RunRow) => {
+    setRefused(null);
+    const id = row.source.id;
+    if (holding(id, 'dismiss')) {
+      const own = document.activeElement?.closest('tr') ?? null;
+      const rows = [...(own?.closest('table')?.querySelectorAll<HTMLElement>('tr[tabindex]') ?? [])];
+      dismissedFrom.current = { job: id, next: own === null ? null : (rows[rows.indexOf(own) + 1] ?? null) };
+    }
+    const result = await client.post('/jobs/{id}/dismiss', undefined, { id });
+    if (result.ok) return;
+    dismissedFrom.current = null;
+    setRefused(result.problem);
+  };
+
   const benchmarks = useMemo(() => {
     const seen = new Map<string, { label: string; count: number }>();
     for (const row of rows) seen.set(row.benchmark, { label: benchmarkLabel(row), count: (seen.get(row.benchmark)?.count ?? 0) + 1 });
@@ -317,16 +369,13 @@ function Loaded({ client, listing, askedWith, refresh, sel, job, launch, store, 
       </div>
     );
 
-  const launchToggle = (
-    <Button
-      aria-expanded={launching}
-      aria-controls={launchId}
-      onClick={() => {
-        // Closing a panel the address opened takes it out of the address, so a reload does not open it again.
-        if (launching && launch !== undefined) navigate(runsRoute(sel, job, undefined), { replace: true });
-        setLaunching(!launching);
-      }}
-    >
+  // Closing a panel the address opened takes it out of the address, so a reload does not open it again.
+  const closeLaunch = () => {
+    if (launch !== undefined) navigate(runsRoute(sel, job, undefined, bench), { replace: true });
+    setLaunching(false);
+  };
+  const launchToggle = (size: 'm' | 'l' = 'm') => (
+    <Button ref={launchButton} size={size} aria-expanded={launching} aria-controls={launchId} onClick={() => (launching ? closeLaunch() : setLaunching(true))}>
       Launch…
     </Button>
   );
@@ -341,10 +390,15 @@ function Loaded({ client, listing, askedWith, refresh, sel, job, launch, store, 
           pipeline={launch?.pipeline}
           upTo={launch?.upTo ?? null}
           benchmarks={launch?.benchmarks}
+          onClose={() => {
+            closeLaunch();
+            // The control that closed it goes with the panel: focus returns to the one that opens it.
+            launchButton.current?.focus();
+          }}
           onWhole={
             launch === undefined
               ? undefined
-              : () => navigate(runsRoute(sel, job, { pipeline: launch.pipeline, ...(launch.benchmarks === undefined ? {} : { benchmarks: launch.benchmarks }) }), { replace: true })
+              : () => navigate(runsRoute(sel, job, { pipeline: launch.pipeline, ...(launch.benchmarks === undefined ? {} : { benchmarks: launch.benchmarks }) }, bench), { replace: true })
           }
         />
       ) : null}
@@ -363,7 +417,7 @@ function Loaded({ client, listing, askedWith, refresh, sel, job, launch, store, 
               Open Editor
             </ButtonLink>
           }
-          secondary={launchToggle}
+          secondary={launchToggle('l')}
         >
           A run is one pipeline on one benchmark: build a pipeline in the Editor, then launch it.
         </EmptyState>
@@ -372,8 +426,11 @@ function Loaded({ client, listing, askedWith, refresh, sel, job, launch, store, 
   }
 
   const stale = connection === 'disconnected';
+  // The live jobs are the Queue's, in the worker's order (`rowsFromJobs` ranks them so); every other row is the table's.
+  const isLive = (r: RunRow) => r.job !== null && (r.status.state === 'queued' || r.status.state === 'running');
   const shown = filter.length === 0 ? rows : rows.filter((r) => filter.includes(r.benchmark));
-  const groups = groupRows(shown);
+  const queued = shown.filter(isLive);
+  const groups = groupRows(shown.filter((r) => !isLive(r)));
   const columns = { latency: rows.some((r) => r.latencyMs !== null), started: rows.some((r) => r.startedAt !== null) };
   const refusals = new Map(rows.map((r) => [rowKey(r), refusal(r, selection, rows)]));
   // A failed run says why on its own row; the selection's rules are said once.
@@ -403,23 +460,34 @@ function Loaded({ client, listing, askedWith, refresh, sel, job, launch, store, 
     ...(columns.latency ? [{ id: 'latency', label: 'Median query latency', numeric: true }] : []),
     ...(columns.started ? [{ id: 'started', label: 'Started' }] : []),
   ];
+  const drawJob = (row: RunRow, inQueue: boolean): TableRow => {
+    const id = row.source.id;
+    const place = row.job?.place ?? 0;
+    const drawn = jobRow(row, {
+      columns: inQueue ? { latency: false, started: false } : columns,
+      pipeline: inQueue,
+      stale,
+      cancelling: cancelling.has(id),
+      onCancel: () => void cancel(id),
+      onMove: (to) => void move(id, to, to < place ? 'up' : 'down'),
+      onResubmit: () => void resubmit(row),
+      onDismiss: () => void dismiss(row),
+    });
+    // The job the address shows is marked on its row, which a table row honours as aria-current.
+    return id !== job || drawn.kind === 'group' ? drawn : { ...drawn, selected: true };
+  };
+  const queueHeader = [
+    { id: 'pipeline', label: 'Pipeline' },
+    { id: 'benchmark', label: 'Benchmark' },
+    { id: 'run', label: 'Run' },
+    { id: 'status', label: 'Status' },
+    { id: 'progress', label: 'Progress' },
+  ];
+  const queueRows: TableRow[] = queued.map((row) => drawJob(row, true));
   const tableRows: TableRow[] = groups.flatMap((group) => [
     { kind: 'group' as const, id: `group:${group.key}`, label: <GroupLabel group={group} shape={group.shapeKey === null ? null : (shapes.get(group.shapeKey) ?? null)} /> },
     ...group.rows.map((row) => {
-      if (row.job !== null) {
-        const id = row.source.id;
-        const place = row.job.place ?? 0;
-        const drawn = jobRow(row, {
-          columns,
-          stale,
-          cancelling: cancelling.has(id),
-          onCancel: () => void cancel(id),
-          onMove: (to) => void move(id, to, to < place ? 'up' : 'down'),
-          onResubmit: () => void resubmit(row),
-        });
-        // The job the address shows is marked on its row, which a table row honours as aria-current.
-        return id === job ? { ...drawn, selected: true } : drawn;
-      }
+      if (row.job !== null) return drawJob(row, false);
       const id = runId(row);
       return runRow(row, { selected: id !== null && selection.includes(id), refusal: refusals.get(rowKey(row)) ?? null, columns, onToggle: () => onToggle(rowKey(row)) });
     }),
@@ -442,7 +510,7 @@ function Loaded({ client, listing, askedWith, refresh, sel, job, launch, store, 
         <div className="rg-runs__actions">
           <ButtonLink href={formatHash({ screen: 'editor' })}>New pipeline</ButtonLink>
           <ForkButton client={client} run={comparable.length === 1 ? comparable[0]! : null} refusal={comparable.length === 1 ? null : 'Select one run to fork it.'} />
-          {launchToggle}
+          {launchToggle()}
           {compareWhy === null ? (
             <Button kind="primary" onClick={() => navigate({ screen: 'compare', ids: addressIds(comparable, rows.flatMap((r) => runId(r) ?? [])) })}>
               Compare {comparable.length} selected
@@ -455,7 +523,7 @@ function Loaded({ client, listing, askedWith, refresh, sel, job, launch, store, 
         </div>
       </div>
       {launchPanel}
-      {job === undefined ? null : <JobPanel key={job} client={client} id={job} closeHref={formatHash({ screen: 'runs', sel: [...sel] })} anchor={jobAnchor} />}
+      {job === undefined ? null : <JobPanel key={job} client={client} id={job} closeHref={formatHash(runsRoute(sel, undefined, undefined, bench))} anchor={jobAnchor} />}
       {unreadable}
       {/* Present while the page follows the queue, one line high, so the rows never move as the stream drops and comes back. */}
       {connection === null ? null : (
@@ -463,7 +531,19 @@ function Loaded({ client, listing, askedWith, refresh, sel, job, launch, store, 
           {stale ? (live ? STREAM_DOWN_LIVE : STREAM_DOWN) : ''}
         </p>
       )}
-      <Table caption="Runs, grouped by pipeline" columns={header} rows={tableRows} onOpen={onOpen} onToggle={onToggle} />
+      {queueRows.length === 0 ? null : (
+        <section className="rg-runs__queue" aria-labelledby={queueId}>
+          <h2 id={queueId} className="rg-runs__queue-heading">
+            Queue
+          </h2>
+          <Table caption="Queue" columns={queueHeader} rows={queueRows} onOpen={onOpen} />
+        </section>
+      )}
+      {/* Where focus lands when a dismissed row was the table's last: a heading a screen reader names, out of the tab order. */}
+      <h2 ref={runsHeading} tabIndex={-1} className="rg-visually-hidden">
+        Runs
+      </h2>
+      {tableRows.length === 0 ? null : <Table caption="Runs, grouped by pipeline" columns={header} rows={tableRows} onOpen={onOpen} onToggle={onToggle} />}
       {/* Below the table: what comes and goes as boxes are checked must not move the rows under the pointer. */}
       {refresh === null && rules.length === 0 && refused === null ? null : (
         <div className="rg-runs__rules">

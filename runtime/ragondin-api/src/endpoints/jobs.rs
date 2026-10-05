@@ -1,4 +1,5 @@
-//! `POST /runs`, `GET /jobs`, `GET`/`PATCH`/`DELETE /jobs/{id}`, over the
+//! `POST /runs`, `GET /jobs`, `GET`/`PATCH`/`DELETE /jobs/{id}` and
+//! `POST /jobs/{id}/dismiss`, over the
 //! queue (`jobs/`). The event stream, `GET /jobs/events`, is `jobs/stream.rs`;
 //! a download's submission, `POST /benchmarks/{name}/download`, is with the
 //! benchmarks.
@@ -253,6 +254,17 @@ fn read_partial_trace(
             query.as_str()
         ),
     })
+}
+
+/// `POST /jobs/{id}/dismiss`: an ended job a person has finished with,
+/// answered with its dismissal's time; it is still listed, and the client
+/// leaves it out of what it shows.
+pub(crate) async fn dismiss(
+    State(state): State<AppState>,
+    ApiPath(id): ApiPath<String>,
+    _: ApiQuery<NoParameters>,
+) -> Result<Json<JobSummary>, ApiError> {
+    Ok(Json(state.jobs.dismiss(&id).await?))
 }
 
 /// `PATCH /jobs/{id}`: moves a queued job among its lane's queued jobs, and

@@ -58,6 +58,9 @@
 .rg-runs__count { font: var(--type-caption); color: var(--ink-3); }
 
 .rg-runs__hash { color: var(--ink); }
+/* A row's identity and its labels wrap within their cell — design/'s Table keeps cells to one line — so the table
+   fits a 1440 px screen with every column in view; a floor keeps the hash and a label on one line. */
+.rg-runs__run { display: inline-block; min-width: 28ch; white-space: normal; }
 /* The fact a run's group is not headed by, after its hash and any prefix label. */
 .rg-runs__fact {
   margin-left: var(--space-2);
@@ -104,6 +107,10 @@
 }
 .rg-runs__bench { color: var(--ink-2); }
 .rg-runs__elapsed { font-variant-numeric: tabular-nums; color: var(--ink-2); }
+
+/* The Queue: the live jobs, above the runs, under a heading of their own. */
+.rg-runs__queue { padding-bottom: var(--space-4); }
+.rg-runs__queue-heading { margin: 0; padding: 0 var(--space-4) var(--space-2); font: var(--type-heading); color: var(--ink); }
 
 /* What the screen says while the job stream is down: present while the page
    follows the queue, empty or not, so the table never moves as it drops. */

@@ -297,6 +297,16 @@ pub const OPERATIONS: &[Operation] = &[
         ),
     },
     Operation {
+        method: "post",
+        path: "/jobs/{id}/dismiss",
+        summary: "Dismisses an ended job: it stays listed, its dismissed_at_ms set, for a client to leave out of what it shows.",
+        response: Response::Json("JobSummary"),
+        request: None,
+        description: Some(
+            "Its state and the traces it kept under jobs/<id>/partial/ are unchanged; the dismissed event carries it, and a job dismissed already keeps its first time. A job still queued or running is job_not_ended (409).",
+        ),
+    },
+    Operation {
         method: "get",
         path: "/jobs/{id}/queries",
         summary: "A failed or cancelled run job's partial traces: the queries it executed before it stopped, the one a failed run stopped on included, and the graph of the pipeline it snapshotted.",

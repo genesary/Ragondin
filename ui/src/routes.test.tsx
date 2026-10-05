@@ -71,6 +71,18 @@ describe('#runs/job/<id>', () => {
   });
 });
 
+describe('#runs?bench=<key>', () => {
+  it('carries the benchmark filter, one value per key, every value encoded, beside a selection and a launch', () => {
+    const route: Route = { screen: 'runs', sel: ['r1'], launch: { pipeline: 'hybrid' }, bench: ['name:beir/scifact', 'f'.repeat(64)] };
+    expect(formatHash(route)).toBe(`#runs?sel=r1&launch=hybrid&bench=name%3Abeir%2Fscifact&bench=${'f'.repeat(64)}`);
+    expect(parseHash(formatHash(route))).toEqual(route);
+  });
+
+  it.each(['#runs?bench=', '#runs?bench=..'])('names no filter at %s, and so no route', (hash) => {
+    expect(parseHash(hash)).toBeNull();
+  });
+});
+
 describe('#runs?launch=<pipeline>&up_to=<node>', () => {
   it('carries the launch panel opened on a pipeline, cut at a node, and restores it from the hash on load', () => {
     const route: Route = { screen: 'runs', launch: { pipeline: 'hybrid-rerank-gen', upTo: 'rerank' } };

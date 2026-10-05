@@ -63,7 +63,7 @@ describe('splitBuild', () => {
   });
 });
 
-const job = (id: string, state: JobSummary['state'], benchmark = 'beir/fiqa'): JobSummary => ({ id, created_at_ms: 1, position: 0, state, work: { kind: 'download', benchmark }, faults: [] });
+const job = (id: string, state: JobSummary['state'], benchmark = 'beir/fiqa'): JobSummary => ({ id, created_at_ms: 1, position: 0, state, work: { kind: 'download', benchmark }, dismissed_at_ms: null, faults: [] });
 const jobs = (...list: JobSummary[]) => new Map(list.map((j) => [j.id, j]));
 const RUNNING: JobSummary['state'] = { kind: 'running', done: 5, total: 10, started_at_ms: 1, median_latency_nanos: null };
 const FAILED: JobSummary['state'] = { kind: 'failed', error: 'reset', at_node: null, finished_at_ms: 2, partial_traces: 0 };

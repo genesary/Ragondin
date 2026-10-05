@@ -1,5 +1,6 @@
 /** @vitest-environment happy-dom */
 import { fireEvent, render, screen } from '@testing-library/react';
+import { createRef } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { declared } from '../../testing/css.ts';
 import css from './Button.css?raw';
@@ -106,6 +107,29 @@ describe.each(KINDS)('Button %s disabled', (kind) => {
     fireEvent.click(button);
     expect(onClick).not.toHaveBeenCalled();
     expect(declared(css, '.rg-btn[aria-disabled="true"]', '--btn-fg')).toBe('var(--ink-disabled)');
+  });
+});
+
+describe('Button disabled, its reason shown', () => {
+  it('says why in a caption beside it, the one description a screen reader hears', () => {
+    render(
+      <Button kind="primary" disabled disabledReason="No benchmark is ready." showReason>
+        Launch
+      </Button>,
+    );
+    const button = screen.getByRole('button', { name: 'Launch' });
+    const reason = screen.getByText('No benchmark is ready.');
+    expect(button.getAttribute('aria-describedby')).toBe(reason.id);
+    expect(reason.className).toBe('rg-btn__reason');
+    expect(declared(css, '.rg-btn__reason', 'color')).toBe('var(--ink-2)');
+  });
+});
+
+describe('Button by reference', () => {
+  it('hands its ref to the native button, so a screen can return focus to it', () => {
+    const ref = createRef<HTMLButtonElement>();
+    render(<Button ref={ref}>Launch…</Button>);
+    expect(ref.current).toBe(screen.getByRole('button', { name: 'Launch…' }));
   });
 });
 

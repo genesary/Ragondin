@@ -1,18 +1,21 @@
 // One run job of the queue as a row of design/'s Table: the identity its job
 // announced, its state as the stream last said, its real progress, and the
 // controls the queue allows — Move up and Move down among the queued, Cancel
-// on a queued or running job, Resubmit on an ended one — and how many faults
-// the queue reported beside it. Every control is a
+// on a queued or running job, Resubmit and Dismiss on a failed or cancelled
+// one, and the way to the failing node in the editor — and how many faults the
+// queue reported beside it. Every control is a
 // native button in the tab order; the row itself takes the table's keys, and
 // Enter opens the job (`#runs/job/<id>`). ARCHITECTURE.md § The Runs screen.
 import { useEffect, useState, type ReactNode } from 'react';
-import { Button, PrefixLabel, StatusChip, type TableRow } from '../../design/index.ts';
+import { Button, ButtonLink, PrefixLabel, StatusChip, type TableRow } from '../../design/index.ts';
 import { formatHash } from '../routes.ts';
 import { benchmarkLabel, formatLatency, rowKey, runningLabel, shortHash, type RunRow } from './model.ts';
 import type { RowColumns } from './runRow.tsx';
 
 export type JobRowOptions = {
   columns: RowColumns;
+  /** The row is the Queue's, which no pipeline heads: it names its pipeline in a cell of its own, first. */
+  pipeline?: boolean;
   /** The stream is down: what the row says of a live job is the last known, and says so. */
   stale: boolean;
   /** A Cancel was asked of the running job and the stream has not said it ended. */
@@ -21,10 +24,26 @@ export type JobRowOptions = {
   /** Moves the queued job to this place among the queued, 0 the next taken. */
   onMove: (place: number) => void;
   onResubmit: () => void;
+  /** Dismisses the ended job: it leaves the rows. */
+  onDismiss: () => void;
 };
 
-/** The failure as a sentence, beside the chip: colour is never the only carrier. */
-const failure = (node: string | null, error: string) => (node === null ? `The run failed: ${error}` : `${node} failed: ${error}`);
+/**
+ * The failure's words beside the chip — colour is never the only carrier —
+ * said once: the chip names the node, and the error is the launcher's own
+ * sentence, which names it again when it does. What it quotes in backticks —
+ * a query, a node — is set as code rather than shown as backticks.
+ */
+export function ErrorWords({ error }: { error: string }) {
+  const parts = error.split('`');
+  // An odd count of backticks leaves the last one unpaired: it is kept as written.
+  const paired = parts.length % 2 === 1;
+  return (
+    <>
+      {parts.map((part, i) => (i % 2 === 1 && (paired || i < parts.length - 1) ? <code key={i}>{part}</code> : i % 2 === 1 ? `\`${part}` : part))}
+    </>
+  );
+}
 
 /** A duration as a clock: m:ss, or h:mm:ss past the hour. */
 export function formatElapsed(ms: number): string {
@@ -65,7 +84,7 @@ function stateWords(row: RunRow, cancelling: boolean): string {
 }
 
 /** `row`, a run job's, as a Table row: its key, its name, its cells. */
-export function jobRow(row: RunRow, { columns, stale, cancelling, onCancel, onMove, onResubmit }: JobRowOptions): TableRow {
+export function jobRow(row: RunRow, { columns, pipeline = false, stale, cancelling, onCancel, onMove, onResubmit, onDismiss }: JobRowOptions): TableRow {
   const { status, job } = row;
   const id = row.source.id;
   const short = shortHash(row.source.kind === 'job' ? (row.source.runId ?? id) : id);
@@ -114,6 +133,11 @@ export function jobRow(row: RunRow, { columns, stale, cancelling, onCancel, onMo
       Resubmit
     </Button>
   );
+  const dismiss = (
+    <Button size="s" kind="quiet" aria-label={`Dismiss run ${short}`} onClick={onDismiss} {...control('dismiss')}>
+      Dismiss
+    </Button>
+  );
 
   let detail: ReactNode;
   switch (status.state) {
@@ -151,13 +175,26 @@ export function jobRow(row: RunRow, { columns, stale, cancelling, onCancel, onMo
     case 'failed':
       detail = (
         <>
-          <span className="rg-runs__failure">{failure(status.node, status.error)}</span>
+          <span className="rg-runs__failure">
+            <ErrorWords error={status.error} />
+          </span>
+          {status.node === null || job === null ? null : (
+            <ButtonLink size="s" kind="quiet" href={formatHash({ screen: 'editor', name: job.submission.pipeline, node: status.node })} aria-label={`Fix ${status.node} in the editor`}>
+              Fix in editor
+            </ButtonLink>
+          )}
           {resubmit}
+          {dismiss}
         </>
       );
       break;
     case 'cancelled':
-      detail = resubmit;
+      detail = (
+        <>
+          {resubmit}
+          {dismiss}
+        </>
+      );
       break;
     case 'done':
       detail =
@@ -173,8 +210,9 @@ export function jobRow(row: RunRow, { columns, stale, cancelling, onCancel, onMo
       break;
   }
 
+  // One wrapping box: the table's cells keep to one line, and a hash with its labels would be a long one.
   const run = (
-    <>
+    <span className="rg-runs__run">
       <a className="rg-runs__hash" href={formatHash({ screen: 'runs', job: id })} tabIndex={-1}>
         {short}
       </a>
@@ -190,7 +228,7 @@ export function jobRow(row: RunRow, { columns, stale, cancelling, onCancel, onMo
           <PrefixLabel parents={row.prefix.parents} upTo={row.prefix.upTo} />
         </span>
       )}
-    </>
+    </span>
   );
 
   return {
@@ -198,6 +236,7 @@ export function jobRow(row: RunRow, { columns, stale, cancelling, onCancel, onMo
     // The name says where the job stands, never its count: a name that changed on every tick would be re-announced each time.
     label: `Run ${short} on ${bench}, ${status.state === 'running' && !cancelling ? 'running' : words}${last}${faultCount === '' ? '' : `, ${faultCount}`}`,
     cells: [
+      ...(pipeline ? [<span className="rg-runs__bench">{row.launchedAs}</span>] : []),
       <span className="rg-runs__bench">{bench}</span>,
       run,
       chip,

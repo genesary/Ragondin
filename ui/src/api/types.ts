@@ -40,6 +40,13 @@ export type BenchmarkEntry = {
 export type BenchmarkListing = {
   /** The manifest's entries in manifest order, then the imports by name. */
   benchmarks: BenchmarkEntry[];
+  /**
+   * Which ground truths a pipeline can be scored on, by what it ends in:
+   * `ragondin-benchmarks`' `CarriedPieces::scorable` asked of each, so a
+   * client offers a pipeline the benchmarks it can be scored on without
+   * restating the rule (ADR-C30 § 5).
+   */
+  scorable: Scorable;
 };
 
 /**
@@ -544,6 +551,9 @@ export type JobEvent = {
   data: JobSummary;
   event: "fault";
 } | {
+  data: JobSummary;
+  event: "dismissed";
+} | {
   data: JobListing;
   event: "resync";
 };
@@ -648,6 +658,13 @@ export type JobSummary = {
    * the clock read before it.
    */
   created_at_ms: number | null;
+  /**
+   * When it was dismissed — an ended job a person has finished with — in
+   * milliseconds since the epoch; `null` while it is not. A dismissed job
+   * is still listed, its state and its partial traces unchanged: a client
+   * leaves it out of what it shows.
+   */
+  dismissed_at_ms: number | null;
   /**
    * What went wrong beside it without stopping it — a layout not copied
    * at launch, latencies left out of its median, a write of its record
@@ -1168,6 +1185,13 @@ export type PipelineDetail = {
   canonical: boolean;
   /** The document, byte for byte as the file holds it. */
   document: string;
+  /**
+   * For each node, by id, whether the pipeline cut there — `POST /runs`'
+   * `up_to` — ends in an answer: the node produces one. `null` when the
+   * document does not validate. With [`BenchmarkListing::scorable`], which
+   * benchmarks a prefix can be scored on.
+   */
+  ends_in_answer_up_to: Record<string, boolean> | null;
   /** Why it does not validate, when it does not. */
   error: PipelineError | null;
   /** The digest of those bytes; also the response's `ETag` header, quoted. */
@@ -1275,6 +1299,12 @@ export type PipelineMatrix = {
 
 /** A pipeline, as the listing shows it. */
 export type PipelineSummary = {
+  /**
+   * Whether its output is an answer — its terminal node produces one —
+   * when it validates; `null` when it does not. With
+   * [`BenchmarkListing::scorable`], which benchmarks it can be scored on.
+   */
+  ends_in_answer: boolean | null;
   /** Why it does not validate, when it does not. */
   error: PipelineError | null;
   /** The digest of its bytes, the value `If-Match` names to write it. */
@@ -1767,6 +1797,20 @@ export type RunSummary = {
   started_at_ms: number | null;
 };
 
+/**
+ * The ground truths a pipeline can be scored on, by whether it ends in an
+ * answer, each list in [`GroundTruth`]'s order.
+ */
+export type Scorable = {
+  /**
+   * For a pipeline whose output is anything else — a ranking or a
+   * context.
+   */
+  ending_elsewhere: GroundTruth[];
+  /** For a pipeline whose output is an answer — one ending in a generator. */
+  ending_in_answer: GroundTruth[];
+};
+
 /** `PUT /services/{family}/{name}`: the address to bind the name to. */
 export type ServiceAddress = {
   /**
@@ -2185,6 +2229,15 @@ export type Paths = {
       };
       body: ReorderRequest;
       response: JobListing;
+    };
+  };
+  "/jobs/{id}/dismiss": {
+    /** Dismisses an ended job: it stays listed, its dismissed_at_ms set, for a client to leave out of what it shows. */
+    post: {
+      params: {
+        id: string;
+      };
+      response: JobSummary;
     };
   };
   "/jobs/{id}/queries": {

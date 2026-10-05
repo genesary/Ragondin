@@ -7,7 +7,8 @@
 // pipeline that is not found, or be refused as a case alias. The shape and
 // whether each name is held come with the listing, so the heading is whole
 // when it is first drawn: nothing loads into it later, and nothing moves under
-// it.
+// it. The count is of the runs the store holds: a job beside them is not one
+// yet, and a group of jobs alone draws none.
 import { Fragment } from 'react';
 import { FAMILY_LABEL, FamilyTile } from '../../design/index.ts';
 import { formatHash } from '../routes.ts';
@@ -20,12 +21,14 @@ export type GroupLabelProps = {
 };
 
 /** Why a recorded name is not a link, in words, by what the listing says of it. */
-// `other_case` is true whether or not the name is also stored as given: the API refuses it either way.
-const NOT_HELD = { gone: 'no longer a document in this workspace', other_case: 'refused: another spelling differs only in case', unchecked: 'not checked against the workspace' } as const;
+// `other_case` is true whether or not the name is also stored as given: the API refuses it either way. `unchecked` is a
+// name only jobs go by: nothing stored says whether the workspace holds it.
+const NOT_HELD = { gone: 'no longer a document in this workspace', other_case: 'refused: another spelling differs only in case', unchecked: 'no stored run yet, so not linked' } as const;
 
 const runs = (n: number) => `${n.toLocaleString('en-US')} run${n === 1 ? '' : 's'}`;
 
 export function GroupLabel({ group, shape }: GroupLabelProps) {
+  const stored = group.rows.filter((r) => r.source.kind === 'run').length;
   return (
     <span className="rg-runs__group">
       {group.names.length === 0 ? (
@@ -66,7 +69,7 @@ export function GroupLabel({ group, shape }: GroupLabelProps) {
           ))}
         </ol>
       )}
-      <span className="rg-runs__count">{runs(group.rows.length)}</span>
+      {stored === 0 ? null : <span className="rg-runs__count">{runs(stored)}</span>}
     </span>
   );
 }

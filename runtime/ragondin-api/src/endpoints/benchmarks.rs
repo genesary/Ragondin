@@ -9,6 +9,7 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use axum::Json;
 
+use crate::convert;
 use crate::error::ApiError;
 use crate::extract::{ApiJson, ApiPath, ApiQuery, NoParameters};
 use crate::handlers::AppState;
@@ -16,13 +17,15 @@ use crate::request::ImportRequest;
 use crate::response::{BenchmarkEntry, BenchmarkListing, DownloadAccepted};
 
 /// `GET /benchmarks`. The registry verifies every dataset on disk on each
-/// call; nothing is cached here.
+/// call; nothing is cached here. Which ground truths each kind of pipeline
+/// can be scored on comes with it, from `CarriedPieces::scorable`.
 pub(crate) async fn list(
     State(state): State<AppState>,
     _: ApiQuery<NoParameters>,
 ) -> Result<Json<BenchmarkListing>, ApiError> {
     Ok(Json(BenchmarkListing {
         benchmarks: state.backends.registry.benchmarks().await?,
+        scorable: convert::scorable(),
     }))
 }
 

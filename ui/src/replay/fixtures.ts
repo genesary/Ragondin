@@ -253,6 +253,7 @@ export const PARTIAL_QUERIES: PartialQueries = {
     created_at_ms: 1_700_000_000_000,
     work: { kind: 'run', run_id: hex('a'), pipeline: 'hybrid-rerank-gen', benchmark: 'beir/scifact', bindings: [], up_to: null, parent_pipeline_hash: null },
     state: { kind: 'failed', error: 'the reranker answered 503', at_node: 'rerank', finished_at_ms: 1_700_000_100_000, partial_traces: 2 },
+    dismissed_at_ms: null,
     faults: [],
   },
   graph: HYBRID_GRAPH,

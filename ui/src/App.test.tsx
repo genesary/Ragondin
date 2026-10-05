@@ -3,7 +3,7 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import { StrictMode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createApiClient } from './api/client.ts';
-import { FakeEventSource, installFakeEventSource, mockApi } from './api/testing.ts';
+import { FakeEventSource, installFakeEventSource, mockApi, SCORABLE } from './api/testing.ts';
 import type { JobSummary, Workspace } from './api/types.ts';
 import { App } from './App.tsx';
 import { COMPARISON, DENSE, HYBRID, RERANK } from './compare/fixtures.ts';
@@ -59,7 +59,7 @@ describe('the shell’s screens', () => {
     ['#editor', 'Editor', 'No pipeline open'],
     ['#editor/hybrid-rrf', 'Editor', 'hybrid-rrf cannot be opened on the canvas'],
   ])('%s renders the %s screen, restored from the hash, in its empty state', async (hash, tab, heading) => {
-    const pipeline = { name: 'hybrid-rrf', document: 'pipeline: {}\n', etag: 'e'.repeat(64), hash: null, error: null, typed: null, canonical: false };
+    const pipeline = { name: 'hybrid-rrf', document: 'pipeline: {}\n', etag: 'e'.repeat(64), hash: null, error: null, typed: null, canonical: false, ends_in_answer_up_to: null };
     mockApi({ 'GET /workspace': { body: WORKSPACE }, 'GET /runs': { body: { runs: [], unreadable: [], shapes: {} } }, 'GET /pipelines/{name}': { body: pipeline } }, { build: BUILD });
     show(hash);
     expect(within(main()).getByRole('heading', { level: 1 }).textContent).toBe(tab);
@@ -129,8 +129,8 @@ describe('the shell’s screens', () => {
         'GET /runs/{id}': (_q, path) => ({ body: id(path) === hash ? replay.HYBRID_DETAIL : replay.DENSE_DETAIL }),
         'GET /runs/{id}/queries': { body: replay.HYBRID_QUERIES },
         'GET /runs/{id}/trace/{query}': { body: replay.HYBRID_TRACE },
-        'GET /pipelines': { body: { pipelines: [{ name: 'hybrid', etag: 'e'.repeat(64), modified_ms: null, hash, error: null }] } },
-        'GET /pipelines/{name}': { body: { name: 'hybrid', document: 'pipeline: …\n', etag: 'e'.repeat(64), hash, error: null, typed: editor.HYBRID_RAG, canonical: true } },
+        'GET /pipelines': { body: { pipelines: [{ name: 'hybrid', etag: 'e'.repeat(64), modified_ms: null, hash, ends_in_answer: false, error: null }] } },
+        'GET /pipelines/{name}': { body: { name: 'hybrid', document: 'pipeline: …\n', etag: 'e'.repeat(64), hash, error: null, typed: editor.HYBRID_RAG, canonical: true, ends_in_answer_up_to: null } },
         'GET /pipelines/{name}/layout': { body: { layout: null } },
         'GET /services': { body: editor.SERVICES },
         'POST /pipelines/validate': { body: { hash, rendering: null } },
@@ -282,7 +282,7 @@ describe('Setup', () => {
     const { requests } = mockApi(
       {
         'GET /workspace': [{ network: 'Failed to fetch' }, { body: WORKSPACE }],
-        'GET /benchmarks': { body: { benchmarks: [] } },
+        'GET /benchmarks': { body: { scorable: SCORABLE, benchmarks: [] } },
         'GET /services': { body: { services: [{ family: 'generator', name: 'qwen', uri: 'http://127.0.0.1:50051', connected: false, identity: null }] } },
       },
       { build: BUILD },
@@ -480,7 +480,7 @@ describe('the connection state', () => {
     await screen.findByText(WORKSPACE.path);
     expect(FakeEventSource.instances).toHaveLength(1);
     expect(FakeEventSource.latest().url).toBe('/api/v1/jobs/events');
-    const job = (state: JobSummary['state']): JobSummary => ({ id: 'j1', created_at_ms: 1, position: 0, state, work: { kind: 'run', pipeline: 'hybrid', benchmark: 'beir/scifact', run_id: 'a'.repeat(64), up_to: null, parent_pipeline_hash: null, bindings: [] }, faults: [] });
+    const job = (state: JobSummary['state']): JobSummary => ({ id: 'j1', created_at_ms: 1, position: 0, state, work: { kind: 'run', pipeline: 'hybrid', benchmark: 'beir/scifact', run_id: 'a'.repeat(64), up_to: null, parent_pipeline_hash: null, bindings: [] }, dismissed_at_ms: null, faults: [] });
     act(() => FakeEventSource.latest().open());
     act(() => FakeEventSource.latest().emit(JSON.stringify({ jobs: [job({ kind: 'running', done: 1, total: 2, started_at_ms: 1, median_latency_nanos: null })], faults: [] }), 'resync'));
     act(() => FakeEventSource.latest().emit(JSON.stringify(job({ kind: 'failed', at_node: 'rerank', error: 'boom', finished_at_ms: 2, partial_traces: 0 })), 'failed'));

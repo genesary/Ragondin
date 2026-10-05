@@ -17,6 +17,7 @@ export function runJob(
     position,
     state,
     work: { kind: 'run', pipeline, benchmark, run_id: runId, up_to: upTo, parent_pipeline_hash: upTo === null ? null : hex('e'), bindings: [] },
+    dismissed_at_ms: null,
     faults: faults.map((reason) => ({ reason, at_ms: 1_700_000_050_000 })),
   };
 }

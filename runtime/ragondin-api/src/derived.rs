@@ -44,7 +44,7 @@ use ragondin_metrics::{
     documents_by_first_occurrence, exact_match, ndcg_at_k, recall_at_k, reciprocal_rank, token_f1,
     Family, Metric,
 };
-use ragondin_pipeline::{produced_kind, LogicalPipeline, NodeId, ValueKind};
+use ragondin_pipeline::{produced_kind, LogicalNode, LogicalPipeline, NodeId, ValueKind};
 use ragondin_types::{DocId, QueryId};
 
 /// The metrics a run recorded that can be read per query, by name, in name
@@ -155,10 +155,27 @@ impl Outputs {
         Self {
             ranking: ranking_node(pipeline).ok().cloned(),
             answer: terminal(pipeline)
-                .filter(|node| produced_kind(node) == ValueKind::Answer)
+                .filter(|node| answers(node))
                 .map(|node| node.id().clone()),
         }
     }
+}
+
+/// Whether `node` produces an answer — what a pipeline whose terminal node it
+/// is ends in. A pipeline cut at `node` has `node` for its one terminal node,
+/// since the cut keeps only what `node` reads, so this is also whether that
+/// cut ends in an answer.
+pub(crate) fn answers(node: &LogicalNode) -> bool {
+    produced_kind(node) == ValueKind::Answer
+}
+
+/// Whether `pipeline` ends in an answer: its terminal node produces one. The
+/// one test `GET /pipelines`' `ends_in_answer` and the Pipeline matrix's
+/// scorability (`GET /pipelines/{name}/matrix`) read; `GET
+/// /pipelines/{name}`'s `ends_in_answer_up_to` and [`Outputs::of`] ask
+/// [`answers`] of the terminal node the same way.
+pub(crate) fn ends_in_answer(pipeline: &LogicalPipeline) -> bool {
+    terminal(pipeline).is_some_and(answers)
 }
 
 /// What `node` produced in `trace`, when it produced a ranking: its documents,

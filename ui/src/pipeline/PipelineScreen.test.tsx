@@ -11,7 +11,7 @@ import { LAST_PIPELINE } from './last.ts';
 import type { LaunchRequest } from './Matrix.tsx';
 import { PipelineScreen } from './PipelineScreen.tsx';
 
-const summary = (name: string): PipelineSummary => ({ name, etag: 'e', hash: 'a'.repeat(64), modified_ms: null, error: null });
+const summary = (name: string): PipelineSummary => ({ name, etag: 'e', hash: 'a'.repeat(64), modified_ms: null, ends_in_answer: false, error: null });
 const LISTING: PipelineListing = { pipelines: [summary('dense-only'), summary(NAME)] };
 
 const problem = (code: Problem['code'], detail: string, status = 404): Problem => ({ type: `urn:ragondin:problem:${code}`, title: code, status, detail, code, hint: 'Check the name under pipelines/.' });

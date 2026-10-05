@@ -17,9 +17,11 @@ export type Route =
    * pipeline; `&benchmark=<name>` opens it on that benchmark too — where the
    * Pipeline screen's Run lands — and the key repeated, one value each, on
    * several, in order — where "Launch the N missing runs" lands. Beside a
-   * selection or a job.
+   * selection or a job. `&bench=<key>`, repeated, is the benchmark filter:
+   * the benchmarks whose rows are shown, each by the key the row model gives
+   * it.
    */
-  | { screen: 'runs'; sel?: string[]; job?: string; launch?: { pipeline: string; upTo?: string; benchmarks?: string[] } }
+  | { screen: 'runs'; sel?: string[]; job?: string; launch?: { pipeline: string; upTo?: string; benchmarks?: string[] }; bench?: string[] }
   /** `#pipeline/<name>`: one pipeline's node × benchmark matrix; `#pipeline` before one is chosen. */
   | { screen: 'pipeline'; name?: string }
   /**
@@ -79,6 +81,7 @@ export function formatHash(route: Route): string {
         ...(route.launch === undefined ? [] : [`launch=${enc(route.launch.pipeline)}`]),
         ...(route.launch?.upTo === undefined ? [] : [`up_to=${enc(route.launch.upTo)}`]),
         ...(route.launch?.benchmarks ?? []).map((b) => `benchmark=${enc(b)}`),
+        ...(route.bench ?? []).map((b) => `bench=${enc(b)}`),
       ];
       return query.length === 0 ? path : `${path}?${query.join('&')}`;
     }
@@ -166,7 +169,10 @@ export function parseHash(hash: string): Route | null {
       const benchmarks = [...new Set(query.getAll('benchmark'))];
       if (pipeline === null ? upTo !== null || benchmarks.length > 0 : ![pipeline, upTo, ...benchmarks].every((v) => v === null || isValue(v))) return null;
       const launch = pipeline === null ? {} : { launch: { pipeline, ...(upTo === null ? {} : { upTo }), ...(benchmarks.length === 0 ? {} : { benchmarks }) } };
-      const at = { ...(job === undefined ? {} : { job }), ...launch };
+      // The filter's benchmarks, each once.
+      const bench = [...new Set(query.getAll('bench'))];
+      if (!bench.every(isValue)) return null;
+      const at = { ...(job === undefined ? {} : { job }), ...launch, ...(bench.length === 0 ? {} : { bench }) };
       // Read from the raw query, split before decoding, so an encoded `,`
       // stays inside its id.
       const raw = search.split('&').find((pair) => pair.startsWith('sel='));

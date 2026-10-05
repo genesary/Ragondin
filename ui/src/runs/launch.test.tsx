@@ -3,11 +3,11 @@
 // stream: the launch panel, the queue's rows, cancel and reorder, the stream
 // down and back, and the outcomes as toasts. Each test is one the issue that
 // built the flow requires, under its name.
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createApiClient } from '../api/client.ts';
-import { FakeEventSource, installFakeEventSource, mockApi, type MockRoutes } from '../api/testing.ts';
+import { FakeEventSource, installFakeEventSource, mockApi, SCORABLE, type MockRoutes } from '../api/testing.ts';
 import type { BenchmarkEntry, JobListing, JobSummary, PipelineDetail, PipelineSummary, Problem, RunListing, RunSummary } from '../api/types.ts';
 import { CANCELLED, connect, doneAs, failedAt, hex, QUEUED, runJob, running, send } from '../jobs/fixtures.ts';
 import { JobQueueProvider } from '../jobs/queue.tsx';
@@ -23,11 +23,13 @@ const HYBRID = hex('c');
 const ANNOUNCED = hex('a');
 const short = (id: string) => id.slice(0, 12);
 
-const pipeline = (name: string, over: Partial<PipelineSummary> = {}): PipelineSummary => ({ name, etag: 'e', hash: HYBRID, error: null, modified_ms: 1, ...over });
-const PIPELINES = { pipelines: [pipeline('hybrid'), pipeline('broken', { hash: null, error: { detail: 'node `rerank` reads `fused`, which no node writes', location: { node: 'rerank', edge: null } } })] };
+const pipeline = (name: string, over: Partial<PipelineSummary> = {}): PipelineSummary => ({ name, etag: 'e', hash: HYBRID, error: null, ends_in_answer: false, modified_ms: 1, ...over });
+// `hybrid` ends in a generator (HYBRID_DETAIL); `lexical` is retrieval only.
+const PIPELINES = { pipelines: [pipeline('hybrid', { ends_in_answer: true }), pipeline('lexical', { hash: hex('9') }), pipeline('broken', { hash: null, ends_in_answer: null, error: { detail: 'node `rerank` reads `fused`, which no node writes', location: { node: 'rerank', edge: null } } })] };
 
 const bench = (name: string, state: BenchmarkEntry['state'], truth: BenchmarkEntry['ground_truth'] = 'qrels'): BenchmarkEntry => ({ name, format: 'beir', ground_truth: truth, licence: null, licence_url: null, state });
 const BENCHMARKS = {
+  scorable: SCORABLE,
   benchmarks: [bench('beir/scifact', { kind: 'ready', dataset_version: SCIFACT }), bench('beir/fiqa', { kind: 'available', size_bytes: 1 }, null), bench('mine', { kind: 'local', dataset_version: hex('7') }, 'both')],
 };
 const SERVICES = { services: [{ family: 'generator', name: 'qwen', uri: 'http://127.0.0.1:8080', connected: true, identity: 'qwen2.5-7b' }] };
@@ -68,6 +70,8 @@ const HYBRID_DETAIL: PipelineDetail = {
   hash: HYBRID,
   error: null,
   canonical: false,
+  // What each cut ends in, as the API serves it: only the generator's ends in an answer.
+  ends_in_answer_up_to: { bm25: false, rerank: false, context: false, generate: true, judge: false },
   typed: {
     pipeline: {
       inputs: ['question'],
@@ -98,7 +102,7 @@ function Shell() {
   const runs = route?.screen === 'runs' ? route : { screen: 'runs' as const };
   return (
     <JobQueueProvider>
-      <RunsScreen client={client} sel={runs.sel ?? []} job={runs.job} launch={runs.launch} store="/work/ws" />
+      <RunsScreen client={client} sel={runs.sel ?? []} job={runs.job} launch={runs.launch} bench={runs.bench} store="/work/ws" />
       <JobToasts />
     </JobQueueProvider>
   );
@@ -117,7 +121,7 @@ async function show(hash = '#runs', mocks: MockRoutes = routes()) {
 const panel = () => screen.getByRole('region', { name: 'Launch a run' });
 async function openPanel() {
   fireEvent.click(screen.getByRole('button', { name: 'Launch…' }));
-  await within(panel()).findByText(`pipeline ${short(HYBRID)}`);
+  await within(panel()).findByText(`Content hash ${short(HYBRID)}`);
   return panel();
 }
 const jobRowOf = (id = ANNOUNCED) => screen.getByRole('row', { name: new RegExp(`^Run ${short(id)} on beir/scifact, `) });
@@ -139,7 +143,7 @@ describe('the launch panel', () => {
     const at = await openPanel();
     // Before launching: the pipeline's hash, once it validates; the benchmarks that are ready, with their ground truth;
     // the bindings in force, read-only; the store, shown not chosen.
-    expect(within(at).getByText(`pipeline ${short(HYBRID)}`)).toBeTruthy();
+    expect(within(at).getByText(`Content hash ${short(HYBRID)}`)).toBeTruthy();
     const benchmark = within(at).getByLabelText('Benchmark') as HTMLSelectElement;
     expect([...benchmark.options].map((o) => o.textContent)).toEqual(['beir/scifact — qrels', 'mine — qrels and reference answers']);
     expect(within(at).getByText('generator/qwen')).toBeTruthy();
@@ -153,12 +157,12 @@ describe('the launch panel', () => {
     expect(within(at).getByText(`run ${short(ANNOUNCED)}`)).toBeTruthy();
     expect(within(at).getByText('announced')).toBeTruthy();
 
-    // The queued row appears in the pipeline's group within one render of the event.
+    // The queued row appears in the Queue within one render of the event, naming its pipeline.
     send(stream, { event: 'queued', data: runJob('j1', QUEUED) });
     const row = jobRowOf();
     expect(within(row).getByText('queued, next')).toBeTruthy();
-    const group = row.closest('tbody') as HTMLElement;
-    expect(within(group).getByRole('row', { name: new RegExp(`^Run ${short(OLD)} on `) })).toBeTruthy();
+    expect(row.closest('table')?.getAttribute('aria-label') ?? row.closest('table')?.querySelector('caption')?.textContent).toBe('Queue');
+    expect(within(row).getByText('hybrid')).toBeTruthy();
   });
 
   it('a_conflict_is_shown_as_an_existing_run_or_job_to_open_not_as_an_error', async () => {
@@ -221,6 +225,106 @@ describe('the launch panel', () => {
   });
 });
 
+describe('the launch panel, as the UX audit left it', () => {
+  it('offers a whole pipeline only the benchmarks it can be scored on, judged by what it ends in, and says why the others are absent', async () => {
+    const { stream } = await show();
+    connect(stream);
+    const at = await openPanel();
+    const benchmark = within(at).getByLabelText('Benchmark') as HTMLSelectElement;
+    // `hybrid` ends in an answer: every ready benchmark with a ground truth.
+    expect([...benchmark.options].map((o) => o.value)).toEqual(['beir/scifact', 'mine']);
+    expect(within(at).queryByText(/Not offered/)).toBeNull();
+
+    fireEvent.change(within(at).getByLabelText('Pipeline'), { target: { value: 'lexical' } });
+    expect([...benchmark.options].map((o) => o.value)).toEqual(['beir/scifact']);
+    // Worded from what the API serves — the benchmark's ground truth, and the ones this output can be scored on — never a rule of its own.
+    const absent = within(at).getByText('Not offered: mine, which carries qrels and reference answers: a pipeline that does not end in an answer can be scored only on a benchmark whose ground truth is qrels.');
+    expect(benchmark.getAttribute('aria-describedby')?.split(' ')).toContain(absent.id);
+  });
+
+  it('offers exactly the ground truths the API lists, and applies no rule of its own to a benchmark that carries none', async () => {
+    const withNone = [...BENCHMARKS.benchmarks, bench('empty', { kind: 'ready', dataset_version: hex('6') }, 'none')];
+    // As the API serves it, a benchmark with nothing to score is in neither list: it is not offered, and the note says why.
+    const { stream } = await show('#runs', routes({ 'GET /benchmarks': { body: { ...BENCHMARKS, benchmarks: withNone } } }));
+    connect(stream);
+    const at = await openPanel();
+    const benchmark = within(at).getByLabelText('Benchmark') as HTMLSelectElement;
+    expect([...benchmark.options].map((o) => o.value)).toEqual(['beir/scifact', 'mine']);
+    expect(within(at).getByText(/Not offered: empty, which carries no ground truth: a pipeline that ends in an answer can be scored only on a benchmark whose ground truth is qrels, reference answers or qrels and reference answers\./)).toBeTruthy();
+    cleanup();
+
+    // Were the API to list it, the panel would offer it: the list is the rule, read and never restated.
+    const lists = { ...BENCHMARKS, benchmarks: withNone, scorable: { ending_in_answer: [...SCORABLE.ending_in_answer, 'none' as const], ending_elsewhere: SCORABLE.ending_elsewhere } };
+    const again = await show('#runs', routes({ 'GET /benchmarks': { body: lists } }));
+    connect(again.stream);
+    const offered = within(await openPanel()).getByLabelText('Benchmark') as HTMLSelectElement;
+    expect([...offered.options].map((o) => o.value)).toEqual(['beir/scifact', 'mine', 'empty']);
+  });
+
+  it('says why Launch is refused in words on the page, not only to a screen reader', async () => {
+    const { stream } = await show();
+    connect(stream);
+    const at = await openPanel();
+    fireEvent.change(within(at).getByLabelText('Pipeline'), { target: { value: 'broken' } });
+    const launch = within(at).getByRole('button', { name: 'Launch' });
+    expect(launch.getAttribute('aria-disabled')).toBe('true');
+    const reason = within(at).getByText('This pipeline does not validate.');
+    expect(reason.closest('.rg-visually-hidden')).toBeNull();
+    // Said once to a screen reader: the visible reason is the one that describes the button.
+    expect(launch.getAttribute('aria-describedby')).toBe(reason.id);
+  });
+
+  it('names an empty pipeline or benchmark field rather than leaving it blank', async () => {
+    const { stream } = await show('#runs', routes({ 'GET /pipelines': { body: { pipelines: [] } }, 'GET /benchmarks': { body: { ...BENCHMARKS, benchmarks: [] } } }));
+    connect(stream);
+    fireEvent.click(screen.getByRole('button', { name: 'Launch…' }));
+    const pipelineField = (await within(panel()).findByLabelText('Pipeline')) as HTMLSelectElement;
+    expect([...pipelineField.options].map((o) => o.textContent)).toEqual(['No pipeline yet']);
+    const benchmarkField = (await within(panel()).findByLabelText('Benchmark')) as HTMLSelectElement;
+    expect([...benchmarkField.options].map((o) => o.textContent)).toEqual(['No ready benchmark']);
+  });
+
+  it('offers Launch again once the run it queued has ended', async () => {
+    const { stream } = await show('#runs', routes({ 'POST /runs': { body: { job_id: 'j1', run_id: ANNOUNCED } } }));
+    connect(stream);
+    const at = await openPanel();
+    fireEvent.click(within(at).getByRole('button', { name: 'Launch' }));
+    await within(at).findByRole('button', { name: 'Queued' });
+    send(stream, { event: 'queued', data: runJob('j1', QUEUED) });
+    expect(within(at).getByRole('button', { name: 'Queued' })).toBeTruthy();
+    send(stream, { event: 'failed', data: runJob('j1', failedAt('rerank', 'boom')) });
+    const again = within(at).getByRole('button', { name: 'Launch' });
+    expect(again.getAttribute('aria-disabled')).toBeNull();
+    // What was announced stays, with the way to it.
+    expect(within(at).getByText(`run ${short(ANNOUNCED)}`)).toBeTruthy();
+  });
+
+  it('closes from a control of its own, taking the launch out of the address', async () => {
+    const { stream } = await show('#runs?launch=hybrid');
+    connect(stream);
+    await within(panel()).findByText(`Content hash ${short(HYBRID)}`);
+    fireEvent.click(within(panel()).getByRole('button', { name: 'Close' }));
+    expect(screen.queryByRole('region', { name: 'Launch a run' })).toBeNull();
+    await waitFor(() => expect(window.location.hash).toBe('#runs'));
+    expect(screen.getByRole('button', { name: 'Launch…' }).getAttribute('aria-expanded')).toBe('false');
+    // The control that closed it went with the panel: focus is back on the one that opens it.
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Launch…' }));
+  });
+
+  it('labels the hash as the content hash, and a conflict names the run by its short id', async () => {
+    const conflict = problem('run_exists', 409, `Run ${OLD} is already in the store.`, 'Open it.', { link: `/api/v1/runs/${OLD}` });
+    const { stream } = await show('#runs', routes({ 'POST /runs': conflict }));
+    connect(stream);
+    const at = await openPanel();
+    expect(within(at).queryByText(`pipeline ${short(HYBRID)}`)).toBeNull();
+    fireEvent.click(within(at).getByRole('button', { name: 'Launch' }));
+    const exists = await within(at).findByText('A run with this identity already exists.');
+    const message = exists.closest('.rg-inline') as HTMLElement;
+    expect(message.textContent).not.toContain(OLD);
+    expect(message.textContent).toContain(short(OLD));
+  });
+});
+
 describe('the launch panel up to a node', () => {
   const PREFIX = '#runs?launch=hybrid&up_to=rerank';
 
@@ -232,11 +336,11 @@ describe('the launch panel up to a node', () => {
     const benchmark = within(sheet).getByLabelText('Benchmark') as HTMLSelectElement;
     // `mine` carries reference answers: a prefix ending before the generator produces no answer to score.
     expect([...benchmark.options].map((o) => o.textContent)).toEqual(['beir/scifact — qrels']);
-    const absent = within(sheet).getByText(/Not offered: mine, which carries reference answers/);
+    const absent = within(sheet).getByText('Not offered: mine, which carries qrels and reference answers: a prefix that does not end in an answer can be scored only on a benchmark whose ground truth is qrels.');
     // The note describes the field it explains.
     expect(benchmark.getAttribute('aria-describedby')?.split(' ')).toContain(absent.id);
     // The identity is the cut's, announced by the API: the parent's hash is not shown as if it were the run's.
-    expect(within(sheet).queryByText(`pipeline ${short(HYBRID)}`)).toBeNull();
+    expect(within(sheet).queryByText(`Content hash ${short(HYBRID)}`)).toBeNull();
     expect(within(sheet).getByText(/identity is announced when it is queued/)).toBeTruthy();
 
     fireEvent.click(within(sheet).getByRole('button', { name: 'Launch' }));
@@ -252,6 +356,16 @@ describe('the launch panel up to a node', () => {
     const benchmark = within(panel()).getByLabelText('Benchmark') as HTMLSelectElement;
     await waitFor(() => expect([...benchmark.options].map((o) => o.textContent)).toEqual(['beir/scifact — qrels', 'mine — qrels and reference answers']));
     expect(within(panel()).queryByText(/Not offered/)).toBeNull();
+  });
+
+  it('judges a cut by what the API says it ends in, never by the family of the node it stops at', async () => {
+    // A cut the API says ends in an answer, at a node whose family is no generator: the served fact is the one read.
+    const served: PipelineDetail = { ...HYBRID_DETAIL, ends_in_answer_up_to: { ...HYBRID_DETAIL.ends_in_answer_up_to, rerank: true } };
+    const { stream } = await show(PREFIX, routes({ 'GET /pipelines/{name}': { body: served } }));
+    connect(stream);
+    await within(panel()).findByText('prefix of hybrid, up to rerank');
+    const benchmark = within(panel()).getByLabelText('Benchmark') as HTMLSelectElement;
+    await waitFor(() => expect([...benchmark.options].map((o) => o.value)).toEqual(['beir/scifact', 'mine']));
   });
 
   it('goes back to the whole pipeline, every ready benchmark offered again', async () => {
@@ -283,7 +397,7 @@ describe('the launch panel on a benchmark', () => {
   it('opens on the pipeline and the benchmark the address names — the Pipeline screen’s Run — and launches them', async () => {
     const { api, stream } = await show('#runs?launch=hybrid&benchmark=mine', routes({ 'POST /runs': { body: { job_id: 'j1', run_id: ANNOUNCED } } }));
     connect(stream);
-    await within(panel()).findByText(`pipeline ${short(HYBRID)}`);
+    await within(panel()).findByText(`Content hash ${short(HYBRID)}`);
     expect((within(panel()).getByLabelText('Pipeline') as HTMLSelectElement).value).toBe('hybrid');
     const benchmark = (await within(panel()).findByLabelText('Benchmark')) as HTMLSelectElement;
     expect(benchmark.value).toBe('mine');
@@ -295,7 +409,7 @@ describe('the launch panel on a benchmark', () => {
   it('refuses to launch on a benchmark the address names that is not ready, rather than another in its place', async () => {
     const { api, stream } = await show('#runs?launch=hybrid&benchmark=beir%2Ffiqa');
     connect(stream);
-    await within(panel()).findByText(`pipeline ${short(HYBRID)}`);
+    await within(panel()).findByText(`Content hash ${short(HYBRID)}`);
     const benchmark = (await within(panel()).findByLabelText('Benchmark')) as HTMLSelectElement;
     expect(benchmark.value).toBe('beir/fiqa');
     expect(benchmark.selectedOptions[0]?.textContent).toBe('beir/fiqa — not ready');
@@ -317,7 +431,7 @@ describe('the launch panel on a benchmark it does not offer, or keeps', () => {
   it('names a benchmark the workspace does not know as such, with no way to Setup', async () => {
     const { stream } = await show('#runs?launch=hybrid&benchmark=beir%2Fnope');
     connect(stream);
-    await within(panel()).findByText(`pipeline ${short(HYBRID)}`);
+    await within(panel()).findByText(`Content hash ${short(HYBRID)}`);
     const benchmark = (await within(panel()).findByLabelText('Benchmark')) as HTMLSelectElement;
     expect(benchmark.selectedOptions[0]?.textContent).toBe('beir/nope — unknown');
     const launch = within(panel()).getByRole('button', { name: 'Launch' });
@@ -371,7 +485,7 @@ describe('the launch panel on several benchmarks', () => {
     const { stream } = await show(SEVERAL);
     connect(stream);
     const launch = await within(panel()).findByRole('button', { name: 'Launch 2 runs' });
-    expect(within(panel()).getAllByText(`pipeline ${short(HYBRID)}`)).toHaveLength(1);
+    expect(within(panel()).getAllByText(`Content hash ${short(HYBRID)}`)).toHaveLength(1);
     expect(within(panel()).getAllByText('generator/qwen')).toHaveLength(1);
     // No benchmark picker: the benchmarks are the address's, each said for itself.
     expect(within(panel()).queryByLabelText('Benchmark')).toBeNull();
@@ -485,6 +599,13 @@ describe('the launch panel on several benchmarks', () => {
     expect(rowOf('beir/scifact').textContent).toContain('qrels');
   });
 
+  it('names a benchmark a whole pipeline cannot be scored on as not launched, for that pipeline', async () => {
+    const { stream } = await show('#runs?launch=lexical&benchmark=beir%2Fscifact&benchmark=mine');
+    connect(stream);
+    await within(panel()).findByRole('button', { name: 'Launch 1 run' });
+    expect(rowOf('mine').textContent).toContain('not launched: cannot score this pipeline');
+  });
+
   it('sends up_to with every run of a cut, and offers Setup only for a benchmark that is not ready', async () => {
     const { api, stream } = await show('#runs?launch=hybrid&up_to=rerank&benchmark=beir%2Fscifact&benchmark=mine&benchmark=beir%2Fnope', routes({ 'POST /runs': { body: { job_id: 'j1', run_id: ANNOUNCED } } }));
     connect(stream);
@@ -553,7 +674,7 @@ describe('the queue’s rows', () => {
     send(stream, { event: 'running', data: runJob('j2', running(1, 10), { runId: FAILED }) });
     send(stream, { event: 'failed', data: runJob('j2', failedAt('rerank', 'the reranker answered 503'), { runId: FAILED }) });
     const failedRow = jobRowOf(FAILED);
-    expect(within(failedRow).getByText('rerank failed: the reranker answered 503')).toBeTruthy();
+    expect(within(failedRow).getByText('the reranker answered 503')).toBeTruthy();
 
     const toasts = within(notifications());
     expect(toasts.getByRole('status').textContent).toContain('Run done');
@@ -568,7 +689,7 @@ describe('the queue’s rows', () => {
     connect(stream, [runJob('j2', failedAt('rerank', 'the reranker answered 503', 2), { runId: hex('b') })]);
     const job = await screen.findByRole('region', { name: 'Job j2' });
     expect(job.querySelector('.rg-status')?.textContent).toBe('failed at rerank');
-    expect(within(job).getByText('rerank failed: the reranker answered 503')).toBeTruthy();
+    expect(within(job).getByText('the reranker answered 503')).toBeTruthy();
     // The count, said as what it is: the traces the job kept, not a run in the store — and the way to Replay them.
     expect(within(job).getByText('It kept the traces of the 2 queries it executed before it failed, under jobs/j2/partial/ in the workspace, never in the store.')).toBeTruthy();
     expect(within(job).queryByText(/does not serve/)).toBeNull();
@@ -580,6 +701,81 @@ describe('the queue’s rows', () => {
     send(stream, { event: 'failed', data: runJob('j2', failedAt(null, 'interrupted', 0), { runId: hex('b') }) });
     expect(within(job).getByText('It kept no trace: a run keeps the traces of the queries it executed when it fails or is cancelled, and a crash keeps none it can vouch for.')).toBeTruthy();
     expect(within(job).queryByRole('link', { name: 'Replay the partial traces' })).toBeNull();
+  });
+
+  it('offers nothing to replay when no query completed before the failure', async () => {
+    const { stream } = await show('#runs/job/j2');
+    // One trace kept, of the query a node failed on: no query completed.
+    connect(stream, [runJob('j2', failedAt('rerank', 'the reranker answered 503', 1), { runId: hex('b') })]);
+    const job = await screen.findByRole('region', { name: 'Job j2' });
+    expect(within(job).getByText(/No query completed before it failed/)).toBeTruthy();
+    expect(within(job).queryByRole('link', { name: 'Replay the partial traces' })).toBeNull();
+  });
+
+  it('dismisses a failed job: the API is asked, and the row goes once the stream says so', async () => {
+    const failed = runJob('j2', failedAt('rerank', 'boom'), { runId: hex('b') });
+    const { api, stream } = await show('#runs', routes({ 'POST /jobs/{id}/dismiss': { body: { ...failed, dismissed_at_ms: 1_700_000_300_000 } } }));
+    connect(stream, [failed]);
+    fireEvent.click(within(jobRowOf(hex('b'))).getByRole('button', { name: `Dismiss run ${short(hex('b'))}` }));
+    await waitFor(() => expect(api.requests).toContain('POST /api/v1/jobs/j2/dismiss'));
+    send(stream, { event: 'dismissed', data: { ...failed, dismissed_at_ms: 1_700_000_300_000 } });
+    expect(screen.queryByRole('row', { name: new RegExp(`^Run ${short(hex('b'))} on `) })).toBeNull();
+  });
+
+  it('hands focus to the next row when the row whose Dismiss had it goes', async () => {
+    const failed = runJob('j2', failedAt('rerank', 'boom'), { runId: hex('b') });
+    const { stream } = await show('#runs', routes({ 'POST /jobs/{id}/dismiss': { body: { ...failed, dismissed_at_ms: 1 } } }));
+    connect(stream, [failed]);
+    const table = screen.getByRole('table', { name: 'Runs, grouped by pipeline' });
+    const rows = [...table.querySelectorAll<HTMLElement>('tr[tabindex]')];
+    const at = rows.indexOf(jobRowOf(hex('b')));
+    const next = rows[at + 1] as HTMLElement;
+    expect(next).toBeTruthy();
+    const dismiss = within(jobRowOf(hex('b'))).getByRole('button', { name: `Dismiss run ${short(hex('b'))}` });
+    dismiss.focus();
+    fireEvent.click(dismiss);
+    await act(async () => {});
+    send(stream, { event: 'dismissed', data: { ...failed, dismissed_at_ms: 1 } });
+    expect(document.activeElement).toBe(next);
+  });
+
+  it('hands focus to the table heading when the row whose Dismiss had it was the last', async () => {
+    const failed = runJob('j9', failedAt('rerank', 'boom'), { runId: hex('b'), benchmark: 'nf/corpus' });
+    const { stream } = await show('#runs', routes({ 'POST /jobs/{id}/dismiss': { body: { ...failed, dismissed_at_ms: 1 } } }));
+    connect(stream, [failed]);
+    // Filtered to its benchmark, the job's row is the table's last.
+    fireEvent.click(screen.getByRole('button', { name: /^nf\/corpus/ }));
+    await waitFor(() => expect(screen.queryByRole('row', { name: new RegExp(`^Run ${short(OLD)} on `) })).toBeNull());
+    const row = screen.getByRole('row', { name: new RegExp(`^Run ${short(hex('b'))} on nf/corpus, `) });
+    const table = screen.getByRole('table', { name: 'Runs, grouped by pipeline' });
+    expect([...table.querySelectorAll<HTMLElement>('tr[tabindex]')].at(-1)).toBe(row);
+    const dismiss = within(row).getByRole('button', { name: `Dismiss run ${short(hex('b'))}` });
+    dismiss.focus();
+    fireEvent.click(dismiss);
+    await act(async () => {});
+    send(stream, { event: 'dismissed', data: { ...failed, dismissed_at_ms: 1 } });
+    expect(document.activeElement).toBe(screen.getByRole('heading', { name: 'Runs' }));
+  });
+
+  it('shows the live jobs in a Queue above the runs, in the order the worker takes them', async () => {
+    const { stream } = await show();
+    connect(stream, [
+      runJob('j3', QUEUED, { runId: hex('8'), position: 7 }),
+      runJob('j1', running(2, 10), { runId: hex('6') }),
+      runJob('j2', QUEUED, { runId: hex('7'), position: 3 }),
+      runJob('j4', failedAt(null, 'boom'), { runId: hex('4') }),
+    ]);
+    const queue = screen.getByRole('table', { name: 'Queue' });
+    const names = within(queue)
+      .getAllByRole('row')
+      .map((r) => r.getAttribute('aria-label'))
+      .filter((n) => n !== null);
+    expect(names.map((n) => n?.slice(0, 16))).toEqual([`Run ${short(hex('6'))}`, `Run ${short(hex('7'))}`, `Run ${short(hex('8'))}`]);
+    const runsTable = screen.getByRole('table', { name: 'Runs, grouped by pipeline' });
+    // The Queue comes first; an ended job stays with its pipeline's runs.
+    expect(queue.compareDocumentPosition(runsTable) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(runsTable).queryByRole('row', { name: new RegExp(`^Run ${short(hex('6'))}`) })).toBeNull();
+    expect(within(runsTable).getByRole('row', { name: new RegExp(`^Run ${short(hex('4'))}`) })).toBeTruthy();
   });
 
   it('a_fault_reported_during_a_job_shows_on_its_row_and_in_its_view_without_a_reload', async () => {
@@ -818,7 +1014,7 @@ describe('the keyboard', () => {
     fireEvent.click(toggle);
     expect(toggle.getAttribute('aria-expanded')).toBe('true');
     const at = panel();
-    await within(at).findByText(`pipeline ${short(HYBRID)}`);
+    await within(at).findByText(`Content hash ${short(HYBRID)}`);
     // Focus moves to the panel, so the keyboard starts from it: its fields come next in tab order.
     expect(document.activeElement).toBe(at);
     for (const control of [within(at).getByLabelText('Pipeline'), within(at).getByLabelText('Benchmark'), within(at).getByRole('button', { name: 'Launch' })]) {
@@ -856,6 +1052,15 @@ describe('the layout', () => {
   it('gives a running job’s figures and Cancel one line, so the median arriving with the first tick wraps nothing and grows no row', () => {
     // Measured in Chrome: "1,840 ms / query", "12:34 elapsed" and Cancel side by side take 37 ch of the body face.
     expect(rule(runsCss, '.rg-runs__job')?.declarations.get('min-width')).toBe('40ch');
+  });
+
+  it('lets a row’s identity and its labels wrap, so the table fits a 1440 px screen with every column in view', async () => {
+    // The table's cells do not wrap (design/'s Table); a run's hash, its prefix label and its facts would otherwise make one long line.
+    expect(rule(runsCss, '.rg-runs__run')?.declarations.get('white-space')).toBe('normal');
+    const { stream } = await show();
+    connect(stream, [runJob('j9', failedAt(null, 'boom'), { runId: hex('d') })]);
+    expect(jobRowOf(hex('d')).querySelector('.rg-runs__run')).toBeTruthy();
+    expect(screen.getByRole('row', { name: new RegExp(`^Run ${short(OLD)} on `) }).querySelector('.rg-runs__run')).toBeTruthy();
   });
 
   it('floats the toasts over the page’s corner, within a phone’s width, and lets a click through where there is none', () => {

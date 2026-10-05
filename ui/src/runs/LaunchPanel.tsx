@@ -4,9 +4,11 @@
 // and the store — the last two shown, not chosen: the API snapshots the
 // workspace's bindings itself, and the store is the workspace's. It shows the
 // pipeline's hash once the pipeline validates, and the run id the API
-// announces once it is launched; it never computes one (INV-8). Opened up to
-// a node — the editor's "Run up to this node" — it launches the pipeline cut
-// there, offers only the benchmarks such a prefix can be scored on, and leaves
+// announces once it is launched; it never computes one (INV-8). It offers a
+// pipeline only the benchmarks it can be scored on, by what it ends in, as the
+// API serves the rule (`GET /benchmarks`' `scorable`), and names the others
+// with why. Opened up to a node — the editor's "Run up to this node" — it
+// launches the pipeline cut there, judged by what the cut ends in, and leaves
 // the identity to the API, since the cut is a pipeline of its own. Opened on
 // a benchmark — the Pipeline screen's Run — it launches on that one, or says
 // why it cannot, never on another in its place. Opened on several — "Launch
@@ -17,7 +19,8 @@
 import { useCallback, useEffect, useId, useRef, useState, type Ref } from 'react';
 import { Button, ButtonLink, InlineMessage, PrefixLabel, Section, Select } from '../../design/index.ts';
 import type { ApiClient, ApiProblem } from '../api/client.ts';
-import type { BenchmarkEntry, BenchmarkListing, PipelineDetail, PipelineListing, RunRequest, ServiceListing } from '../api/types.ts';
+import { useJobs } from '../jobs/queue.tsx';
+import type { BenchmarkEntry, BenchmarkListing, GroundTruth, PipelineDetail, PipelineListing, RunRequest, Scorable, ServiceListing } from '../api/types.ts';
 import { formatHash, type Route } from '../routes.ts';
 import { groundTruthLabel } from '../setup/model.ts';
 import { ErrorState, Loading, type RequestState } from '../shell/states.tsx';
@@ -37,6 +40,8 @@ export type LaunchPanelProps = {
   benchmarks?: readonly string[] | undefined;
   /** Back to the whole pipeline, from a panel opened up to a node. */
   onWhole?: (() => void) | undefined;
+  /** Closes the panel. */
+  onClose?: (() => void) | undefined;
 };
 
 /** Where a launch stands: not asked, in flight, queued under an announced id, or refused. */
@@ -49,11 +54,8 @@ type Submission = { kind: 'sending' } | { kind: 'queued'; job: string; run: stri
 type Standing = 'unknown' | 'not ready' | 'not offered';
 
 /** A benchmark that is not launched, in a few words, for the list of several. */
-const NOT_LAUNCHED: Record<Standing, string> = {
-  unknown: 'not a benchmark of this workspace',
-  'not ready': 'not ready — download or import it in Setup',
-  'not offered': 'cannot score this prefix',
-};
+const notLaunched = (standing: Standing, what: 'pipeline' | 'prefix'): string =>
+  ({ unknown: 'not a benchmark of this workspace', 'not ready': 'not ready — download or import it in Setup', 'not offered': `cannot score this ${what}` })[standing];
 
 const runsLabel = (n: number) => `Launch ${n} run${n === 1 ? '' : 's'}`;
 
@@ -70,29 +72,33 @@ function outcomeCounts(outcomes: readonly Submission[]): string {
 const PIPELINE_CODES = new Set(['pipeline_invalid', 'impl_not_in_build', 'pipeline_not_found', 'prefix_node_not_found', 'prefix_is_whole_pipeline', 'prefix_ends_in_context']);
 const BENCHMARK_CODES = new Set(['benchmark_not_found', 'dataset_absent', 'dataset_differs', 'prefix_not_scorable']);
 
-const carriesAnswers = (b: BenchmarkEntry) => b.ground_truth === 'reference_answers' || b.ground_truth === 'both';
+/** The ground truths `GET /benchmarks`' `scorable` lists for what is launched, by whether it ends in an answer. */
+const scorableFor = (scorable: Scorable, endsInAnswer: boolean): readonly GroundTruth[] => scorable[endsInAnswer ? 'ending_in_answer' : 'ending_elsewhere'];
 
 /**
- * Whether a prefix can be scored on a benchmark, as `POST /runs` and the
- * harness judge it. A cut whose output is an answer — at a generator — can be
- * scored on any benchmark that carries a ground truth. Any other cut produces
- * a ranking: the harness refuses it on a benchmark that carries reference
- * answers (ADR-C30 § 5), so only qrels alone score it.
+ * Whether a pipeline can be scored on a benchmark, given whether it ends in an
+ * answer: the API lists the benchmark's ground truth among those such a
+ * pipeline can be scored on — `CarriedPieces::scorable`, served in
+ * `GET /benchmarks`' `scorable`, which leaves out a benchmark that carries
+ * nothing to score — and nothing is restated here.
  */
-const scoresAPrefix = (answers: boolean) => (b: BenchmarkEntry) =>
-  answers ? b.ground_truth === 'qrels' || carriesAnswers(b) : b.ground_truth === 'qrels';
+const scoredOn = (scorable: Scorable, endsInAnswer: boolean) => (b: BenchmarkEntry) => (scorableFor(scorable, endsInAnswer) as readonly (GroundTruth | null)[]).includes(b.ground_truth);
 
-/** Why the benchmarks a prefix cannot be scored on are not offered, in one sentence; null when every one is. */
-function notOffered(absent: readonly BenchmarkEntry[]): string | null {
+/** Words joined as a sentence lists them: "a", "a or b", "a, b or c". */
+const either = (words: readonly string[]) => (words.length < 2 ? words.join('') : `${words.slice(0, -1).join(', ')} or ${words[words.length - 1] as string}`);
+
+/**
+ * Why the benchmarks a pipeline — or a prefix — cannot be scored on are not
+ * offered, in one sentence; null when every one is. Worded from what the API
+ * serves alone: each benchmark's ground truth, and the ground truths what is
+ * launched can be scored on, by what it ends in.
+ */
+function notOffered(absent: readonly BenchmarkEntry[], prefix: boolean, endsInAnswer: boolean, scorable: Scorable): string | null {
   if (absent.length === 0) return null;
-  const answers = absent.filter(carriesAnswers).map((b) => b.name);
-  const nothing = absent.filter((b) => !answers.includes(b.name)).map((b) => b.name);
-  const clause = (names: string[], what: string) => `${names.join(', ')}, which ${names.length === 1 ? 'carries' : 'carry'} ${what}`;
-  const parts = [
-    ...(answers.length === 0 ? [] : [`${clause(answers, 'reference answers')}: a prefix that stops before the generator produces no answer to score`]),
-    ...(nothing.length === 0 ? [] : [`${clause(nothing, 'no qrels')}: nothing would score the ranking`]),
-  ];
-  return `Not offered: ${parts.join('; ')}.`;
+  const which = absent.map((b) => `${b.name}, which carries ${b.ground_truth === null ? 'a ground truth not yet read' : groundTruthLabel(b.ground_truth)}`).join('; ');
+  const what = `a ${prefix ? 'prefix' : 'pipeline'} that ${endsInAnswer ? 'ends' : 'does not end'} in an answer`;
+  const on = scorableFor(scorable, endsInAnswer).map(groundTruthLabel);
+  return `Not offered: ${which}: ${what} can be scored ${on.length === 0 ? 'on no benchmark' : `only on a benchmark whose ground truth is ${either(on)}`}.`;
 }
 const BINDING_CODES = new Set(['service_unreachable', 'binding_refused', 'service_not_found']);
 
@@ -103,6 +109,9 @@ export function conflictRoute(link: string | undefined): { route: Route; job: bo
   const id = decodeURIComponent(match[2] as string);
   return match[1] === 'runs' ? { route: { screen: 'replay', run: id }, job: false } : { route: { screen: 'runs', job: id }, job: true };
 }
+
+/** A text with every full run id — 64 hex digits — cut to the twelve the screen prints. */
+const shortIds = (text: string) => text.replace(/\b[0-9a-f]{64}\b/g, (id) => shortHash(id));
 
 /** A refusal in the API's words: where, what, how to fix it, and its code. */
 function refusalWords(problem: ApiProblem): string {
@@ -128,7 +137,7 @@ export function Conflict({ problem }: { problem: ApiProblem }) {
         )
       }
     >
-      {problem.message}
+      {shortIds(problem.message)}
     </InlineMessage>
   );
 }
@@ -159,8 +168,8 @@ function useListing<T>(read: (signal: AbortSignal) => Promise<{ ok: true; value:
 }
 
 /** What one of several benchmarks says: why it is not launched, its ground truth before the launch, then its outcome. */
-function SeveralLine({ name, standing, entry, submission }: { name: string; standing: Standing | null; entry: BenchmarkEntry | undefined; submission: Submission | undefined }) {
-  if (standing !== null) return <span className="rg-launch__note">{`not launched: ${NOT_LAUNCHED[standing]}`}</span>;
+function SeveralLine({ name, standing, entry, submission, what }: { what: 'pipeline' | 'prefix'; name: string; standing: Standing | null; entry: BenchmarkEntry | undefined; submission: Submission | undefined }) {
+  if (standing !== null) return <span className="rg-launch__note">{`not launched: ${notLaunched(standing, what)}`}</span>;
   if (submission === undefined) return <span className="rg-launch__note">{entry?.ground_truth == null ? '' : groundTruthLabel(entry.ground_truth)}</span>;
   if (submission.kind === 'sending') return <span className="rg-launch__note">launching…</span>;
   if (submission.kind === 'queued') {
@@ -189,13 +198,13 @@ function SeveralLine({ name, standing, entry, submission }: { name: string; stan
   return <span className="rg-launch__error">{`refused: ${refusalWords(submission.problem)}`}</span>;
 }
 
-export function LaunchPanel({ client, store, anchor, pipeline: opened, upTo = null, benchmarks: names, onWhole }: LaunchPanelProps) {
+export function LaunchPanel({ client, store, anchor, pipeline: opened, upTo = null, benchmarks: names, onWhole, onClose }: LaunchPanelProps) {
   const named = names?.length === 1 ? names[0] : undefined;
   const several = names !== undefined && names.length > 1 ? names : null;
   const [pipelines, retryPipelines] = useListing<PipelineListing>((signal) => client.get('/pipelines', { signal }));
   const [benchmarks, retryBenchmarks] = useListing<BenchmarkListing>((signal) => client.get('/benchmarks', { signal }));
   const [services, retryServices] = useListing<ServiceListing>((signal) => client.get('/services', { signal }));
-  // Up to a node, the stored document says what the node is: a cut at a generator ends in an answer.
+  // Up to a node, the API says what the cut there ends in (`GET /pipelines/{name}`' `ends_in_answer_up_to`).
   const [detail] = useListing<PipelineDetail | null>((signal) =>
     upTo === null || opened === undefined ? Promise.resolve({ ok: true as const, value: null }) : client.get('/pipelines/{name}', { name: opened }, { signal }),
   );
@@ -205,18 +214,22 @@ export function LaunchPanel({ client, store, anchor, pipeline: opened, upTo = nu
   // Several benchmarks: each one's submission, by name, in the order they are sent.
   const [batch, setBatch] = useState<Readonly<Record<string, Submission>> | null>(null);
   const ids = { pipeline: useId(), benchmark: useId(), absent: useId(), list: useId() };
+  const { jobs } = useJobs();
 
   // Up to a node, the pipeline is the one the node is in: no other is offered.
   const listed = pipelines.status === 'loaded' ? pipelines.value.pipelines : [];
   const docs = upTo === null ? listed : listed.filter((p) => p.name === opened);
-  // Ready ones only: a benchmark on disk whose digest is the one expected of it; up to a node, those a prefix can be scored on.
-  const onDisk = benchmarks.status === 'loaded' ? benchmarks.value.benchmarks.filter((b) => b.state.kind === 'ready' || b.state.kind === 'local') : [];
-  // Until the document is read — or when it cannot be — the cut is taken to end in a ranking, the narrower offer.
-  const cutNode = detail.status === 'loaded' ? detail.value?.typed?.pipeline.nodes.find((n) => n.id === upTo) : undefined;
-  const scores = scoresAPrefix(cutNode?.component === 'generator');
-  const ready = upTo === null ? onDisk : onDisk.filter(scores);
-  const absent = upTo === null ? null : notOffered(onDisk.filter((b) => !scores(b)));
   const pipeline = docs.find((p) => p.name === chosenPipeline) ?? docs.find((p) => p.hash !== null) ?? docs[0] ?? null;
+  // Ready ones only: a benchmark on disk whose digest is the one expected of it, and that what is launched can be scored on.
+  const onDisk = benchmarks.status === 'loaded' ? benchmarks.value.benchmarks.filter((b) => b.state.kind === 'ready' || b.state.kind === 'local') : [];
+  // What is launched ends in an answer, as the API says it: `GET /pipelines`' `ends_in_answer` of a whole pipeline,
+  // `GET /pipelines/{name}`' `ends_in_answer_up_to` of a cut. A whole pipeline that does not validate says nothing,
+  // and is refused whatever the benchmark; until the cut's answer is read — or when it cannot be — the cut is taken
+  // to end elsewhere, the narrower offer.
+  const endsInAnswer = upTo === null ? (pipeline?.ends_in_answer ?? null) : detail.status === 'loaded' ? (detail.value?.ends_in_answer_up_to?.[upTo] ?? false) : false;
+  const scores = benchmarks.status !== 'loaded' || endsInAnswer === null ? () => true : scoredOn(benchmarks.value.scorable, endsInAnswer);
+  const ready = onDisk.filter(scores);
+  const absent = benchmarks.status !== 'loaded' || endsInAnswer === null ? null : notOffered(onDisk.filter((b) => !scores(b)), upTo !== null, endsInAnswer, benchmarks.value.scorable);
   // The benchmark the address named, while it is still the one chosen and is not offered: refused, never replaced.
   // Why it is not offered: the workspace does not know it, it is not on disk as expected, or the cut cannot be scored on it.
   const standing = (name: string): Standing | null =>
@@ -263,6 +276,9 @@ export function LaunchPanel({ client, store, anchor, pipeline: opened, upTo = nu
     }
   };
 
+  // A launch queued is done with once its job has ended, as the stream says: Launch is offered again.
+  const queuedJob = launch.kind === 'queued' ? jobs.get(launch.job) : undefined;
+  const ended = queuedJob !== undefined && queuedJob.state.kind !== 'queued' && queuedJob.state.kind !== 'running';
   const refused = launch.kind === 'refused' ? launch.problem : null;
   const on = (codes: Set<string>) => (refused !== null && codes.has(refused.code) ? refusalWords(refused) : undefined);
   const pipelineError = pipeline?.error != null ? `${pipeline.error.detail} Correct the document in the Editor, then launch.` : on(PIPELINE_CODES);
@@ -285,13 +301,13 @@ export function LaunchPanel({ client, store, anchor, pipeline: opened, upTo = nu
           ? unofferedBecause === 'unknown'
             ? `${unoffered} is not a benchmark of this workspace: choose another benchmark.`
             : unofferedBecause === 'not offered'
-              ? `${unoffered} cannot score this prefix: choose another benchmark.`
+              ? `${unoffered} cannot score this ${upTo === null ? 'pipeline' : 'prefix'}: choose another benchmark.`
               : `${unoffered} is not ready: download or import it in Setup, or choose another benchmark.`
           : benchmark === null
-          ? upTo !== null && onDisk.length > 0
-            ? 'No ready benchmark carries qrels alone, the only ground truth a prefix can be scored on.'
+          ? onDisk.length > 0
+            ? `No ready benchmark can score this ${upTo === null ? 'pipeline' : 'prefix'}: each is named under the benchmark field with why.`
             : 'No benchmark is ready: download or import one in Setup.'
-          : launch.kind === 'queued'
+          : launch.kind === 'queued' && !ended
             ? 'Queued. Choose another pipeline or benchmark to launch another run.'
             : null;
 
@@ -306,7 +322,7 @@ export function LaunchPanel({ client, store, anchor, pipeline: opened, upTo = nu
               id={ids.pipeline}
               label="Pipeline"
               value={pipeline?.name ?? ''}
-              options={docs.map((p) => ({ value: p.name, label: p.hash === null ? `${p.name} — does not validate` : p.name }))}
+              options={docs.length === 0 ? [{ value: '', label: 'No pipeline yet' }] : docs.map((p) => ({ value: p.name, label: p.hash === null ? `${p.name} — does not validate` : p.name }))}
               onChange={(e) => choose(setPipeline)(e.target.value)}
               // Several runs in flight are the chosen pipeline's: another chosen now would have their answers written over it.
               disabled={sending}
@@ -316,7 +332,8 @@ export function LaunchPanel({ client, store, anchor, pipeline: opened, upTo = nu
                 node the cut is a pipeline of its own, whose hash the parent's would only stand in for: the API announces it. */}
             {upTo === null ? (
               <p className="rg-launch__identity">
-                {pipeline?.hash == null ? null : <code title={pipeline.hash}>{`pipeline ${shortHash(pipeline.hash)}`}</code>}
+                {/* The content hash of the document as it is now: a run's identity is derived from it, so it changes when the pipeline does. */}
+                {pipeline?.hash == null ? null : <span title={pipeline.hash}>{`Content hash ${shortHash(pipeline.hash)}`}</span>}
               </p>
             ) : (
               <div className="rg-launch__prefix">
@@ -342,7 +359,7 @@ export function LaunchPanel({ client, store, anchor, pipeline: opened, upTo = nu
             <ul className="rg-launch__several" aria-labelledby={ids.list}>
               {several.map((name) => (
                 <li key={name}>
-                  <span className="rg-launch__bench">{name}</span> <SeveralLine name={name} standing={standing(name)} entry={ready.find((b) => b.name === name)} submission={batch?.[name]} />
+                  <span className="rg-launch__bench">{name}</span> <SeveralLine what={upTo === null ? 'pipeline' : 'prefix'} name={name} standing={standing(name)} entry={ready.find((b) => b.name === name)} submission={batch?.[name]} />
                 </li>
               ))}
             </ul>
@@ -359,10 +376,14 @@ export function LaunchPanel({ client, store, anchor, pipeline: opened, upTo = nu
               id={ids.benchmark}
               label="Benchmark"
               value={unoffered ?? benchmark?.name ?? ''}
-              options={[
-                ...(unoffered === null ? [] : [{ value: unoffered, label: `${unoffered} — ${unofferedBecause ?? 'not ready'}` }]),
-                ...ready.map((b) => ({ value: b.name, label: b.ground_truth === null ? b.name : `${b.name} — ${groundTruthLabel(b.ground_truth)}` })),
-              ]}
+              options={
+                unoffered === null && ready.length === 0
+                  ? [{ value: '', label: 'No ready benchmark' }]
+                  : [
+                      ...(unoffered === null ? [] : [{ value: unoffered, label: `${unoffered} — ${unofferedBecause ?? 'not ready'}` }]),
+                      ...ready.map((b) => ({ value: b.name, label: b.ground_truth === null ? b.name : `${b.name} — ${groundTruthLabel(b.ground_truth)}` })),
+                    ]
+              }
               onChange={(e) => choose(setBenchmark)(e.target.value)}
               {...(benchmarkError === undefined ? { help: unoffered === null ? 'Ready benchmarks only, with the ground truth each carries.' : `Ready benchmarks, with the ground truth each carries, and ${unoffered}, which the address named.` } : { error: benchmarkError })}
               {...(absent === null ? {} : { 'aria-describedby': ids.absent })}
@@ -412,7 +433,7 @@ export function LaunchPanel({ client, store, anchor, pipeline: opened, upTo = nu
           {several !== null ? (
             <>
               {why !== null ? (
-                <Button kind="primary" disabled disabledReason={why}>
+                <Button kind="primary" disabled disabledReason={why} showReason>
                   {launchable.length === 0 ? 'Nothing to launch' : submitted ? 'Submitted' : runsLabel(launchable.length)}
                 </Button>
               ) : submitted ? (
@@ -429,25 +450,31 @@ export function LaunchPanel({ client, store, anchor, pipeline: opened, upTo = nu
               </span>
               {sending ? <span className="rg-launch__note">Closing this panel does not stop the runs not yet sent: they are sent all the same.</span> : null}
             </>
-          ) : launch.kind === 'queued' ? (
-            <>
-              <Button kind="primary" disabled disabledReason={why ?? 'Queued.'}>
-                Queued
-              </Button>
-              <span className="rg-launch__identity">
-                <code title={launch.run}>{`run ${shortHash(launch.run)}`}</code> <span className="rg-launch__note">announced</span>{' '}
-                <ButtonLink size="s" href={formatHash({ screen: 'runs', job: launch.job })}>
-                  Open
-                </ButtonLink>
-              </span>
-            </>
+          ) : launch.kind === 'queued' && !ended ? (
+            <Button kind="primary" disabled disabledReason={why ?? 'Queued.'} showReason>
+              Queued
+            </Button>
           ) : why !== null ? (
-            <Button kind="primary" disabled disabledReason={why}>
+            <Button kind="primary" disabled disabledReason={why} showReason>
               Launch
             </Button>
           ) : (
             <Button kind="primary" busy={launch.kind === 'sending'} busyLabel="Launching…" onClick={() => void send()}>
               Launch
+            </Button>
+          )}
+          {/* The identity the API announced stays once the job ended, with the way to it: Launch is offered again beside it. */}
+          {several === null && launch.kind === 'queued' ? (
+            <span className="rg-launch__identity">
+              <code title={launch.run}>{`run ${shortHash(launch.run)}`}</code> <span className="rg-launch__note">announced</span>{' '}
+              <ButtonLink size="s" href={formatHash({ screen: 'runs', job: launch.job })}>
+                Open
+              </ButtonLink>
+            </span>
+          ) : null}
+          {onClose === undefined ? null : (
+            <Button kind="quiet" onClick={onClose}>
+              Close
             </Button>
           )}
         </div>

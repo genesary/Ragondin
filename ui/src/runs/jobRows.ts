@@ -61,7 +61,8 @@ const acceptedAfter = (a: JobSummary, b: JobSummary) => (a.created_at_ms ?? 0) >
  * run it filed, then hands over to that run's row. A failed or cancelled job
  * keeps its row — a failed run is a first-class object — until the store
  * holds its announced run or a later job announced the same id, which took
- * it over (a resubmission). A download is not a run, and has no row here.
+ * it over (a resubmission), or a person dismisses it. A download is not a
+ * run, and has no row here.
  * A benchmark name a run of the store pins takes that run's digest and
  * names, so one filter chip holds both.
  */
@@ -74,6 +75,8 @@ export function rowsFromJobs(jobs: Jobs, runs: readonly RunRow[]): RunRow[] {
   return all
     .filter((job) => {
       const { state } = job;
+      // Dismissed: a person is done with it, and it leaves the rows. The queue still lists it.
+      if (job.dismissed_at_ms !== null) return false;
       if (state.kind === 'done') return state.run_id === null || !stored.has(state.run_id);
       if (state.kind === 'failed' || state.kind === 'cancelled') return !takenOver(job);
       return true;

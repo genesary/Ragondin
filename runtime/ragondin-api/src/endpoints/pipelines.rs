@@ -18,9 +18,11 @@ use axum::response::{IntoResponse, Response};
 use axum::Json;
 use ragondin_config::read_document;
 use ragondin_experiments::UnixMillis;
+use ragondin_pipeline::LogicalPipeline;
 
 use crate::backends::{PipelineFile, Precondition, Revision};
 use crate::convert;
+use crate::derived;
 use crate::error::ApiError;
 use crate::extract::{ApiHeaders, ApiJson, ApiPath, ApiQuery, NoParameters};
 use crate::handlers::{load_run, AppState};
@@ -41,13 +43,19 @@ pub(crate) async fn list(
         pipelines: files
             .into_iter()
             .map(|file| {
-                let (hash, error) = verdict(&file.document);
+                let lowered = validation::lower(&file.document);
+                // What it ends in, read off the pipeline the hash is of: the
+                // harness scores an answer only when its terminal node
+                // produces one.
+                let ends_in_answer = lowered.as_ref().ok().map(derived::ends_in_answer);
+                let (hash, error) = verdict(lowered);
                 PipelineSummary {
                     modified_ms: modified_ms(file.modified),
                     name: file.name,
                     etag: file.revision.as_str().to_owned(),
                     hash,
                     error,
+                    ends_in_answer,
                 }
             })
             .collect(),
@@ -69,7 +77,17 @@ pub(crate) async fn read(
     _: ApiQuery<NoParameters>,
 ) -> Result<Response, ApiError> {
     let file = state.backends.pipelines.read(&name).await?;
-    let (hash, error) = verdict(&file.document);
+    let lowered = validation::lower(&file.document);
+    // What each cut ends in — `POST /runs`' `up_to` — so a client offers a
+    // prefix the benchmarks it can be scored on without reading node kinds.
+    let ends_in_answer_up_to = lowered.as_ref().ok().map(|pipeline| {
+        pipeline
+            .nodes()
+            .iter()
+            .map(|node| (node.id().as_str().to_owned(), derived::answers(node)))
+            .collect()
+    });
+    let (hash, error) = verdict(lowered);
     // The load's first half alone: a document that does not validate still
     // reads, and the editor opens it (ADR-C40 § 4).
     let typed = read_document(&file.document)
@@ -86,6 +104,7 @@ pub(crate) async fn read(
             error,
             typed,
             canonical,
+            ends_in_answer_up_to,
         }),
         &etag,
     ))
@@ -200,9 +219,9 @@ pub(crate) async fn write_layout(
     }))
 }
 
-/// The hash a document validates to, or why it does not.
-fn verdict(document: &str) -> (Option<String>, Option<PipelineError>) {
-    match validation::check(document) {
+/// The hash a document validates to, or why it does not, from its lowering.
+fn verdict(lowered: Result<LogicalPipeline, ApiError>) -> (Option<String>, Option<PipelineError>) {
+    match lowered.map(|pipeline| pipeline.content_hash().to_string()) {
         Ok(hash) => (Some(hash), None),
         Err(ApiError::PipelineInvalid { detail, location }) => {
             (None, Some(PipelineError { detail, location }))

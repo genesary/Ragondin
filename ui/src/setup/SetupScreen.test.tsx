@@ -4,8 +4,8 @@ import { useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from '../App.tsx';
 import { createApiClient } from '../api/client.ts';
-import { FakeEventSource, installFakeEventSource, mockApi, type MockRoutes } from '../api/testing.ts';
-import type { BenchmarkEntry, JobEvent, JobSummary, Problem, ServiceListing, ServiceStatus, Workspace } from '../api/types.ts';
+import { FakeEventSource, installFakeEventSource, mockApi, SCORABLE, type MockRoutes } from '../api/testing.ts';
+import type { BenchmarkEntry, BenchmarkListing, JobEvent, JobSummary, Problem, ServiceListing, ServiceStatus, Workspace } from '../api/types.ts';
 import type { SetupSection } from '../routes.ts';
 import { JobQueueProvider } from '../jobs/queue.tsx';
 import type { RequestState } from '../shell/states.tsx';
@@ -98,7 +98,7 @@ function Harness({ workspace = { status: 'loaded', value: WORKSPACE }, section, 
 }
 
 const routes = (over: MockRoutes = {}): MockRoutes => ({
-  'GET /benchmarks': { body: { benchmarks: EVERY_STATE } },
+  'GET /benchmarks': { body: { scorable: SCORABLE, benchmarks: EVERY_STATE } },
   'GET /services': { body: { services: [QWEN] } },
   ...over,
 });
@@ -209,7 +209,7 @@ describe('the benchmarks', () => {
 });
 
 /** A download job of `benchmark`, as the stream carries it. */
-const download = (id: string, state: JobSummary['state'], benchmark = 'beir/fiqa'): JobSummary => ({ id, created_at_ms: 1, position: 0, state, work: { kind: 'download', benchmark }, faults: [] });
+const download = (id: string, state: JobSummary['state'], benchmark = 'beir/fiqa'): JobSummary => ({ id, created_at_ms: 1, position: 0, state, work: { kind: 'download', benchmark }, dismissed_at_ms: null, faults: [] });
 const running = (done: number, total: number | null): JobSummary['state'] => ({ kind: 'running', done, total, started_at_ms: 2, median_latency_nanos: null });
 /** The job stream sends one event; the stream is opened first if it is not yet. */
 const send = (event: JobEvent) =>
@@ -223,7 +223,7 @@ const AFTER_DOWNLOAD = [READY, FIQA_READY, DIFFERS, UNREADABLE, LOCAL];
 
 describe('the download', () => {
   it('Download submits the job, and the row follows it: queued, downloading with its progress, then ready with its digest', async () => {
-    const api = mockApi(routes({ 'GET /benchmarks': [{ body: { benchmarks: EVERY_STATE } }, { body: { benchmarks: AFTER_DOWNLOAD } }], 'POST /benchmarks/{name}/download': { body: { job_id: '7-0' } } }));
+    const api = mockApi(routes({ 'GET /benchmarks': [{ body: { scorable: SCORABLE, benchmarks: EVERY_STATE } }, { body: { scorable: SCORABLE, benchmarks: AFTER_DOWNLOAD } }], 'POST /benchmarks/{name}/download': { body: { job_id: '7-0' } } }));
     const refresh = vi.fn();
     render(<Harness refresh={refresh} />);
     await within(await screen.findByRole('region', { name: 'Benchmarks' })).findByText('beir/fiqa');
@@ -299,7 +299,7 @@ describe('the download', () => {
   });
 
   it('moves focus to the section when the button that had it goes with the benchmark ready', async () => {
-    mockApi(routes({ 'GET /benchmarks': [{ body: { benchmarks: EVERY_STATE } }, { body: { benchmarks: AFTER_DOWNLOAD } }], 'POST /benchmarks/{name}/download': { body: { job_id: '7-0' } } }));
+    mockApi(routes({ 'GET /benchmarks': [{ body: { scorable: SCORABLE, benchmarks: EVERY_STATE } }, { body: { scorable: SCORABLE, benchmarks: AFTER_DOWNLOAD } }], 'POST /benchmarks/{name}/download': { body: { job_id: '7-0' } } }));
     render(<Harness />);
     await within(await screen.findByRole('region', { name: 'Benchmarks' })).findByText('beir/fiqa');
     const button = within(row('beir/fiqa')).getByRole('button', { name: 'Download' });
@@ -346,7 +346,7 @@ describe('the download', () => {
     const done = entry('beir/scifact', { kind: 'ready', dataset_version: hex('e') });
     mockApi(
       routes({
-        'GET /benchmarks': [{ body: { benchmarks: [small] } }, { body: { benchmarks: [done] } }],
+        'GET /benchmarks': [{ body: { scorable: SCORABLE, benchmarks: [small] } }, { body: { scorable: SCORABLE, benchmarks: [done] } }],
         'GET /services': { body: { services: [] } },
         'POST /benchmarks/{name}/download': { body: { job_id: '7-0' } },
       }),
@@ -426,7 +426,7 @@ describe('the download, when things go wrong around it', () => {
   it('moves focus to the section when the inline Retry succeeds and takes its button with it', async () => {
     mockApi(
       routes({
-        'GET /benchmarks': [{ body: { benchmarks: EVERY_STATE } }, { network: 'Failed to fetch' }, { body: { benchmarks: AFTER_DOWNLOAD } }],
+        'GET /benchmarks': [{ body: { scorable: SCORABLE, benchmarks: EVERY_STATE } }, { network: 'Failed to fetch' }, { body: { scorable: SCORABLE, benchmarks: AFTER_DOWNLOAD } }],
         'POST /benchmarks/{name}/download': { body: { job_id: '7-0' } },
       }),
     );
@@ -445,13 +445,13 @@ describe('the download, when things go wrong around it', () => {
 
   it('a re-read overtaken by a later one that fails is no success: the row still says it is reading its digest', async () => {
     const other = entry('beir/arguana', { kind: 'available', size_bytes: 9_000_000 });
-    let overtaken: (reply: { body: { benchmarks: BenchmarkEntry[] } }) => void = () => {};
+    let overtaken: (reply: { body: BenchmarkListing }) => void = () => {};
     let reads = 0;
     mockApi(
       routes({
         'GET /benchmarks': () => {
           reads += 1;
-          if (reads === 1) return { body: { benchmarks: [AVAILABLE, other] } };
+          if (reads === 1) return { body: { scorable: SCORABLE, benchmarks: [AVAILABLE, other] } };
           if (reads === 2) return new Promise((resolve) => (overtaken = resolve));
           return { network: 'Failed to fetch' };
         },
@@ -468,14 +468,14 @@ describe('the download, when things go wrong around it', () => {
     await waitFor(() => expect(reads).toBe(2));
     send({ event: 'done', data: download('8-0', DONE, 'beir/arguana') });
     await within(region('Benchmarks')).findByRole('alert');
-    await act(async () => overtaken({ body: { benchmarks: [FIQA_READY, other] } }));
+    await act(async () => overtaken({ body: { scorable: SCORABLE, benchmarks: [FIQA_READY, other] } }));
     expect(row('beir/fiqa').textContent).toContain('reading its digest');
     expect(row('beir/arguana').textContent).toContain('reading its digest');
   });
 
   it('says so on the first launch too, on the line beside its Download', async () => {
     const small = entry('beir/scifact', { kind: 'available', size_bytes: 5_200_000 });
-    mockApi(routes({ 'GET /benchmarks': { body: { benchmarks: [small] } }, 'GET /services': { body: { services: [] } }, 'POST /benchmarks/{name}/download': { body: { job_id: '7-0' } } }));
+    mockApi(routes({ 'GET /benchmarks': { body: { scorable: SCORABLE, benchmarks: [small] } }, 'GET /services': { body: { services: [] } }, 'POST /benchmarks/{name}/download': { body: { job_id: '7-0' } } }));
     render(<Harness />);
     const start = await screen.findByRole('region', { name: 'Get started' });
     fireEvent.click(within(start).getByRole('button', { name: 'Download' }));
@@ -490,7 +490,7 @@ describe('the download, when things go wrong around it', () => {
     let answer: (reply: { body: { job_id: string } }) => void = () => {};
     mockApi(
       routes({
-        'GET /benchmarks': [{ body: { benchmarks: EVERY_STATE } }, { body: { benchmarks: AFTER_DOWNLOAD } }],
+        'GET /benchmarks': [{ body: { scorable: SCORABLE, benchmarks: EVERY_STATE } }, { body: { scorable: SCORABLE, benchmarks: AFTER_DOWNLOAD } }],
         'POST /benchmarks/{name}/download': () => new Promise((resolve) => (answer = resolve)),
       }),
     );
@@ -505,11 +505,11 @@ describe('the download, when things go wrong around it', () => {
   });
 
   it('leaves focus where the person moved it while the listing was read again', async () => {
-    let listed: (reply: { body: { benchmarks: BenchmarkEntry[] } }) => void = () => {};
+    let listed: (reply: { body: BenchmarkListing }) => void = () => {};
     let reads = 0;
     mockApi(
       routes({
-        'GET /benchmarks': () => (++reads === 1 ? { body: { benchmarks: EVERY_STATE } } : new Promise((resolve) => (listed = resolve))),
+        'GET /benchmarks': () => (++reads === 1 ? { body: { scorable: SCORABLE, benchmarks: EVERY_STATE } } : new Promise((resolve) => (listed = resolve))),
         'POST /benchmarks/{name}/download': { body: { job_id: '7-0' } },
       }),
     );
@@ -524,7 +524,7 @@ describe('the download, when things go wrong around it', () => {
     send({ event: 'done', data: download('7-0', DONE) });
     const field = benchmarks.getByLabelText('Corpus directory');
     field.focus();
-    await act(async () => listed({ body: { benchmarks: AFTER_DOWNLOAD } }));
+    await act(async () => listed({ body: { scorable: SCORABLE, benchmarks: AFTER_DOWNLOAD } }));
     await waitFor(() => expect(within(row('beir/fiqa')).getByText('ready')).toBeTruthy());
     expect(document.activeElement).toBe(field);
   });
@@ -532,7 +532,7 @@ describe('the download, when things go wrong around it', () => {
   it('a failed re-read keeps the table, says so inline, and its Retry ends the download ready', async () => {
     mockApi(
       routes({
-        'GET /benchmarks': [{ body: { benchmarks: EVERY_STATE } }, { network: 'Failed to fetch' }, { body: { benchmarks: AFTER_DOWNLOAD } }],
+        'GET /benchmarks': [{ body: { scorable: SCORABLE, benchmarks: EVERY_STATE } }, { network: 'Failed to fetch' }, { body: { scorable: SCORABLE, benchmarks: AFTER_DOWNLOAD } }],
         'POST /benchmarks/{name}/download': { body: { job_id: '7-0' } },
       }),
     );
@@ -553,15 +553,15 @@ describe('the download, when things go wrong around it', () => {
 
   it('an import answered while the listing is read again for a download still ends the download ready', async () => {
     const imported = entry('notes', { kind: 'local', dataset_version: hex('d') }, { licence: null, ground_truth: 'qrels' });
-    let stale: (reply: { body: { benchmarks: BenchmarkEntry[] } }) => void = () => {};
+    let stale: (reply: { body: BenchmarkListing }) => void = () => {};
     let reads = 0;
     mockApi(
       routes({
         'GET /benchmarks': () => {
           reads += 1;
-          if (reads === 1) return { body: { benchmarks: EVERY_STATE } };
+          if (reads === 1) return { body: { scorable: SCORABLE, benchmarks: EVERY_STATE } };
           if (reads === 2) return new Promise((resolve) => (stale = resolve));
-          return { body: { benchmarks: [...AFTER_DOWNLOAD, imported] } };
+          return { body: { scorable: SCORABLE, benchmarks: [...AFTER_DOWNLOAD, imported] } };
         },
         'POST /benchmarks/{name}/download': { body: { job_id: '7-0' } },
         'POST /benchmarks/import': { body: imported },
@@ -579,7 +579,7 @@ describe('the download, when things go wrong around it', () => {
     fireEvent.click(benchmarks.getByRole('button', { name: 'Import' }));
     await benchmarks.findByText('notes', { selector: 'td, td *' });
     // The read begun before the import answered lands after it, without the import.
-    await act(async () => stale({ body: { benchmarks: AFTER_DOWNLOAD } }));
+    await act(async () => stale({ body: { scorable: SCORABLE, benchmarks: AFTER_DOWNLOAD } }));
     await waitFor(() => expect(within(row('beir/fiqa')).getByText('ready')).toBeTruthy());
     expect(benchmarks.getByText('notes', { selector: 'td, td *' })).toBeTruthy();
   });
@@ -595,7 +595,7 @@ describe('the download, when things go wrong around it', () => {
 });
 
 describe('the first launch', () => {
-  const empty = routes({ 'GET /benchmarks': { body: { benchmarks: [] } }, 'GET /services': { body: { services: [] } } });
+  const empty = routes({ 'GET /benchmarks': { body: { scorable: SCORABLE, benchmarks: [] } }, 'GET /services': { body: { services: [] } } });
 
   it('the first launch state shows two steps on an empty workspace', async () => {
     mockApi(empty);
@@ -614,7 +614,7 @@ describe('the first launch', () => {
   it('points at the smallest benchmark the manifest pins, read from its size', async () => {
     const big = entry('beir/trec-covid', { kind: 'available', size_bytes: 230_000_000 });
     const small = entry('beir/scifact', { kind: 'available', size_bytes: 5_200_000 });
-    mockApi(routes({ 'GET /benchmarks': { body: { benchmarks: [big, small] } }, 'GET /services': { body: { services: [] } } }));
+    mockApi(routes({ 'GET /benchmarks': { body: { scorable: SCORABLE, benchmarks: [big, small] } }, 'GET /services': { body: { services: [] } } }));
     render(<Harness />);
     const start = await screen.findByRole('region', { name: 'Get started' });
     const first = within(start).getAllByRole('listitem')[0] as HTMLElement;
@@ -1055,7 +1055,7 @@ describe('this build', () => {
 
 describe('the states', () => {
   it('a failed section shows retry while the others render', async () => {
-    const api = mockApi(routes({ 'GET /benchmarks': [problem('backend_failed', 500, 'The datasets directory could not be listed.'), { body: { benchmarks: EVERY_STATE } }] }));
+    const api = mockApi(routes({ 'GET /benchmarks': [problem('backend_failed', 500, 'The datasets directory could not be listed.'), { body: { scorable: SCORABLE, benchmarks: EVERY_STATE } }] }));
     render(<Harness />);
     const benchmarks = within(await screen.findByRole('region', { name: 'Benchmarks' }));
     const alert = await benchmarks.findByRole('alert');
