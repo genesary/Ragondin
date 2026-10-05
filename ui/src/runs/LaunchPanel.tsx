@@ -54,11 +54,8 @@ type Submission = { kind: 'sending' } | { kind: 'queued'; job: string; run: stri
 type Standing = 'unknown' | 'not ready' | 'not offered';
 
 /** A benchmark that is not launched, in a few words, for the list of several. */
-const NOT_LAUNCHED: Record<Standing, string> = {
-  unknown: 'not a benchmark of this workspace',
-  'not ready': 'not ready — download or import it in Setup',
-  'not offered': 'cannot score this prefix',
-};
+const notLaunched = (standing: Standing, what: 'pipeline' | 'prefix'): string =>
+  ({ unknown: 'not a benchmark of this workspace', 'not ready': 'not ready — download or import it in Setup', 'not offered': `cannot score this ${what}` })[standing];
 
 const runsLabel = (n: number) => `Launch ${n} run${n === 1 ? '' : 's'}`;
 
@@ -170,8 +167,8 @@ function useListing<T>(read: (signal: AbortSignal) => Promise<{ ok: true; value:
 }
 
 /** What one of several benchmarks says: why it is not launched, its ground truth before the launch, then its outcome. */
-function SeveralLine({ name, standing, entry, submission }: { name: string; standing: Standing | null; entry: BenchmarkEntry | undefined; submission: Submission | undefined }) {
-  if (standing !== null) return <span className="rg-launch__note">{`not launched: ${NOT_LAUNCHED[standing]}`}</span>;
+function SeveralLine({ name, standing, entry, submission, what }: { what: 'pipeline' | 'prefix'; name: string; standing: Standing | null; entry: BenchmarkEntry | undefined; submission: Submission | undefined }) {
+  if (standing !== null) return <span className="rg-launch__note">{`not launched: ${notLaunched(standing, what)}`}</span>;
   if (submission === undefined) return <span className="rg-launch__note">{entry?.ground_truth == null ? '' : groundTruthLabel(entry.ground_truth)}</span>;
   if (submission.kind === 'sending') return <span className="rg-launch__note">launching…</span>;
   if (submission.kind === 'queued') {
@@ -303,7 +300,7 @@ export function LaunchPanel({ client, store, anchor, pipeline: opened, upTo = nu
           ? unofferedBecause === 'unknown'
             ? `${unoffered} is not a benchmark of this workspace: choose another benchmark.`
             : unofferedBecause === 'not offered'
-              ? `${unoffered} cannot score this prefix: choose another benchmark.`
+              ? `${unoffered} cannot score this ${upTo === null ? 'pipeline' : 'prefix'}: choose another benchmark.`
               : `${unoffered} is not ready: download or import it in Setup, or choose another benchmark.`
           : benchmark === null
           ? onDisk.length > 0
@@ -361,7 +358,7 @@ export function LaunchPanel({ client, store, anchor, pipeline: opened, upTo = nu
             <ul className="rg-launch__several" aria-labelledby={ids.list}>
               {several.map((name) => (
                 <li key={name}>
-                  <span className="rg-launch__bench">{name}</span> <SeveralLine name={name} standing={standing(name)} entry={ready.find((b) => b.name === name)} submission={batch?.[name]} />
+                  <span className="rg-launch__bench">{name}</span> <SeveralLine what={upTo === null ? 'pipeline' : 'prefix'} name={name} standing={standing(name)} entry={ready.find((b) => b.name === name)} submission={batch?.[name]} />
                 </li>
               ))}
             </ul>
@@ -453,17 +450,9 @@ export function LaunchPanel({ client, store, anchor, pipeline: opened, upTo = nu
               {sending ? <span className="rg-launch__note">Closing this panel does not stop the runs not yet sent: they are sent all the same.</span> : null}
             </>
           ) : launch.kind === 'queued' && !ended ? (
-            <>
-              <Button kind="primary" disabled disabledReason={why ?? 'Queued.'} showReason>
-                Queued
-              </Button>
-              <span className="rg-launch__identity">
-                <code title={launch.run}>{`run ${shortHash(launch.run)}`}</code> <span className="rg-launch__note">announced</span>{' '}
-                <ButtonLink size="s" href={formatHash({ screen: 'runs', job: launch.job })}>
-                  Open
-                </ButtonLink>
-              </span>
-            </>
+            <Button kind="primary" disabled disabledReason={why ?? 'Queued.'} showReason>
+              Queued
+            </Button>
           ) : why !== null ? (
             <Button kind="primary" disabled disabledReason={why} showReason>
               Launch
@@ -473,6 +462,15 @@ export function LaunchPanel({ client, store, anchor, pipeline: opened, upTo = nu
               Launch
             </Button>
           )}
+          {/* The identity the API announced stays once the job ended, with the way to it: Launch is offered again beside it. */}
+          {several === null && launch.kind === 'queued' ? (
+            <span className="rg-launch__identity">
+              <code title={launch.run}>{`run ${shortHash(launch.run)}`}</code> <span className="rg-launch__note">announced</span>{' '}
+              <ButtonLink size="s" href={formatHash({ screen: 'runs', job: launch.job })}>
+                Open
+              </ButtonLink>
+            </span>
+          ) : null}
           {onClose === undefined ? null : (
             <Button kind="quiet" onClick={onClose}>
               Close

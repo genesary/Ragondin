@@ -210,8 +210,9 @@ export function jobRow(row: RunRow, { columns, pipeline = false, stale, cancelli
       break;
   }
 
+  // One wrapping box: the table's cells keep to one line, and a hash with its labels would be a long one.
   const run = (
-    <>
+    <span className="rg-runs__run">
       <a className="rg-runs__hash" href={formatHash({ screen: 'runs', job: id })} tabIndex={-1}>
         {short}
       </a>
@@ -227,7 +228,7 @@ export function jobRow(row: RunRow, { columns, pipeline = false, stale, cancelli
           <PrefixLabel parents={row.prefix.parents} upTo={row.prefix.upTo} />
         </span>
       )}
-    </>
+    </span>
   );
 
   return {

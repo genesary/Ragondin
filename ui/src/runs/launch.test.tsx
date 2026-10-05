@@ -273,6 +273,8 @@ describe('the launch panel, as the UX audit left it', () => {
     send(stream, { event: 'failed', data: runJob('j1', failedAt('rerank', 'boom')) });
     const again = within(at).getByRole('button', { name: 'Launch' });
     expect(again.getAttribute('aria-disabled')).toBeNull();
+    // What was announced stays, with the way to it.
+    expect(within(at).getByText(`run ${short(ANNOUNCED)}`)).toBeTruthy();
   });
 
   it('closes from a control of its own, taking the launch out of the address', async () => {
@@ -561,6 +563,13 @@ describe('the launch panel on several benchmarks', () => {
     fireEvent.change(within(panel()).getByLabelText('Pipeline'), { target: { value: 'broken' } });
     expect(within(rowOf('beir/scifact')).queryByText(`run ${short(ANNOUNCED)}`)).toBeNull();
     expect(rowOf('beir/scifact').textContent).toContain('qrels');
+  });
+
+  it('names a benchmark a whole pipeline cannot be scored on as not launched, for that pipeline', async () => {
+    const { stream } = await show('#runs?launch=lexical&benchmark=beir%2Fscifact&benchmark=mine');
+    connect(stream);
+    await within(panel()).findByRole('button', { name: 'Launch 1 run' });
+    expect(rowOf('mine').textContent).toContain('not launched: cannot score this pipeline');
   });
 
   it('sends up_to with every run of a cut, and offers Setup only for a benchmark that is not ready', async () => {
@@ -974,6 +983,15 @@ describe('the layout', () => {
   it('gives a running job’s figures and Cancel one line, so the median arriving with the first tick wraps nothing and grows no row', () => {
     // Measured in Chrome: "1,840 ms / query", "12:34 elapsed" and Cancel side by side take 37 ch of the body face.
     expect(rule(runsCss, '.rg-runs__job')?.declarations.get('min-width')).toBe('40ch');
+  });
+
+  it('lets a row’s identity and its labels wrap, so the table fits a 1440 px screen with every column in view', async () => {
+    // The table's cells do not wrap (design/'s Table); a run's hash, its prefix label and its facts would otherwise make one long line.
+    expect(rule(runsCss, '.rg-runs__run')?.declarations.get('white-space')).toBe('normal');
+    const { stream } = await show();
+    connect(stream, [runJob('j9', failedAt(null, 'boom'), { runId: hex('d') })]);
+    expect(jobRowOf(hex('d')).querySelector('.rg-runs__run')).toBeTruthy();
+    expect(screen.getByRole('row', { name: new RegExp(`^Run ${short(OLD)} on `) }).querySelector('.rg-runs__run')).toBeTruthy();
   });
 
   it('floats the toasts over the page’s corner, within a phone’s width, and lets a click through where there is none', () => {

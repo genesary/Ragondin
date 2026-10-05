@@ -74,8 +74,9 @@ export function runRow(row: RunRow, { selected, refusal, columns, onToggle }: Ru
       />
     );
   const fact = otherFact(row);
+  // One wrapping box: the table's cells keep to one line, and a hash with its labels would be a long one.
   const run = (
-    <>
+    <span className="rg-runs__run">
       <a className="rg-runs__hash" href={formatHash(openRoute(row))} tabIndex={-1}>
         {short}
       </a>
@@ -98,7 +99,7 @@ export function runRow(row: RunRow, { selected, refusal, columns, onToggle }: Ru
           announced as {shortHash(row.announced)}; filed under this id because what ran differs from what was announced
         </span>
       )}
-    </>
+    </span>
   );
 
   // The row keeps focus when Space toggles it, so its name carries the state:

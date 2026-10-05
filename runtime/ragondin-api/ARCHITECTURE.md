@@ -55,7 +55,7 @@ pipeline matrix*; `GET /pipelines`,
 `GET /benchmarks`,
 `POST /benchmarks/import`, `POST /benchmarks/{name}/download`;
 `POST /runs`, `GET /jobs`, `GET`/`PATCH`/`DELETE /jobs/{id}`,
-`GET /jobs/{id}/queries`, `GET /jobs/{id}/trace/{query}` and
+`POST /jobs/{id}/dismiss`, `GET /jobs/{id}/queries`, `GET /jobs/{id}/trace/{query}` and
 `GET /jobs/events` — those described in § *The job queue*; `GET /services`,
 `PUT`/`DELETE /services/{family}/{name}`,
 `POST /services/{family}/{name}/probe` — those described in § *The workspace
@@ -248,8 +248,11 @@ supplies the HTTP transport, and converts what comes back in `convert.rs`.
   `tests/registry_conformance.rs` runs
   it against `FsRegistry`, with a faithful and a corrupted source served by a
   dependency-free local HTTP server — no test touches the network. The
-  derived data's routes call `dataset`; `GET /benchmarks` lists the registry
-  and `POST /benchmarks/import` imports through it; a download is a job on
+  derived data's routes call `dataset`; `GET /benchmarks` lists the registry,
+  beside `scorable` — the ground truths a pipeline can be scored on, by
+  whether it ends in an answer, `CarriedPieces::scorable` asked of each
+  (`convert::scorable`), so a client filters what it offers without restating
+  ADR-C30 § 5 — and `POST /benchmarks/import` imports through it; a download is a job on
   the queue's download lane, through `download` (§ The job queue).
 
 ### The loaded datasets: a choice made here
@@ -497,7 +500,12 @@ in `tests/workspace_toml.rs`:
 
 ### The pipelines
 
-`fs::FsPipelines` is the `PipelineSource` over `pipelines/`.
+`fs::FsPipelines` is the `PipelineSource` over `pipelines/`. `GET /pipelines`
+lists each document with its hash or why it does not validate, and
+`ends_in_answer`: whether the pipeline it lowers to has a terminal node that
+produces an answer (`derived::Outputs`, the harness's own test of an answer
+to score), `null` when it does not validate. With `GET /benchmarks`'
+`scorable`, that is which benchmarks a launch of it can be scored on.
 
 - **The verbatim rule.** A document is stored exactly as it was sent and read
   exactly as it is stored, never parsed and re-serialized — for the reason
@@ -1091,12 +1099,25 @@ already written with their new positions, so two jobs on disk can share a
 position until the next reorder; the fault says so. A job that is not queued
 is `job_not_queued`.
 
+### Dismissal
+
+`POST /jobs/{id}/dismiss` records that a person is done with an ended job:
+`dismissed_at`, written into its file before memory changes, served as
+`dismissed_at_ms`, and published as a `dismissed` event carrying the job.
+Nothing else about it changes — its state, its faults and the partial traces
+under `jobs/<id>/partial/` stay — and `GET /jobs` still lists it: hiding it
+is the client's. A job dismissed already keeps its first time; one still
+queued or running is `job_not_ended`. *A choice made here:* a dismissal is a
+mark, never a deletion, since the jobs have no lifetime yet (§ Known limits)
+and a deletion would take the partial traces with it.
+
 ### The event stream
 
 `GET /jobs/events` is server-sent events over `axum`'s `Sse`: one event per
 transition, named after the state entered, one per progress tick, named
-`running`, one `reordered` per job a reorder moved, and one `fault` per fault
-reported beside a job (§ Faults beside a job), each carrying the job as
+`running`, one `reordered` per job a reorder moved, one `fault` per fault
+reported beside a job (§ Faults beside a job), and one `dismissed` per job
+dismissed (§ Dismissal), each carrying the job as
 `GET /jobs/{id}` answers it. Every event is numbered under the queue's
 lock and kept in a buffer of the 1024 most recent; its id is
 `<process>:<number>`, the process named by the time it started. A client
@@ -1110,7 +1131,7 @@ lock every publication holds, and an event already sent is never sent again.
 An idle stream sends a comment every 15 s. The description declares the
 stream's success body as `text/event-stream` of schema `JobEvent`, an
 adjacently tagged union of `{event, data}` — `queued`, `running`, `done`,
-`failed`, `cancelled`, `reordered` and `fault` to `JobSummary`, `resync` to
+`failed`, `cancelled`, `reordered`, `fault` and `dismissed` to `JobSummary`, `resync` to
 `JobListing` — so the UI's map from an event's name to its data is generated.
 The stream builds each event's name and data from a `JobEvent` value, and a
 unit test checks the two against the type's serde tag, so the schema is the
@@ -1134,7 +1155,8 @@ stream's.
   `fault`, so whatever reads the job at its end — the UI's end toast — counts
   the faults it had then. The job and its file carry the fault either way.
 - **Jobs are never pruned**: every ended job stays in `jobs/` and in memory,
-  and `GET /jobs` lists them all, until a later issue gives them a lifetime.
+  and `GET /jobs` lists them all, dismissed ones included (§ Dismissal),
+  until a later issue gives them a lifetime.
 
 ### Choices made here
 
