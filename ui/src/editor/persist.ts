@@ -11,7 +11,8 @@ import { useEffect, useReducer, useRef, useState } from 'react';
 import type { ApiClient, ApiProblem } from '../api/client.ts';
 import type { WireDocument } from './document.ts';
 import { initialSave, saveReducer, type FileInit, type SaveEvent, type SaveState } from './saving.ts';
-import { chooseRewrite, rewriteChosen } from './session.ts';
+import { renameRecent } from './recent.ts';
+import { chooseRewrite, renameSession, rewriteChosen } from './session.ts';
 import type { EditorLayout } from './store.ts';
 import type { Verdict } from './validation.ts';
 
@@ -24,17 +25,20 @@ const NOTHING: FileInit = { name: null, etag: null, canonical: true, proposed: '
 type Disk = { name: string | null; etag: string | null; saved: string; blocked: boolean };
 
 /** The phases that wait on the person: nothing is written while one is up. */
-export const asking = (state: SaveState) => state.phase.kind === 'conflict' || state.phase.kind === 'handwritten' || state.phase.kind === 'taken';
+export const asking = (state: SaveState) => state.phase.kind === 'conflict' || state.phase.kind === 'handwritten' || state.phase.kind === 'naming';
 
 /**
  * Writes what the editor held when it closed: `doc`, validated first unless
  * `verdict` already called it valid, over the etag of the last write — once
- * the write in flight, if any, has answered. Nothing is written while a
- * prompt is up, for a hand-written file not yet asked about, after a stale
- * etag, or for a document the server refuses.
+ * the write in flight, if any, has answered. Nothing is written while the
+ * stale-etag or the hand-written prompt is up, for a hand-written file not yet asked about, after a stale
+ * etag, or for a document the server refuses. A document never written is
+ * created under the name its question offers, if that name is free.
  */
 async function flush(client: ApiClient, doc: WireDocument, verdict: Verdict, state: SaveState, disk: { current: Disk }, inflight: Promise<void> | null) {
-  if (asking(state) || state.file.handwritten) return;
+  // A document never written whose name is being asked for is kept under the name offered rather than lost: it is
+  // created, never written over another. The two other questions hold everything back.
+  if ((asking(state) && state.phase.kind !== 'naming') || state.file.handwritten) return;
   if (inflight !== null) await inflight;
   const at = disk.current;
   if (at.blocked) return;
@@ -55,7 +59,13 @@ async function flush(client: ApiClient, doc: WireDocument, verdict: Verdict, sta
  * `file`, nothing is ever written. `onNamed` hears the name the editor now
  * writes under, whenever it changes: a first creation, or a save as a new file.
  */
-export function useSaving(client: ApiClient, doc: WireDocument, verdict: Verdict, file: FileInit | undefined, onNamed: (name: string) => void): [SaveState, (event: SaveEvent) => void] {
+export function useSaving(
+  client: ApiClient,
+  doc: WireDocument,
+  verdict: Verdict,
+  file: FileInit | undefined,
+  onNamed: (name: string) => void,
+): [SaveState, (event: SaveEvent) => void, (to: string) => Promise<string | null>] {
   const enabled = file !== undefined;
   const [state, dispatch] = useReducer(saveReducer, undefined, () => initialSave(doc, file ?? NOTHING, file?.name != null && rewriteChosen(file.name)));
   const { phase } = state;
@@ -101,7 +111,33 @@ export function useSaving(client: ApiClient, doc: WireDocument, verdict: Verdict
     if (event.type === 'rewrite' && state.file.name !== null) chooseRewrite(state.file.name);
     dispatch(event);
   };
-  return [state, act];
+
+  /**
+   * The title edited: a document never written takes the name for its first write; a file is renamed on disk
+   * (`POST /pipelines/{name}/rename`) over the etag held — its layout and pairings move with it, its bytes and so
+   * its etag unchanged — and the editor writes on under the new name. Answers why it was refused, or null.
+   */
+  const rename = async (to: string): Promise<string | null> => {
+    const from = disk.current.name;
+    if (from === null) {
+      dispatch({ type: 'propose', name: to });
+      return null;
+    }
+    if (to === from) return null;
+    if (latest.current.state.phase.kind === 'saving') return 'A save is under way: rename once it has answered.';
+    if (asking(latest.current.state)) return 'Answer the question above first.';
+    const result = await client.post('/pipelines/{name}/rename', { to }, { name: from }, { headers: { 'If-Match': `"${disk.current.etag ?? ''}"` } });
+    if (!result.ok) {
+      if (result.problem.code === 'precondition_failed') return `${from}.yaml changed on disk since the editor read it: reload it, then rename it.`;
+      return result.problem.code === 'pipeline_exists' ? `A pipeline named \`${to}\` already exists: choose another name.` : result.problem.message;
+    }
+    disk.current = { ...disk.current, name: result.value.name };
+    renameSession(from, result.value.name);
+    renameRecent(from, result.value.name);
+    dispatch({ type: 'renamed', name: result.value.name });
+    return null;
+  };
+  return [state, act, rename];
 }
 
 /**

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
-import { Button, Inspector } from '../../design/index.ts';
+import { Button, Input, Inspector } from '../../design/index.ts';
 import type { ApiClient } from '../api/client.ts';
 import type { Capabilities, ParameterValue, ServiceStatus } from '../api/types.ts';
 import { boundsOf, Canvas, clearSpot, edgeId, RANK_GAP, resolveLayout, toModel, type CanvasPorts, type Position } from '../canvas/index.ts';
@@ -67,21 +67,96 @@ function saveWords(save: SaveState, dirty: boolean, verdict: Verdict, errors: nu
       return 'Not saved: the file changed on disk';
     case 'handwritten':
       return 'Not saved: waiting for your choice';
-    case 'taken':
-      return 'Not saved: the name is taken';
+    case 'naming':
+      return 'Not saved yet: name it to save it';
     case 'failed':
       return `Not saved: ${phase.problem.message}`;
     case 'idle':
       if (verdict.status === 'invalid') return `Unsaved — ${errors} ${errors === 1 ? 'error' : 'errors'}`;
       if (verdict.status === 'failed') return 'Unsaved: the server could not be asked';
       if (dirty || (save.keep && save.file.name === null)) return 'Unsaved changes';
-      if (save.file.name === null) return 'Not written yet: the first change, or Keep this pipeline, writes it';
+      if (save.file.name === null) return 'Not written yet: the first change, or Keep this pipeline, asks for its name';
       // "Saved" only once this editor has written: a file just opened was saved by nobody here.
       return save.wrote ? 'Saved' : 'No changes since it was opened';
   }
 }
 
 const shortRun = (id: string) => id.slice(0, 12);
+
+/**
+ * The pipeline's name, and its Rename: a field in its place while it is edited — Enter renames, Escape keeps the
+ * name — and the server's refusal under it, in words.
+ */
+function Title({ name, proposed, onRename }: { name: string; proposed: string; onRename: (to: string) => Promise<string | null> }) {
+  const [editing, setEditing] = useState(false);
+  const [text, setText] = useState(proposed);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const stop = () => {
+    setEditing(false);
+    setError(null);
+  };
+  const commit = async () => {
+    const to = text.trim();
+    if (to === '' || to === proposed) return stop();
+    setBusy(true);
+    const why = await onRename(to);
+    setBusy(false);
+    if (why === null) stop();
+    else setError(why);
+  };
+  if (!editing) {
+    return (
+      <div className="rg-editor__name">
+        <h2 className="rg-editor__title">{name}</h2>
+        <Button
+          kind="quiet"
+          size="s"
+          onClick={() => {
+            setText(proposed);
+            setEditing(true);
+          }}
+        >
+          Rename
+        </Button>
+      </div>
+    );
+  }
+  return (
+    <form
+      className="rg-editor__name"
+      onSubmit={(event) => {
+        event.preventDefault();
+        void commit();
+      }}
+    >
+      <Input
+        id="rg-editor-name"
+        label="Pipeline name"
+        mono
+        autoFocus
+        value={text}
+        {...(error === null ? {} : { error: <Words text={error} /> })}
+        onChange={(event) => setText(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') {
+            event.preventDefault();
+            stop();
+          } else if (event.key === 'Enter') {
+            event.preventDefault();
+            void commit();
+          }
+        }}
+      />
+      <Button type="submit" size="s" busy={busy} busyLabel="Renaming…">
+        Rename
+      </Button>
+      <Button kind="quiet" size="s" onClick={stop}>
+        Cancel
+      </Button>
+    </form>
+  );
+}
 
 /**
  * The canonical hash, as the run it would name is shown elsewhere: its first twelve characters, the whole hash in its
@@ -125,7 +200,9 @@ export function Editor({ client, title, stored = null, initial, layout, capabili
   }, []);
   const { doc } = state;
   const verdict = useValidation(client, doc);
-  const [save, act] = useSaving(client, doc, verdict, file, onNamed);
+  const [save, act, renameFile] = useSaving(client, doc, verdict, file, onNamed);
+  // A name typed in the title of a document never written: shown as its name, and offered at its first write.
+  const [proposedByPerson, setProposedByPerson] = useState(false);
   const written = save.file.etag === null ? null : save.file.name;
   // While a prompt is up, or a save as a new file is out, the positions wait for the file chosen.
   const holding = asking(save) || (save.phase.kind === 'saving' && save.phase.back !== null);
@@ -140,7 +217,7 @@ export function Editor({ client, title, stored = null, initial, layout, capabili
     return () => window.removeEventListener('beforeunload', onLeave);
   }, [unsaved]);
   const [exporting, setExporting] = useState(false);
-  const name = save.file.name ?? title;
+  const name = save.file.name ?? (proposedByPerson ? save.file.proposed : title);
   const fileName = save.file.name ?? (save.file.proposed === '' ? 'pipeline' : save.file.proposed);
   const root = useRef<HTMLDivElement>(null);
   const [inserting, setInserting] = useState<HTMLElement | null>(null);
@@ -389,7 +466,19 @@ export function Editor({ client, title, stored = null, initial, layout, capabili
   return (
     <div ref={root} className="rg-editor" onKeyDown={onKeyDown}>
       <header className="rg-editor__bar">
-        <h2 className="rg-editor__title">{name}</h2>
+        {file === undefined ? (
+          <h2 className="rg-editor__title">{name}</h2>
+        ) : (
+          <Title
+            name={name}
+            proposed={save.file.name ?? save.file.proposed}
+            onRename={async (to) => {
+              const why = await renameFile(to);
+              if (why === null && save.file.name === null) setProposedByPerson(true);
+              return why;
+            }}
+          />
+        )}
         {picker?.(save.file.name ?? stored)}
         <Button
           kind="primary"

@@ -168,7 +168,7 @@ describe('the Editor screen', () => {
     expect(await screen.findByText(/Forked from run/, undefined, { timeout: SLOW })).toBeTruthy();
   });
 
-  it('on a workspace with no pipeline, opens on the example, writes no file until the first edit, and keeps editing once it is written', async () => {
+  it('on a workspace with no pipeline, opens on the example, writes no file until the first edit, and keeps editing once it is written', { timeout: 3 * SLOW }, async () => {
     const api = mockApi({
       ...ROUTES,
       'GET /pipelines': { body: { pipelines: [] } },
@@ -184,6 +184,11 @@ describe('the Editor screen', () => {
     await new Promise((resolve) => setTimeout(resolve, 600));
     expect(api.requests.filter((r) => r.startsWith('PUT'))).toEqual([]);
     fireEvent.click(within(screen.getByRole('region', { name: 'Palette' })).getByRole('button', { name: /^rrf/ }));
+    // The first write asks the name, offering the one proposed.
+    const prompt = await screen.findByRole('region', { name: 'Name this pipeline' }, { timeout: SLOW });
+    expect((within(prompt).getByRole('textbox', { name: 'Pipeline name' }) as HTMLInputElement).value).toBe('example');
+    await waitFor(() => expect(within(prompt).getByRole('button', { name: 'Save' }).getAttribute('aria-disabled')).toBeNull(), { timeout: SLOW });
+    fireEvent.click(within(prompt).getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(window.location.hash).toBe('#editor/example'), { timeout: SLOW });
     expect(api.headers[api.requests.indexOf('PUT /api/v1/pipelines/example')]!['If-None-Match']).toBe('*');
     // The same editor, its history kept: the address naming the file it wrote does not reopen it.

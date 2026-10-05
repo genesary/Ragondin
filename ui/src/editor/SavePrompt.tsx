@@ -22,7 +22,7 @@ export const HELD = 'Changes made while this question is open stay on the canvas
 const INVALID = 'Only a document the server calls valid is written: correct the errors the canvas shows first.';
 
 /** The new file's name and its button; `lead`, another choice, drawn first in the same row so the choices sit together. */
-function NewName({ proposed, error, valid, onSave, lead }: { proposed: string; error: string | undefined; valid: boolean; onSave: (name: string) => void; lead?: ReactNode }) {
+function NewName({ proposed, error, valid, onSave, lead, label = 'New file name', action = 'Save as a new file' }: { proposed: string; error: string | undefined; valid: boolean; onSave: (name: string) => void; lead?: ReactNode; label?: string; action?: string }) {
   const id = useId();
   const [name, setName] = useState(proposed);
   const submit = (event: FormEvent) => {
@@ -32,9 +32,9 @@ function NewName({ proposed, error, valid, onSave, lead }: { proposed: string; e
   return (
     <form className="rg-editor__new-name rg-editor__choices" onSubmit={submit}>
       {lead}
-      <Input id={`${id}-name`} label="New file name" mono value={name} onChange={(e) => setName(e.target.value)} {...(error === undefined ? {} : { error: <Words text={error} /> })} />
+      <Input id={`${id}-name`} label={label} mono value={name} onChange={(e) => setName(e.target.value)} {...(error === undefined ? {} : { error: <Words text={error} /> })} />
       <Button type="submit" {...(!valid ? { disabled: true, disabledReason: INVALID } : name.trim() === '' ? { disabled: true, disabledReason: 'Give the new file a name.' } : {})}>
-        Save as a new file
+        {action}
       </Button>
     </form>
   );
@@ -94,13 +94,13 @@ export function SavePrompt({ phase, name, valid, onReload, onRewrite, onSaveAs }
           />
         </section>
       );
-    case 'taken':
+    case 'naming':
       return (
-        <section className="rg-editor__prompt" aria-label="This name is taken">
-          <InlineMessage tone="warning" title={`A pipeline named ${name} already exists. Nothing was written.`}>
-            Give this pipeline another name to write it. {HELD}
+        <section className="rg-editor__prompt" aria-label="Name this pipeline">
+          <InlineMessage tone="info" title="Name this pipeline to save it.">
+            It is written as pipelines/&lt;name&gt;.yaml, and saved as it changes from then on. {HELD}
           </InlineMessage>
-          <NewName proposed={`${name}-2`} error={phase.error} valid={valid} onSave={onSaveAs} />
+          <NewName proposed={name} error={phase.error} valid={valid} onSave={onSaveAs} label="Pipeline name" action="Save" />
         </section>
       );
     default:
