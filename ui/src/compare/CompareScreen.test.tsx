@@ -286,7 +286,7 @@ describe('the charts', () => {
     await loaded();
     fireEvent.change(screen.getByLabelText('Per-query metric'), { target: { value: 'mrr@10' } });
     fireEvent.click(screen.getByRole('radio', { name: 'B · hybrid-rerank' }));
-    fireEvent.click(screen.getByRole('button', { name: 'much worse, below −0.3: 6 queries' }));
+    fireEvent.click(screen.getByRole('button', { name: 'much worse, 6 queries, below −0.3' }));
     const list = screen.getByRole('region', { name: '6 queries much worse, below −0.3' });
     const links = within(list).getAllByRole('link');
     expect(links).toHaveLength(6);
@@ -350,7 +350,7 @@ describe('at phone width', () => {
     show(THREE);
     await loaded();
     for (const toggle of screen.getAllByRole('button', { name: 'Show as a table' })) fireEvent.click(toggle);
-    fireEvent.click(screen.getByRole('button', { name: 'much worse, below −0.3: 1 query' }));
+    fireEvent.click(screen.getByRole('button', { name: 'much worse, 1 query, below −0.3' }));
     const tables = screen.getAllByRole('table');
     expect(tables.length).toBeGreaterThanOrEqual(7);
     for (const table of tables) {
