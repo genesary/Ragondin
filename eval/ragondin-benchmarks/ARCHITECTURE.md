@@ -415,7 +415,7 @@ disagree. Each `ManifestEntry` holds:
 unique, every format one `bench` accepts, and every URL pinned to a commit.
 It also holds each entry's `carries` to what its format's adapter loads from
 the fixture in that format's layout, and refuses an entry that carries
-nothing. That test cannot reach the snapshot itself — tests use no network —
+nothing; `download` checks the real snapshot against it (below). That test cannot reach the snapshot itself — tests use no network —
 but `dataset_version` pins the snapshot, and a format's adapter decides which
 pieces it reads: `beir` reads qrels only, `squad` both.
 
@@ -479,7 +479,9 @@ at `<datasets>/<dir>`. Every verdict is a statement about digests, through
   file unless it is exactly the manifest's size and SHA-256 — before anything
   is loaded or placed. It then loads the staged snapshot with the entry's
   format and refuses it unless it digests to the manifest's
-  `dataset_version`. Only then is the staging directory renamed to
+  `dataset_version` and carries the pieces the entry declares (`carries`,
+  shown before the download; a mismatch, `DownloadError::GroundTruth`, is a
+  defect of the manifest). Only then is the staging directory renamed to
   `<datasets>/<dir>`. Each refusal is a `DownloadError` naming the entry and,
   for a size or a digest, the expected and the found value. `controls` carries
   the progress callback (bytes received of the snapshot's total, after every

@@ -200,6 +200,37 @@ fn a_download_whose_archive_digest_differs_is_refused_and_leaves_no_directory() 
     );
 }
 
+/// The ground truth a manifest entry declares is shown before the download:
+/// a snapshot that carries other pieces is a defect of the manifest, said
+/// rather than published under a declaration it contradicts.
+#[test]
+fn a_download_that_carries_other_pieces_than_its_entry_declares_is_refused_and_leaves_no_directory()
+{
+    let mut entry = true_squad_entry();
+    entry.carries = CarriedPieces::QrelsOnly;
+    let datasets = scratch("download_carries_differ");
+
+    let error =
+        run(&entry, &datasets, &mut serving_squad(squad_bytes())).expect_err("the pieces differ");
+
+    match &error {
+        DownloadError::GroundTruth {
+            entry: name,
+            declared,
+            found,
+        } => {
+            assert_eq!(name, "squad/mini");
+            assert_eq!(*declared, CarriedPieces::QrelsOnly);
+            assert_eq!(*found, CarriedPieces::QrelsAndReferenceAnswers);
+        }
+        other => panic!("expected a ground truth error, got {other:?}"),
+    }
+    assert!(
+        listing(&datasets).is_empty(),
+        "nothing is left under the datasets directory"
+    );
+}
+
 #[test]
 fn a_download_whose_loaded_dataset_version_differs_from_the_manifest_is_refused_and_leaves_no_directory(
 ) {

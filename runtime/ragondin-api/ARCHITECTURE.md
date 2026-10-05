@@ -1583,8 +1583,9 @@ document § 8 lists seven codes and leaves the rest to the implementation:
   import is a 422, the request's to correct. A cancelled download is its own
   code, so the queue can tell it from a failure. A disk that cannot be
   written is `backend_failed`, whichever of the two hit it — and so is a
-  pinned snapshot that does not load, or a manifest path outside its
-  directory: the manifest pinned those bytes, so the defect is this build's,
+  pinned snapshot that does not load, one that carries other pieces than its
+  manifest entry declares, or a manifest path outside its directory: the
+  manifest pinned those bytes, so the defect is this build's,
   not the source's.
 - **Five codes for the workspace's endpoints**, each a different action for
   the client. `pipeline_not_found` and `service_not_found` are their own

@@ -684,11 +684,12 @@ pub(crate) fn download_error(name: &str, error: DownloadError) -> ApiError {
         DownloadError::Cancelled { .. } => ApiError::DownloadCancelled {
             name: name.to_owned(),
         },
-        // The manifest pinned these bytes: a path outside the directory, or
-        // a snapshot that does not load, is this build's defect, not the
-        // source's.
+        // The manifest pinned these bytes: a path outside the directory, a
+        // snapshot that does not load, or one carrying other pieces than the
+        // manifest declares, is this build's defect, not the source's.
         DownloadError::Io { .. }
         | DownloadError::Load { .. }
+        | DownloadError::GroundTruth { .. }
         | DownloadError::InvalidPath { .. } => ApiError::BackendFailed {
             detail: causes(&error),
         },
@@ -947,6 +948,26 @@ pub(crate) fn node_metrics(figures: &NodeFigures) -> NodeMetrics {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Before its download, a manifest entry is listed with the ground truth
+    /// it declares: SQuAD's qrels and reference answers, SciFact's qrels.
+    #[test]
+    fn an_entry_not_yet_downloaded_is_listed_with_the_ground_truth_it_declares() {
+        let listed = |name: &str| {
+            let entry = ragondin_benchmarks::manifest::manifest()
+                .into_iter()
+                .find(|entry| entry.name == name)
+                .expect("the manifest names it");
+            manifest_benchmark(&entry, DiskState::Absent)
+        };
+        let squad = listed("squad/dev");
+        assert!(matches!(squad.state, BenchmarkState::Available { .. }));
+        assert_eq!(squad.ground_truth, Some(GroundTruth::Both));
+        assert_eq!(
+            listed("beir/scifact").ground_truth,
+            Some(GroundTruth::Qrels)
+        );
+    }
 
     /// The submission check reads ADR-C30 § 5 off the listing's ground
     /// truth, so the way back must lose nothing the way there kept.
