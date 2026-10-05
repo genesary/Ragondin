@@ -1,12 +1,13 @@
 // The Replay screen: one run, one query, node by node — and two runs side by
 // side (the front-end design, § 3) — or a failed or cancelled job's partial
 // traces, alone and labelled partial. Its state is the address,
-// `#replay/<run>/q/<query>?with=<run>` or `#replay/job/<id>/q/<query>`; it
-// owns the per-node metric, the filter, the search and the selected node,
-// none of them remembered.
+// `#replay/<run>/q/<query>/node/<id>?with=<run>` or
+// `#replay/job/<id>/q/<query>/node/<id>`, the selected node included; it
+// owns the per-node metric, the filter and the search, none of them
+// remembered.
 // ARCHITECTURE.md § The Replay screen.
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ButtonLink, EmptyState, InlineMessage, RunSwatch, SegmentedControl, Select, Sheet } from '../../design/index.ts';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Button, ButtonLink, EmptyState, InlineMessage, RunSwatch, SegmentedControl, Select, Sheet } from '../../design/index.ts';
 import type { ApiClient, ApiProblem, ApiResult } from '../api/client.ts';
 import { ForkButton } from '../editor/Fork.tsx';
 import type { Graph, JobSummary, PartialQueries, PartialTrace, QueryTrace, RunDetail, RunListing, RunQueries } from '../api/types.ts';
@@ -15,7 +16,7 @@ import { formatHash, navigate } from '../routes.ts';
 import { prefixText } from '../runs/model.ts';
 import { ErrorState, Loading, type RequestState } from '../shell/states.tsx';
 import { defaultMetric } from '../metrics.ts';
-import { candidates, firstJudged, fromPartial, overlayOf, passagesBanner, runName, type ReplayTrace } from './model.ts';
+import { candidates, editorTarget, firstJudged, fromPartial, overlayOf, passagesBanner, runName, type ReplayTrace } from './model.ts';
 import { NodeInspector, type Side } from './NodeInspector.tsx';
 import { QueryList } from './QueryList.tsx';
 import './Replay.css';
@@ -29,6 +30,8 @@ type RunSource = {
   run: string;
   /** The query it names, if any. */
   query?: string | undefined;
+  /** The node it names selected on that query, if any. */
+  node?: string | undefined;
   /** The run it names beside, if any. */
   with?: string | undefined;
 };
@@ -39,6 +42,8 @@ type JobSource = {
   job: string;
   /** The query it names, if any. */
   query?: string | undefined;
+  /** The node it names selected on that query, if any. */
+  node?: string | undefined;
 };
 
 /** What Replay reads: a stored run, or a job's partial traces — never one passed off as the other. */
@@ -114,7 +119,7 @@ export function ReplayScreen(props: ReplayScreenProps) {
   return 'job' in props ? <PartialReplay {...props} /> : <RunReplay {...props} />;
 }
 
-function RunReplay({ client, run, query, with: other }: RunSource) {
+function RunReplay({ client, run, query, node, with: other }: RunSource) {
   const detail = useRead<RunDetail>(`detail ${run}`, (signal) => client.get('/runs/{id}', { id: run }, { signal }));
   const queries = useRead<RunQueries>(`queries ${run}`, (signal) => client.get('/runs/{id}/queries', { id: run }, { signal }));
   const listing = useRead<RunListing>('listing', (signal) => client.get('/runs', { signal }));
@@ -132,14 +137,19 @@ function RunReplay({ client, run, query, with: other }: RunSource) {
   const otherTrace = useRead<QueryTrace>(beside === null || query === undefined ? null : `trace ${beside} ${query}`, (signal) => client.get('/runs/{id}/trace/{query}', { id: beside ?? '', query: query ?? '' }, { signal }));
 
   const [chosenMetric, setMetric] = useState<string | null>(null);
-  const [selected, setSelected] = useState<Selected | null>(null);
+  // The node selected is the address's; which canvas it was selected on is
+  // the screen's, since both canvases select it where both have it.
+  const [from, setFrom] = useState<Selected['from']>('A');
   const listed = loaded(queries);
   const families = loaded(listing)?.runs.find((r) => r.id === run)?.metric_families ?? {};
   const metric = chosenMetric ?? (listed === null ? null : defaultMetric(listed.metrics, families));
 
+  // A query, the run beside and the node selected are state within the view:
+  // written in place. The node stays selected across queries unless one is given.
   const go = useCallback(
-    (q: string, w: string | null) => navigate(w === null ? { screen: 'replay', run, query: q } : { screen: 'replay', run, query: q, with: w }, { replace: true }),
-    [run],
+    (q: string, w: string | null, n: string | null | undefined = node) =>
+      navigate({ screen: 'replay', run, query: q, ...(n === null || n === undefined ? {} : { node: n }), ...(w === null ? {} : { with: w }) }, { replace: true }),
+    [run, node],
   );
 
   const graph = loaded(detail)?.graph;
@@ -178,20 +188,31 @@ function RunReplay({ client, run, query, with: other }: RunSource) {
   const stale = sides.length === 1 && beside !== null && otherFailure === undefined && kept?.run === beside ? kept : null;
   const graphB = drawnB?.graph ?? stale?.graph ?? null;
 
+  const selected: Selected | null = node === undefined ? null : { node, from: (from === 'B' && graphB !== null && has(graphB, node)) || (graph !== undefined && !has(graph, node)) ? 'B' : 'A' };
+  const select = (s: Selected | null) => {
+    if (query === undefined) return;
+    if (s !== null) setFrom(s.from);
+    go(query, beside, s?.node ?? null);
+  };
   // A node selected in B goes with B: in A it would read as "not run".
   useEffect(() => {
-    if (beside === null) setSelected((s) => (s?.from === 'B' ? null : s));
-  }, [beside]);
-  // So does a node neither graph on screen has — B switched to a run that lacks it.
+    if (beside !== null || from !== 'B') return;
+    setFrom('A');
+    if (node !== undefined && query !== undefined) go(query, null, null);
+  }, [beside, from, node, query, go]);
+  // So does a node neither graph has — B switched to a run that lacks it —
+  // but only once B is known: while B is first read, or read again after a
+  // switch, a node only B has waits for it, so a reopened address keeps it.
+  const bKnown = beside === null || graphB !== null || otherFailure !== undefined;
   useEffect(() => {
-    if (graph === undefined) return;
-    setSelected((s) => (s !== null && !has(graph, s.node) && (graphB === null || !has(graphB, s.node)) ? null : s));
-  }, [graph, graphB]);
+    if (graph === undefined || node === undefined || query === undefined || !bKnown) return;
+    if (!has(graph, node) && (graphB === null || !has(graphB, node))) go(query, beside, null);
+  }, [graph, graphB, bKnown, node, query, beside, go]);
 
   // No query chosen: the first judged one, filled in as a correction.
   const first = listed === null ? null : firstJudged(listed.queries);
   useEffect(() => {
-    if (query === undefined && first !== null) go(first.id, null);
+    if (query === undefined && first !== null) go(first.id, null, null);
   }, [query, first, go]);
 
   if (detail.state.status === 'error') return <ErrorState problem={detail.state.problem} onRetry={detail.retry} />;
@@ -218,6 +239,9 @@ function RunReplay({ client, run, query, with: other }: RunSource) {
     );
   }
 
+  // The node the editor opens on, from either button: one of run A's — a node
+  // only B has is no node of the document A ran.
+  const nodeA = selected !== null && has(graph, selected.node) ? selected.node : null;
   // What the stage draws: the sides, and B's kept canvas while B is stale.
   const drawn: Side[] = stale === null ? sides : [...sides, { letter: 'B', name: nameOf(runs, stale.run), graph: stale.graph, trace: stale.trace, queries: null }];
   const held: Held | null =
@@ -241,7 +265,8 @@ function RunReplay({ client, run, query, with: other }: RunSource) {
     <div className="rg-replay">
       <div className="rg-replay__bar">
         <RunSwatch slot="a" name={nameA} hash={run} onCopyHash={copy} copyLabel="run A" />
-        <ForkButton client={client} run={run} size="s" />
+        <ForkButton client={client} run={run} size="s" node={nodeA} />
+        <OpenInEditor listing={listing} run={run} node={nodeA} />
         <SegmentedControl
           label="Replay mode"
           value={beside === null ? 'single' : 'side'}
@@ -289,7 +314,7 @@ function RunReplay({ client, run, query, with: other }: RunSource) {
           {shownTrace === null ? (
             trace.state.status === 'error' ? <ErrorState problem={trace.state.problem} onRetry={trace.retry} /> : <Loading label={`Reading query ${query}…`} />
           ) : (
-            <Stage sides={drawn} stale={stale === null ? null : { asked: query, reading: otherTrace.state.status === 'loading' }} held={held} trace={trace.state.status === 'error' ? trace.state : null} onRetry={trace.retry} metric={metric} selected={selected} onSelect={setSelected} />
+            <Stage sides={drawn} stale={stale === null ? null : { asked: query, reading: otherTrace.state.status === 'loading' }} held={held} trace={trace.state.status === 'error' ? trace.state : null} onRetry={trace.retry} metric={metric} selected={selected} onSelect={select} />
           )}
         </div>
         <div className="rg-replay__panel">
@@ -299,7 +324,7 @@ function RunReplay({ client, run, query, with: other }: RunSource) {
             // A node only B has, selected on B's kept canvas while B reads this query.
             <p className="rg-replay__placeholder">No such node in A.</p>
           ) : (
-            <NodeInspector node={selected.node} from={sides.length === 2 ? selected.from : 'A'} sides={sides} held={beside !== null && sides.length === 1} metric={metric} onClose={() => setSelected(null)} />
+            <NodeInspector node={selected.node} from={sides.length === 2 ? selected.from : 'A'} sides={sides} held={beside !== null && sides.length === 1} metric={metric} onClose={() => select(null)} />
           )}
         </div>
       </div>
@@ -322,16 +347,27 @@ function ending(job: JobSummary): string {
  * reads them against no dataset, so nothing is scored and no text is shown,
  * and nothing stands beside them.
  */
-function PartialReplay({ client, job, query }: JobSource) {
+function PartialReplay({ client, job, query, node }: JobSource) {
   const queries = useRead<PartialQueries>(`partial ${job}`, (signal) => client.get('/jobs/{id}/queries', { id: job }, { signal }));
   const trace = useRead<PartialTrace>(query === undefined ? null : `partial ${job} ${query}`, (signal) => client.get('/jobs/{id}/trace/{query}', { id: job, query: query ?? '' }, { signal }));
-  const [selected, setSelected] = useState<Selected | null>(null);
   const listed = loaded(queries);
-  const go = useCallback((q: string) => navigate({ screen: 'replay', job, query: q }, { replace: true }), [job]);
+  // The node selected is the address's, kept across queries, as a run's is.
+  const go = useCallback(
+    (q: string, n: string | null | undefined = node) => navigate({ screen: 'replay', job, query: q, ...(n === null || n === undefined ? {} : { node: n }) }, { replace: true }),
+    [job, node],
+  );
+  const selected: Selected | null = node === undefined ? null : { node, from: 'A' };
+  const select = (s: Selected | null) => {
+    if (query !== undefined) go(query, s?.node ?? null);
+  };
+  // A node the job's graph does not have is cleared, never read as "not run".
+  useEffect(() => {
+    if (listed !== null && node !== undefined && query !== undefined && !has(listed.graph, node)) go(query, null);
+  }, [listed, node, query, go]);
   // No query chosen: the one a failed job stopped on, else the first kept one, filled in as a correction.
   const first = listed === null ? null : (listed.failed_query ?? listed.queries[0]?.id ?? null);
   useEffect(() => {
-    if (query === undefined && first !== null) go(first);
+    if (query === undefined && first !== null) go(first, null);
   }, [query, first, go]);
 
   if (queries.state.status === 'error') return <ErrorState problem={queries.state.problem} onRetry={queries.retry} />;
@@ -381,7 +417,7 @@ function PartialReplay({ client, job, query }: JobSource) {
       </InlineMessage>
       <div className="rg-replay__body" data-columns={1}>
         <aside className="rg-replay__side" aria-label="Queries of this job">
-          <QueryList queries={listed.queries} current={query} metric={null} onChoose={go} filter={{ pressed: false, onToggle: () => {}, disabled: true, reason: 'Partial traces are not scored' }} />
+          <QueryList queries={listed.queries} current={query} metric={null} onChoose={(q) => go(q)} filter={{ pressed: false, onToggle: () => {}, disabled: true, reason: 'Partial traces are not scored' }} />
         </aside>
         <div className="rg-replay__stage" aria-busy={reading !== '' || undefined}>
           {sides.length === 0 ? (
@@ -395,7 +431,7 @@ function PartialReplay({ client, job, query }: JobSource) {
               onRetry={trace.retry}
               metric={null}
               selected={selected}
-              onSelect={setSelected}
+              onSelect={select}
               labelOf={(side) => `Job ${job}, partial traces, query ${side.trace.query}`}
             />
           )}
@@ -404,11 +440,76 @@ function PartialReplay({ client, job, query }: JobSource) {
           {selected === null || sides.length === 0 ? (
             <p className="rg-replay__placeholder">Select a node to see what it produced for this query.</p>
           ) : (
-            <NodeInspector node={selected.node} from="A" sides={sides} metric={null} onClose={() => setSelected(null)} />
+            <NodeInspector node={selected.node} from="A" sides={sides} metric={null} onClose={() => select(null)} />
           )}
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * "Open in the editor": the stored document holding what the run ran
+ * (`editorTarget`), opened on the node selected here, so the selection
+ * survives the move from Replay to the editor. Refused, saying why, while the
+ * runs are read, when they could not be, and when no document holds the run —
+ * "Fork this run" beside it is then the way to edit it.
+ */
+function OpenInEditor({ listing, run, node }: { listing: Read<RunListing>; run: string; node: string | null }) {
+  const summary = loaded(listing)?.runs.find((r) => r.id === run);
+  const target =
+    listing.state.status === 'error'
+      ? { reason: `The runs could not be listed: ${listing.state.problem.message}` }
+      : listing.state.status === 'loading'
+        ? { reason: 'Reading the runs…' }
+        : summary === undefined
+          ? { reason: 'This run is not in the listing of runs, so no pipeline document is known to hold it.' }
+          : editorTarget(summary);
+  const refused = 'reason' in target;
+  // A refused control is a button and an open one a link, so the runs landing
+  // replaces the element: focus held on it moves to its replacement rather
+  // than falling to the page. Whether focus is held is judged once a blur has
+  // settled, so a blur the replacement itself causes does not count.
+  const wrap = useRef<HTMLSpanElement>(null);
+  const held = useRef(false);
+  const settling = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // A blur still settling when the control goes is dropped with it.
+  useEffect(
+    () => () => {
+      if (settling.current !== null) clearTimeout(settling.current);
+    },
+    [],
+  );
+  useLayoutEffect(() => {
+    const box = wrap.current;
+    if (!held.current || box === null || box.contains(document.activeElement)) return;
+    box.querySelector<HTMLElement>('a, button')?.focus();
+  }, [refused]);
+  return (
+    <span
+      ref={wrap}
+      className="rg-replay__open"
+      onFocus={() => {
+        held.current = true;
+      }}
+      onBlur={() => {
+        if (settling.current !== null) clearTimeout(settling.current);
+        settling.current = setTimeout(() => {
+          settling.current = null;
+          held.current = wrap.current?.contains(document.activeElement) ?? false;
+        });
+      }}
+    >
+      {'reason' in target ? (
+        <Button size="s" disabled disabledReason={target.reason}>
+          Open in the editor
+        </Button>
+      ) : (
+        <ButtonLink size="s" href={formatHash(node === null ? { screen: 'editor', name: target.name } : { screen: 'editor', name: target.name, node })}>
+          Open in the editor
+        </ButtonLink>
+      )}
+    </span>
   );
 }
 

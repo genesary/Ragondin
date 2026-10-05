@@ -115,3 +115,8 @@
   .rg-replay__body[data-columns="2"] { grid-template-columns: minmax(0, 1fr); }
   .rg-replay__body[data-columns="2"] .rg-replay__panel { grid-column: auto; }
 }
+
+/* Open in the editor: a wrapper that only follows focus, laid out as if absent. */
+.rg-replay__open {
+  display: contents;
+}

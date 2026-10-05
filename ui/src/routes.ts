@@ -28,14 +28,18 @@ export type Route =
   | { screen: 'replay' }
   /** `#replay/<run>`: one run, before a query is chosen. */
   | { screen: 'replay'; run: string; query?: never }
-  /** `#replay/<run>/q/<query>?with=<run>`: one query of one run, node by node, optionally beside another run. */
-  | { screen: 'replay'; run: string; query: string; with?: string }
   /**
-   * `#replay/job/<id>/q/<query>`: one query of a failed or cancelled run
-   * job's partial traces, alone — never a stored run; `#replay/job/<id>`
-   * before a query is chosen.
+   * `#replay/<run>/q/<query>/node/<id>?with=<run>`: one query of one run,
+   * node by node, the node selected on it, optionally beside another run;
+   * without `/node/<id>`, none selected.
    */
-  | { screen: 'replay'; job: string; query?: string }
+  | { screen: 'replay'; run: string; query: string; node?: string; with?: string }
+  /**
+   * `#replay/job/<id>/q/<query>/node/<id>`: one query of a failed or
+   * cancelled run job's partial traces, alone — never a stored run — and the
+   * node selected on it; `#replay/job/<id>` before a query is chosen.
+   */
+  | { screen: 'replay'; job: string; query?: string; node?: string }
   /** `#editor`: before a pipeline is opened. */
   | { screen: 'editor'; name?: never; node?: never }
   /** `#editor/<name>/node/<id>`: one pipeline, edited on the canvas, and the node selected on it; `#editor/<name>` with none. */
@@ -79,11 +83,12 @@ export function formatHash(route: Route): string {
       return `#compare/${route.ids.map(enc).join('+')}${query}`;
     }
     case 'replay': {
-      if ('job' in route) return route.query === undefined ? `#replay/job/${enc(route.job)}` : `#replay/job/${enc(route.job)}/q/${enc(route.query)}`;
+      const node = 'node' in route && route.node !== undefined ? `/node/${enc(route.node)}` : '';
+      if ('job' in route) return route.query === undefined ? `#replay/job/${enc(route.job)}` : `#replay/job/${enc(route.job)}/q/${enc(route.query)}${node}`;
       if (!('run' in route)) return '#replay';
       if (route.query === undefined) return `#replay/${enc(route.run)}`;
       const query = route.with === undefined ? '' : `?with=${enc(route.with)}`;
-      return `#replay/${enc(route.run)}/q/${enc(route.query)}${query}`;
+      return `#replay/${enc(route.run)}/q/${enc(route.query)}${node}${query}`;
     }
   }
 }
@@ -185,12 +190,16 @@ export function parseHash(hash: string): Route | null {
       if (rest[0] === 'job') {
         if (other !== null || !nonEmpty) return null;
         if (rest.length === 2) return { screen, job: rest[1] as string };
-        return rest.length === 4 && rest[2] === 'q' ? { screen, job: rest[1] as string, query: rest[3] as string } : null;
+        if (rest[2] !== 'q') return null;
+        if (rest.length === 4) return { screen, job: rest[1] as string, query: rest[3] as string };
+        return rest.length === 6 && rest[4] === 'node' ? { screen, job: rest[1] as string, query: rest[3] as string, node: rest[5] as string } : null;
       }
       if (rest.length === 1) return other === null && nonEmpty ? { screen, run: rest[0] as string } : null;
-      if (rest.length !== 3 || rest[1] !== 'q' || !nonEmpty || (other !== null && !isValue(other))) return null;
-      const [run, , q] = rest as [string, string, string];
-      return other === null ? { screen, run, query: q } : { screen, run, query: q, with: other };
+      // The node selected comes after the query: `/q/<query>/node/<id>`.
+      const named = rest.length === 5 && rest[3] === 'node';
+      if ((rest.length !== 3 && !named) || rest[1] !== 'q' || !nonEmpty || (other !== null && !isValue(other))) return null;
+      const [run, , q, , node] = rest as [string, string, string, string?, string?];
+      return { screen, run, query: q, ...(named ? { node: node as string } : {}), ...(other === null ? {} : { with: other }) };
     }
     default:
       return null;

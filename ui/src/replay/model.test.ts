@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { DENSE, DENSE_GRAPH, DENSE_TRACE, FAILED_TRACE, HYBRID, HYBRID_GRAPH, HYBRID_QUERIES, HYBRID_TRACE, LISTING, withPassages } from './fixtures.ts';
-import { candidates, counterpart, firstJudged, formatMs, listOf, matching, overlayOf, passagesBanner, runName, terminalOf, verdict } from './model.ts';
+import { candidates, counterpart, editorTarget, firstJudged, formatMs, listOf, matching, overlayOf, passagesBanner, runName, terminalOf, verdict } from './model.ts';
 
 describe('overlayOf, building the canvas overlay from a trace', () => {
   const overlay = overlayOf({ graph: HYBRID_GRAPH, trace: HYBRID_TRACE, metric: 'ndcg@10' });
@@ -200,5 +200,33 @@ describe('runName, a run as Replay names it', () => {
     expect(runName({ ...run, launched_as: { name: 'hybrid', prefix_of: null, held: 'exactly' }, pipeline_names: ['hybrid-fork'] })).toBe('hybrid');
     expect(runName({ ...run, launched_as: null, pipeline_names: ['hybrid-fork'] })).toBe('hybrid-fork');
     expect(runName({ ...run, launched_as: { name: null, prefix_of: null, held: null }, pipeline_names: [] })).toBeNull();
+  });
+});
+
+describe('editorTarget, the stored document the editor opens a run on', () => {
+  const run = LISTING.runs[0]!;
+  const launched = (name: string, held: 'exactly' | 'gone') => ({ name, held, prefix_of: null });
+
+  it('is a document whose content is what the run ran', () => {
+    expect(editorTarget(run)).toEqual({ name: 'hybrid-rerank-gen' });
+  });
+
+  it('is the name the run was launched as when that document is among them, else the first', () => {
+    expect(editorTarget({ ...run, pipeline_names: ['a-copy', 'hybrid'], launched_as: launched('hybrid', 'exactly') })).toEqual({ name: 'hybrid' });
+    expect(editorTarget({ ...run, pipeline_names: ['a-copy', 'b-copy'], launched_as: launched('hybrid', 'exactly') })).toEqual({ name: 'a-copy' });
+  });
+
+  it('is never a name the API refuses to read', () => {
+    expect(editorTarget({ ...run, pipeline_names: ['Hybrid', 'hybrid', 'z'], refused_pipeline_names: ['Hybrid', 'hybrid'] })).toEqual({ name: 'z' });
+  });
+
+  it('is none, with the reason, when no document can be opened on it', () => {
+    expect(editorTarget({ ...run, pipeline_names: [] })).toEqual({ reason: 'No pipeline document in the workspace holds what this run ran. Fork this run to edit it.' });
+    expect(editorTarget({ ...run, pipeline_names: [], launched_as: launched('hybrid', 'exactly') })).toEqual({ reason: 'hybrid has changed since this run, and no pipeline document holds what it ran. Fork this run to edit it.' });
+    // A name gone from the workspace is no document at all.
+    expect(editorTarget({ ...run, pipeline_names: [], launched_as: launched('hybrid', 'gone') })).toEqual({ reason: 'No pipeline document in the workspace holds what this run ran. Fork this run to edit it.' });
+    expect(editorTarget({ ...run, pipeline_names: ['Hybrid', 'hybrid'], refused_pipeline_names: ['Hybrid', 'hybrid'] })).toEqual({
+      reason: 'Hybrid and hybrid hold what this run ran, but each differs from another stored name only in case, so neither can be read. Fork this run to edit it.',
+    });
   });
 });

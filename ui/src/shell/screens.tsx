@@ -106,7 +106,7 @@ export function Screen({ route, heading, client, workspace, refreshWorkspace, re
       <>
         {title}
         <Suspense fallback={<Loading label="Opening Replay" />}>
-          <ReplayScreen client={client} run={route.run} query={route.query} with={'with' in route ? route.with : undefined} />
+          <ReplayScreen client={client} run={route.run} query={route.query} node={'node' in route ? route.node : undefined} with={'with' in route ? route.with : undefined} />
         </Suspense>
       </>
     );
@@ -116,7 +116,7 @@ export function Screen({ route, heading, client, workspace, refreshWorkspace, re
       <>
         {title}
         <Suspense fallback={<Loading label="Opening Replay" />}>
-          <ReplayScreen client={client} job={route.job} query={route.query} />
+          <ReplayScreen client={client} job={route.job} query={route.query} node={route.node} />
         </Suspense>
       </>
     );
