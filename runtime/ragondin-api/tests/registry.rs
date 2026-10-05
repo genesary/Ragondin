@@ -95,8 +95,9 @@ async fn the_registry_file_backend_lists_ready_available_local_and_differing_ent
             BenchmarkState::Available {
                 size_bytes: available.size_bytes(),
             },
-            None,
-        )
+            Some(GroundTruth::Qrels),
+        ),
+        "an entry not yet downloaded shows the ground truth its manifest entry declares"
     );
     assert_eq!(
         differs,

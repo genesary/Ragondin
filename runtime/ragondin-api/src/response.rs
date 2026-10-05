@@ -884,8 +884,9 @@ pub struct BenchmarkEntry {
     pub format: String,
     /// Where it stands against the digest expected of it.
     pub state: BenchmarkState,
-    /// The ground truth it carries, read off the loaded dataset; `null` when
-    /// nothing on disk loaded.
+    /// The ground truth it carries, read off the loaded dataset — or, for a
+    /// benchmark the manifest names that is not downloaded yet, the one its
+    /// manifest entry declares; `null` when a dataset on disk does not load.
     pub ground_truth: Option<GroundTruth>,
     /// The dataset's licence, for a benchmark the manifest names, whatever
     /// its state: a downloaded dataset keeps the notice it was obtained

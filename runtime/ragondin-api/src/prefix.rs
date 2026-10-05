@@ -123,8 +123,8 @@ fn truncate(raw: &RawPipeline, up_to: &str) -> RawPipeline {
 /// Whether a prefix stopping at `up_to`, whose output is of kind `output`,
 /// can run on `benchmark`: not when the benchmark carries reference answers
 /// and the output is not an answer, which the harness refuses (ADR-C30 § 5).
-/// A benchmark whose ground truth was not read — nothing on disk loaded — is
-/// left to the launcher, which reads the dataset itself.
+/// A benchmark whose ground truth is not known — a dataset on disk that does
+/// not load — is left to the launcher, which reads the dataset itself.
 ///
 /// # Errors
 ///

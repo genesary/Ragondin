@@ -50,6 +50,7 @@ fn squad_entry(sha256: String, dataset_version: String) -> ManifestEntry {
             size_bytes: squad_bytes().len() as u64,
         }],
         dataset_version,
+        carries: CarriedPieces::QrelsAndReferenceAnswers,
     }
 }
 
@@ -154,6 +155,7 @@ fn a_download_of_several_files_places_each_at_its_path() {
         licence_url: "https://example.invalid/licence".to_owned(),
         files,
         dataset_version: version_of(Format::Beir, &root),
+        carries: CarriedPieces::QrelsOnly,
     };
     let datasets = scratch("download_several");
 

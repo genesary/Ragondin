@@ -14,8 +14,9 @@ export type BenchmarkEntry = {
    */
   format: string;
   /**
-   * The ground truth it carries, read off the loaded dataset; `null` when
-   * nothing on disk loaded.
+   * The ground truth it carries, read off the loaded dataset — or, for a
+   * benchmark the manifest names that is not downloaded yet, the one its
+   * manifest entry declares; `null` when a dataset on disk does not load.
    */
   ground_truth: GroundTruth | null;
   /**

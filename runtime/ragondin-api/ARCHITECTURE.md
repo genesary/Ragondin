@@ -194,7 +194,10 @@ supplies the HTTP transport, and converts what comes back in `convert.rs`.
   this build cannot read is listed `unreadable` under its directory's name,
   with format `unknown`, and fails neither the listing nor its neighbours. The
   ground truth — `qrels`, `reference_answers`, `both` — is read off the loaded
-  dataset's `CarriedPieces`, and is `null` when nothing loaded.
+  dataset's `CarriedPieces`; for an `available` entry, off the `carries` its
+  manifest entry declares, so Setup shows it, and which pipelines it scores,
+  before the download; and it is `null` when a dataset on disk does not
+  load.
 - **The listing digests every dataset on every call.** Each entry on disk is
   loaded whole and digested, and nothing is kept: correct, and slow for a
   large corpus. `GET /benchmarks` and `GET /workspace`'s count call it on
@@ -951,10 +954,11 @@ the workspace document cut at that node. `POST /runs` with `up_to` (`prefix.rs`)
   `convert::carried` — and of whether the cut node's `ragondin-pipeline`
   `produced_kind` is an answer. The ground truth is `Registry::verify`'s,
   read off the loaded dataset; the file backend finds an import by its
-  record and verifies it alone, reading no other benchmark's files. A
+  record and verifies it alone, reading no other benchmark's files; for a
+  manifest entry not yet downloaded, it is the one the entry declares. A
   benchmark the registry does not know is `benchmark_not_found`; one whose
-  ground truth was not read — nothing on disk loaded — is left to the
-  launcher, which reads the dataset itself.
+  ground truth is not known — a dataset on disk that does not load — is left
+  to the launcher, which reads the dataset itself.
 - **The parent is provenance, never identity** (ADR-C39). The `Submission`
   keeps `pipeline_name` as the parent's name and `up_to`, and carries
   `parent_pipeline_hash`, the canonical hash of the parent document at

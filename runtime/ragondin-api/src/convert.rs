@@ -521,14 +521,17 @@ fn kind(kind: ValueKind) -> EdgeKind {
 
 /// A benchmark the manifest names, as the registry lists it: `ready` when the
 /// dataset on disk digests to the manifest's `dataset_version`, `available`
-/// when nothing is there. Its licence is shown in every state.
+/// when nothing is there. Its licence is shown in every state, and so is its
+/// ground truth: before the download, the one its manifest entry declares —
+/// the same `CarriedPieces` the loaded dataset reports, so what a client reads
+/// off `scorable` for it holds once it is on disk.
 pub(crate) fn manifest_benchmark(entry: &ManifestEntry, state: DiskState) -> BenchmarkEntry {
     let (state, ground_truth) = match state {
         DiskState::Absent => (
             BenchmarkState::Available {
                 size_bytes: entry.size_bytes(),
             },
-            None,
+            Some(ground_truth(entry.carries)),
         ),
         DiskState::Verified(verified) => (
             BenchmarkState::Ready {

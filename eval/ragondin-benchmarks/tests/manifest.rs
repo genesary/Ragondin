@@ -3,8 +3,10 @@
 //! snapshot.
 
 use std::collections::BTreeSet;
+use std::path::PathBuf;
 
 use ragondin_benchmarks::manifest::{manifest, Format};
+use ragondin_benchmarks::CarriedPieces;
 
 #[test]
 fn the_manifest_names_every_entry_completely_and_uniquely() {
@@ -122,4 +124,38 @@ fn a_format_is_named_by_its_selector() {
         assert_eq!(Format::from_selector(format.selector()), Some(format));
     }
     assert_eq!(Format::from_selector("crag"), None);
+}
+
+/// The fixture corpus in each format's layout, read by that format's adapter.
+fn fixture(format: Format) -> PathBuf {
+    let dir = match format {
+        Format::Beir => "beir-mini",
+        Format::BeirQa => "beir-qa-mini",
+        Format::Squad => "squad-mini",
+    };
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures")
+        .join(dir)
+}
+
+/// The ground truth an entry declares is shown before its dataset is on disk,
+/// so it must be what the dataset carries once loaded. The adapter of an
+/// entry's format decides which pieces it can read: a fixture in the same
+/// layout carries what the snapshot will. Each entry's `dataset_version`, which
+/// a download is checked against, pins the snapshot itself.
+#[test]
+fn every_entry_declares_the_ground_truth_its_format_loads() {
+    for entry in manifest() {
+        let loaded = entry
+            .format
+            .load(&fixture(entry.format))
+            .unwrap_or_else(|error| panic!("{}: the fixture loads: {error}", entry.name));
+        assert_eq!(entry.carries, loaded.carries(), "{}", entry.name);
+        assert_ne!(
+            entry.carries,
+            CarriedPieces::Neither,
+            "{}: an entry that scores nothing is not worth offering",
+            entry.name
+        );
+    }
 }

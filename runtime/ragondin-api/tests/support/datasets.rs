@@ -16,6 +16,7 @@ use std::thread;
 
 use ragondin_benchmarks::identity::dataset_version;
 use ragondin_benchmarks::manifest::{Format, ManifestEntry, ManifestFile};
+use ragondin_benchmarks::CarriedPieces;
 use sha2::{Digest, Sha256};
 
 /// The BEIR fixture's files, in the order a manifest entry lists them.
@@ -85,6 +86,7 @@ pub fn beir_mini_entry(name: &str, base: &str, dataset_version: &str) -> Manifes
             })
             .collect(),
         dataset_version: dataset_version.to_owned(),
+        carries: CarriedPieces::QrelsOnly,
     }
 }
 

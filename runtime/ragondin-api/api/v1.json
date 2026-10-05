@@ -46,7 +46,7 @@
                 "nullable": true
               }
             ],
-            "description": "The ground truth it carries, read off the loaded dataset; `null` when\nnothing on disk loaded."
+            "description": "The ground truth it carries, read off the loaded dataset — or, for a\nbenchmark the manifest names that is not downloaded yet, the one its\nmanifest entry declares; `null` when a dataset on disk does not load."
           },
           "licence": {
             "description": "The dataset's licence, for a benchmark the manifest names, whatever\nits state: a downloaded dataset keeps the notice it was obtained\nunder. `null` for an import, whose licence is its owner's.",
