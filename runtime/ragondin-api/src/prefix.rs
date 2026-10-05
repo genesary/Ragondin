@@ -124,7 +124,9 @@ fn truncate(raw: &RawPipeline, up_to: &str) -> RawPipeline {
 ///
 /// # Errors
 ///
-/// `prefix_not_scorable`, naming the node, in the harness's words.
+/// `prefix_not_scorable`, naming the node: ADR-C30 § 5 restated from the
+/// same `carries()` and `produced_kind` the harness reads (#468 gives the
+/// rule one definition).
 pub(crate) fn scorable(
     up_to: &str,
     output: ValueKind,

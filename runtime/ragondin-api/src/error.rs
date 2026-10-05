@@ -307,8 +307,9 @@ pub enum ApiError {
         node: String,
     },
     /// A prefix run whose output is not an answer, on a benchmark that
-    /// carries reference answers: the harness refuses it (ADR-C30 § 5), so
-    /// it is refused at submission, in the harness's words.
+    /// carries reference answers: ADR-C30 § 5, restated at submission from
+    /// the same `carries()` and `produced_kind` the harness reads, so the
+    /// run is refused before it starts rather than by the harness after.
     #[error("the prefix up to `{node}` cannot run on {benchmark}: the benchmark carries reference answers, and the pipeline's output is of kind `{kind}`, not an answer")]
     PrefixNotScorable {
         /// The node the prefix stops at.

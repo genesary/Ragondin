@@ -817,13 +817,15 @@ the workspace document cut at that node. `POST /runs` with `up_to` (`prefix.rs`)
   `prefix_ends_in_context` for a context builder, since a context is scored
   by nothing unless a generator follows (ADR-C30 § 3).
 - **A cut whose output is not an answer is refused on a benchmark that
-  carries reference answers**, `prefix_not_scorable`, in the harness's own
-  words (ADR-C30 § 5): the harness would refuse the run once it started. The
-  benchmark's ground truth is `Registry::verify`'s, read off the loaded
-  dataset — the file backend finds an import by its record and verifies it
-  alone, reading no other benchmark's files — the `carries` of ADR-C30 § 5, through `ragondin-benchmarks`'
-  `CarriedPieces` — and the output's kind is `ragondin-pipeline`'s
-  `produced_kind`; the harness itself is not a dependency (INV-12). A
+  carries reference answers**, `prefix_not_scorable`. This restates ADR-C30
+  § 5 — the rule the harness applies once a run starts — from the same two
+  facts the harness reads: the benchmark's `carries()`, through
+  `ragondin-benchmarks`' `CarriedPieces`, and the cut node's
+  `ragondin-pipeline` `produced_kind`. The ground truth is
+  `Registry::verify`'s, read off the loaded dataset; the file backend finds
+  an import by its record and verifies it alone, reading no other
+  benchmark's files. The harness itself is not a dependency (INV-12), and
+  this is a second statement of its rule, not a call into it (below). A
   benchmark the registry does not know is `benchmark_not_found`; one whose
   ground truth was not read — nothing on disk loaded — is left to the
   launcher, which reads the dataset itself.
@@ -859,6 +861,14 @@ Choices made here:
   comparison of lowered nodes per pair of the two: it grows with pipelines,
   not with runs. Not measured against a large store; a cache would be one
   more key to keep right, and is the remedy if it shows.
+- **The scorability rule is restated here, not reached through
+  `Launcher`.** #357's INV-12 line asked that the check at submission reuse
+  the harness's rule as `Launcher` reports it, not a copy of the harness;
+  `Launcher` reports no such rule, and the binary was out of the issue's
+  scope beyond one copy. So `prefix::scorable` states ADR-C30 § 5 again from
+  the same `carries()` and `produced_kind` the harness reads — a second
+  statement of one rule, which the repository owner accepted on #357, until
+  #468 gives the rule a single definition both read.
 - **The benchmark check runs for a prefix run only.** A whole pipeline ending
   in chunks on a benchmark with reference answers is the same refusal, but
   it is the harness's to make for a document a person wrote whole; the
@@ -1348,7 +1358,7 @@ code.
 | `prefix_node_not_found` | 422 | a prefix run's `up_to` names no node of the document — a declared input is not a node; `location` names it | `POST /runs` |
 | `prefix_is_whole_pipeline` | 422 | a prefix run's `up_to` is the pipeline's output: the prefix would be the whole pipeline; `location` names it | `POST /runs` |
 | `prefix_ends_in_context` | 422 | a prefix run's `up_to` is a context builder, whose context nothing scores; `location` names it | `POST /runs` |
-| `prefix_not_scorable` | 422 | a prefix run whose output is not an answer, on a benchmark that carries reference answers — the harness's refusal, in its words, made at submission; `location` names the node | `POST /runs` |
+| `prefix_not_scorable` | 422 | a prefix run whose output is not an answer, on a benchmark that carries reference answers — ADR-C30 § 5 restated at submission from the same `carries()` and `produced_kind` the harness reads; `location` names the node | `POST /runs` |
 
 Choices made here (`AGENTS.md` § Rules of engagement), since the design
 document § 8 lists seven codes and leaves the rest to the implementation:

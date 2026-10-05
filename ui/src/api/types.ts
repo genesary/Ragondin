@@ -1385,7 +1385,9 @@ export type RunDetail = {
    * The run's launch record, as [`RunSummary::launched_as`] serves it;
    * `null` for a run stored without one. A prefix run says what it was
    * cut from here, in the record's `prefix_of`: the parent's name, the
-   * node it stops at and the parent's canonical hash.
+   * node it stops at and the parent's canonical hash. A prefix written by
+   * hand, with no such record, shows only through `GET /runs`'
+   * `prefix_of_documents`.
    */
   launched_as: LaunchedAs | null;
   /** What it scored, by metric name. */

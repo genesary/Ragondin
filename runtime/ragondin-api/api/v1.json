@@ -3421,7 +3421,7 @@
                 "nullable": true
               }
             ],
-            "description": "The run's launch record, as [`RunSummary::launched_as`] serves it;\n`null` for a run stored without one. A prefix run says what it was\ncut from here, in the record's `prefix_of`: the parent's name, the\nnode it stops at and the parent's canonical hash."
+            "description": "The run's launch record, as [`RunSummary::launched_as`] serves it;\n`null` for a run stored without one. A prefix run says what it was\ncut from here, in the record's `prefix_of`: the parent's name, the\nnode it stops at and the parent's canonical hash. A prefix written by\nhand, with no such record, shows only through `GET /runs`'\n`prefix_of_documents`."
           },
           "metrics": {
             "additionalProperties": {
