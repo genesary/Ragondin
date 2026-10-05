@@ -62,6 +62,25 @@ just check             # build + test + clippy + fmt + architecture invariants
 
 `just check` is what CI runs; it must pass before any change merges.
 
+To see the UI on test data, offline:
+
+```bash
+just demo              # http://127.0.0.1:7341/ on target/demo/workspace
+just demo 7400         # on another port
+```
+
+It builds the UI (which needs Node, the major pinned in `ui/.node-version`)
+and `ragondin` with `ui,bm25,onnx,stub`, writes a demo workspace from the
+repository's test corpora, and starts `ragondin ui` on it. The workspace holds
+two retrieval benchmarks and two QA benchmarks, imported and verified; three
+example pipelines that run on that build — `lexical` (BM25), `hybrid` (BM25
+and a dense leg over toy ONNX models, fused, then reranked) and `rag` (BM25,
+a context, and the stub generator); and runs already filed, a prefix run and
+a fork among them, so Runs, Compare, Pipeline and Replay all show data. Each
+`just demo` writes the demo afresh, discarding runs launched in it, and
+refuses a directory it did not write. Its documents' model paths are relative
+to the workspace, which is why the recipe starts the server inside it.
+
 ## Status
 
 **Pre-alpha.** Milestones M0 — *Foundations* — M1 — *Core contracts & engine

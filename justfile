@@ -225,9 +225,25 @@ journey-scifact:
 # beside `corpus/`, the fixture corpus to import, and `fixture.json`, which
 # names each run. The Rust tests build the same workspace for themselves; this
 # writes it for the UI's dev server and end-to-end tests. Runs the binary the
-# test builds, `ui,bm25,onnx`, which `test-ui-e2e` then drives.
+# test builds, `ui,bm25,onnx`, which `test-ui-e2e` then drives. The workspace
+# is DIR/workspace, not DIR, and is served from inside itself, where its
+# documents' relative model paths resolve: the test prints the command.
 fixture-workspace dir=(env_var_or_default("CARGO_TARGET_DIR", justfile_directory() / "target") / "e2e-fixture"):
-    RAGONDIN_FIXTURE_WORKSPACE="{{ absolute_path(dir) }}" cargo test -p ragondin --features ui,bm25,onnx --test fixture_workspace -- --ignored --exact write_the_fixture_workspace
+    RAGONDIN_FIXTURE_WORKSPACE="{{ absolute_path(dir) }}" cargo test -p ragondin --features ui,bm25,onnx --test fixture_workspace -- --ignored --exact write_the_fixture_workspace --nocapture
+
+# `just demo [PORT] [DIR]`: the UI on a demo workspace, offline. Builds the UI,
+# then writes the demo (bin/ragondin/tests/support/workspace.rs's
+# `generate_demo`) into DIR from the repository's test corpora — four
+# benchmarks imported, the example pipelines `lexical`, `hybrid` and `rag`, and
+# runs filed through the API, a prefix run and a fork among them — with the
+# binary its test builds, `ui,bm25,onnx,stub`, then starts that binary's
+# `ragondin ui` on DIR/workspace, from inside it, on PORT. Rerunning it writes
+# the demo afresh, discarding runs launched in it; a DIR that holds files and
+# no `demo.json`, which the generator writes, is refused untouched. Needs
+# Node, like `build-ui`.
+demo port="7341" dir=(env_var_or_default("CARGO_TARGET_DIR", justfile_directory() / "target") / "demo"): build-ui
+    RAGONDIN_DEMO_WORKSPACE="{{ absolute_path(dir) }}" cargo test -p ragondin --features ui,bm25,onnx,stub --test demo_workspace -- --ignored --exact write_the_demo_workspace
+    cd "{{ absolute_path(dir) }}/workspace" && "{{ env_var_or_default("CARGO_TARGET_DIR", justfile_directory() / "target") }}/debug/ragondin" ui --workspace "{{ absolute_path(dir) }}/workspace" --port {{ port }}
 
 # Install exactly the lockfile and build ui/dist/, the folder bin/ragondin's
 # `ui` feature embeds. `check` runs it before `test-features`, the first recipe
@@ -239,8 +255,8 @@ build-ui: check-node
 
 # The front end's gates: install exactly the lockfile, then lint, typecheck,
 # test, build, re-check the notices and audit it (ui/ARCHITECTURE.md § The
-# gates). It, `build-ui`, `gen-ui-types`, `test-ui-e2e` and `ui-dev-fixture`
-# are the recipes here that need Node -- the version pinned in
+# gates). It, `build-ui`, `gen-ui-types`, `test-ui-e2e`, `ui-dev-fixture` and
+# `demo` are the recipes here that need Node -- the version pinned in
 # ui/.node-version. No cargo recipe does, and none may: the Rust build stays
 # Rust-only (ADR-C36 § 5), so every other recipe runs on a machine without
 # Node, and only `check`, which covers both worlds, needs it.

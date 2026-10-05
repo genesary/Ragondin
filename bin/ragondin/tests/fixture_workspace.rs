@@ -179,5 +179,13 @@ fn write_the_fixture_workspace() {
         .map(PathBuf::from)
         .unwrap_or_else(|| panic!("{EXPORT_VAR} names the directory to write"));
     let generated = workspace::generate(&out);
-    println!("fixture workspace: {}", generated.workspace.display());
+    // The workspace is a directory below `out`, and its documents' model
+    // paths are relative: served from anywhere else, it opens empty or its
+    // dense pipelines cannot find their models.
+    let at = generated.workspace.display();
+    println!("fixture workspace: {at}");
+    println!(
+        "serve it from inside itself, with a binary built with ui,bm25,onnx:\n  \
+         cd {at} && ragondin ui --workspace {at}"
+    );
 }

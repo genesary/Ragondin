@@ -40,9 +40,10 @@ charter.
 | `tests/support/remote.rs` | Fake `Remote` services, `tonic` servers over in-test components, for the tests that bind one; shared with `src/wiring.rs`'s tests |
 | `tests/ui_parity.rs` | The M4 exit criterion's parity half: a pipeline composed through the editor's path and exported hashes under `validate` to what the editor showed, both refuse a mis-wired pipeline alike, and a run submitted through the API is the run `bench` records on each format, bound or not (§ The M4 exit criterion) |
 | `tests/fixture_workspace.rs` | The fixture workspace checked as the API lists it, and written out for the UI's dev server and end-to-end journeys by `just fixture-workspace` |
+| `tests/demo_workspace.rs` | The demo workspace checked as the UI reads it — benchmarks verified, each example pipeline run, a prefix run and a fork — and written out by `just demo`, which serves it |
 | `tests/journey_scifact.rs` | The M4 journey over BEIR SciFact itself, through the API — ignored by default, run by `just journey-scifact` |
 | `tests/support/ui.rs` | A running `ragondin ui` and a hand-written HTTP/1.1 client, for the tests that start one |
-| `tests/support/workspace.rs` | The fixture workspace's generator, and the API calls the tests that start `ragondin ui` share: import, write a document, launch and wait, run `bench` |
+| `tests/support/workspace.rs` | The fixture workspace's and the demo workspace's generators, and the API calls the tests that start `ragondin ui` share: import, write a document, launch and wait, run `bench` |
 
 **Five subcommands are declared; four are implemented.** `validate` loads a
 configuration and prints its content hash. `compare` reads two runs already in
@@ -1054,6 +1055,43 @@ an empty queue. Three choices are recorded here:
   `RAGONDIN_FIXTURE_WORKSPACE` says, with `fixture.json` naming each run, for
   `just test-ui-e2e` and the dev server's fixture mode. The binary that test
   builds, `ui,bm25,onnx`, is the one the journeys then drive.
+
+The fixture workspace is the generator's `workspace/`, not its output
+directory, and its documents name their models by paths relative to the
+directory the server runs in, as every configuration does. `ragondin ui
+--workspace target/e2e-fixture` therefore opens an empty workspace, created
+in the output directory, and the workspace itself served from the repository
+root refuses `dense-only` and `hybrid-rerank`, their models not found: the
+two ways it was first found to show no runs and pipelines that do not run.
+The journeys and the dev server start the binary inside the workspace;
+`just fixture-workspace` prints that command.
+
+**The demo workspace** is the same module's `generate_demo`, run by `just
+demo`, which then serves it: the same steps — the toy models copied,
+benchmarks imported, documents written with their layouts and launched
+through `POST /runs` — over the example pipelines in `tests/fixtures/demo/`,
+`lexical`, `hybrid` and `rag`, commented node by node. It imports
+`beir/exit-criterion` and `beir/beir-mini` (qrels), and
+`beir-qa/exit-criterion-qa` and `squad/squad-mini` (qrels and reference
+answers), and files seven runs: `lexical` and `hybrid` on the first, `hybrid`
+up to `fused` (a prefix run), a fork of `hybrid`'s run with RRF's `k` lowered
+to 10 launched as `hybrid-fork`, `lexical` on `beir/beir-mini`, and `rag` on
+both QA sets. `tests/demo_workspace.rs` generates it and checks it as the UI
+reads it — the benchmarks verified, each pipeline stored, valid, laid out and
+run under its name, the prefix run and the fork listed, a trace served for
+every run — under `ui`, `bm25`, `onnx` and `stub`, the build `just demo`
+serves. Two choices are recorded here:
+
+- *A generator beside the fixture's, not the fixture extended.* The fixture's
+  documents and runs are shaped by what the journeys assert — decision #390's
+  two cases, exactly four runs — and its documents' comments speak of the
+  exit-criterion test; the demo's pipelines are written to be read. The steps
+  and the refusal of a foreign directory are shared code; the two
+  compositions are not.
+- *The demo is written afresh by each `just demo`.* The output directory is
+  emptied only when it holds `demo.json`, the generator's manifest, so a
+  mistyped directory is refused untouched; a run launched in the demo is
+  discarded by the next one.
 
 **The record of the SciFact journey** it was accepted on:
 
