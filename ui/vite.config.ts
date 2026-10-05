@@ -1,6 +1,7 @@
 import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitest/config';
 import { buildIdentity } from './scripts/build-identity.mjs';
+import { devProxy } from './scripts/dev-proxy.mjs';
 import { thirdPartyNotices } from './scripts/notices.mjs';
 
 // No React plugin: esbuild compiles JSX with the automatic runtime on its own,
@@ -15,6 +16,9 @@ export default defineConfig({
   // The binary redistributes the bundle, so the bundle carries the notices
   // of what it holds. ARCHITECTURE.md § The third-party notices.
   plugins: [thirdPartyNotices(fileURLToPath(new URL('.', import.meta.url)))],
+  // The fixture mode: `/api` handed to the binary RAGONDIN_API names, which
+  // `npm run dev:fixture` starts. ARCHITECTURE.md § The end-to-end journeys.
+  server: { proxy: devProxy(process.env.RAGONDIN_API) },
   test: {
     // The governance tests read files and run ESLint, so the default
     // environment is Node; a component test opts into a DOM with a

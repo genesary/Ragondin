@@ -38,7 +38,11 @@ charter.
 | `tests/exit_criterion_generation.rs` | The M3 exit criterion: the same two retrieval pipelines ending in a context builder and a `Remote` generator — hybrid with reranking answers more questions than dense-only, on exact match and F1, reproducibly, and `compare` says so |
 | `tests/ui.rs` | `ragondin ui`, exercised as a process: the loopback refusal, the assets and the API over a real connection, the capabilities, the third-party notices, the release assertion; and the lean build's refusal |
 | `tests/support/remote.rs` | Fake `Remote` services, `tonic` servers over in-test components, for the tests that bind one; shared with `src/wiring.rs`'s tests |
-| `tests/support/ui.rs` | A running `ragondin ui` and a hand-written HTTP/1.1 client, for `tests/ui.rs` |
+| `tests/ui_parity.rs` | The M4 exit criterion's parity half: a pipeline composed through the editor's path and exported hashes under `validate` to what the editor showed, both refuse a mis-wired pipeline alike, and a run submitted through the API is the run `bench` records on each format, bound or not (§ The M4 exit criterion) |
+| `tests/fixture_workspace.rs` | The fixture workspace checked as the API lists it, and written out for the UI's dev server and end-to-end journeys by `just fixture-workspace` |
+| `tests/journey_scifact.rs` | The M4 journey over BEIR SciFact itself, through the API — ignored by default, run by `just journey-scifact` |
+| `tests/support/ui.rs` | A running `ragondin ui` and a hand-written HTTP/1.1 client, for the tests that start one |
+| `tests/support/workspace.rs` | The fixture workspace's generator, and the API calls the tests that start `ragondin ui` share: import, write a document, launch and wait, run `bench` |
 
 **Five subcommands are declared; four are implemented.** `validate` loads a
 configuration and prints its content hash. `compare` reads two runs already in
@@ -985,6 +989,88 @@ anywhere else in the graph.
 - **No `Remote` vector store.** ADR-C32 § 5 defers it until the contract can
   scope a store's content to a run, so `store` is not a family `--remote`
   accepts, and the corpus is always searched in the in-memory store.
+
+## The M4 exit criterion
+
+The front end's milestone closes on a green test, as M2's and M3's do (the
+front-end design, § 2). Its two halves are mechanised in three places:
+
+- **Parity, in `tests/ui_parity.rs`**, over `ragondin ui` on a workspace of
+  the test's own and `ragondin validate` and `ragondin bench` spawned beside
+  it. A typed document — what the editor holds — is validated and written
+  through the API; the export, `GET /pipelines/{name}`'s text, is the stored
+  file byte for byte and the rendering `POST /pipelines/validate` showed, and
+  `ragondin validate` on it prints the hash the editor showed. Conversely a
+  hand-written fixture keeps the hash `validate` prints when it is imported,
+  and when the editor's typed form of it is rendered again, comments gone.
+  `incompatible-wiring.yaml` is refused on the same edge and kinds by both.
+  Over `beir-mini/`, `qa-mini/` and `squad-mini/`, imported into the
+  workspace, `POST /runs` files the run id `bench` gives the same document on
+  the same benchmark, and the same `inputs.json`, `metrics.json`,
+  `config.yaml` and `bindings.json` byte for byte — every run file but the
+  traces, whose node durations are measured, and the times and launch record,
+  which are outside a run's identity. Under `remote`, a generator bound in the
+  workspace is recorded on the run as `bench --remote` records it. Compiled
+  under `ui`, `bm25` and `stub`: the two answer formats need a generator in
+  process.
+- **The journeys, in `ui/e2e/`**, run by `just test-ui-e2e` in a browser
+  against this binary (`ui/ARCHITECTURE.md` § The end-to-end journeys), over
+  the fixture workspace below.
+- **The journey on real data, in `tests/journey_scifact.rs`**: `ragondin ui`
+  with no argument on an empty home workspace, SciFact downloaded through
+  `POST /benchmarks/{name}/download` from the manifest's pinned URLs, the
+  calibration's two pipelines composed as typed documents — the test asserts
+  they hash, under `validate`, to `tests/fixtures/calibration/`'s files — both
+  launched, compared, and one query replayed in both. Ignored, for the reasons
+  `tests/calibration.rs` is, plus the network; the server runs from
+  `RAGONDIN_CALIBRATION_MODELS`, so the documents' relative model paths are the
+  calibration's.
+
+**The fixture workspace** is `tests/support/workspace.rs`'s `generate`: the
+exit criterion's corpus imported as `beir/exit-criterion`, without
+`answers.jsonl`, which an import reads as `beir-qa` — reference answers a
+ranking pipeline is refused on (ADR-C30 § 5); `dense-only`, `hybrid-rerank`
+and `bm25-only`, each with a layout; the toy models under `models/`; and four
+runs: `dense-only` and `hybrid-rerank` launched through `POST /runs`, with
+their launch records; `bm25-only` run by `bench` from outside `pipelines/`,
+so with no record, as every run stored before records existed; and a run
+launched as `hybrid-rerank` while its reranker kept five passages, before the
+document was written back with ten — decision #390's two cases. The job
+records of the launches are removed, so a workspace opened on it starts with
+an empty queue. Three choices are recorded here:
+
+- *The benchmark is imported, not a manifest entry.* The manifest is
+  compiled into the binary and names downloads only; `POST /benchmarks/import`
+  is the one way a corpus on the server's disk is registered. So the first-run
+  journey's "obtain SciFact" is an import of `corpus/`, and the download path
+  is the SciFact journey's alone.
+- *A third document, `bm25-only`, for the run without a record.* A run id is
+  a function of the content and the benchmark, so a third run on the one
+  benchmark needs a third content, and a run without a record needs a current
+  document to be found by.
+- *One generator for the Rust tests and the UI.* `tests/fixture_workspace.rs`
+  generates it and checks the listing — the four runs, each with the two
+  facts ADR-C39 § 4 keeps apart — and its ignored test writes it where
+  `RAGONDIN_FIXTURE_WORKSPACE` says, with `fixture.json` naming each run, for
+  `just test-ui-e2e` and the dev server's fixture mode. The binary that test
+  builds, `ui,bm25,onnx`, is the one the journeys then drive.
+
+**The record of the SciFact journey** it was accepted on:
+
+Run on 2026-10-05, a debug build on an Apple-silicon laptop, `just
+journey-scifact`: 1 647 s in all — the download, two minutes for the
+dense-only run, twenty-five for the reranked one. SciFact, downloaded through
+the API, digested to `9a07f80c0d4f1e9e74912d033a8d1fbd52c54b758dafcaa85c19abacfdee5f29`,
+the calibration's recorded dataset.
+
+| Pipeline | Run id | nDCG@10 | MRR | Recall@10 |
+|---|---|---|---|---|
+| `dense-only` | `aa590151b03d4ce9d4b78c563ea0dac5d95edb4449ffb7230deaa74a48c4219d` | 0.6450816521455768 | 0.6047248677248677 | 0.7833333333333333 |
+| `hybrid` | `acf613976a8129e26e6e6e645fe99874a5ed99e9fde110c3bc80006a453b58a3` | 0.6886092429213343 | 0.6579272486772487 | 0.8122222222222222 |
+
+Each figure is, to the last bit, the one § Calibration against a published
+leaderboard records for `bench` over the same material: the run composed and
+launched in the front end is the command line's run.
 
 ## Calibration against a published leaderboard
 

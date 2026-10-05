@@ -181,7 +181,7 @@ jobs:
   # unchanged, and it never needs Node (ADR-C36 § 5). `npm run check` is the
   # same script `just check-ui` and a contributor run.
   ui:
-    name: ui · lint · typecheck · test · build · audit
+    name: ui · lint · typecheck · test · build · audit · journeys
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -212,12 +212,15 @@ jobs:
       # `check`, which never runs Node.
       # rust-toolchain.toml pins the toolchain, as in `check`; the cache is
       # this job's own, since it builds one crate with one feature.
+      # `~/.cache/ort.pyke.io` for the end-to-end steps below, whose binary is
+      # built with `onnx` and links the prebuilt ONNX Runtime (ADR-C27).
       - name: Cache cargo registry and build
         uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
+            ~/.cache/ort.pyke.io
             target
           key: ${{ runner.os }}-cargo-ui-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
           restore-keys: ${{ runner.os }}-cargo-ui-
@@ -227,3 +230,33 @@ jobs:
         run: cargo test -p ragondin --features ui
         env:
           RAGONDIN_REQUIRE_UI_ASSETS: "1"
+
+      # The M4 journeys end to end (ui/ARCHITECTURE.md § The end-to-end
+      # journeys), as `just test-ui-e2e` runs them: the fixture workspace is
+      # written by the binary's own test, which builds the binary with
+      # `ui,bm25,onnx` over the `ui/dist/` `npm run check` built above; the
+      # runner then drives Chromium against that binary, over a copy of the
+      # workspace per test, refusing every request to another origin. The
+      # browser is the one networked step, before any test runs.
+      - name: Install the browser the journeys drive
+        run: npx playwright install --with-deps chromium
+
+      - name: Write the fixture workspace
+        working-directory: .
+        run: cargo test -p ragondin --features ui,bm25,onnx --test fixture_workspace -- --ignored --exact write_the_fixture_workspace
+        env:
+          RAGONDIN_FIXTURE_WORKSPACE: ${{ github.workspace }}/target/e2e-fixture
+
+      - name: The journeys, end to end on the real binary
+        run: npx playwright test
+        env:
+          RAGONDIN_E2E_BINARY: ${{ github.workspace }}/target/debug/ragondin
+          RAGONDIN_E2E_FIXTURE: ${{ github.workspace }}/target/e2e-fixture
+
+      - name: Keep the traces of a failed journey
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-e2e-traces
+          path: target/ui-e2e
+          if-no-files-found: ignore

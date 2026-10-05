@@ -46,7 +46,7 @@ export default defineConfig([
     languageOptions: { globals: globals.browser },
   },
   {
-    files: ['*.{js,mjs,cjs,ts,mts,cts}', 'scripts/**/*.{js,mjs,cjs,ts,mts,cts}', 'tests/**/*.{js,mjs,cjs,ts,mts,cts}'],
+    files: ['*.{js,mjs,cjs,ts,mts,cts}', 'scripts/**/*.{js,mjs,cjs,ts,mts,cts}', 'tests/**/*.{js,mjs,cjs,ts,mts,cts}', 'e2e/**/*.{js,mjs,cjs,ts,mts,cts}'],
     languageOptions: { globals: globals.node },
   },
   {

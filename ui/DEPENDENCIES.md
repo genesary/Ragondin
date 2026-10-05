@@ -23,8 +23,10 @@ The `[workspace.dependencies]` rule, transposed to the npm tree (ADR-C36 § 5; `
 | Package | Role |
 |---|---|
 | `@eslint/js` | ESLint's recommended JavaScript rules. |
+| `@playwright/test` | The browser-driving test runner of the end-to-end journeys (`e2e/`, `npm run e2e`): drives Chromium against the real binary over the fixture workspace (`ARCHITECTURE.md` § The end-to-end journeys). Apache-2.0, as are the two packages it brings, `playwright` and `playwright-core`. The browser it drives is downloaded by `npx playwright install chromium`, outside the lockfile and the tree. |
 | `@testing-library/dom` | DOM queries; the peer dependency `@testing-library/react` builds on. |
 | `@testing-library/react` | Renders components in tests and queries them as a user would. |
+| `accessibility-checker-engine` | The accessibility pass's rules engine: injected into each screen, it reports WCAG 2.2 A and AA violations (`e2e/support/accessibility.ts`). Apache-2.0, no dependency. Chosen over `axe-core`, licensed MPL-2.0, which `deny.toml` leaves off the allow list. |
 | `@types/node` | Node's types, for the scripts, the tests and the configuration files. |
 | `@types/react` | React's types. |
 | `@types/react-dom` | React DOM's types. |
