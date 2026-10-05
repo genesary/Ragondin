@@ -29,7 +29,7 @@ export type HistogramProps = {
   controls: string;
 };
 
-const queries = (n: number) => `${n.toLocaleString('en-US')} quer${n === 1 ? 'y' : 'ies'}`;
+const noun = (n: number) => (n === 1 ? 'query' : 'queries');
 
 /**
  * A diverging histogram: the worse arm, the neutral middle, the better arm,
@@ -69,7 +69,6 @@ export function Histogram({ label, bins, halves, active, onActivate, controls }:
             }}
             type="button"
             className="rg-hist__col"
-            aria-label={`${bin.label}, ${bin.range}: ${queries(bin.count)}`}
             aria-expanded={bin.id === active}
             aria-controls={controls}
             tabIndex={i === stop ? 0 : -1}
@@ -77,7 +76,13 @@ export function Histogram({ label, bins, halves, active, onActivate, controls }:
             onKeyDown={onKeyDown(i)}
             onClick={() => onActivate(bin.id)}
           >
+            {/* Named by its content, not an aria-label, so the count and the
+                range on screen are words of its name (WCAG 2.5.3, Label in
+                Name); the bin's words are read, not shown. */}
+            <span className="rg-visually-hidden">{`${bin.label}, `}</span>
             <span className="rg-hist__count">{bin.count.toLocaleString('en-US')}</span>
+            {/* "change" says what the range measures, so a bare "0" is never read alone. */}
+            <span className="rg-visually-hidden">{` ${noun(bin.count)}, change `}</span>
             <span className="rg-hist__track">
               <span className="rg-hist__bar" data-tone={bin.tone} style={{ height: `${max === 0 ? 0 : (bin.count / max) * 100}%` }} />
             </span>

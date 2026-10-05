@@ -124,8 +124,8 @@ describe('the run bar', () => {
     const items = within(screen.getByRole('list', { name: 'Runs compared' })).getAllByRole('listitem');
     expect(items.map((li) => li.querySelector('.rg-swatch')?.getAttribute('data-run'))).toEqual(['base', 'a', 'b']);
     expect(items[1]?.textContent).toContain('hybrid');
-    expect(within(items[0] as HTMLElement).getByRole('button', { name: 'Copy the hash of the baseline' })).toBeTruthy();
-    expect(within(items[1] as HTMLElement).getByRole('button', { name: 'Copy the hash of run A' }).getAttribute('title')).toBe(HYBRID);
+    expect(within(items[0] as HTMLElement).getByRole('button', { name: /^Copy \w{6}, the hash of the baseline$/ })).toBeTruthy();
+    expect(within(items[1] as HTMLElement).getByRole('button', { name: `Copy ${HYBRID.slice(0, 6)}, the hash of run A` }).getAttribute('title')).toBe(HYBRID);
     expect(screen.getByText('beir/scifact')).toBeTruthy();
   });
 
@@ -286,7 +286,7 @@ describe('the charts', () => {
     await loaded();
     fireEvent.change(screen.getByLabelText('Per-query metric'), { target: { value: 'mrr@10' } });
     fireEvent.click(screen.getByRole('radio', { name: 'B · hybrid-rerank' }));
-    fireEvent.click(screen.getByRole('button', { name: 'much worse, below −0.3: 6 queries' }));
+    fireEvent.click(screen.getByRole('button', { name: 'much worse, 6 queries, change below −0.3' }));
     const list = screen.getByRole('region', { name: '6 queries much worse, below −0.3' });
     const links = within(list).getAllByRole('link');
     expect(links).toHaveLength(6);
@@ -350,7 +350,7 @@ describe('at phone width', () => {
     show(THREE);
     await loaded();
     for (const toggle of screen.getAllByRole('button', { name: 'Show as a table' })) fireEvent.click(toggle);
-    fireEvent.click(screen.getByRole('button', { name: 'much worse, below −0.3: 1 query' }));
+    fireEvent.click(screen.getByRole('button', { name: 'much worse, 1 query, change below −0.3' }));
     const tables = screen.getAllByRole('table');
     expect(tables.length).toBeGreaterThanOrEqual(7);
     for (const table of tables) {
@@ -436,6 +436,17 @@ describe('the verdict', () => {
 });
 
 describe('the pairing', () => {
+  it('points Pair nodes… at its panel only while the panel is on the page', async () => {
+    show(THREE);
+    await loaded();
+    const toggle = screen.getByRole('button', { name: 'Pair nodes…' });
+    expect(toggle.hasAttribute('aria-controls')).toBe(false);
+    // No control on the screen names an element that is not in the document.
+    for (const el of document.querySelectorAll('[aria-controls]')) expect(document.getElementById(el.getAttribute('aria-controls')!), el.outerHTML.slice(0, 80)).not.toBeNull();
+    fireEvent.click(toggle);
+    expect(document.getElementById(toggle.getAttribute('aria-controls') ?? '')).toBe(screen.getByRole('region', { name: 'Pair nodes' }));
+  });
+
   it('posts a pair drawn by hand, then the subtitle counts it; Reset to automatic clears it', async () => {
     const api = show(THREE);
     await loaded();

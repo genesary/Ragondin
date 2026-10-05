@@ -57,17 +57,28 @@ describe('Histogram', () => {
     render(<Histogram {...props()} />);
     const group = screen.getByRole('group', { name: 'Per-query change in ndcg@10, A against the baseline' });
     const buttons = within(group).getAllByRole('button');
-    expect(buttons.map((b) => b.getAttribute('aria-label'))).toEqual([
-      'much worse, below −0.3: 6 queries',
-      'worse, −0.3 to −0.1: 20 queries',
-      'slightly worse, −0.1 to 0: 35 queries',
-      'unchanged, 0: 108 queries',
-      'slightly better, 0 to 0.1: 54 queries',
-      'better, 0.1 to 0.3: 0 queries',
-      'much better, above 0.3: 77 queries',
+    expect(buttons.map((b) => b.textContent)).toEqual([
+      'much worse, 6 queries, change below −0.3',
+      'worse, 20 queries, change −0.3 to −0.1',
+      'slightly worse, 35 queries, change −0.1 to 0',
+      'unchanged, 108 queries, change 0',
+      'slightly better, 54 queries, change 0 to 0.1',
+      'better, 0 queries, change 0.1 to 0.3',
+      'much better, 77 queries, change above 0.3',
     ]);
     expect(buttons[0]?.querySelector('.rg-hist__bar')).toBeTruthy();
     expect(declared(css, '.rg-hist__col', 'height')).toBe('100%');
+  });
+
+  it('names each bar from its content, so the count and the range it shows are words of its name (WCAG 2.5.3)', () => {
+    render(<Histogram {...props({ bins: [{ id: 'one', label: 'worse', range: '−0.3 to −0.1', count: 1, tone: 'worse' }] })} />);
+    const bar = screen.getByRole('button', { name: 'worse, 1 query, change −0.3 to −0.1' });
+    // An aria-label would replace the content, and the words on screen with it.
+    expect(bar.hasAttribute('aria-label')).toBe(false);
+    const shown = [...bar.querySelectorAll('.rg-hist__count, .rg-hist__range')].map((s) => s.textContent);
+    expect(shown).toEqual(['1', '−0.3 to −0.1']);
+    // What is not on screen is read only by assistive technology.
+    expect([...bar.querySelectorAll('.rg-visually-hidden')].map((s) => s.textContent)).toEqual(['worse, ', ' query, change ']);
   });
 
   it('writes the two halves under the axis in words, never colour alone', () => {

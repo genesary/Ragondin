@@ -25,6 +25,10 @@ export type RunSwatchProps = {
 export function RunSwatch({ slot, name, hash, small = false, onCopyHash, copyLabel }: RunSwatchProps) {
   const letter = slot === 'base' ? 'baseline' : slot.toUpperCase();
   const hidden = slot === 'base' || small;
+  const short = hash?.slice(0, 6);
+  // The name holds the characters the button shows, so a person who says
+  // what they see reaches it (WCAG 2.5.3, Label in Name).
+  const copyName = copyLabel === undefined ? `Copy run hash ${short}` : `Copy ${short}, the hash of ${copyLabel}`;
   return (
     <span className="rg-runlabel">
       <span className={small ? 'rg-swatch rg-swatch--s' : 'rg-swatch'} data-run={slot}>
@@ -32,8 +36,8 @@ export function RunSwatch({ slot, name, hash, small = false, onCopyHash, copyLab
       </span>
       {name === undefined ? null : <span className="rg-runlabel__name">{name}</span>}
       {hash === undefined ? null : (
-        <button type="button" className="rg-hash" title={hash} aria-label={copyLabel === undefined ? `Copy run hash ${hash}` : `Copy the hash of ${copyLabel}`} onClick={() => onCopyHash?.(hash)}>
-          {hash.slice(0, 6)}
+        <button type="button" className="rg-hash" title={hash} aria-label={copyName} onClick={() => onCopyHash?.(hash)}>
+          {short}
         </button>
       )}
     </span>

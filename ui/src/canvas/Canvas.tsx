@@ -236,13 +236,17 @@ function Line({ sourceX, sourceY, targetX, targetY, source, target, data }: Edge
 const NODE_TYPES = { card: Card };
 const EDGE_TYPES = { line: Line };
 
-/** Zoom and fit, over this canvas's own viewport. The percentage is read on demand, never announced. */
-function Toolbar() {
+/**
+ * Zoom and fit, over this canvas's own viewport. The percentage is read on
+ * demand, never announced. Named after its canvas, so two toolbars side by
+ * side are told apart.
+ */
+function Toolbar({ label }: { label: string }) {
   const flow = useReactFlow();
   const { zoom } = useViewport();
   const hidden = (text: string) => <span className="rg-visually-hidden">{text}</span>;
   return (
-    <div className="rg-canvas__toolbar" role="toolbar" aria-label="Canvas">
+    <div className="rg-canvas__toolbar" role="toolbar" aria-label={`Canvas, ${label}`}>
       <Button kind="quiet" size="s" icon="minus" onClick={() => void flow.zoomOut()}>
         {hidden('Zoom out')}
       </Button>
@@ -255,6 +259,22 @@ function Toolbar() {
       </Button>
     </div>
   );
+}
+
+/**
+ * The library draws each grid as an `<svg>` and wraps each edge in one, and
+ * takes no attribute for either. A grid says nothing: it is hidden. A wrapper
+ * says nothing of its own and holds the edge, which is named: it is made
+ * presentational, since hiding it would hide the edge's name with it.
+ */
+function quietLibrarySvgs(root: HTMLElement) {
+  for (const grid of root.querySelectorAll('svg.react-flow__background')) {
+    if (grid.getAttribute('aria-hidden') !== 'true') grid.setAttribute('aria-hidden', 'true');
+  }
+  for (const edge of root.querySelectorAll('.react-flow__edge')) {
+    const wrapper = edge.parentElement;
+    if (wrapper?.tagName.toLowerCase() === 'svg' && wrapper.getAttribute('role') !== 'none') wrapper.setAttribute('role', 'none');
+  }
 }
 
 const NO_OVERLAY: Readonly<Record<string, NodeOverlay>> = {};
@@ -318,6 +338,17 @@ function Surface({
   useEffect(() => {
     if (placed !== '{}') report.current?.(JSON.parse(placed) as Record<string, Position>);
   }, [placed]);
+
+  // The library adds and replaces its SVGs as the graph changes, after this
+  // component renders: they are set again whenever its subtree changes.
+  useEffect(() => {
+    const el = root.current;
+    if (el === null) return;
+    quietLibrarySvgs(el);
+    const observer = new MutationObserver(() => quietLibrarySvgs(el));
+    observer.observe(el, { childList: true, subtree: true });
+    return () => observer.disconnect();
+  }, []);
 
   // The menu's node is passed back by the menu, so this closure holds no
   // render's state and is made once.
@@ -527,7 +558,7 @@ function Surface({
     <div className="rg-canvas-frame">
       <div ref={root} className="rg-canvas" data-mode={mode} data-drawing={drawing === null ? undefined : true} onKeyDown={onKeyDown} onDragOver={onDragOver} onDrop={onDrop}>
         {/* First in the tab order, before the nodes. */}
-        <Toolbar />
+        <Toolbar label={label} />
         {/* Its height is kept whether or not it speaks, so nothing moves when it does. */}
         {editable ? (
           <p className="rg-canvas__status" role="status">

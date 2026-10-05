@@ -38,7 +38,7 @@ describe('RunSwatch hash label', () => {
   it('shows six characters in mono, the whole hash on hover, and copies the whole hash', () => {
     const onCopyHash = vi.fn();
     render(<RunSwatch slot="a" name="hybrid-rerank" hash={HASH} onCopyHash={onCopyHash} />);
-    const hash = screen.getByRole('button', { name: `Copy run hash ${HASH}` });
+    const hash = screen.getByRole('button', { name: 'Copy run hash 9e2b7d' });
     expect(hash.textContent).toBe('9e2b7d');
     expect(hash.getAttribute('title')).toBe(HASH);
     fireEvent.click(hash);
@@ -66,6 +66,15 @@ describe('RunSwatch small', () => {
 describe('RunSwatch hash label, named', () => {
   it('names which run it copies, when several sit side by side', () => {
     render(<RunSwatch slot="a" name="hybrid" hash={HASH} copyLabel="run A" />);
-    expect(screen.getByRole('button', { name: 'Copy the hash of run A' }).getAttribute('title')).toBe(HASH);
+    expect(screen.getByRole('button', { name: 'Copy 9e2b7d, the hash of run A' }).getAttribute('title')).toBe(HASH);
+  });
+
+  it('carries the six characters it shows in its name, so a person can say what they see (WCAG 2.5.3)', () => {
+    for (const copyLabel of [undefined, 'run A', 'the baseline']) {
+      const { unmount } = render(<RunSwatch slot="a" name="hybrid" hash={HASH} {...(copyLabel === undefined ? {} : { copyLabel })} />);
+      const button = screen.getByRole('button');
+      expect(button.getAttribute('aria-label')).toContain(button.textContent);
+      unmount();
+    }
   });
 });

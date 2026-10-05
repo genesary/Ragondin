@@ -170,7 +170,8 @@ export function ComparisonView({ comparison: c, ids, baseline, busy, listing, on
                   onChange={(e) => setStageMetric(e.target.value)}
                 />
               )}
-              <Button aria-expanded={pairing} aria-controls={pairingId} onClick={() => setPairing((p) => !p)}>
+              {/* The panel is rendered only while open, so it is named only then: a reference to an absent element is invalid. */}
+              <Button aria-expanded={pairing} aria-controls={pairing ? pairingId : undefined} onClick={() => setPairing((p) => !p)}>
                 Pair nodes…
               </Button>
             </div>
