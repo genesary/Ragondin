@@ -1,11 +1,11 @@
 // One job of the queue, at its own address (`#runs/job/<id>`): what was
-// submitted, the identity it announced, where it stands, and — failed or
-// cancelled — how many queries' traces it kept, where, and the way to Replay
-// over them. The job is the stream's when the queue holds it, else
+// submitted, the identity it announced, where it stands, the faults the queue
+// reported beside it, and — failed or cancelled — how many queries' traces it
+// kept, where, and the way to Replay over them. The job is the stream's when the queue holds it, else
 // `GET /jobs/{id}`'s answer.
 // ARCHITECTURE.md § The Runs screen.
 import { useEffect, useState, type Ref } from 'react';
-import { ButtonLink, Section, StatusChip } from '../../design/index.ts';
+import { ButtonLink, InlineMessage, Section, StatusChip } from '../../design/index.ts';
 import type { ApiClient } from '../api/client.ts';
 import type { JobSummary } from '../api/types.ts';
 import { useJobs } from '../jobs/queue.tsx';
@@ -24,10 +24,38 @@ export type JobPanelProps = {
 
 const when = (ms: number | null) => (ms === null ? null : new Date(ms).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' }));
 
+/**
+ * The faults reported beside the job, each with when. A warning, never an
+ * alert: a fault did not stop the job. Its status role announces it politely
+ * as the stream brings it, and nothing is read again for it.
+ */
+function Faults({ job }: { job: JobSummary }) {
+  const count = job.faults.length;
+  if (count === 0) return null;
+  return (
+    <InlineMessage tone="warning" title={`${count.toLocaleString('en-US')} ${count === 1 ? 'fault' : 'faults'} beside this job; it did not stop it`}>
+      {job.faults.map((fault, i) => {
+        const at = when(fault.at_ms);
+        return (
+          <span key={i} className="rg-job__fault">
+            {fault.reason}
+            {at === null ? null : ` (${at})`}
+          </span>
+        );
+      })}
+    </InlineMessage>
+  );
+}
+
 function Facts({ job }: { job: JobSummary }) {
   const { work, state } = job;
   if (work.kind !== 'run') {
-    return <p>A download of {work.benchmark}, followed in Setup.</p>;
+    return (
+      <>
+        <p>A download of {work.benchmark}, followed in Setup.</p>
+        <Faults job={job} />
+      </>
+    );
   }
   const accepted = when(job.created_at_ms);
   return (
@@ -68,6 +96,7 @@ function Facts({ job }: { job: JobSummary }) {
           )}
         </dd>
       </dl>
+      <Faults job={job} />
       {state.kind === 'failed' ? <p className="rg-runs__failure">{state.at_node === null ? `The run failed: ${state.error}` : `${state.at_node} failed: ${state.error}`}</p> : null}
       {state.kind === 'failed' || state.kind === 'cancelled' ? (
         state.partial_traces === 0 ? (

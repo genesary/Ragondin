@@ -348,6 +348,29 @@ describe('the queue’s rows', () => {
     expect(within(job).queryByRole('link', { name: 'Replay the partial traces' })).toBeNull();
   });
 
+  it('a_fault_reported_during_a_job_shows_on_its_row_and_in_its_view_without_a_reload', async () => {
+    const { api, stream } = await show('#runs/job/j1');
+    connect(stream, [runJob('j1', running(3, 10))]);
+    const job = await screen.findByRole('region', { name: 'Job j1' });
+    expect(within(job).queryByRole('status')).toBeNull();
+    const reads = api.requests.length;
+
+    const reason = 'the layout of pipeline hybrid could not be copied at launch, so a fork of its run starts without one';
+    send(stream, { event: 'fault', data: runJob('j1', running(3, 10), { faults: [reason] }) });
+
+    // Said politely, beside the job, which goes on: a warning, never an alert.
+    const warning = within(job).getByRole('status');
+    expect(warning.textContent).toContain('1 fault beside this job; it did not stop it');
+    expect(warning.textContent).toContain(reason);
+    expect(within(job).queryByRole('alert')).toBeNull();
+    expect(job.querySelector('.rg-status')?.textContent).toBe('running 3 / 10');
+    expect(jobRowOf().getAttribute('aria-label')).toBe(`Run ${short(ANNOUNCED)} on beir/scifact, running, 1 fault`);
+    expect(within(jobRowOf()).getByText('1 fault')).toBeTruthy();
+    // Nothing was read again: the stream carried it.
+    expect(api.requests.length).toBe(reads);
+    expect(notifications().querySelectorAll('.rg-toast')).toHaveLength(0);
+  });
+
   it('cancel_and_resubmit_round_trip_through_the_api', async () => {
     const cancelledQueued = runJob('j2', CANCELLED, { position: 1 });
     const { api, stream } = await show(

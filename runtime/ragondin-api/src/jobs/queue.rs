@@ -2,7 +2,8 @@
 //! `jobs/` as their write-ahead record — each transition is written to the
 //! job's file, then applied in memory, then published, all under the lock,
 //! so the file never trails what a client was told and the events are in
-//! the order the states were entered.
+//! the order the states were entered. A fault beside a job is recorded the
+//! same way, on the job, and published as a `fault` event.
 //!
 //! Two lanes, one worker each: runs, through `Launcher::execute`, and
 //! downloads, through `Registry::download`. A worker is spawned when its lane
@@ -19,7 +20,9 @@ use ragondin_experiments::{lower_median, Run, RunId, RunStore, Trace, TraceDocum
 use ragondin_types::QueryId;
 use tokio::sync::{broadcast, mpsc, Mutex, MutexGuard};
 
-use super::{file, now, summary, Job, JobState, RunIdMismatch, Transition, Work, INTERRUPTED};
+use super::{
+    file, now, summary, Fault, Job, JobState, RunIdMismatch, Transition, Work, INTERRUPTED,
+};
 use crate::backends::{
     Backends, Cancellation, DownloadProgress, Launcher, LauncherError, ProgressSink, QueryProgress,
     Registry, RunObserver, Submission,
@@ -92,6 +95,7 @@ pub(crate) struct Queue {
 struct State {
     /// Every job, by position.
     jobs: Vec<Entry>,
+    /// The record's faults that belong to no job; a job's own are on it.
     faults: Vec<JobFault>,
     /// Whether each lane has a worker.
     busy: [bool; 2],
@@ -201,10 +205,13 @@ impl Queue {
                 // Not running either way: a failed write is reported, and the
                 // next start finds it `Running` and fails it again.
                 if let Err(reason) = file::write(&dir, &job) {
-                    faults.push(fault(&dir, &job.id, reason));
+                    job.faults.push(Fault::now(format!(
+                        "{reason}; its recovery is held in memory only, and the next start \
+                         recovers it again"
+                    )));
                 }
             }
-            recount(&dir, &mut job, &mut faults);
+            recount(&dir, &mut job);
             entries.push(Entry {
                 job,
                 cancel: Cancellation::new(),
@@ -362,14 +369,41 @@ impl Queue {
         self.enqueue(&mut state, work).await
     }
 
-    /// Reports a fault of the job `id` that does not change its state, among
-    /// the faults `GET /jobs` lists.
+    /// Reports a fault beside the job `id`, which does not change its state:
+    /// recorded on the job, written into its file, and published as a
+    /// `fault` event ([`Self::attach`]).
     pub(crate) async fn report(&self, id: &str, reason: String) {
-        self.state
-            .lock()
-            .await
-            .faults
-            .push(fault(&self.dir, id, reason));
+        let mut state = self.state.lock().await;
+        match state.find(id) {
+            Ok(index) => self.attach(&mut state, index, reason).await,
+            // A job is never removed, so this is not met; were it, the fault
+            // would still be reported rather than dropped.
+            Err(_) => state.faults.push(JobFault {
+                path: file::path(&self.dir, id).display().to_string(),
+                reason,
+            }),
+        }
+    }
+
+    /// Records `reason` against the job at `index` as every transition is
+    /// recorded: written into its file, then applied in memory, then
+    /// published — a `fault` event carrying the job. A write that fails
+    /// leaves the fault in memory only, and the fault says so. Called under
+    /// the lock.
+    async fn attach(&self, state: &mut State, index: usize, reason: String) {
+        let mut job = state.jobs[index].job.clone();
+        job.faults.push(Fault::now(reason));
+        if let Err(error) = self.write(&job).await {
+            if let Some(fault) = job.faults.last_mut() {
+                fault.reason = format!(
+                    "{}; this fault is held in memory only: {error}",
+                    fault.reason
+                );
+            }
+        }
+        let view = summary(&job);
+        state.jobs[index].job = job;
+        self.publish(state, &JobEvent::Fault(view));
     }
 
     /// Queues a download of `benchmark` on the download lane.
@@ -413,6 +447,7 @@ impl Queue {
                 state: JobState::Queued.name().to_owned(),
                 at: created_at,
             }],
+            faults: Vec::new(),
         };
         self.write(&job)
             .await
@@ -503,11 +538,12 @@ impl Queue {
                 (i, job)
             })
             .collect();
-        for (_, job) in &changed {
+        for (i, job) in &changed {
             if let Err(detail) = self.write(job).await {
-                state.faults.push(fault(&self.dir, &job.id, format!(
+                let reason = format!(
                     "{detail}; the reorder was refused, and the files written before it keep their new positions, so two jobs on disk may now share a position until the next reorder"
-                )));
+                );
+                self.attach(&mut state, *i, reason).await;
                 return Err(ApiError::BackendFailed { detail });
             }
         }
@@ -666,16 +702,19 @@ impl Queue {
                         state: failed.state.name().to_owned(),
                         at,
                     });
-                    let outcome = match self.write(&failed).await {
-                        Ok(()) => "the job was failed without running".to_owned(),
-                        Err(again) => format!(
-                            "the job was failed without running, in memory only ({again}): \
-                             a restart finds it queued and runs it"
-                        ),
-                    };
-                    state
-                        .faults
-                        .push(fault(&self.dir, &failed.id, format!("{reason}; {outcome}")));
+                    // On the job, written with its failure when the disk
+                    // allows it.
+                    failed.faults.push(Fault::now(format!(
+                        "{reason}; the job was failed without running"
+                    )));
+                    if let Err(again) = self.write(&failed).await {
+                        if let Some(fault) = failed.faults.last_mut() {
+                            fault.reason = format!(
+                                "{reason}; the job was failed without running, in memory only \
+                                 ({again}): a restart finds it queued and runs it"
+                            );
+                        }
+                    }
                     let event = transition(&failed);
                     state.jobs[index].job = failed;
                     self.publish(&mut state, &event);
@@ -825,11 +864,11 @@ impl Queue {
 
     /// Writes a stopped run's traces under `jobs/<id>/partial/`, and
     /// returns how many it kept: none when the write failed, which is
-    /// reported among the faults.
+    /// reported against the job.
     async fn keep_partial(&self, id: &str, tally: &Tally) -> u64 {
         let (dir, id, traces) = (self.dir.clone(), id.to_owned(), tally.traces.clone());
         let written = {
-            let (dir, id) = (dir.clone(), id.clone());
+            let id = id.clone();
             tokio::task::spawn_blocking(move || file::write_partial(&dir, &id, &traces))
                 .await
                 .map_err(|error| format!("writing the partial traces did not complete: {error}"))
@@ -838,10 +877,7 @@ impl Queue {
         match written {
             Ok(()) => tally.traces.len() as u64,
             Err(reason) => {
-                self.state.lock().await.faults.push(JobFault {
-                    path: file::partial_path(&dir, &id).display().to_string(),
-                    reason,
-                });
+                self.report(&id, reason).await;
                 0
             }
         }
@@ -855,11 +891,7 @@ impl Queue {
                 "{} of its traces carry no latency that reads, and were left out of its median",
                 tally.unread
             );
-            self.state
-                .lock()
-                .await
-                .faults
-                .push(fault(&self.dir, id, reason));
+            self.report(id, reason).await;
         }
     }
 
@@ -949,14 +981,11 @@ impl Queue {
             state: job.state.name().to_owned(),
             at,
         });
+        // The fault is on the job, and the terminal event carries it.
         if let Err(reason) = self.write(&job).await {
-            state.faults.push(fault(
-                &self.dir,
-                &job.id,
-                format!(
+            job.faults.push(Fault::now(format!(
                 "{reason}; its end is held in memory only: a restart finds it running, and fails it as interrupted unless its run is stored under the announced id"
-            ),
-            ));
+            )));
         }
         let event = transition(&job);
         state.jobs[index].job = job;
@@ -988,8 +1017,8 @@ impl RunObserver for Forward {
 /// Sets the count of partial traces of a failed or cancelled job whose file
 /// was written before the count was recorded, from the traces it kept: none
 /// when there is no file. A file that does not read counts none, and is
-/// reported — never repaired.
-fn recount(dir: &std::path::Path, job: &mut Job, faults: &mut Vec<JobFault>) {
+/// reported against the job, in memory — never repaired.
+fn recount(dir: &std::path::Path, job: &mut Job) {
     let (JobState::Failed { partial_traces, .. } | JobState::Cancelled { partial_traces, .. }) =
         &mut job.state
     else {
@@ -1001,20 +1030,11 @@ fn recount(dir: &std::path::Path, job: &mut Job, faults: &mut Vec<JobFault>) {
     *partial_traces = Some(match file::read_partial(dir, &job.id) {
         Ok(traces) => traces.map_or(0, |traces| traces.len() as u64),
         Err(reason) => {
-            faults.push(JobFault {
-                path: file::partial_path(dir, &job.id).display().to_string(),
-                reason: format!("{reason}; the job counts none"),
-            });
+            job.faults
+                .push(Fault::now(format!("{reason}; the job counts none")));
             0
         }
     });
-}
-
-fn fault(dir: &std::path::Path, id: &str, reason: String) -> JobFault {
-    JobFault {
-        path: file::path(dir, id).display().to_string(),
-        reason,
-    }
 }
 
 /// The event a job's current state is the transition into.
@@ -1039,6 +1059,7 @@ fn parts(event: &JobEvent) -> (&'static str, String) {
         JobEvent::Failed(job) => ("failed", to_json(job)),
         JobEvent::Cancelled(job) => ("cancelled", to_json(job)),
         JobEvent::Reordered(job) => ("reordered", to_json(job)),
+        JobEvent::Fault(job) => ("fault", to_json(job)),
         JobEvent::Resync(listing) => ("resync", to_json(listing)),
     }
 }
@@ -1068,6 +1089,7 @@ mod tests {
                 benchmark: "beir/mini".to_owned(),
             },
             state: JobStatus::Queued,
+            faults: Vec::new(),
         };
         let listing = JobListing {
             jobs: vec![job.clone()],
@@ -1079,7 +1101,8 @@ mod tests {
             JobEvent::Done(job.clone()),
             JobEvent::Failed(job.clone()),
             JobEvent::Cancelled(job.clone()),
-            JobEvent::Reordered(job),
+            JobEvent::Reordered(job.clone()),
+            JobEvent::Fault(job),
             JobEvent::Resync(listing),
         ] {
             let tagged = serde_json::to_value(&event).unwrap();

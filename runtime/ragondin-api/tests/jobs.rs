@@ -890,17 +890,65 @@ async fn a_trace_whose_latency_does_not_read_is_left_out_of_the_median_and_repor
 
     let job = job_until(&app, &id, finished).await;
     assert_eq!(kind(&job), "done", "{job}");
-    let listing = json(send(app.clone(), get("/api/v1/jobs")).await).await;
-    let faults = listing["faults"].as_array().unwrap();
-    assert_eq!(faults.len(), 1, "{listing}");
-    assert!(faults[0]["path"]
-        .as_str()
-        .unwrap()
-        .ends_with(&format!("{id}.json")));
+    let faults = job["faults"].as_array().unwrap();
+    assert_eq!(faults.len(), 1, "{job}");
     assert!(faults[0]["reason"]
         .as_str()
         .unwrap()
         .contains("2 of its traces"));
+    // A fault beside a job is the job's, not the record's.
+    let listing = json(send(app.clone(), get("/api/v1/jobs")).await).await;
+    assert_eq!(listing["faults"], json!([]), "{listing}");
+}
+
+/// A fault reported while a job runs is published as it is reported — a
+/// `fault` event carrying the job, its faults included — and written into
+/// the job's file, so a restart reads it back.
+#[tokio::test]
+async fn a_fault_beside_a_job_is_published_and_survives_a_restart() {
+    let workspace = scratch("jobs-fault-published-persisted");
+    let launcher = Arc::new(ScriptedLauncher::new(Script {
+        queries: vec![100, 200],
+        malformed: true,
+        ..Script::default()
+    }));
+    let app = server(&workspace, launcher);
+    let watcher = {
+        let app = app.clone();
+        tokio::spawn(async move {
+            events(&app, None, |events| {
+                events.iter().any(|event| event.name == "done")
+            })
+            .await
+        })
+    };
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let id = accepted(&app, PIPELINE).await;
+    let events = watcher.await.unwrap();
+
+    assert_eq!(
+        names_of(&events, &id),
+        ["queued", "running", "running", "running", "fault", "done"],
+        "{events:#?}"
+    );
+    let fault = events.iter().find(|event| event.name == "fault").unwrap();
+    assert_eq!(fault.data["state"]["kind"], "running", "it stops nothing");
+    let reported = &fault.data["faults"][0];
+    assert!(reported["reason"]
+        .as_str()
+        .unwrap()
+        .contains("2 of its traces"));
+    assert!(reported["at_ms"].is_u64(), "{reported}");
+    let done = events.iter().find(|event| event.name == "done").unwrap();
+    assert_eq!(done.data["faults"], fault.data["faults"]);
+
+    let file = job_file(&workspace, &id);
+    assert_eq!(file["faults"].as_array().unwrap().len(), 1, "{file}");
+
+    let restarted = server(&workspace, Arc::new(ScriptedLauncher::default()));
+    let job = json(send(restarted.clone(), get(&format!("/api/v1/jobs/{id}"))).await).await;
+    assert_eq!(job["faults"], fault.data["faults"], "{job}");
 }
 
 #[tokio::test]
@@ -1147,16 +1195,21 @@ async fn a_job_whose_running_cannot_be_written_is_not_executed_and_a_restart_res
         .contains("could not be started"));
     assert_eq!(*launcher.executed.lock().unwrap(), [PIPELINE]);
     let listing = json(send(app.clone(), get("/api/v1/jobs")).await).await;
-    let reported = listing["faults"].as_array().unwrap().iter().any(|fault| {
-        fault["path"]
-            .as_str()
-            .unwrap()
-            .ends_with(&format!("{second}.json"))
-            && fault["reason"]
+    let reported = listing["jobs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|job| job["id"] == second.as_str())
+        .unwrap()["faults"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|fault| {
+            fault["reason"]
                 .as_str()
                 .unwrap()
                 .contains("a restart finds it queued")
-    });
+        });
     assert!(reported, "{listing}");
     assert_eq!(job_file(&workspace, &second)["state"]["kind"], "queued");
 
@@ -1679,17 +1732,16 @@ async fn a_partial_write_that_fails_records_none_and_is_reported() {
     let job = job_until(&app, &id, finished).await;
     assert_eq!(kind(&job), "failed", "{job}");
     assert_eq!(job["state"]["partial_traces"], 0, "{job}");
-    let listing = json(send(app.clone(), get("/api/v1/jobs")).await).await;
     assert!(
-        listing["faults"]
+        job["faults"]
             .as_array()
             .unwrap()
             .iter()
-            .any(|fault| fault["path"]
+            .any(|fault| fault["reason"]
                 .as_str()
                 .unwrap()
-                .ends_with("partial/traces.json")),
-        "{listing}"
+                .contains("partial/traces.json")),
+        "{job}"
     );
 }
 
@@ -1785,17 +1837,16 @@ async fn an_old_job_file_whose_traces_do_not_read_counts_none_and_says_why() {
 
     let torn = json(send(app.clone(), get("/api/v1/jobs/torn")).await).await;
     assert_eq!(torn["state"]["partial_traces"], 0, "{torn}");
-    let listing = json(send(app.clone(), get("/api/v1/jobs")).await).await;
     assert!(
-        listing["faults"]
+        torn["faults"]
             .as_array()
             .unwrap()
             .iter()
-            .any(|fault| fault["path"]
+            .any(|fault| fault["reason"]
                 .as_str()
                 .unwrap()
-                .ends_with("torn/partial/traces.json")),
-        "{listing}"
+                .contains("torn/partial/traces.json")),
+        "{torn}"
     );
     let response = send(app.clone(), get("/api/v1/jobs/torn/queries")).await;
     assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);

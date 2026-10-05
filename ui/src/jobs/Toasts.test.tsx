@@ -74,10 +74,34 @@ describe('the outcome of a run, as a toast', () => {
     expect(toasts()).toHaveLength(0);
   });
 
+  it('says a run done with faults has them, still politely: a fault does not stop a run', () => {
+    vi.useFakeTimers();
+    const stream = show();
+    connect(stream, [runJob('j1', running(9, 10))]);
+    send(stream, { event: 'fault', data: runJob('j1', running(9, 10), { faults: ['the layout could not be copied'] }) });
+    // The fault itself raises no toast: the job's row and its view say it.
+    expect(toasts()).toHaveLength(0);
+    send(stream, { event: 'done', data: runJob('j1', doneAs(RUN), { faults: ['the layout could not be copied'] }) });
+    const toast = within(region()).getByRole('status');
+    expect(toast.textContent).toContain('Run done, with 1 fault');
+    expect(within(region()).queryByRole('alert')).toBeNull();
+    act(() => vi.advanceTimersByTime(6000));
+    expect(toasts()).toHaveLength(0);
+  });
+
+  it('counts the faults of a run that failed or was cancelled beside its outcome', () => {
+    const stream = show();
+    connect(stream, [runJob('j1', running(1, 10)), runJob('j2', running(1, 10))]);
+    send(stream, { event: 'failed', data: runJob('j1', failedAt('rerank', 'x'), { faults: ['a', 'b'] }) });
+    send(stream, { event: 'cancelled', data: runJob('j2', CANCELLED, { faults: ['c'] }) });
+    expect(within(region()).getByRole('alert').textContent).toContain('Run failed at rerank, with 2 faults');
+    expect(within(region()).getByRole('status').textContent).toContain('Run cancelled, with 1 fault');
+  });
+
   it('raises nothing for what had already ended when the page opened, nor for a download', () => {
     const stream = show();
     connect(stream, [runJob('j1', doneAs(RUN)), runJob('j2', failedAt(null, 'interrupted'))]);
-    const download: JobSummary = { id: 'd1', created_at_ms: 1, position: 0, state: QUEUED, work: { kind: 'download', benchmark: 'beir/fiqa' } };
+    const download: JobSummary = { id: 'd1', created_at_ms: 1, position: 0, state: QUEUED, work: { kind: 'download', benchmark: 'beir/fiqa' }, faults: [] };
     send(stream, { event: 'queued', data: download });
     send(stream, { event: 'done', data: { ...download, state: doneAs('') } });
     expect(toasts()).toHaveLength(0);

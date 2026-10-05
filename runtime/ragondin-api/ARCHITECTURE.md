@@ -594,10 +594,10 @@ in `tests/workspace_toml.rs`:
   concurrent writes could share. `FsPipelines::launched_layout` is the one
   place the path is written, for the copy and the read alike. A pipeline
   with no layout copies nothing, and that is not an error; a layout that
-  cannot be read, or a copy that cannot be written, is listed among
-  `GET /jobs`' `faults` against the job, naming the pipeline, and the run
-  goes ahead: the positions are presentation, and a fork without them is
-  laid out by the canvas. The layout never reaches the hash (INV-8): the
+  cannot be read, or a copy that cannot be written, is a fault on the job
+  (§ Faults beside a job), naming the pipeline, and the run goes ahead:
+  the positions are presentation, and a fork without them is laid out by
+  the canvas. The layout never reaches the hash (INV-8): the
   hash is computed from the document and names the file, nothing more.
   **One window is left:** the document and the layout are two files read one
   after the other, so an edit saved between the two reads pairs the run with
@@ -939,18 +939,17 @@ published; all three happen under one `tokio` mutex, so the file never trails
 what a client was told and the events are in the order the states were
 entered. A progress tick is not a transition: it changes memory and the
 stream, not the file, since a restart fails a running job whatever its count.
-The ways a write can fail are reported among `GET /jobs`' `faults`, never
-dropped: a submission or a cancellation whose write fails is refused
-(`backend_failed`) and changes nothing; a job whose `running` cannot be
-written is not executed by this process, and its failure is written in its
-place, best effort — when that write fails too, the failure is held in memory
-only, the disk still says `queued`, and a restart runs the job; the fault
-says which happened. A terminal state whose write fails is applied in memory
-anyway — the job has ended — and the next start finds it running, and fails
-it as interrupted unless its run is stored under the announced id. A job file that does not read is left out of the
-queue, left on disk, and listed as a fault: reported, never repaired. A
-layout that could not be copied at submission is listed there too, against
-the job, which it does not stop (§ The pipelines).
+The ways a write can fail are reported, never dropped: a submission or a
+cancellation whose write fails is refused (`backend_failed`) and changes
+nothing; a job whose `running` cannot be written is not executed by this
+process, and its failure is written in its place, best effort — when that
+write fails too, the failure is held in memory only, the disk still says
+`queued`, and a restart runs the job; the job's fault says which happened. A
+terminal state whose write fails is applied in memory anyway — the job has
+ended — and the next start finds it running, and fails it as interrupted
+unless its run is stored under the announced id. A job file that does not
+read is left out of the queue, left on disk, and listed among `GET /jobs`'
+`faults`, the record's own: reported, never repaired.
 
 A run that fails or is cancelled leaves **the traces of the queries it
 executed** in `jobs/<id>/partial/traces.json`, a map by query id — the shape
@@ -972,6 +971,45 @@ with a count of `0`; that file is never served as the job's. A job file
 written before the count was recorded has none; `Queue::open` counts the
 traces it kept when it reads it back, and reports a file of traces that
 does not read, never repairing it.
+
+### Faults beside a job
+
+A **fault** is what went wrong beside a job without changing its state: a
+layout not copied at submission (§ The pipelines), latencies left out of the
+live median (§ Progress, and the live median), partial traces that could not
+be written, a write of the job's own record that failed. Each is on the job —
+`Job::faults` in `jobs/<id>.json`, `JobSummary::faults` in every answer and
+event — with its reason and the time it was reported, in the order reported.
+`GET /jobs`' top-level `faults` keep only what belongs to no job: a job file
+that does not read, a `jobs/` that cannot be listed, a run store that cannot
+be listed at start-up.
+
+**A fault is recorded as a transition is** (`Queue::attach`): written into
+the job's file, then applied in memory, then published, under the queue's
+lock — as a `fault` event, whose data is the job with its faults, the new one
+last (§ The event stream). It changes no state, so a client sees it as it is
+reported, not at its next resync, and nothing reads the job again for it.
+Writing the file then also writes the job's latest progress, which a tick
+leaves in memory only; a restart fails a running job whatever its count, so
+that number is never read back. A write of the fault that fails leaves it in
+memory only, and the fault says so. A fault that accompanies a transition —
+a `running` that could not be written, so the job is failed without running;
+an end that could not be written; a recovery at start-up that could not be
+written — is put on the job with that transition, written with it when the
+disk allows, and published by that transition's own event; when the write
+fails, it says it is held in memory only. A reorder whose write fails records
+its fault on the job it could not write, as any other fault.
+
+**Faults persist** — a choice made here: they are the job's, the job's file
+is the record a restart reads the queue back from, and a fault that vanished
+on restart would leave a run whose fork silently lacks its layout with
+nothing saying why. A file written before faults were recorded on the job
+reads as having none. Those held in memory only are lost on restart, and
+that loss is what each of them says: the next start meets its cause again —
+the job found running, or queued — and recovers it as § The state machine
+says. The fault of a job whose file recorded no count of partial traces and
+whose traces file does not read is in memory only as well: the job counts
+none, and each start finds the file again and reports it again.
 
 ### The partial traces, served
 
@@ -1034,8 +1072,9 @@ is `job_not_queued`.
 
 `GET /jobs/events` is server-sent events over `axum`'s `Sse`: one event per
 transition, named after the state entered, one per progress tick, named
-`running`, and one `reordered` per job a reorder moved, each carrying the
-job as `GET /jobs/{id}` answers it. Every event is numbered under the queue's
+`running`, one `reordered` per job a reorder moved, and one `fault` per fault
+reported beside a job (§ Faults beside a job), each carrying the job as
+`GET /jobs/{id}` answers it. Every event is numbered under the queue's
 lock and kept in a buffer of the 1024 most recent; its id is
 `<process>:<number>`, the process named by the time it started. A client
 that reconnects with `Last-Event-ID` gets every event after it, once, when
@@ -1048,7 +1087,7 @@ lock every publication holds, and an event already sent is never sent again.
 An idle stream sends a comment every 15 s. The description declares the
 stream's success body as `text/event-stream` of schema `JobEvent`, an
 adjacently tagged union of `{event, data}` — `queued`, `running`, `done`,
-`failed`, `cancelled` and `reordered` to `JobSummary`, `resync` to
+`failed`, `cancelled`, `reordered` and `fault` to `JobSummary`, `resync` to
 `JobListing` — so the UI's map from an event's name to its data is generated.
 The stream builds each event's name and data from a `JobEvent` value, and a
 unit test checks the two against the type's serde tag, so the schema is the

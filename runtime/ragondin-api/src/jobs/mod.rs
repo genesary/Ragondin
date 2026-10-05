@@ -19,7 +19,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::backends::Submission;
 use crate::response::{
-    JobStatus, JobSummary, JobWork, RunIdMismatch as RunIdMismatchSummary, ServiceBinding,
+    JobStatus, JobSummary, JobWork, ReportedFault, RunIdMismatch as RunIdMismatchSummary,
+    ServiceBinding,
 };
 
 mod file;
@@ -46,6 +47,27 @@ pub struct Job {
     pub state: JobState,
     /// Every transition it went through, in order, the current one last.
     pub history: Vec<Transition>,
+    /// What went wrong beside it without stopping it, in the order reported.
+    /// Absent in a file written before faults were recorded on the job.
+    #[serde(default)]
+    pub faults: Vec<Fault>,
+}
+
+/// A fault beside a job: what went wrong without changing its state, and
+/// what the queue did about it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Fault {
+    /// What went wrong, and what the queue did about it.
+    pub reason: String,
+    /// When it was reported; `None` when the clock read before the epoch.
+    pub at: Option<UnixMillis>,
+}
+
+impl Fault {
+    /// `reason`, reported now.
+    pub(crate) fn now(reason: String) -> Self {
+        Self { reason, at: now() }
+    }
 }
 
 /// What a job does.
@@ -290,5 +312,13 @@ pub(crate) fn summary(job: &Job) -> JobSummary {
                 partial_traces: partial_traces.unwrap_or(0),
             },
         },
+        faults: job
+            .faults
+            .iter()
+            .map(|fault| ReportedFault {
+                reason: fault.reason.clone(),
+                at_ms: millis(fault.at),
+            })
+            .collect(),
     }
 }

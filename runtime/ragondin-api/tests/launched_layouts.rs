@@ -227,11 +227,14 @@ async fn done(app: &Server, accepted: &Value) {
     panic!("the job never finished: {job}");
 }
 
+/// Every fault `GET /jobs` lists: the record's own, and each job's.
 async fn faults(app: &Server) -> Vec<Value> {
-    json(send(app.clone(), get("/api/v1/jobs")).await).await["faults"]
-        .as_array()
-        .unwrap()
-        .clone()
+    let listing = json(send(app.clone(), get("/api/v1/jobs")).await).await;
+    let mut faults = listing["faults"].as_array().unwrap().clone();
+    for job in listing["jobs"].as_array().unwrap() {
+        faults.extend(job["faults"].as_array().unwrap().iter().cloned());
+    }
+    faults
 }
 
 fn launched(workspace: &Workspace, hash: &str) -> std::path::PathBuf {
@@ -394,16 +397,13 @@ async fn a_copy_that_fails_is_reported_and_the_run_still_goes_ahead() {
     let accepted = launch(&app, None).await;
     done(&app, &accepted).await;
 
-    let faults = faults(&app).await;
-    assert_eq!(faults.len(), 1, "{faults:?}");
-    let reason = faults[0]["reason"].as_str().unwrap();
+    // Against the job, which it did not stop: on the job itself.
+    let path = format!("/api/v1/jobs/{}", accepted["job_id"].as_str().unwrap());
+    let job = json(send(app.clone(), get(&path)).await).await;
+    let on_job = job["faults"].as_array().unwrap();
+    assert_eq!(on_job.len(), 1, "{job}");
+    let reason = on_job[0]["reason"].as_str().unwrap();
     assert!(reason.contains("layout"), "{reason}");
     assert!(reason.contains(NAME), "{reason}");
-    assert!(
-        faults[0]["path"]
-            .as_str()
-            .unwrap()
-            .contains(accepted["job_id"].as_str().unwrap()),
-        "{faults:?}"
-    );
+    assert_eq!(faults(&app).await.len(), 1, "nowhere else");
 }

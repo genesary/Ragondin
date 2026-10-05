@@ -1,5 +1,6 @@
 // A run's outcome as a toast (the front-end design, § 8): "Run done — open",
-// "Run failed at rerank — open", "Run cancelled". Raised once per job, on the
+// "Run failed at rerank — open", "Run cancelled" — each ", with 1 fault" when
+// the queue reported faults beside the job. Raised once per job, on the
 // transition the page saw — an event, or a resync after the stream was down —
 // from a state not ended to an ended one; what had already ended when the
 // page opened raises nothing. ARCHITECTURE.md § The job stream.
@@ -16,19 +17,24 @@ export type Outcome = { job: string; tone: 'good' | 'critical'; words: string; d
 
 const ENDED = new Set(['done', 'failed', 'cancelled']);
 
+/** The faults reported beside a job, counted: ", with 2 faults"; nothing when there are none. */
+export const faultWords = (count: number) => (count === 0 ? '' : `, with ${count.toLocaleString('en-US')} ${count === 1 ? 'fault' : 'faults'}`);
+
 /** The outcome a run job's ended state says; null for a job that is not a run or has not ended. */
 export function outcomeOf(job: JobSummary): Outcome | null {
   const { work, state } = job;
   if (work.kind !== 'run') return null;
   const detail = `${work.pipeline} on ${work.benchmark}`;
+  // A fault does not stop a run, so it changes neither the tone nor whether the toast stays: it is said, never raised.
+  const faults = faultWords(job.faults.length);
   switch (state.kind) {
     case 'done':
-      return { job: job.id, tone: 'good', words: 'Run done', detail, open: state.run_id === null ? null : { screen: 'replay', run: state.run_id }, persist: false };
+      return { job: job.id, tone: 'good', words: `Run done${faults}`, detail, open: state.run_id === null ? null : { screen: 'replay', run: state.run_id }, persist: false };
     case 'failed':
       // A failure needs action, so it stays until acted on.
-      return { job: job.id, tone: 'critical', words: state.at_node === null ? 'Run failed' : `Run failed at ${state.at_node}`, detail, open: { screen: 'runs', job: job.id }, persist: true };
+      return { job: job.id, tone: 'critical', words: `${state.at_node === null ? 'Run failed' : `Run failed at ${state.at_node}`}${faults}`, detail, open: { screen: 'runs', job: job.id }, persist: true };
     case 'cancelled':
-      return { job: job.id, tone: 'good', words: 'Run cancelled', detail, open: null, persist: false };
+      return { job: job.id, tone: 'good', words: `Run cancelled${faults}`, detail, open: null, persist: false };
     default:
       return null;
   }

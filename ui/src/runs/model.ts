@@ -132,6 +132,8 @@ export type JobFacts = {
   filed: string | null;
   /** Both ids, when the run was filed under another than the one announced. */
   mismatch: { announced: string; decided: string } | null;
+  /** The reason of each fault the queue reported beside the job, in their order: none stopped it. */
+  faults: string[];
 };
 
 /** A pipeline's runs, under one heading. */

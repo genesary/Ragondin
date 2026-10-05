@@ -5,14 +5,19 @@ import type { JobEvent, JobStatus, JobSummary } from '../api/types.ts';
 
 export const hex = (c: string) => c.repeat(64);
 
-/** A run job: `pipeline` on `benchmark`, announcing `runId`. */
-export function runJob(id: string, state: JobStatus, { pipeline = 'hybrid', benchmark = 'beir/scifact', runId = hex('a'), position = 0, upTo = null }: { pipeline?: string; benchmark?: string; runId?: string; position?: number; upTo?: string | null } = {}): JobSummary {
+/** A run job: `pipeline` on `benchmark`, announcing `runId`, with a fault for each of `faults`. */
+export function runJob(
+  id: string,
+  state: JobStatus,
+  { pipeline = 'hybrid', benchmark = 'beir/scifact', runId = hex('a'), position = 0, upTo = null, faults = [] }: { pipeline?: string; benchmark?: string; runId?: string; position?: number; upTo?: string | null; faults?: string[] } = {},
+): JobSummary {
   return {
     id,
     created_at_ms: 1_700_000_000_000,
     position,
     state,
     work: { kind: 'run', pipeline, benchmark, run_id: runId, up_to: upTo, parent_pipeline_hash: upTo === null ? null : hex('e'), bindings: [] },
+    faults: faults.map((reason) => ({ reason, at_ms: 1_700_000_050_000 })),
   };
 }
 

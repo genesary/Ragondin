@@ -151,6 +151,7 @@ fn the_queue_s_operations_declare_their_status_and_their_stream() {
             ("cancelled".to_owned(), summary.clone()),
             ("done".to_owned(), summary.clone()),
             ("failed".to_owned(), summary.clone()),
+            ("fault".to_owned(), summary.clone()),
             ("queued".to_owned(), summary.clone()),
             ("reordered".to_owned(), summary.clone()),
             (

@@ -204,7 +204,7 @@ describe('the benchmarks', () => {
 });
 
 /** A download job of `benchmark`, as the stream carries it. */
-const download = (id: string, state: JobSummary['state'], benchmark = 'beir/fiqa'): JobSummary => ({ id, created_at_ms: 1, position: 0, state, work: { kind: 'download', benchmark } });
+const download = (id: string, state: JobSummary['state'], benchmark = 'beir/fiqa'): JobSummary => ({ id, created_at_ms: 1, position: 0, state, work: { kind: 'download', benchmark }, faults: [] });
 const running = (done: number, total: number | null): JobSummary['state'] => ({ kind: 'running', done, total, started_at_ms: 2, median_latency_nanos: null });
 /** The job stream sends one event; the stream is opened first if it is not yet. */
 const send = (event: JobEvent) =>

@@ -495,16 +495,19 @@ export type JobEvent = {
   data: JobSummary;
   event: "reordered";
 } | {
+  data: JobSummary;
+  event: "fault";
+} | {
   data: JobListing;
   event: "resync";
 };
 
 /**
- * A job file the queue could not read, a write of it that failed, or what
- * went wrong beside a job without stopping it.
+ * A fault of the queue's record that belongs to no job: a job file the
+ * queue could not read, or a directory or store it could not list.
  */
 export type JobFault = {
-  /** The file — for a fault beside a job, the job's own file. */
+  /** The file or directory. */
   path: string;
   /** What went wrong, and what the queue did about it. */
   reason: string;
@@ -516,10 +519,10 @@ export type JobFault = {
  */
 export type JobListing = {
   /**
-   * A job file that does not read, a write of the queue's record that
-   * failed, or what went wrong beside a job without stopping it — a
-   * layout not copied at launch, latencies left out of its median —
-   * reported, never repaired.
+   * The faults of the queue's record that belong to no job — a job file
+   * that does not read, a directory that cannot be listed, a run store
+   * that cannot be listed at start-up — reported, never repaired. A fault
+   * beside a job is on the job, in [`JobSummary::faults`].
    */
   faults: JobFault[];
   /**
@@ -599,6 +602,14 @@ export type JobSummary = {
    * the clock read before it.
    */
   created_at_ms: number | null;
+  /**
+   * What went wrong beside it without stopping it — a layout not copied
+   * at launch, latencies left out of its median, a write of its record
+   * that failed — in the order reported. Written into the job's file with
+   * it, so a restart reads them back; one that could not be written says
+   * it is held in memory only.
+   */
+  faults: ReportedFault[];
   /** Its id. */
   id: string;
   /** Its place: a lane's worker takes the queued job with the lowest. */
@@ -1361,6 +1372,17 @@ export type ReorderRequest = {
    * place past the last moves it last.
    */
   position: number;
+};
+
+/** A fault beside a job, which did not change its state. */
+export type ReportedFault = {
+  /**
+   * When it was reported, in milliseconds since the epoch; `null` when
+   * the clock read before it.
+   */
+  at_ms: number | null;
+  /** What went wrong, and what the queue did about it. */
+  reason: string;
 };
 
 /** `POST /runs`: the job accepted, and the run id it announced. */

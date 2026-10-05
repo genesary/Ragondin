@@ -9,6 +9,7 @@ const job = (id: string, state: JobSummary['state'], benchmark = 'beir/scifact')
   position: 0,
   state,
   work: { kind: 'download', benchmark },
+  faults: [],
 });
 
 const QUEUED = job('1-0', { kind: 'queued' });
@@ -41,8 +42,8 @@ describe('openJobStream', () => {
     const source = FakeEventSource.latest();
     source.open();
     source.emit(JSON.stringify({ jobs: [QUEUED], faults: [] }), 'resync');
-    for (const name of ['queued', 'running', 'done', 'failed', 'cancelled', 'reordered'] as const) source.emit(JSON.stringify(QUEUED), name);
-    expect(events.map((e) => e.event)).toEqual(['resync', 'queued', 'running', 'done', 'failed', 'cancelled', 'reordered']);
+    for (const name of ['queued', 'running', 'done', 'failed', 'cancelled', 'reordered', 'fault'] as const) source.emit(JSON.stringify(QUEUED), name);
+    expect(events.map((e) => e.event)).toEqual(['resync', 'queued', 'running', 'done', 'failed', 'cancelled', 'reordered', 'fault']);
     expect(events[0]).toEqual({ event: 'resync', data: { jobs: [QUEUED], faults: [] } });
     expect(events[1]).toEqual({ event: 'queued', data: QUEUED });
   });
@@ -68,6 +69,8 @@ describe('openJobStream', () => {
     ['a failure without the count of the traces it kept', { ...QUEUED, state: { kind: 'failed', error: 'boom', at_node: null, finished_at_ms: 3 } }],
     ['a cancellation whose count is not a number', { ...QUEUED, state: { kind: 'cancelled', finished_at_ms: 3, partial_traces: '2' } }],
     ['a download without its benchmark', { ...QUEUED, work: { kind: 'download' } }],
+    ['a job without its faults', { ...QUEUED, faults: undefined }],
+    ['a fault without its reason', { ...QUEUED, faults: [{ at_ms: 3 }] }],
   ])('treats %s as unreadable: never handed on, and the stream starts again', (_, data) => {
     const { events } = open();
     FakeEventSource.latest().open();
