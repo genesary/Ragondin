@@ -327,7 +327,7 @@ const RRF_K: ParamSpec = ParamSpec {
     required: false,
     description: "The constant added to each rank before it is inverted; absent, the component's own default.",
 };
-/// `concat`'s separator: required, and may be empty ([`concat`]).
+/// `concat`'s separator: required, and may be empty ([`concat()`]).
 const SEPARATOR: ParamSpec = ParamSpec {
     name: "separator",
     kind: ParamKind::String,
