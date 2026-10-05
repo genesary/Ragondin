@@ -64,15 +64,20 @@ export function signedGain(gain: number): string {
   return `${gain > 0 ? '+' : MINUS}${magnitude}`;
 }
 
-/** The reasons a cell holds no figure because nothing measured it there, which say nothing of the node itself. */
-const UNMEASURED: ReadonlySet<MatrixCell['kind']> = new Set(['not_run_yet', 'prefix_stops', 'not_run_on_this_version']);
+/**
+ * The reasons a cell holds no figure because nothing measured it there, which
+ * say nothing of the node itself — the pipeline that cannot be scored on the
+ * benchmark included, which is the whole pipeline's matter, not the node's.
+ */
+const UNMEASURED: ReadonlySet<MatrixCell['kind']> = new Set(['not_run_yet', 'prefix_stops', 'not_run_on_this_version', 'not_scorable']);
 
 /**
  * Whether row `row` says one thing for every benchmark: a node no metric
  * reads — a context builder. Not scored is structural, so a row with one
  * `not_scored` cell is not scored everywhere; a cell that only says the node
  * was not measured there — not run yet, beyond a prefix run, run on earlier
- * content — does not contradict it. Any other cell does.
+ * content, on a benchmark the pipeline cannot be scored on — does not
+ * contradict it. Any other cell does.
  */
 export function spansRow(m: PipelineMatrix, row: number): boolean {
   const kinds = m.columns.map((column) => column.cells[row]?.kind);
@@ -92,6 +97,15 @@ export const missingCount = (m: PipelineMatrix) => m.missing.reduce((sum, column
 
 /** Of those, how many a launch can fill: a column no benchmark name is pinned to has nothing to launch on. */
 export const launchableCount = (m: PipelineMatrix) => m.missing.reduce((sum, column) => sum + (column.benchmark === null ? 0 : column.nodes.length), 0);
+
+/**
+ * The benchmarks a launch can fill, each name once: one run of the whole
+ * pipeline per benchmark fills every missing cell of its column, so the
+ * primary action counts these, never cells. Two columns may carry one name
+ * (two digests pinned under it) and are one run; a column no name is pinned
+ * to has nothing to launch on.
+ */
+export const launchableBenchmarks = (m: PipelineMatrix) => [...new Set(m.missing.flatMap((column) => (column.benchmark === null ? [] : [column.benchmark])))];
 
 const count = (n: number, one: string, many: string) => `${n.toLocaleString('en-US')} ${n === 1 ? one : many}`;
 
@@ -115,13 +129,13 @@ export function verdict(m: PipelineMatrix): string {
 /** ADR-C39 § 4's first fact: what the run's launch record says it was launched as. */
 export function launchFact(run: FeedingRun): string {
   const record = run.launched_as;
-  if (record === null) return 'No launch record';
-  if (record.prefix_of !== null) return `Launched as a prefix of ${record.name ?? 'a pipeline'}, up to ${record.prefix_of.up_to}`;
-  return record.name === null ? 'Launched under no name' : `Launched as ${record.name}`;
+  if (record === null) return 'No record of the name it ran under';
+  if (record.prefix_of !== null) return `Run as a prefix of ${record.name ?? 'a pipeline'}, up to ${record.prefix_of.up_to}`;
+  return record.name === null ? 'Run under no name' : `Run under the name ${record.name}`;
 }
 
 /** ADR-C39 § 4's second fact: which current documents the run's content is — never resolved with the first into one name. */
-export const contentFact = (run: FeedingRun) => `Content: ${run.pipeline_names.length === 0 ? 'no current pipeline document' : run.pipeline_names.join(', ')}`;
+export const contentFact = (run: FeedingRun) => `Configuration matches ${run.pipeline_names.length === 0 ? 'no pipeline in the workspace' : run.pipeline_names.join(', ')} now`;
 
 /** For a run launched as `pipeline` whose content has since changed, what its record says it was; null for a run that fills a cell. */
 export function sinceChangedLabel(run: FeedingRun, pipeline: string): string | null {

@@ -9,8 +9,8 @@
 // there, offers only the benchmarks such a prefix can be scored on, and leaves
 // the identity to the API, since the cut is a pipeline of its own. Opened on
 // a benchmark — the Pipeline screen's Run — it launches on that one, or says
-// why it cannot, never on another in its place. Opened on several — "Run the
-// N missing cells" — it lists them, each with why it cannot be launched if it
+// why it cannot, never on another in its place. Opened on several — "Launch
+// the N missing runs" — it lists them, each with why it cannot be launched if it
 // cannot, and one confirmation sends one `POST /runs` per launchable one, each
 // outcome said beside its benchmark.
 // ARCHITECTURE.md § The Runs screen.

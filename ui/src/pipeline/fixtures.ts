@@ -47,6 +47,7 @@ function whole(dataset: string, names: string[], run: string, ranking: MatrixCel
     up_to: null,
     dataset_check: { benchmark: names[0] ?? null, detail: 'the dataset on disk digests to the one the run recorded', expected: { dataset_version: dataset, index_version: hex('0') }, found: { dataset_version: dataset, index_version: hex('0') }, status: 'verified' },
     cells: [...ranking, { kind: 'not_scored' }, generate],
+    failed_attempt: null,
   };
 }
 
@@ -104,7 +105,7 @@ export const PREFIXED: PipelineMatrix = {
 export const WITH_FIQA: PipelineMatrix = {
   ...MATRIX,
   columns: [
-    { dataset_version: FIQA, benchmark_names: ['beir/fiqa'], ground_truth: null, run: null, up_to: null, dataset_check: null, cells: ROWS.map(() => ({ kind: 'not_run_yet', benchmark: 'beir/fiqa' })) },
+    { dataset_version: FIQA, benchmark_names: ['beir/fiqa'], ground_truth: null, run: null, up_to: null, dataset_check: null, cells: ROWS.map(() => ({ kind: 'not_run_yet', benchmark: 'beir/fiqa' })), failed_attempt: null },
     ...COLUMNS,
   ],
   missing: [{ benchmark: 'beir/fiqa', dataset_version: FIQA, nodes: ROWS.map((r) => r.node) }],
@@ -128,3 +129,30 @@ export const SINCE_CHANGED: FeedingRun = {
 
 /** A pipeline with no run at all. */
 export const NO_RUNS: PipelineMatrix = { ...MATRIX, columns: [], feeding_runs: [], missing: [] };
+
+export const FAILED_JOB = 'job-fiqa-1';
+
+/** beir/fiqa again, where the last attempt of the current pipeline failed: its cells still wait for a run. */
+export const FIQA_FAILED: PipelineMatrix = {
+  ...WITH_FIQA,
+  columns: WITH_FIQA.columns.map((c) => (c.dataset_version === FIQA ? { ...c, failed_attempt: { job: FAILED_JOB, error: 'the reranker failed', at_node: 'rerank' } } : c)),
+};
+
+export const RETRIEVAL = 'hybrid-rerank';
+
+/**
+ * A pipeline ending in chunks: measured on nfcorpus, and never scorable on
+ * squad/dev, which carries reference answers (the API's `not_scorable`), so
+ * nothing is missing there.
+ */
+export const RETRIEVAL_ONLY: PipelineMatrix = {
+  ...MATRIX,
+  pipeline: RETRIEVAL,
+  rows: ROWS.slice(0, 4),
+  columns: [
+    { ...(COLUMNS[0] as MatrixColumn), cells: (COLUMNS[0] as MatrixColumn).cells.slice(0, 4) },
+    { dataset_version: SQUAD, benchmark_names: ['squad/dev'], ground_truth: 'both', run: null, up_to: null, dataset_check: null, cells: ROWS.slice(0, 4).map(() => ({ kind: 'not_scorable' })), failed_attempt: null },
+  ],
+  feeding_runs: [{ ...feeding(RUN_NF, NFCORPUS, ['beir/nfcorpus'], 1_000), launched_as: { name: RETRIEVAL, prefix_of: null, held: 'exactly' }, pipeline_names: [RETRIEVAL] }],
+  missing: [],
+};

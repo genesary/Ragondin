@@ -250,6 +250,13 @@ impl Queue {
         queue
     }
 
+    /// Every job as the queue holds it, its pipeline document included, by
+    /// position: what the pipeline matrix reads a failed attempt from.
+    pub(crate) async fn jobs(&self) -> Vec<Job> {
+        let state = self.state.lock().await;
+        state.jobs.iter().map(|entry| entry.job.clone()).collect()
+    }
+
     /// Every job, by position, and the record's faults.
     pub(crate) async fn listing(&self) -> JobListing {
         self.state.lock().await.listing()

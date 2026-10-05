@@ -8,6 +8,7 @@ import {
   contentFact,
   groundTruthLabel,
   launchFact,
+  launchableBenchmarks,
   launchableCount,
   missingCount,
   rankingMetrics,
@@ -107,6 +108,15 @@ describe('the rows and the columns in words', () => {
   });
 });
 
+describe('the missing runs', () => {
+  it('are one per benchmark a launch can fill, each name once, never one per cell', () => {
+    expect(launchableBenchmarks(MATRIX)).toEqual([]);
+    expect(launchableBenchmarks(WITH_FIQA)).toEqual(['beir/fiqa']);
+    const many: PipelineMatrix = { ...WITH_FIQA, missing: [...WITH_FIQA.missing, ...PREFIXED.missing, { benchmark: 'beir/fiqa', dataset_version: '1', nodes: ['bm25'] }, { benchmark: null, dataset_version: '0', nodes: ['bm25'] }] };
+    expect(launchableBenchmarks(many)).toEqual(['beir/fiqa', 'beir/nfcorpus']);
+  });
+});
+
 describe('the missing cells', () => {
   it('counts every node the API lists as missing, over every column', () => {
     expect(missingCount(MATRIX)).toBe(0);
@@ -144,17 +154,17 @@ describe('a feeding run’s two facts', () => {
   const base = MATRIX.feeding_runs[0] as FeedingRun;
 
   it('says what the run was launched as, from its record', () => {
-    expect(launchFact(base)).toBe(`Launched as ${NAME}`);
-    expect(launchFact(PREFIXED.feeding_runs[2]!)).toBe(`Launched as a prefix of ${NAME}, up to rerank`);
-    expect(launchFact({ ...base, launched_as: null })).toBe('No launch record');
-    expect(launchFact({ ...base, launched_as: { name: null, prefix_of: null, held: null } })).toBe('Launched under no name');
+    expect(launchFact(base)).toBe(`Run under the name ${NAME}`);
+    expect(launchFact(PREFIXED.feeding_runs[2]!)).toBe(`Run as a prefix of ${NAME}, up to rerank`);
+    expect(launchFact({ ...base, launched_as: null })).toBe('No record of the name it ran under');
+    expect(launchFact({ ...base, launched_as: { name: null, prefix_of: null, held: null } })).toBe('Run under no name');
   });
 
   it('says which current documents its content is, apart from the launch', () => {
-    expect(contentFact(base)).toBe(`Content: ${NAME}`);
-    expect(contentFact(SINCE_CHANGED)).toBe('Content: dense-50');
-    expect(contentFact({ ...base, pipeline_names: ['a', 'b'] })).toBe('Content: a, b');
-    expect(contentFact({ ...base, pipeline_names: [] })).toBe('Content: no current pipeline document');
+    expect(contentFact(base)).toBe(`Configuration matches ${NAME} now`);
+    expect(contentFact(SINCE_CHANGED)).toBe('Configuration matches dense-50 now');
+    expect(contentFact({ ...base, pipeline_names: ['a', 'b'] })).toBe('Configuration matches a, b now');
+    expect(contentFact({ ...base, pipeline_names: [] })).toBe('Configuration matches no pipeline in the workspace now');
   });
 
   it('says a run whose content changed since its launch for what its record says it was', () => {

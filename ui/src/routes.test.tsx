@@ -96,7 +96,7 @@ describe('#runs?launch=<pipeline>&up_to=<node>', () => {
     expect(load('#runs?launch=hybrid&benchmark=a&benchmark=b&benchmark=a')).toEqual({ screen: 'runs', launch: { pipeline: 'hybrid', benchmarks: ['a', 'b'] } });
   });
 
-  it('carries several benchmarks, one value per key, in order — where “Run the N missing cells” lands', () => {
+  it('carries several benchmarks, one value per key, in order — where “Launch the N missing runs” lands', () => {
     const route: Route = { screen: 'runs', sel: ['r1'], launch: { pipeline: 'hybrid', benchmarks: ['beir/fiqa', 'a&b', 'squad/dev'] } };
     expect(formatHash(route)).toBe('#runs?sel=r1&launch=hybrid&benchmark=beir%2Ffiqa&benchmark=a%26b&benchmark=squad%2Fdev');
     expect(parseHash(formatHash(route))).toEqual(route);
