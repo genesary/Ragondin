@@ -15,18 +15,16 @@ import { answerMetrics, bestGainColumns, columnLabel, groundTruthLabel, signedGa
 export type LaunchPair = { pipeline: string; benchmark: string };
 
 /**
- * The hand-off to the launcher, which the launch flow implements; absent
- * until it exists, and every Run button is then refused with this reason.
+ * The hand-off to the launcher: the screen passes one that opens Runs' launch
+ * panel on the pair (`launchInPanel`), so the matrix imports no launcher.
  */
 export type Launch = (pair: LaunchPair) => void;
-
-export const NO_LAUNCHER = 'Launching arrives with the launcher.';
 
 export type MatrixProps = {
   matrix: PipelineMatrix;
   /** The ranking metric every ranking row reads. */
   metric: string;
-  launch?: Launch | undefined;
+  launch: Launch;
 };
 
 /** A cell's two lines; `never` hatches it — never measurable on this benchmark. */
@@ -77,7 +75,7 @@ function gainLine(cell: Extract<MatrixCell, { kind: 'measured' }>, metric: strin
   }
 }
 
-function cellContent(m: PipelineMatrix, row: MatrixRow, cell: MatrixCell, metric: string, best: boolean, runHere: boolean, launch: Launch | undefined): ReactNode {
+function cellContent(m: PipelineMatrix, row: MatrixRow, cell: MatrixCell, metric: string, best: boolean, runHere: boolean, launch: Launch): ReactNode {
   switch (cell.kind) {
     case 'measured': {
       if (row.produces === 'answer') {
@@ -110,15 +108,9 @@ function cellContent(m: PipelineMatrix, row: MatrixRow, cell: MatrixCell, metric
           state={cell.kind}
           first="not run yet"
           second={
-            launch === undefined ? (
-              <Button size="s" aria-label={name} disabled disabledReason={NO_LAUNCHER}>
-                Run
-              </Button>
-            ) : (
-              <Button size="s" aria-label={name} onClick={() => launch({ pipeline: m.pipeline, benchmark: cell.benchmark })}>
-                Run
-              </Button>
-            )
+            <Button size="s" aria-label={name} onClick={() => launch({ pipeline: m.pipeline, benchmark: cell.benchmark })}>
+              Run
+            </Button>
           }
         />
       );

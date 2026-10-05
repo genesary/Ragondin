@@ -279,6 +279,36 @@ describe('the launch panel up to a node', () => {
   });
 });
 
+describe('the launch panel on a benchmark', () => {
+  it('opens on the pipeline and the benchmark the address names — the Pipeline screen’s Run — and launches them', async () => {
+    const { api, stream } = await show('#runs?launch=hybrid&benchmark=mine', routes({ 'POST /runs': { body: { job_id: 'j1', run_id: ANNOUNCED } } }));
+    connect(stream);
+    await within(panel()).findByText(`pipeline ${short(HYBRID)}`);
+    expect((within(panel()).getByLabelText('Pipeline') as HTMLSelectElement).value).toBe('hybrid');
+    const benchmark = (await within(panel()).findByLabelText('Benchmark')) as HTMLSelectElement;
+    expect(benchmark.value).toBe('mine');
+    fireEvent.click(within(panel()).getByRole('button', { name: 'Launch' }));
+    await within(panel()).findByRole('button', { name: 'Queued' });
+    expect(api.bodies[api.requests.indexOf('POST /api/v1/runs')]).toEqual({ pipeline: 'hybrid', benchmark: 'mine' });
+  });
+
+  it('refuses to launch on a benchmark the address names that is not ready, rather than another in its place', async () => {
+    const { api, stream } = await show('#runs?launch=hybrid&benchmark=beir%2Ffiqa');
+    connect(stream);
+    await within(panel()).findByText(`pipeline ${short(HYBRID)}`);
+    const benchmark = (await within(panel()).findByLabelText('Benchmark')) as HTMLSelectElement;
+    expect(benchmark.value).toBe('beir/fiqa');
+    expect(benchmark.selectedOptions[0]?.textContent).toBe('beir/fiqa — not ready');
+    const launch = within(panel()).getByRole('button', { name: 'Launch' });
+    expect(launch.getAttribute('aria-disabled')).toBe('true');
+    expect(document.getElementById(launch.getAttribute('aria-describedby') as string)?.textContent).toBe('beir/fiqa is not ready: download or import it in Setup, or choose another benchmark.');
+    // Choosing a ready one lifts the refusal.
+    fireEvent.change(benchmark, { target: { value: 'beir/scifact' } });
+    expect(within(panel()).getByRole('button', { name: 'Launch' }).hasAttribute('aria-disabled')).toBe(false);
+    expect(api.requests).not.toContain('POST /api/v1/runs');
+  });
+});
+
 describe('the queue’s rows', () => {
   it('running_ticks_update_progress_median_and_elapsed', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });

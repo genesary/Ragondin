@@ -7,7 +7,9 @@
 // announces once it is launched; it never computes one (INV-8). Opened up to
 // a node — the editor's "Run up to this node" — it launches the pipeline cut
 // there, offers only the benchmarks such a prefix can be scored on, and leaves
-// the identity to the API, since the cut is a pipeline of its own.
+// the identity to the API, since the cut is a pipeline of its own. Opened on
+// a benchmark — the Pipeline screen's Run — it launches on that one, or says
+// why it cannot, never on another in its place.
 // ARCHITECTURE.md § The Runs screen.
 import { useCallback, useEffect, useId, useRef, useState, type Ref } from 'react';
 import { Button, ButtonLink, InlineMessage, PrefixLabel, Section, Select } from '../../design/index.ts';
@@ -28,6 +30,8 @@ export type LaunchPanelProps = {
   pipeline?: string | undefined;
   /** The node a prefix run stops at: the pipeline is launched cut there. Null for the whole pipeline. */
   upTo?: string | null;
+  /** The benchmark the panel opens on, when the address names one. */
+  benchmark?: string | undefined;
   /** Back to the whole pipeline, from a panel opened up to a node. */
   onWhole?: (() => void) | undefined;
 };
@@ -127,7 +131,7 @@ function useListing<T>(read: (signal: AbortSignal) => Promise<{ ok: true; value:
   return [state, reload] as const;
 }
 
-export function LaunchPanel({ client, store, anchor, pipeline: opened, upTo = null, onWhole }: LaunchPanelProps) {
+export function LaunchPanel({ client, store, anchor, pipeline: opened, upTo = null, benchmark: named, onWhole }: LaunchPanelProps) {
   const [pipelines, retryPipelines] = useListing<PipelineListing>((signal) => client.get('/pipelines', { signal }));
   const [benchmarks, retryBenchmarks] = useListing<BenchmarkListing>((signal) => client.get('/benchmarks', { signal }));
   const [services, retryServices] = useListing<ServiceListing>((signal) => client.get('/services', { signal }));
@@ -136,7 +140,7 @@ export function LaunchPanel({ client, store, anchor, pipeline: opened, upTo = nu
     upTo === null || opened === undefined ? Promise.resolve({ ok: true as const, value: null }) : client.get('/pipelines/{name}', { name: opened }, { signal }),
   );
   const [chosenPipeline, setPipeline] = useState<string | null>(opened ?? null);
-  const [chosenBenchmark, setBenchmark] = useState<string | null>(null);
+  const [chosenBenchmark, setBenchmark] = useState<string | null>(named ?? null);
   const [launch, setLaunch] = useState<Launch>({ kind: 'idle' });
   const ids = { pipeline: useId(), benchmark: useId(), absent: useId() };
 
@@ -151,7 +155,10 @@ export function LaunchPanel({ client, store, anchor, pipeline: opened, upTo = nu
   const ready = upTo === null ? onDisk : onDisk.filter(scores);
   const absent = upTo === null ? null : notOffered(onDisk.filter((b) => !scores(b)));
   const pipeline = docs.find((p) => p.name === chosenPipeline) ?? docs.find((p) => p.hash !== null) ?? docs[0] ?? null;
-  const benchmark = ready.find((b) => b.name === chosenBenchmark) ?? ready[0] ?? null;
+  // The benchmark the address named, while it is still the one chosen and is not offered: refused, never replaced.
+  const unoffered = benchmarks.status === 'loaded' && named !== undefined && chosenBenchmark === named && !ready.some((b) => b.name === named) ? named : null;
+  const unscorable = unoffered !== null && onDisk.some((b) => b.name === unoffered);
+  const benchmark = unoffered !== null ? null : (ready.find((b) => b.name === chosenBenchmark) ?? ready[0] ?? null);
 
   // A change of what would be launched is a new launch: the last answer no longer describes it.
   const choose = (set: (v: string) => void) => (value: string) => {
@@ -179,7 +186,11 @@ export function LaunchPanel({ client, store, anchor, pipeline: opened, upTo = nu
       ? 'No pipeline in this workspace: build one in the Editor.'
       : pipeline.hash === null
         ? 'This pipeline does not validate.'
-        : benchmark === null
+        : unoffered !== null
+          ? unscorable
+            ? `${unoffered} cannot score this prefix: choose another benchmark.`
+            : `${unoffered} is not ready: download or import it in Setup, or choose another benchmark.`
+          : benchmark === null
           ? upTo !== null && onDisk.length > 0
             ? 'No ready benchmark carries qrels alone, the only ground truth a prefix can be scored on.'
             : 'No benchmark is ready: download or import one in Setup.'
@@ -229,8 +240,11 @@ export function LaunchPanel({ client, store, anchor, pipeline: opened, upTo = nu
             <Select
               id={ids.benchmark}
               label="Benchmark"
-              value={benchmark?.name ?? ''}
-              options={ready.map((b) => ({ value: b.name, label: b.ground_truth === null ? b.name : `${b.name} — ${groundTruthLabel(b.ground_truth)}` }))}
+              value={unoffered ?? benchmark?.name ?? ''}
+              options={[
+                ...(unoffered === null ? [] : [{ value: unoffered, label: `${unoffered} — ${unscorable ? 'not offered' : 'not ready'}` }]),
+                ...ready.map((b) => ({ value: b.name, label: b.ground_truth === null ? b.name : `${b.name} — ${groundTruthLabel(b.ground_truth)}` })),
+              ]}
               onChange={(e) => choose(setBenchmark)(e.target.value)}
               {...(benchmarkError === undefined ? { help: 'Ready benchmarks only, with the ground truth each carries.' } : { error: benchmarkError })}
               {...(absent === null ? {} : { 'aria-describedby': ids.absent })}
@@ -240,7 +254,7 @@ export function LaunchPanel({ client, store, anchor, pipeline: opened, upTo = nu
                 {absent}
               </p>
             )}
-            {ready.length === 0 ? (
+            {ready.length === 0 || (unoffered !== null && !unscorable) ? (
               <ButtonLink size="s" href={formatHash({ screen: 'setup', section: 'benchmarks' })}>
                 Open Setup
               </ButtonLink>

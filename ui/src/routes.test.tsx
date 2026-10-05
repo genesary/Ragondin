@@ -84,7 +84,15 @@ describe('#runs?launch=<pipeline>&up_to=<node>', () => {
     expect(parseHash(formatHash(route))).toEqual(route);
   });
 
-  it.each(['#runs?up_to=rerank', '#runs?launch=', '#runs?launch=p&up_to=', '#runs?launch=..'])('names no launch at %s, and so no route', (hash) => {
+  it('opens the panel on a pipeline and a benchmark — where the Pipeline screen’s Run lands — every value encoded', () => {
+    const route: Route = { screen: 'runs', launch: { pipeline: 'hybrid', benchmark: 'beir/scifact' } };
+    expect(formatHash(route)).toBe('#runs?launch=hybrid&benchmark=beir%2Fscifact');
+    expect(load('#runs?launch=hybrid&benchmark=beir%2Fscifact')).toEqual(route);
+    const cut: Route = { screen: 'runs', launch: { pipeline: 'hybrid', upTo: 'rerank', benchmark: 'a,b' } };
+    expect(parseHash(formatHash(cut))).toEqual(cut);
+  });
+
+  it.each(['#runs?up_to=rerank', '#runs?launch=', '#runs?launch=p&up_to=', '#runs?launch=..', '#runs?benchmark=beir%2Fscifact', '#runs?launch=p&benchmark=', '#runs?launch=p&benchmark=..'])('names no launch at %s, and so no route', (hash) => {
     expect(parseHash(hash)).toBeNull();
   });
 

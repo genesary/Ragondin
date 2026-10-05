@@ -213,13 +213,15 @@ describe('the verdict and the one primary action', () => {
     expect(screen.getByText('Measured on 3 of 3 benchmarks, 1 of them only up to rerank. 2 cells wait for a run of the whole pipeline.')).toBeTruthy();
   });
 
-  it('offers “Run the N missing cells” with the API’s count, refused with its reason until the launcher exists', async () => {
-    show(`#pipeline/${NAME}`, routes({ body: WITH_FIQA }));
+  it('offers “Run the N missing cells” with the API’s count, which opens the launch panel on the one column missing', async () => {
+    const launch = vi.fn();
+    show(`#pipeline/${NAME}`, routes({ body: WITH_FIQA }), launch);
     await loaded();
     const action = screen.getByRole('button', { name: 'Run the 6 missing cells' });
     expect(action.classList.contains('rg-btn--primary')).toBe(true);
-    expect(action.getAttribute('aria-disabled')).toBe('true');
-    expect(document.getElementById(action.getAttribute('aria-describedby') as string)?.textContent).toBe('Launching arrives with the launcher.');
+    expect(action.hasAttribute('aria-disabled')).toBe(false);
+    fireEvent.click(action);
+    expect(launch.mock.calls).toEqual([[{ pipeline: NAME, benchmark: 'beir/fiqa' }]]);
   });
 
   it('is absent when no cell is missing', async () => {
@@ -228,13 +230,25 @@ describe('the verdict and the one primary action', () => {
     expect(screen.queryByRole('button', { name: /missing cell/ })).toBeNull();
   });
 
-  it('hands the launcher each benchmark to run the whole pipeline on, when it exists', async () => {
+  it('refuses “Run the N missing cells” over several columns, naming them, since the launch panel queues one run at a time', async () => {
     const launch = vi.fn();
     const both: PipelineMatrix = { ...WITH_FIQA, missing: [...WITH_FIQA.missing, ...PREFIXED.missing, { benchmark: null, dataset_version: '0', nodes: ['bm25'] }] };
     show(`#pipeline/${NAME}`, routes({ body: both }), launch);
     await loaded();
     // The column with no benchmark name cannot be launched, and is not counted in the action.
-    fireEvent.click(screen.getByRole('button', { name: 'Run the 8 missing cells' }));
-    expect(launch.mock.calls).toEqual([[{ pipeline: NAME, benchmark: 'beir/fiqa' }], [{ pipeline: NAME, benchmark: 'beir/nfcorpus' }]]);
+    const action = screen.getByRole('button', { name: 'Run the 8 missing cells' });
+    expect(action.getAttribute('aria-disabled')).toBe('true');
+    expect(document.getElementById(action.getAttribute('aria-describedby') as string)?.textContent).toBe(
+      'The launch panel queues one run at a time: launch beir/fiqa and beir/nfcorpus one by one.',
+    );
+    fireEvent.click(action);
+    expect(launch).not.toHaveBeenCalled();
+  });
+
+  it('opens Runs’ launch panel on the pipeline and the benchmark when a Run is pressed, with no launcher of its own', async () => {
+    show(`#pipeline/${NAME}`, routes({ body: WITH_FIQA }));
+    await loaded();
+    fireEvent.click(screen.getByRole('button', { name: 'Run on beir/fiqa' }));
+    await screen.findByText(`elsewhere #runs?launch=${NAME}&benchmark=beir%2Ffiqa`);
   });
 });

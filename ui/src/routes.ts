@@ -14,9 +14,10 @@ export type Route =
    * same selection beside it. `#runs?launch=<pipeline>&up_to=<node>`
    * opens the launch panel on that pipeline, cut at that node — where the
    * editor's "Run up to this node" lands — or, without `up_to`, on the whole
-   * pipeline; beside a selection or a job.
+   * pipeline; `&benchmark=<name>` opens it on that benchmark too — where the
+   * Pipeline screen's Run lands. Beside a selection or a job.
    */
-  | { screen: 'runs'; sel?: string[]; job?: string; launch?: { pipeline: string; upTo?: string } }
+  | { screen: 'runs'; sel?: string[]; job?: string; launch?: { pipeline: string; upTo?: string; benchmark?: string } }
   /** `#pipeline/<name>`: one pipeline's node × benchmark matrix; `#pipeline` before one is chosen. */
   | { screen: 'pipeline'; name?: string }
   /**
@@ -67,6 +68,7 @@ export function formatHash(route: Route): string {
         ...(route.sel === undefined || route.sel.length === 0 ? [] : [`sel=${route.sel.map(enc).join(',')}`]),
         ...(route.launch === undefined ? [] : [`launch=${enc(route.launch.pipeline)}`]),
         ...(route.launch?.upTo === undefined ? [] : [`up_to=${enc(route.launch.upTo)}`]),
+        ...(route.launch?.benchmark === undefined ? [] : [`benchmark=${enc(route.launch.benchmark)}`]),
       ];
       return query.length === 0 ? path : `${path}?${query.join('&')}`;
     }
@@ -143,11 +145,13 @@ export function parseHash(hash: string): Route | null {
     case 'runs': {
       const job = rest.length === 2 && rest[0] === 'job' && nonEmpty ? (rest[1] as string) : undefined;
       if (rest.length !== 0 && job === undefined) return null;
-      // The launch panel's pipeline, and the node it is cut at: a node with no pipeline names nothing.
+      // The launch panel's pipeline, the node it is cut at and the benchmark it opens on: a node or a benchmark with no
+      // pipeline names nothing.
       const pipeline = query.get('launch');
       const upTo = query.get('up_to');
-      if ((pipeline === null && upTo !== null) || (pipeline !== null && !isValue(pipeline)) || (upTo !== null && !isValue(upTo))) return null;
-      const launch = pipeline === null ? {} : { launch: upTo === null ? { pipeline } : { pipeline, upTo } };
+      const benchmark = query.get('benchmark');
+      if (pipeline === null ? upTo !== null || benchmark !== null : ![pipeline, upTo, benchmark].every((v) => v === null || isValue(v))) return null;
+      const launch = pipeline === null ? {} : { launch: { pipeline, ...(upTo === null ? {} : { upTo }), ...(benchmark === null ? {} : { benchmark }) } };
       const at = { ...(job === undefined ? {} : { job }), ...launch };
       // Read from the raw query, split before decoding, so an encoded `,`
       // stays inside its id.

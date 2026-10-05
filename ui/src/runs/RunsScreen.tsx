@@ -32,8 +32,8 @@ export type RunsScreenProps = {
   job?: string | undefined;
   /** The workspace's root, where the store is, as the shell read it; null before. */
   store?: string | null;
-  /** The launch panel the address opens (`#runs?launch=<pipeline>&up_to=<node>`), if any. */
-  launch?: { pipeline: string; upTo?: string } | undefined;
+  /** The launch panel the address opens (`#runs?launch=<pipeline>&up_to=<node>&benchmark=<name>`), if any. */
+  launch?: { pipeline: string; upTo?: string; benchmark?: string } | undefined;
 };
 
 /** The Runs address with this selection, job and launch panel, each left out when absent. */
@@ -152,10 +152,16 @@ function withPositions(jobs: Jobs, positions: ReadonlyMap<string, number> | null
 }
 
 function Loaded({ client, listing, askedWith, refresh, sel, job, launch, store, reread }: LoadedProps) {
-  const [launchPipeline, launchUpTo] = [launch?.pipeline, launch?.upTo];
+  const [launchPipeline, launchUpTo, launchBenchmark] = [launch?.pipeline, launch?.upTo, launch?.benchmark];
   const select = useMemo(
-    () => selectWith(job, launchPipeline === undefined ? undefined : launchUpTo === undefined ? { pipeline: launchPipeline } : { pipeline: launchPipeline, upTo: launchUpTo }),
-    [job, launchPipeline, launchUpTo],
+    () =>
+      selectWith(
+        job,
+        launchPipeline === undefined
+          ? undefined
+          : { pipeline: launchPipeline, ...(launchUpTo === undefined ? {} : { upTo: launchUpTo }), ...(launchBenchmark === undefined ? {} : { benchmark: launchBenchmark }) },
+      ),
+    [job, launchPipeline, launchUpTo, launchBenchmark],
   );
   const { jobs, connection } = useJobs();
   const stored = useMemo(() => rowsFromListing(listing), [listing]);
@@ -200,10 +206,10 @@ function Loaded({ client, listing, askedWith, refresh, sel, job, launch, store, 
     if (selection.join(',') !== sel.join(',')) select(selection);
   }, [selection, sel, select]);
 
-  // The launch panel, opened from the bar or by the address — the editor's "Run up to this node" lands here; focus moves
+  // The launch panel, opened from the bar or by the address — the editor's "Run up to this node" and the Pipeline screen's Run land here; focus moves
   // to it as it opens.
   const [launching, setLaunching] = useState(launch !== undefined);
-  const launchKey = launch === undefined ? null : `${launch.pipeline}\u0000${launch.upTo ?? ''}`;
+  const launchKey = launch === undefined ? null : `${launch.pipeline}\u0000${launch.upTo ?? ''}\u0000${launch.benchmark ?? ''}`;
   useEffect(() => {
     if (launchKey !== null) setLaunching(true);
   }, [launchKey]);
@@ -333,7 +339,12 @@ function Loaded({ client, listing, askedWith, refresh, sel, job, launch, store, 
           anchor={launchAnchor}
           pipeline={launch?.pipeline}
           upTo={launch?.upTo ?? null}
-          onWhole={launch === undefined ? undefined : () => navigate(runsRoute(sel, job, { pipeline: launch.pipeline }), { replace: true })}
+          benchmark={launch?.benchmark}
+          onWhole={
+            launch === undefined
+              ? undefined
+              : () => navigate(runsRoute(sel, job, { pipeline: launch.pipeline, ...(launch.benchmark === undefined ? {} : { benchmark: launch.benchmark }) }), { replace: true })
+          }
         />
       ) : null}
     </div>

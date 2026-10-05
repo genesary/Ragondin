@@ -13,7 +13,7 @@ import { shortHash } from '../runs/model.ts';
 import { ErrorState, Loading, type RequestState } from '../shell/states.tsx';
 import { FeedingRuns } from './FeedingRuns.tsx';
 import { rememberPipeline } from './last.ts';
-import { Matrix, NO_LAUNCHER, type Launch } from './Matrix.tsx';
+import { Matrix, type Launch } from './Matrix.tsx';
 import { columnLabel, launchableCount, rankingMetrics, verdict } from './model.ts';
 import './Pipeline.css';
 
@@ -21,9 +21,12 @@ export type PipelineScreenProps = {
   client: ApiClient;
   /** The pipeline the address names, if it names one. */
   name?: string | undefined;
-  /** The launcher's entry point, once it exists; every Run is refused with its reason until then. */
+  /** Where a Run hands its pipeline and benchmark; Runs' launch panel unless a test passes another. */
   launch?: Launch | undefined;
 };
+
+/** A Run opens Runs' launch panel on the pipeline and the benchmark, whole: the one launcher, never a second. */
+export const launchInPanel: Launch = ({ pipeline, benchmark }) => navigate({ screen: 'runs', launch: { pipeline, benchmark } });
 
 const runs = (n: number) => `${n.toLocaleString('en-US')} run${n === 1 ? '' : 's'}`;
 
@@ -59,7 +62,7 @@ function PipelineSelect({ listing, current }: { listing: RequestState<PipelineLi
   );
 }
 
-export function PipelineScreen({ client, name, launch }: PipelineScreenProps) {
+export function PipelineScreen({ client, name, launch = launchInPanel }: PipelineScreenProps) {
   const listing = usePipelines(client);
   if (name === undefined) return <Unchosen listing={listing} />;
   return <Reading client={client} name={name} listing={listing} launch={launch} />;
@@ -87,7 +90,7 @@ function Unchosen({ listing }: { listing: RequestState<PipelineListing> }) {
   );
 }
 
-function Reading({ client, name, listing, launch }: { client: ApiClient; name: string; listing: RequestState<PipelineListing>; launch: Launch | undefined }) {
+function Reading({ client, name, listing, launch }: { client: ApiClient; name: string; listing: RequestState<PipelineListing>; launch: Launch }) {
   const [state, setState] = useState<RequestState<PipelineMatrix>>({ status: 'loading' });
   const latest = useRef(0);
 
@@ -116,7 +119,7 @@ function Reading({ client, name, listing, launch }: { client: ApiClient; name: s
   return <Loaded matrix={state.value} listing={listing} launch={launch} />;
 }
 
-function Loaded({ matrix, listing, launch }: { matrix: PipelineMatrix; listing: RequestState<PipelineListing>; launch: Launch | undefined }) {
+function Loaded({ matrix, listing, launch }: { matrix: PipelineMatrix; listing: RequestState<PipelineListing>; launch: Launch }) {
   const metrics = rankingMetrics(matrix);
   const [chosen, setChosen] = useState<string | null>(null);
   // Every metric a ranking row reads is a ranking metric, so no family is passed: ndcg@10, else the first.
@@ -170,9 +173,9 @@ function Loaded({ matrix, listing, launch }: { matrix: PipelineMatrix; listing: 
     );
   }
 
-  const runMissing = () => {
-    for (const column of matrix.missing) if (column.benchmark !== null) launch?.({ pipeline: matrix.pipeline, benchmark: column.benchmark });
-  };
+  // The launch panel queues one run at a time: one column missing opens it there; several are named, to launch one by one.
+  const toLaunch = matrix.missing.flatMap((column) => (column.benchmark === null ? [] : [column.benchmark]));
+  const several = toLaunch.length > 1 ? `The launch panel queues one run at a time: launch ${toLaunch.slice(0, -1).join(', ')} and ${toLaunch.at(-1) ?? ''} one by one.` : null;
 
   return (
     <Sheet>
@@ -218,12 +221,12 @@ function Loaded({ matrix, listing, launch }: { matrix: PipelineMatrix; listing: 
       </Section>
       <div className="rg-pipeline__verdict">
         <p>{verdict(matrix)}</p>
-        {missing === 0 ? null : launch === undefined ? (
-          <Button kind="primary" disabled disabledReason={NO_LAUNCHER}>
+        {missing === 0 ? null : several !== null ? (
+          <Button kind="primary" disabled disabledReason={several}>
             Run the {missing} missing {missing === 1 ? 'cell' : 'cells'}
           </Button>
         ) : (
-          <Button kind="primary" onClick={runMissing}>
+          <Button kind="primary" onClick={() => launch({ pipeline: matrix.pipeline, benchmark: toLaunch[0] as string })}>
             Run the {missing} missing {missing === 1 ? 'cell' : 'cells'}
           </Button>
         )}
