@@ -14,7 +14,8 @@ export type RunUpTo = { kind: 'open'; line: string } | { kind: 'refused'; reason
 export type Stored = { name: string | null; unchanged: boolean };
 
 /**
- * Whether `node` of `doc` can be run up to. Refused on the pipeline's output
+ * Whether `node` of `doc` can be run up to. Refused on a node with no input,
+ * which has nothing to run on; on the pipeline's output
  * — the one node no node reads, so the prefix would be the whole pipeline — and
  * on a context builder, whose context nothing scores (ADR-C30 § 3); and while
  * the canvas is not the stored document, since a run takes the document on
@@ -27,6 +28,7 @@ export function runUpTo(doc: WireDocument, node: string, stored: Stored): RunUpT
   const nodes = doc.pipeline.nodes;
   const target = nodes.find((n) => n.id === node);
   if (target === undefined) return { kind: 'refused', reason: 'Only a node can be run up to.' };
+  if (target.inputs.length === 0) return { kind: 'refused', reason: 'This node has no input yet: connect one first.' };
   // The output as the server finds it (`ragondin_experiments::terminal`): the one node nothing reads, when there is
   // exactly one. With a stray node nothing reads either there is none, and the server cuts at both.
   const unread = nodes.filter((n) => !nodes.some((m) => m.inputs.includes(n.id)));

@@ -16,6 +16,7 @@ import { ExportPanel, SavePrompt } from './SavePrompt.tsx';
 import { canRedo, canUndo, editorReducer, initialEditor, type EditorAction, type EditorLayout } from './store.ts';
 import { useValidation, type Verdict } from './validation.ts';
 import { navigate } from '../routes.ts';
+import { Words } from '../words.tsx';
 import './Editor.css';
 
 // Where a node placed from the palette lands beside the selected one: a
@@ -49,14 +50,6 @@ export type EditorProps = {
   onReload?: () => void;
 };
 
-// What the inspector's verdict slot says of a node the server names nothing about.
-const QUIET: Record<'checking' | 'valid' | 'invalid' | 'failed', string> = {
-  checking: 'Checking with the server…',
-  valid: 'The server names no problem with this node.',
-  invalid: 'The server stopped at a problem elsewhere; it has not judged this node past it.',
-  failed: 'No verdict: the request to the server failed.',
-};
-
 // A field with an undo of its own: text being typed. A checkbox, a radio or a
 // button has none, so Ctrl+Z there is the editor's.
 const NO_TEXT = new Set(['checkbox', 'radio', 'button', 'submit', 'reset', 'range', 'color', 'file']);
@@ -85,6 +78,31 @@ function saveWords(save: SaveState, dirty: boolean, verdict: Verdict, errors: nu
 }
 
 const shortRun = (id: string) => id.slice(0, 12);
+
+/**
+ * The canonical hash, as the run it would name is shown elsewhere: its first twelve characters, the whole hash in its
+ * title, copied whole on a click — the identity a run of this document would carry.
+ */
+function HashButton({ hash }: { hash: string }) {
+  const [said, setSaid] = useState('');
+  const copy = () => {
+    void navigator.clipboard?.writeText(hash).then(
+      () => setSaid('Copied.'),
+      () => setSaid('The browser refused the copy.'),
+    );
+  };
+  return (
+    <>
+      <button type="button" className="rg-editor__hash" title={hash} onClick={copy}>
+        <code>{hash.slice(0, 12)}</code>
+        <span className="rg-visually-hidden">Copy the canonical hash, the identity a run of this document would carry</span>
+      </button>{' '}
+      <span className="rg-editor__copied" role="status">
+        {said}
+      </span>
+    </>
+  );
+}
 
 /**
  * The editor: the canvas in write mode over one wire-schema document, the
@@ -280,7 +298,7 @@ export function Editor({ client, title, stored = null, initial, layout, capabili
         parameters={takes(node.component, node.impl, node.params)}
         insisted={insisted}
         verdict={verdictOf(id)}
-        quiet={QUIET[verdict.status]}
+        quiet={verdict.status}
         dispatch={dispatch}
         onRenamed={onSelect}
         run={runOf(id)}
@@ -330,13 +348,21 @@ export function Editor({ client, title, stored = null, initial, layout, capabili
       case 'valid':
         return (
           <span>
-            Canonical hash <code title="The identity a run of this document would carry">{verdict.hash}</code>
+            Canonical hash <HashButton hash={verdict.hash} />
           </span>
         );
       case 'invalid':
-        return <span data-invalid="true">Not valid: {verdict.problem.message}</span>;
+        return (
+          <span data-invalid="true">
+            Not valid: <Words text={verdict.problem.message} />
+          </span>
+        );
       case 'failed':
-        return <span data-invalid="true">Could not validate: {verdict.problem.message}</span>;
+        return (
+          <span data-invalid="true">
+            Could not validate: <Words text={verdict.problem.message} />
+          </span>
+        );
     }
   })();
   const rendering = verdict.status === 'valid' ? verdict.rendering : null;
@@ -366,7 +392,7 @@ export function Editor({ client, title, stored = null, initial, layout, capabili
         {file === undefined ? null : (
           <div className="rg-editor__file">
             <p className="rg-editor__save" data-testid="save-state" role="status" aria-live="polite">
-              {saveWords(save, dirty, verdict, errors)}
+              <Words text={saveWords(save, dirty, verdict, errors)} />
             </p>
             {save.file.name === null && !save.keep ? (
               <Button size="s" onClick={() => act({ type: 'keep' })}>

@@ -28,6 +28,7 @@ import { NodeCard, type NodeStatus } from './NodeCard.tsx';
 import { NodeMenu } from './NodeMenu.tsx';
 import { PortDot, portTitle, portTop, type PortProps } from './Port.tsx';
 import './Canvas.css';
+import { Words } from '../words.tsx';
 
 /** What the canvas lets a person do: read (pan, zoom, select, the menu), or write — move nodes and draw edges too. */
 export type CanvasMode = 'read' | 'write';
@@ -593,7 +594,7 @@ function Surface({
         {/* Its height is kept whether or not it speaks, so nothing moves when it does. */}
         {editable ? (
           <p className="rg-canvas__status" role="status">
-            {status}
+            <Words text={status} />
           </p>
         ) : null}
         <ReactFlow<CardNode, LineEdge>

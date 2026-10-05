@@ -115,7 +115,7 @@ describe('continuous saving', () => {
     // The validation of that very document came first.
     expect(validations(api).at(-1)!).toBeLessThan(write!.at);
     await waitFor(() => expect(saveLine().textContent).toBe('Saved'));
-    expect(screen.getByText(HASH)).toBeTruthy();
+    expect(screen.getByText(HASH.slice(0, 12))).toBeTruthy();
     // The next write names the etag the last one answered.
     place(/^concat/);
     await waitFor(() => expect(writes(api)).toHaveLength(2));

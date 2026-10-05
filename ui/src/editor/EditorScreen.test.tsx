@@ -75,7 +75,7 @@ describe('the Editor screen', () => {
     const palette = await screen.findByRole('region', { name: 'Palette' });
     expect(within(palette).getByRole('button', { name: /^qwen/ })).toBeTruthy();
     expect(api.requests).toContain('GET /api/v1/services');
-    expect(await screen.findByText(HASH)).toBeTruthy();
+    expect(await screen.findByText(HASH.slice(0, 12))).toBeTruthy();
   });
 
   it('judges kinds during the drag with the ports the capabilities serve', async () => {
@@ -101,7 +101,7 @@ describe('the Editor screen', () => {
     expect(api.requests).toContain('GET /api/v1/pipelines/hybrid');
     await waitFor(() => expect(api.requests).toContain('POST /api/v1/pipelines/validate'), { timeout: SLOW });
     expect(api.bodies[api.requests.indexOf('POST /api/v1/pipelines/validate')]).toEqual({ typed: HYBRID });
-    expect(await screen.findByText(HASH)).toBeTruthy();
+    expect(await screen.findByText(HASH.slice(0, 12))).toBeTruthy();
   });
 
   it('opens a stored pipeline that does not validate, with the server’s words on it', async () => {

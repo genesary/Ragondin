@@ -12,6 +12,7 @@ import { Editor } from './Editor.tsx';
 import { GRAMMAR, HYBRID, HYBRID_RAG, SERVICES, WORKSPACE } from './fixtures.ts';
 import { bool, float, int, list, str } from '../parameters.ts';
 import type { PortGrammar } from './ports.ts';
+import { byWords } from '../words.testing.ts';
 
 const HASH = 'b'.repeat(64);
 // The hybrid, and a reranker with nothing wired yet.
@@ -64,7 +65,7 @@ describe('live validation', () => {
     expect(Object.keys(doc)).toEqual(['pipeline']);
     expect(nodesOf(sent).at(-1)).toEqual({ id: 'rrf', component: 'fusion', impl: 'rrf', inputs: [], params: {} });
     expect(JSON.stringify(sent)).not.toMatch(/"x"|"y"|position/);
-    expect(await within(container).findByText(HASH)).toBeTruthy();
+    expect(await within(container).findByText(HASH.slice(0, 12))).toBeTruthy();
   });
 
   it('places a located error on the node and the edge it names, and in the inspector, in the server’s words, and announces it', async () => {
@@ -74,11 +75,11 @@ describe('live validation', () => {
     expect(container.querySelector('path.rg-edge[data-from="fused"][data-to="reranked"]')?.getAttribute('data-invalid')).toBe('true');
     const inspector = screen.getByRole('complementary', { name: 'reranked' });
     expect(within(inspector).getAllByText(/wires two nodes incompatibly/).length).toBeGreaterThan(0);
-    const row = within(inspector).getByRole('listitem', { name: /port 1/ });
+    const row = within(inspector).getByRole('listitem', { name: /Input 2/ });
     expect(row.getAttribute('data-invalid')).toBe('true');
     expect(row.querySelector('small')?.textContent).toBe('The server names this edge.');
     expect(screen.getAllByRole('status').map((s) => s.textContent).find((t) => t?.startsWith('Not valid:'))).toContain('wires two nodes incompatibly');
-    expect(within(container).queryByText(HASH)).toBeNull();
+    expect(within(container).queryByText(HASH.slice(0, 12))).toBeNull();
   });
 
   it('never shows a hash of its own: the header waits for the server', async () => {
@@ -88,7 +89,7 @@ describe('live validation', () => {
     await waitFor(() => expect(validations(api)).toHaveLength(1));
     expect(within(container).getByText('Checking with the server…')).toBeTruthy();
     await act(async () => answer({ body: { hash: HASH, rendering: null } }));
-    expect(await within(container).findByText(HASH)).toBeTruthy();
+    expect(await within(container).findByText(HASH.slice(0, 12))).toBeTruthy();
   });
 });
 
@@ -98,7 +99,7 @@ describe('the inspector\'s verdict slot when the server names no problem here', 
   it('says it is checking while a request is out, and that the node is clear once the document validates', async () => {
     setup(undefined, { start: 'lexical' });
     expect(slot()).toBe('Checking with the server…');
-    await waitFor(() => expect(slot()).toBe('The server names no problem with this node.'));
+    await waitFor(() => expect(slot()).toBe('Valid'));
   });
 
   it('says validation stopped at another problem, since the server names only the first', async () => {
@@ -204,7 +205,7 @@ describe('the node menu', () => {
     expect(nodeEl(container, 'fused')).toBeNull();
     expect(container.querySelector('path.rg-edge[data-from="fused"]')).toBeNull();
     expect(nodeEl(container, 'reranked')!.querySelector('.rg-node')?.getAttribute('data-status')).toBe('invalid');
-    expect(within(nodeEl(container, 'reranked')!).getByText('Port 1 names `fused`, which is not a node or an input.')).toBeTruthy();
+    expect(within(nodeEl(container, 'reranked')!).getByText(byWords('Port 1 names `fused`, which is not a node or an input.'))).toBeTruthy();
     await waitFor(() => expect(nodesOf(validations(api).at(-1)!).find((n) => n.id === 'reranked')?.inputs).toEqual(['question', 'fused']));
   });
 
@@ -221,7 +222,7 @@ describe('the node menu', () => {
     const menu = screen.getByRole('menu', { name: 'Node lexical' });
     const refused = within(menu).getByRole('menuitem', { name: /^second, port 0/ });
     expect(refused.getAttribute('aria-disabled')).toBe('true');
-    expect(within(refused).getByText('`lexical` feeds `second` at port 0: expected query, found chunks.')).toBeTruthy();
+    expect(within(refused).getByText(byWords('`lexical` feeds `second` at port 0: expected query, found chunks.'))).toBeTruthy();
     expect(document.activeElement).toBe(within(menu).getAllByRole('menuitem')[0]);
     fireEvent.click(within(menu).getByRole('menuitem', { name: /^fused, port 2/ }));
     expect(container.querySelector('path.rg-edge[data-from="lexical"][data-to="fused"][data-port="2"]')).toBeTruthy();
@@ -256,8 +257,8 @@ describe('the node menu', () => {
   it('only offers to remove the last edge into a node, so no input slides into another port', () => {
     setup(undefined, { start: 'reranked' });
     const inspector = screen.getByRole('complementary', { name: 'reranked' });
-    expect(within(inspector).queryByRole('button', { name: 'Remove the edge into port 0' })).toBeNull();
-    expect(within(inspector).getByRole('button', { name: 'Remove the edge into port 1' })).toBeTruthy();
+    expect(within(inspector).queryByRole('button', { name: 'Remove the edge into input 1' })).toBeNull();
+    expect(within(inspector).getByRole('button', { name: 'Remove the edge into input 2' })).toBeTruthy();
   });
 
   it('opens the parameters: selects the node and moves focus into the inspector', () => {
@@ -525,7 +526,7 @@ describe('the inspector in write mode', () => {
     const id = screen.getByLabelText('Node id');
     fireEvent.change(id, { target: { value: 'lexical' } });
     fireEvent.keyDown(id, { key: 'Enter' });
-    expect(screen.getByText('`lexical` is taken: a node, an input or an edge already names it.')).toBeTruthy();
+    expect(screen.getByText(byWords('`lexical` is taken: a node, an input or an edge already names it.'))).toBeTruthy();
     expect(nodeEl(container, 'fused')).toBeTruthy();
     fireEvent.change(id, { target: { value: 'rrf' } });
     fireEvent.keyDown(id, { key: 'Enter' });
@@ -578,22 +579,25 @@ describe('the inspector in write mode', () => {
     expect(screen.queryByLabelText('w')).toBeNull();
   });
 
+  // A key the implementation does not serve, so every kind is offered: a served one keeps its served kind.
+  const UNSERVED: WireDocument = { pipeline: { inputs: ['question'], nodes: [{ id: 'fused', component: 'fusion', impl: 'rrf', inputs: [], params: { k: int('60'), weight: int('60'), tag: str('bge') } }] } };
+
   it('shows each value’s kind beside it, and changes the kind alone when another is picked', async () => {
-    const { api } = setup(undefined, { start: 'fused' });
-    const kind = screen.getByLabelText('Kind of k') as HTMLSelectElement;
+    const { api } = setup(undefined, { initial: UNSERVED, start: 'fused' });
+    const kind = screen.getByLabelText('Kind of weight') as HTMLSelectElement;
     expect(kind.value).toBe('int');
     fireEvent.change(kind, { target: { value: 'float' } });
-    await waitFor(() => expect(nodesOf(validations(api).at(-1)!).find((n) => n.id === 'fused')?.params['k']).toEqual(float(60)));
-    expect((screen.getByLabelText('k') as HTMLInputElement).value).toBe('60.0');
-    fireEvent.change(screen.getByLabelText('Kind of k'), { target: { value: 'string' } });
-    await waitFor(() => expect(nodesOf(validations(api).at(-1)!).find((n) => n.id === 'fused')?.params['k']).toEqual(str('60.0')));
+    await waitFor(() => expect(nodesOf(validations(api).at(-1)!).find((n) => n.id === 'fused')?.params['weight']).toEqual(float(60)));
+    expect((screen.getByLabelText('weight') as HTMLInputElement).value).toBe('60.0');
+    fireEvent.change(screen.getByLabelText('Kind of weight'), { target: { value: 'string' } });
+    await waitFor(() => expect(nodesOf(validations(api).at(-1)!).find((n) => n.id === 'fused')?.params['weight']).toEqual(str('60.0')));
   });
 
   it('refuses a change of kind the value cannot take, in words, and keeps the value', () => {
-    setup({ 'POST /pipelines/validate': { body: { hash: HASH, rendering: null } } }, { start: 'vectors' });
-    fireEvent.change(screen.getByLabelText('Kind of embedder'), { target: { value: 'int' } });
+    setup({ 'POST /pipelines/validate': { body: { hash: HASH, rendering: null } } }, { initial: UNSERVED, start: 'fused' });
+    fireEvent.change(screen.getByLabelText('Kind of tag'), { target: { value: 'int' } });
     expect(screen.getByText('An integer is a whole number, such as 60: "bge" is not one.')).toBeTruthy();
-    expect((screen.getByLabelText('Kind of embedder') as HTMLSelectElement).value).toBe('string');
+    expect((screen.getByLabelText('Kind of tag') as HTMLSelectElement).value).toBe('string');
   });
 
   it('draws a float with its fractional part, so 60.0 never reads as the integer 60', () => {
@@ -638,7 +642,7 @@ describe('the inspector in write mode', () => {
     const id = screen.getByLabelText('Node id');
     fireEvent.change(id, { target: { value: 'fused' } });
     fireEvent.keyDown(id, { key: 'Enter' });
-    expect(screen.getByText('`fused` is taken: a node, an input or an edge already names it.')).toBeTruthy();
+    expect(screen.getByText(byWords('`fused` is taken: a node, an input or an edge already names it.'))).toBeTruthy();
     expect(nodeEl(container, 'vectors')).toBeTruthy();
     expect(nodeEl(container, 'fused')).toBeNull();
   });

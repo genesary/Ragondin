@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { DROP_TYPE } from '../canvas/index.ts';
 import { SERVICES, WORKSPACE } from './fixtures.ts';
 import { Palette, paletteOf } from './Palette.tsx';
+import { byWords } from '../words.testing.ts';
 
 const renderPalette = (remote = true) => {
   const onPlace = vi.fn();
@@ -26,7 +27,7 @@ describe('the palette, from this build’s capabilities', () => {
     expect(placeable('fusion')).toEqual(['rrf']);
     expect(placeable('reranker')).toEqual([]);
     expect(placeable('context builder')).toEqual(['concat']);
-    expect(within(palette).queryByText('onnx')).toBeNull();
+    expect(within(palette).queryAllByRole('button').map((b) => b.querySelector('b')?.textContent)).not.toContain('onnx');
     expect(within(palette).queryByText('bge')).toBeNull();
   });
 
@@ -59,10 +60,10 @@ describe('the palette, from this build’s capabilities', () => {
     const { palette, onPlace } = renderPalette();
     const crossEncoder = entry(palette, /^cross_encoder/);
     expect(crossEncoder.getAttribute('aria-disabled')).toBe('true');
-    expect(within(crossEncoder).getByText('Not in this build: needs the `onnx` feature.')).toBeTruthy();
+    expect(within(crossEncoder).getByText(byWords('Not in this build: needs the `onnx` feature.'))).toBeTruthy();
     const stub = entry(palette, /^stub_generator/);
     expect(stub.getAttribute('aria-disabled')).toBe('true');
-    expect(within(stub).getByText('Not in this build: needs the `stub` feature.')).toBeTruthy();
+    expect(within(stub).getByText(byWords('Not in this build: needs the `stub` feature.'))).toBeTruthy();
     expect(stub.getAttribute('draggable')).toBe('false');
     fireEvent.click(stub);
     expect(onPlace).not.toHaveBeenCalled();

@@ -82,7 +82,13 @@ describe('Canvas, drawing the lowered graph', () => {
     for (const name of ['query', 'retriever', 'fusion', 'reranker', 'context builder', 'generator']) expect(within(legend).getByText(name, { selector: '[data-legend="family"]' })).toBeTruthy();
     expect(legend.querySelectorAll('.rg-tile')).toHaveLength(6);
     for (const [kind, word] of [['query', 'query'], ['chunks', 'candidates'], ['context', 'context'], ['answer', 'answer']] as const)
-      expect(within(legend).getByText(word, { selector: '[data-legend="port"]' }).querySelector(`.rg-port[data-kind="${kind}"]`)).toBeTruthy();
+      expect(within(legend).getByText(`${word} port`, { selector: '[data-legend="port"]' }).querySelector(`.rg-port[data-kind="${kind}"]`)).toBeTruthy();
+  });
+
+  it('names no two legend entries alike: the query family and the query port are told apart', () => {
+    const { container } = renderCanvas();
+    const words = [...container.querySelectorAll('.rg-canvas__legend [data-legend]')].map((e) => e.textContent);
+    expect(new Set(words).size).toBe(words.length);
   });
 });
 
@@ -299,7 +305,7 @@ describe('Canvas, round 1 of review', () => {
     expect(port?.querySelector('.rg-port__dot')).toBeTruthy();
     expect(nodeEl(container, 'gate').querySelector('.rg-tile[data-family="control"]')).toBeTruthy();
     const legend = container.querySelector('.rg-canvas__legend') as HTMLElement;
-    expect(within(legend).getByText('other', { selector: '[data-legend="port"]' }).querySelector('.rg-port__dot')).toBeTruthy();
+    expect(within(legend).getByText('other port', { selector: '[data-legend="port"]' }).querySelector('.rg-port__dot')).toBeTruthy();
   });
 
   it('describes each node by the keys that work in read mode', () => {

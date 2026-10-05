@@ -7,6 +7,7 @@
 import { useId, useState, type FormEvent } from 'react';
 import { Button, InlineMessage, Input } from '../../design/index.ts';
 import type { Phase } from './saving.ts';
+import { Words } from '../words.tsx';
 
 /**
  * Everything the server's rendering does not keep of a text a person wrote,
@@ -29,7 +30,7 @@ function NewName({ proposed, error, valid, onSave }: { proposed: string; error: 
   };
   return (
     <form className="rg-editor__new-name" onSubmit={submit}>
-      <Input id={`${id}-name`} label="New file name" mono value={name} onChange={(e) => setName(e.target.value)} {...(error === undefined ? {} : { error })} />
+      <Input id={`${id}-name`} label="New file name" mono value={name} onChange={(e) => setName(e.target.value)} {...(error === undefined ? {} : { error: <Words text={error} /> })} />
       <Button type="submit" {...(!valid ? { disabled: true, disabledReason: INVALID } : name.trim() === '' ? { disabled: true, disabledReason: 'Give the new file a name.' } : {})}>
         Save as a new file
       </Button>

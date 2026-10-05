@@ -102,7 +102,8 @@ describe('Canvas in write mode, an edge drawn by drag', () => {
     fireEvent.pointerDown(outPort(container, 'question'), { button: 0 });
     expect(status.textContent).toBe('Connecting from question. Drop on an open port; Escape cancels.');
     fireEvent.pointerEnter(inPort(container, 'reranked', 1));
-    expect(status.textContent).toBe('`question` feeds `reranked` at port 1: expected chunks, found query.');
+    expect(status.textContent).toBe('question feeds reranked at port 1: expected chunks, found query.');
+    expect(status.querySelector('code')?.textContent).toBe('question');
   });
 
   it('creates nothing when dropped on a refused port, and the edge when dropped on an open one', () => {

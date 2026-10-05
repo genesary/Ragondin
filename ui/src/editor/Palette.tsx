@@ -2,6 +2,7 @@ import type { DragEvent } from 'react';
 import { FAMILY_LABEL, FamilyTile, familyOfComponent, type Family } from '../../design/index.ts';
 import type { Capabilities, ServiceStatus } from '../api/types.ts';
 import { DROP_TYPE } from '../canvas/index.ts';
+import { Words } from '../words.tsx';
 
 /** One thing the palette offers: a node's `component:` and `impl:`, whether it is a Remote name, and why it cannot be placed, if it cannot. */
 export type PaletteEntry = { component: string; impl: string; remote: boolean; refused: string | null };
@@ -95,7 +96,9 @@ export function Palette({ entries, onPlace }: PaletteProps) {
             >
               <b>{entry.impl}</b>
               {entry.remote ? <span className="rg-palette__tag">Remote</span> : null}
-              {entry.refused === null ? null : <small>{entry.refused}</small>}
+              {entry.refused === null ? null : <small>
+            <Words text={entry.refused} />
+          </small>}
             </button>
           ))}
         </div>

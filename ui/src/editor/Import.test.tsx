@@ -48,7 +48,7 @@ describe('importing a pipeline', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Validate and import' }));
     const alert = await screen.findByRole('alert');
     expect(alert.textContent).toContain('wires two nodes incompatibly');
-    expect(alert.textContent).toContain('At node `ranked`, on the edge `legs` → `ranked`, port 0.');
+    expect(alert.textContent).toContain('At node ranked, on the edge legs → ranked, port 0.');
     expect(api.bodies[api.requests.indexOf('POST /api/v1/pipelines/validate')]).toEqual({ document: HAND });
     expect(api.requests.filter((r) => r.startsWith('PUT'))).toEqual([]);
     expect(onImported).not.toHaveBeenCalled();

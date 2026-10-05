@@ -6,6 +6,7 @@
 import { useId, useState, type ChangeEvent, type FormEvent } from 'react';
 import { Button, InlineMessage, Input, Section } from '../../design/index.ts';
 import type { ApiClient, ApiProblem } from '../api/client.ts';
+import { Words } from '../words.tsx';
 
 /** Where a refusal is, in words: the node, and the edge when the server names one. */
 export function locationWords(problem: ApiProblem): string {
@@ -83,7 +84,7 @@ export function ImportPanel({ client, onImported, onCancel }: ImportPanelProps) 
         <Input id={`${id}-name`} label="Pipeline name" mono value={name} onChange={(e) => setName(e.target.value)} help="Written as pipelines/<name>.yaml." />
         {refused === null ? null : (
           <InlineMessage tone="critical" title={refused.title}>
-            {refused.detail}
+            <Words text={refused.detail} />
           </InlineMessage>
         )}
         <div className="rg-editor__import-actions">
