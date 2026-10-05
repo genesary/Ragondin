@@ -890,17 +890,65 @@ async fn a_trace_whose_latency_does_not_read_is_left_out_of_the_median_and_repor
 
     let job = job_until(&app, &id, finished).await;
     assert_eq!(kind(&job), "done", "{job}");
-    let listing = json(send(app.clone(), get("/api/v1/jobs")).await).await;
-    let faults = listing["faults"].as_array().unwrap();
-    assert_eq!(faults.len(), 1, "{listing}");
-    assert!(faults[0]["path"]
-        .as_str()
-        .unwrap()
-        .ends_with(&format!("{id}.json")));
+    let faults = job["faults"].as_array().unwrap();
+    assert_eq!(faults.len(), 1, "{job}");
     assert!(faults[0]["reason"]
         .as_str()
         .unwrap()
         .contains("2 of its traces"));
+    // A fault beside a job is the job's, not the record's.
+    let listing = json(send(app.clone(), get("/api/v1/jobs")).await).await;
+    assert_eq!(listing["faults"], json!([]), "{listing}");
+}
+
+/// A fault reported while a job runs is published as it is reported — a
+/// `fault` event carrying the job, its faults included — and written into
+/// the job's file, so a restart reads it back.
+#[tokio::test]
+async fn a_fault_beside_a_job_is_published_and_survives_a_restart() {
+    let workspace = scratch("jobs-fault-published-persisted");
+    let launcher = Arc::new(ScriptedLauncher::new(Script {
+        queries: vec![100, 200],
+        malformed: true,
+        ..Script::default()
+    }));
+    let app = server(&workspace, launcher);
+    let watcher = {
+        let app = app.clone();
+        tokio::spawn(async move {
+            events(&app, None, |events| {
+                events.iter().any(|event| event.name == "done")
+            })
+            .await
+        })
+    };
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let id = accepted(&app, PIPELINE).await;
+    let events = watcher.await.unwrap();
+
+    assert_eq!(
+        names_of(&events, &id),
+        ["queued", "running", "running", "running", "fault", "done"],
+        "{events:#?}"
+    );
+    let fault = events.iter().find(|event| event.name == "fault").unwrap();
+    assert_eq!(fault.data["state"]["kind"], "running", "it stops nothing");
+    let reported = &fault.data["faults"][0];
+    assert!(reported["reason"]
+        .as_str()
+        .unwrap()
+        .contains("2 of its traces"));
+    assert!(reported["at_ms"].is_u64(), "{reported}");
+    let done = events.iter().find(|event| event.name == "done").unwrap();
+    assert_eq!(done.data["faults"], fault.data["faults"]);
+
+    let file = job_file(&workspace, &id);
+    assert_eq!(file["faults"].as_array().unwrap().len(), 1, "{file}");
+
+    let restarted = server(&workspace, Arc::new(ScriptedLauncher::default()));
+    let job = json(send(restarted.clone(), get(&format!("/api/v1/jobs/{id}"))).await).await;
+    assert_eq!(job["faults"], fault.data["faults"], "{job}");
 }
 
 #[tokio::test]
@@ -1147,16 +1195,21 @@ async fn a_job_whose_running_cannot_be_written_is_not_executed_and_a_restart_res
         .contains("could not be started"));
     assert_eq!(*launcher.executed.lock().unwrap(), [PIPELINE]);
     let listing = json(send(app.clone(), get("/api/v1/jobs")).await).await;
-    let reported = listing["faults"].as_array().unwrap().iter().any(|fault| {
-        fault["path"]
-            .as_str()
-            .unwrap()
-            .ends_with(&format!("{second}.json"))
-            && fault["reason"]
+    let reported = listing["jobs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|job| job["id"] == second.as_str())
+        .unwrap()["faults"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|fault| {
+            fault["reason"]
                 .as_str()
                 .unwrap()
                 .contains("a restart finds it queued")
-    });
+        });
     assert!(reported, "{listing}");
     assert_eq!(job_file(&workspace, &second)["state"]["kind"], "queued");
 
@@ -1168,6 +1221,158 @@ async fn a_job_whose_running_cannot_be_written_is_not_executed_and_a_restart_res
     let job = job_until(&restarted, &second, finished).await;
     assert_eq!(kind(&job), "done", "{job}");
     assert_eq!(*rerun.executed.lock().unwrap(), [OTHER_PIPELINE]);
+}
+
+/// `jobs/` read-only while it lives, writable again when it drops — a
+/// failing assertion included, so the scratch directory stays usable.
+struct ReadOnlyJobs(PathBuf);
+
+impl Drop for ReadOnlyJobs {
+    fn drop(&mut self) {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&self.0, std::fs::Permissions::from_mode(0o755));
+    }
+}
+
+/// Makes `workspace/jobs/` read-only; `None` when this user can write there
+/// anyway — root — so nothing can make a write fail and the test has
+/// nothing to check.
+fn read_only_jobs(workspace: &Path) -> Option<ReadOnlyJobs> {
+    use std::os::unix::fs::PermissionsExt;
+    let jobs = workspace.join("jobs");
+    std::fs::set_permissions(&jobs, std::fs::Permissions::from_mode(0o555)).unwrap();
+    let guard = ReadOnlyJobs(jobs.clone());
+    let probe = jobs.join("probe");
+    if std::fs::write(&probe, b"").is_ok() {
+        let _ = std::fs::remove_file(&probe);
+        eprintln!("skipped: a read-only directory is writable for this user");
+        return None;
+    }
+    Some(guard)
+}
+
+fn faults_of(job: &Value) -> Vec<String> {
+    job["faults"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|fault| fault["reason"].as_str().unwrap().to_owned())
+        .collect()
+}
+
+/// A reorder whose write fails puts its fault on the job it could not
+/// write, held in memory only and saying so; the job's next write that
+/// succeeds — a cancellation here — carries the fault to disk and drops the
+/// clause, which would be false there.
+#[tokio::test]
+async fn a_reorder_that_cannot_be_written_is_a_fault_on_the_job_until_a_write_carries_it() {
+    let workspace = scratch("jobs-reorder-unwritable");
+    let launcher = Arc::new(ScriptedLauncher::new(Script {
+        queries: vec![100],
+        gate_after: Some(1),
+        ..Script::default()
+    }));
+    let app = server(&workspace, Arc::clone(&launcher));
+    let first = accepted(&app, PIPELINE).await;
+    job_until(&app, &first, |job| kind(job) == "running").await;
+    let second = accepted(&app, OTHER_PIPELINE).await;
+    let response = send(
+        app.clone(),
+        write_request(
+            "POST",
+            "/api/v1/runs",
+            &json!({ "pipeline": PIPELINE, "benchmark": BENCHMARK, "up_to": "fused" }),
+            &[],
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+    let third = json(response).await["job_id"].as_str().unwrap().to_owned();
+
+    let Some(read_only) = read_only_jobs(&workspace) else {
+        launcher.gate.add_permits(1);
+        return;
+    };
+    let response = send(
+        app.clone(),
+        write_request(
+            "PATCH",
+            &format!("/api/v1/jobs/{third}"),
+            &json!({ "position": 0 }),
+            &[],
+        ),
+    )
+    .await;
+    drop(read_only);
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+
+    let listing = json(send(app.clone(), get("/api/v1/jobs")).await).await;
+    let faulty: Vec<&Value> = listing["jobs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|job| !faults_of(job).is_empty())
+        .collect();
+    assert_eq!(faulty.len(), 1, "{listing}");
+    let id = faulty[0]["id"].as_str().unwrap().to_owned();
+    assert!([second.as_str(), third.as_str()].contains(&id.as_str()));
+    let reason = &faults_of(faulty[0])[0];
+    assert!(reason.contains("the reorder was refused"), "{reason}");
+    assert!(reason.contains("held in memory only"), "{reason}");
+    assert_eq!(listing["faults"], json!([]), "the record's own stay empty");
+
+    let response = send(
+        app.clone(),
+        write_request("DELETE", &format!("/api/v1/jobs/{id}"), &json!(null), &[]),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let cancelled = json(send(app.clone(), get(&format!("/api/v1/jobs/{id}"))).await).await;
+    let reasons = faults_of(&cancelled);
+    assert_eq!(reasons.len(), 1, "{cancelled}");
+    assert!(reasons[0].contains("the reorder was refused"));
+    assert!(
+        !reasons[0].contains("held in memory only"),
+        "a write carried it: {cancelled}"
+    );
+    let file = job_file(&workspace, &id);
+    assert_eq!(file["faults"][0]["reason"], json!(reasons[0]), "{file}");
+
+    launcher.gate.add_permits(1);
+}
+
+/// An end that cannot be written is applied in memory anyway, and its fault
+/// is on the job, saying a restart finds it running.
+#[tokio::test]
+async fn an_end_that_cannot_be_written_is_a_fault_on_the_job() {
+    let workspace = scratch("jobs-end-unwritable");
+    let launcher = Arc::new(ScriptedLauncher::new(Script {
+        queries: vec![100],
+        gate_after: Some(1),
+        ..Script::default()
+    }));
+    let app = server(&workspace, Arc::clone(&launcher));
+    let id = accepted(&app, PIPELINE).await;
+    job_until(&app, &id, |job| kind(job) == "running").await;
+
+    let Some(read_only) = read_only_jobs(&workspace) else {
+        launcher.gate.add_permits(1);
+        return;
+    };
+    launcher.gate.add_permits(1);
+    let ended = job_until(&app, &id, finished).await;
+    drop(read_only);
+
+    assert_eq!(kind(&ended), "done", "{ended}");
+    let reasons = faults_of(&ended);
+    assert_eq!(reasons.len(), 1, "{ended}");
+    assert!(
+        reasons[0].contains("its end is held in memory only: a restart finds it running"),
+        "{ended}"
+    );
+    assert_eq!(job_file(&workspace, &id)["state"]["kind"], "running");
+    let listing = json(send(app.clone(), get("/api/v1/jobs")).await).await;
+    assert_eq!(listing["faults"], json!([]), "{listing}");
 }
 
 #[tokio::test]
@@ -1679,17 +1884,16 @@ async fn a_partial_write_that_fails_records_none_and_is_reported() {
     let job = job_until(&app, &id, finished).await;
     assert_eq!(kind(&job), "failed", "{job}");
     assert_eq!(job["state"]["partial_traces"], 0, "{job}");
-    let listing = json(send(app.clone(), get("/api/v1/jobs")).await).await;
     assert!(
-        listing["faults"]
+        job["faults"]
             .as_array()
             .unwrap()
             .iter()
-            .any(|fault| fault["path"]
+            .any(|fault| fault["reason"]
                 .as_str()
                 .unwrap()
-                .ends_with("partial/traces.json")),
-        "{listing}"
+                .contains("partial/traces.json")),
+        "{job}"
     );
 }
 
@@ -1785,17 +1989,16 @@ async fn an_old_job_file_whose_traces_do_not_read_counts_none_and_says_why() {
 
     let torn = json(send(app.clone(), get("/api/v1/jobs/torn")).await).await;
     assert_eq!(torn["state"]["partial_traces"], 0, "{torn}");
-    let listing = json(send(app.clone(), get("/api/v1/jobs")).await).await;
     assert!(
-        listing["faults"]
+        torn["faults"]
             .as_array()
             .unwrap()
             .iter()
-            .any(|fault| fault["path"]
+            .any(|fault| fault["reason"]
                 .as_str()
                 .unwrap()
-                .ends_with("torn/partial/traces.json")),
-        "{listing}"
+                .contains("torn/partial/traces.json")),
+        "{torn}"
     );
     let response = send(app.clone(), get("/api/v1/jobs/torn/queries")).await;
     assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);

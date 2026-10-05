@@ -348,6 +348,40 @@ describe('the queue’s rows', () => {
     expect(within(job).queryByRole('link', { name: 'Replay the partial traces' })).toBeNull();
   });
 
+  it('a_fault_reported_during_a_job_shows_on_its_row_and_in_its_view_without_a_reload', async () => {
+    const { api, stream } = await show('#runs/job/j1');
+    connect(stream, [runJob('j1', running(3, 10))]);
+    const job = await screen.findByRole('region', { name: 'Job j1' });
+    // The polite region is there, empty, before any fault: one inserted already filled may go unannounced.
+    const live = job.querySelector('.rg-job__faults') as HTMLElement;
+    expect(live.getAttribute('role')).toBe('status');
+    // Not atomic: a new fault is announced as what was added, never the whole list again.
+    expect(live.getAttribute('aria-atomic')).toBe('false');
+    expect(live.textContent).toBe('');
+    const reads = api.requests.length;
+
+    const reason = 'the layout of pipeline hybrid could not be copied at launch, so a fork of its run starts without one';
+    send(stream, { event: 'fault', data: runJob('j1', running(3, 10), { faults: [reason] }) });
+
+    // Said politely, beside the job, which goes on: a warning, never an alert.
+    expect(job.querySelector('.rg-job__faults')).toBe(live);
+    expect(live.textContent).toContain('1 fault beside this job; it did not stop it');
+    expect(live.textContent).toContain(reason);
+    expect(within(live).getByRole('img', { name: 'Warning' })).toBeTruthy();
+    // One live region, so a fault is announced once: the warning inside it is not a second.
+    expect(within(live).queryByRole('status')).toBeNull();
+    // Each fault says when it was reported.
+    const at = new Date(1_700_000_050_000).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' });
+    expect(live.querySelector('.rg-job__fault')?.textContent).toBe(`${reason} (${at})`);
+    expect(within(job).queryByRole('alert')).toBeNull();
+    expect(job.querySelector('.rg-status')?.textContent).toBe('running 3 / 10');
+    expect(jobRowOf().getAttribute('aria-label')).toBe(`Run ${short(ANNOUNCED)} on beir/scifact, running, 1 fault`);
+    expect(within(jobRowOf()).getByText('1 fault')).toBeTruthy();
+    // Nothing was read again: the stream carried it.
+    expect(api.requests.length).toBe(reads);
+    expect(notifications().querySelectorAll('.rg-toast')).toHaveLength(0);
+  });
+
   it('cancel_and_resubmit_round_trip_through_the_api', async () => {
     const cancelledQueued = runJob('j2', CANCELLED, { position: 1 });
     const { api, stream } = await show(
@@ -415,6 +449,23 @@ describe('the queue’s rows', () => {
       send(stream, { event: 'reordered', data: j });
     }
     expect(order()).toEqual([short(B), short(A), short(C)]);
+  });
+
+  it('still follows a reorder’s answer after a fault event, which says no order', async () => {
+    const A = hex('a');
+    const B = hex('b');
+    const C = hex('e');
+    const q = (id: string, runId: string, position: number, faults: string[] = []) => runJob(id, QUEUED, { runId, position, faults });
+    let answer: (reply: { body: JobListing }) => void = () => {};
+    const { stream } = await show('#runs', routes({ 'PATCH /jobs/{id}': () => new Promise((resolve) => (answer = resolve)) }));
+    connect(stream, [q('jc', C, 0), q('ja', A, 1), q('jb', B, 2)]);
+    const order = () => screen.getAllByRole('row', { name: /, queued/ }).map((r) => r.getAttribute('aria-label')?.slice(4, 16));
+
+    fireEvent.click(within(jobRowOf(B)).getByRole('button', { name: `Move run ${short(B)} up` }));
+    // A fault reported beside a job while the move is in flight moves no job among the queued.
+    send(stream, { event: 'fault', data: q('jc', C, 0, ['the layout could not be copied']) });
+    await act(async () => answer({ body: { faults: [], jobs: [q('ja', A, 0), q('jb', B, 1), q('jc', C, 2, ['the layout could not be copied'])] } }));
+    expect(order()).toEqual([short(A), short(B), short(C)]);
   });
 
   it('follows the stream, not a reorder’s answer that the stream’s own events overtook', async () => {

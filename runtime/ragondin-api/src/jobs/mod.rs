@@ -19,7 +19,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::backends::Submission;
 use crate::response::{
-    JobStatus, JobSummary, JobWork, RunIdMismatch as RunIdMismatchSummary, ServiceBinding,
+    JobStatus, JobSummary, JobWork, ReportedFault, RunIdMismatch as RunIdMismatchSummary,
+    ServiceBinding,
 };
 
 mod file;
@@ -46,6 +47,57 @@ pub struct Job {
     pub state: JobState,
     /// Every transition it went through, in order, the current one last.
     pub history: Vec<Transition>,
+    /// What went wrong beside it without stopping it, in the order reported.
+    /// Absent in a file written before faults were recorded on the job.
+    #[serde(default)]
+    pub faults: Vec<Fault>,
+}
+
+/// A fault beside a job: what went wrong without changing its state, and
+/// what the queue did about it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Fault {
+    /// What went wrong, and what the queue did about it.
+    pub reason: String,
+    /// When it was reported; `None` when the clock read before the epoch.
+    pub at: Option<UnixMillis>,
+    /// While the fault, or the transition it accompanies, is held in memory
+    /// only: what that means, which the API appends to the reason. Never
+    /// written — the write that would carry it is the one that makes it
+    /// false — and cleared by the job's next write that succeeds
+    /// (`Job::written`).
+    #[serde(skip)]
+    pub unwritten: Option<String>,
+}
+
+impl Fault {
+    /// `reason`, reported now.
+    pub(crate) fn now(reason: String) -> Self {
+        Self {
+            reason,
+            at: now(),
+            unwritten: None,
+        }
+    }
+
+    /// `reason`, reported now, and held in memory only: `clause` says what
+    /// that means until a write of the job carries it.
+    pub(crate) fn held(reason: String, clause: String) -> Self {
+        Self {
+            unwritten: Some(clause),
+            ..Self::now(reason)
+        }
+    }
+}
+
+impl Job {
+    /// The job was just written whole, its faults with it: none is held in
+    /// memory only any more.
+    pub(crate) fn written(&mut self) {
+        for fault in &mut self.faults {
+            fault.unwritten = None;
+        }
+    }
 }
 
 /// What a job does.
@@ -290,5 +342,64 @@ pub(crate) fn summary(job: &Job) -> JobSummary {
                 partial_traces: partial_traces.unwrap_or(0),
             },
         },
+        faults: job
+            .faults
+            .iter()
+            .map(|fault| ReportedFault {
+                reason: match &fault.unwritten {
+                    Some(clause) => format!("{}; {clause}", fault.reason),
+                    None => fault.reason.clone(),
+                },
+                at_ms: millis(fault.at),
+            })
+            .collect(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn job_with(fault: Fault) -> Job {
+        Job {
+            id: "1-1".to_owned(),
+            position: 0,
+            created_at: None,
+            work: Work::Download {
+                benchmark: "beir/mini".to_owned(),
+            },
+            state: JobState::Queued,
+            history: Vec::new(),
+            faults: vec![fault],
+        }
+    }
+
+    /// A fault that could not be written says so while it is in memory
+    /// only, and never on disk: the write that would carry the clause is the
+    /// one that makes it false.
+    #[test]
+    fn a_fault_held_in_memory_says_so_until_a_write_carries_it() {
+        let mut job = job_with(Fault::held(
+            "the layout could not be copied".to_owned(),
+            "this fault is held in memory only: disk full".to_owned(),
+        ));
+        assert_eq!(
+            summary(&job).faults[0].reason,
+            "the layout could not be copied; this fault is held in memory only: disk full"
+        );
+        let written = serde_json::to_value(&job).unwrap();
+        let on_disk = written["faults"][0].as_object().unwrap();
+        assert_eq!(
+            on_disk.keys().collect::<Vec<_>>(),
+            ["at", "reason"],
+            "{on_disk:?}"
+        );
+        assert_eq!(on_disk["reason"], "the layout could not be copied");
+
+        job.written();
+        assert_eq!(
+            summary(&job).faults[0].reason,
+            "the layout could not be copied"
+        );
     }
 }

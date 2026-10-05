@@ -28,6 +28,13 @@ describe('InlineMessage warning', () => {
     expect(screen.getByRole('img', { name: 'Warning' })).toBeTruthy();
     expect(declared(css, '.rg-inline[data-tone="warning"]', '--msg-bg')).toBe('var(--warning-wash)');
   });
+
+  it('is no live region of its own inside one its caller keeps (live={false}), and keeps its spoken tone', () => {
+    const { container } = render(<InlineMessage tone="warning" live={false} title="1 fault beside this job." />);
+    expect(screen.queryByRole('status')).toBeNull();
+    expect(container.querySelector('.rg-inline')?.hasAttribute('role')).toBe(false);
+    expect(screen.getByRole('img', { name: 'Warning' })).toBeTruthy();
+  });
 });
 
 describe('InlineMessage info', () => {

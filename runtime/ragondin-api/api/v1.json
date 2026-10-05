@@ -1298,6 +1298,25 @@
             "type": "object"
           },
           {
+            "description": "A fault reported beside a job, which does not change its state: the\njob, its faults with the new one last.",
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/JobSummary"
+              },
+              "event": {
+                "enum": [
+                  "fault"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "event",
+              "data"
+            ],
+            "type": "object"
+          },
+          {
             "description": "The whole queue, sent when the stream cannot replay what a client\nmissed.",
             "properties": {
               "data": {
@@ -1319,10 +1338,10 @@
         ]
       },
       "JobFault": {
-        "description": "A job file the queue could not read, a write of it that failed, or what\nwent wrong beside a job without stopping it.",
+        "description": "A fault of the queue's record that belongs to no job: a job file the\nqueue could not read, or a directory or store it could not list.",
         "properties": {
           "path": {
-            "description": "The file — for a fault beside a job, the job's own file.",
+            "description": "The file or directory.",
             "type": "string"
           },
           "reason": {
@@ -1340,7 +1359,7 @@
         "description": "`GET /jobs`: every job, in its place, and every fault of the queue's\nrecord.",
         "properties": {
           "faults": {
-            "description": "A job file that does not read, a write of the queue's record that\nfailed, or what went wrong beside a job without stopping it — a\nlayout not copied at launch, latencies left out of its median —\nreported, never repaired.",
+            "description": "The faults of the queue's record that belong to no job — a job file\nthat does not read, a directory that cannot be listed, a run store\nthat cannot be listed at start-up — reported, never repaired. A fault\nbeside a job is on the job, in [`JobSummary::faults`].",
             "items": {
               "$ref": "#/components/schemas/JobFault"
             },
@@ -1551,6 +1570,13 @@
             "nullable": true,
             "type": "integer"
           },
+          "faults": {
+            "description": "What went wrong beside it without stopping it — a layout not copied\nat launch, latencies left out of its median, a write of its record\nthat failed — in the order reported. Written into the job's file with\nit, so a restart reads them back; one that could not be written says\nit is held in memory only, until a later write of the job carries it.",
+            "items": {
+              "$ref": "#/components/schemas/ReportedFault"
+            },
+            "type": "array"
+          },
           "id": {
             "description": "Its id.",
             "type": "string"
@@ -1580,6 +1606,7 @@
         },
         "required": [
           "created_at_ms",
+          "faults",
           "id",
           "position",
           "state",
@@ -3357,6 +3384,27 @@
         ],
         "type": "object"
       },
+      "ReportedFault": {
+        "description": "A fault beside a job, which did not change its state.",
+        "properties": {
+          "at_ms": {
+            "description": "When it was reported, in milliseconds since the epoch; `null` when\nthe clock read before it.",
+            "format": "uint64",
+            "minimum": 0,
+            "nullable": true,
+            "type": "integer"
+          },
+          "reason": {
+            "description": "What went wrong, and what the queue did about it.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "at_ms",
+          "reason"
+        ],
+        "type": "object"
+      },
       "RunAccepted": {
         "description": "`POST /runs`: the job accepted, and the run id it announced.",
         "properties": {
@@ -4825,7 +4873,7 @@
     },
     "/jobs/events": {
       "get": {
-        "description": "Each event is named after the state entered — queued, running, done, failed, cancelled — or reordered, and its data is the job as a JobSummary; a run's running events tick once per query, a download's in bytes. Its id is `<process>:<number>`: reconnecting with Last-Event-ID replays every event missed, once, while this server still holds them. Otherwise the stream begins with resync, whose data is the whole queue as a JobListing. JobEvent maps each name to its data's schema; the stream sends them as the SSE `event` and `data` fields.",
+        "description": "Each event is named after the state entered — queued, running, done, failed, cancelled — or reordered, or fault, for a fault reported beside a job that does not change its state, and its data is the job as a JobSummary, its faults included; a run's running events tick once per query, a download's in bytes. Its id is `<process>:<number>`: reconnecting with Last-Event-ID replays every event missed, once, while this server still holds them. Otherwise the stream begins with resync, whose data is the whole queue as a JobListing. JobEvent maps each name to its data's schema; the stream sends them as the SSE `event` and `data` fields.",
         "parameters": [
           {
             "description": "The id of the last event the client received, to resume after it.\nAbsent, or one this server no longer holds the events after, and the\nstream begins with `resync`.",

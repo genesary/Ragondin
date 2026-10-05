@@ -1,7 +1,8 @@
 // One run job of the queue as a row of design/'s Table: the identity its job
 // announced, its state as the stream last said, its real progress, and the
 // controls the queue allows — Move up and Move down among the queued, Cancel
-// on a queued or running job, Resubmit on an ended one. Every control is a
+// on a queued or running job, Resubmit on an ended one — and how many faults
+// the queue reported beside it. Every control is a
 // native button in the tab order; the row itself takes the table's keys, and
 // Enter opens the job (`#runs/job/<id>`). ARCHITECTURE.md § The Runs screen.
 import { useEffect, useState, type ReactNode } from 'react';
@@ -73,6 +74,8 @@ export function jobRow(row: RunRow, { columns, stale, cancelling, onCancel, onMo
   const live = status.state === 'queued' || status.state === 'running';
   const last = stale && live ? ' · last known' : '';
   const control = (name: string) => ({ 'data-job': id, 'data-control': name });
+  const faults = job?.faults ?? [];
+  const faultCount = faults.length === 0 ? '' : `${faults.length.toLocaleString('en-US')} ${faults.length === 1 ? 'fault' : 'faults'}`;
 
   const chip =
     status.state === 'running' ? (
@@ -176,6 +179,12 @@ export function jobRow(row: RunRow, { columns, stale, cancelling, onCancel, onMo
         {short}
       </a>
       <span className="rg-runs__fact">announced</span>
+      {/* A fault does not stop the job: a count beside its identity, never its chip, each reason in the title and all of them in the job's view. */}
+      {faultCount === '' ? null : (
+        <span className="rg-runs__fault" title={faults.join('\n')}>
+          {faultCount}
+        </span>
+      )}
       {row.prefix === null ? null : (
         <span className="rg-runs__prefix">
           <PrefixLabel parents={row.prefix.parents} upTo={row.prefix.upTo} />
@@ -187,7 +196,7 @@ export function jobRow(row: RunRow, { columns, stale, cancelling, onCancel, onMo
   return {
     id: rowKey(row),
     // The name says where the job stands, never its count: a name that changed on every tick would be re-announced each time.
-    label: `Run ${short} on ${bench}, ${status.state === 'running' && !cancelling ? 'running' : words}${last}`,
+    label: `Run ${short} on ${bench}, ${status.state === 'running' && !cancelling ? 'running' : words}${last}${faultCount === '' ? '' : `, ${faultCount}`}`,
     cells: [
       <span className="rg-runs__bench">{bench}</span>,
       run,

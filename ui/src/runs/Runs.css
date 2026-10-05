@@ -67,6 +67,12 @@
 .rg-runs__prefix {
   margin-left: var(--space-2);
 }
+/* A fault beside a job: a caption in the warning's ink, its count in words, so colour is never the only carrier. */
+.rg-runs__fault {
+  margin-left: var(--space-2);
+  font: var(--type-caption);
+  color: var(--warning-ink);
+}
 .rg-runs__metrics {
   display: inline-flex;
   flex-wrap: wrap;
@@ -143,6 +149,7 @@
 .rg-job__facts dd { margin: 0; }
 .rg-job__facts code { font: var(--type-hash); letter-spacing: var(--type-hash-tracking); }
 .rg-job__partial { margin: 0; max-width: 72ch; color: var(--ink-2); }
+.rg-job__fault { display: block; max-width: 72ch; }
 
 @media (max-width: 640px) {
   /* The stream line's longer sentence wraps to two lines here: both are held, empty or not. */

@@ -15,6 +15,7 @@ const facts = (over: Partial<JobFacts> = {}): JobFacts => ({
   medianMs: null,
   filed: null,
   mismatch: null,
+  faults: [],
   ...over,
 });
 
@@ -79,6 +80,21 @@ describe('a job row', () => {
     expect(tr.getAttribute('aria-label')).toBe('Run a1b2c3d4e5f6 on beir/scifact, queued, 1 ahead');
     fireEvent.keyDown(tr, { key: 'Enter' });
     expect(onOpen).toHaveBeenCalledWith('job:j1');
+  });
+
+  it('says how many faults the queue reported beside the job, each reason in its title, and names them on the row', () => {
+    const { tr } = show(job({ state: 'running', done: 3, total: 10 }, { faults: ['the layout could not be copied', 'two traces carry no latency'] }));
+    const note = tr.querySelector('.rg-runs__fault') as HTMLElement;
+    expect(note.textContent).toBe('2 faults');
+    expect(note.getAttribute('title')).toBe('the layout could not be copied\ntwo traces carry no latency');
+    // The fault does not stop the job: the row still says it is running.
+    expect(tr.getAttribute('aria-label')).toBe('Run a1b2c3d4e5f6 on beir/scifact, running, 2 faults');
+  });
+
+  it('says nothing of faults when the queue reported none', () => {
+    const { tr } = show(job({ state: 'done' }));
+    expect(tr.querySelector('.rg-runs__fault')).toBeNull();
+    expect(tr.getAttribute('aria-label')).toBe('Run a1b2c3d4e5f6 on beir/scifact, done');
   });
 });
 

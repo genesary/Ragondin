@@ -55,6 +55,12 @@ describe('rowsFromJobs', () => {
     expect(row?.status).toEqual({ state: 'cancelled' });
   });
 
+  it('carries the reasons of the faults the queue reported beside the job, in their order', () => {
+    const [row] = rowsFromJobs(jobs(runJob('r', running(3, 10), { faults: ['first', 'second'] })), []);
+    expect(row?.job?.faults).toEqual(['first', 'second']);
+    expect(row?.status).toEqual({ state: 'running', done: 3, total: 10 });
+  });
+
   it('names the failed node and the error', () => {
     const [row] = rowsFromJobs(jobs(runJob('f', failedAt('rerank', 'the reranker answered 503'))), []);
     expect(row?.status).toEqual({ state: 'failed', node: 'rerank', error: 'the reranker answered 503' });
@@ -91,7 +97,7 @@ describe('rowsFromJobs', () => {
   });
 
   it('draws no download', () => {
-    const download: JobSummary = { id: 'd', created_at_ms: 1, position: 0, state: QUEUED, work: { kind: 'download', benchmark: 'beir/fiqa' } };
+    const download: JobSummary = { id: 'd', created_at_ms: 1, position: 0, state: QUEUED, work: { kind: 'download', benchmark: 'beir/fiqa' }, faults: [] };
     expect(rowsFromJobs(jobs(download), [])).toEqual([]);
   });
 });

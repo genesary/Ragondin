@@ -1789,10 +1789,10 @@ pub struct JobListing {
     /// The jobs, by position: the order accepted and as reordered; each
     /// lane's queued jobs in the order its worker takes them.
     pub jobs: Vec<JobSummary>,
-    /// A job file that does not read, a write of the queue's record that
-    /// failed, or what went wrong beside a job without stopping it — a
-    /// layout not copied at launch, latencies left out of its median —
-    /// reported, never repaired.
+    /// The faults of the queue's record that belong to no job — a job file
+    /// that does not read, a directory that cannot be listed, a run store
+    /// that cannot be listed at start-up — reported, never repaired. A fault
+    /// beside a job is on the job, in [`JobSummary::faults`].
     pub faults: Vec<JobFault>,
 }
 
@@ -1814,16 +1814,19 @@ pub enum JobEvent {
     Cancelled(JobSummary),
     /// A queued job moved by a reorder.
     Reordered(JobSummary),
+    /// A fault reported beside a job, which does not change its state: the
+    /// job, its faults with the new one last.
+    Fault(JobSummary),
     /// The whole queue, sent when the stream cannot replay what a client
     /// missed.
     Resync(JobListing),
 }
 
-/// A job file the queue could not read, a write of it that failed, or what
-/// went wrong beside a job without stopping it.
+/// A fault of the queue's record that belongs to no job: a job file the
+/// queue could not read, or a directory or store it could not list.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct JobFault {
-    /// The file — for a fault beside a job, the job's own file.
+    /// The file or directory.
     pub path: String,
     /// What went wrong, and what the queue did about it.
     pub reason: String,
@@ -1844,6 +1847,23 @@ pub struct JobSummary {
     pub work: JobWork,
     /// Where it stands.
     pub state: JobStatus,
+    /// What went wrong beside it without stopping it — a layout not copied
+    /// at launch, latencies left out of its median, a write of its record
+    /// that failed — in the order reported. Written into the job's file with
+    /// it, so a restart reads them back; one that could not be written says
+    /// it is held in memory only, until a later write of the job carries it.
+    pub faults: Vec<ReportedFault>,
+}
+
+/// A fault beside a job, which did not change its state.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+#[schemars(transform = every_property_required)]
+pub struct ReportedFault {
+    /// What went wrong, and what the queue did about it.
+    pub reason: String,
+    /// When it was reported, in milliseconds since the epoch; `null` when
+    /// the clock read before it.
+    pub at_ms: Option<u64>,
 }
 
 /// What a job does.

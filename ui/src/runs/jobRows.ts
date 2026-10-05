@@ -108,6 +108,7 @@ export function rowsFromJobs(jobs: Jobs, runs: readonly RunRow[]): RunRow[] {
           medianMs: state.kind === 'running' && state.median_latency_nanos !== null ? state.median_latency_nanos / 1e6 : null,
           filed: state.kind === 'done' ? state.run_id : null,
           mismatch: state.kind === 'done' ? state.id_mismatch : null,
+          faults: job.faults.map((f) => f.reason),
         },
         announced: null,
       } satisfies RunRow;

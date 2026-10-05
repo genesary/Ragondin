@@ -1,7 +1,8 @@
-//! `GET /jobs/events`: every transition and every progress tick, as
-//! server-sent events. Each event's name is the state entered — `queued`,
-//! `running`, `done`, `failed`, `cancelled` — or `reordered`, and its data is
-//! the job as `GET /jobs/{id}` answers it. Its id is `<process>:<number>`;
+//! `GET /jobs/events`: every transition, every progress tick and every fault
+//! reported beside a job, as server-sent events. Each event's name is the
+//! state entered — `queued`, `running`, `done`, `failed`, `cancelled` — or
+//! `reordered`, or `fault`, and its data is the job as `GET /jobs/{id}`
+//! answers it. Its id is `<process>:<number>`;
 //! a client that reconnects with `Last-Event-ID` gets every event it missed,
 //! once, when this process still holds them all. Otherwise — no
 //! `Last-Event-ID`, one from another process, one older than the events kept

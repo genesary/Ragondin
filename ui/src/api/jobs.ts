@@ -10,7 +10,7 @@ export type Jobs = ReadonlyMap<string, JobSummary>;
 // Every event name the description gives the stream, listed once: a record
 // over the generated union, so a name added to `JobEvent` does not compile
 // until it is here.
-const NAMES: Record<JobEvent['event'], true> = { queued: true, running: true, done: true, failed: true, cancelled: true, reordered: true, resync: true };
+const NAMES: Record<JobEvent['event'], true> = { queued: true, running: true, done: true, failed: true, cancelled: true, reordered: true, fault: true, resync: true };
 const isName = (name: string): name is JobEvent['event'] => Object.hasOwn(NAMES, name);
 
 const isObject = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -32,13 +32,15 @@ const WORKS: Record<JobWork['kind'], (w: Record<string, unknown>) => boolean> = 
 };
 const known = <K extends string>(checks: Record<K, (v: Record<string, unknown>) => boolean>, value: unknown) =>
   isObject(value) && typeof value.kind === 'string' && Object.hasOwn(checks, value.kind) && checks[value.kind as K](value);
-const isSummary = (value: unknown) => isObject(value) && typeof value.id === 'string' && known(STATES, value.state) && known(WORKS, value.work);
+const isFaults = (value: unknown) => Array.isArray(value) && value.every((f) => isObject(f) && typeof f.reason === 'string');
+const isSummary = (value: unknown) => isObject(value) && typeof value.id === 'string' && known(STATES, value.state) && known(WORKS, value.work) && isFaults(value.faults);
 
 /**
  * One event as `JobEvent`, or null when its data is not JSON or lacks what
  * the screens read: a listing's jobs; a job's id, a state and a work of a
  * kind the description gives, a running job's counts, a failure's error, how
- * many traces a failed or cancelled job kept, and a work's benchmark.
+ * many traces a failed or cancelled job kept, a work's benchmark, and the
+ * reason of each fault reported beside the job.
  */
 function readJobEvent(name: string, data: string): JobEvent | null {
   if (!isName(name)) return null;
@@ -85,8 +87,9 @@ export function openJobStream({ onEvent, onState, onReconnect }: JobStreamHandle
 
 /**
  * The jobs after one event: `resync` replaces them all with the listing;
- * any other sets its job — in its place when known, last when new. The map
- * given is never changed.
+ * any other sets its job — in its place when known, last when new; a
+ * `fault` among them, which carries the job with its faults. The map given
+ * is never changed.
  */
 export function applyJobEvent(jobs: Jobs, event: JobEvent): Jobs {
   if (event.event === 'resync') return new Map(event.data.jobs.map((j) => [j.id, j]));

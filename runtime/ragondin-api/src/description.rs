@@ -265,7 +265,7 @@ pub const OPERATIONS: &[Operation] = &[
         response: Response::EventStream("JobEvent"),
         request: None,
         description: Some(
-            "Each event is named after the state entered — queued, running, done, failed, cancelled — or reordered, and its data is the job as a JobSummary; a run's running events tick once per query, a download's in bytes. Its id is `<process>:<number>`: reconnecting with Last-Event-ID replays every event missed, once, while this server still holds them. Otherwise the stream begins with resync, whose data is the whole queue as a JobListing. JobEvent maps each name to its data's schema; the stream sends them as the SSE `event` and `data` fields.",
+            "Each event is named after the state entered — queued, running, done, failed, cancelled — or reordered, or fault, for a fault reported beside a job that does not change its state, and its data is the job as a JobSummary, its faults included; a run's running events tick once per query, a download's in bytes. Its id is `<process>:<number>`: reconnecting with Last-Event-ID replays every event missed, once, while this server still holds them. Otherwise the stream begins with resync, whose data is the whole queue as a JobListing. JobEvent maps each name to its data's schema; the stream sends them as the SSE `event` and `data` fields.",
         ),
     },
     Operation {

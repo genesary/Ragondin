@@ -9,7 +9,7 @@ import { Button, ButtonLink, EmptyState, FilterChip, InlineMessage, Sheet, Table
 import type { ApiClient, ApiProblem } from '../api/client.ts';
 import { ForkButton } from '../editor/Fork.tsx';
 import type { Jobs } from '../api/jobs.ts';
-import type { RunListing } from '../api/types.ts';
+import type { JobEvent, RunListing } from '../api/types.ts';
 import { useJobEvents, useJobs } from '../jobs/queue.tsx';
 import { STREAM_DOWN, STREAM_DOWN_LIVE } from '../jobs/stream.ts';
 import { formatHash, navigate, type Route } from '../routes.ts';
@@ -46,6 +46,11 @@ const runsRoute = (sel: readonly string[], job: string | undefined, launch: Runs
 
 /** Writes a selection to the address in place, keeping the job shown and the launch panel: checking a box is state within the view, not a move Back should undo. */
 const selectWith = (job: string | undefined, launch: RunsScreenProps['launch']) => (sel: string[]) => navigate({ ...runsRoute([], job, launch), sel }, { replace: true });
+
+// Which events say the queue's order, one entry per name of the generated
+// union: a name added to `JobEvent` does not compile until it is decided here.
+// A fault, a tick and a transition move no job among the queued.
+const SAYS_ORDER: Record<JobEvent['event'], boolean> = { queued: false, running: false, done: false, failed: false, cancelled: false, fault: false, reordered: true, resync: true };
 
 const runs = (n: number) => `${n.toLocaleString('en-US')} run${n === 1 ? '' : 's'}`;
 
@@ -159,7 +164,7 @@ function Loaded({ client, listing, askedWith, refresh, sel, job, launch, store, 
   // How many times the stream has said the order: an answer to a reorder sent before the last of them is older than the stream.
   const orderSaid = useRef(0);
   useJobEvents((_before, _after, event) => {
-    if (event.event !== 'reordered' && event.event !== 'resync') return;
+    if (!SAYS_ORDER[event.event]) return;
     orderSaid.current += 1;
     setPositions(null);
   });
@@ -438,7 +443,7 @@ function Loaded({ client, listing, askedWith, refresh, sel, job, launch, store, 
         </div>
       </div>
       {launchPanel}
-      {job === undefined ? null : <JobPanel client={client} id={job} closeHref={formatHash({ screen: 'runs', sel: [...sel] })} anchor={jobAnchor} />}
+      {job === undefined ? null : <JobPanel key={job} client={client} id={job} closeHref={formatHash({ screen: 'runs', sel: [...sel] })} anchor={jobAnchor} />}
       {unreadable}
       {/* Present while the page follows the queue, one line high, so the rows never move as the stream drops and comes back. */}
       {connection === null ? null : (
