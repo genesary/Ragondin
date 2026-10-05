@@ -11,14 +11,14 @@ import { formatMetric, metricLabel, shortHash } from '../runs/model.ts';
 import './Pipeline.css';
 import { answerMetrics, bestGainColumns, columnLabel, groundTruthLabel, signedGain, spansRow } from './model.ts';
 
-/** The pair the launcher is handed: run this pipeline on this benchmark. */
-export type LaunchPair = { pipeline: string; benchmark: string };
+/** What the launcher is handed: run this pipeline, whole, on each of these benchmarks. */
+export type LaunchRequest = { pipeline: string; benchmarks: string[] };
 
 /**
  * The hand-off to the launcher: the screen passes one that opens Runs' launch
- * panel on the pair (`launchInPanel`), so the matrix imports no launcher.
+ * panel on the request (`launchInPanel`), so the matrix imports no launcher.
  */
-export type Launch = (pair: LaunchPair) => void;
+export type Launch = (request: LaunchRequest) => void;
 
 export type MatrixProps = {
   matrix: PipelineMatrix;
@@ -108,7 +108,7 @@ function cellContent(m: PipelineMatrix, row: MatrixRow, cell: MatrixCell, metric
           state={cell.kind}
           first="not run yet"
           second={
-            <Button size="s" aria-label={name} onClick={() => launch({ pipeline: m.pipeline, benchmark: cell.benchmark })}>
+            <Button size="s" aria-label={name} onClick={() => launch({ pipeline: m.pipeline, benchmarks: [cell.benchmark] })}>
               Run
             </Button>
           }

@@ -9,7 +9,10 @@
 // there, offers only the benchmarks such a prefix can be scored on, and leaves
 // the identity to the API, since the cut is a pipeline of its own. Opened on
 // a benchmark — the Pipeline screen's Run — it launches on that one, or says
-// why it cannot, never on another in its place.
+// why it cannot, never on another in its place. Opened on several — "Run the
+// N missing cells" — it lists them, each with why it cannot be launched if it
+// cannot, and one confirmation sends one `POST /runs` per launchable one, each
+// outcome said beside its benchmark.
 // ARCHITECTURE.md § The Runs screen.
 import { useCallback, useEffect, useId, useRef, useState, type Ref } from 'react';
 import { Button, ButtonLink, InlineMessage, PrefixLabel, Section, Select } from '../../design/index.ts';
@@ -30,14 +33,36 @@ export type LaunchPanelProps = {
   pipeline?: string | undefined;
   /** The node a prefix run stops at: the pipeline is launched cut there. Null for the whole pipeline. */
   upTo?: string | null;
-  /** The benchmark the panel opens on, when the address names one. */
-  benchmark?: string | undefined;
+  /** The benchmarks the panel opens on, when the address names any: one is chosen in the field, several are launched together. */
+  benchmarks?: readonly string[] | undefined;
   /** Back to the whole pipeline, from a panel opened up to a node. */
   onWhole?: (() => void) | undefined;
 };
 
 /** Where a launch stands: not asked, in flight, queued under an announced id, or refused. */
 type Launch = { kind: 'idle' } | { kind: 'sending' } | { kind: 'queued'; job: string; run: string } | { kind: 'refused'; problem: ApiProblem };
+
+/** One benchmark's submission among several: in flight, queued under an announced id, or refused. */
+type Submission = { kind: 'sending' } | { kind: 'queued'; job: string; run: string } | { kind: 'refused'; problem: ApiProblem };
+
+/** Why a benchmark the address named is not offered: the workspace does not know it, it is not on disk as expected, or the cut cannot be scored on it. */
+type Standing = 'unknown' | 'not ready' | 'not offered';
+
+/** A benchmark that is not launched, in a few words, for the list of several. */
+const NOT_LAUNCHED: Record<Standing, string> = {
+  unknown: 'not a benchmark of this workspace',
+  'not ready': 'not ready — download or import it in Setup',
+  'not offered': 'cannot score this prefix',
+};
+
+/** The outcomes of several submissions as one sentence of counts. */
+function outcomeCounts(outcomes: readonly Submission[]): string {
+  const queued = outcomes.filter((o) => o.kind === 'queued').length;
+  const held = outcomes.filter((o) => o.kind === 'refused' && o.problem.code === 'run_exists').length;
+  const refused = outcomes.filter((o) => o.kind === 'refused').length - held;
+  const parts = [...(queued === 0 ? [] : [`${queued} queued`]), ...(held === 0 ? [] : [`${held} already held by a run or a job`]), ...(refused === 0 ? [] : [`${refused} refused`])];
+  return `${parts.join(', ')}.`;
+}
 
 /** Where a refusal is shown: on the field or the list it names, or for the whole panel. */
 const PIPELINE_CODES = new Set(['pipeline_invalid', 'impl_not_in_build', 'pipeline_not_found', 'prefix_node_not_found', 'prefix_is_whole_pipeline', 'prefix_ends_in_context']);
@@ -131,7 +156,40 @@ function useListing<T>(read: (signal: AbortSignal) => Promise<{ ok: true; value:
   return [state, reload] as const;
 }
 
-export function LaunchPanel({ client, store, anchor, pipeline: opened, upTo = null, benchmark: named, onWhole }: LaunchPanelProps) {
+/** What one of several benchmarks says: why it is not launched, its ground truth before the launch, then its outcome. */
+function SeveralLine({ name, standing, entry, submission }: { name: string; standing: Standing | null; entry: BenchmarkEntry | undefined; submission: Submission | undefined }) {
+  if (standing !== null) return <span className="rg-launch__note">{`not launched: ${NOT_LAUNCHED[standing]}`}</span>;
+  if (submission === undefined) return <span className="rg-launch__note">{entry?.ground_truth == null ? '' : groundTruthLabel(entry.ground_truth)}</span>;
+  if (submission.kind === 'sending') return <span className="rg-launch__note">launching…</span>;
+  if (submission.kind === 'queued') {
+    return (
+      <span className="rg-launch__identity">
+        <code title={submission.run}>{`run ${shortHash(submission.run)}`}</code> <span className="rg-launch__note">announced</span>{' '}
+        <ButtonLink size="s" href={formatHash({ screen: 'runs', job: submission.job })} aria-label={`Open the job on ${name}`}>
+          Open
+        </ButtonLink>
+      </span>
+    );
+  }
+  if (submission.problem.code === 'run_exists') {
+    const to = conflictRoute(submission.problem.link);
+    return (
+      <span className="rg-launch__note">
+        {to?.job === true ? 'A run with this identity is already queued or running.' : 'A run with this identity already exists.'}{' '}
+        {to === null ? null : (
+          <ButtonLink size="s" href={formatHash(to.route)} aria-label={`Open what holds the run on ${name}`}>
+            Open
+          </ButtonLink>
+        )}
+      </span>
+    );
+  }
+  return <span className="rg-launch__error">{`refused: ${refusalWords(submission.problem)}`}</span>;
+}
+
+export function LaunchPanel({ client, store, anchor, pipeline: opened, upTo = null, benchmarks: names, onWhole }: LaunchPanelProps) {
+  const named = names?.length === 1 ? names[0] : undefined;
+  const several = names !== undefined && names.length > 1 ? names : null;
   const [pipelines, retryPipelines] = useListing<PipelineListing>((signal) => client.get('/pipelines', { signal }));
   const [benchmarks, retryBenchmarks] = useListing<BenchmarkListing>((signal) => client.get('/benchmarks', { signal }));
   const [services, retryServices] = useListing<ServiceListing>((signal) => client.get('/services', { signal }));
@@ -142,7 +200,9 @@ export function LaunchPanel({ client, store, anchor, pipeline: opened, upTo = nu
   const [chosenPipeline, setPipeline] = useState<string | null>(opened ?? null);
   const [chosenBenchmark, setBenchmark] = useState<string | null>(named ?? null);
   const [launch, setLaunch] = useState<Launch>({ kind: 'idle' });
-  const ids = { pipeline: useId(), benchmark: useId(), absent: useId() };
+  // Several benchmarks: each one's submission, by name, in the order they are sent.
+  const [batch, setBatch] = useState<Readonly<Record<string, Submission>> | null>(null);
+  const ids = { pipeline: useId(), benchmark: useId(), absent: useId(), list: useId() };
 
   // Up to a node, the pipeline is the one the node is in: no other is offered.
   const listed = pipelines.status === 'loaded' ? pipelines.value.pipelines : [];
@@ -157,21 +217,26 @@ export function LaunchPanel({ client, store, anchor, pipeline: opened, upTo = nu
   const pipeline = docs.find((p) => p.name === chosenPipeline) ?? docs.find((p) => p.hash !== null) ?? docs[0] ?? null;
   // The benchmark the address named, while it is still the one chosen and is not offered: refused, never replaced.
   // Why it is not offered: the workspace does not know it, it is not on disk as expected, or the cut cannot be scored on it.
-  const unoffered = benchmarks.status === 'loaded' && named !== undefined && chosenBenchmark === named && !ready.some((b) => b.name === named) ? named : null;
-  const unofferedBecause: 'unknown' | 'not ready' | 'not offered' | null =
-    unoffered === null || benchmarks.status !== 'loaded'
+  const standing = (name: string): Standing | null =>
+    benchmarks.status !== 'loaded' || ready.some((b) => b.name === name)
       ? null
-      : !benchmarks.value.benchmarks.some((b) => b.name === unoffered)
+      : !benchmarks.value.benchmarks.some((b) => b.name === name)
         ? 'unknown'
-        : onDisk.some((b) => b.name === unoffered)
+        : onDisk.some((b) => b.name === name)
           ? 'not offered'
           : 'not ready';
+  const unoffered = named !== undefined && chosenBenchmark === named && standing(named) !== null ? named : null;
+  const unofferedBecause = unoffered === null ? null : standing(unoffered);
+  // Several: the ones that can be launched, in the address's order.
+  const launchable = several === null || benchmarks.status !== 'loaded' ? [] : several.filter((name) => standing(name) === null);
+  const submitted = batch !== null && launchable.every((name) => batch[name] !== undefined && batch[name].kind !== 'sending');
   const benchmark = unoffered !== null ? null : (ready.find((b) => b.name === chosenBenchmark) ?? ready[0] ?? null);
 
   // A change of what would be launched is a new launch: the last answer no longer describes it.
   const choose = (set: (v: string) => void) => (value: string) => {
     set(value);
     setLaunch({ kind: 'idle' });
+    setBatch(null);
   };
 
   const send = async () => {
@@ -180,6 +245,17 @@ export function LaunchPanel({ client, store, anchor, pipeline: opened, upTo = nu
     const request: RunRequest = upTo === null ? { pipeline: pipeline.name, benchmark: benchmark.name } : { pipeline: pipeline.name, benchmark: benchmark.name, up_to: upTo };
     const result = await client.post('/runs', request);
     setLaunch(result.ok ? { kind: 'queued', job: result.value.job_id, run: result.value.run_id } : { kind: 'refused', problem: result.problem });
+  };
+
+  // One confirmation, then one `POST /runs` per launchable benchmark, one after another, each answer kept beside its benchmark.
+  const sendAll = async () => {
+    if (pipeline === null) return;
+    for (const name of launchable) {
+      setBatch((b) => ({ ...b, [name]: { kind: 'sending' } }));
+      const request: RunRequest = upTo === null ? { pipeline: pipeline.name, benchmark: name } : { pipeline: pipeline.name, benchmark: name, up_to: upTo };
+      const result = await client.post('/runs', request);
+      setBatch((b) => ({ ...b, [name]: result.ok ? { kind: 'queued', job: result.value.job_id, run: result.value.run_id } : { kind: 'refused', problem: result.problem } }));
+    }
   };
 
   const refused = launch.kind === 'refused' ? launch.problem : null;
@@ -194,6 +270,12 @@ export function LaunchPanel({ client, store, anchor, pipeline: opened, upTo = nu
       ? 'No pipeline in this workspace: build one in the Editor.'
       : pipeline.hash === null
         ? 'This pipeline does not validate.'
+        : several !== null
+          ? launchable.length === 0
+            ? 'None of these benchmarks can be launched: each says why.'
+            : submitted
+              ? 'Submitted: each benchmark says its outcome. Choose another pipeline to launch again.'
+              : null
         : unoffered !== null
           ? unofferedBecause === 'unknown'
             ? `${unoffered} is not a benchmark of this workspace: choose another benchmark.`
@@ -245,7 +327,26 @@ export function LaunchPanel({ client, store, anchor, pipeline: opened, upTo = nu
 
         {benchmarks.status === 'loading' ? <Loading label="Reading benchmarks" /> : null}
         {benchmarks.status === 'error' ? <ErrorState problem={benchmarks.problem} onRetry={retryBenchmarks} /> : null}
-        {benchmarks.status === 'loaded' ? (
+        {benchmarks.status === 'loaded' && several !== null ? (
+          <div className="rg-launch__field">
+            <span className="rg-launch__label" id={ids.list}>
+              Benchmarks
+            </span>
+            <ul className="rg-launch__several" aria-labelledby={ids.list}>
+              {several.map((name) => (
+                <li key={name}>
+                  <span className="rg-launch__bench">{name}</span> <SeveralLine name={name} standing={standing(name)} entry={ready.find((b) => b.name === name)} submission={batch?.[name]} />
+                </li>
+              ))}
+            </ul>
+            {launchable.length < several.length && several.some((name) => standing(name) === 'not ready') ? (
+              <ButtonLink size="s" href={formatHash({ screen: 'setup', section: 'benchmarks' })}>
+                Open Setup
+              </ButtonLink>
+            ) : null}
+          </div>
+        ) : null}
+        {benchmarks.status === 'loaded' && several === null ? (
           <div className="rg-launch__field">
             <Select
               id={ids.benchmark}
@@ -301,7 +402,22 @@ export function LaunchPanel({ client, store, anchor, pipeline: opened, upTo = nu
         </div>
 
         <div className="rg-launch__action">
-          {launch.kind === 'queued' ? (
+          {several !== null ? (
+            <>
+              {why !== null ? (
+                <Button kind="primary" disabled disabledReason={why}>
+                  {submitted ? 'Submitted' : `Launch ${launchable.length} runs`}
+                </Button>
+              ) : (
+                <Button kind="primary" busy={batch !== null} busyLabel="Launching…" onClick={() => void sendAll()}>
+                  {`Launch ${launchable.length} runs`}
+                </Button>
+              )}
+              <span className="rg-launch__note" role="status">
+                {submitted && batch !== null ? outcomeCounts(launchable.map((name) => batch[name] as Submission)) : ''}
+              </span>
+            </>
+          ) : launch.kind === 'queued' ? (
             <>
               <Button kind="primary" disabled disabledReason={why ?? 'Queued.'}>
                 Queued

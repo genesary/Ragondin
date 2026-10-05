@@ -7,7 +7,7 @@ import css from './Pipeline.css?raw';
 import { MATRIX, NAME, PREFIXED, ROWS, RUN_OLD, WITH_FIQA } from './fixtures.ts';
 import { Matrix } from './Matrix.tsx';
 
-const show = (matrix: PipelineMatrix = MATRIX, metric = 'ndcg@10', launch: (pair: { pipeline: string; benchmark: string }) => void = () => {}) =>
+const show = (matrix: PipelineMatrix = MATRIX, metric = 'ndcg@10', launch: (request: { pipeline: string; benchmarks: string[] }) => void = () => {}) =>
   render(<Matrix matrix={matrix} metric={metric} launch={launch} />);
 
 const names = (role: 'rowheader' | 'columnheader') => screen.getAllByRole(role).map((h) => h.textContent?.replace(/\s+/g, ' ').trim());
@@ -216,7 +216,7 @@ describe('an empty cell explains itself', () => {
     const run = within(cell).getByRole('button', { name: 'Run on beir/fiqa' });
     expect(run.hasAttribute('aria-disabled')).toBe(false);
     fireEvent.click(run);
-    expect(launch).toHaveBeenCalledWith({ pipeline: NAME, benchmark: 'beir/fiqa' });
+    expect(launch).toHaveBeenCalledWith({ pipeline: NAME, benchmarks: ['beir/fiqa'] });
   });
 
   it('prefix stops: the node the prefix run stops at', () => {

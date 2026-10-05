@@ -25,8 +25,8 @@ export type PipelineScreenProps = {
   launch?: Launch | undefined;
 };
 
-/** A Run opens Runs' launch panel on the pipeline and the benchmark, whole: the one launcher, never a second. */
-export const launchInPanel: Launch = ({ pipeline, benchmark }) => navigate({ screen: 'runs', launch: { pipeline, benchmark } });
+/** A Run opens Runs' launch panel on the pipeline, whole, and its benchmarks: the one launcher, never a second. */
+export const launchInPanel: Launch = ({ pipeline, benchmarks }) => navigate({ screen: 'runs', launch: { pipeline, benchmarks } });
 
 const runs = (n: number) => `${n.toLocaleString('en-US')} run${n === 1 ? '' : 's'}`;
 
@@ -173,9 +173,9 @@ function Loaded({ matrix, listing, launch }: { matrix: PipelineMatrix; listing: 
     );
   }
 
-  // The launch panel queues one run at a time: one column missing opens it there; several are named, to launch one by one.
+  // Every launchable column's benchmark goes to the panel at once; a column no name is pinned to is said, not launched.
   const toLaunch = matrix.missing.flatMap((column) => (column.benchmark === null ? [] : [column.benchmark]));
-  const several = toLaunch.length > 1 ? `The launch panel queues one run at a time: launch ${toLaunch.slice(0, -1).join(', ')} and ${toLaunch.at(-1) ?? ''} one by one.` : null;
+  const unlaunchable = matrix.missing.filter((column) => column.benchmark === null);
 
   return (
     <Sheet>
@@ -221,16 +221,21 @@ function Loaded({ matrix, listing, launch }: { matrix: PipelineMatrix; listing: 
       </Section>
       <div className="rg-pipeline__verdict">
         <p>{verdict(matrix)}</p>
-        {missing === 0 ? null : several !== null ? (
-          <Button kind="primary" disabled disabledReason={several}>
-            Run the {missing} missing {missing === 1 ? 'cell' : 'cells'}
-          </Button>
-        ) : (
-          <Button kind="primary" onClick={() => launch({ pipeline: matrix.pipeline, benchmark: toLaunch[0] as string })}>
+        {missing === 0 ? null : (
+          <Button kind="primary" onClick={() => launch({ pipeline: matrix.pipeline, benchmarks: toLaunch })}>
             Run the {missing} missing {missing === 1 ? 'cell' : 'cells'}
           </Button>
         )}
       </div>
+      {unlaunchable.length === 0 ? null : (
+        <ul className="rg-pipeline__notes">
+          {unlaunchable.map((column) => (
+            <li key={column.dataset_version} className="rg-pipeline__note">
+              Not launched: dataset {shortHash(column.dataset_version)}, which no benchmark name is pinned to, so there is nothing to launch it on.
+            </li>
+          ))}
+        </ul>
+      )}
     </Sheet>
   );
 }
