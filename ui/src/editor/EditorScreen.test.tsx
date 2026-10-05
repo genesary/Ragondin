@@ -222,7 +222,7 @@ describe('the Editor screen', () => {
 });
 
 describe('opening a pipeline from the editor', () => {
-  const LISTED: MockRoutes = { ...ROUTES, 'GET /pipelines': { body: { pipelines: ['hybrid', 'lexical', 'rag'].map((name) => ({ name, etag: 'e'.repeat(64), modified_ms: null, hash: HASH, error: null })) } } };
+  const LISTED: MockRoutes = { ...ROUTES, 'GET /pipelines': { body: { pipelines: ['hybrid', 'lexical', 'rag'].map((name) => ({ name, etag: 'e'.repeat(64), modified_ms: null, hash: HASH, error: null, ends_in_answer: true })) } } };
 
   it('offers the recent pipelines first, then every pipeline, from the empty state', async () => {
     rememberPipeline('rag');
