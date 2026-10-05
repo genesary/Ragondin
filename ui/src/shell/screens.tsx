@@ -2,18 +2,18 @@
 // Pipeline, Compare, Replay, Editor and Setup are built (src/runs/,
 // src/pipeline/, src/compare/, src/replay/, src/editor/, src/setup/) — Replay
 // and the editor's canvas loaded as chunks of their own, since they carry the
-// canvas; Replay before a run is chosen is its empty state here: one sentence
-// on the default path and the action that leads on. A screen's own issue
+// canvas; Replay before a run is chosen is its run picker, which carries no
+// canvas and so is imported here directly. A screen's own issue
 // replaces its empty state with its content and keeps the route shape
 // src/routes.ts gives it.
 import { lazy, Suspense, useEffect, useRef, type RefObject } from 'react';
-import { ButtonLink, EmptyState, Sheet } from '../../design/index.ts';
 import type { ApiClient } from '../api/client.ts';
 import type { Workspace } from '../api/types.ts';
 import { CompareScreen } from '../compare/CompareScreen.tsx';
 import { EditorScreen } from '../editor/EditorScreen.tsx';
 import { PipelineScreen } from '../pipeline/PipelineScreen.tsx';
-import { formatHash, type Route, type ScreenName } from '../routes.ts';
+import type { Route, ScreenName } from '../routes.ts';
+import { RunPicker } from '../replay/RunPicker.tsx';
 import { RunsScreen } from '../runs/RunsScreen.tsx';
 import { SetupScreen } from '../setup/SetupScreen.tsx';
 import { Loading, type RequestState } from './states.tsx';
@@ -30,14 +30,6 @@ export const SCREENS: readonly { screen: ScreenName; label: string; bare: Route 
   { screen: 'editor', label: 'Editor', bare: { screen: 'editor' } },
   { screen: 'setup', label: 'Setup', bare: { screen: 'setup' } },
 ];
-
-type Action = { label: string; to: Route };
-type Empty = { heading: string; sentence: string; action?: Action };
-
-const openCompare: Action = { label: 'Open Compare', to: { screen: 'compare', ids: [] } };
-
-/** What Replay shows before a run is chosen. */
-const REPLAY_EMPTY: Empty = { heading: 'No query chosen', sentence: 'Open a run from Runs, or a query from Compare, to follow it through the pipeline, node by node.', action: openCompare };
 
 /**
  * Moves focus to `heading` whenever `address` changes from the one the page
@@ -106,7 +98,7 @@ export function Screen({ route, heading, client, workspace, refreshWorkspace, re
       <>
         {title}
         <Suspense fallback={<Loading label="Opening Replay" />}>
-          <ReplayScreen client={client} run={route.run} query={route.query} node={'node' in route ? route.node : undefined} with={'with' in route ? route.with : undefined} />
+          <ReplayScreen client={client} run={route.run} query={route.query} node={'node' in route ? route.node : undefined} with={'with' in route ? route.with : undefined} set={'set' in route ? route.set : undefined} />
         </Suspense>
       </>
     );
@@ -137,24 +129,10 @@ export function Screen({ route, heading, client, workspace, refreshWorkspace, re
       </>
     );
   }
-  const empty = REPLAY_EMPTY;
   return (
     <>
       {title}
-      <Sheet>
-        <EmptyState
-          heading={empty.heading}
-          action={
-            empty.action === undefined ? undefined : (
-              <ButtonLink kind="primary" size="l" href={formatHash(empty.action.to)}>
-                {empty.action.label}
-              </ButtonLink>
-            )
-          }
-        >
-          {empty.sentence}
-        </EmptyState>
-      </Sheet>
+      <RunPicker client={client} />
     </>
   );
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { Comparison, MetricDeltas } from '../api/types.ts';
+import type { Comparison, DeltaBinName, MetricDeltas } from '../api/types.ts';
 import { COMPARISON, DENSE, HYBRID, metricDeltas, RERANK } from './fixtures.ts';
 import { bool, float, int, list, str } from '../parameters.ts';
 import {
@@ -189,8 +189,25 @@ describe('verdict', () => {
 
 describe('regressions', () => {
   it('counts the queries that get worse and names the worst of them', () => {
-    expect(regressions(deltasOf(RERANK, 'mrr@10'))).toEqual({ count: 61, worst: 'q1' });
-    expect(regressions(metricDeltas('ndcg@10', [0, 0, 0, 1, 1, 0, 0]))).toEqual({ count: 0, worst: null });
+    expect(regressions(deltasOf(RERANK, 'mrr@10'))).toMatchObject({ count: 61, worst: 'q1' });
+    expect(regressions(metricDeltas('ndcg@10', [0, 0, 0, 1, 1, 0, 0]))).toMatchObject({ count: 0, worst: null, queries: [] });
+  });
+
+  it('lists the queries that get worse, the largest drop first, so Replay can step through them', () => {
+    const bin = (name: DeltaBinName, queries: string[]) => ({ bin: name, count: queries.length, lower: null, upper: null, queries });
+    const md: MetricDeltas = {
+      metric: 'ndcg@10',
+      judged_queries: 5,
+      bins: [bin('much_worse', ['10']), bin('worse', []), bin('slightly_worse', ['2', '9']), bin('unchanged', ['3']), bin('slightly_better', ['4']), bin('better', []), bin('much_better', [])],
+      deltas: [
+        { query: '10', delta: -0.5 },
+        { query: '2', delta: -0.05 },
+        { query: '3', delta: 0 },
+        { query: '4', delta: 0.05 },
+        { query: '9', delta: -0.08 },
+      ],
+    };
+    expect(regressions(md)).toEqual({ count: 3, worst: '10', queries: ['10', '9', '2'] });
   });
 });
 

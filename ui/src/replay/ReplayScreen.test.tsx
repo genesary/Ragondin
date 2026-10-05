@@ -3,7 +3,8 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createApiClient } from '../api/client.ts';
 import { mockApi, type MockReply } from '../api/testing.ts';
-import type { PartialQueries, Problem, QueryTrace, RunDetail, RunListing, RunQueries } from '../api/types.ts';
+import type { Comparison, PartialQueries, Problem, QueryTrace, RunDetail, RunListing, RunQueries } from '../api/types.ts';
+import { COMPARISON } from '../compare/fixtures.ts';
 import { formatHash, parseHash, useRoute } from '../routes.ts';
 import {
   DENSE,
@@ -26,12 +27,46 @@ import {
   partialTrace,
   withPassages,
 } from './fixtures.ts';
-import { declared } from '../../design/testing/css.ts';
+import { declared, parseRules, selectors } from '../../design/testing/css.ts';
 import css from './Replay.css?raw';
 import { ReplayScreen, type ReplayScreenProps } from './ReplayScreen.tsx';
 
 const problem = (code: Problem['code'], status: number, detail: string): Problem => ({ type: `urn:ragondin:problem:${code}`, title: code, status, detail, code, hint: 'Pick another.' });
 const segment = (path: string, i: number) => decodeURIComponent(path.split('/')[i] ?? '');
+
+/**
+ * The hybrid against the dense-only run as the baseline: on ndcg@10, q1 gets
+ * a little worse and q2 much worse; q3 is unchanged. The API's bins and
+ * deltas, as `POST /compare` answers them.
+ */
+const REGRESSED: Comparison = {
+  ...COMPARISON,
+  query_deltas: [
+    {
+      run: HYBRID,
+      metrics: [
+        {
+          metric: 'ndcg@10',
+          judged_queries: 3,
+          bins: [
+            { bin: 'much_worse', count: 1, lower: null, upper: -0.3, queries: ['q2'] },
+            { bin: 'worse', count: 0, lower: -0.3, upper: -0.1, queries: [] },
+            { bin: 'slightly_worse', count: 1, lower: -0.1, upper: 0, queries: ['q1'] },
+            { bin: 'unchanged', count: 1, lower: 0, upper: 0, queries: ['q3'] },
+            { bin: 'slightly_better', count: 0, lower: 0, upper: 0.1, queries: [] },
+            { bin: 'better', count: 0, lower: 0.1, upper: 0.3, queries: [] },
+            { bin: 'much_better', count: 0, lower: 0.3, upper: null, queries: [] },
+          ],
+          deltas: [
+            { query: 'q1', delta: -0.05 },
+            { query: 'q2', delta: -0.6 },
+            { query: 'q3', delta: 0 },
+          ],
+        },
+      ],
+    },
+  ],
+};
 
 const DETAILS: Record<string, RunDetail> = { [HYBRID]: HYBRID_DETAIL, [DENSE]: DENSE_DETAIL, [FAILED]: FAILED_DETAIL };
 const QUERIES: Record<string, RunQueries> = { [HYBRID]: HYBRID_QUERIES, [DENSE]: DENSE_QUERIES, [FAILED]: FAILED_QUERIES };
@@ -45,9 +80,18 @@ function api({
   queries,
   detail,
   listing = LISTING,
-}: { listing?: RunListing; traces?: Record<string, QueryTrace>; trace?: (run: string, query: string) => MockReply<QueryTrace> | Promise<MockReply<QueryTrace>>; queries?: Override<RunQueries>; detail?: Override<RunDetail> } = {}) {
+  compare = { body: REGRESSED },
+}: {
+  listing?: RunListing;
+  traces?: Record<string, QueryTrace>;
+  trace?: (run: string, query: string) => MockReply<QueryTrace> | Promise<MockReply<QueryTrace>>;
+  queries?: Override<RunQueries>;
+  detail?: Override<RunDetail>;
+  compare?: MockReply<Comparison>;
+} = {}) {
   return mockApi({
     'GET /runs': { body: listing },
+    'POST /compare': compare,
     'GET /runs/{id}': (_q, path) => detail?.(segment(path, 4)) ?? (DETAILS[segment(path, 4)] === undefined ? { problem: problem('run_not_found', 404, 'no such run') } : { body: DETAILS[segment(path, 4)]! }),
     'GET /runs/{id}/queries': (query, path) => {
       const run = segment(path, 4);
@@ -958,5 +1002,107 @@ describe('side by side, the rest', () => {
     show({ query: 'q1' });
     const side = await screen.findByRole('radio', { name: 'Side by side' });
     await waitFor(() => expect(side.getAttribute('title')).toBe('The runs could not be listed: The store did not answer.'));
+  });
+});
+
+describe('a set of regressions, kept in the address', () => {
+  const SET = { kind: 'regressions', metric: 'ndcg@10' } as const;
+  const showSet = (query = 'q2', set: { kind: 'regressions'; metric: string } = SET) => {
+    window.history.replaceState(null, '', `/${formatHash({ screen: 'replay', run: HYBRID, query, with: DENSE, set })}`);
+    return render(
+      <div style={{ width: 1400 }}>
+        <Routed client={createApiClient()} run={HYBRID} query={query} with={DENSE} set={set} />
+      </div>,
+    );
+  };
+  const options = () => within(screen.getByRole('listbox', { name: 'Queries' })).getAllByRole('option').map((o) => o.getAttribute('data-query'));
+
+  it('asks the API which queries get worse against the run beside, and lists those alone, the largest drop first', async () => {
+    const mock = api();
+    showSet();
+    await waitFor(() => expect(options()).toEqual(['q2', 'q1']));
+    expect(mock.bodies[mock.requests.indexOf('POST /api/v1/compare')]).toEqual({ run_ids: [DENSE, HYBRID], baseline: DENSE });
+    expect(screen.getByRole('navigation', { name: 'Step through the regressions' }).textContent).toContain('Regression 1 of 2');
+  });
+
+  it('steps through the set with Previous and Next, keeping the set and the run beside in the address', async () => {
+    api();
+    showSet();
+    const steps = await screen.findByRole('navigation', { name: 'Step through the regressions' });
+    await waitFor(() => expect(within(steps).getByRole('button', { name: /Next/ }).getAttribute('aria-disabled')).toBeNull());
+    expect(within(steps).getByRole('button', { name: /Previous/ }).getAttribute('aria-disabled')).toBe('true');
+    fireEvent.click(within(steps).getByRole('button', { name: /Next/ }));
+    expect(route()).toEqual({ screen: 'replay', run: HYBRID, query: 'q1', with: DENSE, set: SET });
+  });
+
+  it('opens the metric on the one the set was read on', async () => {
+    api({ compare: { body: { ...REGRESSED, query_deltas: [{ run: HYBRID, metrics: [{ ...REGRESSED.query_deltas[0]!.metrics[0]!, metric: 'mrr' }] }] } } });
+    showSet('q2', { kind: 'regressions', metric: 'mrr' });
+    await waitFor(() => expect((screen.getByLabelText('Metric') as HTMLSelectElement).value).toBe('mrr'));
+  });
+
+  it('lets the set go, keeping the query and the run beside, with Show all queries', async () => {
+    api();
+    showSet();
+    fireEvent.click(await screen.findByRole('button', { name: 'Show all queries' }));
+    expect(route()).toEqual({ screen: 'replay', run: HYBRID, query: 'q2', with: DENSE });
+  });
+
+  it('lets the set go when another run is chosen beside: the set was read against the one before', async () => {
+    api();
+    showSet();
+    const beside = (await screen.findByLabelText('Beside')) as HTMLSelectElement;
+    fireEvent.change(beside, { target: { value: FAILED } });
+    expect(route()).toEqual({ screen: 'replay', run: HYBRID, query: 'q2', with: FAILED });
+  });
+
+  it('says why, with Retry, when the set cannot be read', async () => {
+    api({ compare: { problem: problem('runs_not_comparable', 409, 'The runs are of two benchmarks.') } });
+    showSet();
+    expect(await screen.findByText(/The runs are of two benchmarks\./)).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy();
+  });
+});
+
+describe('the queries, in order', () => {
+  it('lists the queries by their number, never as text, where the ids are numbers', async () => {
+    const numbered: RunQueries = { ...HYBRID_QUERIES, queries: ['10', '9', '1'].map((id, i) => ({ ...HYBRID_QUERIES.queries[i]!, id })) };
+    api({ queries: (run) => (run === HYBRID ? { body: numbered } : undefined) });
+    show({ query: '1' });
+    await waitFor(() => expect(within(screen.getByRole('listbox', { name: 'Queries' })).getAllByRole('option').map((o) => o.getAttribute('data-query'))).toEqual(['1', '9', '10']));
+  });
+
+  it('steps through every query with Previous and Next when no set is kept', async () => {
+    api();
+    show({ query: 'q1' });
+    const steps = await screen.findByRole('navigation', { name: 'Step through the queries' });
+    expect(steps.textContent).toContain('Query 1 of 3');
+    fireEvent.click(within(steps).getByRole('button', { name: /Next/ }));
+    expect(route()).toEqual({ screen: 'replay', run: HYBRID, query: 'q2' });
+  });
+});
+
+describe('on a phone', () => {
+  it('folds the query list behind one control, so the trace comes first', async () => {
+    api();
+    show({ query: 'q1' });
+    await screen.findByRole('listbox', { name: 'Queries' });
+    // Hidden wider than a phone, where the list is always shown, so out of the accessibility tree in this wide window.
+    const toggle = document.querySelector('.rg-replay__fold-toggle') as HTMLElement;
+    expect(toggle.textContent).toBe('Queries · q1 of 3');
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    const list = document.getElementById(toggle.getAttribute('aria-controls')!)!;
+    expect(list.hasAttribute('data-folded')).toBe(true);
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    expect(list.hasAttribute('data-folded')).toBe(false);
+  });
+
+  it('hides the folded list and shows the control only at phone width', () => {
+    const phone = parseRules(css).filter((r) => r.atRule === '@media (max-width: 640px)');
+    const at = (selector: string, property: string) => phone.find((r) => selectors(r).includes(selector))?.declarations.get(property);
+    expect(at('.rg-replay__fold[data-folded]', 'display')).toBe('none');
+    expect(at('.rg-replay__fold-toggle', 'display')).not.toBe('none');
+    expect(declared(css, '.rg-replay__fold-toggle', 'display')).toBe('none');
   });
 });

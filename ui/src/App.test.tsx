@@ -55,7 +55,7 @@ describe('the shell’s screens', () => {
     ['#pipeline', 'Pipeline', 'No pipeline chosen'],
     ['#compare', 'Compare', 'Choose at least two runs'],
     ['#compare/aaa', 'Compare', 'Choose at least two runs'],
-    ['#replay', 'Replay', 'No query chosen'],
+    ['#replay', 'Replay', 'No run to replay yet'],
     ['#editor', 'Editor', 'No pipeline open'],
     ['#editor/hybrid-rrf', 'Editor', 'hybrid-rrf cannot be opened on the canvas'],
   ])('%s renders the %s screen, restored from the hash, in its empty state', async (hash, tab, heading) => {
@@ -95,6 +95,27 @@ describe('the shell’s screens', () => {
     expect(await within(main()).findByRole('application', { name: 'Run A, hybrid-rerank-gen, query q1' })).toBeTruthy();
     expect(await within(main()).findByRole('application', { name: 'Run B, dense-only, query q1' })).toBeTruthy();
     expect(within(main()).getByRole('heading', { level: 1 }).textContent).toBe('Replay');
+  });
+
+  it('hands Replay the set of regressions its address carries, read against the run beside', async () => {
+    const id = (path: string) => decodeURIComponent(path.split('/')[4] ?? '');
+    const details = { [replay.HYBRID]: replay.HYBRID_DETAIL, [replay.DENSE]: replay.DENSE_DETAIL };
+    const queries = { [replay.HYBRID]: replay.HYBRID_QUERIES, [replay.DENSE]: replay.DENSE_QUERIES };
+    const traces = { [replay.HYBRID]: replay.HYBRID_TRACE, [replay.DENSE]: replay.DENSE_TRACE };
+    const api = mockApi(
+      {
+        'GET /workspace': { body: WORKSPACE },
+        'GET /runs': { body: replay.LISTING },
+        'GET /runs/{id}': (_q, path) => ({ body: details[id(path)]! }),
+        'GET /runs/{id}/queries': (_q, path) => ({ body: queries[id(path)]! }),
+        'GET /runs/{id}/trace/{query}': (_q, path) => ({ body: traces[id(path)]! }),
+        'POST /compare': { body: COMPARISON },
+      },
+      { build: BUILD },
+    );
+    show(`#replay/${replay.HYBRID}/q/q1?with=${replay.DENSE}&set=regressions&metric=ndcg%4010`);
+    expect(await within(main()).findByRole('navigation', { name: 'Step through the regressions' })).toBeTruthy();
+    await waitFor(() => expect(api.bodies[api.requests.indexOf('POST /api/v1/compare')]).toEqual({ run_ids: [replay.DENSE, replay.HYBRID], baseline: replay.DENSE }));
   });
 
   it('keeps the node selected in Replay when Replay opens the editor on the same pipeline', async () => {

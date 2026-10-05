@@ -250,6 +250,17 @@ export function firstJudged(queries: readonly QueryScores[]): QueryScores | null
   return queries.find((q) => Object.keys(q.scores).length > 0) ?? queries[0] ?? null;
 }
 
+const NUMERIC = new Intl.Collator('en', { numeric: true });
+
+/**
+ * The queries in the order the list shows them: by id, the numbers an id
+ * holds read as numbers — 1, 2, 10, never 1, 10, 2 — where the API serves
+ * them in its own order, by id as text. Presentation only: no score is read.
+ */
+export function byNumber<T extends Pick<QueryScores, 'id'>>(queries: readonly T[]): T[] {
+  return [...queries].sort((a, b) => NUMERIC.compare(a.id, b.id));
+}
+
 /** The queries whose text or id holds `search`, whatever the case; all of them for a blank search. */
 export function matching(queries: readonly QueryScores[], search: string): QueryScores[] {
   const needle = search.trim().toLowerCase();

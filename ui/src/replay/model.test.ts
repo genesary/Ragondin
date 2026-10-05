@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { DENSE, DENSE_GRAPH, DENSE_TRACE, FAILED_TRACE, HYBRID, HYBRID_GRAPH, HYBRID_QUERIES, HYBRID_TRACE, LISTING, withPassages } from './fixtures.ts';
-import { candidates, counterpart, editorTarget, firstJudged, formatMs, listOf, matching, overlayOf, passagesBanner, runName, terminalOf, verdict } from './model.ts';
+import { candidates, counterpart, editorTarget, byNumber, firstJudged, formatMs, listOf, matching, overlayOf, passagesBanner, runName, terminalOf, verdict } from './model.ts';
 
 describe('overlayOf, building the canvas overlay from a trace', () => {
   const overlay = overlayOf({ graph: HYBRID_GRAPH, trace: HYBRID_TRACE, metric: 'ndcg@10' });
@@ -228,5 +228,20 @@ describe('editorTarget, the stored document the editor opens a run on', () => {
     expect(editorTarget({ ...run, pipeline_names: ['Hybrid', 'hybrid'], refused_pipeline_names: ['Hybrid', 'hybrid'] })).toEqual({
       reason: 'Hybrid and hybrid hold what this run ran, but each differs from another stored name only in case, so neither can be read. Fork this run to edit it.',
     });
+  });
+});
+
+describe('byNumber, the order the query list shows', () => {
+  const q = (id: string) => ({ id, text: null, scores: {}, duration_nanos: 0 });
+
+  it('orders ids by the numbers they hold, never as text', () => {
+    expect(byNumber([q('10'), q('2'), q('1'), q('100')]).map((x) => x.id)).toEqual(['1', '2', '10', '100']);
+    expect(byNumber([q('test-10'), q('test-9'), q('train-1')]).map((x) => x.id)).toEqual(['test-9', 'test-10', 'train-1']);
+  });
+
+  it('leaves what it was given as it was', () => {
+    const given = [q('2'), q('1')];
+    byNumber(given);
+    expect(given.map((x) => x.id)).toEqual(['2', '1']);
   });
 });

@@ -34,9 +34,12 @@ export type Route =
   /**
    * `#replay/<run>/q/<query>/node/<id>?with=<run>`: one query of one run,
    * node by node, the node selected on it, optionally beside another run;
-   * without `/node/<id>`, none selected.
+   * without `/node/<id>`, none selected. `&set=regressions&metric=<name>`
+   * keeps a set of queries to step through: the run's regressions against
+   * the run beside on that metric — where Compare's "Replay the N
+   * regressions" lands. A set needs the run beside.
    */
-  | { screen: 'replay'; run: string; query: string; node?: string; with?: string }
+  | { screen: 'replay'; run: string; query: string; node?: string; with?: string; set?: ReplaySet }
   /**
    * `#replay/job/<id>/q/<query>/node/<id>`: one query of a failed or
    * cancelled run job's partial traces, alone — never a stored run — and the
@@ -52,6 +55,9 @@ export type Route =
    * build, scrolled to and focusing one section; `#setup` at the top.
    */
   | { screen: 'setup'; section?: SetupSection };
+
+/** A set of queries Replay steps through: the queries that get worse against the run beside, on one metric. */
+export type ReplaySet = { kind: 'regressions'; metric: string };
 
 /** The sections of Setup an address can focus. */
 export const SETUP_SECTIONS = ['benchmarks', 'services'] as const;
@@ -91,8 +97,11 @@ export function formatHash(route: Route): string {
       if ('job' in route) return route.query === undefined ? `#replay/job/${enc(route.job)}` : `#replay/job/${enc(route.job)}/q/${enc(route.query)}${node}`;
       if (!('run' in route)) return '#replay';
       if (route.query === undefined) return `#replay/${enc(route.run)}`;
-      const query = route.with === undefined ? '' : `?with=${enc(route.with)}`;
-      return `#replay/${enc(route.run)}/q/${enc(route.query)}${node}${query}`;
+      const params = [
+        ...(route.with === undefined ? [] : [`with=${enc(route.with)}`]),
+        ...(route.set === undefined ? [] : [`set=${route.set.kind}`, `metric=${enc(route.set.metric)}`]),
+      ];
+      return `#replay/${enc(route.run)}/q/${enc(route.query)}${node}${params.length === 0 ? '' : `?${params.join('&')}`}`;
     }
   }
 }
@@ -192,10 +201,15 @@ export function parseHash(hash: string): Route | null {
     }
     case 'replay': {
       const other = query.get('with');
+      const kind = query.get('set');
+      const metric = query.get('metric');
+      // A set is read against the run beside, on one metric: the three come together.
+      const set = kind === null && metric === null ? null : kind === 'regressions' && metric !== null && metric !== '' && other !== null ? ({ kind, metric } as const) : undefined;
+      if (set === undefined) return null;
       if (rest.length === 0) return other === null ? { screen } : null;
       // A run is named by its hash, so `job` is never one: it opens a job's partial traces.
       if (rest[0] === 'job') {
-        if (other !== null || !nonEmpty) return null;
+        if (other !== null || set !== null || !nonEmpty) return null;
         if (rest.length === 2) return { screen, job: rest[1] as string };
         if (rest[2] !== 'q') return null;
         if (rest.length === 4) return { screen, job: rest[1] as string, query: rest[3] as string };
@@ -206,7 +220,7 @@ export function parseHash(hash: string): Route | null {
       const named = rest.length === 5 && rest[3] === 'node';
       if ((rest.length !== 3 && !named) || rest[1] !== 'q' || !nonEmpty || (other !== null && !isValue(other))) return null;
       const [run, , q, , node] = rest as [string, string, string, string?, string?];
-      return { screen, run, query: q, ...(named ? { node: node as string } : {}), ...(other === null ? {} : { with: other }) };
+      return { screen, run, query: q, ...(named ? { node: node as string } : {}), ...(other === null ? {} : { with: other }), ...(set === null ? {} : { set }) };
     }
     default:
       return null;

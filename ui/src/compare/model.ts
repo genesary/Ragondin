@@ -187,12 +187,18 @@ export function noVerdict(c: Comparison, run: string): string {
   return `No query of ${run} can be compared with the baseline: ${c.ground_truth.detail}.`;
 }
 
-/** The queries that get worse, and the one whose delta is lowest: where Replay opens first. */
-export function regressions(md: MetricDeltas): { count: number; worst: string | null } {
+/**
+ * The queries that get worse — those the API's worse bins hold — the lowest
+ * delta first, ties in the API's order: the set Replay steps through, opening
+ * on the worst.
+ */
+export function regressions(md: MetricDeltas): { count: number; worst: string | null; queries: string[] } {
   const ids = new Set(md.bins.filter((b) => isWorse(b.bin)).flatMap((b) => b.queries));
-  let worst: { query: string; delta: number } | null = null;
-  for (const d of md.deltas) if (ids.has(d.query) && (worst === null || d.delta < worst.delta)) worst = d;
-  return { count: ids.size, worst: worst?.query ?? null };
+  const queries = md.deltas
+    .filter((d) => ids.has(d.query))
+    .sort((a, b) => a.delta - b.delta)
+    .map((d) => d.query);
+  return { count: ids.size, worst: queries[0] ?? null, queries };
 }
 
 /** The stages a pair drawn by hand can move a node into: those a node's kind decides. */

@@ -6,17 +6,18 @@
 // owns the per-node metric, the filter and the search, none of them
 // remembered.
 // ARCHITECTURE.md § The Replay screen.
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Button, ButtonLink, EmptyState, InlineMessage, RunSwatch, SegmentedControl, Select, Sheet } from '../../design/index.ts';
 import type { ApiClient, ApiProblem, ApiResult } from '../api/client.ts';
 import { ForkButton } from '../editor/Fork.tsx';
-import type { Graph, JobSummary, PartialQueries, PartialTrace, QueryTrace, RunDetail, RunListing, RunQueries } from '../api/types.ts';
-import { Canvas } from '../canvas/index.ts';
-import { formatHash, navigate } from '../routes.ts';
+import type { Comparison, Graph, JobSummary, PartialQueries, PartialTrace, QueryScores, QueryTrace, RunDetail, RunListing, RunQueries } from '../api/types.ts';
+import { Canvas, extentOf } from '../canvas/index.ts';
+import { regressions } from '../compare/model.ts';
+import { formatHash, navigate, type ReplaySet } from '../routes.ts';
 import { prefixText } from '../runs/model.ts';
 import { ErrorState, Loading, type RequestState } from '../shell/states.tsx';
 import { defaultMetric } from '../metrics.ts';
-import { candidates, editorTarget, firstJudged, fromPartial, overlayOf, passagesBanner, runName, type ReplayTrace } from './model.ts';
+import { byNumber, candidates, editorTarget, firstJudged, fromPartial, overlayOf, passagesBanner, runName, type ReplayTrace } from './model.ts';
 import { NodeInspector, type Side } from './NodeInspector.tsx';
 import { QueryList } from './QueryList.tsx';
 import './Replay.css';
@@ -34,6 +35,8 @@ type RunSource = {
   node?: string | undefined;
   /** The run it names beside, if any. */
   with?: string | undefined;
+  /** The set of queries it names to step through, read against the run beside. */
+  set?: ReplaySet | undefined;
 };
 
 type JobSource = {
@@ -115,11 +118,79 @@ const has = (graph: Graph, id: string) => graph.nodes.some((n) => n.id === id) |
 /** The B last drawn beside A: kept on screen, stale, while B's answer for a newer query is read. */
 type Kept = { run: string; graph: Graph; trace: ReplayTrace };
 
+/** The ids of a set, in its order, from the API's comparison of `run` against the run beside; none where it has no figure on the set's metric. */
+function setOf(comparison: Comparison, run: string, set: ReplaySet): string[] {
+  const md = comparison.query_deltas.find((d) => d.run === run)?.metrics.find((m) => m.metric === set.metric);
+  return md === undefined ? [] : regressions(md).queries;
+}
+
+/** The queries of `queries` the set holds, in the set's order. */
+function inSetOrder(queries: readonly QueryScores[], ids: readonly string[]): QueryScores[] {
+  const byId = new Map(queries.map((q) => [q.id, q]));
+  return ids.flatMap((id) => {
+    const q = byId.get(id);
+    return q === undefined ? [] : [q];
+  });
+}
+
+/**
+ * Previous and Next through the queries listed — a set's, or every query —
+ * with where the query shown stands among them. A query the list does not
+ * hold stands nowhere: Next opens the first.
+ */
+function Steps({ kind, order, current, onChoose }: { kind: 'query' | 'regression'; order: readonly QueryScores[] | null; current: string; onChoose: (id: string) => void }) {
+  const at = order === null ? -1 : order.findIndex((q) => q.id === current);
+  const n = order?.length ?? 0;
+  const word = kind === 'query' ? 'Query' : 'Regression';
+  const where = order === null ? 'Reading the regressions…' : at < 0 ? `${kind === 'query' ? 'Not in the list' : 'Not a regression'} · ${n.toLocaleString('en-US')}` : `${word} ${(at + 1).toLocaleString('en-US')} of ${n.toLocaleString('en-US')}`;
+  const prev = order !== null && at > 0 ? order[at - 1]! : null;
+  const next = order !== null && at + 1 < n ? order[at + 1]! : null;
+  return (
+    <nav className="rg-replay__steps" aria-label={kind === 'query' ? 'Step through the queries' : 'Step through the regressions'}>
+      <Button size="s" {...(prev === null ? { disabled: true as const, disabledReason: `No ${kind} before this one` } : {})} onClick={() => prev !== null && onChoose(prev.id)}>
+        Previous<span className="rg-visually-hidden"> {kind}</span>
+      </Button>
+      <span className="rg-replay__where">{where}</span>
+      <Button size="s" {...(next === null ? { disabled: true as const, disabledReason: `No ${kind} after this one` } : {})} onClick={() => next !== null && onChoose(next.id)}>
+        Next<span className="rg-visually-hidden"> {kind}</span>
+      </Button>
+    </nav>
+  );
+}
+
+/**
+ * The query list, folded behind one control at phone width, so the trace
+ * comes first; wider, the control is hidden and the list always shown.
+ * Folded again by a query chosen with the pointer, so the trace it opens is
+ * in view.
+ */
+function Fold({ current, total, children }: { current: string; total: number | null; children: ReactNode }) {
+  const [folded, setFolded] = useState(true);
+  const id = useId();
+  return (
+    <>
+      <Button size="s" className="rg-replay__fold-toggle" aria-expanded={!folded} aria-controls={id} onClick={() => setFolded((f) => !f)}>
+        {`Queries · ${current}${total === null ? '' : ` of ${total.toLocaleString('en-US')}`}`}
+      </Button>
+      <div
+        id={id}
+        className="rg-replay__fold"
+        data-folded={folded || undefined}
+        onClick={(event) => {
+          if ((event.target as HTMLElement).closest('[role="option"]') !== null) setFolded(true);
+        }}
+      >
+        {children}
+      </div>
+    </>
+  );
+}
+
 export function ReplayScreen(props: ReplayScreenProps) {
   return 'job' in props ? <PartialReplay {...props} /> : <RunReplay {...props} />;
 }
 
-function RunReplay({ client, run, query, node, with: other }: RunSource) {
+function RunReplay({ client, run, query, node, with: other, set }: RunSource) {
   const detail = useRead<RunDetail>(`detail ${run}`, (signal) => client.get('/runs/{id}', { id: run }, { signal }));
   const queries = useRead<RunQueries>(`queries ${run}`, (signal) => client.get('/runs/{id}/queries', { id: run }, { signal }));
   const listing = useRead<RunListing>('listing', (signal) => client.get('/runs', { signal }));
@@ -134,6 +205,9 @@ function RunReplay({ client, run, query, node, with: other }: RunSource) {
   const beside = other !== undefined && !refused ? other : null;
   const otherDetail = useRead<RunDetail>(beside === null ? null : `detail ${beside}`, (signal) => client.get('/runs/{id}', { id: beside ?? '' }, { signal }));
   const otherQueries = useRead<RunQueries>(beside === null ? null : `queries ${beside}`, (signal) => client.get('/runs/{id}/queries', { id: beside ?? '' }, { signal }));
+  // The set's queries are the API's: its comparison against the run beside,
+  // read for the per-query deltas and their bins, never recomputed here.
+  const setRead = useRead<Comparison>(set === undefined || beside === null ? null : `set ${run} ${beside}`, (signal) => client.post('/compare', { run_ids: [beside ?? '', run], baseline: beside ?? '' }, { signal }));
   const otherTrace = useRead<QueryTrace>(beside === null || query === undefined ? null : `trace ${beside} ${query}`, (signal) => client.get('/runs/{id}/trace/{query}', { id: beside ?? '', query: query ?? '' }, { signal }));
 
   const [chosenMetric, setMetric] = useState<string | null>(null);
@@ -142,14 +216,20 @@ function RunReplay({ client, run, query, node, with: other }: RunSource) {
   const [from, setFrom] = useState<Selected['from']>('A');
   const listed = loaded(queries);
   const families = loaded(listing)?.runs.find((r) => r.id === run)?.metric_families ?? {};
-  const metric = chosenMetric ?? (listed === null ? null : defaultMetric(listed.metrics, families));
+  // A set opens on the metric it was read on, when the run records it.
+  const setOn = set !== undefined && listed?.metrics.includes(set.metric) === true ? set.metric : null;
+  const metric = chosenMetric ?? setOn ?? (listed === null ? null : defaultMetric(listed.metrics, families));
 
   // A query, the run beside and the node selected are state within the view:
-  // written in place. The node stays selected across queries unless one is given.
+  // written in place. The node stays selected across queries unless one is
+  // given; the set stays while the run beside it was read against does.
   const go = useCallback(
-    (q: string, w: string | null, n: string | null | undefined = node) =>
-      navigate({ screen: 'replay', run, query: q, ...(n === null || n === undefined ? {} : { node: n }), ...(w === null ? {} : { with: w }) }, { replace: true }),
-    [run, node],
+    (q: string, w: string | null, n: string | null | undefined = node, keep: ReplaySet | null | undefined = set) =>
+      navigate(
+        { screen: 'replay', run, query: q, ...(n === null || n === undefined ? {} : { node: n }), ...(w === null ? {} : { with: w }), ...(keep === null || keep === undefined || w === null || w !== other ? {} : { set: keep }) },
+        { replace: true },
+      ),
+    [run, node, set, other],
   );
 
   const graph = loaded(detail)?.graph;
@@ -209,8 +289,8 @@ function RunReplay({ client, run, query, node, with: other }: RunSource) {
     if (!has(graph, node) && (graphB === null || !has(graphB, node))) go(query, beside, null);
   }, [graph, graphB, bKnown, node, query, beside, go]);
 
-  // No query chosen: the first judged one, filled in as a correction.
-  const first = listed === null ? null : firstJudged(listed.queries);
+  // No query chosen: the first judged one, in the list's order, filled in as a correction.
+  const first = useMemo(() => (listed === null ? null : firstJudged(byNumber(listed.queries))), [listed]);
   useEffect(() => {
     if (query === undefined && first !== null) go(first.id, null, null);
   }, [query, first, go]);
@@ -258,7 +338,11 @@ function RunReplay({ client, run, query, node, with: other }: RunSource) {
           ? `Finding the queries with no gold in the top ${MISS_AT}…`
           : '';
   // While the filter is read, the list on screen stays rather than collapsing.
-  const shownQueries = missing ? (loaded(missed)?.queries ?? missed.shown?.queries ?? listed.queries) : listed.queries;
+  const filtered = missing ? (loaded(missed)?.queries ?? missed.shown?.queries ?? listed.queries) : listed.queries;
+  const comparison = loaded(setRead);
+  const setIds = set === undefined || comparison === null ? null : setOf(comparison, run, set);
+  // A set is listed alone, in its own order — the largest drop first; every query else by its number.
+  const shownQueries = setIds === null ? byNumber(filtered) : inSetOrder(filtered, setIds);
   const verified = listed.ground_truth.status === 'verified';
 
   return (
@@ -297,18 +381,37 @@ function RunReplay({ client, run, query, node, with: other }: RunSource) {
       {refused ? <InlineMessage tone="info" title={`Run ${short(other)} is not on this run’s benchmark, so it cannot stand beside it.`}>Choose a run beside it from the runs on the same benchmark.</InlineMessage> : null}
       <div className="rg-replay__body" data-columns={beside === null ? 1 : 2}>
         <aside className="rg-replay__side" aria-label="Queries of this run">
-          {missing && missed.state.status === 'error' ? <ErrorState problem={missed.state.problem} onRetry={missed.retry} /> : null}
-          <QueryList
-              queries={shownQueries}
-              current={query}
-              metric={metric}
-              onChoose={(q) => go(q, beside)}
-              filter={
-                verified
-                  ? { pressed: missing, onToggle: setMissing, ...(loaded(missed) === null ? {} : { count: loaded(missed)!.queries.length }) }
-                  : { pressed: false, onToggle: () => {}, disabled: true, reason: 'Needs the run’s own dataset on disk' }
-              }
-            />
+          {set === undefined ? null : (
+            <div className="rg-replay__set">
+              <p>
+                Regressions against B on <strong>{set.metric}</strong>
+              </p>
+              <Button size="s" onClick={() => go(query, beside, node, null)}>
+                Show all queries
+              </Button>
+            </div>
+          )}
+          <Steps kind={set === undefined ? 'query' : 'regression'} order={setIds === null && set !== undefined ? null : shownQueries} current={query} onChoose={(q) => go(q, beside)} />
+          <Fold current={query} total={setIds === null && set !== undefined ? null : shownQueries.length}>
+            {missing && missed.state.status === 'error' ? <ErrorState problem={missed.state.problem} onRetry={missed.retry} /> : null}
+            {set !== undefined && setRead.state.status === 'error' ? (
+              <ErrorState problem={setRead.state.problem} onRetry={setRead.retry} />
+            ) : set !== undefined && setIds === null ? (
+              <Loading label="Reading the regressions…" />
+            ) : (
+              <QueryList
+                queries={shownQueries}
+                current={query}
+                metric={metric}
+                onChoose={(q) => go(q, beside)}
+                filter={
+                  verified
+                    ? { pressed: missing, onToggle: setMissing, ...(loaded(missed) === null ? {} : { count: loaded(missed)!.queries.length }) }
+                    : { pressed: false, onToggle: () => {}, disabled: true, reason: 'Needs the run’s own dataset on disk' }
+                }
+              />
+            )}
+          </Fold>
         </aside>
         <div className="rg-replay__stage" aria-busy={reading !== '' || undefined}>
           {shownTrace === null ? (
@@ -553,6 +656,15 @@ function Stage({ sides, stale, held, trace, onRetry, metric, selected, onSelect,
     return [{ ...banner, letter: side.letter, title: sides.length === 2 ? `Run ${side.letter}: ${banner.title.charAt(0).toLowerCase()}${banner.title.slice(1)}` : banner.title }];
   });
   const failed = a.trace.nodes.find((n) => n.error !== null);
+  // Two canvases are framed alike — the larger graph's extent — so they share
+  // one zoom and line up rank by rank, rather than each fitting its own graph.
+  const graphA = a.graph;
+  const graphB = b?.graph;
+  const frame = useMemo(() => {
+    if (graphB === undefined) return undefined;
+    const [ea, eb] = [extentOf(graphA), extentOf(graphB)];
+    return { width: Math.max(ea.width, eb.width), height: Math.max(ea.height, eb.height) };
+  }, [graphA, graphB]);
   return (
     <>
       <h2 className="rg-replay__query" title={a.trace.text ?? undefined}>
@@ -576,6 +688,7 @@ function Stage({ sides, stale, held, trace, onRetry, metric, selected, onSelect,
               {b === undefined && held === null ? null : <RunSwatch slot={side.letter === 'A' ? 'a' : 'b'} name={side.name} />}
               <Canvas
                 graph={side.graph}
+                frame={frame}
                 label={labelOf(side, old)}
                 overlay={overlays[i]}
                 selected={mine}

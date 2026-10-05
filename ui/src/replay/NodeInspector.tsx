@@ -3,7 +3,8 @@
 // order against its upstream, the context and the answer whole, and for the
 // final node the verdict. Side by side, one column per run, the other run's
 // node resolved by `counterpart`. ARCHITECTURE.md § The Replay screen.
-import { FamilyTile, Inspector, InlineMessage, RunSwatch, familyOfComponent, type Family } from '../../design/index.ts';
+import { useLayoutEffect, useRef, useState } from 'react';
+import { Button, FamilyTile, Inspector, InlineMessage, RunSwatch, familyOfComponent, type Family } from '../../design/index.ts';
 import type { Graph, RunQueries } from '../api/types.ts';
 import { percent } from '../canvas/index.ts';
 import { counterpart, formatMs, formatScore, listOf, terminalOf, verdict, type ListItem, type Reading, type ReplayTrace } from './model.ts';
@@ -30,22 +31,53 @@ const implOf = (graph: Graph, id: string): string => {
 };
 const chunks = (n: number) => `${n} chunk${n === 1 ? '' : 's'}`;
 
+/** A chunk's ids: the chunk, and its document only when the chunk is a part of it rather than the whole — never the same id twice. */
+function Ids({ item }: { item: ListItem }) {
+  return (
+    <span className="rg-replay__ids">
+      <code className="rg-replay__chunk">{item.chunk}</code>
+      {item.document === item.chunk ? null : <span className="rg-replay__doc">{item.document}</span>}
+    </span>
+  );
+}
+
+/**
+ * A passage clamped to three lines, so a list of ten reads as a list; one
+ * that overflows them gets a control that shows it whole and back. Whether
+ * it overflows is measured once it is drawn, clamped.
+ */
+function Passage({ text }: { text: string }) {
+  const [whole, setWhole] = useState(false);
+  const [overflows, setOverflows] = useState(false);
+  const box = useRef<HTMLSpanElement>(null);
+  useLayoutEffect(() => {
+    const el = box.current;
+    if (el !== null && !whole) setOverflows(el.scrollHeight > el.clientHeight + 1);
+  }, [text, whole]);
+  return (
+    <>
+      <span ref={box} className="rg-replay__clamp" data-clamped={whole ? undefined : true}>
+        {text}
+      </span>
+      {overflows ? (
+        <Button kind="quiet" size="s" className="rg-replay__more" aria-expanded={whole} onClick={() => setWhole((w) => !w)}>
+          {whole ? 'Show less' : 'Show all'}
+        </Button>
+      ) : null}
+    </>
+  );
+}
+
 /** One chunk of a node's list: rank, gold star and grade, move, and its text or its ids. */
 export function ListItemView({ item, discarded = false }: { item: ListItem; discarded?: boolean }) {
   const gold = item.grade !== null && item.grade > 0;
   const body =
     item.text === null ? (
-      <span className="rg-replay__ids">
-        <code className="rg-replay__chunk">{item.chunk}</code>
-        <span className="rg-replay__doc">{item.document}</span>
-      </span>
+      <Ids item={item} />
     ) : (
       <span className="rg-replay__passage">
-        <span className="rg-replay__ids">
-          <code className="rg-replay__chunk">{item.chunk}</code>
-          <span className="rg-replay__doc">{item.document}</span>
-        </span>
-        <span>{item.text}</span>
+        <Ids item={item} />
+        <Passage text={item.text} />
       </span>
     );
   return (

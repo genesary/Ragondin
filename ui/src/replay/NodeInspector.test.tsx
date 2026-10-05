@@ -1,6 +1,6 @@
 /** @vitest-environment happy-dom */
-import { render, screen, within } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { fireEvent, render, screen, within } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { declared } from '../../design/testing/css.ts';
 import { DENSE_GRAPH, DENSE_QUERIES, DENSE_TRACE, FAILED_TRACE, HYBRID_GRAPH, HYBRID_QUERIES, HYBRID_TRACE, withPassages } from './fixtures.ts';
 import type { ListItem } from './model.ts';
@@ -174,5 +174,44 @@ describe('the verdict slot, side by side', () => {
   it("stays empty on a node that is not its run's final node, even when the other column shows its run's final output", () => {
     render(<NodeInspector node="rerank" from="A" sides={[A, B]} metric="ndcg@10" />);
     expect(screen.queryByRole('heading', { name: 'Verdict' })).toBeNull();
+  });
+});
+
+describe('a passage, readable in a list', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it('names a chunk once when it is its whole document, and both when the chunk is a part of it', () => {
+    const whole = one({ item: item({ chunk: '4983', document: '4983' }) });
+    expect(whole.querySelectorAll('.rg-replay__chunk, .rg-replay__doc')).toHaveLength(1);
+    expect(whole.textContent?.match(/4983/g)).toHaveLength(1);
+    const part = one({ item: item({ chunk: 'd5#2', document: 'd5' }) });
+    expect([...part.querySelectorAll('.rg-replay__chunk, .rg-replay__doc')].map((e) => e.textContent)).toEqual(['d5#2', 'd5']);
+    const bare = one({ item: item({ chunk: '77', document: '77', text: null }) });
+    expect(bare.textContent?.match(/77/g)).toHaveLength(1);
+  });
+
+  it('clamps a long passage to three lines, with a control that shows it whole and back', () => {
+    vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(120);
+    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(54);
+    const li = one({ item: item({ text: 'A long passage. '.repeat(40) }) });
+    const text = li.querySelector('.rg-replay__clamp') as HTMLElement;
+    expect(text.hasAttribute('data-clamped')).toBe(true);
+    const more = within(li).getByRole('button', { name: 'Show all' });
+    expect(more.getAttribute('aria-expanded')).toBe('false');
+    fireEvent.click(more);
+    expect(text.hasAttribute('data-clamped')).toBe(false);
+    expect(within(li).getByRole('button', { name: 'Show less' }).getAttribute('aria-expanded')).toBe('true');
+  });
+
+  it('offers no control for a passage that fits its three lines', () => {
+    vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(36);
+    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(36);
+    const li = one({ item: item({ text: 'Short.' }) });
+    expect(within(li).queryByRole('button')).toBeNull();
+  });
+
+  it('draws the clamp at three lines', () => {
+    expect(declared(css, '.rg-replay__clamp[data-clamped]', '-webkit-line-clamp')).toBe('3');
+    expect(declared(css, '.rg-replay__clamp[data-clamped]', 'overflow')).toBe('hidden');
   });
 });
