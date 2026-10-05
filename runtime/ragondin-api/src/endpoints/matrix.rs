@@ -38,7 +38,7 @@ use ragondin_benchmarks::CarriedPieces;
 
 use crate::backends::RunDataset;
 use crate::comparison::{self, Gain};
-use crate::derived::{Metrics, NodeFigures, Outputs};
+use crate::derived::{self, Metrics, NodeFigures, Outputs};
 use crate::error::ApiError;
 use crate::extract::{ApiPath, ApiQuery};
 use crate::handlers::{self, AppState};
@@ -161,8 +161,7 @@ pub(crate) async fn matrix(
     // a column no run of the current content fills: it is never a question
     // for a pipeline ending in an answer, so only another reads a dataset no
     // run of it used.
-    let ends_in_answer =
-        terminal(&current).is_some_and(|node| produced_kind(node) == ValueKind::Answer);
+    let ends_in_answer = derived::ends_in_answer(&current);
 
     let mut columns = Vec::new();
     let mut cache_errors = Vec::new();

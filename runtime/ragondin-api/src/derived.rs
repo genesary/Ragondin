@@ -170,8 +170,10 @@ pub(crate) fn answers(node: &LogicalNode) -> bool {
 }
 
 /// Whether `pipeline` ends in an answer: its terminal node produces one. The
-/// one test the matrix's columns ([`Outputs::of`]), `GET /pipelines`' and
-/// `GET /pipelines/{name}`'s `ends_in_answer` read.
+/// one test `GET /pipelines`' `ends_in_answer` and the Pipeline matrix's
+/// scorability (`GET /pipelines/{name}/matrix`) read; `GET
+/// /pipelines/{name}`'s `ends_in_answer_up_to` and [`Outputs::of`] ask
+/// [`answers`] of the terminal node the same way.
 pub(crate) fn ends_in_answer(pipeline: &LogicalPipeline) -> bool {
     terminal(pipeline).is_some_and(answers)
 }
