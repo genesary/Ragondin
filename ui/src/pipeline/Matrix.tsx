@@ -158,12 +158,16 @@ const NOT_VERIFIED: Record<Exclude<DatasetStatus, 'verified'>, string> = {
   index_differs: 'index differs',
 };
 
-/** A column's status in words: measured, how far a prefix run reached, or why nothing measured it. */
+/**
+ * A column's status in words: measured, how far a prefix run reached, or why
+ * nothing measured it. A failed attempt says more than “not run yet”, so that
+ * one is left to it; every other status stands beside it.
+ */
 function columnStatus(column: MatrixColumn): ReactNode {
   if (column.run !== null) return <StatusChip state="done">{column.up_to === null ? 'measured' : `up to ${column.up_to}`}</StatusChip>;
   if (column.cells.length > 0 && column.cells.every((c) => c.kind === 'not_scorable')) return <span className="rg-matrix__note">cannot be scored</span>;
   if (column.cells.length > 0 && column.cells.every((c) => c.kind === 'not_run_on_this_version')) return <StatusChip state="warning">earlier version only</StatusChip>;
-  return <span className="rg-matrix__note">not run yet</span>;
+  return column.failed_attempt === null ? <span className="rg-matrix__note">not run yet</span> : null;
 }
 
 /** The API's most recent attempt of the whole pipeline here, when it failed: said, with the way to the job. */
@@ -186,7 +190,7 @@ function columnHeader(column: MatrixColumn) {
     <span className="rg-matrix__col">
       <span className="rg-matrix__bench">{columnLabel(column)}</span>{' '}
       <span className="rg-matrix__status">
-        {column.run === null && column.failed_attempt !== null ? null : columnStatus(column)}
+        {columnStatus(column)}
         {failedAttempt(column)}
         {check === 'verified' ? null : (
           <>

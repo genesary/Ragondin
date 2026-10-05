@@ -1,5 +1,5 @@
 /** @vitest-environment happy-dom */
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { MatrixCell, MatrixColumn, PipelineMatrix } from '../api/types.ts';
 import { declared } from '../../design/testing/css.ts';
@@ -311,6 +311,24 @@ describe('a benchmark whose last attempt failed', () => {
     const first = cellAt('bm25', 'beir/fiqa');
     expect(first.textContent).toContain('last attempt failed');
     expect(within(first).getByRole('button', { name: 'Run on beir/fiqa' })).toBeTruthy();
+  });
+
+  it('keeps what the column’s status says beside the failure, unless that is only “not run yet”', () => {
+    const attempt = { job: FAILED_JOB, error: 'refused', at_node: null };
+    const withAttempt = (matrix: PipelineMatrix, name: string): PipelineMatrix => ({ ...matrix, columns: matrix.columns.map((c) => (c.benchmark_names[0] === name ? { ...c, failed_attempt: attempt } : c)) });
+    show(withAttempt(RETRIEVAL_ONLY, 'squad/dev'));
+    const squad = screen.getByRole('columnheader', { name: /squad\/dev/ });
+    expect(squad.textContent).toContain('cannot be scored');
+    expect(squad.textContent).toContain('last attempt failed');
+    cleanup();
+    const earlier: PipelineMatrix = { ...WITH_FIQA, columns: WITH_FIQA.columns.map((c) => (c.benchmark_names[0] === 'beir/fiqa' ? { ...c, cells: c.cells.map(() => ({ kind: 'not_run_on_this_version' as const, run: RUN_OLD })) } : c)) };
+    show(withAttempt(earlier, 'beir/fiqa'));
+    const fiqa = screen.getByRole('columnheader', { name: /beir\/fiqa/ });
+    expect(fiqa.textContent).toContain('earlier version only');
+    expect(fiqa.textContent).toContain('last attempt failed');
+    cleanup();
+    show(FIQA_FAILED);
+    expect(screen.getByRole('columnheader', { name: /beir\/fiqa/ }).textContent).not.toContain('not run yet');
   });
 
   it('marks the column failed, with the way to open the failed job', () => {

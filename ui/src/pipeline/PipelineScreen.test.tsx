@@ -104,6 +104,18 @@ describe('the header', () => {
     expect(screen.getByText('Shape, node by node').tagName).not.toBe('OL');
   });
 
+  it('names the shape by the words on screen, and hides each glyph its family’s words already say', async () => {
+    show(`#pipeline/${NAME}`);
+    await loaded();
+    const shape = screen.getByRole('list', { name: 'Shape, node by node' });
+    const label = screen.getByText('Shape, node by node');
+    expect(shape.getAttribute('aria-labelledby')).toBe(label.id);
+    expect(shape.hasAttribute('aria-label')).toBe(false);
+    // Six tiles drawn, none announced: the family is said once, in words.
+    expect(shape.querySelectorAll('.rg-tile')).toHaveLength(6);
+    expect(within(shape).queryAllByRole('img')).toHaveLength(0);
+  });
+
   it('says the matrix is derived from runs, and from how many', async () => {
     show(`#pipeline/${NAME}`);
     await loaded();
