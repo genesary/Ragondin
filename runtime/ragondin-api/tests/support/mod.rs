@@ -326,6 +326,10 @@ impl PipelineSource for FakePipelines {
         })
     }
 
+    async fn read_launched_layout(&self, _hash: &str) -> Result<Option<Layout>, ApiError> {
+        Ok(None)
+    }
+
     async fn write_layout(&self, name: &str, _layout: &Layout) -> Result<(), ApiError> {
         Err(ApiError::PipelineNotFound {
             name: name.to_owned(),
@@ -441,6 +445,10 @@ impl PipelineSource for HeldPipelines {
         FakePipelines.read_layout(name).await
     }
 
+    async fn read_launched_layout(&self, hash: &str) -> Result<Option<Layout>, ApiError> {
+        FakePipelines.read_launched_layout(hash).await
+    }
+
     async fn write_layout(&self, name: &str, layout: &Layout) -> Result<(), ApiError> {
         FakePipelines.write_layout(name, layout).await
     }
@@ -486,6 +494,10 @@ impl PipelineSource for UnlistablePipelines {
 
     async fn read_layout(&self, name: &str) -> Result<Option<Layout>, ApiError> {
         FakePipelines.read_layout(name).await
+    }
+
+    async fn read_launched_layout(&self, hash: &str) -> Result<Option<Layout>, ApiError> {
+        FakePipelines.read_launched_layout(hash).await
     }
 
     async fn write_layout(&self, name: &str, layout: &Layout) -> Result<(), ApiError> {
@@ -548,6 +560,10 @@ impl<P: PipelineSource> PipelineSource for ListCounted<P> {
 
     async fn read_layout(&self, name: &str) -> Result<Option<Layout>, ApiError> {
         self.inner.read_layout(name).await
+    }
+
+    async fn read_launched_layout(&self, hash: &str) -> Result<Option<Layout>, ApiError> {
+        self.inner.read_launched_layout(hash).await
     }
 
     async fn write_layout(&self, name: &str, layout: &Layout) -> Result<(), ApiError> {

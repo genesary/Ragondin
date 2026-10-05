@@ -1496,6 +1496,10 @@ impl PipelineSource for CountedListings {
         self.inner.read_layout(name).await
     }
 
+    async fn read_launched_layout(&self, hash: &str) -> Result<Option<Layout>, ApiError> {
+        self.inner.read_launched_layout(hash).await
+    }
+
     async fn write_layout(&self, name: &str, layout: &Layout) -> Result<(), ApiError> {
         self.inner.write_layout(name, layout).await
     }

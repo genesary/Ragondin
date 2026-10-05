@@ -1,5 +1,6 @@
 //! `GET /pipelines`, `GET`/`PUT /pipelines/{name}`,
-//! `GET`/`PUT /pipelines/{name}/layout` and `POST /pipelines/validate`.
+//! `GET`/`PUT /pipelines/{name}/layout`, `POST /pipelines/validate`, and
+//! `GET /runs/{id}/layout`, the layout a fork from a run copies.
 //!
 //! The etag is the document's [`Revision`], in hex: bare in a JSON body,
 //! quoted in the `ETag` header, as HTTP spells an entity tag. A write names
@@ -22,7 +23,7 @@ use crate::backends::{PipelineFile, Precondition, Revision};
 use crate::convert;
 use crate::error::ApiError;
 use crate::extract::{ApiHeaders, ApiJson, ApiPath, ApiQuery, NoParameters};
-use crate::handlers::AppState;
+use crate::handlers::{load_run, AppState};
 use crate::request::{PipelineDocument, PreconditionHeaders, ValidationRequest};
 use crate::response::{
     Layout, PipelineDetail, PipelineError, PipelineLayout, PipelineListing, PipelineSummary,
@@ -74,6 +75,7 @@ pub(crate) async fn read(
     let typed = read_document(&file.document)
         .ok()
         .and_then(|raw| convert::typed_document(&raw));
+    let canonical = validation::is_rendering(&file.document);
     let etag = file.revision.clone();
     Ok(with_etag(
         Json(PipelineDetail {
@@ -83,13 +85,15 @@ pub(crate) async fn read(
             hash,
             error,
             typed,
+            canonical,
         }),
         &etag,
     ))
 }
 
 /// `PUT /pipelines/{name}`: `If-Match` or `If-None-Match: *`, and the
-/// document.
+/// document — a text, stored byte for byte, or the editor's typed document,
+/// stored as the server renders it.
 pub(crate) async fn write(
     State(state): State<AppState>,
     ApiPath(name): ApiPath<String>,
@@ -98,9 +102,13 @@ pub(crate) async fn write(
     ApiJson(request): ApiJson<PipelineDocument>,
 ) -> Result<Response, ApiError> {
     let precondition = precondition(headers)?;
+    let text = match request {
+        PipelineDocument::Document(text) => text,
+        PipelineDocument::Typed(typed) => validation::render_typed(&typed)?,
+    };
     // The composition root's key refusals, with the workspace's bindings
     // deciding which names are bound: what `bench` would refuse is not stored.
-    let pipeline = validation::lower(&request.document)?;
+    let pipeline = validation::lower(&text)?;
     let settings = state.backends.settings.read().await?;
     state
         .backends
@@ -114,7 +122,7 @@ pub(crate) async fn write(
     } = state
         .backends
         .pipelines
-        .write(&name, &request.document, &precondition)
+        .write(&name, &text, &precondition)
         .await?;
     let hash = validation::check(&document)?;
     Ok(with_etag(
@@ -127,17 +135,23 @@ pub(crate) async fn write(
     ))
 }
 
-/// `POST /pipelines/validate`: the hash, or `pipeline_invalid` — of the text
-/// as sent, or of the typed document's rendering.
+/// `POST /pipelines/validate`: the hash and the rendering, or
+/// `pipeline_invalid` — of the text as sent, or of the typed document's
+/// rendering.
 pub(crate) async fn validate(
     _: ApiQuery<NoParameters>,
     ApiJson(request): ApiJson<ValidationRequest>,
 ) -> Result<Json<PipelineValidated>, ApiError> {
-    let hash = match request {
-        ValidationRequest::Document(text) => validation::check(&text)?,
-        ValidationRequest::Typed(typed) => validation::check_typed(&typed)?,
+    let (hash, rendering) = match request {
+        ValidationRequest::Document(text) => {
+            (validation::check(&text)?, validation::rendering(&text))
+        }
+        ValidationRequest::Typed(typed) => {
+            let text = validation::render_typed(&typed)?;
+            (validation::check(&text)?, Some(text))
+        }
     };
-    Ok(Json(PipelineValidated { hash }))
+    Ok(Json(PipelineValidated { hash, rendering }))
 }
 
 /// `GET /pipelines/{name}/layout`.
@@ -148,6 +162,24 @@ pub(crate) async fn read_layout(
 ) -> Result<Json<PipelineLayout>, ApiError> {
     Ok(Json(PipelineLayout {
         layout: state.backends.pipelines.read_layout(&name).await?,
+    }))
+}
+
+/// `GET /runs/{id}/layout`: the layout copied at launch for the run's
+/// pipeline, `layouts/<hash>.json` by its canonical hash, if any — what a
+/// fork from the run copies beside its new document.
+pub(crate) async fn run_layout(
+    State(state): State<AppState>,
+    ApiPath(id): ApiPath<String>,
+    _: ApiQuery<NoParameters>,
+) -> Result<Json<PipelineLayout>, ApiError> {
+    let run = load_run(&state, id).await?;
+    Ok(Json(PipelineLayout {
+        layout: state
+            .backends
+            .pipelines
+            .read_launched_layout(&run.inputs.pipeline.to_string())
+            .await?,
     }))
 }
 

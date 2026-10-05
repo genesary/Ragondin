@@ -18,7 +18,7 @@ afterEach(() => {
 describe('live validation', () => {
   it('waits for the document to rest: three changes inside the debounce send one request, of the last', async () => {
     vi.useFakeTimers();
-    const api = mockApi({ 'POST /pipelines/validate': { body: { hash: HASH } } });
+    const api = mockApi({ 'POST /pipelines/validate': { body: { hash: HASH, rendering: null } } });
     const client = createApiClient();
     const { rerender } = renderHook(({ doc }) => useValidation(client, doc), { initialProps: { doc: emptyDocument() } });
     rerender({ doc: withNode('a') });
@@ -31,12 +31,12 @@ describe('live validation', () => {
   });
 
   it('cancels the request a newer document supersedes, and shows only the newer verdict', async () => {
-    let first: (v: { body: { hash: string } }) => void = () => {};
+    let first: (v: { body: { hash: string; rendering: string | null } }) => void = () => {};
     let calls = 0;
     const api = mockApi({
       'POST /pipelines/validate': () => {
         calls += 1;
-        return calls === 1 ? new Promise((resolve) => (first = resolve)) : { body: { hash: HASH } };
+        return calls === 1 ? new Promise((resolve) => (first = resolve)) : { body: { hash: HASH, rendering: null } };
       },
     });
     const client = createApiClient();
@@ -44,8 +44,8 @@ describe('live validation', () => {
     await waitFor(() => expect(sent(api)).toHaveLength(1));
     rerender({ doc: withNode('b') });
     expect(api.signals[sent(api)[0]!]?.aborted).toBe(true);
-    await waitFor(() => expect(result.current).toEqual({ status: 'valid', hash: HASH }));
-    await act(async () => first({ body: { hash: 'e'.repeat(64) } }));
-    expect(result.current).toEqual({ status: 'valid', hash: HASH });
+    await waitFor(() => expect(result.current).toEqual({ status: 'valid', hash: HASH, rendering: null }));
+    await act(async () => first({ body: { hash: 'e'.repeat(64), rendering: null } }));
+    expect(result.current).toEqual({ status: 'valid', hash: HASH, rendering: null });
   });
 });

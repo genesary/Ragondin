@@ -50,6 +50,8 @@ const RESERVED: &str = "validate";
 #[derive(Clone, Debug)]
 pub struct FsPipelines {
     directory: Arc<PathBuf>,
+    /// `layouts/`: the layouts copied at launch, by canonical hash.
+    launched: Arc<PathBuf>,
     writing: Arc<tokio::sync::Mutex<()>>,
 }
 
@@ -58,6 +60,7 @@ impl FsPipelines {
     pub fn new(workspace: &Workspace) -> Self {
         Self {
             directory: Arc::new(workspace.pipelines()),
+            launched: Arc::new(workspace.layouts()),
             writing: Arc::default(),
         }
     }
@@ -258,28 +261,19 @@ impl PipelineSource for FsPipelines {
         let (this, name) = (self.clone(), name.to_owned());
         blocking(move || {
             this.require(&name)?;
-            let path = this.layout(&name);
-            let text = match fs::read_to_string(&path) {
-                Ok(text) => text,
-                Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-                Err(error) => return Err(failed(&path, error)),
-            };
-            let layout: Layout =
-                serde_json::from_str(&text).map_err(|error| ApiError::BackendFailed {
-                    detail: format!("{}: not a layout this build reads: {error}", path.display()),
-                })?;
-            if layout.version != LAYOUT_VERSION {
-                return Err(ApiError::BackendFailed {
-                    detail: format!(
-                        "{}: layout version {}, and this build reads version {LAYOUT_VERSION}",
-                        path.display(),
-                        layout.version
-                    ),
-                });
-            }
-            Ok(Some(layout))
+            read_layout_file(&this.layout(&name))
         })
         .await
+    }
+
+    async fn read_launched_layout(&self, hash: &str) -> Result<Option<Layout>, ApiError> {
+        // A canonical hash is hex; anything else names no file `layouts/`
+        // could hold, and is never joined onto the path.
+        if hash.is_empty() || !hash.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Ok(None);
+        }
+        let path = self.launched.join(format!("{hash}.json"));
+        blocking(move || read_layout_file(&path)).await
     }
 
     async fn write_layout(&self, name: &str, layout: &Layout) -> Result<(), ApiError> {
@@ -527,6 +521,30 @@ fn not_found(name: &str) -> ApiError {
     ApiError::PipelineNotFound {
         name: name.to_owned(),
     }
+}
+
+/// The layout at `path`, or `None` when there is no file: a layout of
+/// another version, or not a layout at all, is `backend_failed`, never
+/// guessed at.
+fn read_layout_file(path: &Path) -> Result<Option<Layout>, ApiError> {
+    let text = match fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(failed(path, error)),
+    };
+    let layout: Layout = serde_json::from_str(&text).map_err(|error| ApiError::BackendFailed {
+        detail: format!("{}: not a layout this build reads: {error}", path.display()),
+    })?;
+    if layout.version != LAYOUT_VERSION {
+        return Err(ApiError::BackendFailed {
+            detail: format!(
+                "{}: layout version {}, and this build reads version {LAYOUT_VERSION}",
+                path.display(),
+                layout.version
+            ),
+        });
+    }
+    Ok(Some(layout))
 }
 
 fn failed(path: &Path, error: io::Error) -> ApiError {

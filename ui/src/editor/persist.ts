@@ -1,0 +1,149 @@
+// The editor's writes, driven by the state machine in saving.ts: the document
+// after the server called it valid (`PUT /pipelines/{name}` with the typed
+// document, which the server renders and stores), and the layout beside it on
+// every position change (`PUT /pipelines/{name}/layout`), which is never
+// invalid and never hashed, so it needs no gate (ADR-016 § 4). When the editor
+// closes, what is pending is flushed under the same protections: the last
+// document is validated and written over the etag held, the last positions
+// written beside the file; nothing held behind a prompt is.
+// ARCHITECTURE.md § The editor.
+import { useEffect, useReducer, useRef, useState } from 'react';
+import type { ApiClient, ApiProblem } from '../api/client.ts';
+import type { WireDocument } from './document.ts';
+import { initialSave, saveReducer, type FileInit, type SaveEvent, type SaveState } from './saving.ts';
+import { chooseRewrite, rewriteChosen } from './session.ts';
+import type { EditorLayout } from './store.ts';
+import type { Verdict } from './validation.ts';
+
+/** How long positions must rest before the layout is written: a drag or a run of arrow keys is one write. */
+export const LAYOUT_DEBOUNCE_MS = 250;
+
+const NOTHING: FileInit = { name: null, etag: null, canonical: true, proposed: '' };
+
+/** What is on disk as far as the editor knows, updated the moment a write answers — before the render that follows, and after the editor is gone. */
+type Disk = { name: string | null; etag: string | null; saved: string; blocked: boolean };
+
+/** The phases that wait on the person: nothing is written while one is up. */
+export const asking = (state: SaveState) => state.phase.kind === 'conflict' || state.phase.kind === 'handwritten' || state.phase.kind === 'taken';
+
+/**
+ * Writes what the editor held when it closed: `doc`, validated first unless
+ * `verdict` already called it valid, over the etag of the last write — once
+ * the write in flight, if any, has answered. Nothing is written while a
+ * prompt is up, for a hand-written file not yet asked about, after a stale
+ * etag, or for a document the server refuses.
+ */
+async function flush(client: ApiClient, doc: WireDocument, verdict: Verdict, state: SaveState, disk: { current: Disk }, inflight: Promise<void> | null) {
+  if (asking(state) || state.file.handwritten) return;
+  if (inflight !== null) await inflight;
+  const at = disk.current;
+  if (at.blocked) return;
+  const text = JSON.stringify(doc);
+  if (text === at.saved && !(at.name === null && state.keep)) return;
+  if (state.phase.kind === 'failed' && JSON.stringify(state.phase.doc) === text) return;
+  if (verdict.status !== 'valid') {
+    const checked = await client.post('/pipelines/validate', { typed: doc });
+    if (!checked.ok) return;
+  }
+  const name = at.name ?? state.file.proposed;
+  const headers = at.etag === null ? { 'If-None-Match': '*' } : { 'If-Match': `"${at.etag}"` };
+  await client.put('/pipelines/{name}', { typed: doc }, { name }, { headers });
+}
+
+/**
+ * The saving state of `doc`, given the server's verdict on it. With no
+ * `file`, nothing is ever written. `onNamed` hears the name the editor now
+ * writes under, whenever it changes: a first creation, or a save as a new file.
+ */
+export function useSaving(client: ApiClient, doc: WireDocument, verdict: Verdict, file: FileInit | undefined, onNamed: (name: string) => void): [SaveState, (event: SaveEvent) => void] {
+  const enabled = file !== undefined;
+  const [state, dispatch] = useReducer(saveReducer, undefined, () => initialSave(doc, file ?? NOTHING, file?.name != null && rewriteChosen(file.name)));
+  const { phase } = state;
+  const disk = useRef<Disk>({ name: state.file.name, etag: state.file.etag, saved: state.saved, blocked: false });
+  const inflight = useRef<Promise<void> | null>(null);
+  const latest = useRef({ client, doc, verdict, state });
+  latest.current = { client, doc, verdict, state };
+
+  // Every valid document is offered; the state machine decides whether it is written.
+  useEffect(() => {
+    if (enabled && verdict.status === 'valid') dispatch({ type: 'valid', doc });
+  }, [enabled, verdict, doc, phase, state.file.handwritten, state.keep]);
+
+  // A write, once sent, is never cancelled: its answer is what says what is on disk.
+  useEffect(() => {
+    if (phase.kind !== 'saving') return;
+    const headers = phase.create ? { 'If-None-Match': '*' } : { 'If-Match': `"${disk.current.etag ?? ''}"` };
+    inflight.current = client.put('/pipelines/{name}', { typed: phase.doc }, { name: phase.name }, { headers }).then((result) => {
+      if (result.ok) disk.current = { name: result.value.name, etag: result.value.etag, saved: JSON.stringify(phase.doc), blocked: false };
+      else if (result.problem.code === 'precondition_failed' && phase.back === null) disk.current = { ...disk.current, blocked: true };
+      dispatch(result.ok ? { type: 'written', doc: phase.doc, name: result.value.name, etag: result.value.etag } : { type: 'refused', problem: result.problem });
+    });
+  }, [client, phase]);
+
+  // Leaving the editor — another address, another pipeline, a reload of this one — flushes it.
+  useEffect(() => {
+    if (!enabled) return;
+    return () => {
+      const { client, doc, verdict, state } = latest.current;
+      void flush(client, doc, verdict, state, disk, state.phase.kind === 'saving' ? inflight.current : null);
+    };
+  }, [enabled]);
+
+  const named = useRef(file?.name ?? null);
+  useEffect(() => {
+    if (state.file.name !== null && state.file.name !== named.current) {
+      named.current = state.file.name;
+      onNamed(state.file.name);
+    }
+  });
+
+  const act = (event: SaveEvent) => {
+    if (event.type === 'rewrite' && state.file.name !== null) chooseRewrite(state.file.name);
+    dispatch(event);
+  };
+  return [state, act];
+}
+
+/**
+ * Writes `layout` beside the file `name` once a step — not the canvas's own
+ * automatic placement on opening — has changed it, debounced, and at once when
+ * the editor closes. Nothing is written while `paused` (a prompt is up); once
+ * it lifts, the positions go beside whichever file was chosen. Answers why the
+ * last write failed, if it did.
+ */
+export function useLayoutSaving(client: ApiClient, name: string | null, layout: EditorLayout, touched: boolean, paused: boolean): ApiProblem | null {
+  // The file and the positions last written beside it: a save as a new file writes them again.
+  const saved = useRef<string | null>(null);
+  const pending = useRef<{ name: string; layout: EditorLayout; key: string } | null>(null);
+  const [failed, setFailed] = useState<ApiProblem | null>(null);
+  const live = useRef(true);
+
+  const write = (next: { name: string; layout: EditorLayout; key: string }) =>
+    client.put('/pipelines/{name}/layout', { version: 1, nodes: { ...next.layout } }, { name: next.name }).then((result) => {
+      if (result.ok) saved.current = next.key;
+      if (live.current) setFailed(result.ok ? null : result.problem);
+    });
+
+  useEffect(() => {
+    pending.current = null;
+    if (name === null || !touched || paused) return;
+    const key = `${name}\n${JSON.stringify(layout)}`;
+    if (key === saved.current) return;
+    const next = { name, layout, key };
+    pending.current = next;
+    const timer = setTimeout(() => {
+      pending.current = null;
+      void write(next);
+    }, LAYOUT_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  });
+
+  useEffect(() => {
+    live.current = true;
+    return () => {
+      live.current = false;
+      if (pending.current !== null) void write(pending.current);
+    };
+  }, []);
+  return failed;
+}

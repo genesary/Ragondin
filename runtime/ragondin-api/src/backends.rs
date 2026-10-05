@@ -111,6 +111,15 @@ pub trait PipelineSource: Send + Sync {
     /// `pipeline_not_found` when the pipeline itself is not there.
     async fn write_layout(&self, name: &str, layout: &Layout) -> Result<(), ApiError>;
 
+    /// The layout copied at launch for the pipeline whose canonical hash is
+    /// `hash` — `layouts/<hash>.json` locally — or `None` when none was. What
+    /// a fork from a run copies beside the new document.
+    ///
+    /// # Errors
+    ///
+    /// `backend_failed` for a layout this build cannot read.
+    async fn read_launched_layout(&self, hash: &str) -> Result<Option<Layout>, ApiError>;
+
     /// The manual pairing between the pipelines `pipeline` and `other`, in
     /// whichever direction it was kept, oriented from `pipeline` — each
     /// pair's `node` in `pipeline`, its `other` in `other` — or `None` when

@@ -7,6 +7,7 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Button, ButtonLink, EmptyState, FilterChip, InlineMessage, Sheet, Table, type TableRow } from '../../design/index.ts';
 import type { ApiClient, ApiProblem } from '../api/client.ts';
+import { ForkButton } from '../editor/Fork.tsx';
 import type { Jobs } from '../api/jobs.ts';
 import type { RunListing } from '../api/types.ts';
 import { useJobEvents, useJobs } from '../jobs/queue.tsx';
@@ -423,6 +424,7 @@ function Loaded({ client, listing, askedWith, refresh, sel, job, launch, store, 
         </div>
         <div className="rg-runs__actions">
           <ButtonLink href={formatHash({ screen: 'editor' })}>New pipeline</ButtonLink>
+          <ForkButton client={client} run={comparable.length === 1 ? comparable[0]! : null} refusal={comparable.length === 1 ? null : 'Select one run to fork it.'} />
           {launchToggle}
           {compareWhy === null ? (
             <Button kind="primary" onClick={() => navigate({ screen: 'compare', ids: comparable })}>

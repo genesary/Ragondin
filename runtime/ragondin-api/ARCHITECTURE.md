@@ -51,7 +51,8 @@ Served today, under `/api/v1`: `GET /workspace`; `GET /runs`,
 in § *Compare*; `GET /pipelines/{name}/matrix`, described in § *The
 pipeline matrix*; `GET /pipelines`,
 `POST /pipelines/validate`, `GET`/`PUT /pipelines/{name}`,
-`GET`/`PUT /pipelines/{name}/layout`; `GET /benchmarks`,
+`GET`/`PUT /pipelines/{name}/layout` and `GET /runs/{id}/layout`;
+`GET /benchmarks`,
 `POST /benchmarks/import`, `POST /benchmarks/{name}/download`;
 `POST /runs`, `GET /jobs`, `GET`/`PATCH`/`DELETE /jobs/{id}`,
 `GET /jobs/{id}/queries`, `GET /jobs/{id}/trace/{query}` and
@@ -370,7 +371,7 @@ and every path derived from it.
   pipelines/<name>.yaml         a pipeline document, the source of truth
   pipelines/<name>.layout.json  its layout, never in its hash
   pipelines/<name>.pairing/     its manual pairings, one file per other pipeline — never hashed (§ Compare)
-  layouts/                      layouts copied at launch — created here; nothing copies one yet
+  layouts/                      layouts copied at launch, `<hash>.json` — created here and read by `GET /runs/{id}/layout`; written at launch by the launcher's copy, #470
   runs/                         the run store, as `bench --store <root>/runs` writes it
   jobs/                         the queue's state: `<id>.json` per job, `<id>/partial/` — § The job queue
   cache/                        derived data — created here, written by #343
@@ -502,7 +503,14 @@ in `tests/workspace_toml.rs`:
   exactly as it is stored, never parsed and re-serialized — for the reason
   `bench` keeps a run's configuration text verbatim: the comments and the
   formatting a person gave it are theirs, and a document read and written
-  back unchanged is byte-identical.
+  back unchanged is byte-identical. A write sends its document one of two
+  ways, one key naming which (`PipelineDocument`, ADR-C40 § 5, § 6): **as
+  text**, `{"document": …}`, stored byte for byte — what an import and a
+  fork from a run send — or **as the editor's typed document**,
+  `{"typed": …}`, which the handler renders with `ragondin-config`'s one
+  writer (`validation::render_typed`, ADR-C41) and stores as that text. The
+  backend stores what the handler hands it either way; nothing stored is
+  ever rewritten except by a write that names its etag.
 - **The etag rule.** A document's revision — its etag — is the SHA-256 of its
   bytes, in hex: bare in a JSON body, quoted in the `ETag` header. It needs no
   clock, so it cannot race on a filesystem with coarse timestamps, and bytes
@@ -566,6 +574,12 @@ in `tests/workspace_toml.rs`:
   own, last writer wins, which costs a position, never a pipeline. Writing a
   layout needs the pipeline to exist (`pipeline_not_found` otherwise); it is
   re-serialized as JSON, since the verbatim rule is the document's.
+- **A run's layout** (`GET /runs/{id}/layout`): the layout copied at the
+  run's launch, `layouts/<hash>.json` by the run's canonical pipeline hash,
+  in the same format, or `null` — what a fork from the run copies beside
+  its new document (`PipelineSource::read_launched_layout`). A hash that is
+  not hex names no file and answers `null`, never a path. Writing one at
+  launch is #470's, the launcher's copy of the layout.
 
 ### Validation, in the CLI's words
 
@@ -660,10 +674,30 @@ tagged `{"Float": 60.0}` is the in-memory model's, not the API's.
   store, through the one load (INV-8). `tests/pipelines.rs` holds that a
   typed document hashes as its text does, that `60` and `60.0` hash apart,
   and that the typed document a read serves validates to the read's hash.
-- **What is not here**: writing the rendering — `PUT` still stores the text
-  it is sent, byte for byte — and the warning before a rendering replaces
-  text a person wrote, which are #356's (ADR-C40 § 7); patching stored text
-  instead of re-rendering it, left to its own decision (§ 9).
+- **Writing** (`PUT /pipelines/{name}`, ADR-C40 § 5): `{"typed": …}` is
+  rendered as validating renders it, then checked, refused or stored as any
+  text is — so the bytes stored are the bytes whose hash validation
+  answered, and `ragondin validate` on the file prints the hash the editor
+  showed. `tests/pipelines.rs` holds that a typed write stores exactly
+  validation's `rendering`, and that its precondition and its validation
+  refuse as a text's do, writing nothing.
+- **The rendering, answered** (`POST /pipelines/validate`'s `rendering`): for
+  a typed document, the bytes a write of it stores; for a text, the
+  rendering of the document it reads to (`validation::rendering`), none of
+  its comments or formatting kept, `null` only when the renderer cannot write
+  it so that it reads back. It is what the editor exports.
+- **Whether a file is that rendering** (`GET /pipelines/{name}`'s
+  `canonical`, `validation::is_rendering`): the text read into the wire
+  schema, rendered, and the two compared byte for byte, with no
+  normalisation of its own; `false` for a text that does not read. The
+  editor warns before its first save replaces a text for which it is false
+  (ADR-016 § 5). **The rendering is not canonical hashing**: INV-8 hashes the
+  canonical logical form, never this text, and two renderings of one
+  pipeline could differ without changing its hash. It is only the editor's
+  stable way of writing — the server's own, so "the file is the editor's
+  rendering" needs no second definition.
+- **What is not here**: patching stored text instead of re-rendering it, left
+  to its own decision (ADR-C40 § 9).
 
 ### The services and the probe
 

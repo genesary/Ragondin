@@ -1,15 +1,20 @@
 /** @vitest-environment happy-dom */
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createApiClient } from '../api/client.ts';
 import { mockApi, type MockRoutes } from '../api/testing.ts';
 import type { PipelineDetail, Workspace } from '../api/types.ts';
+import { useRoute } from '../routes.ts';
 import type { RequestState } from '../shell/states.tsx';
 import { EditorScreen } from './EditorScreen.tsx';
+import { exampleDocument } from './example.ts';
 import { HYBRID, SERVICES, WORKSPACE } from './fixtures.ts';
+import { rememberFork } from './session.ts';
 
 const HASH = 'c'.repeat(64);
+/** The recorded workspace before its first pipeline: the first launch. */
+const EMPTY_WORKSPACE: Workspace = { ...WORKSPACE, counts: { ...WORKSPACE.counts, pipelines: 0 } };
 // The editor's chunk loads lazily, then validation waits out its debounce: under a loaded test run that can pass a second.
 const SLOW = 5000;
 
@@ -18,24 +23,36 @@ function Harness({ name, node, workspace = { status: 'loaded', value: WORKSPACE 
   return <EditorScreen client={client} name={name} node={node} workspace={workspace} />;
 }
 
+/** The screen as the shell mounts it: following the address. */
+function Routed() {
+  const [client] = useState(() => createApiClient());
+  const route = useRoute();
+  if (route?.screen !== 'editor') return null;
+  return <EditorScreen client={client} name={route.name} node={route.node} workspace={{ status: 'loaded', value: EMPTY_WORKSPACE }} />;
+}
+
 const ROUTES: MockRoutes = {
   'GET /services': { body: SERVICES },
-  'POST /pipelines/validate': { body: { hash: HASH } },
+  'POST /pipelines/validate': { body: { hash: HASH, rendering: null } },
 };
 
 /** `HYBRID` as `GET /pipelines/{name}` serves it: its text, and its typed document. */
-const STORED_DETAIL: PipelineDetail = { name: 'hybrid', document: 'pipeline: …\n', etag: 'e'.repeat(64), hash: HASH, error: null, typed: HYBRID };
+const STORED_DETAIL: PipelineDetail = { name: 'hybrid', document: 'pipeline: …\n', etag: 'e'.repeat(64), hash: HASH, error: null, typed: HYBRID, canonical: true };
 const STORED: MockRoutes = { ...ROUTES, 'GET /pipelines/{name}': { body: STORED_DETAIL } };
 
-afterEach(() => {
+afterEach(async () => {
+  // The editor flushes what it holds when it closes: let that land on the mocks before `fetch` is restored.
+  cleanup();
+  await new Promise((resolve) => setTimeout(resolve, 50));
   vi.unstubAllGlobals();
+  window.sessionStorage.clear();
 });
 
 describe('the Editor screen', () => {
   it('before a pipeline is opened, offers a new one, and opens the canvas on an empty document with the palette this build allows', async () => {
     const api = mockApi(ROUTES);
     render(<Harness />);
-    expect(screen.getByRole('heading', { name: 'No pipeline open' })).toBeTruthy();
+    expect(await screen.findByRole('heading', { name: 'No pipeline open' })).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Start a new pipeline' }));
     expect(await screen.findByRole('application', { name: 'Pipeline New pipeline' })).toBeTruthy();
     expect(screen.getByRole('application', { name: 'Pipeline New pipeline' }).querySelector('.react-flow__node[data-id="query"]')).toBeTruthy();
@@ -48,7 +65,7 @@ describe('the Editor screen', () => {
   it('judges kinds during the drag with the ports the capabilities serve', async () => {
     mockApi(ROUTES);
     render(<Harness />);
-    fireEvent.click(screen.getByRole('button', { name: 'Start a new pipeline' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Start a new pipeline' }));
     const palette = await screen.findByRole('region', { name: 'Palette' });
     fireEvent.click(within(palette).getByRole('button', { name: /^bm25/ }));
     fireEvent.click(within(palette).getByRole('button', { name: /^concat/ }));
@@ -103,10 +120,78 @@ describe('the Editor screen', () => {
     expect(screen.getByRole('link', { name: 'Start a new pipeline' }).getAttribute('href')).toBe('#editor');
   });
 
+  it('opens a stored pipeline at its stored positions, and writes its changes over the etag it read', async () => {
+    const api = mockApi({
+      ...STORED,
+      'GET /pipelines/{name}/layout': { body: { layout: { version: 1, nodes: { lexical: { x: 1600, y: 800 } } } } },
+      'PUT /pipelines/{name}': { body: { name: 'hybrid', etag: 'f'.repeat(64), hash: HASH } },
+    });
+    render(<Harness name="hybrid" />);
+    const canvas = await screen.findByRole('application', { name: 'Pipeline hybrid' }, { timeout: SLOW });
+    expect(api.requests).toContain('GET /api/v1/pipelines/hybrid/layout');
+    expect(canvas.querySelector<HTMLElement>('.react-flow__node[data-id="lexical"]')!.style.transform).toContain('1600px');
+    fireEvent.click(within(screen.getByRole('region', { name: 'Palette' })).getByRole('button', { name: /^rrf/ }));
+    await waitFor(() => expect(api.requests).toContain('PUT /api/v1/pipelines/hybrid'), { timeout: SLOW });
+    expect(api.headers[api.requests.indexOf('PUT /api/v1/pipelines/hybrid')]!['If-Match']).toBe(`"${'e'.repeat(64)}"`);
+  });
+
+  it('opens a hand-written pipeline, and warns before its first save', async () => {
+    mockApi({ ...STORED, 'GET /pipelines/{name}': { body: { ...STORED_DETAIL, canonical: false } }, 'GET /pipelines/{name}/layout': { body: { layout: null } } });
+    render(<Harness name="hybrid" />);
+    await screen.findByRole('application', { name: 'Pipeline hybrid' }, { timeout: SLOW });
+    fireEvent.click(within(screen.getByRole('region', { name: 'Palette' })).getByRole('button', { name: /^rrf/ }));
+    expect(await screen.findByRole('region', { name: 'This file was written by hand' }, { timeout: SLOW })).toBeTruthy();
+  });
+
+  it('names the run a pipeline was forked from', async () => {
+    mockApi({ ...STORED, 'GET /pipelines/{name}/layout': { body: { layout: null } } });
+    rememberFork('hybrid', 'a'.repeat(64));
+    render(<Harness name="hybrid" />);
+    expect(await screen.findByText(/Forked from run/, undefined, { timeout: SLOW })).toBeTruthy();
+  });
+
+  it('on a workspace with no pipeline, opens on the example, writes no file until the first edit, and keeps editing once it is written', async () => {
+    const api = mockApi({
+      ...ROUTES,
+      'GET /pipelines': { body: { pipelines: [] } },
+      'PUT /pipelines/{name}': { body: { name: 'example', etag: 'f'.repeat(64), hash: HASH } },
+      'PUT /pipelines/{name}/layout': { body: { layout: null } },
+    });
+    window.location.hash = '#editor';
+    render(<Routed />);
+    const canvas = await screen.findByRole('application', { name: 'Pipeline Example pipeline' }, { timeout: SLOW });
+    expect(canvas.querySelector('.react-flow__node[data-id="lexical"]')).toBeTruthy();
+    await waitFor(() => expect(api.requests).toContain('POST /api/v1/pipelines/validate'), { timeout: SLOW });
+    expect((api.bodies[api.requests.indexOf('POST /api/v1/pipelines/validate')] as { typed: unknown }).typed).toEqual(exampleDocument(WORKSPACE.capabilities));
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    expect(api.requests.filter((r) => r.startsWith('PUT'))).toEqual([]);
+    fireEvent.click(within(screen.getByRole('region', { name: 'Palette' })).getByRole('button', { name: /^rrf/ }));
+    await waitFor(() => expect(window.location.hash).toBe('#editor/example'), { timeout: SLOW });
+    expect(api.headers[api.requests.indexOf('PUT /api/v1/pipelines/example')]!['If-None-Match']).toBe('*');
+    // The same editor, its history kept: the address naming the file it wrote does not reopen it.
+    expect(await screen.findByRole('heading', { name: 'example' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Undo' }).getAttribute('aria-disabled')).toBeNull();
+    expect(api.requests).not.toContain('GET /api/v1/pipelines/example');
+  });
+
+  it('opens no example when the listing finds a pipeline the shell’s count is too old to know', async () => {
+    mockApi({ ...ROUTES, 'GET /pipelines': { body: { pipelines: [{ name: 'hybrid', etag: 'e'.repeat(64), modified_ms: null, hash: HASH, error: null }] } } });
+    render(<Harness workspace={{ status: 'loaded', value: EMPTY_WORKSPACE }} />);
+    expect(await screen.findByRole('heading', { name: 'No pipeline open' })).toBeTruthy();
+  });
+
+  it('on a workspace holding pipelines, offers a new one or an import', async () => {
+    mockApi({ ...ROUTES, 'GET /pipelines': { body: { pipelines: [{ name: 'hybrid', etag: 'e'.repeat(64), modified_ms: null, hash: HASH, error: null }] } } });
+    render(<Harness />);
+    expect(await screen.findByRole('heading', { name: 'No pipeline open' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Import a pipeline' }));
+    expect(screen.getByRole('textbox', { name: 'Pipeline document (YAML)' })).toBeTruthy();
+  });
+
   it('shows a failed read of the services with Retry, in place of the editor', async () => {
     const api = mockApi({ ...ROUTES, 'GET /services': [{ network: 'down' }, { body: SERVICES }] });
     render(<Harness />);
-    fireEvent.click(screen.getByRole('button', { name: 'Start a new pipeline' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Start a new pipeline' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Retry' }));
     await waitFor(() => expect(screen.getByRole('region', { name: 'Palette' })).toBeTruthy());
     expect(api.requests.filter((r) => r === 'GET /api/v1/services')).toHaveLength(2);

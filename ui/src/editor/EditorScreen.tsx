@@ -1,14 +1,20 @@
-// The Editor screen: the canvas in write mode over a pipeline document held
-// in state (src/editor/Editor.tsx): a new one, or a stored one opened from its
-// typed document. ARCHITECTURE.md § The editor.
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+// The Editor screen: the canvas in write mode over a pipeline document
+// (src/editor/Editor.tsx) — a new one, the first-launch example, an import, or
+// a stored one opened from its typed document — written back as it changes.
+// ARCHITECTURE.md § The editor.
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Button, ButtonLink, EmptyState, Sheet } from '../../design/index.ts';
 import type { ApiClient, ApiResult } from '../api/client.ts';
-import type { PipelineDetail, ServiceListing, Workspace } from '../api/types.ts';
+import type { PipelineDetail, PipelineLayout, PipelineListing, ServiceListing, Workspace } from '../api/types.ts';
 import { formatHash, navigate } from '../routes.ts';
 import { ErrorState, Loading, Resource, type RequestState } from '../shell/states.tsx';
 import { emptyDocument, type WireDocument } from './document.ts';
+import { exampleDocument, freshName } from './example.ts';
+import { ImportPanel } from './Import.tsx';
 import { grammarOf } from './ports.ts';
+import type { FileInit } from './saving.ts';
+import { forkedFrom } from './session.ts';
+import type { EditorLayout } from './store.ts';
 
 // The canvas and its two libraries come with the editor, in a chunk of their
 // own, so the shell and this screen's empty state do not pay for them.
@@ -50,48 +56,136 @@ function useOnce<T>(read: ((signal: AbortSignal) => Promise<ApiResult<T>>) | nul
   return [state, ask];
 }
 
-/** The editor over `initial`, once the services are read. */
-function Editing({ client, workspace, title, stored = null, initial, selected, onSelect }: { client: ApiClient; workspace: Workspace; title: string; stored?: string | null; initial: WireDocument; selected: string | null; onSelect: (id: string | null) => void }) {
+/** What a session's editor opens on, and the file it writes. */
+type Opening = { title: string; doc: WireDocument; layout?: EditorLayout; file: FileInit; forkedFrom: string | null };
+
+type Callbacks = { onNamed: (name: string) => void; onReload: () => void };
+
+/** The editor over `opening`, once the services are read. */
+function Editing({ client, workspace, opening, selected, onSelect, onNamed, onReload }: { client: ApiClient; workspace: Workspace; opening: Opening; selected: string | null; onSelect: (id: string | null) => void } & Callbacks) {
   const [services, retry] = useOnce<ServiceListing>((signal) => client.get('/services', { signal }));
   const grammar = useMemo(() => grammarOf(workspace.capabilities), [workspace.capabilities]);
   return (
     <Resource state={services} loading="Reading the services Setup bound" error={(problem) => <ErrorState problem={problem} onRetry={retry} />}>
       {(listing) => (
         <Suspense fallback={<Loading label="Opening the editor" />}>
-        <Editor
-          client={client}
-          title={title}
-          stored={stored}
-          initial={initial}
-          capabilities={workspace.capabilities}
-          services={listing.services}
-          grammar={grammar}
-          selected={selected}
-          onSelect={onSelect}
-        />
+          <Editor
+            client={client}
+            title={opening.title}
+            initial={opening.doc}
+            {...(opening.layout === undefined ? {} : { layout: opening.layout })}
+            capabilities={workspace.capabilities}
+            services={listing.services}
+            grammar={grammar}
+            selected={selected}
+            onSelect={onSelect}
+            file={opening.file}
+            forkedFrom={opening.forkedFrom}
+            onNamed={onNamed}
+            onReload={onReload}
+          />
         </Suspense>
       )}
     </Resource>
   );
 }
 
-/** The editor over a new, empty document; its selection is the screen's, since no address names it. */
-function NewPipeline({ client, workspace }: { client: ApiClient; workspace: Workspace }) {
-  const [selected, setSelected] = useState<string | null>(null);
-  const [initial] = useState(emptyDocument);
-  return <Editing client={client} workspace={workspace} title="New pipeline" initial={initial} selected={selected} onSelect={setSelected} />;
+/** The capabilities, or what to show while they are not there. */
+function withWorkspace(workspace: RequestState<Workspace>, render: (workspace: Workspace) => ReactNode) {
+  if (workspace.status === 'loading') return <Loading label="Reading this build's capabilities" />;
+  // A failed workspace read is the shell's to show, with Retry, above the screen.
+  if (workspace.status === 'error') return null;
+  return render(workspace.value);
 }
 
 /**
- * A stored pipeline, opened from the typed document `GET /pipelines/{name}`
- * serves — whether or not it validates (ADR-C40 § 4) — its selected node the
- * address's: restored from `#editor/<name>/node/<id>`, and written there.
- * A document whose text does not read into the wire schema, or holds a value
- * the typed document cannot carry, has none, and is said to be text only.
+ * `#editor`: on a workspace with no pipeline file, the first-launch example,
+ * written at its first edit or at "Keep this pipeline"; otherwise one action,
+ * a new pipeline, beside an import and a link to Runs. A document never
+ * written is first written under a name free in the listing; its selection is
+ * the screen's, since no address names it.
  */
-function Stored({ client, name, node, workspace }: { client: ApiClient; name: string; node: string | undefined; workspace: RequestState<Workspace> }) {
+function Unnamed({ client, workspace, ...callbacks }: { client: ApiClient; workspace: RequestState<Workspace> } & Callbacks) {
+  const [chosen, setChosen] = useState<'new' | 'import' | null>(null);
+  const [selected, setSelected] = useState<string | null>(null);
+  // The shell's count says whether the workspace may be empty; the listing
+  // decides, since the count is as old as the shell's last read, and gives
+  // the names a new document's first write must avoid. A workspace the count
+  // says holds pipelines is not listed until a new document needs a name.
+  const maybeEmpty = workspace.status === 'loaded' && workspace.value.counts.pipelines === 0;
+  const [listing] = useOnce<PipelineListing>(maybeEmpty || chosen === 'new' ? (signal) => client.get('/pipelines', { signal }) : null);
+  const listed = maybeEmpty || chosen === 'new';
+  if (listed && listing.status === 'loading') return <Loading label="Reading the workspace's pipelines" />;
+  // A listing that failed proposes names blind; the server still refuses one taken.
+  const names = listed && listing.status === 'loaded' ? listing.value.pipelines.map((p) => p.name) : [];
+  const empty = maybeEmpty && listing.status === 'loaded' && names.length === 0;
+
+  if (chosen === 'import') {
+    return (
+      <Sheet>
+        <ImportPanel client={client} onImported={(name) => navigate({ screen: 'editor', name })} onCancel={() => setChosen(null)} />
+      </Sheet>
+    );
+  }
+  if (chosen === 'new' || empty) {
+    return withWorkspace(workspace, (ws) => {
+      const example = chosen === null ? exampleDocument(ws.capabilities) : null;
+      const opening: Opening =
+        example === null
+          ? { title: 'New pipeline', doc: emptyDocument(), file: { name: null, etag: null, canonical: true, proposed: freshName('pipeline', names) }, forkedFrom: null }
+          : { title: 'Example pipeline', doc: example, file: { name: null, etag: null, canonical: true, proposed: freshName('example', names) }, forkedFrom: null };
+      return <Session opening={opening} client={client} workspace={ws} selected={selected} onSelect={setSelected} {...callbacks} />;
+    });
+  }
+  return (
+    <Sheet>
+      <EmptyState
+        heading="No pipeline open"
+        action={
+          <>
+            <Button kind="primary" size="l" onClick={() => setChosen('new')}>
+              Start a new pipeline
+            </Button>
+            <Button size="l" onClick={() => setChosen('import')}>
+              Import a pipeline
+            </Button>
+            <ButtonLink kind="quiet" size="l" href={formatHash({ screen: 'runs' })}>
+              Open Runs
+            </ButtonLink>
+          </>
+        }
+      >
+        Start a new pipeline on the canvas, from what this build can run, or import a pipeline document.
+      </EmptyState>
+    </Sheet>
+  );
+}
+
+/** The editor, its opening fixed when it mounts: what it writes afterwards is its own. */
+function Session({ opening, ...rest }: { opening: Opening; client: ApiClient; workspace: Workspace; selected: string | null; onSelect: (id: string | null) => void } & Callbacks) {
+  const [fixed] = useState(opening);
+  return <Editing opening={fixed} {...rest} />;
+}
+
+const layoutOf = (read: RequestState<PipelineLayout>): EditorLayout | undefined => (read.status === 'loaded' && read.value.layout !== null ? read.value.layout.nodes : undefined);
+
+/**
+ * A stored pipeline, opened from the typed document `GET /pipelines/{name}`
+ * serves — whether or not it validates (ADR-C40 § 4) — at the positions its
+ * layout holds, its selected node the address's: restored from
+ * `#editor/<name>/node/<id>`, and written there. A document whose text does
+ * not read into the wire schema, or holds a value the typed document cannot
+ * carry, has none, and is said to be text only.
+ */
+function Stored({ client, name, current, node, workspace, ...callbacks }: { client: ApiClient; name: string; current: string | undefined; node: string | undefined; workspace: RequestState<Workspace> } & Callbacks) {
   const [detail, retry] = useOnce<PipelineDetail>((signal) => client.get('/pipelines/{name}', { name }, { signal }));
-  const onSelect = useCallback((id: string | null) => navigate(id === null ? { screen: 'editor', name } : { screen: 'editor', name, node: id }, { replace: true }), [name]);
+  // Positions are presentation: a layout that cannot be read opens the
+  // pipeline laid out by the canvas, never keeps it closed.
+  const [layout] = useOnce<PipelineLayout>((signal) => client.get('/pipelines/{name}/layout', { name }, { signal }));
+  // The address names the file the editor writes now: a save as a new file changes it.
+  const at = current ?? name;
+  const onSelect = useCallback((id: string | null) => navigate(id === null ? { screen: 'editor', name: at } : { screen: 'editor', name: at, node: id }, { replace: true }), [at]);
+  if (layout.status === 'loading') return <Loading label={`Reading ${name}`} />;
   return (
     <Resource state={detail} loading={`Reading ${name}`} error={(problem) => <ErrorState problem={problem} onRetry={retry} />}>
       {(pipeline) => {
@@ -111,45 +205,43 @@ function Stored({ client, name, node, workspace }: { client: ApiClient; name: st
             </Sheet>
           );
         }
-        if (workspace.status === 'loading') return <Loading label="Reading this build's capabilities" />;
-        // A failed workspace read is the shell's to show, with Retry, above the screen.
-        if (workspace.status === 'error') return null;
-        return <Editing client={client} workspace={workspace.value} title={name} stored={name} initial={pipeline.typed} selected={node ?? null} onSelect={onSelect} />;
+        const stored = layoutOf(layout);
+        const opening: Opening = {
+          title: name,
+          doc: pipeline.typed,
+          ...(stored === undefined ? {} : { layout: stored }),
+          file: { name: pipeline.name, etag: pipeline.etag, canonical: pipeline.canonical, proposed: pipeline.name },
+          forkedFrom: forkedFrom(pipeline.name),
+        };
+        return withWorkspace(workspace, (ws) => <Session opening={opening} client={client} workspace={ws} selected={node ?? null} onSelect={onSelect} {...callbacks} />);
       }}
     </Resource>
   );
 }
 
+/** One mounted editor: what it opened on is read once, when it mounts. */
+function Opened({ client, name, node, workspace, ...callbacks }: EditorScreenProps & Callbacks) {
+  const [opened] = useState(name);
+  if (opened === undefined) return <Unnamed client={client} workspace={workspace} {...callbacks} />;
+  return <Stored client={client} name={opened} current={name} node={node} workspace={workspace} {...callbacks} />;
+}
+
 /**
- * `#editor`: one action, a new pipeline, and a link to Runs.
- * `#editor/<name>[/node/<id>]`: the stored pipeline on the canvas.
+ * `#editor` and `#editor/<name>[/node/<id>]`. The address moving to the file
+ * the mounted editor has just written — its first creation, or a save as a
+ * new file — keeps that editor and its history; moving anywhere else, or
+ * "Discard my changes and reload", opens afresh from disk.
  */
 export function EditorScreen({ client, name, node, workspace }: EditorScreenProps) {
-  const [started, setStarted] = useState(false);
-  if (name !== undefined) return <Stored key={name} client={client} name={name} node={node} workspace={workspace} />;
-  if (started) {
-    if (workspace.status === 'loading') return <Loading label="Reading this build's capabilities" />;
-    // A failed workspace read is the shell's to show, with Retry, above the screen.
-    if (workspace.status === 'error') return null;
-    return <NewPipeline client={client} workspace={workspace.value} />;
+  const [session, setSession] = useState<{ key: number; route: string | undefined; owned: string | null }>({ key: 0, route: name, owned: null });
+  if (session.route !== name) {
+    const kept = name !== undefined && name === session.owned;
+    setSession({ key: kept ? session.key : session.key + 1, route: name, owned: kept ? session.owned : null });
   }
-  return (
-    <Sheet>
-      <EmptyState
-        heading="No pipeline open"
-        action={
-          <>
-            <Button kind="primary" size="l" onClick={() => setStarted(true)}>
-              Start a new pipeline
-            </Button>
-            <ButtonLink kind="quiet" size="l" href={formatHash({ screen: 'runs' })}>
-              Open Runs
-            </ButtonLink>
-          </>
-        }
-      >
-        Start a new pipeline on the canvas, from what this build can run.
-      </EmptyState>
-    </Sheet>
-  );
+  const onNamed = useCallback((written: string) => {
+    setSession((s) => ({ ...s, owned: written }));
+    navigate({ screen: 'editor', name: written }, { replace: true });
+  }, []);
+  const onReload = useCallback(() => setSession((s) => ({ ...s, key: s.key + 1 })), []);
+  return <Opened key={session.key} client={client} name={name} node={node} workspace={workspace} onNamed={onNamed} onReload={onReload} />;
 }

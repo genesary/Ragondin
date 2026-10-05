@@ -8,9 +8,12 @@ import { EditorInspector, type NodeVerdict } from './EditorInspector.tsx';
 import { InsertMenu, NodeEntries } from './menus.tsx';
 import { Palette, paletteOf } from './Palette.tsx';
 import { INPUT_KIND, portsOf, refusal, type PortGrammar } from './ports.ts';
-import { canRedo, canUndo, editorReducer, initialEditor, type EditorLayout } from './store.ts';
+import { asking, useLayoutSaving, useSaving } from './persist.ts';
 import { runUpTo } from './prefix.ts';
-import { useValidation } from './validation.ts';
+import { isDirty, type FileInit, type SaveState } from './saving.ts';
+import { ExportPanel, SavePrompt } from './SavePrompt.tsx';
+import { canRedo, canUndo, editorReducer, initialEditor, type EditorAction, type EditorLayout } from './store.ts';
+import { useValidation, type Verdict } from './validation.ts';
 import { navigate } from '../routes.ts';
 import './Editor.css';
 
@@ -35,6 +38,14 @@ export type EditorProps = {
   grammar: PortGrammar | null;
   selected: string | null;
   onSelect: (id: string | null) => void;
+  /** The file the editor writes, as it was read; absent, nothing is ever written. */
+  file?: FileInit;
+  /** The run this pipeline was forked from, named in the header. */
+  forkedFrom?: string | null;
+  /** The name the editor now writes under: a first creation, or a save as a new file. */
+  onNamed?: (name: string) => void;
+  /** "Discard my changes and reload": the file read again from disk. */
+  onReload?: () => void;
 };
 
 // What the inspector's verdict slot says of a node the server names nothing about.
@@ -50,16 +61,64 @@ const QUIET: Record<'checking' | 'valid' | 'invalid' | 'failed', string> = {
 const NO_TEXT = new Set(['checkbox', 'radio', 'button', 'submit', 'reset', 'range', 'color', 'file']);
 const isTextField = (el: Element | null) => (el instanceof HTMLInputElement && !NO_TEXT.has(el.type)) || el instanceof HTMLTextAreaElement;
 
+/** What the save line says: whether what is on the canvas is what is on disk, and if not, why. */
+function saveWords(save: SaveState, dirty: boolean, verdict: Verdict, errors: number): string {
+  const { phase } = save;
+  switch (phase.kind) {
+    case 'saving':
+      return 'Saving…';
+    case 'conflict':
+      return 'Not saved: the file changed on disk';
+    case 'handwritten':
+      return 'Not saved: waiting for your choice';
+    case 'taken':
+      return 'Not saved: the name is taken';
+    case 'failed':
+      return `Not saved: ${phase.problem.message}`;
+    case 'idle':
+      if (verdict.status === 'invalid') return `Unsaved — ${errors} ${errors === 1 ? 'error' : 'errors'}`;
+      if (verdict.status === 'failed') return 'Unsaved: the server could not be asked';
+      if (dirty || (save.keep && save.file.name === null)) return 'Unsaved changes';
+      return save.file.name === null ? 'Not written yet: the first change, or Keep this pipeline, writes it' : 'Saved';
+  }
+}
+
+const shortRun = (id: string) => id.slice(0, 12);
+
 /**
  * The editor: the canvas in write mode over one wire-schema document, the
- * palette beside it, the inspector for the selected node, undo and redo, and
- * the server's verdict on the document as it stands. It holds the document in
- * state and writes nothing: saving is not here.
+ * palette beside it, the inspector for the selected node, undo and redo, the
+ * server's verdict on the document as it stands, and — given the `file` it
+ * writes — continuous saving (`persist.ts`, `saving.ts`) and the export.
  */
-export function Editor({ client, title, stored = null, initial, layout, capabilities, services, grammar, selected, onSelect }: EditorProps) {
-  const [state, dispatch] = useReducer(editorReducer, undefined, () => initialEditor(initial, layout));
+export function Editor({ client, title, stored = null, initial, layout, capabilities, services, grammar, selected, onSelect, file, forkedFrom = null, onNamed = () => {}, onReload = () => {} }: EditorProps) {
+  const [state, apply] = useReducer(editorReducer, undefined, () => initialEditor(initial, layout));
+  // A position a step changed is the person's and is written; where the
+  // canvas placed a node itself on opening is kept, and written with the next.
+  const [touched, setTouched] = useState(false);
+  const dispatch = useCallback((action: EditorAction) => {
+    if (action.type !== 'placed') setTouched(true);
+    apply(action);
+  }, []);
   const { doc } = state;
   const verdict = useValidation(client, doc);
+  const [save, act] = useSaving(client, doc, verdict, file, onNamed);
+  const written = save.file.etag === null ? null : save.file.name;
+  // While a prompt is up, or a save as a new file is out, the positions wait for the file chosen.
+  const holding = asking(save) || (save.phase.kind === 'saving' && save.phase.back !== null);
+  const layoutFailed = useLayoutSaving(client, written, state.layout, touched, holding);
+  const dirty = isDirty(save, doc);
+  // Leaving the page while something is not on disk asks the browser to confirm.
+  const unsaved = file !== undefined && (save.phase.kind !== 'idle' || dirty || (save.keep && save.file.name === null));
+  useEffect(() => {
+    if (!unsaved) return;
+    const onLeave = (event: BeforeUnloadEvent) => event.preventDefault();
+    window.addEventListener('beforeunload', onLeave);
+    return () => window.removeEventListener('beforeunload', onLeave);
+  }, [unsaved]);
+  const [exporting, setExporting] = useState(false);
+  const name = save.file.name ?? title;
+  const fileName = save.file.name ?? (save.file.proposed === '' ? 'pipeline' : save.file.proposed);
   const root = useRef<HTMLDivElement>(null);
   const [inserting, setInserting] = useState<HTMLElement | null>(null);
   // A node to focus once it is on the canvas, or the inspector to enter once it opens.
@@ -159,12 +218,15 @@ export function Editor({ client, title, stored = null, initial, layout, capabili
     return () => document.removeEventListener('keydown', onPage);
   }, []);
 
-  // "Run up to this node" launches the stored document cut at the node, so it is offered only while the canvas still
-  // holds that document unchanged: the editor writes no file, and a run takes the one on disk.
-  const unchanged = useMemo(() => JSON.stringify(doc) === JSON.stringify(initial), [doc, initial]);
-  const runOf = (id: string) => runUpTo(doc, id, { name: stored, unchanged });
+  // "Run up to this node" launches the document on disk cut at the node, so it is offered only while the canvas holds
+  // exactly what is on disk: a run takes the file, never the canvas. Given the file it writes, that is the file it
+  // last read or wrote, with nothing pending; with none, the stored pipeline it opened, still unedited.
+  const onDisk = file === undefined ? stored : save.file.etag === null ? null : save.file.name;
+  const pristine = useMemo(() => JSON.stringify(doc) === JSON.stringify(initial), [doc, initial]);
+  const unchanged = file === undefined ? pristine : !isDirty(save, doc) && save.phase.kind === 'idle';
+  const runOf = (id: string) => runUpTo(doc, id, { name: onDisk, unchanged });
   const runUpToNode = (id: string) => {
-    if (stored !== null) navigate({ screen: 'runs', launch: { pipeline: stored, upTo: id } });
+    if (onDisk !== null) navigate({ screen: 'runs', launch: { pipeline: onDisk, upTo: id } });
   };
 
   const nodeOf = (id: string) => doc.pipeline.nodes.find((n) => n.id === id);
@@ -245,13 +307,15 @@ export function Editor({ client, title, stored = null, initial, layout, capabili
         return <span data-invalid="true">Could not validate: {verdict.problem.message}</span>;
     }
   })();
+  const rendering = verdict.status === 'valid' ? verdict.rendering : null;
+  const errors = Math.max(1, Object.keys(issues).length);
   // Said once, politely: what is wrong, and nothing while the document is valid or being checked.
   const announced = verdict.status === 'invalid' ? `Not valid: ${verdict.problem.message}` : verdict.status === 'failed' ? `Could not validate: ${verdict.problem.message}` : '';
 
   return (
     <div ref={root} className="rg-editor" onKeyDown={onKeyDown}>
       <header className="rg-editor__bar">
-        <h2 className="rg-editor__title">{title}</h2>
+        <h2 className="rg-editor__title">{name}</h2>
         <div className="rg-editor__history" role="group" aria-label="History">
           <Button kind="quiet" size="s" icon="undo" onClick={() => dispatch({ type: 'undo' })} {...(canUndo(state) ? {} : { disabled: true, disabledReason: 'Nothing to undo.' })}>
             Undo
@@ -260,17 +324,50 @@ export function Editor({ client, title, stored = null, initial, layout, capabili
             Redo
           </Button>
         </div>
+        <Button kind="quiet" size="s" aria-expanded={exporting} onClick={() => setExporting(!exporting)} {...(rendering === null ? { disabled: true, disabledReason: 'Only a document the server calls valid is exported.' } : {})}>
+          Export
+        </Button>
         <p className="rg-editor__verdict">{header}</p>
         <p className="rg-visually-hidden" role="status">
           {announced}
         </p>
+        {file === undefined ? null : (
+          <div className="rg-editor__file">
+            <p className="rg-editor__save" data-testid="save-state" role="status" aria-live="polite">
+              {saveWords(save, dirty, verdict, errors)}
+            </p>
+            {save.file.name === null && !save.keep ? (
+              <Button size="s" onClick={() => act({ type: 'keep' })}>
+                Keep this pipeline
+              </Button>
+            ) : null}
+            {forkedFrom === null ? null : (
+              <p className="rg-editor__fork">
+                Forked from run <code title={forkedFrom}>{shortRun(forkedFrom)}</code>
+              </p>
+            )}
+            {layoutFailed === null ? null : <p className="rg-editor__layout-failed">The positions could not be saved: {layoutFailed.message}</p>}
+          </div>
+        )}
       </header>
+      <SavePrompt
+        phase={save.phase}
+        name={save.file.name ?? save.file.proposed}
+        valid={verdict.status === 'valid'}
+        onReload={onReload}
+        onRewrite={() => act({ type: 'rewrite' })}
+        onSaveAs={(to) => {
+          // A new file is written only from a document the server called valid, as every write is.
+          if (verdict.status === 'valid') act({ type: 'saveAs', doc, name: to });
+        }}
+      />
+      {exporting && rendering !== null ? <ExportPanel name={fileName} rendering={rendering} /> : null}
       <div className="rg-editor__body">
         <Palette entries={sections} onPlace={(component, impl) => place(component, impl)} />
         <div className="rg-editor__stage">
           <Canvas
             graph={graph}
-            label={`Pipeline ${title}`}
+            label={`Pipeline ${name}`}
             mode="write"
             layout={state.layout}
             selected={selected}

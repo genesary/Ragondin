@@ -1173,3 +1173,150 @@ async fn a_typed_document_read_from_a_file_validates_to_the_hash_of_its_text() {
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["hash"], detail["hash"]);
 }
+
+// The editor's writes: a typed document stored as the server renders it, the
+// read saying whether a file's text is that rendering, the rendering a
+// validation answers for an export, and a run's layout read for a fork.
+
+/// Writes `body` to `name` with `headers`, answering the status and body.
+async fn put(
+    workspace: &Workspace,
+    name: &str,
+    body: &Value,
+    headers: &[(&str, &str)],
+) -> (StatusCode, Value) {
+    let response = send(
+        server(workspace),
+        write_request("PUT", &format!("/api/v1/pipelines/{name}"), body, headers),
+    )
+    .await;
+    (response.status(), body_json(response).await)
+}
+
+#[tokio::test]
+async fn a_typed_write_stores_the_server_s_rendering_and_hashes_as_its_validation() {
+    let workspace = scratch("typed_write");
+
+    let (_, validated) = validate(&workspace, &json!({ "typed": kinds_typed() })).await;
+    let (status, written) = put(
+        &workspace,
+        "kinds",
+        &json!({ "typed": kinds_typed() }),
+        &[("if-none-match", "*")],
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "{written}");
+    let stored = String::from_utf8(on_disk(&workspace, "kinds")).unwrap();
+    // The rendering, never the JSON the browser sent: block YAML that states
+    // its version (ADR-C41).
+    assert!(stored.starts_with("version: "), "{stored}");
+    assert_eq!(validated["rendering"], stored.as_str());
+    assert_eq!(written["hash"], validated["hash"]);
+    let (_, text) = validate(&workspace, &document(&stored)).await;
+    assert_eq!(text["hash"], written["hash"]);
+}
+
+#[tokio::test]
+async fn a_typed_write_honours_the_precondition_and_writes_nothing_invalid() {
+    let workspace = scratch("typed_write_guarded");
+    let etag = create(&workspace, "kinds", KINDS).await;
+    let mut dangling = kinds_typed();
+    dangling["pipeline"]["nodes"][0]["inputs"] = json!(["nowhere"]);
+    let typed = json!({ "typed": kinds_typed() });
+
+    let (stale, problem) = put(&workspace, "kinds", &typed, &[("if-match", "\"0000\"")]).await;
+    let (missing, _) = put(&workspace, "kinds", &typed, &[]).await;
+    let (invalid, refused) = put(
+        &workspace,
+        "kinds",
+        &json!({ "typed": dangling }),
+        &[("if-match", &etag)],
+    )
+    .await;
+
+    assert_eq!(stale, StatusCode::PRECONDITION_FAILED, "{problem}");
+    assert_eq!(problem["code"], "precondition_failed");
+    assert_eq!(missing, StatusCode::PRECONDITION_FAILED);
+    assert_eq!(invalid, StatusCode::UNPROCESSABLE_ENTITY, "{refused}");
+    assert_eq!(refused["location"]["node"], "lexical");
+    assert_eq!(on_disk(&workspace, "kinds"), KINDS.as_bytes());
+}
+
+#[tokio::test]
+async fn the_read_says_whether_the_text_is_the_server_s_own_rendering() {
+    let workspace = scratch("canonical_flag");
+    let (status, written) = put(
+        &workspace,
+        "rendered",
+        &json!({ "typed": kinds_typed() }),
+        &[("if-none-match", "*")],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{written}");
+    let rendered =
+        body_json(send(server(&workspace), get("/api/v1/pipelines/rendered")).await).await;
+    let commented = format!("# a comment\n{}", rendered["document"].as_str().unwrap());
+
+    assert_eq!(rendered["canonical"], true, "{rendered}");
+    assert_eq!(
+        read_detail(&workspace, "commented", &commented).await["canonical"],
+        false
+    );
+    assert_eq!(
+        read_detail(&workspace, "hand", HYBRID).await["canonical"],
+        false
+    );
+    assert_eq!(
+        read_detail(&workspace, "syntax", "pipeline: [").await["canonical"],
+        false
+    );
+}
+
+#[tokio::test]
+async fn validate_answers_the_rendering_a_write_would_store() {
+    let workspace = scratch("validate_rendering");
+
+    let (_, typed) = validate(&workspace, &json!({ "typed": kinds_typed() })).await;
+    let (_, text) = validate(&workspace, &document(KINDS)).await;
+
+    // A text is answered with the rendering of the document it reads to, so
+    // an import exports as the editor would write it.
+    assert_eq!(text["rendering"], typed["rendering"]);
+    let rendering = typed["rendering"].as_str().expect("a rendering");
+    assert!(rendering.starts_with("version: "), "{rendering}");
+    assert!(rendering.contains("k: 60.0"), "{rendering}");
+}
+
+#[tokio::test]
+async fn a_run_s_layout_is_read_from_the_layouts_copied_at_launch() {
+    let workspace = scratch("run_layout");
+    let run = support::fixture_run();
+    let id = run.id.to_string();
+    let hash = run.inputs.pipeline.to_string();
+    let serve = || {
+        let mut backends = fakes(FakeRunStore::holding([run.clone()]));
+        backends.pipelines = Arc::new(FsPipelines::new(&workspace));
+        app_with_backends(backends)
+    };
+
+    let absent = body_json(send(serve(), get(&format!("/api/v1/runs/{id}/layout"))).await).await;
+    fs::write(
+        workspace.layouts().join(format!("{hash}.json")),
+        r#"{"version":1,"nodes":{"lexical":{"x":16.0,"y":32.0}}}"#,
+    )
+    .unwrap();
+    let present = body_json(send(serve(), get(&format!("/api/v1/runs/{id}/layout"))).await).await;
+    let unknown = send(
+        serve(),
+        get(&format!("/api/v1/runs/{}/layout", "0".repeat(64))),
+    )
+    .await;
+
+    assert_eq!(absent, json!({ "layout": null }));
+    assert_eq!(
+        present,
+        json!({ "layout": { "version": 1, "nodes": { "lexical": { "x": 16.0, "y": 32.0 } } } })
+    );
+    assert_eq!(unknown.status(), StatusCode::NOT_FOUND);
+}
