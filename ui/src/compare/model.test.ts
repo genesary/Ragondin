@@ -106,7 +106,7 @@ describe('configurationRows', () => {
 
   it('draws a node some run lacks as one row saying which runs hold it, never as rows of unset parameters', () => {
     const rows = configurationRows(matrix!);
-    expect(rows.map((r) => (r.kind === 'node' ? `${r.node} — ${onlyIn(r.present)}` : `${r.row.node}/${parameterName(r.row.key)}`))).toEqual([
+    expect(rows.map((r) => (r.kind === 'node' ? `${r.node} — ${onlyIn(r.present, runSeries(COMPARISON))}` : `${r.row.node}/${parameterName(r.row.key)}`))).toEqual([
       'bm25 — only in A and B',
       'dense/top_k',
       'rerank — only in B',
@@ -124,10 +124,13 @@ describe('configurationRows', () => {
 });
 
 describe('onlyIn', () => {
-  it('names the runs holding a node by their letters, the baseline in words', () => {
-    expect(onlyIn([true, false])).toBe('only in baseline');
-    expect(onlyIn([false, true, false])).toBe('only in A');
-    expect(onlyIn([true, true, false, true])).toBe('only in baseline, A and C');
+  it('names the runs holding a node by their series\' letters, the baseline in words', () => {
+    const series = runSeries({ ...COMPARISON, runs: [...COMPARISON.runs, { ...COMPARISON.runs[2]!, id: 'r4' }] });
+    expect(onlyIn([true, false, false, false], series)).toBe('only in baseline');
+    expect(onlyIn([false, true, false, false], series)).toBe('only in A');
+    expect(onlyIn([true, true, false, true], series)).toBe('only in baseline, A and C');
+    // The letter is the series' own, so a run the chart writes otherwise is named as the chart writes it.
+    expect(onlyIn([false, true], [series[0]!, { ...series[1]!, short: 'X' }])).toBe('only in X');
   });
 });
 

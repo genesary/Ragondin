@@ -5,6 +5,7 @@
 // moves between a node and its upstream, the counterpart beside a node, and
 // the sentences. ARCHITECTURE.md § The Replay screen.
 import type { DatasetCheck, Graph, PartialTrace, QueryScores, QueryTrace, RunListing, RunSummary, TracePassage, TraceNodeView } from '../api/types.ts';
+import { listed } from '../../design/index.ts';
 import type { NodeOverlay } from '../canvas/index.ts';
 
 /**
@@ -26,7 +27,6 @@ export const fromPartial = (trace: PartialTrace): ReplayTrace => ({ query: trace
 export const runName = (run: Pick<RunSummary, 'launched_as' | 'pipeline_names'>): string | null => run.launched_as?.name ?? run.pipeline_names[0] ?? null;
 
 const FORK_INSTEAD = 'Fork this run to edit it.';
-const andList = (names: string[]) => (names.length < 2 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`);
 
 /**
  * The stored document the editor opens a run on, so the selected node is the
@@ -44,7 +44,7 @@ export function editorTarget(run: Pick<RunSummary, 'launched_as' | 'pipeline_nam
   if (name !== undefined) return { name };
   const refused = run.refused_pipeline_names;
   if (refused.length === 1) return { reason: `${refused[0]} holds what this run ran, but differs from another stored name only in case, so it cannot be read. ${FORK_INSTEAD}` };
-  if (refused.length > 1) return { reason: `${andList(refused)} hold what this run ran, but each differs from another stored name only in case, so ${refused.length === 2 ? 'neither' : 'none'} can be read. ${FORK_INSTEAD}` };
+  if (refused.length > 1) return { reason: `${listed(refused)} hold what this run ran, but each differs from another stored name only in case, so ${refused.length === 2 ? 'neither' : 'none'} can be read. ${FORK_INSTEAD}` };
   if (launched !== null && run.launched_as?.held === 'exactly') return { reason: `${launched} has changed since this run, and no pipeline document holds what it ran. ${FORK_INSTEAD}` };
   return { reason: `No pipeline document in the workspace holds what this run ran. ${FORK_INSTEAD}` };
 }

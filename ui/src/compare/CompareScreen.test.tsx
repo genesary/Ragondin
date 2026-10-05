@@ -468,7 +468,10 @@ describe('the tables', () => {
     const table = screen.getByRole('table', { name: 'Parameters that differ across the runs' });
     expect(within(table).queryByText('not set')).toBeNull();
     const rerank = within(table).getByText('rerank').closest('tr') as HTMLElement;
-    expect(rerank.textContent).toContain('only in B');
+    // Which runs hold it is said with the node; the Parameter column says the row is the node itself.
+    const [node, parameter] = [...rerank.querySelectorAll('td')].map((td) => td.textContent);
+    expect(node).toBe('rerank only in B');
+    expect(parameter).toBe('whole node');
     const cells = [...rerank.querySelectorAll('td')].slice(-3).map((td) => td.textContent);
     expect(cells).toEqual(['no such node', 'no such node', 'reranker · cross_encoder (differs from the baseline)']);
     // A parameter of such a node is kept where the runs holding it disagree; a run without the node says so.

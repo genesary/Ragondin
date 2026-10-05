@@ -104,7 +104,15 @@ export function ParameterMatrix({ configuration, series }: { configuration: Conf
     if (entry.kind === 'node') {
       return {
         id: `${entry.node}/`,
-        cells: [entry.node, onlyIn(entry.present), ...entry.present.map((held, i) => (held ? departed(heldAs(entry.node, i), i !== 0 && held !== entry.present[0]) : lacking))],
+        // Which runs hold the node is said with its name, the row's label; the
+        // Parameter column says the row is the node itself, not one of its parameters.
+        cells: [
+          <>
+            {entry.node} <span className="rg-compare__absent">{onlyIn(entry.present, series)}</span>
+          </>,
+          <span className="rg-compare__absent">whole node</span>,
+          ...entry.present.map((held, i) => (held ? departed(heldAs(entry.node, i), i !== 0 && held !== entry.present[0]) : lacking)),
+        ],
       };
     }
     const { row, present } = entry;

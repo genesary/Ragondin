@@ -4,6 +4,7 @@
 // § Prefix runs): these checks only anticipate its refusals, so neither
 // control offers a launch the server would refuse. ARCHITECTURE.md § The
 // editor.
+import { listed } from '../../design/index.ts';
 import type { WireDocument } from './document.ts';
 
 /** Whether a node can be run up to: open, with the second line that says what the prefix keeps and skips, or refused, with why. */
@@ -11,12 +12,6 @@ export type RunUpTo = { kind: 'open'; line: string } | { kind: 'refused'; reason
 
 /** The pipeline as it is stored: its name, null before it is a workspace document, and whether the canvas still holds it unchanged. */
 export type Stored = { name: string | null; unchanged: boolean };
-
-/** Names joined as a sentence lists them: "a", "a and b", "a, b and c". */
-function listed(names: readonly string[]): string {
-  if (names.length <= 1) return names.join('');
-  return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
-}
 
 /**
  * Whether `node` of `doc` can be run up to. Refused on the pipeline's output

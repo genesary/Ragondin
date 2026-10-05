@@ -3,7 +3,7 @@
 // the best of each row — and this module only lays them out: which slot a
 // run takes, which metrics share the bars' 0–1 scale, how a bound or a delta
 // is written, and the verdict sentence. ARCHITECTURE.md § The Compare screen.
-import { familyOfComponent, type Family, type HistogramBin, type RunSeries, type RunSlot, type StackSegment } from '../../design/index.ts';
+import { familyOfComponent, listed, type Family, type HistogramBin, type RunSeries, type RunSlot, type StackSegment } from '../../design/index.ts';
 import type { Comparison, ConfigurationMatrix, MetricDeltas, MetricDirection, MetricRow, NodePair, ParameterRow, ParameterValue, StageName, UnplacedPair } from '../api/types.ts';
 import { formatParameter as formatValueOf } from '../parameters.ts';
 import { shortHash } from '../runs/model.ts';
@@ -74,11 +74,9 @@ export function departures(row: ParameterRow): boolean[] {
 /** A parameter's name as a configuration spells it. */
 export const parameterName = (key: ParameterRow['key']) => (key.kind === 'param' ? key.name : key.kind);
 
-/** The words for the runs holding a node: "only in baseline", "only in A and B". */
-export function onlyIn(present: readonly boolean[]): string {
-  const names = present.flatMap((held, i) => (held ? [i === 0 ? 'baseline' : letterOf(i)] : []));
-  const words = names.length < 2 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names.at(-1) ?? ''}`;
-  return `only in ${words}`;
+/** The words for the runs holding a node, by the letters `series` writes: "only in baseline", "only in A and B". */
+export function onlyIn(present: readonly boolean[], series: readonly RunSeries[]): string {
+  return `only in ${listed(present.flatMap((held, i) => (held ? [i === 0 ? 'baseline' : (series[i]?.short ?? '')] : [])))}`;
 }
 
 /**
