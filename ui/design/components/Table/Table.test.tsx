@@ -258,3 +258,36 @@ describe('Table as a scroll region', () => {
     expect(container.querySelector('.rg-tablewrap')?.hasAttribute('tabindex')).toBe(false);
   });
 });
+
+describe('Table wider than its box', () => {
+  // happy-dom lays nothing out: the box's widths are set by hand, and a scroll event asks the table to look again.
+  const sized = (box: HTMLElement, scrollWidth: number, clientWidth: number) => {
+    Object.defineProperty(box, 'scrollWidth', { configurable: true, value: scrollWidth });
+    Object.defineProperty(box, 'clientWidth', { configurable: true, value: clientWidth });
+  };
+
+  it('shows which sides hold more, a fade on each edge it can still scroll towards', () => {
+    const { container } = render(<Table caption="m" columns={columns} rows={rows} />);
+    const box = container.querySelector('.rg-tablewrap') as HTMLElement;
+    const frame = box.parentElement as HTMLElement;
+    expect(frame.classList.contains('rg-tableframe')).toBe(true);
+    expect(frame.hasAttribute('data-more-end')).toBe(false);
+    sized(box, 900, 300);
+    fireEvent.scroll(box);
+    expect(frame.getAttribute('data-more-end')).toBe('true');
+    expect(frame.hasAttribute('data-more-start')).toBe(false);
+    box.scrollLeft = 600;
+    fireEvent.scroll(box);
+    expect(frame.getAttribute('data-more-start')).toBe('true');
+    expect(frame.hasAttribute('data-more-end')).toBe(false);
+  });
+
+  it('draws each fade from the surface the table sits on, above the sticky headers, and lets the pointer through', () => {
+    expect(declared(css, '.rg-tableframe', 'position')).toBe('relative');
+    expect(declared(css, '.rg-tableframe[data-more-end]::after', 'background')).toBe('linear-gradient(to left, var(--surface), transparent)');
+    expect(declared(css, '.rg-tableframe[data-more-start]::before', 'background')).toBe('linear-gradient(to right, var(--surface), transparent)');
+    expect(declared(css, '.rg-tableframe::before', 'pointer-events')).toBe('none');
+    expect(declared(css, '.rg-tableframe::after', 'pointer-events')).toBe('none');
+    expect(declared(css, '.rg-tableframe::after', 'z-index')).toBe('3');
+  });
+});

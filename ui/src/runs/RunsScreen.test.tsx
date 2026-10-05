@@ -5,6 +5,8 @@ import { createApiClient, type ApiClient, type ApiResult } from '../api/client.t
 import { mockApi, type MockReply, type MockRoutes } from '../api/testing.ts';
 import type { Graph, Problem, RunListing, RunSummary } from '../api/types.ts';
 import { navigate, useRoute } from '../routes.ts';
+import { parseRules } from '../../design/testing/css.ts';
+import runsCss from './Runs.css?raw';
 import { RunsScreen } from './RunsScreen.tsx';
 
 const hex = (c: string) => c.repeat(64);
@@ -261,6 +263,21 @@ describe('over a listing with two benchmarks', () => {
     expect(table.querySelectorAll('tbody')).toHaveLength(2);
     expect(table.querySelectorAll('th[scope="rowgroup"]')).toHaveLength(2);
     expect(within(table).getAllByRole('columnheader').map((h) => h.textContent)).toEqual(['Benchmark', 'Run', 'Status', 'Metrics']);
+  });
+
+  it('scrolls the runs sideways in a named scroll box that is a tab stop, so a phone\'s keyboard reaches the columns past its edge', async () => {
+    show('#runs');
+    const table = await screen.findByRole('table', { name: 'Runs, grouped by pipeline' });
+    const box = screen.getByRole('region', { name: 'Runs, grouped by pipeline' });
+    expect(table.closest('.rg-tablewrap')).toBe(box);
+    expect(box.getAttribute('tabindex')).toBe('0');
+  });
+
+  it('keeps each row one metric line high on a phone, the table scrolling sideways rather than stacking the figures', () => {
+    const phone = parseRules(runsCss).filter((r) => r.atRule === '@media (max-width: 640px)');
+    for (const selector of ['.rg-runs__metrics', '.rg-runs__family']) {
+      expect(phone.find((r) => r.selector.split(',').map((x) => x.trim()).includes(selector))?.declarations.get('flex-wrap'), selector).toBe('nowrap');
+    }
   });
 
   it('shows on each row only the metrics its run recorded, and no cell reads "—"', async () => {

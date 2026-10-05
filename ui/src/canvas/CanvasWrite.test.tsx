@@ -81,7 +81,7 @@ describe('Canvas in write mode, drawing', () => {
   it('describes each node by the keys write mode adds', () => {
     const { container } = renderWrite();
     const described = nodeEl(container, 'lexical').getAttribute('aria-describedby')!;
-    expect(document.getElementById(described)?.textContent).toBe('Enter selects, Shift+F10 opens the menu, the arrow keys move it, Delete removes it, Escape clears.');
+    expect(document.getElementById(described)?.textContent).toBe('Enter selects, Shift+F10 opens the menu, the arrow keys move it, Alt and the arrow keys move between nodes, Delete removes it, Escape clears.');
   });
 });
 
@@ -149,6 +149,24 @@ describe('Canvas in write mode, an edge drawn by drag', () => {
     expect(rule?.declarations.get('pointer-events')).toBe('all');
   });
 
+  it('shows, while the status line is silent, how to move between nodes — beside the live region, never inside it', () => {
+    const { container } = renderWrite();
+    const status = within(container).getByRole('status');
+    const hint = container.querySelector('.rg-canvas__hint');
+    expect(hint?.textContent).toBe('Alt + arrow keys: move between nodes');
+    expect(hint?.getAttribute('aria-hidden')).toBe('true');
+    expect(status.contains(hint)).toBe(false);
+    expect(hint?.parentElement).toBe(status.parentElement);
+    expect(status.textContent).toBe('');
+    fireEvent.pointerDown(outPort(container, 'question'), { button: 0 });
+    expect(container.querySelector('.rg-canvas__hint')).toBeNull();
+  });
+
+  it('shows no such hint in read mode, where the plain arrow keys already move between nodes', () => {
+    const { container } = renderWrite({ mode: 'read' });
+    expect(container.querySelector('.rg-canvas__hint')).toBeNull();
+  });
+
   it('lets the status line wrap below the toolbar on a narrow screen rather than cut its reason off', () => {
     const narrow = parseRules(css).filter((r) => r.selector === '.rg-canvas__status' && r.atRule?.includes('max-width'));
     expect(narrow.at(-1)?.declarations.get('white-space')).toBe('normal');
@@ -175,6 +193,17 @@ describe('Canvas in write mode, the keyboard', () => {
     const { container } = renderWrite({ onInsert });
     fireEvent.keyDown(container.querySelector('.react-flow') as HTMLElement, { key: '/' });
     expect(onInsert).toHaveBeenCalledTimes(1);
+  });
+
+  it('moves focus between the nodes with Alt and the arrow keys, moving no node', () => {
+    const { container, onMove } = renderWrite();
+    const order = [...container.querySelectorAll('.react-flow__node')].filter((el) => el.getAttribute('tabindex') === '0').map((el) => el.getAttribute('data-id')!);
+    act(() => nodeEl(container, order[0]!).focus());
+    fireEvent.keyDown(nodeEl(container, order[0]!), { key: 'ArrowRight', altKey: true });
+    expect(document.activeElement).toBe(nodeEl(container, order[1]!));
+    fireEvent.keyDown(nodeEl(container, order[1]!), { key: 'ArrowLeft', altKey: true });
+    expect(document.activeElement).toBe(nodeEl(container, order[0]!));
+    expect(onMove).not.toHaveBeenCalled();
   });
 
   it('moves nothing with the arrow keys in read mode', () => {

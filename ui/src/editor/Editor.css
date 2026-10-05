@@ -3,7 +3,7 @@
    Nothing here changes size with what the server says: the verdict line has a
    fixed height and scrolls, so a verdict arriving moves nothing below it and a
    long report is never cut off. */
-.rg-editor { display: flex; flex-direction: column; height: calc(100vh - 120px); min-height: 480px; }
+.rg-editor { position: relative; display: flex; flex-direction: column; height: calc(100vh - 120px); min-height: 480px; }
 .rg-editor__bar {
   display: grid;
   grid-template-columns: auto auto minmax(0, 1fr);
@@ -71,7 +71,9 @@
 .rg-editor__stage { position: relative; min-width: 0; min-height: 0; display: flex; }
 
 /* The palette: one section per family, each entry a full-width button. */
-.rg-palette { overflow-y: auto; padding: var(--space-3); border-right: 1px solid var(--line); display: grid; align-content: start; gap: var(--space-4); }
+.rg-palette { overflow-y: auto; padding: var(--space-3); border-right: 1px solid var(--line); }
+/* The toolbar that holds the entries lays the sections out, so wrapping them in it moved nothing. */
+.rg-palette__entries { display: grid; align-content: start; gap: var(--space-4); }
 .rg-palette__section { display: grid; gap: 2px; }
 .rg-palette__head { display: flex; align-items: center; gap: var(--space-2); margin: 0 0 var(--space-1); font: 600 12px/16px var(--font-sans); color: var(--ink-2); }
 .rg-palette__head .rg-tile { width: 20px; height: 20px; border-radius: 5px; }
@@ -147,11 +149,42 @@
 .rg-editor-inspector__param > .rg-check { margin-top: 20px; min-height: var(--size-control); }
 .rg-editor-inspector__add { display: grid; gap: var(--space-2); margin-top: var(--space-3); padding-top: var(--space-3); border-top: 1px solid var(--line); }
 
+/* The skip link past the bar and the palette: hidden until it has focus, then drawn over the bar's corner. */
+.rg-skip {
+  position: absolute;
+  z-index: 10;
+  margin: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--line-control);
+  border-radius: var(--radius-s);
+  background: var(--surface);
+  color: var(--ink);
+  font: var(--type-label);
+  box-shadow: var(--shadow-float);
+}
+.rg-skip:not(:focus) {
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+/* Said on a phone only: the editor is laid out for a wide screen. */
+.rg-editor__narrow { display: none; }
+
+@media (max-width: 640px) {
+  .rg-editor__narrow { display: block; padding: var(--space-3) var(--space-4) 0; }
+}
+
 @media (max-width: 900px) {
   .rg-editor { height: auto; }
+  /* Stacked above the canvas, the palette scrolls inside a bounded height, so the canvas is not pushed off the screen. */
+  .rg-palette { max-height: 12rem; border-right: 0; border-bottom: 1px solid var(--line); }
   .rg-editor__body { grid-template-columns: minmax(0, 1fr); }
   .rg-editor__stage { min-height: 480px; }
-  .rg-palette { border-right: 0; border-bottom: 1px solid var(--line); }
   .rg-editor__bar { grid-template-columns: minmax(0, 1fr); }
   .rg-editor__verdict { grid-column: 1 / -1; }
   /* The inspector goes under the canvas, which otherwise keeps no width beside it. */

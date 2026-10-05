@@ -135,8 +135,8 @@ type LineEdge = Edge<{ port: number; kind: PortKind; invalid: boolean; selected:
 // no other. The library's default names Space, the arrow keys and Delete,
 // which the canvas binds itself, Delete in write mode only, or not at all.
 const NODE_DESCRIPTION: Record<CanvasMode, string> = {
-  read: 'Enter selects, Shift+F10 opens the menu, Escape clears.',
-  write: 'Enter selects, Shift+F10 opens the menu, the arrow keys move it, Delete removes it, Escape clears.',
+  read: 'Enter selects, the arrow keys move between nodes, Shift+F10 opens the menu, Escape clears.',
+  write: 'Enter selects, Shift+F10 opens the menu, the arrow keys move it, Alt and the arrow keys move between nodes, Delete removes it, Escape clears.',
 };
 // The id the library gives that description, suffixed with the flow's id.
 const KEYS_DESCRIPTION = 'react-flow__node-desc';
@@ -159,6 +159,8 @@ const handles = (node: CanvasNode): NodeHandle[] => [
 
 // A key's move, in grid steps: one, or four with Shift.
 const ARROWS: Record<string, [number, number]> = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
+// A key's step through the nodes in the order Tab walks: the next or the previous.
+const THROUGH: Record<string, 1 | -1> = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 };
 const snap = (v: number) => Math.round(v / GRID) * GRID;
 const WRITE_FIT = { maxZoom: 1 };
 // The library's own fit leaves a tenth of the pane around the graph; a frame keeps the same margin.
@@ -608,6 +610,14 @@ function Surface({
     } else if (editable && (event.key === 'Delete' || event.key === 'Backspace')) {
       event.preventDefault();
       onDelete?.(id);
+    } else if ((THROUGH[event.key] !== undefined && (!editable || event.altKey)) || event.key === 'Home' || event.key === 'End') {
+      // Focus moves through the nodes in the order Tab walks, stopping at either end; in write mode the plain arrows
+      // move the node, so Alt goes with them. Moving focus selects nothing.
+      event.preventDefault();
+      const order = model.nodes.map((n) => n.id);
+      const at = order.indexOf(id);
+      const to = event.key === 'Home' ? 0 : event.key === 'End' ? order.length - 1 : Math.min(Math.max(at + THROUGH[event.key]!, 0), order.length - 1);
+      root.current?.querySelector<HTMLElement>(`.react-flow__node[data-id="${CSS.escape(order[to]!)}"]`)?.focus();
     } else if (editable && ARROWS[event.key] !== undefined) {
       event.preventDefault();
       const [dx, dy] = ARROWS[event.key]!;
@@ -646,10 +656,19 @@ function Surface({
       <div ref={root} className="rg-canvas" data-mode={mode} data-drawing={drawing === null ? undefined : true} onKeyDown={onKeyDown} onDragOver={onDragOver} onDrop={onDrop}>
         {/* First in the tab order, before the nodes. */}
         <Toolbar label={label} onFit={fit} />
-        {/* Its height is kept whether or not it speaks, so nothing moves when it does. */}
+        {/* Its height is kept whether or not it speaks, so nothing moves when it does. While it is
+            silent it shows how to move between nodes, beside the live region rather than in it, so
+            the hint is never announced: every node's description already says it. */}
         {editable ? (
-          <p className="rg-canvas__status" role="status">
-            <Words text={status} />
+          <p className="rg-canvas__status">
+            <span role="status">
+              <Words text={status} />
+            </span>
+            {status === '' ? (
+              <span className="rg-canvas__hint" aria-hidden="true">
+                Alt + arrow keys: move between nodes
+              </span>
+            ) : null}
           </p>
         ) : null}
         <ReactFlow<CardNode, LineEdge>
@@ -737,10 +756,13 @@ function Surface({
  * The pipeline canvas: the lowered graph as node cards and typed edges, laid
  * out automatically or at stored positions, with pan, zoom, one selection and
  * a keyboard model — Tab walks the toolbar, then the nodes in topological
- * order; Enter selects, Shift+F10 opens the node menu, Escape clears. In
- * write mode nodes move, by drag or by the arrow keys, an edge is drawn from
- * an output port onto an input port that every port judges during the drag,
- * and `/` asks for the caller's insert list. It receives everything through
+ * order; the arrow keys move focus between nodes in that order in read mode,
+ * Alt and the arrow keys do in write mode, and Home and End go to the first
+ * and the last node, in either mode; Enter selects, Shift+F10 opens the node
+ * menu, Escape clears. In write mode the plain arrow keys move the focused
+ * node, as a drag does, an edge is drawn from an output port onto an input
+ * port that every port judges during the drag, and `/` asks for the caller's
+ * insert list. It receives everything through
  * its props and makes no request; it knows no screen. Each canvas holds its
  * own viewport and selection, so two side by side share nothing.
  */

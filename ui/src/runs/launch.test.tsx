@@ -766,6 +766,8 @@ describe('the queue’s rows', () => {
       runJob('j4', failedAt(null, 'boom'), { runId: hex('4') }),
     ]);
     const queue = screen.getByRole('table', { name: 'Queue' });
+    expect(queue.closest('.rg-tablewrap')?.getAttribute('role')).toBe('region');
+    expect(queue.closest('.rg-tablewrap')?.getAttribute('aria-label')).toBe('Queue');
     const names = within(queue)
       .getAllByRole('row')
       .map((r) => r.getAttribute('aria-label'))

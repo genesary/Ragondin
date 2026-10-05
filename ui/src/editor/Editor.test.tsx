@@ -228,13 +228,24 @@ describe('the node menu', () => {
     expect(container.querySelector('path.rg-edge[data-from="lexical"][data-to="fused"][data-port="2"]')).toBeTruthy();
   });
 
-  it('gives a declared input a menu too, whose one entry connects it by keyboard', () => {
+  it('opens a declared input\'s menu straight on the ports it can feed, with no one-entry menu before them', () => {
     const { container } = setup();
     const menu = openMenu(container, 'question');
-    expect(within(menu).getAllByRole('menuitem').map((m) => m.querySelector('b')?.textContent)).toEqual(['Connect output to…']);
-    fireEvent.click(within(menu).getByRole('menuitem', { name: /Connect output to/ }));
-    fireEvent.click(within(screen.getByRole('menu', { name: 'Node question' })).getByRole('menuitem', { name: /^second, port 0/ }));
+    const titles = within(menu).getAllByRole('menuitem').map((m) => m.querySelector('b')?.textContent);
+    expect(titles).not.toContain('Connect output to…');
+    expect(titles).not.toContain('Back to the node menu');
+    expect(titles[0]).toMatch(/^lexical, port 0/);
+    expect(document.activeElement).toBe(within(menu).getAllByRole('menuitem')[0]);
+    fireEvent.click(within(menu).getByRole('menuitem', { name: /^second, port 0/ }));
     expect(container.querySelector('path.rg-edge[data-from="question"][data-to="second"][data-port="0"]')).toBeTruthy();
+  });
+
+  it('says so when a declared input has no port to feed yet', () => {
+    const { container } = setup(undefined, { initial: { pipeline: { inputs: ['question'], nodes: [] } } });
+    const menu = openMenu(container, 'question');
+    const only = within(menu).getByRole('menuitem');
+    expect(only.getAttribute('aria-disabled')).toBe('true');
+    expect(only.textContent).toBe('No input port to connect toPlace a node from the palette first.');
   });
 
   it('after a delete, gives focus to the node that fed it, so the next undo is heard and brings the node back', () => {
@@ -867,3 +878,35 @@ describe('the Launch action', () => {
   });
 });
 
+
+describe('the editor from the keyboard and on a narrow screen', () => {
+  const at = (selector: string, media: string | null) => parseRules(editorCss).find((r) => r.selector === selector && (media === null ? r.atRule === null : r.atRule?.includes(media) === true));
+
+  it('opens with a link past the bar and the palette, which gives focus to the canvas\'s first node', () => {
+    const { container } = setup();
+    const editor = container.querySelector('.rg-editor') as HTMLElement;
+    const skip = within(editor).getByRole('button', { name: 'Skip to the canvas' });
+    const first = editor.querySelector('a[href], button, input, select, textarea, [tabindex="0"]');
+    expect(first).toBe(skip);
+    fireEvent.click(skip);
+    expect(document.activeElement).toBe(nodeEl(container, 'question'));
+  });
+
+  it('hides that link until it has focus, then shows it over the bar', () => {
+    expect(at('.rg-skip', null)?.declarations.get('position')).toBe('absolute');
+    expect(at('.rg-skip:not(:focus)', null)?.declarations.get('clip-path')).toBe('inset(50%)');
+  });
+
+  it('says, on a phone, that the editor is made for a wide screen, and nothing above that width', () => {
+    setup();
+    const notice = screen.getByText(/The editor is made for a wide screen/);
+    expect(notice.closest('.rg-editor__narrow')).toBeTruthy();
+    expect(at('.rg-editor__narrow', null)?.declarations.get('display')).toBe('none');
+    expect(at('.rg-editor__narrow', 'max-width: 640px')?.declarations.get('display')).toBe('block');
+  });
+
+  it('keeps the canvas near the top on a narrow screen: the stacked palette scrolls inside a bounded height', () => {
+    const palette = at('.rg-palette', 'max-width: 900px');
+    expect(palette?.declarations.get('max-height')).toBe('12rem');
+  });
+});

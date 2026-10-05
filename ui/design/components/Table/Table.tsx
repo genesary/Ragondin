@@ -1,4 +1,4 @@
-import { useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { tabStop } from '../../roving.ts';
 import './Table.css';
 
@@ -92,6 +92,29 @@ export function Table({ caption, columns, rows, onOpen, onToggle, rowHeaders = f
   const elements = useRef(new Map<string, HTMLTableRowElement>());
   const stop = keyed[tabStop(keyed.map(() => false), keyed.findIndex((r) => r.id === active))]?.id;
 
+  // Which sides of a table wider than its box hold more, so the frame draws a fade on each: a table cut at the
+  // screen's edge otherwise reads as whole on a phone, whose scrollbars show only while scrolling.
+  const box = useRef<HTMLDivElement>(null);
+  const [more, setMore] = useState({ start: false, end: false });
+  useEffect(() => {
+    const el = box.current;
+    if (el === null) return;
+    const look = () => {
+      const start = el.scrollLeft > 1;
+      const end = el.scrollLeft < el.scrollWidth - el.clientWidth - 1;
+      setMore((m) => (m.start === start && m.end === end ? m : { start, end }));
+    };
+    look();
+    el.addEventListener('scroll', look, { passive: true });
+    const resized = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(look);
+    resized?.observe(el);
+    if (el.firstElementChild !== null) resized?.observe(el.firstElementChild);
+    return () => {
+      el.removeEventListener('scroll', look);
+      resized?.disconnect();
+    };
+  }, []);
+
   const move = (to: number) => {
     const target = keyed[to];
     if (target === undefined) return;
@@ -130,71 +153,73 @@ export function Table({ caption, columns, rows, onOpen, onToggle, rowHeaders = f
   };
 
   return (
-    <div className="rg-tablewrap" {...(region ? { role: 'region', 'aria-label': caption, tabIndex: 0 } : {})}>
-      <table className="rg-table" aria-label={caption} data-row-headers={rowHeaders ? true : undefined}>
-        <thead>
-          <tr>
-            {columns.map((c) => (
-              <th key={c.id} scope="col" className={c.numeric ? 'num' : undefined}>
-                {c.label}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        {groups.map((group, g) => (
-          <tbody key={group.head?.id ?? `rows-${g}`}>
-            {group.head === null ? null : (
-              <tr className="rg-table__group">
-                <th scope="rowgroup" colSpan={columns.length}>
-                  {group.head.label}
+    <div className="rg-tableframe" data-more-start={more.start ? true : undefined} data-more-end={more.end ? true : undefined}>
+      <div ref={box} className="rg-tablewrap" {...(region ? { role: 'region', 'aria-label': caption, tabIndex: 0 } : {})}>
+        <table className="rg-table" aria-label={caption} data-row-headers={rowHeaders ? true : undefined}>
+          <thead>
+            <tr>
+              {columns.map((c) => (
+                <th key={c.id} scope="col" className={c.numeric ? 'num' : undefined}>
+                  {c.label}
                 </th>
-              </tr>
-            )}
-            {group.rows.map((row) => {
-              const takesKeys = live && !row.passive;
-              return (
-                <tr
-                  key={row.id}
-                  ref={(el) => {
-                    if (el === null) elements.current.delete(row.id);
-                    else elements.current.set(row.id, el);
-                  }}
-                  aria-current={row.selected ? true : undefined}
-                  aria-label={takesKeys ? row.label : undefined}
-                  tabIndex={takesKeys ? (row.id === stop ? 0 : -1) : undefined}
-                  onKeyDown={takesKeys ? onKeyDown(row) : undefined}
-                  onFocus={takesKeys ? () => setActive(row.id) : undefined}
-                >
-                  {row.cells.map((cell, i) => {
-                    const key = columns[i]?.id ?? i;
-                    if (i === 0 && rowHeaders) {
+              ))}
+            </tr>
+          </thead>
+          {groups.map((group, g) => (
+            <tbody key={group.head?.id ?? `rows-${g}`}>
+              {group.head === null ? null : (
+                <tr className="rg-table__group">
+                  <th scope="rowgroup" colSpan={columns.length}>
+                    {group.head.label}
+                  </th>
+                </tr>
+              )}
+              {group.rows.map((row) => {
+                const takesKeys = live && !row.passive;
+                return (
+                  <tr
+                    key={row.id}
+                    ref={(el) => {
+                      if (el === null) elements.current.delete(row.id);
+                      else elements.current.set(row.id, el);
+                    }}
+                    aria-current={row.selected ? true : undefined}
+                    aria-label={takesKeys ? row.label : undefined}
+                    tabIndex={takesKeys ? (row.id === stop ? 0 : -1) : undefined}
+                    onKeyDown={takesKeys ? onKeyDown(row) : undefined}
+                    onFocus={takesKeys ? () => setActive(row.id) : undefined}
+                  >
+                    {row.cells.map((cell, i) => {
+                      const key = columns[i]?.id ?? i;
+                      if (i === 0 && rowHeaders) {
+                        return (
+                          <th key={key} scope="row">
+                            {cell}
+                          </th>
+                        );
+                      }
+                      if (i === 1 && row.span) {
+                        return (
+                          <td key={key} colSpan={columns.length - 1}>
+                            {cell}
+                          </td>
+                        );
+                      }
+                      const best = typeof row.bestColumn === 'number' ? i === row.bestColumn : (row.bestColumn?.includes(i) ?? false);
                       return (
-                        <th key={key} scope="row">
+                        <td key={key} className={columns[i]?.numeric ? 'num' : undefined} data-best={best ? true : undefined}>
                           {cell}
-                        </th>
-                      );
-                    }
-                    if (i === 1 && row.span) {
-                      return (
-                        <td key={key} colSpan={columns.length - 1}>
-                          {cell}
+                          {best ? <span className="rg-visually-hidden"> (best)</span> : null}
                         </td>
                       );
-                    }
-                    const best = typeof row.bestColumn === 'number' ? i === row.bestColumn : (row.bestColumn?.includes(i) ?? false);
-                    return (
-                      <td key={key} className={columns[i]?.numeric ? 'num' : undefined} data-best={best ? true : undefined}>
-                        {cell}
-                        {best ? <span className="rg-visually-hidden"> (best)</span> : null}
-                      </td>
-                    );
-                  })}
-                </tr>
-              );
-            })}
-          </tbody>
-        ))}
-      </table>
+                    })}
+                  </tr>
+                );
+              })}
+            </tbody>
+          ))}
+        </table>
+      </div>
     </div>
   );
 }

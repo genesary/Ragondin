@@ -1,5 +1,5 @@
 /** @vitest-environment happy-dom */
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { DROP_TYPE } from '../canvas/index.ts';
 import { SERVICES, WORKSPACE } from './fixtures.ts';
@@ -97,5 +97,42 @@ describe('the palette, from this build’s capabilities', () => {
     const { palette } = renderPalette();
     expect(entry(palette, /^judge/).getAttribute('draggable')).toBe('false');
     expect(entry(palette, /^bm25/).getAttribute('draggable')).toBe('true');
+  });
+});
+
+describe('the palette from the keyboard', () => {
+  const entries = (palette: HTMLElement) => within(palette).getAllByRole('button');
+  const stops = (palette: HTMLElement) => entries(palette).filter((b) => b.getAttribute('tabindex') !== '-1');
+
+  it('is one tab stop, on its first entry until another takes focus', () => {
+    const { palette } = renderPalette();
+    expect(stops(palette)).toEqual([entries(palette)[0]]);
+    act(() => entries(palette)[2]!.focus());
+    expect(stops(palette)).toEqual([entries(palette)[2]]);
+  });
+
+  it('moves between entries with the arrow keys, Home and End, refused ones included, stopping at either end', () => {
+    const { palette } = renderPalette();
+    const all = entries(palette);
+    act(() => all[0]!.focus());
+    fireEvent.keyDown(all[0]!, { key: 'ArrowUp' });
+    expect(document.activeElement).toBe(all[0]);
+    fireEvent.keyDown(all[0]!, { key: 'ArrowDown' });
+    expect(document.activeElement).toBe(all[1]);
+    fireEvent.keyDown(all[1]!, { key: 'End' });
+    expect(document.activeElement).toBe(all.at(-1));
+    expect(all.at(-1)!.getAttribute('aria-disabled')).toBe('true');
+    fireEvent.keyDown(all.at(-1)!, { key: 'ArrowDown' });
+    expect(document.activeElement).toBe(all.at(-1));
+    fireEvent.keyDown(all.at(-1)!, { key: 'Home' });
+    expect(document.activeElement).toBe(all[0]);
+    expect(stops(palette)).toEqual([all[0]]);
+  });
+
+  it('holds its entries in one vertical toolbar, so a screen reader says the arrow keys reach the others', () => {
+    const { palette } = renderPalette();
+    const toolbar = within(palette).getByRole('toolbar', { name: 'Palette entries' });
+    expect(toolbar.getAttribute('aria-orientation')).toBe('vertical');
+    expect(within(toolbar).getAllByRole('button')).toEqual(entries(palette));
   });
 });

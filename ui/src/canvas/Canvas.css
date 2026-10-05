@@ -113,6 +113,8 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* The hint the silent status line shows: quieter than a status, in the same line, so it moves nothing. */
+.rg-canvas__hint { color: var(--ink-3); }
 /* The node's `more` control: a pointer's way to the menu, at the card's top-right corner. */
 .rg-canvas__more {
   position: absolute;

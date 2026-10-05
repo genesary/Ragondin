@@ -589,14 +589,14 @@ function Loaded({ client, listing, askedWith, refresh, sel, job, launch, bench, 
           <h2 id={queueId} className="rg-runs__queue-heading">
             Queue
           </h2>
-          <Table caption="Queue" columns={queueHeader} rows={queueRows} onOpen={onOpen} />
+          <Table region caption="Queue" columns={queueHeader} rows={queueRows} onOpen={onOpen} />
         </section>
       )}
       {/* Where focus lands when a dismissed row was the table's last: a heading a screen reader names, out of the tab order. */}
       <h2 ref={runsHeading} tabIndex={-1} className="rg-visually-hidden">
         Runs
       </h2>
-      {tableRows.length === 0 ? null : <Table caption="Runs, grouped by pipeline" columns={header} rows={tableRows} onOpen={onOpen} onToggle={onToggle} />}
+      {tableRows.length === 0 ? null : <Table region caption="Runs, grouped by pipeline" columns={header} rows={tableRows} onOpen={onOpen} onToggle={onToggle} />}
       {/* Below the table: what comes and goes as boxes are checked must not move the rows under the pointer. */}
       {refresh === null && rules.length === 0 && refused === null ? null : (
         <div className="rg-runs__rules">
