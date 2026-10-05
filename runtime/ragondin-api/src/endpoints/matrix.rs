@@ -559,8 +559,8 @@ async fn carried_when_asked(
 
 /// A column no run of the current content fills: every cell `waiting`, or
 /// `not_scorable` where the pieces `carried` say the pipeline cannot be
-/// scored there (ADR-C30 § 5) — a run there would be refused, so nothing
-/// waits for one.
+/// scored there (ADR-C30 § 5) — a run there would fail, the harness
+/// refusing it once its job runs, so nothing waits for one.
 fn unfilled_column(
     version: &str,
     benchmark_names: Vec<String>,

@@ -1628,7 +1628,9 @@ pub enum MatrixCell {
     NoFigure,
     /// The pipeline cannot be scored on this benchmark: it does not end in
     /// an answer, and the benchmark carries reference answers (ADR-C30 § 5,
-    /// `CarriedPieces::scorable`), so a run there is refused. Never missing.
+    /// `CarriedPieces::scorable`), so a run there cannot succeed: the
+    /// harness refuses it once the job runs, and the refusal arrives as a
+    /// failed job. Never missing.
     NotScorable,
     /// Not run on this version: the only runs on this benchmark were launched
     /// as this pipeline before its content changed (ADR-C39 § 6). They fill

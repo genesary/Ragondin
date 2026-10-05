@@ -2121,16 +2121,20 @@ runs that fill nothing.
   content fills, when the pipeline does not end in an answer and the
   benchmark carries reference answers — ADR-C30 § 5, asked of
   `CarriedPieces::scorable`, the rule's one definition, which the harness's
-  `NoAnswer` refusal and `prefix::scorable` call too. A run there would be
-  refused, so such a column is never in `missing`.
+  `NoAnswer` refusal and `prefix::scorable` call too. A run of the whole
+  pipeline there would fail — it is not refused at submission, as a cut is:
+  the harness refuses it once the job runs, and the refusal arrives as a
+  failed job — so such a column is never in `missing`.
 - **A failed attempt** (`failed_attempt`, a column's). A failed run job
-  leaves no run, so its cells still read `not_run_yet`; the column names the
-  job when the most recent run job of the whole current form on one of its
-  benchmarks — the job's snapshotted document lowering to *H*, whatever name
-  it was launched under, by the job queue's own records — failed, and no run
-  of the whole current form measured the benchmark. A later attempt that did
-  not fail, queued, running, done or cancelled, clears it. "Most recent" is
-  the job's acceptance time, an unknown one first, then its queue position.
+  leaves no run, so its cells read what they would without it —
+  `not_run_yet`, or `not_scorable` on a column the harness refused; the
+  column names the job when the most recent run job of the whole current
+  form, run with no `up_to`, on one of its benchmarks — the job's
+  snapshotted document lowering to *H*, whatever name it was launched under,
+  by the job queue's own records — failed, and no run of the whole current
+  form measured the benchmark. A later attempt that did not fail, queued,
+  running, done or cancelled, clears it. "Most recent" is the job's
+  acceptance time, an unknown one first, then its queue position.
 
 `missing` lists, per column, the nodes reading `not_run_yet`,
 `prefix_stops` or `not_run_on_this_version` — never `not_scorable`: what a run of the whole pipeline

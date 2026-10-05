@@ -1988,7 +1988,7 @@
             "type": "object"
           },
           {
-            "description": "The pipeline cannot be scored on this benchmark: it does not end in\nan answer, and the benchmark carries reference answers (ADR-C30 § 5,\n`CarriedPieces::scorable`), so a run there is refused. Never missing.",
+            "description": "The pipeline cannot be scored on this benchmark: it does not end in\nan answer, and the benchmark carries reference answers (ADR-C30 § 5,\n`CarriedPieces::scorable`), so a run there cannot succeed: the\nharness refuses it once the job runs, and the refusal arrives as a\nfailed job. Never missing.",
             "properties": {
               "kind": {
                 "enum": [
