@@ -93,7 +93,7 @@ describe('the group heading', () => {
   it('does not link a recorded name nothing checked, and says so', () => {
     show(group({ names: ['hybrid'], held: ['unchecked'] }));
     expect(screen.queryByRole('link')).toBeNull();
-    expect(document.querySelector('th[scope="rowgroup"]')?.textContent).toContain('not checked against the workspace');
+    expect(document.querySelector('th[scope="rowgroup"]')?.textContent).toContain('no stored run yet, so not linked');
   });
 
   it('fails closed on a name the group gives no held state for: unlinked', () => {
@@ -101,7 +101,7 @@ describe('the group heading', () => {
     expect(screen.queryByRole('link')).toBeNull();
     const header = document.querySelector('th[scope="rowgroup"]') as HTMLElement;
     expect(header.textContent).toContain('x');
-    expect(header.textContent).toContain('not checked against the workspace');
+    expect(header.textContent).toContain('no stored run yet, so not linked');
   });
 
   it('links a recorded name the workspace holds exactly', () => {

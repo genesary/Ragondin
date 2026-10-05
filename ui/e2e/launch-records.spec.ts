@@ -19,7 +19,7 @@ test('Runs groups the run without a record by its content, and the changed run b
 
   // Recorded as hybrid-rerank: under that name, though no document holds its content.
   await expect(group('hybrid-rerank').getByRole('row', { name: new RegExp(`^Run ${changed.slice(0, 12)} on `) })).toBeVisible();
-  await expect(row(changed)).toContainText('no current document has this content');
+  await expect(row(changed)).toContainText('no pipeline in the workspace matches this run now');
 });
 
 test('the Pipeline screen lists the changed run among the feeding runs, filling no cell, with what differs', async ({ page, fixture }) => {

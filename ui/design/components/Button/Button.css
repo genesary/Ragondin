@@ -76,5 +76,7 @@
 @media (prefers-reduced-motion: reduce) {
   .rg-btn[aria-busy="true"]::after { animation: none; width: 100%; opacity: 0.25; }
 }
+/* A refusal's reason, shown beside the button as a caption. */
+.rg-btn__reason { font: var(--type-caption); color: var(--ink-2); }
 /* ButtonLink: the same drawing on a link, which a browser underlines by default. */
 a.rg-btn { text-decoration: none; }

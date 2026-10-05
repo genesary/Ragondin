@@ -20,8 +20,9 @@ export type GroupLabelProps = {
 };
 
 /** Why a recorded name is not a link, in words, by what the listing says of it. */
-// `other_case` is true whether or not the name is also stored as given: the API refuses it either way.
-const NOT_HELD = { gone: 'no longer a document in this workspace', other_case: 'refused: another spelling differs only in case', unchecked: 'not checked against the workspace' } as const;
+// `other_case` is true whether or not the name is also stored as given: the API refuses it either way. `unchecked` is a
+// name only jobs go by: nothing stored says whether the workspace holds it.
+const NOT_HELD = { gone: 'no longer a document in this workspace', other_case: 'refused: another spelling differs only in case', unchecked: 'no stored run yet, so not linked' } as const;
 
 const runs = (n: number) => `${n.toLocaleString('en-US')} run${n === 1 ? '' : 's'}`;
 

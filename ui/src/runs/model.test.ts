@@ -314,7 +314,7 @@ describe('the other fact', () => {
   it('the other fact is a secondary label', () => {
     // Under a recorded name: the current documents holding the run's content.
     expect(otherFact(row('1', { launchedAs: 'hybrid', pipelineNames: ['hybrid', 'hybrid-fork'] }))).toBe('content held by hybrid, hybrid-fork');
-    expect(otherFact(row('1', { launchedAs: 'hybrid' }))).toBe('no current document has this content');
+    expect(otherFact(row('1', { launchedAs: 'hybrid' }))).toBe('no pipeline in the workspace matches this run now');
     // Under the hash matches, or the hash: that no launch was recorded.
     expect(otherFact(row('1', { pipelineNames: ['hybrid'] }))).toBe('launch not recorded');
     expect(otherFact(row('1'))).toBe('launch not recorded');

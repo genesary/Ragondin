@@ -8,7 +8,8 @@ import './Button.css';
  */
 export type ButtonKind = 'primary' | 'secondary' | 'quiet' | 'destructive';
 
-type Disabled = { disabled: true; disabledReason: string } | { disabled?: false; disabledReason?: never };
+/** Disabled, it says why: to a screen reader always, and on the page too with `showReason`, as a caption beside it. */
+type Disabled = { disabled: true; disabledReason: string; showReason?: boolean } | { disabled?: false; disabledReason?: never; showReason?: never };
 
 export type ButtonProps = {
   kind?: ButtonKind;
@@ -31,7 +32,7 @@ export type ButtonProps = {
  */
 const isActivation = (key: string) => /^on(Click|DoubleClick|AuxClick|ContextMenu|KeyDown|KeyUp|KeyPress|PointerDown|PointerUp|MouseDown|MouseUp|TouchStart|TouchEnd|Submit)(Capture)?$/.test(key);
 
-export function Button({ kind = 'secondary', size = 'm', icon, busy = false, busyLabel, disabled, disabledReason, className, onClick, children, ...rest }: ButtonProps) {
+export function Button({ kind = 'secondary', size = 'm', icon, busy = false, busyLabel, disabled, disabledReason, showReason = false, className, onClick, children, ...rest }: ButtonProps) {
   const reasonId = useId();
   const classes = ['rg-btn', `rg-btn--${kind}`, size === 'm' ? '' : `rg-btn--${size}`, className ?? ''].filter(Boolean).join(' ');
   // Disabled is aria-disabled, not the native attribute: the button stays in
@@ -60,9 +61,10 @@ export function Button({ kind = 'secondary', size = 'm', icon, busy = false, bus
       </button>
       {/* The reason's one accessible path: it describes the button, from
           outside it so it does not join its name. No title as well, which
-          would announce it twice. */}
+          would announce it twice. Shown, it is the same span, so it is
+          still heard once. */}
       {disabled ? (
-        <span id={reasonId} className="rg-visually-hidden">
+        <span id={reasonId} className={showReason ? 'rg-btn__reason' : 'rg-visually-hidden'}>
           {disabledReason}
         </span>
       ) : null}

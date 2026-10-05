@@ -24,7 +24,8 @@ const ANNOUNCED = hex('a');
 const short = (id: string) => id.slice(0, 12);
 
 const pipeline = (name: string, over: Partial<PipelineSummary> = {}): PipelineSummary => ({ name, etag: 'e', hash: HYBRID, error: null, ends_in_answer: false, modified_ms: 1, ...over });
-const PIPELINES = { pipelines: [pipeline('hybrid'), pipeline('broken', { hash: null, error: { detail: 'node `rerank` reads `fused`, which no node writes', location: { node: 'rerank', edge: null } } })] };
+// `hybrid` ends in a generator (HYBRID_DETAIL); `lexical` is retrieval only.
+const PIPELINES = { pipelines: [pipeline('hybrid', { ends_in_answer: true }), pipeline('lexical', { hash: hex('9') }), pipeline('broken', { hash: null, ends_in_answer: null, error: { detail: 'node `rerank` reads `fused`, which no node writes', location: { node: 'rerank', edge: null } } })] };
 
 const bench = (name: string, state: BenchmarkEntry['state'], truth: BenchmarkEntry['ground_truth'] = 'qrels'): BenchmarkEntry => ({ name, format: 'beir', ground_truth: truth, licence: null, licence_url: null, state });
 const BENCHMARKS = {
@@ -118,7 +119,7 @@ async function show(hash = '#runs', mocks: MockRoutes = routes()) {
 const panel = () => screen.getByRole('region', { name: 'Launch a run' });
 async function openPanel() {
   fireEvent.click(screen.getByRole('button', { name: 'Launch…' }));
-  await within(panel()).findByText(`pipeline ${short(HYBRID)}`);
+  await within(panel()).findByText(`Content hash ${short(HYBRID)}`);
   return panel();
 }
 const jobRowOf = (id = ANNOUNCED) => screen.getByRole('row', { name: new RegExp(`^Run ${short(id)} on beir/scifact, `) });
@@ -140,7 +141,7 @@ describe('the launch panel', () => {
     const at = await openPanel();
     // Before launching: the pipeline's hash, once it validates; the benchmarks that are ready, with their ground truth;
     // the bindings in force, read-only; the store, shown not chosen.
-    expect(within(at).getByText(`pipeline ${short(HYBRID)}`)).toBeTruthy();
+    expect(within(at).getByText(`Content hash ${short(HYBRID)}`)).toBeTruthy();
     const benchmark = within(at).getByLabelText('Benchmark') as HTMLSelectElement;
     expect([...benchmark.options].map((o) => o.textContent)).toEqual(['beir/scifact — qrels', 'mine — qrels and reference answers']);
     expect(within(at).getByText('generator/qwen')).toBeTruthy();
@@ -222,6 +223,82 @@ describe('the launch panel', () => {
   });
 });
 
+describe('the launch panel, as the UX audit left it', () => {
+  it('offers a whole pipeline only the benchmarks it can be scored on, judged by what it ends in, and says why the others are absent', async () => {
+    const { stream } = await show();
+    connect(stream);
+    const at = await openPanel();
+    const benchmark = within(at).getByLabelText('Benchmark') as HTMLSelectElement;
+    // `hybrid` ends in an answer: every ready benchmark with a ground truth.
+    expect([...benchmark.options].map((o) => o.value)).toEqual(['beir/scifact', 'mine']);
+    expect(within(at).queryByText(/Not offered/)).toBeNull();
+
+    fireEvent.change(within(at).getByLabelText('Pipeline'), { target: { value: 'lexical' } });
+    expect([...benchmark.options].map((o) => o.value)).toEqual(['beir/scifact']);
+    const absent = within(at).getByText(/Not offered: mine, which carries reference answers: a pipeline that does not end in a generator produces no answer to score/);
+    expect(benchmark.getAttribute('aria-describedby')?.split(' ')).toContain(absent.id);
+  });
+
+  it('says why Launch is refused in words on the page, not only to a screen reader', async () => {
+    const { stream } = await show();
+    connect(stream);
+    const at = await openPanel();
+    fireEvent.change(within(at).getByLabelText('Pipeline'), { target: { value: 'broken' } });
+    const launch = within(at).getByRole('button', { name: 'Launch' });
+    expect(launch.getAttribute('aria-disabled')).toBe('true');
+    const reason = within(at).getByText('This pipeline does not validate.');
+    expect(reason.closest('.rg-visually-hidden')).toBeNull();
+    // Said once to a screen reader: the visible reason is the one that describes the button.
+    expect(launch.getAttribute('aria-describedby')).toBe(reason.id);
+  });
+
+  it('names an empty pipeline or benchmark field rather than leaving it blank', async () => {
+    const { stream } = await show('#runs', routes({ 'GET /pipelines': { body: { pipelines: [] } }, 'GET /benchmarks': { body: { ...BENCHMARKS, benchmarks: [] } } }));
+    connect(stream);
+    fireEvent.click(screen.getByRole('button', { name: 'Launch…' }));
+    const pipelineField = (await within(panel()).findByLabelText('Pipeline')) as HTMLSelectElement;
+    expect([...pipelineField.options].map((o) => o.textContent)).toEqual(['No pipeline yet']);
+    const benchmarkField = (await within(panel()).findByLabelText('Benchmark')) as HTMLSelectElement;
+    expect([...benchmarkField.options].map((o) => o.textContent)).toEqual(['No ready benchmark']);
+  });
+
+  it('offers Launch again once the run it queued has ended', async () => {
+    const { stream } = await show('#runs', routes({ 'POST /runs': { body: { job_id: 'j1', run_id: ANNOUNCED } } }));
+    connect(stream);
+    const at = await openPanel();
+    fireEvent.click(within(at).getByRole('button', { name: 'Launch' }));
+    await within(at).findByRole('button', { name: 'Queued' });
+    send(stream, { event: 'queued', data: runJob('j1', QUEUED) });
+    expect(within(at).getByRole('button', { name: 'Queued' })).toBeTruthy();
+    send(stream, { event: 'failed', data: runJob('j1', failedAt('rerank', 'boom')) });
+    const again = within(at).getByRole('button', { name: 'Launch' });
+    expect(again.getAttribute('aria-disabled')).toBeNull();
+  });
+
+  it('closes from a control of its own, taking the launch out of the address', async () => {
+    const { stream } = await show('#runs?launch=hybrid');
+    connect(stream);
+    await within(panel()).findByText(`Content hash ${short(HYBRID)}`);
+    fireEvent.click(within(panel()).getByRole('button', { name: 'Close' }));
+    expect(screen.queryByRole('region', { name: 'Launch a run' })).toBeNull();
+    await waitFor(() => expect(window.location.hash).toBe('#runs'));
+    expect(screen.getByRole('button', { name: 'Launch…' }).getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('labels the hash as the content hash, and a conflict names the run by its short id', async () => {
+    const conflict = problem('run_exists', 409, `Run ${OLD} is already in the store.`, 'Open it.', { link: `/api/v1/runs/${OLD}` });
+    const { stream } = await show('#runs', routes({ 'POST /runs': conflict }));
+    connect(stream);
+    const at = await openPanel();
+    expect(within(at).queryByText(`pipeline ${short(HYBRID)}`)).toBeNull();
+    fireEvent.click(within(at).getByRole('button', { name: 'Launch' }));
+    const exists = await within(at).findByText('A run with this identity already exists.');
+    const message = exists.closest('.rg-inline') as HTMLElement;
+    expect(message.textContent).not.toContain(OLD);
+    expect(message.textContent).toContain(short(OLD));
+  });
+});
+
 describe('the launch panel up to a node', () => {
   const PREFIX = '#runs?launch=hybrid&up_to=rerank';
 
@@ -237,7 +314,7 @@ describe('the launch panel up to a node', () => {
     // The note describes the field it explains.
     expect(benchmark.getAttribute('aria-describedby')?.split(' ')).toContain(absent.id);
     // The identity is the cut's, announced by the API: the parent's hash is not shown as if it were the run's.
-    expect(within(sheet).queryByText(`pipeline ${short(HYBRID)}`)).toBeNull();
+    expect(within(sheet).queryByText(`Content hash ${short(HYBRID)}`)).toBeNull();
     expect(within(sheet).getByText(/identity is announced when it is queued/)).toBeTruthy();
 
     fireEvent.click(within(sheet).getByRole('button', { name: 'Launch' }));
@@ -284,7 +361,7 @@ describe('the launch panel on a benchmark', () => {
   it('opens on the pipeline and the benchmark the address names — the Pipeline screen’s Run — and launches them', async () => {
     const { api, stream } = await show('#runs?launch=hybrid&benchmark=mine', routes({ 'POST /runs': { body: { job_id: 'j1', run_id: ANNOUNCED } } }));
     connect(stream);
-    await within(panel()).findByText(`pipeline ${short(HYBRID)}`);
+    await within(panel()).findByText(`Content hash ${short(HYBRID)}`);
     expect((within(panel()).getByLabelText('Pipeline') as HTMLSelectElement).value).toBe('hybrid');
     const benchmark = (await within(panel()).findByLabelText('Benchmark')) as HTMLSelectElement;
     expect(benchmark.value).toBe('mine');
@@ -296,7 +373,7 @@ describe('the launch panel on a benchmark', () => {
   it('refuses to launch on a benchmark the address names that is not ready, rather than another in its place', async () => {
     const { api, stream } = await show('#runs?launch=hybrid&benchmark=beir%2Ffiqa');
     connect(stream);
-    await within(panel()).findByText(`pipeline ${short(HYBRID)}`);
+    await within(panel()).findByText(`Content hash ${short(HYBRID)}`);
     const benchmark = (await within(panel()).findByLabelText('Benchmark')) as HTMLSelectElement;
     expect(benchmark.value).toBe('beir/fiqa');
     expect(benchmark.selectedOptions[0]?.textContent).toBe('beir/fiqa — not ready');
@@ -318,7 +395,7 @@ describe('the launch panel on a benchmark it does not offer, or keeps', () => {
   it('names a benchmark the workspace does not know as such, with no way to Setup', async () => {
     const { stream } = await show('#runs?launch=hybrid&benchmark=beir%2Fnope');
     connect(stream);
-    await within(panel()).findByText(`pipeline ${short(HYBRID)}`);
+    await within(panel()).findByText(`Content hash ${short(HYBRID)}`);
     const benchmark = (await within(panel()).findByLabelText('Benchmark')) as HTMLSelectElement;
     expect(benchmark.selectedOptions[0]?.textContent).toBe('beir/nope — unknown');
     const launch = within(panel()).getByRole('button', { name: 'Launch' });
@@ -372,7 +449,7 @@ describe('the launch panel on several benchmarks', () => {
     const { stream } = await show(SEVERAL);
     connect(stream);
     const launch = await within(panel()).findByRole('button', { name: 'Launch 2 runs' });
-    expect(within(panel()).getAllByText(`pipeline ${short(HYBRID)}`)).toHaveLength(1);
+    expect(within(panel()).getAllByText(`Content hash ${short(HYBRID)}`)).toHaveLength(1);
     expect(within(panel()).getAllByText('generator/qwen')).toHaveLength(1);
     // No benchmark picker: the benchmarks are the address's, each said for itself.
     expect(within(panel()).queryByLabelText('Benchmark')).toBeNull();
@@ -819,7 +896,7 @@ describe('the keyboard', () => {
     fireEvent.click(toggle);
     expect(toggle.getAttribute('aria-expanded')).toBe('true');
     const at = panel();
-    await within(at).findByText(`pipeline ${short(HYBRID)}`);
+    await within(at).findByText(`Content hash ${short(HYBRID)}`);
     // Focus moves to the panel, so the keyboard starts from it: its fields come next in tab order.
     expect(document.activeElement).toBe(at);
     for (const control of [within(at).getByLabelText('Pipeline'), within(at).getByLabelText('Benchmark'), within(at).getByRole('button', { name: 'Launch' })]) {

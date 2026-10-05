@@ -317,16 +317,13 @@ function Loaded({ client, listing, askedWith, refresh, sel, job, launch, store, 
       </div>
     );
 
-  const launchToggle = (
-    <Button
-      aria-expanded={launching}
-      aria-controls={launchId}
-      onClick={() => {
-        // Closing a panel the address opened takes it out of the address, so a reload does not open it again.
-        if (launching && launch !== undefined) navigate(runsRoute(sel, job, undefined), { replace: true });
-        setLaunching(!launching);
-      }}
-    >
+  // Closing a panel the address opened takes it out of the address, so a reload does not open it again.
+  const closeLaunch = () => {
+    if (launch !== undefined) navigate(runsRoute(sel, job, undefined), { replace: true });
+    setLaunching(false);
+  };
+  const launchToggle = (size: 'm' | 'l' = 'm') => (
+    <Button size={size} aria-expanded={launching} aria-controls={launchId} onClick={() => (launching ? closeLaunch() : setLaunching(true))}>
       Launch…
     </Button>
   );
@@ -341,6 +338,11 @@ function Loaded({ client, listing, askedWith, refresh, sel, job, launch, store, 
           pipeline={launch?.pipeline}
           upTo={launch?.upTo ?? null}
           benchmarks={launch?.benchmarks}
+          onClose={() => {
+            closeLaunch();
+            // The control that closed it goes with the panel: focus returns to the one that opens it.
+            [...document.querySelectorAll<HTMLElement>('[aria-controls]')].find((el) => el.getAttribute('aria-controls') === launchId)?.focus();
+          }}
           onWhole={
             launch === undefined
               ? undefined
@@ -363,7 +365,7 @@ function Loaded({ client, listing, askedWith, refresh, sel, job, launch, store, 
               Open Editor
             </ButtonLink>
           }
-          secondary={launchToggle}
+          secondary={launchToggle('l')}
         >
           A run is one pipeline on one benchmark: build a pipeline in the Editor, then launch it.
         </EmptyState>
@@ -442,7 +444,7 @@ function Loaded({ client, listing, askedWith, refresh, sel, job, launch, store, 
         <div className="rg-runs__actions">
           <ButtonLink href={formatHash({ screen: 'editor' })}>New pipeline</ButtonLink>
           <ForkButton client={client} run={comparable.length === 1 ? comparable[0]! : null} refusal={comparable.length === 1 ? null : 'Select one run to fork it.'} />
-          {launchToggle}
+          {launchToggle()}
           {compareWhy === null ? (
             <Button kind="primary" onClick={() => navigate({ screen: 'compare', ids: addressIds(comparable, rows.flatMap((r) => runId(r) ?? [])) })}>
               Compare {comparable.length} selected

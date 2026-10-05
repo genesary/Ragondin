@@ -79,15 +79,20 @@ export function runRow(row: RunRow, { selected, refusal, columns, onToggle }: Ru
       <a className="rg-runs__hash" href={formatHash(openRoute(row))} tabIndex={-1}>
         {short}
       </a>
+      {/* Each label after the hash is a word apart from it, so the text reads and copies as words, not run together. */}
+      {row.prefix === null ? null : ' '}
       {row.prefix === null ? null : (
         <span className="rg-runs__prefix">
           <PrefixLabel parents={row.prefix.parents} upTo={row.prefix.upTo} />
         </span>
       )}
       {/* The structural relation, when the record names another: a fact of its own, beside the recorded one. */}
+      {row.contentPrefix === null ? null : ' '}
       {row.contentPrefix === null ? null : <span className="rg-runs__fact">content: {prefixWords(row.contentPrefix.parents, row.contentPrefix.upTo)}</span>}
       {/* The fact the group is not headed by: text from the first draw, so nothing moves in later. */}
+      {fact === null ? null : ' '}
       {fact === null ? null : <span className="rg-runs__fact">{fact}</span>}
+      {row.announced === null ? null : ' '}
       {row.announced === null ? null : (
         <span className="rg-runs__fact">
           announced as {shortHash(row.announced)}; filed under this id because what ran differs from what was announced

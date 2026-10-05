@@ -109,6 +109,21 @@ describe.each(KINDS)('Button %s disabled', (kind) => {
   });
 });
 
+describe('Button disabled, its reason shown', () => {
+  it('says why in a caption beside it, the one description a screen reader hears', () => {
+    render(
+      <Button kind="primary" disabled disabledReason="No benchmark is ready." showReason>
+        Launch
+      </Button>,
+    );
+    const button = screen.getByRole('button', { name: 'Launch' });
+    const reason = screen.getByText('No benchmark is ready.');
+    expect(button.getAttribute('aria-describedby')).toBe(reason.id);
+    expect(reason.className).toBe('rg-btn__reason');
+    expect(declared(css, '.rg-btn__reason', 'color')).toBe('var(--ink-2)');
+  });
+});
+
 describe.each(KINDS)('Button %s loading', (kind) => {
   it('says the verb in progress, marks itself busy, and does not act twice', () => {
     const onClick = vi.fn();
