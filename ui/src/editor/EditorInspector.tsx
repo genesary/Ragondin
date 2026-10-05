@@ -17,6 +17,8 @@ export type EditorInspectorProps = {
   ports: NodePorts;
   /** What the node takes, as `GET /workspace` serves it for its family and name; null when the capabilities say nothing about it. */
   parameters: readonly Served[] | null;
+  /** Whether the server refused a save of this document: a required key still unset is then marked invalid, not only said to be required. */
+  insisted: boolean;
   verdict: NodeVerdict;
   /** What the slot says when the server names nothing here: checking, clear, stopped elsewhere, or no verdict. */
   quiet: string;
@@ -165,56 +167,71 @@ const SERVED_KIND: Record<ParameterKind, { kind: Kind; label: string }> = {
 };
 const REQUIRED = 'Required: the pipeline cannot be saved or run without it.';
 
-/** What a served parameter is for, on a line of its own under its row, so an error on the field never hides it. */
-function About({ served }: { served: Served | undefined }) {
-  return served === undefined ? null : <p className="rg-editor-inspector__about">{served.description}</p>;
+/** What a served parameter is for, on a line of its own under its row, so an error on the field never hides it; its field names it in `aria-describedby`. */
+function About({ id, served }: { id: string; served: Served | undefined }) {
+  return served === undefined ? null : (
+    <p id={id} className="rg-editor-inspector__about">
+      {served.description}
+    </p>
+  );
 }
 
 /**
  * A parameter the implementation takes and the node does not set: an empty
  * field, typed in the kind it is served with, that sets it once a value is
- * entered; marked when it is required, since the server refuses to store or
- * run the node without it.
+ * entered — and, for text, to the empty text on Enter in the empty field,
+ * never on leaving it. A required one says so as information; it is marked
+ * invalid only once the server refused a save for want of it (`insisted`),
+ * never before the person has done anything.
  */
-function Unset({ prefix, served, onSet }: { prefix: string; served: Served; onSet: (v: ParameterValue) => void }) {
+function Unset({ prefix, served, insisted, onSet }: { prefix: string; served: Served; insisted: boolean; onSet: (v: ParameterValue) => void }) {
   const [text, setText] = useState('');
   const [error, setError] = useState<string | undefined>(undefined);
   const { kind, label } = SERVED_KIND[served.kind];
-  const commit = () => {
-    if (text.trim() === '' && kind !== 'string') return setError(undefined);
-    if (text === '') return setError(undefined);
+  const commit = (entered: boolean) => {
+    if (text === '' || (kind !== 'string' && text.trim() === '')) {
+      setError(undefined);
+      if (entered && text === '' && kind === 'string') onSet(str(''));
+      return;
+    }
     const read = readAs(kind, text);
     if ('error' in read) return setError(read.error);
     setError(undefined);
     setText('');
     onSet(read.value);
   };
-  const shown = error ?? (served.required ? REQUIRED : undefined);
+  const id = `${prefix}-param-${served.name}`;
+  const invalid = error ?? (served.required && insisted ? REQUIRED : undefined);
+  const info = served.required && invalid === undefined ? 'Required.' : undefined;
   return (
     <>
       <div className="rg-editor-inspector__param" data-unset>
         <Input
-          id={`${prefix}-param-${served.name}`}
+          id={id}
           label={served.name}
           mono
           numeric={kind === 'int' || kind === 'float'}
           value={text}
-          help=" "
-          {...(shown === undefined ? {} : { error: shown })}
+          describedBy={`${id}-unset ${id}-about`}
+          {...(invalid === undefined ? {} : { error: invalid })}
+          {...(info === undefined ? {} : { help: info })}
           onChange={(e) => setText(e.target.value)}
-          onBlur={commit}
+          onBlur={() => commit(false)}
           onKeyDown={(e) => {
-            if (e.key === 'Enter') commit();
+            if (e.key === 'Enter') commit(true);
           }}
         />
-        <small className="rg-editor-inspector__unset">Not set · {label}</small>
+        <small id={`${id}-unset`} className="rg-editor-inspector__unset">
+          Not set · {label}
+          {kind === 'string' ? <span className="rg-visually-hidden">; Enter in the empty field sets it to the empty text</span> : null}
+        </small>
       </div>
-      <About served={served} />
+      <About id={`${id}-about`} served={served} />
     </>
   );
 }
 
-function Parameter({ prefix, name, value, onSet, onRemove }: { prefix: string; name: string; value: ParameterValue; onSet: (v: ParameterValue) => void; onRemove: () => void }) {
+function Parameter({ prefix, name, value, about, onSet, onRemove }: { prefix: string; name: string; value: ParameterValue; about: boolean; onSet: (v: ParameterValue) => void; onRemove: () => void }) {
   const [text, setText] = useState(textOf(value));
   const [error, setError] = useState<string | undefined>(undefined);
   const [kindError, setKindError] = useState<string | undefined>(undefined);
@@ -269,6 +286,7 @@ function Parameter({ prefix, name, value, onSet, onRemove }: { prefix: string; n
         id={id}
         label={name}
         mono
+        {...(about ? { describedBy: `${id}-about` } : {})}
         numeric={value.kind === 'int' || value.kind === 'float'}
         value={text}
         readOnly={readOnly !== null}
@@ -302,7 +320,7 @@ const FROM_VALUE = '';
  * moves no field under the pointer; an edge it named is said again on that
  * port's row.
  */
-export function EditorInspector({ doc, node, ports, parameters, verdict, quiet, dispatch, onRenamed, run, onRunUpTo }: EditorInspectorProps) {
+export function EditorInspector({ doc, node, ports, parameters, insisted, verdict, quiet, dispatch, onRenamed, run, onRunUpTo }: EditorInspectorProps) {
   const prefix = useId();
   const [id, setId] = useState(node.id);
   const [idError, setIdError] = useState<string | undefined>(undefined);
@@ -398,11 +416,11 @@ export function EditorInspector({ doc, node, ports, parameters, verdict, quiet, 
       {params.map((name) => {
         const value = node.params[name];
         const set = (v: ParameterValue) => dispatch({ type: 'setParam', node: node.id, key: name, value: v });
-        if (value === undefined) return <Unset key={name} prefix={prefix} served={served.get(name)!} onSet={set} />;
+        if (value === undefined) return <Unset key={name} prefix={prefix} served={served.get(name)!} insisted={insisted} onSet={set} />;
         return (
           <div key={name}>
-            <Parameter prefix={prefix} name={name} value={value} onSet={set} onRemove={() => dispatch({ type: 'removeParam', node: node.id, key: name })} />
-            <About served={served.get(name)} />
+            <Parameter prefix={prefix} name={name} value={value} about={served.has(name)} onSet={set} onRemove={() => dispatch({ type: 'removeParam', node: node.id, key: name })} />
+            <About id={`${prefix}-param-${name}-about`} served={served.get(name)} />
           </div>
         );
       })}

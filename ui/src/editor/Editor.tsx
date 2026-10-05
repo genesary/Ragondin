@@ -141,14 +141,17 @@ export function Editor({ client, title, stored = null, initial, layout, capabili
   // What each node takes, from the served list; and the required keys a node lacks, said on the node as the server
   // would refuse them at a save — under a dangling input, which is the more basic fault.
   const takes = useCallback((component: string, impl: string, params: Readonly<Record<string, ParameterValue>>) => parametersOf(capabilities, services, component, impl, params), [capabilities, services]);
+  // Said on the card only once the server refused a save: before that, the inspector says it as information.
+  const insisted = save.phase.kind === 'failed';
   const missing = useMemo(() => {
     const out: Record<string, string> = {};
+    if (!insisted) return out;
     for (const node of doc.pipeline.nodes) {
       const lacking = missingRequired(takes(node.component, node.impl, node.params) ?? [], node.params);
       if (lacking.length > 0) out[node.id] = `${lacking.map((k) => `\`${k}\``).join(', ')} ${lacking.length === 1 ? 'is' : 'are'} required: set ${lacking.length === 1 ? 'it' : 'them'} in the inspector.`;
     }
     return out;
-  }, [doc, takes]);
+  }, [doc, takes, insisted]);
   const located = verdict.status === 'invalid' ? verdict.problem.location : null;
   const issues = useMemo(() => {
     const out: Record<string, string> = { ...missing, ...dangling };
@@ -261,6 +264,7 @@ export function Editor({ client, title, stored = null, initial, layout, capabili
         node={node}
         ports={portsOf(node, grammar)}
         parameters={takes(node.component, node.impl, node.params)}
+        insisted={insisted}
         verdict={verdictOf(id)}
         quiet={QUIET[verdict.status]}
         dispatch={dispatch}

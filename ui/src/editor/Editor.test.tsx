@@ -442,19 +442,42 @@ describe('the inspector in write mode', () => {
     const prefix = within(inspector).getByLabelText('query_prefix') as HTMLInputElement;
     expect(prefix.value).toBe('');
     expect(within(inspector).getByText('Text prepended to a query before it is embedded; absent, none. Never empty.')).toBeTruthy();
-    expect(within(inspector).getAllByText('Not set · text')).toHaveLength(2);
+    expect(within(inspector).getAllByText(/^Not set · text/)).toHaveLength(2);
     // The set ones say what they are for too.
     expect(within(inspector).getByText('How many chunks the node returns, best first.')).toBeTruthy();
   });
 
-  it('marks a required key the node does not set, from the served list, in the inspector and on the canvas', () => {
+  it('says a required key the node does not set is required, as information, before any save is attempted', () => {
     const { container } = setup(undefined, { initial: HYBRID_RAG, start: 'context' });
     const inspector = screen.getByRole('complementary', { name: 'context' });
-    expect(within(inspector).getAllByText('Required: the pipeline cannot be saved or run without it.')).toHaveLength(2);
-    expect(nodeEl(container, 'context')!.querySelector('.rg-node')?.getAttribute('data-status')).toBe('invalid');
-    expect(within(nodeEl(container, 'context')!).getByText('`budget`, `separator` are required: set them in the inspector.')).toBeTruthy();
-    // A key it sets is not marked: the complete dense leg is clear.
-    expect(nodeEl(container, 'vectors')!.querySelector('.rg-node')?.getAttribute('data-status')).not.toBe('invalid');
+    expect(within(inspector).getAllByText('Required.')).toHaveLength(2);
+    expect(within(inspector).queryByText('Required: the pipeline cannot be saved or run without it.')).toBeNull();
+    expect(within(inspector).getByLabelText('budget').getAttribute('aria-invalid')).toBeNull();
+    expect(nodeEl(container, 'context')!.querySelector('.rg-node')?.getAttribute('data-status')).not.toBe('invalid');
+  });
+
+  it('links a parameter not set to the line saying so and to what it is for', () => {
+    setup(undefined, { initial: HYBRID_RAG, start: 'context' });
+    const field = screen.getByLabelText('budget');
+    const described = (field.getAttribute('aria-describedby') ?? '').split(' ').map((id) => document.getElementById(id)?.textContent);
+    expect(described).toContain('Not set · integer, zero or more');
+    expect(described).toContain('The cap on the size of the context, in the unit the implementation counts.');
+    expect(described).toContain('Required.');
+  });
+
+  it('links a set parameter to what it is for', () => {
+    setup(undefined, { start: 'lexical' });
+    const field = screen.getByLabelText('top_k');
+    const described = (field.getAttribute('aria-describedby') ?? '').split(' ').map((id) => document.getElementById(id)?.textContent);
+    expect(described).toContain('How many chunks the node returns, best first.');
+  });
+
+  it('sets a text parameter to the empty text on Enter in its empty field, and never on leaving it', async () => {
+    const { api } = setup(undefined, { initial: HYBRID_RAG, start: 'context' });
+    const separator = screen.getByLabelText('separator');
+    fireEvent.blur(separator);
+    fireEvent.keyDown(separator, { key: 'Enter' });
+    await waitFor(() => expect(nodesOf(validations(api).at(-1)!).find((n) => n.id === 'context')?.params).toEqual({ separator: str('') }));
   });
 
   it('sets a parameter not yet set, in the kind it is served with', async () => {

@@ -84,3 +84,10 @@ describe('Input read-only', () => {
     expect(input.disabled).toBe(false);
   });
 });
+
+describe('Input described by other elements', () => {
+  it('names them after its own help line', () => {
+    render(<Input id="x" label="budget" help="Required." describedBy="x-unset x-about" />);
+    expect(screen.getByLabelText('budget').getAttribute('aria-describedby')).toBe('x-help x-unset x-about');
+  });
+});
