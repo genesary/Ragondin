@@ -11,7 +11,8 @@
 // journey that launches a run changes no other test's workspace.
 //
 // No network: every request the page makes to another origin than the
-// server's is aborted and recorded, and a test that made one fails.
+// server's is aborted and recorded, and a test that made one fails; the
+// binary's own requests are sent to a proxy nothing answers.
 import { spawn, type ChildProcess } from 'node:child_process';
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -51,9 +52,14 @@ export function readFixture(): Fixture {
 
 /** Starts the binary over `workspace` and resolves with the address it prints. */
 function start(workspace: string): Promise<{ child: ChildProcess; url: string }> {
+  // The server's own outbound requests — a download, a probe — go to a proxy
+  // on port 9 (discard), which nothing answers: a journey that made one would
+  // fail rather than reach the network.
+  const offline = 'http://127.0.0.1:9';
   const child = spawn(required('RAGONDIN_E2E_BINARY'), ['ui', '--workspace', workspace, '--port', '0'], {
     cwd: workspace,
     stdio: ['ignore', 'pipe', 'inherit'],
+    env: { ...process.env, HTTP_PROXY: offline, HTTPS_PROXY: offline, http_proxy: offline, https_proxy: offline, NO_PROXY: '', no_proxy: '' },
   });
   return new Promise((resolve, reject) => {
     const lines = createInterface({ input: child.stdout! });

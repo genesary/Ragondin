@@ -49,6 +49,7 @@ for (const theme of ['Light', 'Dark'] as const) {
     for (const screen of screens(fixture)) {
       await page.goto(`/${screen.hash}`);
       await screen.ready(page);
+      await expect(page.locator('html'), `${screen.name} keeps the theme chosen`).toHaveAttribute('data-theme', theme.toLowerCase());
       const violations = await accessibilityViolations(page);
       if (violations.length > 0) details[screen.name] = violations;
       for (const { ruleId } of violations) found.add(`${screen.name}: ${ruleId}`);

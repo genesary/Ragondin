@@ -14,15 +14,21 @@ export async function expectSameViewWhenOpenedFresh(page: Page, view: (page: Pag
   if (browser === null) throw new Error('the page belongs to no browser');
   const context = await browser.newContext();
   const origin = new URL(url).origin;
+  const refused: string[] = [];
   await context.route('**/*', async (route) => {
-    if (new URL(route.request().url()).origin === origin) await route.continue();
-    else await route.abort('blockedbyclient');
+    const requested = route.request().url();
+    if (new URL(requested).origin === origin) await route.continue();
+    else {
+      refused.push(requested);
+      await route.abort('blockedbyclient');
+    }
   });
   try {
     const fresh = await context.newPage();
     await fresh.goto(url);
     await expect(fresh.getByRole('heading', { level: 1 })).toHaveText(heading ?? '');
     await expect(view(fresh)).toMatchAriaSnapshot(shown);
+    expect(refused, 'the fresh page reached only the origin that served it').toEqual([]);
   } finally {
     await context.close();
   }

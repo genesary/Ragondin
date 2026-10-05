@@ -311,6 +311,16 @@ fn layout(name: &str) -> serde_json::Value {
 /// Builds the fixture workspace under `out`, emptied first, and returns what
 /// it wrote. See the module's documentation for what that is.
 pub fn generate(out: &Path) -> FixtureWorkspace {
+    // Emptied first, but only a directory this wrote before, or none: one
+    // that holds anything and no `fixture.json` is someone's, and refused.
+    let foreign = std::fs::read_dir(out).is_ok_and(|mut entries| entries.next().is_some())
+        && !out.join("fixture.json").is_file();
+    assert!(
+        !foreign,
+        "{} holds files and no fixture.json: not a fixture workspace this wrote, so it is \
+         left as it is; name an empty or absent directory",
+        out.display()
+    );
     let _ = std::fs::remove_dir_all(out);
     let workspace = out.join("workspace");
     let corpus = out.join("corpus").join(BENCHMARK_NAME);

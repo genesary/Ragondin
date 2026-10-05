@@ -57,8 +57,9 @@ test('iterate: fork a run, change top_k, launch, compare with the original', asy
   const configuration = page.getByRole('table', { name: 'Parameters that differ across the runs' });
   await expect(configuration.getByRole('row', { name: 'vectors top_k 3 1 (differs from the baseline)' })).toBeVisible();
   const afterFusion = page.getByRole('table', { name: 'Stages of each run' }).getByRole('row', { name: /^after fusion/ });
-  const [baseline, forked] = await afterFusion.getByRole('cell').allTextContents().then((cells) => cells.slice(1));
-  expect(forked, 'the fork ranks differently after fusion').not.toBe(baseline);
+  // The fixture's figures: with one dense passage, the fused ranking loses
+  // ground on the queries the dense leg alone answered.
+  await expect(afterFusion.getByRole('cell')).toHaveText(['after fusion', /^fused\s*0\.8262$/, /^fused\s*0\.7786$/]);
 
   await expectSameViewWhenOpenedFresh(page, (p) => p.getByRole('main'));
 });

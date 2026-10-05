@@ -18,20 +18,33 @@ just check                  # everything CI runs, in one command
 `just check` runs build, tests, `clippy` (warnings are errors), `cargo fmt
 --check`, `cargo doc` (rustdoc warnings are errors), the architecture invariant
 checks, the documentation link check, the ADR index staleness check, the
-dependency audit, and the front end's gates (`just check-ui`: lint,
-typecheck, tests, the notices' re-check and the npm audit inside `ui/`). It
+dependency audit, the front end's gates (`just check-ui`: lint,
+typecheck, tests, the notices' re-check and the npm audit inside `ui/`), and
+the M4 journeys end to end in a browser against the real binary (`just
+test-ui-e2e`). It
 builds the UI once, with `just build-ui` (`npm ci`, then the build into
 `ui/dist/`), before the feature-gated Rust tests, which embed `ui/dist/`, so a
-`ui/dist/` left by an older checkout never fails them. Those two recipes
-make `just check` need **Node**, the major pinned in `ui/.node-version`; the
-Rust build itself never does, and every cargo command and every other recipe
-runs without it (`ui/README.md` covers the front end). **A change is not done
+`ui/dist/` left by an older checkout never fails them. Those recipes and
+`test-ui-e2e` make `just check` need **Node**, the major pinned in
+`ui/.node-version`; the Rust build itself never does, and every cargo command
+and every other recipe runs without it (`ui/README.md` covers the front end). **A change is not done
 until `just check` passes.** The toolchain is pinned to stable
 (`rust-toolchain.toml`); never rely on nightly.
 
-The dependency audit (`just check-deny`) is the one check that needs a tool the
-toolchain does not carry: install it once with `cargo install cargo-deny
---locked --version 0.20.2`. Pin that version — it is the one the CI action
+Two checks need a tool neither the Rust toolchain nor `npm ci` carries.
+
+**Chromium, for the journeys.** `just test-ui-e2e` runs `npx playwright
+install chromium`, which downloads the browser the journeys drive once per
+machine into the runner's cache (`~/.cache/ms-playwright` on Linux,
+`~/Library/Caches/ms-playwright` on macOS) and does nothing after that. On
+Linux the browser also needs system libraries: `npx playwright install-deps
+chromium` installs them (it uses the system's package manager), as CI does with
+`--with-deps`. Offline or air-gapped: install the browser once while connected,
+or set `PLAYWRIGHT_BROWSERS_PATH` to a directory that holds it; the journeys
+themselves use no network.
+
+**cargo-deny, for the dependency audit** (`just check-deny`): install it once
+with `cargo install cargo-deny --locked --version 0.20.2`. Pin that version — it is the one the CI action
 bundles, and an unpinned install eventually disagrees with CI about a policy
 file neither of you changed. Its policy — allowed licences, advisory allowances,
 duplicate versions, source registries — is [`deny.toml`](deny.toml) at the

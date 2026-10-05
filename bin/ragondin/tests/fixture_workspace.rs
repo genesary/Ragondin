@@ -146,6 +146,30 @@ fn the_generated_workspace_opens_in_ui_and_lists_exactly_its_runs() {
     assert_eq!(manifest["benchmark"], workspace::BENCHMARK);
 }
 
+/// The generator empties its directory first, so a directory it did not
+/// write — no `fixture.json` — is refused, untouched: a mistyped
+/// `just fixture-workspace <dir>` must not delete someone's files.
+#[test]
+fn a_non_empty_directory_the_generator_did_not_write_is_refused_untouched() {
+    let dir = out("foreign");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("notes.txt"), "mine").unwrap();
+
+    let refused = std::panic::catch_unwind(|| workspace::generate(&dir));
+
+    let message = refused.expect_err("the generator refuses");
+    let message = message
+        .downcast_ref::<String>()
+        .map(String::as_str)
+        .unwrap_or_default();
+    assert!(message.contains("fixture.json"), "{message}");
+    assert_eq!(
+        std::fs::read_to_string(dir.join("notes.txt")).unwrap(),
+        "mine"
+    );
+}
+
 /// What `just fixture-workspace` runs: the same generator, into the
 /// directory `RAGONDIN_FIXTURE_WORKSPACE` names.
 #[test]

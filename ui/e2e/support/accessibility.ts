@@ -31,7 +31,14 @@ export async function withAccessibilityEngine(context: BrowserContext): Promise<
 export async function accessibilityViolations(page: Page): Promise<Violation[]> {
   // A colour read mid-transition — the theme applied after mount, a hover —
   // is no colour the page settles on: wait for every transition to end.
-  await page.waitForFunction(() => document.getAnimations().every((animation) => animation.playState !== 'running'));
+  // An infinite animation never ends, so it is not waited on; and the wait is
+  // bounded, so a page that never settles fails here, naming why.
+  await page.waitForFunction(
+    () =>
+      document.getAnimations().every((animation) => animation.playState !== 'running' || animation.effect?.getComputedTiming().iterations === Infinity),
+    undefined,
+    { timeout: 5_000 },
+  );
   return page.evaluate(async (ruleset) => {
     type Result = { ruleId: string; reasonId: string; value: [string, string]; message: string; path: { dom: string } };
     type Engine = { Checker: new () => { check: (doc: Document, rulesets: string[]) => Promise<{ results: Result[] }> } };

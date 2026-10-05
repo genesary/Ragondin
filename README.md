@@ -65,13 +65,13 @@ just check             # build + test + clippy + fmt + architecture invariants
 ## Status
 
 **Pre-alpha.** Milestones M0 — *Foundations* — M1 — *Core contracts & engine
-skeleton* — M2 — *First defensible deliverable (BEIR retrieval bench)* — and M3
-— *Generation & end-to-end RAG* — have every one of their issues closed. M4 —
+skeleton* — M2 — *First defensible deliverable (BEIR retrieval bench)* — and
+M3 — *Generation & end-to-end RAG* — have every one of their issues closed. M4 —
 *The front end* — is the current milestone, and its exit criterion is asserted
-by `bin/ragondin/tests/ui_parity.rs` and the journeys under `ui/e2e/` (below). The issues open
-outside any milestone are decisions reserved for a human, work blocked on one of
-those decisions, ADR follow-ups, documentation defects, and one dependency
-advisory exception.
+by `bin/ragondin/tests/ui_parity.rs` and the journeys under `ui/e2e/` (below).
+The issues open outside any milestone are decisions reserved for a human, work
+blocked on one of those decisions, ADR follow-ups, documentation defects, and
+one dependency advisory exception.
 
 M2's exit criterion is asserted mechanically rather than claimed:
 `bin/ragondin/tests/exit_criterion.rs` drives the binary over a curated fixture

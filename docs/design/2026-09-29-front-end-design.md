@@ -209,7 +209,7 @@ The `run_id` is **announced at submission and decided at execution**: computing 
 - Generated types current (CI).
 - Components (Vitest, Testing Library): the node card in **every** state, the table, the chips, the inline error.
 - Contract: MSW mocks derived from the OpenAPI examples; and a **fixture workspace** — runs recorded from the repository's calibration fixtures — that the dev server serves *and* the Rust tests use. One truth on both sides.
-- **Playwright against the real binary** with that workspace: the three journeys of § 3 (first run with the stub components, fork and compare, investigate down to side-by-side replay); axe for accessibility; one keyboard-only journey across the canvas.
+- **Playwright against the real binary** with that workspace: the three journeys of § 3 (first run with the stub components, fork and compare, investigate down to side-by-side replay); axe for accessibility (in the event, `accessibility-checker-engine`: axe's MPL-2.0 is off `deny.toml`'s allow list); one keyboard-only journey across the canvas.
 - No visual diffing at first (brittle); revisit.
 
 ### CI and governance
