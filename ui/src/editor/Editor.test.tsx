@@ -456,6 +456,18 @@ describe('the inspector in write mode', () => {
     expect(nodeEl(container, 'context')!.querySelector('.rg-node')?.getAttribute('data-status')).not.toBe('invalid');
   });
 
+  it('cues a node with required keys to set on its card from the moment it is there, as information, not as an error', () => {
+    const { container } = setup(undefined, { initial: HYBRID_RAG });
+    const card = nodeEl(container, 'context')!;
+    const cue = card.querySelector('.rg-node__todo');
+    expect(cue?.textContent).toBe('2 parameters to set');
+    expect(card.querySelector('.rg-node')?.getAttribute('data-status')).toBeNull();
+    expect(card.querySelector('.rg-node__msg')).toBeNull();
+    expect(card.getAttribute('aria-label')).toContain('2 parameters to set');
+    // A complete node has none.
+    expect(nodeEl(container, 'lexical')!.querySelector('.rg-node__todo')).toBeNull();
+  });
+
   it('links a parameter not set to the line saying so and to what it is for', () => {
     setup(undefined, { initial: HYBRID_RAG, start: 'context' });
     const field = screen.getByLabelText('budget');

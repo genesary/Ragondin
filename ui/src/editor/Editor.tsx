@@ -141,17 +141,31 @@ export function Editor({ client, title, stored = null, initial, layout, capabili
   // What each node takes, from the served list; and the required keys a node lacks, said on the node as the server
   // would refuse them at a save — under a dangling input, which is the more basic fault.
   const takes = useCallback((component: string, impl: string, params: Readonly<Record<string, ParameterValue>>) => parametersOf(capabilities, services, component, impl, params), [capabilities, services]);
-  // Said on the card only once the server refused a save: before that, the inspector says it as information.
+  // A node's required keys it does not set: from the moment it is there, a neutral cue on its card ("1 parameter to
+  // set"); once the server refused a save, the invalid state, as the inspector marks the field — under a dangling
+  // input, which is the more basic fault.
   const insisted = save.phase.kind === 'failed';
-  const missing = useMemo(() => {
-    const out: Record<string, string> = {};
-    if (!insisted) return out;
+  const lacking = useMemo(() => {
+    const out: Record<string, string[]> = {};
     for (const node of doc.pipeline.nodes) {
-      const lacking = missingRequired(takes(node.component, node.impl, node.params) ?? [], node.params);
-      if (lacking.length > 0) out[node.id] = `${lacking.map((k) => `\`${k}\``).join(', ')} ${lacking.length === 1 ? 'is' : 'are'} required: set ${lacking.length === 1 ? 'it' : 'them'} in the inspector.`;
+      const keys = missingRequired(takes(node.component, node.impl, node.params) ?? [], node.params);
+      if (keys.length > 0) out[node.id] = keys;
     }
     return out;
-  }, [doc, takes, insisted]);
+  }, [doc, takes]);
+  const todos = useMemo(
+    () => (insisted ? {} : Object.fromEntries(Object.entries(lacking).map(([id, keys]) => [id, `${keys.length} ${keys.length === 1 ? 'parameter' : 'parameters'} to set`]))),
+    [lacking, insisted],
+  );
+  const missing = useMemo(
+    () =>
+      insisted
+        ? Object.fromEntries(
+            Object.entries(lacking).map(([id, keys]) => [id, `${keys.map((k) => `\`${k}\``).join(', ')} ${keys.length === 1 ? 'is' : 'are'} required: set ${keys.length === 1 ? 'it' : 'them'} in the inspector.`]),
+          )
+        : {},
+    [lacking, insisted],
+  );
   const located = verdict.status === 'invalid' ? verdict.problem.location : null;
   const issues = useMemo(() => {
     const out: Record<string, string> = { ...missing, ...dangling };
@@ -404,6 +418,7 @@ export function Editor({ client, title, stored = null, initial, layout, capabili
               if (entry !== undefined && entry.refused === null) place(component, impl, position);
             }}
             issues={issues}
+            todos={todos}
             invalidEdges={invalidEdges}
           />
           {inserting === null ? null : (

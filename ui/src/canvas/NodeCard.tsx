@@ -26,6 +26,8 @@ export type NodeCardProps = {
   connected?: { inputs: boolean | readonly boolean[]; output: boolean };
   selected?: boolean;
   status?: NodeStatus | undefined;
+  /** Something still to do on the node, said as information rather than as a state: "1 parameter to set". Not drawn beside a failure. */
+  todo?: string | undefined;
   /** A drop target that is not a node yet, or a node this build cannot run. */
   variant?: 'ghost' | 'unavailable';
   dragging?: boolean;
@@ -54,6 +56,7 @@ export function NodeCard({
   connected = { inputs: false, output: false },
   selected = false,
   status,
+  todo,
   variant,
   dragging = false,
   overlay,
@@ -103,6 +106,7 @@ export function NodeCard({
           <span>{shown.message}</span>
         </div>
       ) : null}
+      {todo === undefined || shown?.kind === 'invalid' || shown?.kind === 'failed' ? null : <div className="rg-node__todo">{todo}</div>}
       {inputs.map((kind, index) => renderPort({ side: 'in', kind, index, top: portTop(index), connected: typeof connected.inputs === 'boolean' ? connected.inputs : (connected.inputs[index] ?? false) }))}
       {output === null ? null : renderPort({ side: 'out', kind: output, index: 0, top: portTop(0), connected: connected.output })}
     </div>

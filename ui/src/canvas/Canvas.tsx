@@ -79,6 +79,8 @@ export type CanvasProps = {
   onDropItem?: (item: string, position: Position) => void;
   /** Per node, the validation's words, drawn as the invalid state. */
   issues?: Readonly<Record<string, string>> | undefined;
+  /** Per node, what is still to do on it, drawn as information — never as a state, and not beside an issue. */
+  todos?: Readonly<Record<string, string>> | undefined;
   /** The edges the validation named, by `edgeId`. */
   invalidEdges?: readonly string[] | undefined;
 };
@@ -103,6 +105,7 @@ type CardData = {
   /** Whether an edge leaves the node: its output port is drawn filled. */
   downstream: boolean;
   status: NodeStatus | undefined;
+  todo: string | undefined;
   /** While an edge is drawn, each input port's stance. */
   drops: readonly (Drop | null)[] | null;
   write: WriteHandlers | null;
@@ -142,11 +145,12 @@ const ARROWS: Record<string, [number, number]> = { ArrowLeft: [-1, 0], ArrowRigh
 const snap = (v: number) => Math.round(v / GRID) * GRID;
 const WRITE_FIT = { maxZoom: 1 };
 
-function accessibleName(node: CanvasNode, selected: boolean, overlay: NodeOverlay | undefined, issue: string | undefined): string {
+function accessibleName(node: CanvasNode, selected: boolean, overlay: NodeOverlay | undefined, issue: string | undefined, todo: string | undefined): string {
   return [
     `${FAMILY_LABEL[node.family]} ${node.id}, ${node.impl}`,
     selected ? 'selected' : null,
     issue === undefined ? null : 'invalid',
+    issue === undefined ? (todo ?? null) : null,
     overlay?.error !== undefined ? 'failed' : null,
     overlay?.notRun === true ? 'not run' : null,
     overlay?.onlyHere ?? null,
@@ -196,7 +200,7 @@ const handlePort =
   };
 
 const Card = memo(function Card({ data }: NodeProps<CardNode>) {
-  const { node, overlay, selected, connectedInputs, downstream, status, drops, write, menu } = data;
+  const { node, overlay, selected, connectedInputs, downstream, status, todo, drops, write, menu } = data;
   return (
     <>
       <NodeCard
@@ -209,6 +213,7 @@ const Card = memo(function Card({ data }: NodeProps<CardNode>) {
         connected={{ inputs: connectedInputs, output: downstream }}
         selected={selected}
         status={status}
+        todo={todo}
         overlay={overlay}
         renderPort={handlePort(node.id, drops, write)}
       />
@@ -301,6 +306,7 @@ function Surface({
   onInsert,
   onDropItem,
   issues = NO_ISSUES,
+  todos = NO_ISSUES,
   invalidEdges,
 }: CanvasProps) {
   const editable = EDITABLE[mode];
@@ -432,6 +438,7 @@ function Surface({
     return model.nodes.map((node) => {
       const isSelected = node.id === selected;
       const issue = editable ? issues[node.id] : undefined;
+      const todo = editable ? todos[node.id] : undefined;
       const filled = new Set(model.edges.filter((e) => e.to === node.id).map((e) => e.port));
       const drops =
         from === undefined
@@ -450,7 +457,7 @@ function Surface({
         handles: handles(node),
         draggable: editable,
         connectable: false,
-        ariaLabel: accessibleName(node, isSelected, overlay[node.id], issue),
+        ariaLabel: accessibleName(node, isSelected, overlay[node.id], issue, todo),
         ...(described.has(node.id) ? { domAttributes: { 'aria-describedby': `${described.get(node.id)!} ${KEYS_DESCRIPTION}-${flowId}` } } : {}),
         // The node whose menu is open is lifted above the others, so its menu is too.
         ...(menu === node.id ? { zIndex: 1 } : {}),
@@ -461,6 +468,7 @@ function Surface({
           connectedInputs: node.inputs.map((_, port) => filled.has(port)),
           downstream: downstream.has(node.id),
           status: issue === undefined ? undefined : { kind: 'invalid', message: issue },
+          todo,
           drops,
           write,
           menu:
@@ -473,7 +481,7 @@ function Surface({
       };
     });
     // `tick` hands the library fresh nodes when it asked for them (below).
-  }, [tick, model, positionOf, measured, selected, overlay, menu, entries, editable, closeMenu, descriptions, flowId, issues, drawing?.from, refuse, write]);
+  }, [tick, model, positionOf, measured, selected, overlay, menu, entries, editable, closeMenu, descriptions, flowId, issues, todos, drawing?.from, refuse, write]);
 
   const edges: LineEdge[] = useMemo(() => {
     const flagged = new Set(editable ? (invalidEdges ?? []) : []);
