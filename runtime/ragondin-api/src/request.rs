@@ -156,6 +156,30 @@ impl crate::extract::HeaderFields for PreconditionHeaders {
     const NAMES: &'static [&'static str] = &["If-Match", "If-None-Match"];
 }
 
+/// `POST /pipelines/{name}/rename`'s header: the etag the rename moves, as
+/// a write names it. Optional on the wire, as a write's are; a rename that
+/// states none is refused, since it would move a document it never read.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, JsonSchema)]
+pub struct RenameHeaders {
+    /// `"<etag>"`: the stored document must be at that etag — a weak `W/` tag
+    /// reads as its strong form — or `*`, at any.
+    #[serde(rename = "If-Match")]
+    pub if_match: Option<String>,
+}
+
+impl crate::extract::HeaderFields for RenameHeaders {
+    const NAMES: &'static [&'static str] = &["If-Match"];
+}
+
+/// `POST /pipelines/{name}/rename`: the name the pipeline takes.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RenameRequest {
+    /// The new name: one file name, under the rule every pipeline name
+    /// follows, that no stored pipeline has in any case.
+    pub to: String,
+}
+
 /// `PUT /pipelines/{name}`: a pipeline document, as text or as the editor
 /// holds it — one key, naming which (ADR-C40 § 5, § 6).
 #[derive(Clone, Debug, PartialEq, Deserialize, JsonSchema)]

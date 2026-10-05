@@ -1362,3 +1362,170 @@ async fn a_run_s_layout_is_read_from_the_layouts_copied_at_launch() {
     );
     assert_eq!(unknown.status(), StatusCode::NOT_FOUND);
 }
+
+/// `POST /pipelines/{from}/rename` with `to`, stating `if_match`.
+async fn rename(
+    workspace: &Workspace,
+    from: &str,
+    to: &str,
+    if_match: Option<&str>,
+) -> axum::http::Response<axum::body::Body> {
+    let headers: Vec<(&str, &str)> = if_match
+        .map(|etag| ("if-match", etag))
+        .into_iter()
+        .collect();
+    send(
+        server(workspace),
+        write_request(
+            "POST",
+            &format!("/api/v1/pipelines/{from}/rename"),
+            &json!({ "to": to }),
+            &headers,
+        ),
+    )
+    .await
+}
+
+fn pairing_file(pipeline: &str, other: &str) -> String {
+    format!(
+        "{{\"version\":1,\"pipeline\":\"{pipeline}\",\"other\":\"{other}\",\"pairs\":[{{\"node\":\"lexical\",\"other\":\"lexical\"}}]}}"
+    )
+}
+
+#[tokio::test]
+async fn a_rename_moves_the_document_its_layout_and_its_pairings() {
+    let workspace = scratch("rename");
+    let etag = create(&workspace, "hybrid", HYBRID).await;
+    create(&workspace, "baseline", HYBRID_REFORMATTED).await;
+    create(&workspace, "third", HYBRID_REFORMATTED).await;
+    let dir = workspace.pipelines();
+    fs::write(
+        dir.join("hybrid.layout.json"),
+        r#"{"version":1,"nodes":{"lexical":{"x":16.0,"y":32.0}}}"#,
+    )
+    .unwrap();
+    // A pairing kept from the renamed pipeline, and one kept towards it.
+    fs::create_dir_all(dir.join("hybrid.pairing")).unwrap();
+    fs::write(
+        dir.join("hybrid.pairing/baseline.json"),
+        pairing_file("hybrid", "baseline"),
+    )
+    .unwrap();
+    fs::create_dir_all(dir.join("third.pairing")).unwrap();
+    fs::write(
+        dir.join("third.pairing/hybrid.json"),
+        pairing_file("third", "hybrid"),
+    )
+    .unwrap();
+
+    let response = rename(&workspace, "hybrid", "lexical-only", Some(&etag)).await;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let header = response
+        .headers()
+        .get("etag")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_owned();
+    let body = body_json(response).await;
+    assert_eq!(body["name"], "lexical-only");
+    // The bytes move as they are, so the etag is the one the rename named.
+    assert_eq!(header, etag);
+    assert_eq!(format!("\"{}\"", body["etag"].as_str().unwrap()), etag);
+    assert!(body["hash"].is_string(), "{body}");
+    assert_eq!(on_disk(&workspace, "lexical-only"), HYBRID.as_bytes());
+    assert!(!dir.join("hybrid.yaml").exists());
+    assert!(!dir.join("hybrid.layout.json").exists());
+    assert_eq!(
+        body_json(
+            send(
+                server(&workspace),
+                get("/api/v1/pipelines/lexical-only/layout")
+            )
+            .await
+        )
+        .await,
+        json!({ "layout": { "version": 1, "nodes": { "lexical": { "x": 16.0, "y": 32.0 } } } })
+    );
+    assert!(!dir.join("hybrid.pairing").exists());
+    let moved: Value =
+        serde_json::from_slice(&fs::read(dir.join("lexical-only.pairing/baseline.json")).unwrap())
+            .unwrap();
+    assert_eq!(
+        (moved["pipeline"].as_str(), moved["other"].as_str()),
+        (Some("lexical-only"), Some("baseline"))
+    );
+    assert!(!dir.join("third.pairing/hybrid.json").exists());
+    let towards: Value =
+        serde_json::from_slice(&fs::read(dir.join("third.pairing/lexical-only.json")).unwrap())
+            .unwrap();
+    assert_eq!(
+        (towards["pipeline"].as_str(), towards["other"].as_str()),
+        (Some("third"), Some("lexical-only"))
+    );
+    let old = send(server(&workspace), get("/api/v1/pipelines/hybrid")).await;
+    assert_eq!(old.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn a_rename_with_a_stale_etag_or_none_moves_nothing() {
+    let workspace = scratch("rename_stale");
+    create(&workspace, "hybrid", HYBRID).await;
+    let stale = format!("\"{}\"", "0".repeat(64));
+
+    for if_match in [Some(stale.as_str()), None] {
+        let response = rename(&workspace, "hybrid", "other", if_match).await;
+
+        assert_eq!(
+            response.status(),
+            StatusCode::PRECONDITION_FAILED,
+            "{if_match:?}"
+        );
+        assert_eq!(body_json(response).await["code"], "precondition_failed");
+        assert_eq!(on_disk(&workspace, "hybrid"), HYBRID.as_bytes());
+        assert!(!workspace.pipelines().join("other.yaml").exists());
+    }
+}
+
+#[tokio::test]
+async fn a_rename_onto_a_taken_name_is_pipeline_exists_and_moves_nothing() {
+    let workspace = scratch("rename_taken");
+    let etag = create(&workspace, "hybrid", HYBRID).await;
+    create(&workspace, "baseline", HYBRID_REFORMATTED).await;
+
+    let response = rename(&workspace, "hybrid", "baseline", Some(&etag)).await;
+
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    let body = body_json(response).await;
+    assert_eq!(body["code"], "pipeline_exists");
+    assert!(
+        body["detail"].as_str().unwrap().contains("baseline"),
+        "{body}"
+    );
+    assert_eq!(on_disk(&workspace, "hybrid"), HYBRID.as_bytes());
+    assert_eq!(
+        on_disk(&workspace, "baseline"),
+        HYBRID_REFORMATTED.as_bytes()
+    );
+}
+
+#[tokio::test]
+async fn a_rename_to_a_name_that_is_not_one_or_from_an_absent_pipeline_is_refused() {
+    let workspace = scratch("rename_names");
+    let etag = create(&workspace, "hybrid", HYBRID).await;
+    create(&workspace, "Baseline", HYBRID_REFORMATTED).await;
+
+    for to in ["a/b", "validate", ".hidden", "", "baseline"] {
+        let response = rename(&workspace, "hybrid", to, Some(&etag)).await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{to}");
+        assert_eq!(body_json(response).await["code"], "request_invalid", "{to}");
+    }
+    let absent = rename(&workspace, "absent", "other", Some(&etag)).await;
+    assert_eq!(absent.status(), StatusCode::NOT_FOUND);
+    assert_eq!(body_json(absent).await["code"], "pipeline_not_found");
+    // Renamed to itself: nothing to move, and nothing refused.
+    let same = rename(&workspace, "hybrid", "hybrid", Some(&etag)).await;
+    assert_eq!(same.status(), StatusCode::OK);
+    assert_eq!(on_disk(&workspace, "hybrid"), HYBRID.as_bytes());
+}

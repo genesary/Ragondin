@@ -51,6 +51,7 @@ Served today, under `/api/v1`: `GET /workspace`; `GET /runs`,
 in § *Compare*; `GET /pipelines/{name}/matrix`, described in § *The
 pipeline matrix*; `GET /pipelines`,
 `POST /pipelines/validate`, `GET`/`PUT /pipelines/{name}`,
+`POST /pipelines/{name}/rename`,
 `GET`/`PUT /pipelines/{name}/layout` and `GET /runs/{id}/layout`;
 `GET /benchmarks`,
 `POST /benchmarks/import`, `POST /benchmarks/{name}/download`;
@@ -579,6 +580,28 @@ a prefix of it, can be scored on.
   computed on the request. The modified time goes through
   `UnixMillis::from_system_time`, the rule every time in the API follows: a
   time before the epoch is unknown, `null`, never `0`.
+- **A rename moves the pipeline whole** (`POST /pipelines/{name}/rename`,
+  `{"to": …}`, `PipelineSource::rename`) — a choice made here, the design
+  leaving renaming to the editor (ui/ARCHITECTURE.md § The editor). It states
+  `If-Match`, the etag the editor read or `*`, through `RenameHeaders`, and is
+  refused `precondition_failed` for a stale etag or none, as a write is: a
+  rename of a document changed since it was read would move a version nobody
+  looked at. `to` follows the name rule above and is `request_invalid` when it
+  does not, or when it differs from a stored name only in case; a `to` a
+  stored pipeline has is `pipeline_exists` (409), never replaced. The
+  document moves byte for byte with `fs::rename`, so its etag and its hash
+  are unchanged; its layout follows; its pairings move to `<to>.pairing/`,
+  and every pairing another pipeline keeps towards it is renamed, each file's
+  own names rewritten, since a pairing names both its pipelines inside (§
+  Compare). Every pairing is read before anything moves, so one this build
+  cannot read refuses the rename whole (`backend_failed`); the new pairings
+  are written before the document moves and the old ones removed after. The
+  answer is the document as the listing describes it, `PipelineSummary`,
+  with its etag in `ETag`. **What is not rewritten**: a run's launch record
+  is write-once (ADR-C39), so a run launched under the old name keeps it, and
+  the Runs table groups it under that name, unlinked, as a name no longer in
+  the workspace — and under the new name too while the document's hash is
+  the run's; a layout copied at launch is keyed by hash and needs nothing.
 - **The layout format** — a choice made here, the design leaving it open
   (ADR-C36 § 7): `pipelines/<name>.layout.json`, JSON,
   `{"version": 1, "nodes": {"<node id>": {"x": <number>, "y": <number>}}}`.
@@ -1496,7 +1519,7 @@ code.
 | `download_cancelled` | 409 | a download whose cancellation flag was set; nothing was kept | `FsRegistry` |
 | `import_refused` | 422 | an import name outside `[A-Za-z0-9_-][A-Za-z0-9._-]*` (64 bytes at most, no trailing `.`, no Windows device name), a path that cannot be read, or a corpus its adapter refuses — the adapter's error in the detail | `FsRegistry` |
 | `pipeline_not_found` | 404 | no pipeline of this name, or a name that is not one file name | `GET /pipelines/{name}`, the layout endpoints |
-| `precondition_failed` | 412 | a pipeline write whose `If-Match` names another revision or, as `*`, meets no file, whose `If-None-Match: *` meets an existing file, or that states neither; the current etag in `ETag`, the detail and the `etag` member | `PUT /pipelines/{name}` |
+| `precondition_failed` | 412 | a pipeline write whose `If-Match` names another revision or, as `*`, meets no file, whose `If-None-Match: *` meets an existing file, or that states neither — or a rename whose `If-Match` names another revision or that states none; the current etag in `ETag`, the detail and the `etag` member | `PUT /pipelines/{name}`, `POST /pipelines/{name}/rename` |
 | `binding_refused` | 422 | a binding the composition root would refuse on `--remote`, in its words | `PUT /services/{family}/{name}`, the probe |
 | `service_not_found` | 404 | no service bound under this family and name | `DELETE /services/…`, the probe |
 | `request_invalid` | 400 | a body that is not the operation's JSON — a field missing, or one it does not read — a pipeline name that is not one file name on a write or differs from a stored one only in case, a layout of another version, a probe its family cannot answer as asked; a body that fails to buffer — a connection that breaks off mid-body; a precondition header whose value is not text | every endpoint that reads a body |
@@ -1516,6 +1539,7 @@ code.
 | `prefix_is_whole_pipeline` | 422 | a prefix run's `up_to` is the pipeline's output: the prefix would be the whole pipeline; `location` names it | `POST /runs` |
 | `prefix_ends_in_context` | 422 | a prefix run's `up_to` is a context builder, whose context nothing scores; `location` names it | `POST /runs` |
 | `prefix_not_scorable` | 422 | a prefix run whose output is not an answer, on a benchmark that carries reference answers — ADR-C30 § 5 restated at submission from the same `carries()` and `produced_kind` the harness reads; `location` names the node | `POST /runs` |
+| `pipeline_exists` | 409 | a rename onto a name a stored pipeline has; nothing moved | `POST /pipelines/{name}/rename` |
 
 Choices made here (`AGENTS.md` § Rules of engagement), since the design
 document § 8 lists seven codes and leaves the rest to the implementation:
@@ -1562,6 +1586,11 @@ document § 8 lists seven codes and leaves the rest to the implementation:
   by `ApiJson`, buffered and parsed here; it is not `parameter_invalid`,
   which names a parameter, so a client can tell which part of its request
   to correct.
+- **A rename onto a taken name is `pipeline_exists`**, its own 409, not
+  `precondition_failed`: the rename's precondition is about the document it
+  moves, whose etag the 412's `etag` member carries, and a name taken is
+  another document — the client's action is to pick another name, not to
+  read again.
 - **Two refusals of a body's buffering, which ADR-C37 made problem bodies.**
   A body over the limit is `body_too_large`, its own code because its
   status is HTTP's 413 and its action differs — send less, not send

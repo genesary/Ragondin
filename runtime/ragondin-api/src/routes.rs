@@ -98,6 +98,7 @@ pub(crate) fn api(routes: &mut impl Routes) {
     routes.route(Post, "/pipelines/validate", pipelines::validate);
     routes.route(Get, "/pipelines/{name}", pipelines::read);
     routes.route(Put, "/pipelines/{name}", pipelines::write);
+    routes.route(Post, "/pipelines/{name}/rename", pipelines::rename);
     routes.route(Get, "/pipelines/{name}/layout", pipelines::read_layout);
     routes.route(Put, "/pipelines/{name}/layout", pipelines::write_layout);
     routes.route(Get, "/pipelines/{name}/matrix", matrix::matrix);
@@ -201,15 +202,17 @@ mod tests {
     }
 
     /// Each route carries the query and header types its handler takes:
-    /// every handler an `ApiQuery`, and only the pipeline write and the event
-    /// stream headers.
+    /// every handler an `ApiQuery`, and only the pipeline write, the pipeline
+    /// rename and the event stream headers.
     #[test]
     fn each_route_carries_its_handler_s_query_and_header_types() {
         for route in declared() {
             assert!(route.query.is_some(), "{} {}", route.method, route.path);
             let reads_headers = matches!(
                 (route.method, route.path),
-                ("put", "/pipelines/{name}") | ("get", "/jobs/events")
+                ("put", "/pipelines/{name}")
+                    | ("post", "/pipelines/{name}/rename")
+                    | ("get", "/jobs/events")
             );
             assert_eq!(
                 route.headers.is_some(),

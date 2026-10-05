@@ -1504,6 +1504,15 @@ impl PipelineSource for CountedListings {
         self.inner.write(name, document, precondition).await
     }
 
+    async fn rename(
+        &self,
+        from: &str,
+        to: &str,
+        precondition: &Precondition,
+    ) -> Result<PipelineFile, ApiError> {
+        self.inner.rename(from, to, precondition).await
+    }
+
     async fn read_layout(&self, name: &str) -> Result<Option<Layout>, ApiError> {
         self.inner.read_layout(name).await
     }

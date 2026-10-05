@@ -1,4 +1,5 @@
 //! `GET /pipelines`, `GET`/`PUT /pipelines/{name}`,
+//! `POST /pipelines/{name}/rename`,
 //! `GET`/`PUT /pipelines/{name}/layout`, `POST /pipelines/validate`, and
 //! `GET /runs/{id}/layout`, the layout a fork from a run copies.
 //!
@@ -26,7 +27,9 @@ use crate::derived;
 use crate::error::ApiError;
 use crate::extract::{ApiHeaders, ApiJson, ApiPath, ApiQuery, NoParameters};
 use crate::handlers::{load_run, AppState};
-use crate::request::{PipelineDocument, PreconditionHeaders, ValidationRequest};
+use crate::request::{
+    PipelineDocument, PreconditionHeaders, RenameHeaders, RenameRequest, ValidationRequest,
+};
 use crate::response::{
     Layout, PipelineDetail, PipelineError, PipelineLayout, PipelineListing, PipelineSummary,
     PipelineValidated, PipelineWritten,
@@ -154,6 +157,40 @@ pub(crate) async fn write(
     ))
 }
 
+/// `POST /pipelines/{name}/rename`: `If-Match`, and the name to move to.
+/// The document moves byte for byte — its etag with it — and its layout and
+/// pairings follow; it is answered as the listing describes a pipeline.
+pub(crate) async fn rename(
+    State(state): State<AppState>,
+    ApiPath(name): ApiPath<String>,
+    _: ApiQuery<NoParameters>,
+    ApiHeaders(headers): ApiHeaders<RenameHeaders>,
+    ApiJson(RenameRequest { to }): ApiJson<RenameRequest>,
+) -> Result<Response, ApiError> {
+    let precondition = match headers.if_match {
+        Some(star) if star == "*" => Precondition::Exists,
+        Some(etag) => Precondition::Matches(revision_of_header(&etag)),
+        None => Precondition::Unstated,
+    };
+    let file = state
+        .backends
+        .pipelines
+        .rename(&name, &to, &precondition)
+        .await?;
+    let (hash, error) = verdict(&file.document);
+    let revision = file.revision.clone();
+    Ok(with_etag(
+        Json(PipelineSummary {
+            modified_ms: modified_ms(file.modified),
+            name: file.name,
+            etag: revision.as_str().to_owned(),
+            hash,
+            error,
+        }),
+        &revision,
+    ))
+}
+
 /// `POST /pipelines/validate`: the hash and the rendering, or
 /// `pipeline_invalid` — of the text as sent, or of the typed document's
 /// rendering.
@@ -248,12 +285,7 @@ fn precondition(headers: PreconditionHeaders) -> Result<Precondition, ApiError> 
             detail: "a write states `If-Match` or `If-None-Match: *`, not both".to_owned(),
         }),
         (Some(star), None) if star == "*" => Ok(Precondition::Exists),
-        (Some(etag), None) => Ok(Precondition::Matches(Revision::new(
-            etag.strip_prefix("W/")
-                .unwrap_or(&etag)
-                .trim_matches('"')
-                .to_owned(),
-        ))),
+        (Some(etag), None) => Ok(Precondition::Matches(revision_of_header(&etag))),
         (None, Some(star)) if star == "*" => Ok(Precondition::Absent),
         (None, Some(other)) => Err(ApiError::RequestInvalid {
             detail: format!(
@@ -262,6 +294,17 @@ fn precondition(headers: PreconditionHeaders) -> Result<Precondition, ApiError> 
         }),
         (None, None) => Ok(Precondition::Unstated),
     }
+}
+
+/// The revision an `If-Match` value names: a weak `W/` tag read as its
+/// strong form, the quotes taken off.
+fn revision_of_header(etag: &str) -> Revision {
+    Revision::new(
+        etag.strip_prefix("W/")
+            .unwrap_or(etag)
+            .trim_matches('"')
+            .to_owned(),
+    )
 }
 
 /// `body`, with the `ETag` header naming `revision`.

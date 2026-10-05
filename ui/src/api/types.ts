@@ -1399,7 +1399,7 @@ export type Problem = {
    * The stable code a client matches on: one of `ApiError::CODES`, which
    * the schema lists as an enum so a generated client can narrow on it.
    */
-  code: "pipeline_invalid" | "impl_not_in_build" | "service_unreachable" | "run_exists" | "run_unreadable" | "run_not_found" | "query_not_found" | "parameter_invalid" | "dataset_absent" | "dataset_differs" | "benchmark_not_found" | "benchmark_exists" | "download_failed" | "download_cancelled" | "import_refused" | "pipeline_not_found" | "precondition_failed" | "binding_refused" | "service_not_found" | "request_invalid" | "backend_failed" | "host_refused" | "origin_refused" | "route_not_found" | "method_not_allowed" | "runs_not_comparable" | "body_too_large" | "job_not_found" | "job_not_queued" | "job_finished" | "job_not_ended" | "no_partial_traces" | "prefix_node_not_found" | "prefix_is_whole_pipeline" | "prefix_ends_in_context" | "prefix_not_scorable";
+  code: "pipeline_invalid" | "impl_not_in_build" | "service_unreachable" | "run_exists" | "run_unreadable" | "run_not_found" | "query_not_found" | "parameter_invalid" | "dataset_absent" | "dataset_differs" | "benchmark_not_found" | "benchmark_exists" | "download_failed" | "download_cancelled" | "import_refused" | "pipeline_not_found" | "precondition_failed" | "binding_refused" | "service_not_found" | "request_invalid" | "backend_failed" | "host_refused" | "origin_refused" | "route_not_found" | "method_not_allowed" | "runs_not_comparable" | "body_too_large" | "job_not_found" | "job_not_queued" | "job_finished" | "job_not_ended" | "no_partial_traces" | "prefix_node_not_found" | "prefix_is_whole_pipeline" | "prefix_ends_in_context" | "prefix_not_scorable" | "pipeline_exists";
   /** What happened, in this occurrence's words. */
   detail: string;
   /**
@@ -1495,6 +1495,15 @@ export type QueryTrace = {
    * it holds the query; `null` otherwise, and `passages` says why.
    */
   text: string | null;
+};
+
+/** `POST /pipelines/{name}/rename`: the name the pipeline takes. */
+export type RenameRequest = {
+  /**
+   * The new name: one file name, under the rule every pipeline name
+   * follows, that no stored pipeline has in any case.
+   */
+  to: string;
 };
 
 /** `PATCH /jobs/{id}`: where to move a queued job. */
@@ -2332,6 +2341,23 @@ export type Paths = {
         include_available?: boolean;
       };
       response: PipelineMatrix;
+    };
+  };
+  "/pipelines/{name}/rename": {
+    /** Renames a pipeline document: the file moves byte for byte, its layout and its pairings with it, and every pairing another pipeline keeps towards it follows. */
+    post: {
+      params: {
+        name: string;
+      };
+      headers: {
+        /**
+         * `"<etag>"`: the stored document must be at that etag — a weak `W/` tag
+         * reads as its strong form — or `*`, at any.
+         */
+        "If-Match"?: string;
+      };
+      body: RenameRequest;
+      response: PipelineSummary;
     };
   };
   "/runs": {

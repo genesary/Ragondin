@@ -320,6 +320,12 @@ pub enum ApiError {
         /// The kind the prefix's output is, as a configuration names it.
         kind: String,
     },
+    /// A rename onto a name a stored pipeline already has. Nothing was moved.
+    #[error("a pipeline named {name} already exists")]
+    PipelineExists {
+        /// The name taken.
+        name: String,
+    },
 }
 
 impl ApiError {
@@ -361,6 +367,7 @@ impl ApiError {
         "prefix_is_whole_pipeline",
         "prefix_ends_in_context",
         "prefix_not_scorable",
+        "pipeline_exists",
     ];
 
     /// The stable code a client matches on.
@@ -387,6 +394,7 @@ impl ApiError {
             Self::RunExists { .. }
             | Self::DatasetDiffers { .. }
             | Self::BenchmarkExists { .. }
+            | Self::PipelineExists { .. }
             | Self::DownloadCancelled { .. }
             | Self::RunsNotComparable { .. }
             | Self::JobNotQueued { .. }
@@ -485,6 +493,7 @@ impl ApiError {
             Self::PrefixIsWholePipeline { .. } => 33,
             Self::PrefixEndsInContext { .. } => 34,
             Self::PrefixNotScorable { .. } => 35,
+            Self::PipelineExists { .. } => 36,
         }
     }
 
@@ -526,6 +535,7 @@ impl ApiError {
             Self::PrefixIsWholePipeline { .. } => "The prefix would be the whole pipeline",
             Self::PrefixEndsInContext { .. } => "A prefix cannot end on a context builder",
             Self::PrefixNotScorable { .. } => "The prefix cannot be scored on this benchmark",
+            Self::PipelineExists { .. } => "The pipeline already exists",
         }
     }
 
@@ -646,6 +656,9 @@ impl ApiError {
             }
             Self::PrefixNotScorable { .. } => {
                 "Run the prefix on a benchmark that carries qrels and no reference answers, or launch the whole pipeline.".to_owned()
+            }
+            Self::PipelineExists { name } => {
+                format!("Choose another name, or rename or remove {name} first.")
             }
         }
     }
@@ -838,6 +851,9 @@ mod tests {
                 node: String::new(),
                 benchmark: String::new(),
                 kind: String::new(),
+            },
+            ApiError::PipelineExists {
+                name: String::new(),
             },
         ];
         assert_eq!(samples.len(), ApiError::CODES.len());

@@ -532,6 +532,18 @@ async fn prefix_not_scorable() {
     assert!(body["detail"].as_str().unwrap().contains("squad/dev"));
 }
 
+#[tokio::test]
+async fn pipeline_exists() {
+    let (status, body) = render(ApiError::PipelineExists {
+        name: "baseline".to_owned(),
+    })
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_problem(&body, status, "pipeline_exists");
+    assert!(body["detail"].as_str().unwrap().contains("baseline"));
+    assert!(body["hint"].as_str().unwrap().contains("baseline"));
+}
+
 #[test]
 fn every_variant_has_a_distinct_code() {
     let codes = ApiError::CODES;
@@ -541,7 +553,7 @@ fn every_variant_has_a_distinct_code() {
     assert_eq!(sorted.len(), codes.len(), "codes are unique: {codes:?}");
     assert_eq!(
         codes.len(),
-        36,
+        37,
         "a variant added without a test here: {codes:?}"
     );
 }

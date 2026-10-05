@@ -200,13 +200,7 @@ impl PipelineSource for FsPipelines {
         precondition: &Precondition,
     ) -> Result<PipelineFile, ApiError> {
         if !is_name(name) {
-            return Err(ApiError::RequestInvalid {
-                detail: format!(
-                    "`{name}` is not a pipeline name: one file name of letters, digits, `_`, \
-                     `-` and `.`, not starting with `.` nor ending with one, 64 bytes at most, \
-                     not a device name Windows reserves, and not `{RESERVED}`"
-                ),
-            });
+            return Err(not_a_name(name));
         }
         validation::check(document)?;
         let _writing = self.writing.lock().await;
@@ -260,6 +254,67 @@ impl PipelineSource for FsPipelines {
             write_atomically(&path, document.as_bytes()).map_err(|error| failed(&path, error))?;
             this.load(&name)?.ok_or_else(|| ApiError::BackendFailed {
                 detail: format!("{}: written, then not found", path.display()),
+            })
+        })
+        .await
+    }
+
+    async fn rename(
+        &self,
+        from: &str,
+        to: &str,
+        precondition: &Precondition,
+    ) -> Result<PipelineFile, ApiError> {
+        if !is_name(to) {
+            return Err(not_a_name(to));
+        }
+        if *precondition == Precondition::Absent {
+            return Err(ApiError::RequestInvalid {
+                detail: "a rename moves a stored document: it states `If-Match`, never \
+                         `If-None-Match: *`"
+                    .to_owned(),
+            });
+        }
+        let _writing = self.writing.lock().await;
+        let (this, from, to, precondition) = (
+            self.clone(),
+            from.to_owned(),
+            to.to_owned(),
+            precondition.clone(),
+        );
+        blocking(move || {
+            let stored = this.require(&from)?;
+            let refusal = match &precondition {
+                Precondition::Matches(expected) if *expected == stored.revision => None,
+                Precondition::Matches(expected) => Some(format!(
+                    "pipeline {from} changed since it was read: `If-Match` names {}, the stored \
+                     document is at {}",
+                    expected.as_str(),
+                    stored.revision.as_str()
+                )),
+                Precondition::Exists | Precondition::Absent => None,
+                Precondition::Unstated => Some(format!(
+                    "a rename of pipeline {from} states no `If-Match`; the stored document is \
+                     at {}",
+                    stored.revision.as_str()
+                )),
+            };
+            if let Some(reason) = refusal {
+                return Err(ApiError::PreconditionFailed {
+                    reason,
+                    current: Some(stored.revision.as_str().to_owned()),
+                });
+            }
+            if from == to {
+                return Ok(stored);
+            }
+            this.refuse_alias(&to)?;
+            if this.load(&to)?.is_some() {
+                return Err(ApiError::PipelineExists { name: to });
+            }
+            this.move_pipeline(&from, &to)?;
+            this.load(&to)?.ok_or_else(|| ApiError::BackendFailed {
+                detail: format!("{}: renamed, then not found", this.document(&to).display()),
             })
         })
         .await
@@ -414,6 +469,98 @@ impl PipelineSource for FsPipelines {
 }
 
 impl FsPipelines {
+    /// Moves the pipeline `from` to `to`, which is free: its document, its
+    /// layout, its pairings — each file's own names rewritten, since a
+    /// pairing names both its pipelines inside — and every pairing another
+    /// pipeline keeps towards it. Every pairing is read before anything
+    /// moves, so one this build cannot read refuses the rename whole; the new
+    /// pairings are written before the document moves, and the old ones
+    /// removed after, so a failure leaves the document under one name with
+    /// its pairings readable under it.
+    fn move_pipeline(&self, from: &str, to: &str) -> Result<(), ApiError> {
+        // (path it is kept at now, path it moves to, the file rewritten)
+        let mut pairings: Vec<(PathBuf, PathBuf, PairingFile)> = Vec::new();
+        let own = self.directory.join(format!("{from}{PAIRING}"));
+        if own.is_dir() {
+            for entry in fs::read_dir(&own).map_err(|error| failed(&own, error))? {
+                let entry = entry.map_err(|error| failed(&own, error))?;
+                let file_name = entry.file_name();
+                let Some(other) = file_name
+                    .to_str()
+                    .and_then(|name| name.strip_suffix(".json"))
+                    .filter(|other| is_name(other))
+                else {
+                    continue;
+                };
+                if let Some(mut kept) = self.load_pairing_file(from, other)? {
+                    kept.pipeline = to.to_owned();
+                    pairings.push((self.pairing(from, other), self.pairing(to, other), kept));
+                }
+            }
+        }
+        let entries = fs::read_dir(self.directory.as_ref())
+            .map_err(|error| failed(&self.directory, error))?;
+        for entry in entries {
+            let entry = entry.map_err(|error| failed(&self.directory, error))?;
+            let file_name = entry.file_name();
+            let Some(pipeline) = file_name
+                .to_str()
+                .and_then(|name| name.strip_suffix(PAIRING))
+                .filter(|pipeline| is_name(pipeline) && *pipeline != from)
+            else {
+                continue;
+            };
+            if let Some(mut kept) = self.load_pairing_file(pipeline, from)? {
+                kept.other = to.to_owned();
+                pairings.push((
+                    self.pairing(pipeline, from),
+                    self.pairing(pipeline, to),
+                    kept,
+                ));
+            }
+        }
+
+        for (_, path, kept) in &pairings {
+            if let Some(directory) = path.parent() {
+                fs::create_dir_all(directory).map_err(|error| failed(directory, error))?;
+            }
+            let mut text =
+                serde_json::to_string_pretty(kept).map_err(|error| ApiError::BackendFailed {
+                    detail: format!("{}: {error}", path.display()),
+                })?;
+            text.push('\n');
+            write_atomically(path, text.as_bytes()).map_err(|error| failed(path, error))?;
+        }
+        let (document, moved) = (self.document(from), self.document(to));
+        if let Err(error) = fs::rename(&document, &moved) {
+            // The document stays where it was, so the pairings written for
+            // the new name go: nothing is left pairing a name nothing has.
+            for (_, path, _) in &pairings {
+                let _ = fs::remove_file(path);
+            }
+            let _ = fs::remove_dir(self.directory.join(format!("{to}{PAIRING}")));
+            return Err(failed(&document, error));
+        }
+        let layout = self.layout(from);
+        match fs::rename(&layout, self.layout(to)) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(failed(&layout, error)),
+        }
+        for (path, _, _) in &pairings {
+            match fs::remove_file(path) {
+                Ok(()) => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(failed(path, error)),
+            }
+            // Fails while another pairing is kept there, which is what is meant.
+            if let Some(directory) = path.parent() {
+                let _ = fs::remove_dir(directory);
+            }
+        }
+        Ok(())
+    }
+
     fn pairing(&self, pipeline: &str, other: &str) -> PathBuf {
         self.directory
             .join(format!("{pipeline}{PAIRING}"))
@@ -425,6 +572,29 @@ impl FsPipelines {
     /// or the names inside are not the two its path gives — a file renamed
     /// by hand would otherwise pair nodes of another pipeline.
     fn load_pairing(&self, pipeline: &str, other: &str) -> Result<Option<Pairing>, ApiError> {
+        Ok(self
+            .load_pairing_file(pipeline, other)?
+            .map(|file| Pairing {
+                pipeline: file.pipeline,
+                other: file.other,
+                pairs: file
+                    .pairs
+                    .into_iter()
+                    .map(|pair| NodePair {
+                        node: pair.node,
+                        other: pair.other,
+                        label: pair.label,
+                    })
+                    .collect(),
+            }))
+    }
+
+    /// The file `load_pairing` reads, as it is kept, under the same refusals.
+    fn load_pairing_file(
+        &self,
+        pipeline: &str,
+        other: &str,
+    ) -> Result<Option<PairingFile>, ApiError> {
         let path = self.pairing(pipeline, other);
         let text = match fs::read_to_string(&path) {
             Ok(text) => text,
@@ -458,19 +628,7 @@ impl FsPipelines {
                 ),
             });
         }
-        Ok(Some(Pairing {
-            pipeline: file.pipeline,
-            other: file.other,
-            pairs: file
-                .pairs
-                .into_iter()
-                .map(|pair| NodePair {
-                    node: pair.node,
-                    other: pair.other,
-                    label: pair.label,
-                })
-                .collect(),
-        }))
+        Ok(Some(file))
     }
 
     /// Removes `pipelines/<pipeline>.pairing/<other>.json`, and the
@@ -551,6 +709,17 @@ fn is_device_name(name: &str) -> bool {
         || (stem.len() == 4
             && (stem.starts_with("COM") || stem.starts_with("LPT"))
             && matches!(stem.as_bytes()[3], b'1'..=b'9'))
+}
+
+/// `request_invalid` for a name a pipeline cannot have, saying the rule.
+fn not_a_name(name: &str) -> ApiError {
+    ApiError::RequestInvalid {
+        detail: format!(
+            "`{name}` is not a pipeline name: one file name of letters, digits, `_`, `-` and \
+             `.`, not starting with `.` nor ending with one, 64 bytes at most, not a device \
+             name Windows reserves, and not `{RESERVED}`"
+        ),
+    }
 }
 
 fn not_found(name: &str) -> ApiError {

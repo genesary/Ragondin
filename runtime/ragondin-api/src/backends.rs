@@ -97,6 +97,26 @@ pub trait PipelineSource: Send + Sync {
         precondition: &Precondition,
     ) -> Result<PipelineFile, ApiError>;
 
+    /// Renames the pipeline `from` to `to`, when its stored revision is the
+    /// one `precondition` expects (`Matches` or `Exists`): the document
+    /// moves byte for byte, its layout and its pairings with it, and every
+    /// pairing another pipeline keeps towards it follows. Returns what is now
+    /// stored under `to`. A rename to `from` itself moves nothing.
+    ///
+    /// # Errors
+    ///
+    /// `pipeline_not_found` when `from` is not there; `request_invalid` for a
+    /// `to` that is not one file name or differs from a stored name only in
+    /// case, or a precondition that is a creation; `pipeline_exists` when
+    /// `to` is taken; `precondition_failed` when the stored revision is not
+    /// the one expected, or none is stated. Nothing is moved on any of them.
+    async fn rename(
+        &self,
+        from: &str,
+        to: &str,
+        precondition: &Precondition,
+    ) -> Result<PipelineFile, ApiError>;
+
     /// The layout beside the pipeline `name`, or `None` when it has none.
     ///
     /// # Errors
