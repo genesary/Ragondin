@@ -120,6 +120,30 @@ pub trait PipelineSource: Send + Sync {
     /// `backend_failed` for a layout this build cannot read.
     async fn read_launched_layout(&self, hash: &str) -> Result<Option<Layout>, ApiError>;
 
+    /// The layout beside the pipeline `name` as it is stored, byte for byte,
+    /// or `None` when it has none: what `POST /runs` reads beside the
+    /// document it submits, to copy once the run is accepted.
+    ///
+    /// # Errors
+    ///
+    /// `backend_failed` when the layout is there and cannot be read.
+    async fn read_layout_bytes(&self, name: &str) -> Result<Option<Vec<u8>>, ApiError>;
+
+    /// Stores `bytes`, a pipeline's layout as it was stored, as the layout
+    /// launched under `hash` — `layouts/<hash>.json` locally, replacing any —
+    /// for [`read_launched_layout`](Self::read_launched_layout) to answer.
+    /// `POST /runs` calls it once a run is queued, `hash` being the canonical
+    /// hash of the document the job runs.
+    ///
+    /// # Errors
+    ///
+    /// `backend_failed` when the copy cannot be written.
+    async fn write_launched_layout(
+        &self,
+        hash: &PipelineHash,
+        bytes: &[u8],
+    ) -> Result<(), ApiError>;
+
     /// The manual pairing between the pipelines `pipeline` and `other`, in
     /// whichever direction it was kept, oriented from `pipeline` — each
     /// pair's `node` in `pipeline`, its `other` in `other` — or `None` when

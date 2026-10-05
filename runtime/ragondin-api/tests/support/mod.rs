@@ -29,7 +29,7 @@ use ragondin_api::{
 use ragondin_benchmarks::identity::dataset_version;
 use ragondin_benchmarks::Benchmark;
 use ragondin_experiments::{FileSystemRunStore, Run, RunId, RunStore, RunStoreError};
-use ragondin_pipeline::{LogicalNode, LogicalPipeline};
+use ragondin_pipeline::{LogicalNode, LogicalPipeline, PipelineHash};
 
 /// The address every test router serves, and so the `Host` a request names.
 pub const SERVED: &str = "127.0.0.1:7878";
@@ -330,6 +330,14 @@ impl PipelineSource for FakePipelines {
         Ok(None)
     }
 
+    async fn read_layout_bytes(&self, _name: &str) -> Result<Option<Vec<u8>>, ApiError> {
+        Ok(None)
+    }
+
+    async fn write_launched_layout(&self, _: &PipelineHash, _: &[u8]) -> Result<(), ApiError> {
+        Ok(())
+    }
+
     async fn write_layout(&self, name: &str, _layout: &Layout) -> Result<(), ApiError> {
         Err(ApiError::PipelineNotFound {
             name: name.to_owned(),
@@ -449,6 +457,18 @@ impl PipelineSource for HeldPipelines {
         FakePipelines.read_launched_layout(hash).await
     }
 
+    async fn read_layout_bytes(&self, name: &str) -> Result<Option<Vec<u8>>, ApiError> {
+        FakePipelines.read_layout_bytes(name).await
+    }
+
+    async fn write_launched_layout(
+        &self,
+        hash: &PipelineHash,
+        bytes: &[u8],
+    ) -> Result<(), ApiError> {
+        FakePipelines.write_launched_layout(hash, bytes).await
+    }
+
     async fn write_layout(&self, name: &str, layout: &Layout) -> Result<(), ApiError> {
         FakePipelines.write_layout(name, layout).await
     }
@@ -498,6 +518,18 @@ impl PipelineSource for UnlistablePipelines {
 
     async fn read_launched_layout(&self, hash: &str) -> Result<Option<Layout>, ApiError> {
         FakePipelines.read_launched_layout(hash).await
+    }
+
+    async fn read_layout_bytes(&self, name: &str) -> Result<Option<Vec<u8>>, ApiError> {
+        FakePipelines.read_layout_bytes(name).await
+    }
+
+    async fn write_launched_layout(
+        &self,
+        hash: &PipelineHash,
+        bytes: &[u8],
+    ) -> Result<(), ApiError> {
+        FakePipelines.write_launched_layout(hash, bytes).await
     }
 
     async fn write_layout(&self, name: &str, layout: &Layout) -> Result<(), ApiError> {
@@ -564,6 +596,18 @@ impl<P: PipelineSource> PipelineSource for ListCounted<P> {
 
     async fn read_launched_layout(&self, hash: &str) -> Result<Option<Layout>, ApiError> {
         self.inner.read_launched_layout(hash).await
+    }
+
+    async fn read_layout_bytes(&self, name: &str) -> Result<Option<Vec<u8>>, ApiError> {
+        self.inner.read_layout_bytes(name).await
+    }
+
+    async fn write_launched_layout(
+        &self,
+        hash: &PipelineHash,
+        bytes: &[u8],
+    ) -> Result<(), ApiError> {
+        self.inner.write_launched_layout(hash, bytes).await
     }
 
     async fn write_layout(&self, name: &str, layout: &Layout) -> Result<(), ApiError> {

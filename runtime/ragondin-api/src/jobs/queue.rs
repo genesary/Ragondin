@@ -362,6 +362,16 @@ impl Queue {
         self.enqueue(&mut state, work).await
     }
 
+    /// Reports a fault of the job `id` that does not change its state, among
+    /// the faults `GET /jobs` lists.
+    pub(crate) async fn report(&self, id: &str, reason: String) {
+        self.state
+            .lock()
+            .await
+            .faults
+            .push(fault(&self.dir, id, reason));
+    }
+
     /// Queues a download of `benchmark` on the download lane.
     pub(crate) async fn submit_download(
         self: &Arc<Self>,

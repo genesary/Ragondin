@@ -36,6 +36,8 @@ use crate::validation;
 pub(crate) struct Cut {
     /// The cut, rendered: what the job snapshots and the run stores.
     pub(crate) document: String,
+    /// The cut's own canonical hash: the run's pipeline hash.
+    pub(crate) hash: PipelineHash,
     /// The canonical hash of the document it was cut from.
     pub(crate) parent_hash: PipelineHash,
     /// The kind of value the cut's output produces.
@@ -80,9 +82,10 @@ pub(crate) fn cut(pipeline: &str, document: &str, up_to: &str) -> Result<Cut, Ap
             edge: None,
         },
     })?;
-    validation::lower(&rendered)?;
+    let hash = validation::lower(&rendered)?.content_hash();
     Ok(Cut {
         document: rendered,
+        hash,
         parent_hash: parent.content_hash(),
         output: produced_kind(node),
     })

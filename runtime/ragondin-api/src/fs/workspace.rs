@@ -25,7 +25,7 @@ const DATASETS: &str = "datasets";
 ///   workspace.toml                the datasets directory and the services — never hashed
 ///   pipelines/<name>.yaml         a pipeline document, the source of truth
 ///   pipelines/<name>.layout.json  its layout, never in its hash
-///   layouts/                      layouts copied at launch, by run
+///   layouts/                      layouts copied at launch, by canonical hash
 ///   runs/                         the run store, as `bench --store <root>/runs` writes it
 ///   jobs/                         the queue's state
 ///   cache/                        derived data, reconstructible
