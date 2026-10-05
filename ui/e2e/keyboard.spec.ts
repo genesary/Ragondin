@@ -23,7 +23,7 @@ test('keyboard only: Runs → Compare → Replay → a node and its menu', async
 
   // Compare: a regressed bin, then one of its queries, into Replay.
   await expect(page).toHaveURL(new RegExp(`#compare/${hybrid}\\+${dense}\\?baseline=${hybrid}$`));
-  const worst = page.getByRole('button', { name: /^much worse, below −0\.3: [1-9]\d* quer/ });
+  const worst = page.getByRole('button', { name: /^much worse, [1-9][\d,]* quer(y|ies), change below −0\.3$/ });
   await tabTo(page, worst, 'the regressed bin');
   await page.keyboard.press('Enter');
   await tabTo(page, page.getByRole('region', { name: /queries much worse/ }).getByRole('link').first(), 'its first query');

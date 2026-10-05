@@ -16,7 +16,7 @@ test('investigate: from the histogram to the node that differs, side by side', a
 
   // The histogram's regressions.
   const perQuery = page.getByRole('region', { name: 'Per query' });
-  const worst = perQuery.getByRole('button', { name: /^much worse, below −0\.3: [1-9]\d* quer/ });
+  const worst = perQuery.getByRole('button', { name: /^much worse, [1-9][\d,]* quer(y|ies), change below −0\.3$/ });
   await worst.click();
   await expect(worst).toHaveAttribute('aria-expanded', 'true');
   const regressions = perQuery.getByRole('region', { name: /queries much worse/ }).getByRole('link');
