@@ -436,6 +436,17 @@ describe('the verdict', () => {
 });
 
 describe('the pairing', () => {
+  it('points Pair nodes… at its panel only while the panel is on the page', async () => {
+    show(THREE);
+    await loaded();
+    const toggle = screen.getByRole('button', { name: 'Pair nodes…' });
+    expect(toggle.hasAttribute('aria-controls')).toBe(false);
+    // No control on the screen names an element that is not in the document.
+    for (const el of document.querySelectorAll('[aria-controls]')) expect(document.getElementById(el.getAttribute('aria-controls')!), el.outerHTML.slice(0, 80)).not.toBeNull();
+    fireEvent.click(toggle);
+    expect(document.getElementById(toggle.getAttribute('aria-controls') ?? '')).toBe(screen.getByRole('region', { name: 'Pair nodes' }));
+  });
+
   it('posts a pair drawn by hand, then the subtitle counts it; Reset to automatic clears it', async () => {
     const api = show(THREE);
     await loaded();
