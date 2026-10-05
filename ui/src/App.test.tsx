@@ -8,6 +8,7 @@ import type { JobSummary, Workspace } from './api/types.ts';
 import { App } from './App.tsx';
 import { COMPARISON, DENSE, HYBRID, RERANK } from './compare/fixtures.ts';
 import * as replay from './replay/fixtures.ts';
+import * as editor from './editor/fixtures.ts';
 import { MATRIX, NAME as PIPELINE } from './pipeline/fixtures.ts';
 
 const BUILD = '0.0.0+aaaaaaaaaaaa';
@@ -95,6 +96,38 @@ describe('the shell’s screens', () => {
     expect(await within(main()).findByRole('application', { name: 'Run B, dense-only, query q1' })).toBeTruthy();
     expect(within(main()).getByRole('heading', { level: 1 }).textContent).toBe('Replay');
   });
+
+  it('keeps the node selected in Replay when Replay opens the editor on the same pipeline', async () => {
+    const id = (path: string) => decodeURIComponent(path.split('/')[4] ?? '');
+    const hash = replay.HYBRID;
+    const listing = { ...replay.LISTING, runs: replay.LISTING.runs.map((r) => (r.id === hash ? { ...r, pipeline_names: ['hybrid'] } : r)) };
+    mockApi(
+      {
+        'GET /workspace': { body: WORKSPACE },
+        'GET /runs': { body: listing },
+        'GET /runs/{id}': (_q, path) => ({ body: id(path) === hash ? replay.HYBRID_DETAIL : replay.DENSE_DETAIL }),
+        'GET /runs/{id}/queries': { body: replay.HYBRID_QUERIES },
+        'GET /runs/{id}/trace/{query}': { body: replay.HYBRID_TRACE },
+        'GET /pipelines': { body: { pipelines: [{ name: 'hybrid', etag: 'e'.repeat(64), modified_ms: null, hash, error: null }] } },
+        'GET /pipelines/{name}': { body: { name: 'hybrid', document: 'pipeline: …\n', etag: 'e'.repeat(64), hash, error: null, typed: editor.HYBRID_RAG, canonical: true } },
+        'GET /pipelines/{name}/layout': { body: { layout: null } },
+        'GET /services': { body: editor.SERVICES },
+        'POST /pipelines/validate': { body: { hash, rendering: null } },
+      },
+      { build: BUILD },
+    );
+    show(`#replay/${hash}/q/q1/node/context`);
+    expect(await within(main()).findByRole('complementary', { name: 'context' })).toBeTruthy();
+    const open = await within(main()).findByRole('link', { name: 'Open in the editor' });
+    expect(open.getAttribute('href')).toBe('#editor/hybrid/node/context');
+    act(() => {
+      window.location.hash = open.getAttribute('href')!;
+    });
+    expect(await within(main()).findByRole('application', { name: 'Pipeline hybrid' }, { timeout: 5000 })).toBeTruthy();
+    expect(await within(main()).findByRole('complementary', { name: 'context' }, { timeout: 5000 })).toBeTruthy();
+    expect(window.location.hash).toBe('#editor/hybrid/node/context');
+    expect(within(main()).getByRole('heading', { level: 1 }).textContent).toBe('Editor');
+  }, 15000);
 
   it('hands Runs the selection its address carries', async () => {
     const id = (c: string) => c.repeat(64);

@@ -25,6 +25,30 @@ export const fromPartial = (trace: PartialTrace): ReplayTrace => ({ query: trace
  */
 export const runName = (run: Pick<RunSummary, 'launched_as' | 'pipeline_names'>): string | null => run.launched_as?.name ?? run.pipeline_names[0] ?? null;
 
+const FORK_INSTEAD = 'Fork this run to edit it.';
+const andList = (names: string[]) => (names.length < 2 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`);
+
+/**
+ * The stored document the editor opens a run on, so the selected node is the
+ * same node there: a workspace document whose canonical hash is the run's
+ * (`pipeline_names`, the API's content fact) and that the API reads
+ * (`refused_pipeline_names` excluded) — the name the run was launched as when
+ * it is among them, else the first. Never the launch record's name alone: a
+ * document edited since the run is another pipeline. With none, the reason,
+ * and the fork as the way to edit it.
+ */
+export function editorTarget(run: Pick<RunSummary, 'launched_as' | 'pipeline_names' | 'refused_pipeline_names'>): { name: string } | { reason: string } {
+  const readable = run.pipeline_names.filter((name) => !run.refused_pipeline_names.includes(name));
+  const launched = run.launched_as?.name ?? null;
+  const name = launched !== null && readable.includes(launched) ? launched : readable[0];
+  if (name !== undefined) return { name };
+  const refused = run.refused_pipeline_names;
+  if (refused.length === 1) return { reason: `${refused[0]} holds what this run ran, but differs from another stored name only in case, so it cannot be read. ${FORK_INSTEAD}` };
+  if (refused.length > 1) return { reason: `${andList(refused)} hold what this run ran, but each differs from another stored name only in case, so ${refused.length === 2 ? 'neither' : 'none'} can be read. ${FORK_INSTEAD}` };
+  if (launched !== null && run.launched_as?.held === 'exactly') return { reason: `${launched} has changed since this run, and no pipeline document holds what it ran. ${FORK_INSTEAD}` };
+  return { reason: `No pipeline document in the workspace holds what this run ran. ${FORK_INSTEAD}` };
+}
+
 /** A metric value as every screen prints a ranking metric: four decimals. */
 export const formatScore = (value: number) => value.toFixed(4);
 

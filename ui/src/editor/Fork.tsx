@@ -2,7 +2,8 @@
 // every run keeps it, verbatim — written byte for byte to a new pipeline file
 // under a proposed name (sent as text, ADR-C40 § 6), the layout copied at the
 // run's launch copied beside it when there is one, and the editor opened on it
-// with the run named in its header. The iterate journey's first click (design
+// with the run named in its header — on the node selected in Replay, when it
+// is forked from there. The iterate journey's first click (design
 // document § 3). ARCHITECTURE.md § The editor.
 import { useState } from 'react';
 import { Button, ButtonLink, InlineMessage } from '../../design/index.ts';
@@ -50,8 +51,13 @@ export async function forkRun(client: ApiClient, run: string): Promise<Forked> {
   return { ok: true, name: written, layoutFailed: copied.ok ? null : copied.problem };
 }
 
-/** "Fork this run"; refused, saying `refusal`, while there is no one run to fork. */
-export function ForkButton({ client, run, size = 'm', refusal = null }: { client: ApiClient; run: string | null; size?: 's' | 'm'; refusal?: string | null }) {
+/**
+ * "Fork this run"; refused, saying `refusal`, while there is no one run to
+ * fork. Given the node selected where it is pressed — Replay's — it opens the
+ * fork on that node: the fork is the run's own configuration, so it has it.
+ */
+export function ForkButton({ client, run, size = 'm', refusal = null, node = null }: { client: ApiClient; run: string | null; size?: 's' | 'm'; refusal?: string | null; node?: string | null }) {
+  const editorAt = (name: string) => (node === null ? { screen: 'editor' as const, name } : { screen: 'editor' as const, name, node });
   const [busy, setBusy] = useState(false);
   const [refused, setRefused] = useState<ApiProblem | null>(null);
   const [partly, setPartly] = useState<{ name: string; problem: ApiProblem } | null>(null);
@@ -64,7 +70,7 @@ export function ForkButton({ client, run, size = 'm', refusal = null }: { client
     setBusy(false);
     if (!forked.ok) setRefused(forked.problem);
     else if (forked.layoutFailed !== null) setPartly({ name: forked.name, problem: forked.layoutFailed });
-    else navigate({ screen: 'editor', name: forked.name });
+    else navigate(editorAt(forked.name));
   };
   return (
     <>
@@ -81,7 +87,7 @@ export function ForkButton({ client, run, size = 'm', refusal = null }: { client
           tone="warning"
           title={`Forked as ${partly.name}, but its layout could not be copied: ${partly.problem.message}`}
           action={
-            <ButtonLink size="s" href={formatHash({ screen: 'editor', name: partly.name })}>
+            <ButtonLink size="s" href={formatHash(editorAt(partly.name))}>
               Open {partly.name} in the editor
             </ButtonLink>
           }

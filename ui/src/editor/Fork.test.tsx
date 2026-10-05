@@ -14,12 +14,12 @@ const CONFIGURATION = '# tuned on 2026-10-01\npipeline:\n  inputs: [question]\n 
 const RUN: RunDetail = { ...HYBRID_DETAIL, configuration: CONFIGURATION, launched_as: { name: 'hybrid', held: null, prefix_of: null } };
 const LAYOUT: Layout = { version: 1, nodes: { lexical: { x: 16, y: 32 } } };
 
-function Harness() {
+function Harness({ node }: { node?: string }) {
   const [client] = useState(() => createApiClient());
-  return <ForkButton client={client} run={RUN.id} />;
+  return <ForkButton client={client} run={RUN.id} {...(node === undefined ? {} : { node })} />;
 }
 
-function setup(routes: MockRoutes = {}) {
+function setup(routes: MockRoutes = {}, node?: string) {
   const api = mockApi({
     'GET /runs/{id}': { body: RUN },
     'GET /pipelines': { body: { pipelines: [{ name: 'hybrid', etag: 'e'.repeat(64), modified_ms: null, hash: null, error: null }] } },
@@ -28,7 +28,7 @@ function setup(routes: MockRoutes = {}) {
     'PUT /pipelines/{name}/layout': { body: { layout: LAYOUT } },
     ...routes,
   });
-  render(<Harness />);
+  render(<Harness {...(node === undefined ? {} : { node })} />);
   return api;
 }
 
@@ -78,6 +78,18 @@ describe('forking a run', () => {
     expect(said.textContent).toContain('Forked as hybrid-fork, but its layout could not be copied: disk full');
     expect(window.location.hash).toBe('');
     expect(screen.getByRole('link', { name: 'Open hybrid-fork in the editor' }).getAttribute('href')).toBe('#editor/hybrid-fork');
+  });
+
+  it('opens the fork on the node selected in Replay, which the fork has: its configuration is the run’s', async () => {
+    setup({}, 'lexical');
+    fireEvent.click(screen.getByRole('button', { name: 'Fork this run' }));
+    await waitFor(() => expect(window.location.hash).toBe('#editor/hybrid-fork/node/lexical'));
+  });
+
+  it('offers the fork on that node when its layout could not be copied', async () => {
+    setup({ 'GET /runs/{id}/layout': { problem: { type: 'urn:ragondin:problem:backend_failed', title: 'Backend failed', status: 500, code: 'backend_failed', detail: 'disk full', hint: 'Free space.', location: null } } }, 'lexical');
+    fireEvent.click(screen.getByRole('button', { name: 'Fork this run' }));
+    expect((await screen.findByRole('link', { name: 'Open hybrid-fork in the editor' })).getAttribute('href')).toBe('#editor/hybrid-fork/node/lexical');
   });
 
   it('says why when the write is refused, and opens nothing', async () => {

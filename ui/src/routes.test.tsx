@@ -172,6 +172,39 @@ describe('#replay/<run>/q/<query>?with=<run>', () => {
   });
 });
 
+describe('#replay/<run>/q/<query>/node/<id>?with=<run>', () => {
+  it('carries the node selected on the query, and restores it from the hash on load', () => {
+    const route: Route = { screen: 'replay', run: 'aaa', query: '1395', node: 'fused/2', with: 'bbb' };
+    expect(formatHash(route)).toBe('#replay/aaa/q/1395/node/fused%2F2?with=bbb');
+    expect(load('#replay/aaa/q/1395/node/fused%2F2?with=bbb')).toEqual(route);
+  });
+
+  it('carries it without a run beside', () => {
+    expect(formatHash({ screen: 'replay', run: 'aaa', query: '7', node: 'rerank' })).toBe('#replay/aaa/q/7/node/rerank');
+    expect(parseHash('#replay/aaa/q/7/node/rerank')).toEqual({ screen: 'replay', run: 'aaa', query: '7', node: 'rerank' });
+  });
+
+  it("is state within the run's view, as the query is", () => {
+    expect(viewOf({ screen: 'replay', run: 'aaa', query: '7', node: 'rerank' })).toBe('#replay/aaa');
+  });
+
+  it.each(['#replay/aaa/node/rerank', '#replay/aaa/q/7/node', '#replay/aaa/q/7/node/', '#replay/aaa/q/7/nodes/rerank', '#replay/aaa/q/7/node/..', '#replay/aaa/q/7/node/a/b'])('reads %s as no route', (hash) => {
+    expect(parseHash(hash)).toBeNull();
+  });
+});
+
+describe('#replay/job/<id>/q/<query>/node/<id>', () => {
+  it("carries the node selected on a job's query, and restores it from the hash on load", () => {
+    const route: Route = { screen: 'replay', job: 'j2', query: 'q1', node: 'rerank' };
+    expect(formatHash(route)).toBe('#replay/job/j2/q/q1/node/rerank');
+    expect(load('#replay/job/j2/q/q1/node/rerank')).toEqual(route);
+  });
+
+  it.each(['#replay/job/j2/node/rerank', '#replay/job/j2/q/q1/node', '#replay/job/j2/q/q1/node/rerank?with=aaa'])('reads %s as no route', (hash) => {
+    expect(parseHash(hash)).toBeNull();
+  });
+});
+
 describe('#replay/job/<id>/q/<query>', () => {
   it('carries a job whose partial traces are replayed, and the query, and restores them from the hash on load', () => {
     const route: Route = { screen: 'replay', job: '1700000000000-2', query: 'q/1' };
