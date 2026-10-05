@@ -8,6 +8,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ButtonLink, EmptyState, InlineMessage, RunSwatch, SegmentedControl, Select, Sheet } from '../../design/index.ts';
 import type { ApiClient, ApiProblem, ApiResult } from '../api/client.ts';
+import { ForkButton } from '../editor/Fork.tsx';
 import type { Graph, JobSummary, PartialQueries, PartialTrace, QueryTrace, RunDetail, RunListing, RunQueries } from '../api/types.ts';
 import { Canvas } from '../canvas/index.ts';
 import { formatHash, navigate } from '../routes.ts';
@@ -240,6 +241,7 @@ function RunReplay({ client, run, query, with: other }: RunSource) {
     <div className="rg-replay">
       <div className="rg-replay__bar">
         <RunSwatch slot="a" name={nameA} hash={run} onCopyHash={copy} copyLabel="run A" />
+        <ForkButton client={client} run={run} size="s" />
         <SegmentedControl
           label="Replay mode"
           value={beside === null ? 'single' : 'side'}

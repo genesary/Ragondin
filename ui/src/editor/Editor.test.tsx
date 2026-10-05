@@ -36,7 +36,7 @@ function Harness({ initial = DRAFT, grammar = GRAMMAR, start = null, stored = nu
   );
 }
 
-function setup(routes: MockRoutes = { 'POST /pipelines/validate': { body: { hash: HASH } } }, props: Parameters<typeof Harness>[0] = {}) {
+function setup(routes: MockRoutes = { 'POST /pipelines/validate': { body: { hash: HASH, rendering: null } } }, props: Parameters<typeof Harness>[0] = {}) {
   const api = mockApi(routes);
   const view = render(<Harness {...props} />);
   return { ...view, api };
@@ -82,12 +82,12 @@ describe('live validation', () => {
   });
 
   it('never shows a hash of its own: the header waits for the server', async () => {
-    let answer: (v: { body: { hash: string } }) => void = () => {};
+    let answer: (v: { body: { hash: string; rendering: string | null } }) => void = () => {};
     const { container, api } = setup({ 'POST /pipelines/validate': () => new Promise((resolve) => (answer = resolve)) });
     expect(await within(container).findByText('Checking with the server…')).toBeTruthy();
     await waitFor(() => expect(validations(api)).toHaveLength(1));
     expect(within(container).getByText('Checking with the server…')).toBeTruthy();
-    await act(async () => answer({ body: { hash: HASH } }));
+    await act(async () => answer({ body: { hash: HASH, rendering: null } }));
     expect(await within(container).findByText(HASH)).toBeTruthy();
   });
 });
@@ -498,7 +498,7 @@ describe('the inspector in write mode', () => {
   });
 
   it('refuses a change of kind the value cannot take, in words, and keeps the value', () => {
-    setup({ 'POST /pipelines/validate': { body: { hash: HASH } } }, { start: 'vectors' });
+    setup({ 'POST /pipelines/validate': { body: { hash: HASH, rendering: null } } }, { start: 'vectors' });
     fireEvent.change(screen.getByLabelText('Kind of embedder'), { target: { value: 'int' } });
     expect(screen.getByText('An integer is a whole number, such as 60: "bge" is not one.')).toBeTruthy();
     expect((screen.getByLabelText('Kind of embedder') as HTMLSelectElement).value).toBe('string');

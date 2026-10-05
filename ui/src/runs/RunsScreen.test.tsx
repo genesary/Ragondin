@@ -306,6 +306,31 @@ describe('the keyboard', () => {
   });
 });
 
+describe('fork', () => {
+  const fork = () => screen.getByRole('button', { name: 'Fork this run' });
+
+  it('is refused, saying why, until exactly one run is selected', async () => {
+    show('#runs');
+    await loaded();
+    expect(fork().getAttribute('aria-disabled')).toBe('true');
+    expect(reasonOf(fork())).toBe('Select one run to fork it.');
+  });
+
+  it('forks the one run selected and opens the editor on the new pipeline', async () => {
+    const api = show(`#runs?sel=${R1}`, {
+      ...routes(),
+      'GET /runs/{id}': { body: { id: R1, inputs: { pipeline: HYBRID, dataset_version: SCIFACT, index_version: 'i', model_hashes: {}, engine_version: '0.1.0' }, metrics: {}, configuration: 'pipeline: {}\n', bindings: [], started_at_ms: null, finished_at_ms: null, graph: HYBRID_GRAPH, launched_as: null } },
+      'GET /pipelines': { body: { pipelines: [] } },
+      'PUT /pipelines/{name}': { body: { name: 'run-11111111-fork', etag: 'e'.repeat(64), hash: HYBRID } },
+      'GET /runs/{id}/layout': { body: { layout: null } },
+    });
+    await loaded();
+    fireEvent.click(fork());
+    await waitFor(() => expect(window.location.hash).toBe('#editor/run-11111111-fork'));
+    expect(api.bodies[api.requests.indexOf('PUT /api/v1/pipelines/run-11111111-fork')]).toEqual({ document: 'pipeline: {}\n' });
+  });
+});
+
 describe('the selection', () => {
   it('disables every run on another benchmark once a run is checked, and re-enables them when it is unchecked', async () => {
     show('#runs');
