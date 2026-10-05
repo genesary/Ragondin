@@ -648,11 +648,12 @@ pub(crate) fn carried(ground_truth: GroundTruth) -> CarriedPieces {
 }
 
 /// Which ground truths a pipeline can be scored on, by whether it ends in an
-/// answer: `CarriedPieces::scorable` asked of every [`GroundTruth`], the rule
-/// served rather than restated by a client.
+/// answer: `CarriedPieces::scorable` asked of every [`GroundTruth`] that
+/// carries a piece, the rule served rather than restated by a client.
+/// [`GroundTruth::None`] is in neither list: the harness runs on such a
+/// benchmark, but nothing would score the run, so no client offers it.
 pub(crate) fn scorable() -> Scorable {
     let all = [
-        GroundTruth::None,
         GroundTruth::Qrels,
         GroundTruth::ReferenceAnswers,
         GroundTruth::Both,

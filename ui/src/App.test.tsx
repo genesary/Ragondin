@@ -59,7 +59,7 @@ describe('the shell’s screens', () => {
     ['#editor', 'Editor', 'No pipeline open'],
     ['#editor/hybrid-rrf', 'Editor', 'hybrid-rrf cannot be opened on the canvas'],
   ])('%s renders the %s screen, restored from the hash, in its empty state', async (hash, tab, heading) => {
-    const pipeline = { name: 'hybrid-rrf', document: 'pipeline: {}\n', etag: 'e'.repeat(64), hash: null, error: null, typed: null, canonical: false };
+    const pipeline = { name: 'hybrid-rrf', document: 'pipeline: {}\n', etag: 'e'.repeat(64), hash: null, error: null, typed: null, canonical: false, ends_in_answer_up_to: null };
     mockApi({ 'GET /workspace': { body: WORKSPACE }, 'GET /runs': { body: { runs: [], unreadable: [], shapes: {} } }, 'GET /pipelines/{name}': { body: pipeline } }, { build: BUILD });
     show(hash);
     expect(within(main()).getByRole('heading', { level: 1 }).textContent).toBe(tab);
@@ -130,7 +130,7 @@ describe('the shell’s screens', () => {
         'GET /runs/{id}/queries': { body: replay.HYBRID_QUERIES },
         'GET /runs/{id}/trace/{query}': { body: replay.HYBRID_TRACE },
         'GET /pipelines': { body: { pipelines: [{ name: 'hybrid', etag: 'e'.repeat(64), modified_ms: null, hash, ends_in_answer: false, error: null }] } },
-        'GET /pipelines/{name}': { body: { name: 'hybrid', document: 'pipeline: …\n', etag: 'e'.repeat(64), hash, error: null, typed: editor.HYBRID_RAG, canonical: true } },
+        'GET /pipelines/{name}': { body: { name: 'hybrid', document: 'pipeline: …\n', etag: 'e'.repeat(64), hash, error: null, typed: editor.HYBRID_RAG, canonical: true, ends_in_answer_up_to: null } },
         'GET /pipelines/{name}/layout': { body: { layout: null } },
         'GET /services': { body: editor.SERVICES },
         'POST /pipelines/validate': { body: { hash, rendering: null } },

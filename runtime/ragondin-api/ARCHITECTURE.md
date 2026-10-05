@@ -252,7 +252,9 @@ supplies the HTTP transport, and converts what comes back in `convert.rs`.
   beside `scorable` — the ground truths a pipeline can be scored on, by
   whether it ends in an answer, `CarriedPieces::scorable` asked of each
   (`convert::scorable`), so a client filters what it offers without restating
-  ADR-C30 § 5 — and `POST /benchmarks/import` imports through it; a download is a job on
+  ADR-C30 § 5. `none` is in neither list: the harness runs on a benchmark
+  that carries no ground truth, but nothing would score the run, so the
+  served list is the whole of what a client offers — and `POST /benchmarks/import` imports through it; a download is a job on
   the queue's download lane, through `download` (§ The job queue).
 
 ### The loaded datasets: a choice made here
@@ -503,9 +505,15 @@ in `tests/workspace_toml.rs`:
 `fs::FsPipelines` is the `PipelineSource` over `pipelines/`. `GET /pipelines`
 lists each document with its hash or why it does not validate, and
 `ends_in_answer`: whether the pipeline it lowers to has a terminal node that
-produces an answer (`derived::Outputs`, the harness's own test of an answer
-to score), `null` when it does not validate. With `GET /benchmarks`'
-`scorable`, that is which benchmarks a launch of it can be scored on.
+produces an answer (`derived::ends_in_answer`, the harness's own test of an
+answer to score, and the one the matrix's columns read through
+`derived::Outputs`), `null` when it does not validate. `GET /pipelines/{name}`
+adds `ends_in_answer_up_to`: for each node, whether the pipeline cut there —
+`POST /runs`' `up_to` — ends in an answer, which is whether the node produces
+one (`derived::answers`), since the cut's one terminal node is the node it
+stops at; `null` when the document does not validate. With
+`GET /benchmarks`' `scorable`, that is which benchmarks a launch of it, or of
+a prefix of it, can be scored on.
 
 - **The verbatim rule.** A document is stored exactly as it was sent and read
   exactly as it is stored, never parsed and re-serialized — for the reason

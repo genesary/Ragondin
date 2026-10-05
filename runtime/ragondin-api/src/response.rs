@@ -1023,6 +1023,11 @@ pub struct PipelineDetail {
     /// another formatting) and for one that does not read: the editor warns
     /// before its first save replaces such a text (ADR-016 § 5).
     pub canonical: bool,
+    /// For each node, by id, whether the pipeline cut there — `POST /runs`'
+    /// `up_to` — ends in an answer: the node produces one. `null` when the
+    /// document does not validate. With [`BenchmarkListing::scorable`], which
+    /// benchmarks a prefix can be scored on.
+    pub ends_in_answer_up_to: Option<BTreeMap<String, bool>>,
 }
 
 /// Why a pipeline document does not validate: `pipeline_invalid`'s detail and

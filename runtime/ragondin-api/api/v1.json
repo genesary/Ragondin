@@ -3070,6 +3070,14 @@
             "description": "The document, byte for byte as the file holds it.",
             "type": "string"
           },
+          "ends_in_answer_up_to": {
+            "additionalProperties": {
+              "type": "boolean"
+            },
+            "description": "For each node, by id, whether the pipeline cut there — `POST /runs`'\n`up_to` — ends in an answer: the node produces one. `null` when the\ndocument does not validate. With [`BenchmarkListing::scorable`], which\nbenchmarks a prefix can be scored on.",
+            "nullable": true,
+            "type": "object"
+          },
           "error": {
             "anyOf": [
               {
@@ -3115,6 +3123,7 @@
         "required": [
           "canonical",
           "document",
+          "ends_in_answer_up_to",
           "error",
           "etag",
           "hash",

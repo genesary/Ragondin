@@ -77,12 +77,13 @@ async fn the_listing_says_which_ground_truths_each_output_can_be_scored_on() {
 
     // `CarriedPieces::scorable`, asked of every ground truth: a pipeline that
     // ends elsewhere than in an answer cannot be scored against reference
-    // answers (ADR-C30 § 5).
+    // answers (ADR-C30 § 5). A benchmark that carries none has nothing to
+    // score a run on, whatever the run ends in: it is in neither list.
     assert_eq!(
         listing["scorable"],
         json!({
-            "ending_in_answer": ["none", "qrels", "reference_answers", "both"],
-            "ending_elsewhere": ["none", "qrels"],
+            "ending_in_answer": ["qrels", "reference_answers", "both"],
+            "ending_elsewhere": ["qrels"],
         })
     );
 }

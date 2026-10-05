@@ -1185,6 +1185,13 @@ export type PipelineDetail = {
   canonical: boolean;
   /** The document, byte for byte as the file holds it. */
   document: string;
+  /**
+   * For each node, by id, whether the pipeline cut there — `POST /runs`'
+   * `up_to` — ends in an answer: the node produces one. `null` when the
+   * document does not validate. With [`BenchmarkListing::scorable`], which
+   * benchmarks a prefix can be scored on.
+   */
+  ends_in_answer_up_to: Record<string, boolean> | null;
   /** Why it does not validate, when it does not. */
   error: PipelineError | null;
   /** The digest of those bytes; also the response's `ETag` header, quoted. */

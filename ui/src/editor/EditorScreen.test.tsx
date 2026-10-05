@@ -54,7 +54,7 @@ const ROUTES: MockRoutes = {
 };
 
 /** `HYBRID` as `GET /pipelines/{name}` serves it: its text, and its typed document. */
-const STORED_DETAIL: PipelineDetail = { name: 'hybrid', document: 'pipeline: …\n', etag: 'e'.repeat(64), hash: HASH, error: null, typed: HYBRID, canonical: true };
+const STORED_DETAIL: PipelineDetail = { name: 'hybrid', document: 'pipeline: …\n', etag: 'e'.repeat(64), hash: HASH, error: null, typed: HYBRID, canonical: true, ends_in_answer_up_to: null };
 const STORED: MockRoutes = { ...ROUTES, 'GET /pipelines/{name}': { body: STORED_DETAIL } };
 
 afterEach(async () => {

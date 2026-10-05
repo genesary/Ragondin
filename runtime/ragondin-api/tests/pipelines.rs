@@ -170,6 +170,26 @@ async fn the_listing_says_whether_each_pipeline_ends_in_an_answer() {
 }
 
 #[tokio::test]
+async fn a_pipeline_says_which_of_its_nodes_a_cut_ending_in_an_answer_stops_at() {
+    let workspace = scratch("detail_output");
+    fs::write(workspace.pipelines().join("answering.yaml"), ANSWERING).unwrap();
+    fs::write(workspace.pipelines().join("broken.yaml"), MIS_KINDED).unwrap();
+
+    let answering =
+        body_json(send(server(&workspace), get("/api/v1/pipelines/answering")).await).await;
+    let broken = body_json(send(server(&workspace), get("/api/v1/pipelines/broken")).await).await;
+
+    // Cut at a node, the pipeline ends in what that node produces: only the
+    // generator's cut — the whole pipeline here — ends in an answer.
+    assert_eq!(
+        answering["ends_in_answer_up_to"],
+        json!({ "lexical": false, "concat": false, "generate": true })
+    );
+    // A document that does not validate has no cut to speak of.
+    assert_eq!(broken["ends_in_answer_up_to"], Value::Null);
+}
+
+#[tokio::test]
 async fn a_write_with_a_stale_etag_is_refused_with_412_and_the_current_etag() {
     let workspace = scratch("stale");
     let first = create(&workspace, "hybrid", HYBRID).await;
