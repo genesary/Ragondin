@@ -371,7 +371,7 @@ and every path derived from it.
   pipelines/<name>.yaml         a pipeline document, the source of truth
   pipelines/<name>.layout.json  its layout, never in its hash
   pipelines/<name>.pairing/     its manual pairings, one file per other pipeline — never hashed (§ Compare)
-  layouts/                      layouts copied at launch, `<hash>.json` — created here and read by `GET /runs/{id}/layout`; nothing copies one yet
+  layouts/                      layouts copied at launch, `<hash>.json` — created here and read by `GET /runs/{id}/layout`; written at launch by the launcher's copy, #470
   runs/                         the run store, as `bench --store <root>/runs` writes it
   jobs/                         the queue's state: `<id>.json` per job, `<id>/partial/` — § The job queue
   cache/                        derived data — created here, written by #343
@@ -578,8 +578,8 @@ in `tests/workspace_toml.rs`:
   run's launch, `layouts/<hash>.json` by the run's canonical pipeline hash,
   in the same format, or `null` — what a fork from the run copies beside
   its new document (`PipelineSource::read_launched_layout`). A hash that is
-  not hex names no file and answers `null`, never a path. Nothing writes one
-  yet: the launcher's copy at launch is its own issue.
+  not hex names no file and answers `null`, never a path. Writing one at
+  launch is #470's, the launcher's copy of the layout.
 
 ### Validation, in the CLI's words
 

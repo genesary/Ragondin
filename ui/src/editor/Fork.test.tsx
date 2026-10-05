@@ -59,6 +59,27 @@ describe('forking a run', () => {
     expect(api.bodies[api.requests.indexOf('PUT /api/v1/pipelines/hybrid-fork/layout')]).toEqual(LAYOUT);
   });
 
+  it('takes the next free name when the one proposed is taken between the listing and the write', async () => {
+    const taken = { problem: { type: 'urn:ragondin:problem:precondition_failed', title: 'Precondition failed', status: 412, code: 'precondition_failed' as const, detail: 'a document is stored', hint: 'Read it again.', location: null } };
+    const api = setup({ 'PUT /pipelines/{name}': [taken, { body: { name: 'hybrid-fork-2', etag: 'f'.repeat(64), hash: RUN.inputs.pipeline } }] });
+    fireEvent.click(screen.getByRole('button', { name: 'Fork this run' }));
+    await waitFor(() => expect(window.location.hash).toBe('#editor/hybrid-fork-2'));
+    expect(api.requests.filter((r) => r.startsWith('PUT /api/v1/pipelines/hybrid-fork'))).toEqual(['PUT /api/v1/pipelines/hybrid-fork', 'PUT /api/v1/pipelines/hybrid-fork-2']);
+    expect(api.bodies[api.requests.indexOf('PUT /api/v1/pipelines/hybrid-fork-2')]).toEqual({ document: CONFIGURATION });
+  });
+
+  it('says in words when the layout could not be copied, and offers the fork', async () => {
+    setup({
+      'GET /runs/{id}/layout': { body: { layout: LAYOUT } },
+      'PUT /pipelines/{name}/layout': { problem: { type: 'urn:ragondin:problem:backend_failed', title: 'Backend failed', status: 500, code: 'backend_failed', detail: 'disk full', hint: 'Free space.', location: null } },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Fork this run' }));
+    const said = await screen.findByRole('status');
+    expect(said.textContent).toContain('Forked as hybrid-fork, but its layout could not be copied: disk full');
+    expect(window.location.hash).toBe('');
+    expect(screen.getByRole('link', { name: 'Open hybrid-fork in the editor' }).getAttribute('href')).toBe('#editor/hybrid-fork');
+  });
+
   it('says why when the write is refused, and opens nothing', async () => {
     setup({ 'PUT /pipelines/{name}': { problem: { type: 'urn:ragondin:problem:pipeline_invalid', title: 'Invalid', status: 422, code: 'pipeline_invalid', detail: 'a key no component reads', hint: 'Fix it.', location: null } } });
     fireEvent.click(screen.getByRole('button', { name: 'Fork this run' }));

@@ -5,42 +5,66 @@
 // with the run named in its header. The iterate journey's first click (design
 // document § 3). ARCHITECTURE.md § The editor.
 import { useState } from 'react';
-import { Button, InlineMessage } from '../../design/index.ts';
+import { Button, ButtonLink, InlineMessage } from '../../design/index.ts';
 import type { ApiClient, ApiProblem } from '../api/client.ts';
-import { navigate } from '../routes.ts';
+import { formatHash, navigate } from '../routes.ts';
 import { freshName } from './example.ts';
 import { rememberFork } from './session.ts';
 
-/** Forks `run`, answering the new pipeline's name, or why it could not. */
-export async function forkRun(client: ApiClient, run: string): Promise<{ ok: true; name: string } | { ok: false; problem: ApiProblem }> {
+/** How many names a fork tries when each it proposes is taken before it is written. */
+const ATTEMPTS = 5;
+
+export type Forked =
+  | { ok: true; name: string; layoutFailed: ApiProblem | null }
+  | { ok: false; problem: ApiProblem };
+
+/** Forks `run`: the new pipeline's name, and why its layout was not copied, if it was not; or why nothing was written. */
+export async function forkRun(client: ApiClient, run: string): Promise<Forked> {
   const detail = await client.get('/runs/{id}', { id: run });
   if (!detail.ok) return detail;
   const listing = await client.get('/pipelines');
   if (!listing.ok) return listing;
   const base = `${detail.value.launched_as?.name ?? `run-${run.slice(0, 8)}`}-fork`;
-  const name = freshName(base, listing.value.pipelines.map((p) => p.name));
-  const written = await client.put('/pipelines/{name}', { document: detail.value.configuration }, { name }, { headers: { 'If-None-Match': '*' } });
-  if (!written.ok) return written;
-  // The positions are presentation: a fork whose layout cannot be copied
-  // still opens, laid out by the canvas.
+  const taken = listing.value.pipelines.map((p) => p.name);
+  // A name taken between the listing and the write — by another tab, another
+  // editor — is skipped for the next one free; the write itself never replaces.
+  let written = null;
+  for (let attempt = 0; attempt < ATTEMPTS; attempt += 1) {
+    const name = freshName(base, taken);
+    const result = await client.put('/pipelines/{name}', { document: detail.value.configuration }, { name }, { headers: { 'If-None-Match': '*' } });
+    if (result.ok) {
+      written = result.value.name;
+      break;
+    }
+    if (result.problem.code !== 'precondition_failed' || attempt === ATTEMPTS - 1) return result;
+    taken.push(name);
+  }
+  if (written === null) return { ok: false, problem: { code: 'precondition_failed', message: 'Every name proposed for the fork was taken.', hint: 'Fork it again.', location: null, status: 412 } };
+  rememberFork(written, run);
+  // The positions are presentation: a fork whose layout cannot be copied is
+  // still a fork, laid out by the canvas — and says so.
   const layout = await client.get('/runs/{id}/layout', { id: run });
-  if (layout.ok && layout.value.layout !== null) await client.put('/pipelines/{name}/layout', layout.value.layout, { name: written.value.name });
-  rememberFork(written.value.name, run);
-  return { ok: true, name: written.value.name };
+  if (!layout.ok) return { ok: true, name: written, layoutFailed: layout.problem };
+  if (layout.value.layout === null) return { ok: true, name: written, layoutFailed: null };
+  const copied = await client.put('/pipelines/{name}/layout', layout.value.layout, { name: written });
+  return { ok: true, name: written, layoutFailed: copied.ok ? null : copied.problem };
 }
 
 /** "Fork this run"; refused, saying `refusal`, while there is no one run to fork. */
 export function ForkButton({ client, run, size = 'm', refusal = null }: { client: ApiClient; run: string | null; size?: 's' | 'm'; refusal?: string | null }) {
   const [busy, setBusy] = useState(false);
   const [refused, setRefused] = useState<ApiProblem | null>(null);
+  const [partly, setPartly] = useState<{ name: string; problem: ApiProblem } | null>(null);
   const fork = async () => {
     if (run === null) return;
     setBusy(true);
     setRefused(null);
+    setPartly(null);
     const forked = await forkRun(client, run);
     setBusy(false);
-    if (forked.ok) navigate({ screen: 'editor', name: forked.name });
-    else setRefused(forked.problem);
+    if (!forked.ok) setRefused(forked.problem);
+    else if (forked.layoutFailed !== null) setPartly({ name: forked.name, problem: forked.layoutFailed });
+    else navigate({ screen: 'editor', name: forked.name });
   };
   return (
     <>
@@ -50,6 +74,19 @@ export function ForkButton({ client, run, size = 'm', refusal = null }: { client
       {refused === null ? null : (
         <InlineMessage tone="critical" title="The run could not be forked. Nothing was opened.">
           {refused.message}
+        </InlineMessage>
+      )}
+      {partly === null ? null : (
+        <InlineMessage
+          tone="warning"
+          title={`Forked as ${partly.name}, but its layout could not be copied: ${partly.problem.message}`}
+          action={
+            <ButtonLink size="s" href={formatHash({ screen: 'editor', name: partly.name })}>
+              Open {partly.name} in the editor
+            </ButtonLink>
+          }
+        >
+          The canvas lays it out itself.
         </InlineMessage>
       )}
     </>

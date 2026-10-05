@@ -1,32 +1,20 @@
 // The first-launch example (design document § 3, the first-run journey): a
-// retrieval-only pipeline built from what this build carries, never a stored
-// fixture — a build with nothing to compose it from opens on an empty canvas,
-// its palette saying why. It names only `Local` components, so it runs
-// without any service. ARCHITECTURE.md § The editor.
+// retrieval-only pipeline that runs without any service or any file beyond the
+// benchmark — the lexical leg, `bm25` — built from what this build carries,
+// never a stored fixture. A build without it opens on an empty canvas, its
+// palette saying why. A dense leg is left to the palette: it needs a model and
+// a tokenizer on disk, which a new workspace does not hold.
+// ARCHITECTURE.md § The editor.
 import type { Capabilities } from '../api/types.ts';
-import { int, str } from '../parameters.ts';
-import type { WireDocument, WireNode } from './document.ts';
+import { int } from '../parameters.ts';
+import type { WireDocument } from './document.ts';
 
 const carries = (caps: Capabilities, family: string, impl: string) => caps.families.find((f) => f.family === family)?.local.includes(impl) === true;
 
-/**
- * The lexical leg (`bm25`) and, when the build embeds locally (`dense` and
- * the ONNX embedder), the dense leg — fused by `rrf` when both are there;
- * null when it carries neither. The dense leg names its model and tokenizer
- * under the workspace's `models/`, which the person supplies.
- */
+/** The lexical leg on the query, or null when the build carries no `bm25`. */
 export function exampleDocument(caps: Capabilities): WireDocument | null {
-  const lexical: WireNode | null = carries(caps, 'retriever', 'bm25') ? { id: 'lexical', component: 'retriever', impl: 'bm25', inputs: ['query'], params: { top_k: int('10') } } : null;
-  const vectors: WireNode | null =
-    carries(caps, 'retriever', 'dense') && carries(caps, 'embedder', 'onnx')
-      ? { id: 'vectors', component: 'retriever', impl: 'dense', inputs: ['query'], params: { top_k: int('10'), embedder: str('onnx'), model: str('models/embedder.onnx'), tokenizer: str('models/tokenizer.json') } }
-      : null;
-  const legs = [lexical, vectors].filter((n): n is WireNode => n !== null);
-  if (legs.length === 0) return null;
-  const fused: WireNode[] = legs.length === 2 && carries(caps, 'fusion', 'rrf') ? [{ id: 'fused', component: 'fusion', impl: 'rrf', inputs: legs.map((l) => l.id), params: { k: int('60') } }] : [];
-  // Two legs and no fusion to join them would leave two outputs: the lexical leg alone, then.
-  const nodes = fused.length === 0 ? legs.slice(0, 1) : [...legs, ...fused];
-  return { pipeline: { inputs: ['query'], nodes } };
+  if (!carries(caps, 'retriever', 'bm25')) return null;
+  return { pipeline: { inputs: ['query'], nodes: [{ id: 'lexical', component: 'retriever', impl: 'bm25', inputs: ['query'], params: { top_k: int('10') } }] } };
 }
 
 /**
