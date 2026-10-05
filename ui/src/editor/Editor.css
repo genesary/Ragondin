@@ -14,10 +14,10 @@
 }
 .rg-editor__title { margin: 0; font: 600 16px/24px var(--font-display); }
 .rg-editor__history { display: flex; gap: 2px; }
-/* The bar's actions in one row: the picker, Launch…, the history, Tidy layout, Export. The picker's label is said, not shown. */
+/* The bar's actions in one row: the picker, its label beside it, Launch…, the history, Tidy layout, Export. */
 .rg-editor__actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
-.rg-editor__actions .rg-field { gap: 0; }
-.rg-editor__actions .rg-field__label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.rg-editor__actions .rg-field { display: flex; align-items: center; gap: var(--space-2); }
+.rg-editor__actions .rg-field__label { white-space: nowrap; }
 .rg-editor__verdict {
   margin: 0;
   height: 40px;
