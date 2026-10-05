@@ -30,8 +30,11 @@ use crate::error::ApiError;
 use crate::response::{EdgeLocation, Location, TypedDocument};
 
 /// The content hash of `document`'s canonical logical form, or why it is
-/// not a pipeline, as `pipeline_invalid`. The one place this crate renders a
-/// document's hash: every listing, write and lineage reads it here.
+/// not a pipeline, as `pipeline_invalid`: [`lower`], then `content_hash`.
+/// The listing and a write read a document's hash here; a reader that needs
+/// the lowered form too — `lineage`'s index, the pipeline matrix, a prefix
+/// cut — calls [`lower`] and takes `content_hash` of what it returns, the
+/// same load and the same hash.
 pub(crate) fn check(document: &str) -> Result<String, ApiError> {
     Ok(lower(document)?.content_hash().to_string())
 }

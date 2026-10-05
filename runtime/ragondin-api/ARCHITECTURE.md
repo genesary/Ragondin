@@ -574,8 +574,10 @@ in `tests/workspace_toml.rs`:
 which `LocalFile` calls on a file's contents: the version peeked, the document
 parsed into `RawPipeline` (INV-9: the wire schema, never an internal type),
 `validate` — and renders `content_hash` over the canonical logical form
-(INV-8). It is the one place this crate renders a document's hash: the
-listing, a write and `lineage.rs` all read it there. `bin/ragondin`'s
+(INV-8). The listing and a write read a document's hash there; a reader
+that needs the lowered form as well — `lineage.rs`'s index, the pipeline
+matrix, a prefix cut — calls `validation::lower` and takes `content_hash` of
+what it returns: the same load, so the same hash. `bin/ragondin`'s
 `tests/ui.rs` posts every fixture configuration under `bin/ragondin/tests`,
 and one document per refusal the load can make, and compares the answer with
 what `ragondin validate` prints for the same file: the hash, or the refusal
@@ -818,7 +820,8 @@ the workspace document cut at that node. `POST /runs` with `up_to` (`prefix.rs`)
   carries reference answers**, `prefix_not_scorable`, in the harness's own
   words (ADR-C30 § 5): the harness would refuse the run once it started. The
   benchmark's ground truth is `Registry::verify`'s, read off the loaded
-  dataset — the `carries` of ADR-C30 § 5, through `ragondin-benchmarks`'
+  dataset — the file backend finds an import by its record and verifies it
+  alone, reading no other benchmark's files — the `carries` of ADR-C30 § 5, through `ragondin-benchmarks`'
   `CarriedPieces` — and the output's kind is `ragondin-pipeline`'s
   `produced_kind`; the harness itself is not a dependency (INV-12). A
   benchmark the registry does not know is `benchmark_not_found`; one whose
@@ -850,10 +853,12 @@ Choices made here:
   document cannot fail — the rule its `launched_as.held: unchecked` follows.
   Every screen that labels a prefix reads `GET /runs` already.
 - **The structural test is computed on each `GET /runs`, not cached** under
-  `cache/`: the listing already lowers every workspace document once for its
-  hash matches, and the test compares lowered nodes, which costs nothing
-  beside a run's traces. A cache would be one more key to keep right for no
-  measured gain.
+  `cache/`. Its cost is one lowering per workspace document — which the
+  listing makes anyway for its hash matches — one lowering per distinct
+  pipeline hash among the runs, shared with that hash's shape, and a
+  comparison of lowered nodes per pair of the two: it grows with pipelines,
+  not with runs. Not measured against a large store; a cache would be one
+  more key to keep right, and is the remedy if it shows.
 - **The benchmark check runs for a prefix run only.** A whole pipeline ending
   in chunks on a benchmark with reference answers is the same refusal, but
   it is the harness's to make for a document a person wrote whole; the
@@ -1114,8 +1119,10 @@ listing — reported, never repaired.
 - `prefix_of_documents`: every current workspace document the run's lowered
   graph is a structural prefix of (`lineage::Index::prefixes`, over
   `is_prefix`), each `{pipeline, up_to}` — the node the run stops at, its
-  output — sorted by name; empty when none is, or when the stored document
-  no longer lowers. Read from the same listing of `pipelines/` as
+  output — sorted by name; empty when none is, or when none of the stored
+  documents of its canonical hash lowers. Read off the one lowering per
+  canonical hash the listing makes for the shapes (below): one canonical
+  form, one relation. Read from the same listing of `pipelines/` as
   `pipeline_names`, and asked of every run whatever its record says
   (§ Prefix runs).
 - `benchmark_names`: every registry entry pinned to the run's
@@ -1139,11 +1146,12 @@ listing — reported, never repaired.
   preparation too.
 
 `RunListing::shapes` carries each listed pipeline's graph once, keyed by its
-canonical hash, by the conversion `GET /runs/{id}` serves (`convert::shape`
-and `convert::detail` share `graph`), so a screen draws every group's shape
+canonical hash, by the conversion `GET /runs/{id}` serves (`convert::graph`,
+which `convert::detail` calls too), so a screen draws every group's shape
 from the listing. One canonical hash is one canonical form and so one graph;
-it is lowered from the first of its runs whose document lowers, and a
-pipeline none of whose documents lowers has no entry. The workspace's
+it is lowered once, from the first of its runs whose document lowers — the
+lowering its runs' `prefix_of_documents` are read off too — and a pipeline
+none of whose documents lowers has no entry. The workspace's
 pipelines and the registry's pins are each read once per request, and a
 failure of either fails the listing, by design, rather than answering with
 every name list silently empty. A cache that fails does not: its first

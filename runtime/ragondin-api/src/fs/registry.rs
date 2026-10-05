@@ -164,12 +164,21 @@ impl Registry for FsRegistry {
             if let Some(entry) = registry.entry(&name) {
                 return Ok(manifest_state(&registry.datasets, &entry));
             }
-            registry
-                .locals()?
+            // The import named, found by its record, and verified alone: the
+            // others' datasets are not read for it.
+            let local = local_entries(&registry.datasets)
+                .map_err(backend_failed)?
                 .into_iter()
-                .find(|(selector, _)| selector.as_deref() == Some(name.as_str()))
-                .map(|(_, entry)| entry)
-                .ok_or(ApiError::BenchmarkNotFound { name })
+                .flatten()
+                .find(|local| local.selector() == name)
+                .ok_or_else(|| ApiError::BenchmarkNotFound { name: name.clone() })?;
+            let state = datasets::verify(
+                &registry.datasets.join(&local.name),
+                local.format,
+                &local.dataset_version,
+            );
+            // A directory gone since its record was listed is no benchmark.
+            convert::local_benchmark(&local, state).ok_or(ApiError::BenchmarkNotFound { name })
         })
         .await
     }

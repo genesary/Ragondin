@@ -460,6 +460,32 @@ async fn a_run_launched_from_the_command_line_is_a_prefix_by_structure_alone() {
     assert_eq!(by_id(2)["pipeline_names"], json!([PARENT]));
 }
 
+/// One canonical hash is one canonical form, so the listing lowers a
+/// pipeline once for all its runs: a second run of the same hash is read by
+/// the first's lowering, whatever its own stored text says.
+#[tokio::test]
+async fn the_listing_lowers_each_pipeline_once_whatever_its_runs_number() {
+    let first = run_over(1, UP_TO_RERANK, &benchmark(), Vec::new(), &[]);
+    let mut second = run_over(2, UP_TO_RERANK, &benchmark(), Vec::new(), &[]);
+    second.config = ragondin_experiments::ConfigDocument::new("not: [a pipeline");
+    let app = listing(
+        "prefix-listing-once",
+        &[(PARENT, HYBRID_RERANK_GEN)],
+        vec![first, second],
+    );
+
+    let runs = listed(&app).await;
+
+    for run in &runs {
+        assert_eq!(
+            run["prefix_of_documents"],
+            json!([{ "pipeline": PARENT, "up_to": "rerank" }]),
+            "{}",
+            run["id"]
+        );
+    }
+}
+
 #[tokio::test]
 async fn a_changed_parameter_makes_no_prefix_and_one_document_under_two_names_makes_two() {
     let changed = UP_TO_RERANK.replace("top_k: 100", "top_k: 99");
