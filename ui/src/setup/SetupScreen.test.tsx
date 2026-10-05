@@ -1183,6 +1183,31 @@ describe('leading a new user to a first run', () => {
     expect(screen.queryByRole('region', { name: 'Next step' })).toBeNull();
   });
 
+  it('waits for the workspace to be read again after the write that ended the first launch before saying the next step', async () => {
+    const imported = entry('notes', { kind: 'local', dataset_version: hex('d') }, { licence: null, ground_truth: 'qrels' });
+    mockApi({ ...empty, 'POST /benchmarks/import': { body: imported } });
+    // The shell's read of the workspace, answered when this test says.
+    let answer: (() => void) | null = null;
+    function Controlled() {
+      const [workspace, setWorkspace] = useState<RequestState<Workspace>>({ status: 'loaded', value: { ...WORKSPACE, counts: { ...WORKSPACE.counts, benchmarks_ready: 0 } } });
+      const refresh = () => {
+        answer = () => setWorkspace({ status: 'loaded', value: { ...WORKSPACE, counts: { ...WORKSPACE.counts, benchmarks_ready: 1 } } });
+      };
+      return <Harness workspace={workspace} refresh={refresh} />;
+    }
+    render(<Controlled />);
+    const start = within(await screen.findByRole('region', { name: 'Get started' }));
+    fireEvent.change(start.getByLabelText('Corpus directory'), { target: { value: '/data/notes' } });
+    fireEvent.change(start.getByLabelText('Import as'), { target: { value: 'notes' } });
+    fireEvent.click(start.getByRole('button', { name: 'Import' }));
+    await within(await screen.findByRole('region', { name: 'Benchmarks' })).findByText('notes');
+    expect(answer).not.toBeNull();
+    // The first launch has ended, but the workspace read that counts the import has not answered.
+    expect(screen.queryByRole('region', { name: 'Next step' })).toBeNull();
+    act(() => answer?.());
+    expect((await screen.findByRole('region', { name: 'Next step' })).textContent).toContain('1 benchmark is ready');
+  });
+
   it('shows no Next step while the first launch lasts, and shows it once it ends', async () => {
     const imported = entry('notes', { kind: 'local', dataset_version: hex('d') }, { licence: null, ground_truth: 'qrels' });
     mockApi({ ...empty, 'POST /benchmarks/import': { body: imported } });
@@ -1355,6 +1380,21 @@ describe('the screen’s name', () => {
     expect(heading.textContent).toBe('Setup');
     expect(heading.classList.contains('rg-visually-hidden')).toBe(false);
     expect(document.querySelectorAll('[aria-hidden="true"]').length === 0 || [...document.querySelectorAll('[aria-hidden="true"]')].every((el) => el.textContent !== 'Setup')).toBe(true);
+  });
+});
+
+describe('the screen’s focus', () => {
+  it('a move to Setup focuses its visible heading, the shell’s', async () => {
+    mockApi({ 'GET /workspace': { body: WORKSPACE }, 'GET /runs': { body: { runs: [], unreadable: [], shapes: {} } }, ...routes() }, { build: BUILD });
+    window.history.replaceState(null, '', '/#runs');
+    render(<App client={createApiClient()} build={BUILD} reload={() => {}} />);
+    await screen.findByRole('heading', { level: 1, name: 'Runs' });
+    act(() => {
+      window.location.hash = '#setup';
+    });
+    const heading = await screen.findByRole('heading', { level: 1, name: 'Setup' });
+    await waitFor(() => expect(document.activeElement).toBe(heading));
+    expect(heading.classList.contains('rg-setup__title')).toBe(true);
   });
 });
 

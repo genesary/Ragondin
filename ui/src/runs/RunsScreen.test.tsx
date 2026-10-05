@@ -136,7 +136,7 @@ describe('the states', () => {
     expect(within(items[1] as HTMLElement).getByRole('link', { name: 'Open Editor' }).getAttribute('href')).toBe('#editor');
     expect(within(items[2] as HTMLElement).getByRole('button', { name: 'Launch…' })).toBeTruthy();
     // The counts are the workspace's as the shell read it: read again, so a pipeline saved since ticks its step.
-    expect(refresh).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(refresh).toHaveBeenCalledTimes(1));
   });
 
   it('ticks no step before the workspace is read', async () => {

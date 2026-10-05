@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { ApiProblem } from '../api/client.ts';
 import { SCORABLE } from '../api/testing.ts';
 import type { BenchmarkEntry, GroundTruth, JobSummary } from '../api/types.ts';
-import { downloadView, familyLabel, finishedDownloads, firstBenchmark, formatSize, groundTruthLabel, isFirstLaunch, scorableLabel, shortDigest, smallestAvailable, splitBuild } from './model.ts';
+import { downloadView, familyLabel, finishedDownloads, firstBenchmark, formatSize, groundTruthLabel, isFirstLaunch, scorableFor, scorableLabel, shortDigest, smallestAvailable, splitBuild } from './model.ts';
 
 const entry = (name: string, state: BenchmarkEntry['state'], ground_truth: GroundTruth | null = null): BenchmarkEntry => ({ name, format: 'beir', ground_truth, licence: null, licence_url: null, state });
 
@@ -115,6 +115,13 @@ describe('finishedDownloads', () => {
   it('counts a job done at its first sight only when this page submitted it: an old done job is not news', () => {
     const after = jobs(job('1-0', DONE), job('2-0', DONE, 'beir/scifact'));
     expect(finishedDownloads(jobs(), after, new Set(['2-0']))).toEqual(['beir/scifact']);
+  });
+});
+
+describe('scorableFor', () => {
+  it('is the list the API serves for a pipeline by whether it ends in an answer', () => {
+    expect(scorableFor(SCORABLE, true)).toBe(SCORABLE.ending_in_answer);
+    expect(scorableFor(SCORABLE, false)).toBe(SCORABLE.ending_elsewhere);
   });
 });
 

@@ -34,8 +34,15 @@ const GROUND_TRUTH: Record<GroundTruth, string> = {
 /** What a benchmark's ground truth lets a run measure, in words. */
 export const groundTruthLabel = (truth: GroundTruth) => GROUND_TRUTH[truth];
 
-/** Whether a pipeline ending (or not) in an answer can be scored on `truth`: in the list `GET /benchmarks`' `scorable` serves for it. */
-const scoredBy = (scorable: Scorable, truth: GroundTruth, endsInAnswer: boolean) => scorable[endsInAnswer ? 'ending_in_answer' : 'ending_elsewhere'].includes(truth);
+/**
+ * The ground truths a pipeline can be scored on, by whether it ends in an
+ * answer: the list `GET /benchmarks`' `scorable` serves for it —
+ * `CarriedPieces::scorable`, asked by the API. The one reading of it every
+ * screen shares.
+ */
+export const scorableFor = (scorable: Scorable, endsInAnswer: boolean): readonly GroundTruth[] => scorable[endsInAnswer ? 'ending_in_answer' : 'ending_elsewhere'];
+
+const scoredBy = (scorable: Scorable, truth: GroundTruth, endsInAnswer: boolean) => scorableFor(scorable, endsInAnswer).includes(truth);
 
 /**
  * Which pipelines a benchmark carrying `truth` scores, in words: read off the

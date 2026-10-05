@@ -2,8 +2,8 @@
    the table, the chips, the fields and the messages are drawn by their own
    stylesheets; every value here is a token (ARCHITECTURE.md § The design
    system). */
-/* The screen's name, shown: the page's heading is the shell's, read by
-   assistive technology and hidden, so this one is hidden from it instead. */
+/* The screen's name, shown: the shell's level-one heading, which Setup draws
+   itself at the top of its sheet rather than leaving it visually hidden. */
 .rg-setup__title {
   margin: 0;
   padding: var(--space-6) var(--space-6) 0;
