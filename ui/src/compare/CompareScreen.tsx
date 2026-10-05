@@ -109,6 +109,7 @@ function Comparing({ client, ids, baseline, listing, onRetryListing, known }: Co
   const key = keyOf(ids, baseline);
   const [read, setRead] = useState<Read>({ state: { status: 'loading' }, key, shown: null });
   const [texts, setTexts] = useState<ReadonlyMap<string, string> | null>(null);
+  const [textsProblem, setTextsProblem] = useState<ApiProblem | null>(null);
   const textsAsked = useRef(false);
   // Answers already in hand, by key: a run added or a pairing kept was
   // compared before the address moved, and is not asked for twice.
@@ -168,12 +169,20 @@ function Comparing({ client, ids, baseline, listing, onRetryListing, known }: Co
   );
 
   // A query's text is the dataset's, the same in every run of the benchmark:
-  // read once, from the baseline, the first time a bar's list opens.
+  // read once, from the baseline, the first time a bar's list opens. A read
+  // that fails is said in the list and asked again by its Retry, or by the
+  // next list opened.
   const onWantTexts = useCallback(() => {
     if (textsAsked.current) return;
     textsAsked.current = true;
+    setTextsProblem(null);
     void client.get('/runs/{id}/queries', { id: request.current.baseline }).then((result) => {
-      if (result.ok) setTexts(new Map(result.value.queries.flatMap((q) => (q.text === null ? [] : [[q.id, q.text] as const]))));
+      if (result.ok) {
+        setTexts(new Map(result.value.queries.flatMap((q) => (q.text === null ? [] : [[q.id, q.text] as const]))));
+        return;
+      }
+      textsAsked.current = false;
+      setTextsProblem(result.problem);
     });
   }, [client]);
 
@@ -258,6 +267,7 @@ function Comparing({ client, ids, baseline, listing, onRetryListing, known }: Co
       onPair={onPair}
       addressOf={addressOf}
       texts={texts}
+      textsProblem={textsProblem}
       onWantTexts={onWantTexts}
     />
   );

@@ -25,7 +25,7 @@ import {
 import type { ApiProblem } from '../api/client.ts';
 import type { Comparison, Pairing, RunListing } from '../api/types.ts';
 import { formatHash, type Route } from '../routes.ts';
-import type { RequestState } from '../shell/states.tsx';
+import { ErrorState, type RequestState } from '../shell/states.tsx';
 import { defaultMetric } from '../metrics.ts';
 import { barMetrics, binsOf, deltaOf, hasChange, latencyBars, pairsByHandLabel, noVerdict, queriesByDelta, regressions, runSeries, stageLabel, stageLine, stageMetrics, unplacedLabel, verdict } from './model.ts';
 import { PairingPanel, type PairOutcome } from './PairingPanel.tsx';
@@ -46,7 +46,9 @@ export type ComparisonViewProps = {
   addressOf: (ids: readonly string[], baseline: string) => Route;
   /** Each query's text by id, once read; null before. */
   texts: ReadonlyMap<string, string> | null;
-  /** Asks for the queries' texts, the first time a bar's list opens. */
+  /** Why the queries' texts could not be read; null while none failed. */
+  textsProblem: ApiProblem | null;
+  /** Asks for the queries' texts, the first time a bar's list opens, and again after a failure. */
   onWantTexts: () => void;
 };
 
@@ -66,7 +68,7 @@ const ms = (v: number) => `${Number.isInteger(v) ? v : v.toFixed(1)} ms`;
 const four = (v: number) => v.toFixed(4);
 const queries = (n: number) => `${n.toLocaleString('en-US')} quer${n === 1 ? 'y' : 'ies'}`;
 
-export function ComparisonView({ comparison: c, ids, baseline, busy, listing, onRetryListing, onAdd, onPair, addressOf, texts, onWantTexts }: ComparisonViewProps) {
+export function ComparisonView({ comparison: c, ids, baseline, busy, listing, onRetryListing, onAdd, onPair, addressOf, texts, textsProblem, onWantTexts }: ComparisonViewProps) {
   const series = runSeries(c);
   const listId = useId();
   const pairingId = useId();
@@ -297,6 +299,7 @@ export function ComparisonView({ comparison: c, ids, baseline, busy, listing, on
                       <h3>
                         {queries(open.count)} {openBinView.label}, {openBinView.range}
                       </h3>
+                      {textsProblem === null ? null : <ErrorState problem={textsProblem} onRetry={onWantTexts} />}
                       {open.queries.length === 0 ? (
                         <p className="rg-compare__note">No query falls in this bin.</p>
                       ) : (
@@ -307,7 +310,9 @@ export function ComparisonView({ comparison: c, ids, baseline, busy, listing, on
                               <li key={q}>
                                 <a href={replayOf(q)}>
                                   <span className="rg-compare__query-id">{q}</span>
-                                  <span className="rg-compare__query-text">{texts?.get(q) ?? ''}</span>
+                                  <span className="rg-compare__query-text" title={texts?.get(q)}>
+                                    {texts?.get(q) ?? ''}
+                                  </span>
                                   <span className="rg-compare__query-delta">{d === undefined ? '' : deltaOf('higher', d).text}</span>
                                 </a>
                               </li>

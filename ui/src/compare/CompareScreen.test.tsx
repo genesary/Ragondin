@@ -356,6 +356,30 @@ describe('the charts', () => {
     expect(first.map((a) => a.getAttribute('href')?.match(/\/q\/(q\d+)/)?.[1])).toEqual(['q1', 'q2', 'q3', 'q4', 'q5', 'q6']);
   });
 
+  it('gives each query text a title, so a text cut short can be read in full', async () => {
+    show(THREE);
+    await loaded();
+    fireEvent.change(screen.getByLabelText('Per-query metric'), { target: { value: 'mrr@10' } });
+    fireEvent.click(screen.getByRole('radio', { name: 'B · hybrid-rerank' }));
+    fireEvent.click(screen.getByRole('button', { name: /^much worse, 6 queries/ }));
+    const list = screen.getByRole('region', { name: /^6 queries much worse/ });
+    await waitFor(() => expect(list.querySelector('.rg-compare__query-text')?.textContent).not.toBe(''));
+    const text = list.querySelector('.rg-compare__query-text');
+    expect(text?.getAttribute('title')).toBe(text?.textContent);
+  });
+
+  it('says why the query texts could not be read, and Retry reads them again', async () => {
+    show(THREE, { ...routes(), 'GET /runs/{id}/queries': [{ network: 'down' }, { body: QUERIES }] });
+    await loaded();
+    fireEvent.change(screen.getByLabelText('Per-query metric'), { target: { value: 'mrr@10' } });
+    fireEvent.click(screen.getByRole('radio', { name: 'B · hybrid-rerank' }));
+    fireEvent.click(screen.getByRole('button', { name: /^much worse, 6 queries/ }));
+    const list = screen.getByRole('region', { name: /^6 queries much worse/ });
+    fireEvent.click(await within(list).findByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(list.querySelector('.rg-compare__query-text')?.textContent).toContain('What does claim'));
+    expect(within(list).queryByRole('button', { name: 'Retry' })).toBeNull();
+  });
+
   it('points the bars and the stage line at the tables shown below them, rather than offering a second copy', async () => {
     show(THREE);
     await loaded();
