@@ -3,16 +3,17 @@
 // services, and what this build can run — or, on a workspace with no
 // benchmark and no service, the first-launch invitation. ARCHITECTURE.md
 // § The Setup screen.
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type RefObject } from 'react';
 import { Sheet } from '../../design/index.ts';
 import type { ApiClient, ApiProblem } from '../api/client.ts';
 import type { Jobs } from '../api/jobs.ts';
-import type { BenchmarkEntry, ServiceBinding, ServiceStatus, Workspace } from '../api/types.ts';
+import type { BenchmarkEntry, Scorable, ServiceBinding, ServiceStatus, Workspace } from '../api/types.ts';
 import { useJobEvents, useJobQueue, useJobs } from '../jobs/queue.tsx';
 import type { SetupSection } from '../routes.ts';
 import { Loading, type RequestState } from '../shell/states.tsx';
 import { Benchmarks, type Downloads } from './Benchmarks.tsx';
-import { FirstLaunch } from './FirstLaunch.tsx';
+import { FirstLaunch, NextStep } from './FirstLaunch.tsx';
+import { EMPTY_DRAFT, type ConnectDraft } from './forms.tsx';
 import { downloadView, finishedDownloads, isFirstLaunch, serviceKey, type Submission } from './model.ts';
 import { displayed, Services, type RemovedSlot, type SessionProbe } from './Services.tsx';
 import './Setup.css';
@@ -28,6 +29,8 @@ export type SetupScreenProps = {
   retryWorkspace: () => void;
   /** The section the address focuses. */
   section?: SetupSection | undefined;
+  /** The shell's level-one heading, which it focuses on a move to this screen: drawn here, as the screen's visible name. */
+  heading?: RefObject<HTMLHeadingElement | null>;
 };
 
 type Mode = 'first' | 'sections';
@@ -122,9 +125,12 @@ function useListing<T>(read: () => Promise<{ ok: true; value: T } | { ok: false;
   return { state, stale, retry, replace, reload };
 }
 
-export function SetupScreen({ client, workspace, refreshWorkspace, retryWorkspace, section }: SetupScreenProps) {
+export function SetupScreen({ client, workspace, refreshWorkspace, retryWorkspace, section, heading }: SetupScreenProps) {
+  // The listing's `scorable` — the rule, served — set before the benchmarks it qualifies land.
+  const [scorable, setScorable] = useState<Scorable | null>(null);
   const readBenchmarks = useCallback(async () => {
     const r = await client.get('/benchmarks');
+    if (r.ok) setScorable(r.value.scorable);
     return r.ok ? { ok: true as const, value: r.value.benchmarks as readonly BenchmarkEntry[] } : r;
   }, [client]);
   const readServices = useCallback(async () => {
@@ -150,6 +156,13 @@ export function SetupScreen({ client, workspace, refreshWorkspace, retryWorkspac
   // Derived during render from the previous decision (React's pattern for
   // state that follows other state), never written to a ref.
   const [mode, setMode] = useState<Mode | null>(null);
+  const loaded = workspace.status === 'loaded' ? workspace.value : null;
+  // The workspace read current when this page saw the first launch end, or
+  // undefined while it has not: the sections then say what is in place and
+  // the next step, so the way on does not go with the invitation — once the
+  // workspace is read again after the write that ended it, so its counts
+  // include what that write added.
+  const [endedAt, setEndedAt] = useState<Workspace | null | undefined>(undefined);
   const next: Mode | null =
     benchmarks.state.status === 'loaded' && services.state.status === 'loaded'
       ? isFirstLaunch(benchmarks.state.value, services.state.value)
@@ -158,7 +171,13 @@ export function SetupScreen({ client, workspace, refreshWorkspace, retryWorkspac
       : mode === null && (benchmarks.state.status === 'error' || services.state.status === 'error')
         ? 'sections'
         : mode;
-  if (next !== mode) setMode(next);
+  if (next !== mode) {
+    if (mode === 'first' && next === 'sections') setEndedAt(loaded);
+    setMode(next);
+  }
+  // The Connect form's fields, kept here so the first launch's form and the
+  // Services section's are one draft: the first launch ending loses nothing typed.
+  const [draft, setDraft] = useState<ConnectDraft>(EMPTY_DRAFT);
 
   // The address's section is scrolled to and focused once it is on the page:
   // on load, and on every move to another section.
@@ -420,9 +439,20 @@ export function SetupScreen({ client, workspace, refreshWorkspace, retryWorkspac
     if (jobsNow.current.get(jobId)?.state.kind === 'done') void finish([name]);
   };
 
+  // The download jobs this page asked to cancel, until the stream says each ended.
+  const [cancels, setCancels] = useState<ReadonlySet<string>>(new Set());
+  const cancelDownload = async (jobId: string) => {
+    setCancels((all) => new Set(all).add(jobId));
+    const result = await client.del('/jobs/{id}', { id: jobId });
+    // Refused — the job ended meanwhile — the stream says how; the button goes back.
+    if (!result.ok) setCancels((all) => new Set([...all].filter((id) => id !== jobId)));
+  };
+
   const downloads: Downloads = {
     view: (name) => downloadView(name, submissions.get(name), jobs),
     start: (name) => void startDownload(name),
+    cancel: (jobId) => void cancelDownload(jobId),
+    cancelling: (jobId) => cancels.has(jobId),
     streamDown: connection === 'disconnected',
   };
 
@@ -435,27 +465,35 @@ export function SetupScreen({ client, workspace, refreshWorkspace, retryWorkspac
     return null;
   };
 
-  const loaded = workspace.status === 'loaded' ? workspace.value : null;
   const connect = {
     families: loaded?.capabilities.families.map((f) => f.family) ?? [],
+    // The first launch's step is a generator's; the same default after it ends, so the family shown never changes by itself.
+    initialFamily: 'generator',
     remote: loaded?.capabilities.remote ?? null,
+    draft,
+    onDraft: setDraft,
     onConnect,
   };
 
   return (
     <Sheet>
+      <h1 ref={heading} tabIndex={-1} className="rg-setup__title">
+        Setup
+      </h1>
       <p className="rg-setup__intro">Everything a run needs besides its pipeline. Nothing here enters a run’s identity except the benchmarks’ digests.</p>
       <WorkspaceSection state={workspace} onRetry={retryWorkspace} />
       {mode === null ? (
         <div className="rg-setup__pending">
           <Loading label="Reading benchmarks and services" />
         </div>
-      ) : mode === 'first' && benchmarks.state.status === 'loaded' ? (
-        <FirstLaunch benchmarks={benchmarks.state.value} capabilities={loaded?.capabilities ?? null} onImport={onImport} downloads={downloads} connect={{ ...connect, initialFamily: 'generator' }} />
+      ) : mode === 'first' && benchmarks.state.status === 'loaded' && scorable !== null ? (
+        <FirstLaunch benchmarks={benchmarks.state.value} scorable={scorable} capabilities={loaded?.capabilities ?? null} onImport={onImport} downloads={downloads} connect={connect} />
       ) : (
         <>
+          {endedAt !== undefined && loaded !== null && loaded !== endedAt && services.state.status === 'loaded' ? <NextStep ready={loaded.counts.benchmarks_ready} services={services.state.value} /> : null}
           <Benchmarks
             state={benchmarks.state}
+            scorable={scorable}
             stale={benchmarks.stale}
             onRetry={benchmarks.retry}
             onRefresh={() =>

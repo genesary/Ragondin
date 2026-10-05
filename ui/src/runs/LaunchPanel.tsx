@@ -22,7 +22,7 @@ import type { ApiClient, ApiProblem } from '../api/client.ts';
 import { useJobs } from '../jobs/queue.tsx';
 import type { BenchmarkEntry, BenchmarkListing, GroundTruth, PipelineDetail, PipelineListing, RunRequest, Scorable, ServiceListing } from '../api/types.ts';
 import { formatHash, type Route } from '../routes.ts';
-import { groundTruthLabel } from '../setup/model.ts';
+import { groundTruthLabel, scorableFor } from '../setup/model.ts';
 import { ErrorState, Loading, type RequestState } from '../shell/states.tsx';
 import { shortHash } from './model.ts';
 
@@ -71,9 +71,6 @@ function outcomeCounts(outcomes: readonly Submission[]): string {
 /** Where a refusal is shown: on the field or the list it names, or for the whole panel. */
 const PIPELINE_CODES = new Set(['pipeline_invalid', 'impl_not_in_build', 'pipeline_not_found', 'prefix_node_not_found', 'prefix_is_whole_pipeline', 'prefix_ends_in_context']);
 const BENCHMARK_CODES = new Set(['benchmark_not_found', 'dataset_absent', 'dataset_differs', 'prefix_not_scorable']);
-
-/** The ground truths `GET /benchmarks`' `scorable` lists for what is launched, by whether it ends in an answer. */
-const scorableFor = (scorable: Scorable, endsInAnswer: boolean): readonly GroundTruth[] => scorable[endsInAnswer ? 'ending_in_answer' : 'ending_elsewhere'];
 
 /**
  * Whether a pipeline can be scored on a benchmark, given whether it ends in an

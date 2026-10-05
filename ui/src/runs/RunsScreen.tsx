@@ -6,12 +6,12 @@
 // the job it shows, live in the address. The live jobs — running, then queued
 // in the order the worker takes them — are a Queue of their own above the
 // runs. ARCHITECTURE.md § The Runs screen.
-import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Button, ButtonLink, EmptyState, FilterChip, InlineMessage, Sheet, Table, type TableRow } from '../../design/index.ts';
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Button, ButtonLink, EmptyState, FilterChip, Glyph, InlineMessage, Sheet, Table, type TableRow } from '../../design/index.ts';
 import type { ApiClient, ApiProblem } from '../api/client.ts';
 import { ForkButton } from '../editor/Fork.tsx';
 import type { Jobs } from '../api/jobs.ts';
-import type { JobEvent, RunListing } from '../api/types.ts';
+import type { JobEvent, RunListing, WorkspaceCounts } from '../api/types.ts';
 import { useJobEvents, useJobs } from '../jobs/queue.tsx';
 import { STREAM_DOWN, STREAM_DOWN_LIVE } from '../jobs/stream.ts';
 import { formatHash, navigate, type Route } from '../routes.ts';
@@ -38,7 +38,64 @@ export type RunsScreenProps = {
   launch?: { pipeline: string; upTo?: string; benchmarks?: string[] } | undefined;
   /** The benchmark filter the address carries (`#runs?bench=<key>…`): the benchmarks whose rows are shown, all when absent. */
   bench?: readonly string[] | undefined;
+  /** What the workspace holds, as the shell read it; null before. The empty state's steps are ticked from it. */
+  counts?: WorkspaceCounts | null;
+  /** Reads the workspace again, keeping it on screen: the empty state asks it once, so its ticks are current. */
+  refreshWorkspace?: () => void;
 };
+
+/**
+ * The steps to a first run, in order — a benchmark, a pipeline, then the
+ * launch — each ticked once the workspace holds what it asks for. The counts
+ * are the shell's read of `GET /workspace`, read again as the list is drawn,
+ * since a pipeline saved in the Editor does not read it again.
+ */
+function FirstRunSteps({ counts, refreshWorkspace, launch }: { counts: WorkspaceCounts | null; refreshWorkspace: (() => void) | undefined; launch: ReactNode }) {
+  // Once per drawing of the empty state: the shell's function is new on each of its renders.
+  const refresh = useRef(refreshWorkspace);
+  useEffect(() => {
+    refresh.current?.();
+  }, []);
+  const steps: { done: boolean; title: string; body: ReactNode }[] = [
+    {
+      done: (counts?.benchmarks_ready ?? 0) > 0,
+      title: 'Add a benchmark',
+      body: (
+        <ButtonLink size="s" href={formatHash({ screen: 'setup', section: 'benchmarks' })}>
+          Open Setup
+        </ButtonLink>
+      ),
+    },
+    {
+      done: (counts?.pipelines ?? 0) > 0,
+      title: 'Build a pipeline',
+      body: (
+        <ButtonLink size="s" href={formatHash({ screen: 'editor' })}>
+          Open Editor
+        </ButtonLink>
+      ),
+    },
+    { done: false, title: 'Launch it', body: launch },
+  ];
+  return (
+    <ol className="rg-runs__steps" aria-label="Steps to a first run">
+      {steps.map((step) => (
+        <li key={step.title} className="rg-runs__step" data-done={step.done ? 'true' : undefined}>
+          {/* The row is a flex box inside the item, so the item keeps its list marker, its number. */}
+          <span className="rg-runs__step-row">
+            <b>{step.title}</b>
+            {step.done ? (
+              <span className="rg-runs__tick">
+                <Glyph name="check" label="Done" />
+              </span>
+            ) : null}
+            {step.body}
+          </span>
+        </li>
+      ))}
+    </ol>
+  );
+}
 
 /** The Runs address with this selection, job, launch panel and filter, each left out when absent. */
 const runsRoute = (sel: readonly string[], job: string | undefined, launch: RunsScreenProps['launch'], bench: readonly string[] = []): Extract<Route, { screen: 'runs' }> => ({
@@ -66,7 +123,7 @@ const runs = (n: number) => `${n.toLocaleString('en-US')} run${n === 1 ? '' : 's
  */
 type Read = { listing: RequestState<RunListing>; askedWith: ReadonlySet<string>; refresh: ApiProblem | null };
 
-export function RunsScreen({ client, sel, job, store = null, launch, bench }: RunsScreenProps) {
+export function RunsScreen({ client, sel, job, store = null, launch, bench, counts = null, refreshWorkspace }: RunsScreenProps) {
   const [read, setRead] = useState<Read>({ listing: { status: 'loading' }, askedWith: new Set(), refresh: null });
   const latest = useRef(0);
   // The listing read in flight, cancelled once a newer read overtakes it.
@@ -129,6 +186,8 @@ export function RunsScreen({ client, sel, job, store = null, launch, bench }: Ru
           launch={launch}
           bench={bench ?? []}
           store={store}
+          counts={counts}
+          refreshWorkspace={refreshWorkspace}
           reread={() => void fetchListing()}
         />
       );
@@ -151,6 +210,8 @@ type LoadedProps = {
   store: string | null;
   /** Reads the listing again, keeping this one on screen meanwhile. */
   reread: () => void;
+  counts: WorkspaceCounts | null;
+  refreshWorkspace: (() => void) | undefined;
 };
 
 /** A job row's control, as `jobRow` marks it: the job, and which button. */
@@ -169,7 +230,7 @@ function withPositions(jobs: Jobs, positions: ReadonlyMap<string, number> | null
   return new Map([...jobs].map(([id, j]) => [id, j.state.kind === 'queued' && positions.has(id) ? { ...j, position: positions.get(id) as number } : j]));
 }
 
-function Loaded({ client, listing, askedWith, refresh, sel, job, launch, bench, store, reread }: LoadedProps) {
+function Loaded({ client, listing, askedWith, refresh, sel, job, launch, bench, store, counts, refreshWorkspace, reread }: LoadedProps) {
   // The benchmarks as one string, so a new array of the same names is the same address.
   const [launchPipeline, launchUpTo, launchBenchmarks] = [launch?.pipeline, launch?.upTo, launch?.benchmarks?.join('\u0000')];
   const benchKey = bench.join('\u0000');
@@ -374,7 +435,7 @@ function Loaded({ client, listing, askedWith, refresh, sel, job, launch, bench, 
     if (launch !== undefined) navigate(runsRoute(sel, job, undefined, bench), { replace: true });
     setLaunching(false);
   };
-  const launchToggle = (size: 'm' | 'l' = 'm') => (
+  const launchToggle = (size: 's' | 'm' | 'l' = 'm') => (
     <Button ref={launchButton} size={size} aria-expanded={launching} aria-controls={launchId} onClick={() => (launching ? closeLaunch() : setLaunching(true))}>
       Launch…
     </Button>
@@ -410,16 +471,8 @@ function Loaded({ client, listing, askedWith, refresh, sel, job, launch, bench, 
       <Sheet>
         {unreadable}
         {launchPanel}
-        <EmptyState
-          heading="No runs yet"
-          action={
-            <ButtonLink kind="primary" size="l" href={formatHash({ screen: 'editor' })}>
-              Open Editor
-            </ButtonLink>
-          }
-          secondary={launchToggle('l')}
-        >
-          A run is one pipeline on one benchmark: build a pipeline in the Editor, then launch it.
+        <EmptyState heading="No runs yet" steps={<FirstRunSteps counts={counts} refreshWorkspace={refreshWorkspace} launch={launchToggle('s')} />}>
+          A run is one pipeline on one benchmark. Three steps to the first:
         </EmptyState>
       </Sheet>
     );

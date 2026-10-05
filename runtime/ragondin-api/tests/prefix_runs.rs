@@ -12,11 +12,13 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use axum::http::StatusCode;
+use ragondin_api::fs::FsRegistry;
 use ragondin_api::{
     ApiError, BenchmarkEntry, BenchmarkState, Cancellation, Capabilities, GroundTruth, Launcher,
     LauncherError, PinnedBenchmark, ProgressSink, Registry, RunDataset, RunObserver, Server,
     ServiceBinding, ServiceIdentity, Submission,
 };
+use ragondin_benchmarks::manifest::manifest;
 use ragondin_benchmarks::{Benchmark, Qrels};
 use ragondin_config::{parse_document, ConfigSource, LocalFile};
 use ragondin_experiments::{PrefixOf, Run, RunId, RunProvenance};
@@ -381,6 +383,29 @@ async fn a_prefix_ending_before_the_generator_is_refused_on_a_benchmark_with_ref
     // The same cut on a benchmark of qrels alone is accepted.
     let (status, body) = submit(&app, "rerank", QRELS_ONLY).await;
     assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+}
+
+/// A benchmark the manifest names that is not downloaded yet carries the
+/// ground truth its manifest entry declares, so a prefix the harness would
+/// refuse on it is refused at submission rather than left to the launcher.
+#[tokio::test]
+async fn a_prefix_ending_before_the_generator_is_refused_on_a_benchmark_not_yet_downloaded() {
+    let launcher = Arc::new(RecordingLauncher::default());
+    let mut backends = fakes(FakeRunStore::default());
+    backends.pipelines = Arc::new(HeldPipelines {
+        files: vec![(PARENT.to_owned(), HYBRID_RERANK_GEN.to_owned())],
+    });
+    let datasets = scratch("prefix-not-downloaded").join("datasets");
+    backends.registry = Arc::new(FsRegistry::new(datasets, manifest()));
+    backends.launcher = Arc::clone(&launcher) as _;
+    let app = router_over(backends, &scratch("prefix-not-downloaded-ws"));
+
+    let (status, body) = submit(&app, "rerank", "squad/dev").await;
+
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert_eq!(body["code"], "prefix_not_scorable");
+    assert_eq!(body["location"]["node"], "rerank");
+    assert!(launcher.seen.lock().unwrap().is_empty());
 }
 
 // ---- The prefix relation on `GET /runs` ------------------------------------

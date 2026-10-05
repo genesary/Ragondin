@@ -350,6 +350,19 @@ pub enum DownloadError {
         /// The loaded snapshot's.
         found: String,
     },
+    /// The snapshot digests to the manifest's `dataset_version`, and carries
+    /// other pieces than the entry declares: a defect in the manifest this
+    /// build carries, whose declared ground truth was shown before the
+    /// download.
+    #[error("{entry}: the snapshot carries {found:?}, the manifest declares {declared:?}")]
+    GroundTruth {
+        /// The entry.
+        entry: String,
+        /// The pieces the manifest entry declares.
+        declared: CarriedPieces,
+        /// The pieces the loaded snapshot carries.
+        found: CarriedPieces,
+    },
     /// The datasets directory could not be written.
     #[error("{entry}: cannot write {}", path.display())]
     Io {
@@ -430,6 +443,13 @@ pub fn download(
             entry: name.to_owned(),
             expected: entry.dataset_version.clone(),
             found,
+        });
+    }
+    if benchmark.carries() != entry.carries {
+        return Err(DownloadError::GroundTruth {
+            entry: name.to_owned(),
+            declared: entry.carries,
+            found: benchmark.carries(),
         });
     }
     match staging.publish(&destination) {

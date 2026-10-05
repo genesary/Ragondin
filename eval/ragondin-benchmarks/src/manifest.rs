@@ -11,7 +11,9 @@
 
 use std::path::Path;
 
-use crate::{BeirAdapter, Benchmark, BenchmarkAdapter, BenchmarkError, SquadAdapter};
+use crate::{
+    BeirAdapter, Benchmark, BenchmarkAdapter, BenchmarkError, CarriedPieces, SquadAdapter,
+};
 
 /// A dataset format, as the text before the `/` of a benchmark selector names
 /// it — the selectors `ragondin bench --benchmark` accepts.
@@ -80,6 +82,12 @@ pub struct ManifestEntry {
     /// ([`crate::identity::dataset_version`]), recorded once this repository
     /// loaded it.
     pub dataset_version: String,
+    /// The ground truth the loaded snapshot carries — qrels, reference
+    /// answers or both — known before it is downloaded, so a client can say
+    /// which pipelines it scores (`CarriedPieces::scorable`) before anything
+    /// is on disk. `tests/manifest.rs` holds it to what the format's adapter
+    /// loads.
+    pub carries: CarriedPieces,
 }
 
 impl ManifestEntry {
@@ -151,6 +159,7 @@ pub fn manifest() -> Vec<ManifestEntry> {
                 ),
             ],
             dataset_version: "9a07f80c0d4f1e9e74912d033a8d1fbd52c54b758dafcaa85c19abacfdee5f29".to_owned(),
+            carries: CarriedPieces::QrelsOnly,
         },
         ManifestEntry {
             name: "squad/dev".to_owned(),
@@ -164,6 +173,7 @@ pub fn manifest() -> Vec<ManifestEntry> {
                 4_854_279,
             )],
             dataset_version: "e4e3b7605b66545c91fdfb2ac8b4ddb177df1b1b34e7f8e557f63f0dcf074010".to_owned(),
+            carries: CarriedPieces::QrelsAndReferenceAnswers,
         },
     ]
 }

@@ -406,18 +406,26 @@ disagree. Each `ManifestEntry` holds:
 - `dataset_version`: what the loaded snapshot digests to through
   `identity::dataset_version`, recorded when this repository loaded it. A
   download is checked against it, so "verified" means the identity a run over
-  the dataset will carry, not only the bytes received.
+  the dataset will carry, not only the bytes received;
+- `carries`: the `CarriedPieces` the loaded snapshot carries — its ground
+  truth — so a client can say which pipelines it scores before it is
+  downloaded. It is declared rather than read, since nothing is on disk yet.
 
 `tests/manifest.rs` holds every entry complete, every name and directory
 unique, every format one `bench` accepts, and every URL pinned to a commit.
+It also holds each entry's `carries` to what its format's adapter loads from
+the fixture in that format's layout, and refuses an entry that carries
+nothing; `download` checks the real snapshot against it (below). That test cannot reach the snapshot itself — tests use no network —
+but `dataset_version` pins the snapshot, and a format's adapter decides which
+pieces it reads: `beir` reads qrels only, `squad` both.
 
 **The entries, and why only these.** The manifest holds two, each checked for
 a licence that permits the copy a user makes by downloading:
 
-| Entry | Snapshot | Licence | `dataset_version` |
-|---|---|---|---|
-| `beir/scifact` | `mteb/scifact` on the Hugging Face hub at commit `cf10ab68…`: `corpus.jsonl`, `queries.jsonl`, `qrels/test.tsv`, `qrels/train.tsv` | `CC-BY-4.0 AND ODC-By-1.0` — the claims under CC BY 4.0, the S2ORC abstracts under ODC-By 1.0 (`allenai/scifact`'s `LICENSE.md`) | `9a07f80c…` |
-| `squad/dev` | `dev-v1.1.json` from `rajpurkar/SQuAD-explorer` at commit `240e165a…` | `CC-BY-SA-4.0`, as the SQuAD site states it | `e4e3b760…` |
+| Entry | Snapshot | Licence | `dataset_version` | `carries` |
+|---|---|---|---|---|
+| `beir/scifact` | `mteb/scifact` on the Hugging Face hub at commit `cf10ab68…`: `corpus.jsonl`, `queries.jsonl`, `qrels/test.tsv`, `qrels/train.tsv` | `CC-BY-4.0 AND ODC-By-1.0` — the claims under CC BY 4.0, the S2ORC abstracts under ODC-By 1.0 (`allenai/scifact`'s `LICENSE.md`) | `9a07f80c…` | `QrelsOnly` |
+| `squad/dev` | `dev-v1.1.json` from `rajpurkar/SQuAD-explorer` at commit `240e165a…` | `CC-BY-SA-4.0`, as the SQuAD site states it | `e4e3b760…` | `QrelsAndReferenceAnswers` |
 
 The SciFact snapshot digests to `9a07f80c…`, the `dataset_version` of the
 original BEIR `scifact.zip` that `bin/ragondin/tests/calibration.rs` pins: its
@@ -471,7 +479,9 @@ at `<datasets>/<dir>`. Every verdict is a statement about digests, through
   file unless it is exactly the manifest's size and SHA-256 — before anything
   is loaded or placed. It then loads the staged snapshot with the entry's
   format and refuses it unless it digests to the manifest's
-  `dataset_version`. Only then is the staging directory renamed to
+  `dataset_version` and carries the pieces the entry declares (`carries`,
+  shown before the download; a mismatch, `DownloadError::GroundTruth`, is a
+  defect of the manifest). Only then is the staging directory renamed to
   `<datasets>/<dir>`. Each refusal is a `DownloadError` naming the entry and,
   for a size or a digest, the expected and the found value. `controls` carries
   the progress callback (bytes received of the snapshot's total, after every

@@ -73,7 +73,7 @@ export function Screen({ route, heading, client, workspace, refreshWorkspace, re
     return (
       <>
         {title}
-        <RunsScreen client={client} sel={route.sel ?? []} job={route.job} launch={route.launch} bench={route.bench} store={workspace.status === 'loaded' ? workspace.value.path : null} />
+        <RunsScreen client={client} sel={route.sel ?? []} job={route.job} launch={route.launch} bench={route.bench} store={workspace.status === 'loaded' ? workspace.value.path : null} counts={workspace.status === 'loaded' ? workspace.value.counts : null} refreshWorkspace={refreshWorkspace} />
       </>
     );
   }
@@ -122,12 +122,8 @@ export function Screen({ route, heading, client, workspace, refreshWorkspace, re
     );
   }
   if (route.screen === 'setup') {
-    return (
-      <>
-        {title}
-        <SetupScreen client={client} workspace={workspace} refreshWorkspace={refreshWorkspace} retryWorkspace={retryWorkspace} section={route.section} />
-      </>
-    );
+    // Setup shows its name: it draws this heading itself, at the top of its sheet.
+    return <SetupScreen client={client} workspace={workspace} refreshWorkspace={refreshWorkspace} retryWorkspace={retryWorkspace} section={route.section} heading={heading} />;
   }
   return (
     <>

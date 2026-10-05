@@ -2,9 +2,10 @@
 // sizes and digests in words, the first-launch rule, the build identity's
 // parts, where a benchmark's download stands. ARCHITECTURE.md § The Setup
 // screen.
+import { FAMILY_LABEL, familyOfComponent } from '../../design/index.ts';
 import type { ApiProblem } from '../api/client.ts';
 import type { Jobs } from '../api/jobs.ts';
-import type { BenchmarkEntry, GroundTruth, JobSummary, ServiceStatus } from '../api/types.ts';
+import type { BenchmarkEntry, GroundTruth, JobSummary, Scorable, ServiceStatus } from '../api/types.ts';
 
 const UNITS = ['B', 'kB', 'MB', 'GB', 'TB'] as const;
 
@@ -34,6 +35,42 @@ const GROUND_TRUTH: Record<GroundTruth, string> = {
 export const groundTruthLabel = (truth: GroundTruth) => GROUND_TRUTH[truth];
 
 /**
+ * The ground truths a pipeline can be scored on, by whether it ends in an
+ * answer: the list `GET /benchmarks`' `scorable` serves for it —
+ * `CarriedPieces::scorable`, asked by the API. The one reading of it every
+ * screen shares.
+ */
+export const scorableFor = (scorable: Scorable, endsInAnswer: boolean): readonly GroundTruth[] => scorable[endsInAnswer ? 'ending_in_answer' : 'ending_elsewhere'];
+
+const scoredBy = (scorable: Scorable, truth: GroundTruth, endsInAnswer: boolean) => scorableFor(scorable, endsInAnswer).includes(truth);
+
+/**
+ * Which pipelines a benchmark carrying `truth` scores, in words: read off the
+ * lists `GET /benchmarks` serves — `CarriedPieces::scorable` asked of each
+ * ground truth — never decided here. `none` is in neither list, so a
+ * benchmark carrying nothing scores no pipeline.
+ */
+export function scorableLabel(scorable: Scorable, truth: GroundTruth): string {
+  const answer = scoredBy(scorable, truth, true);
+  const elsewhere = scoredBy(scorable, truth, false);
+  if (answer && elsewhere) return 'any pipeline';
+  if (answer) return 'only a pipeline that ends in an answer';
+  if (elsewhere) return 'only a pipeline that does not end in an answer';
+  return 'no pipeline';
+}
+
+/**
+ * A family as a person reads it — design/'s `FAMILY_LABEL` of the tile
+ * `familyOfComponent` gives it, so `context_builder` is "context builder" —
+ * or its own name for a family no tile draws (`embedder`). The value sent
+ * stays the configuration's.
+ */
+export function familyLabel(family: string): string {
+  const tile = familyOfComponent(family);
+  return tile === null ? family : FAMILY_LABEL[tile];
+}
+
+/**
  * Whether the workspace is at its first launch: no benchmark on disk — an
  * `available` entry is the manifest's offer, not something held — and no
  * service bound. The screen is then an invitation rather than four sections.
@@ -49,6 +86,21 @@ const isAvailable = (b: BenchmarkEntry): b is Available => b.state.kind === 'ava
 /** The available benchmark with the fewest bytes — a good first run, read from the manifest's sizes — or null. */
 export function smallestAvailable(benchmarks: readonly BenchmarkEntry[]): Available | null {
   return benchmarks.filter(isAvailable).reduce<Available | null>((best, b) => (best === null || b.state.size_bytes < best.state.size_bytes ? b : best), null);
+}
+
+/**
+ * The benchmark the first launch recommends. The front-end design's first-run
+ * journey (§ 3) downloads a benchmark, then launches the Editor's example
+ * pipeline, which is retrieval-only: so the smallest available benchmark a
+ * pipeline that does not end in an answer is scored on, read off the ground
+ * truth the listing serves before a download; otherwise the smallest
+ * available; null when none is.
+ */
+export function firstBenchmark(benchmarks: readonly BenchmarkEntry[], scorable: Scorable): { entry: Available; why: 'first-run' | 'smallest' } | null {
+  const retrievalOnly = smallestAvailable(benchmarks.filter((b) => b.ground_truth !== null && scoredBy(scorable, b.ground_truth, false)));
+  if (retrievalOnly !== null) return { entry: retrievalOnly, why: 'first-run' };
+  const smallest = smallestAvailable(benchmarks);
+  return smallest === null ? null : { entry: smallest, why: 'smallest' };
 }
 
 /** The build identity's two parts, `<version>+<commit>` (ARCHITECTURE.md § The build identity handshake). */
@@ -68,8 +120,8 @@ export type DownloadView =
   | { kind: 'idle' }
   | { kind: 'submitting' }
   | { kind: 'refused'; problem: ApiProblem }
-  | { kind: 'queued' }
-  | { kind: 'running'; done: number; total: number | null }
+  | { kind: 'queued'; jobId: string }
+  | { kind: 'running'; jobId: string; done: number; total: number | null }
   | { kind: 'verifying' }
   | { kind: 'failed'; error: string }
   | { kind: 'cancelled' };
@@ -80,9 +132,9 @@ function viewOf(job: JobSummary): DownloadView {
   const state = job.state;
   switch (state.kind) {
     case 'queued':
-      return { kind: 'queued' };
+      return { kind: 'queued', jobId: job.id };
     case 'running':
-      return { kind: 'running', done: state.done, total: state.total };
+      return { kind: 'running', jobId: job.id, done: state.done, total: state.total };
     case 'done':
       return { kind: 'verifying' };
     case 'failed':
@@ -104,7 +156,7 @@ export function downloadView(name: string, submission: Submission | undefined, j
   if (submission !== undefined) {
     if (submission.kind !== 'accepted') return submission;
     const job = jobs.get(submission.jobId);
-    return job === undefined ? { kind: 'queued' } : viewOf(job);
+    return job === undefined ? { kind: 'queued', jobId: submission.jobId } : viewOf(job);
   }
   const last = [...jobs.values()].filter(isDownloadOf(name)).at(-1);
   return last === undefined || last.state.kind === 'done' ? { kind: 'idle' } : viewOf(last);

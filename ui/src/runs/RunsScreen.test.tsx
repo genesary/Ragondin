@@ -1,6 +1,6 @@
 /** @vitest-environment happy-dom */
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createApiClient, type ApiClient, type ApiResult } from '../api/client.ts';
 import { mockApi, type MockReply, type MockRoutes } from '../api/testing.ts';
 import type { Graph, Problem, RunListing, RunSummary } from '../api/types.ts';
@@ -121,18 +121,41 @@ describe('the states', () => {
     await loaded();
   });
 
+  it('with no runs, lists the three steps to a first one — a benchmark, a pipeline, a launch — ticking those the workspace holds', async () => {
+    const refresh = vi.fn();
+    window.history.replaceState(null, '', '/#runs');
+    mockApi(routes({ body: { runs: [], unreadable: [], shapes: {} } }));
+    const counts = { benchmarks_ready: 1, pipelines: 0, runs: 0, services_connected: 0 };
+    render(<RunsScreen client={createApiClient()} sel={[]} counts={counts} refreshWorkspace={refresh} />);
+    const steps = await screen.findByRole('list', { name: 'Steps to a first run' });
+    const items = within(steps).getAllByRole('listitem');
+    expect(items.map((i) => i.querySelector('h4, b, strong')?.textContent ?? '')).toEqual(['Add a benchmark', 'Build a pipeline', 'Launch it']);
+    expect(within(items[0] as HTMLElement).getByRole('img', { name: 'Done' })).toBeTruthy();
+    expect(within(items[1] as HTMLElement).queryByRole('img', { name: 'Done' })).toBeNull();
+    expect(within(items[0] as HTMLElement).getByRole('link', { name: 'Open Setup' }).getAttribute('href')).toBe('#setup/benchmarks');
+    expect(within(items[1] as HTMLElement).getByRole('link', { name: 'Open Editor' }).getAttribute('href')).toBe('#editor');
+    expect(within(items[2] as HTMLElement).getByRole('button', { name: 'Launch…' })).toBeTruthy();
+    // The counts are the workspace's as the shell read it: read again, so a pipeline saved since ticks its step.
+    await waitFor(() => expect(refresh).toHaveBeenCalledTimes(1));
+  });
+
+  it('ticks no step before the workspace is read', async () => {
+    show('#runs', routes({ body: { runs: [], unreadable: [], shapes: {} } }));
+    const steps = await screen.findByRole('list', { name: 'Steps to a first run' });
+    expect(within(steps).queryByRole('img', { name: 'Done' })).toBeNull();
+  });
+
   it('says there are no runs yet in one sentence, and leads to the Editor', async () => {
     show('#runs', routes({ body: { runs: [], unreadable: [], shapes: {} } }));
     expect((await screen.findByRole('heading', { name: 'No runs yet' })).tagName).toBe('H3');
     expect(screen.getByRole('link', { name: 'Open Editor' }).getAttribute('href')).toBe('#editor');
   });
 
-  it('draws the empty state’s two actions at one size', async () => {
+  it('draws the actions of the empty state’s steps at one size', async () => {
     show('#runs', routes({ body: { runs: [], unreadable: [], shapes: {} } }));
-    const open = await screen.findByRole('link', { name: 'Open Editor' });
-    const launch = screen.getByRole('button', { name: 'Launch…' });
-    expect(launch.className).toContain('rg-btn--l');
-    expect(open.className).toContain('rg-btn--l');
+    const steps = await screen.findByRole('list', { name: 'Steps to a first run' });
+    const actions = [within(steps).getByRole('link', { name: 'Open Setup' }), within(steps).getByRole('link', { name: 'Open Editor' }), within(steps).getByRole('button', { name: 'Launch…' })];
+    for (const action of actions) expect(action.classList.contains('rg-btn--s'), action.textContent ?? '').toBe(true);
   });
 });
 

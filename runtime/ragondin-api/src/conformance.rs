@@ -146,6 +146,10 @@ fn assert_available(listed: &[BenchmarkEntry], name: &str, case: &str) {
             .is_some_and(|licence| !licence.is_empty()),
         "{case}: {name} shows no licence"
     );
+    assert!(
+        entry.ground_truth.is_some(),
+        "{case}: {name} shows no ground truth before it is downloaded"
+    );
 }
 
 async fn listing<R: Registry>(fixture: RegistryFixture<R>) {

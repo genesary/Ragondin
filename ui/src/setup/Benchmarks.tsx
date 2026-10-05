@@ -6,16 +6,20 @@
 import type { ReactNode, Ref } from 'react';
 import { Button, Section, StatusChip, Table, type Status, type TableRow } from '../../design/index.ts';
 import type { ApiProblem } from '../api/client.ts';
-import type { BenchmarkEntry } from '../api/types.ts';
+import type { BenchmarkEntry, Scorable } from '../api/types.ts';
 import { STREAM_DOWN, STREAM_DOWN_LIVE } from '../jobs/stream.ts';
 import { ErrorState, Resource, type RequestState } from '../shell/states.tsx';
 import { ImportForm } from './forms.tsx';
-import { formatSize, groundTruthLabel, shortDigest, type DownloadView } from './model.ts';
+import { formatSize, groundTruthLabel, scorableLabel, shortDigest, type DownloadView } from './model.ts';
 
 /** The downloads the screen follows: where each benchmark's stands, and how to ask for one. */
 export type Downloads = {
   view: (name: string) => DownloadView;
   start: (name: string) => void;
+  /** Cancels a download's job: `DELETE /jobs/{id}`, whose end the stream then says. */
+  cancel: (jobId: string) => void;
+  /** Whether this page asked for that job's cancellation and the stream has not yet said it ended. */
+  cancelling: (jobId: string) => boolean;
   /** The job stream is down and retrying: what a row says of a live job is the last known, not the current. */
   streamDown: boolean;
 };
@@ -151,7 +155,7 @@ export function Licence({ entry }: { entry: BenchmarkEntry }) {
   return entry.licence_url === null ? (
     <>{entry.licence}</>
   ) : (
-    <a href={entry.licence_url} rel="noreferrer">
+    <a className="rg-setup__link" href={entry.licence_url} rel="noreferrer">
       {entry.licence}
     </a>
   );
@@ -190,6 +194,35 @@ export function DownloadButton({ view, onStart }: { view: DownloadView; onStart:
   }
 }
 
+/**
+ * Cancel, beside a download that is queued or running: its job is cancelled
+ * through the queue, and the button says so, refused, until the stream says
+ * the job ended — then the download's own button offers Retry.
+ */
+export function CancelButton({ benchmark, view, downloads }: { benchmark: string; view: DownloadView; downloads: Downloads }) {
+  if (view.kind !== 'queued' && view.kind !== 'running') return null;
+  const hidden = <span className="rg-visually-hidden"> the download of {benchmark}</span>;
+  return downloads.cancelling(view.jobId) ? (
+    <Button size="s" disabled disabledReason="The download stops at its next read; its row then offers Retry.">
+      Cancelling…{hidden}
+    </Button>
+  ) : (
+    <Button size="s" onClick={() => downloads.cancel(view.jobId)}>
+      Cancel{hidden}
+    </Button>
+  );
+}
+
+/** A benchmark's download controls: its one download button, and Cancel while its job is under way. */
+export function DownloadControls({ benchmark, view, downloads }: { benchmark: string; view: DownloadView; downloads: Downloads }) {
+  return (
+    <>
+      <DownloadButton view={view} onStart={() => downloads.start(benchmark)} />
+      <CancelButton benchmark={benchmark} view={view} downloads={downloads} />
+    </>
+  );
+}
+
 /** The action cell of every row, one control high whether it holds a button or not, so a button coming or going moves nothing. */
 export function ActionSlot({ benchmark, children }: { benchmark: string; children?: ReactNode }) {
   return (
@@ -204,11 +237,12 @@ const COLUMNS = [
   { id: 'state', label: 'State' },
   { id: 'detail', label: 'Digest or size' },
   { id: 'truth', label: 'Ground truth' },
+  { id: 'scores', label: 'Scores' },
   { id: 'licence', label: 'Licence' },
   { id: 'action', label: <span className="rg-visually-hidden">Action</span> },
 ];
 
-function rows(benchmarks: readonly BenchmarkEntry[], downloads: Downloads): TableRow[] {
+function rows(benchmarks: readonly BenchmarkEntry[], scorable: Scorable | null, downloads: Downloads): TableRow[] {
   return benchmarks.map((b) => {
     const view = b.state.kind === 'available' ? downloads.view(b.name) : null;
     return {
@@ -218,8 +252,9 @@ function rows(benchmarks: readonly BenchmarkEntry[], downloads: Downloads): Tabl
         b.state.kind === 'available' && view !== null ? downloadChip(view, b.state.size_bytes) : <StatusChip state={CHIP[b.state.kind]}>{b.state.kind}</StatusChip>,
         <span className="rg-setup__detail">{detail(b, downloads)}</span>,
         b.ground_truth === null ? null : groundTruthLabel(b.ground_truth),
+        b.ground_truth === null || scorable === null ? null : scorableLabel(scorable, b.ground_truth),
         <Licence entry={b} />,
-        <ActionSlot benchmark={b.name}>{view === null ? null : <DownloadButton view={view} onStart={() => downloads.start(b.name)} />}</ActionSlot>,
+        <ActionSlot benchmark={b.name}>{view === null ? null : <DownloadControls benchmark={b.name} view={view} downloads={downloads} />}</ActionSlot>,
       ],
     };
   });
@@ -227,6 +262,8 @@ function rows(benchmarks: readonly BenchmarkEntry[], downloads: Downloads): Tabl
 
 export type BenchmarksProps = {
   state: RequestState<readonly BenchmarkEntry[]>;
+  /** The listing's `scorable`: which ground truths each kind of pipeline is scored on; null before it is read. */
+  scorable: Scorable | null;
   /** A read of the listing in place that failed: the table stays, and this says why it is not newer. */
   stale: ApiProblem | null;
   onRetry: () => void;
@@ -237,7 +274,7 @@ export type BenchmarksProps = {
   anchor: Ref<HTMLElement>;
 };
 
-export function Benchmarks({ state, stale, onRetry, onRefresh, onImport, downloads, anchor }: BenchmarksProps) {
+export function Benchmarks({ state, scorable, stale, onRetry, onRefresh, onImport, downloads, anchor }: BenchmarksProps) {
   return (
     <Section heading="Benchmarks" caption="Pinned snapshots: a benchmark is ready when the dataset on disk digests to the version the manifest pins." anchor={anchor}>
       <Resource state={state} loading="Reading benchmarks" error={(problem) => <ErrorState problem={problem} onRetry={onRetry} />}>
@@ -246,7 +283,7 @@ export function Benchmarks({ state, stale, onRetry, onRefresh, onImport, downloa
             <p className="rg-setup__note">The registry lists no benchmark: this build’s manifest pins none, and nothing was imported.</p>
           ) : (
             <>
-              <Table caption="Benchmarks the registry knows" columns={COLUMNS} rows={rows(benchmarks, downloads)} />
+              <Table caption="Benchmarks the registry knows" columns={COLUMNS} rows={rows(benchmarks, scorable, downloads)} />
               {stale === null ? null : <ErrorState problem={stale} onRetry={onRefresh} />}
             </>
           )

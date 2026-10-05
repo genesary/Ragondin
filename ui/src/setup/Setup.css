@@ -2,6 +2,15 @@
    the table, the chips, the fields and the messages are drawn by their own
    stylesheets; every value here is a token (ARCHITECTURE.md § The design
    system). */
+/* The screen's name, shown: the shell's level-one heading, which Setup draws
+   itself at the top of its sheet rather than leaving it visually hidden. */
+.rg-setup__title {
+  margin: 0;
+  padding: var(--space-6) var(--space-6) 0;
+  font: var(--type-title);
+  letter-spacing: var(--type-title-tracking);
+  color: var(--ink);
+}
 .rg-setup__intro {
   margin: 0;
   padding: var(--space-4) var(--space-6) 0;
@@ -31,6 +40,15 @@
 .rg-setup__identity code,
 .rg-setup__facts code { font: var(--type-hash); letter-spacing: var(--type-hash-tracking); overflow-wrap: anywhere; }
 .rg-setup__name { font-weight: 600; color: var(--ink); }
+/* A link out of the screen — a licence's terms — reads as one: underlined in the accent, the ring on focus. */
+.rg-setup__link {
+  color: var(--accent);
+  text-decoration-line: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+.rg-setup__link:hover { text-decoration-thickness: 2px; }
+.rg-setup__link:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; border-radius: var(--radius-s); }
 .rg-setup__absent { color: var(--ink-3); }
 
 /* A fact per line: its label beside its value, stacked on a phone. */
@@ -49,7 +67,7 @@
    ready moves no row. A block box: an empty inline one would sit on the
    text's baseline, and the line's descent below it would make a row without
    a button taller than a row with one. */
-.rg-setup__action { display: flex; align-items: center; min-height: var(--size-control-s); }
+.rg-setup__action { display: flex; align-items: center; gap: var(--space-2); min-height: var(--size-control-s); }
 
 /* The details cell wraps: an adapter's error is a sentence, not a figure. */
 .rg-setup__detail { display: inline-block; min-width: 24ch; max-width: 56ch; white-space: normal; }
@@ -108,6 +126,7 @@
 .rg-setup__step > .rg-setup__subheading:first-child { margin-top: 0; }
 
 @media (max-width: 640px) {
+  .rg-setup__title { padding: var(--space-4) var(--space-4) 0; }
   .rg-setup__intro { padding: var(--space-4) var(--space-4) 0; }
   .rg-setup__facts { grid-template-columns: minmax(0, 1fr); gap: var(--space-1); }
   .rg-setup__facts dd + dt { margin-top: var(--space-2); }

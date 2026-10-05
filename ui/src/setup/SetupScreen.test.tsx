@@ -10,6 +10,7 @@ import type { SetupSection } from '../routes.ts';
 import { JobQueueProvider } from '../jobs/queue.tsx';
 import type { RequestState } from '../shell/states.tsx';
 import { parseRules } from '../../design/testing/css.ts';
+import { NextStep } from './FirstLaunch.tsx';
 import { SetupScreen, UNDO_WINDOW_MS } from './SetupScreen.tsx';
 
 const hex = (c: string) => c.repeat(64);
@@ -74,7 +75,8 @@ const entry = (name: string, state: BenchmarkEntry['state'], over: Partial<Bench
 });
 
 const READY = entry('beir/scifact', { kind: 'ready', dataset_version: hex('5') }, { ground_truth: 'qrels' });
-const AVAILABLE = entry('beir/fiqa', { kind: 'available', size_bytes: 17_100_000 }, { licence_url: 'https://example.org/fiqa-terms' });
+// The listing serves an available benchmark's ground truth, from its manifest entry, before the download.
+const AVAILABLE = entry('beir/fiqa', { kind: 'available', size_bytes: 17_100_000 }, { ground_truth: 'qrels', licence_url: 'https://example.org/fiqa-terms' });
 const DIFFERS = entry('beir/nfcorpus', { kind: 'differs', expected: hex('a'), found: hex('b') }, { ground_truth: 'qrels' });
 const UNREADABLE = entry('squad/squad', { kind: 'unreadable', error: 'corpus.jsonl line 4: expected `_id`' });
 const LOCAL = entry('mine', { kind: 'local', dataset_version: hex('c') }, { format: 'beir-qa', ground_truth: 'both', licence: null });
@@ -95,6 +97,18 @@ function Harness({ workspace = { status: 'loaded', value: WORKSPACE }, section, 
       <SetupScreen client={client} workspace={workspace} refreshWorkspace={refresh} retryWorkspace={refresh} section={section} />
     </JobQueueProvider>
   );
+}
+
+/**
+ * The Harness with the shell's workspace read again on each refresh, as the
+ * shell does, each read after the first counting `ready` benchmarks — so what the screen says
+ * from the counts follows the writes that changed them.
+ */
+function LiveHarness({ ready }: { ready: number }) {
+  const [workspace, setWorkspace] = useState<RequestState<Workspace>>({ status: 'loaded', value: { ...WORKSPACE, counts: { ...WORKSPACE.counts, benchmarks_ready: 0 } } });
+  // A read over the network, as the shell's is: its answer lands after the write's.
+  const refresh = () => void setTimeout(() => setWorkspace({ status: 'loaded', value: { ...WORKSPACE, counts: { ...WORKSPACE.counts, benchmarks_ready: ready } } }), 0);
+  return <Harness workspace={workspace} refresh={refresh} />;
 }
 
 const routes = (over: MockRoutes = {}): MockRoutes => ({
@@ -611,18 +625,31 @@ describe('the first launch', () => {
     expect(screen.queryByRole('region', { name: 'Services' })).toBeNull();
   });
 
-  it('points at the smallest benchmark the manifest pins, read from its size', async () => {
-    const big = entry('beir/trec-covid', { kind: 'available', size_bytes: 230_000_000 });
-    const small = entry('beir/scifact', { kind: 'available', size_bytes: 5_200_000 });
-    mockApi(routes({ 'GET /benchmarks': { body: { scorable: SCORABLE, benchmarks: [big, small] } }, 'GET /services': { body: { services: [] } } }));
+  it('recommends the smallest benchmark the Editor’s retrieval-only example is scored on, read off the ground truth served before download, though another is smaller', async () => {
+    const squad = entry('squad/dev', { kind: 'available', size_bytes: 4_854_279 }, { ground_truth: 'both' });
+    const scifact = entry('beir/scifact', { kind: 'available', size_bytes: 8_172_614 }, { ground_truth: 'qrels' });
+    mockApi(routes({ 'GET /benchmarks': { body: { scorable: SCORABLE, benchmarks: [scifact, squad] } }, 'GET /services': { body: { services: [] } } }));
     render(<Harness />);
     const start = await screen.findByRole('region', { name: 'Get started' });
     const first = within(start).getAllByRole('listitem')[0] as HTMLElement;
     expect(first.textContent).toContain('beir/scifact');
-    expect(first.textContent).toContain('5.2 MB');
-    expect(first.textContent).toContain('the smallest, a good first run');
-    expect(first.textContent).not.toContain('beir/trec-covid');
+    expect(first.textContent).toContain('8.2 MB');
+    expect(first.textContent).toContain('the Editor’s example pipeline, retrieval-only, is scored on it');
+    expect(first.textContent).not.toContain('squad/dev');
     expect(within(first).getByRole('button', { name: 'Download' }).getAttribute('aria-disabled')).toBeNull();
+  });
+
+  it('points at the smallest benchmark the manifest pins when no retrieval-only pipeline is scored on any', async () => {
+    const big = entry('beir/trec-covid', { kind: 'available', size_bytes: 230_000_000 }, { ground_truth: 'both' });
+    const small = entry('beir/nfcorpus', { kind: 'available', size_bytes: 5_200_000 }, { ground_truth: 'reference_answers' });
+    mockApi(routes({ 'GET /benchmarks': { body: { scorable: SCORABLE, benchmarks: [big, small] } }, 'GET /services': { body: { services: [] } } }));
+    render(<Harness />);
+    const start = await screen.findByRole('region', { name: 'Get started' });
+    const first = within(start).getAllByRole('listitem')[0] as HTMLElement;
+    expect(first.textContent).toContain('beir/nfcorpus');
+    expect(first.textContent).toContain('5.2 MB');
+    expect(first.textContent).toContain('the smallest');
+    expect(first.textContent).not.toContain('beir/trec-covid');
   });
 
   it('adding a benchmark leaves the first launch state', async () => {
@@ -726,11 +753,11 @@ describe('the services', () => {
     await services.findByRole('listitem', { name: 'generator/qwen' });
     view.rerender(<Harness workspace={{ status: 'loaded', value: WORKSPACE }} />);
     const form = within(services.getByRole('form', { name: 'Connect a service' }));
-    expect((form.getByLabelText('Family') as HTMLSelectElement).value).toBe('retriever');
+    expect((form.getByLabelText('Family') as HTMLSelectElement).value).toBe('generator');
     fireEvent.change(form.getByLabelText('Name'), { target: { value: 'q2' } });
     fireEvent.change(form.getByLabelText('Address'), { target: { value: 'http://127.0.0.1:7070' } });
     fireEvent.click(form.getByRole('button', { name: 'Connect' }));
-    await waitFor(() => expect(api.requests).toContain('PUT /api/v1/services/retriever/q2'));
+    await waitFor(() => expect(api.requests).toContain('PUT /api/v1/services/generator/q2'));
   });
 
   it('shows the binding as its row at once, while it is stored and tested', async () => {
@@ -764,7 +791,7 @@ describe('the services', () => {
     expect(within(qwen).getByText('connected')).toBeTruthy();
     expect(qwen.textContent).toContain('qwen2.5-7b-instruct');
     expect(qwen.textContent).toContain('read before this page was opened');
-    expect(services.textContent).toContain('The address never enters a pipeline. A run records which address answered, as provenance — two runs with different addresses and the same identity are one experiment run twice.');
+    expect(services.textContent).toContain('The address is not part of a pipeline: the same pipeline run against two addresses that serve the same model is the same experiment, run twice.');
     expect(services.textContent).toContain('since this page was opened');
   });
 
@@ -1099,6 +1126,275 @@ describe('the address', () => {
       window.location.hash = '#setup/benchmarks';
     });
     await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('region', { name: 'Benchmarks' })));
+  });
+});
+
+describe('leading a new user to a first run', () => {
+  const empty = routes({ 'GET /benchmarks': { body: { scorable: SCORABLE, benchmarks: [] } }, 'GET /services': { body: { services: [] } } });
+
+  it('says which pipelines each benchmark can score, from what the API says, an available one before its download', async () => {
+    mockApi(routes());
+    render(<Harness />);
+    await within(await screen.findByRole('region', { name: 'Benchmarks' })).findByText('beir/scifact');
+    expect(within(region('Benchmarks')).getByRole('columnheader', { name: 'Scores' })).toBeTruthy();
+    expect(row('beir/scifact').textContent).toContain('any pipeline');
+    expect(row('mine').textContent).toContain('only a pipeline that ends in an answer');
+    expect(row('beir/fiqa').textContent).toContain('qrels');
+    expect(row('beir/fiqa').textContent).toContain('any pipeline');
+    expect(row('beir/fiqa').textContent).not.toContain('known once downloaded');
+  });
+
+  it('says a benchmark that carries no ground truth scores no pipeline, as the API’s lists say', async () => {
+    const bare = entry('beir/bare', { kind: 'local', dataset_version: hex('9') }, { ground_truth: 'none', licence: null });
+    mockApi(routes({ 'GET /benchmarks': { body: { scorable: SCORABLE, benchmarks: [READY, bare] } } }));
+    render(<Harness />);
+    await within(await screen.findByRole('region', { name: 'Benchmarks' })).findByText('beir/bare');
+    expect(row('beir/bare').textContent).toContain('no ground truth');
+    expect(row('beir/bare').textContent).toContain('no pipeline');
+  });
+
+  it('after the first launch ends with a benchmark ready, says so and offers the next step, the Editor', async () => {
+    const imported = entry('notes', { kind: 'local', dataset_version: hex('d') }, { licence: null, ground_truth: 'qrels' });
+    mockApi({ ...empty, 'POST /benchmarks/import': { body: imported } });
+    render(<LiveHarness ready={1} />);
+    const start = within(await screen.findByRole('region', { name: 'Get started' }));
+    fireEvent.change(start.getByLabelText('Corpus directory'), { target: { value: '/data/notes' } });
+    fireEvent.change(start.getByLabelText('Import as'), { target: { value: 'notes' } });
+    fireEvent.click(start.getByRole('button', { name: 'Import' }));
+
+    const next = await screen.findByRole('region', { name: 'Next step' });
+    expect(next.textContent).toContain('1 benchmark is ready');
+    expect(next.textContent).toContain('which pipelines each scores');
+    expect(within(next).getByRole('link', { name: 'Open Editor' }).getAttribute('href')).toBe('#editor');
+    expect(within(next).getByRole('link', { name: 'Runs' }).getAttribute('href')).toBe('#runs');
+  });
+
+  it('shows no Next step on a visit to a workspace that is already populated, even once a write reads its listing again', async () => {
+    const imported = entry('notes', { kind: 'local', dataset_version: hex('d') }, { licence: null, ground_truth: 'qrels' });
+    mockApi(routes({ 'POST /benchmarks/import': { body: imported } }));
+    render(<LiveHarness ready={3} />);
+    const benchmarks = within(await screen.findByRole('region', { name: 'Benchmarks' }));
+    await benchmarks.findByText('beir/scifact');
+    expect(screen.queryByRole('region', { name: 'Next step' })).toBeNull();
+    fireEvent.change(benchmarks.getByLabelText('Corpus directory'), { target: { value: '/data/notes' } });
+    fireEvent.change(benchmarks.getByLabelText('Import as'), { target: { value: 'notes' } });
+    fireEvent.click(benchmarks.getByRole('button', { name: 'Import' }));
+    await benchmarks.findByText('notes');
+    expect(screen.queryByRole('region', { name: 'Next step' })).toBeNull();
+  });
+
+  it('waits for the workspace to be read again after the write that ended the first launch before saying the next step', async () => {
+    const imported = entry('notes', { kind: 'local', dataset_version: hex('d') }, { licence: null, ground_truth: 'qrels' });
+    mockApi({ ...empty, 'POST /benchmarks/import': { body: imported } });
+    // The shell's read of the workspace, answered when this test says.
+    let answer: (() => void) | null = null;
+    function Controlled() {
+      const [workspace, setWorkspace] = useState<RequestState<Workspace>>({ status: 'loaded', value: { ...WORKSPACE, counts: { ...WORKSPACE.counts, benchmarks_ready: 0 } } });
+      const refresh = () => {
+        answer = () => setWorkspace({ status: 'loaded', value: { ...WORKSPACE, counts: { ...WORKSPACE.counts, benchmarks_ready: 1 } } });
+      };
+      return <Harness workspace={workspace} refresh={refresh} />;
+    }
+    render(<Controlled />);
+    const start = within(await screen.findByRole('region', { name: 'Get started' }));
+    fireEvent.change(start.getByLabelText('Corpus directory'), { target: { value: '/data/notes' } });
+    fireEvent.change(start.getByLabelText('Import as'), { target: { value: 'notes' } });
+    fireEvent.click(start.getByRole('button', { name: 'Import' }));
+    await within(await screen.findByRole('region', { name: 'Benchmarks' })).findByText('notes');
+    expect(answer).not.toBeNull();
+    // The first launch has ended, but the workspace read that counts the import has not answered.
+    expect(screen.queryByRole('region', { name: 'Next step' })).toBeNull();
+    act(() => answer?.());
+    expect((await screen.findByRole('region', { name: 'Next step' })).textContent).toContain('1 benchmark is ready');
+  });
+
+  it('shows no Next step while the first launch lasts, and shows it once it ends', async () => {
+    const imported = entry('notes', { kind: 'local', dataset_version: hex('d') }, { licence: null, ground_truth: 'qrels' });
+    mockApi({ ...empty, 'POST /benchmarks/import': { body: imported } });
+    render(<LiveHarness ready={1} />);
+    const start = within(await screen.findByRole('region', { name: 'Get started' }));
+    expect(screen.queryByRole('region', { name: 'Next step' })).toBeNull();
+    fireEvent.change(start.getByLabelText('Corpus directory'), { target: { value: '/data/notes' } });
+    fireEvent.change(start.getByLabelText('Import as'), { target: { value: 'notes' } });
+    fireEvent.click(start.getByRole('button', { name: 'Import' }));
+    await screen.findByRole('region', { name: 'Next step' });
+  });
+
+  it('says, when the first launch ended with nothing ready and no service bound, that no benchmark is ready, naming no service', () => {
+    render(<NextStep ready={0} services={[]} />);
+    const next = screen.getByRole('region', { name: 'Next step' });
+    expect(next.textContent).toContain('No benchmark is ready yet. Next: add a benchmark below');
+    expect(next.textContent).not.toContain('bound');
+  });
+
+  it('names the services bound when the first launch ended with a service and no benchmark ready', () => {
+    render(<NextStep ready={0} services={[QWEN]} />);
+    expect(screen.getByRole('region', { name: 'Next step' }).textContent).toContain('generator/qwen is bound. Next: add a benchmark below');
+  });
+
+  it('keeps the family chosen in the first launch’s Connect form once a Connect ends the first launch', async () => {
+    const bge = service('reranker', 'bge', 'http://127.0.0.1:9090');
+    mockApi({
+      ...empty,
+      'PUT /services/{family}/{name}': { body: { services: [bge] } },
+      'POST /services/{family}/{name}/probe': { body: { identity: 'bge-reranker-v2-m3@sha256:1f2e' } },
+    });
+    render(<Harness />);
+    const start = within(await screen.findByRole('region', { name: 'Get started' }));
+    const connect = within(start.getByRole('form', { name: 'Connect a service' }));
+    fireEvent.change(connect.getByLabelText('Family'), { target: { value: 'reranker' } });
+    fireEvent.change(connect.getByLabelText('Name'), { target: { value: 'bge' } });
+    fireEvent.change(connect.getByLabelText('Address'), { target: { value: 'http://127.0.0.1:9090' } });
+    fireEvent.click(connect.getByRole('button', { name: 'Connect' }));
+
+    const services = within(await screen.findByRole('region', { name: 'Services' }));
+    await services.findByRole('listitem', { name: 'reranker/bge' });
+    const form = within(services.getByRole('form', { name: 'Connect a service' }));
+    await waitFor(() => expect((form.getByLabelText('Name') as HTMLInputElement).value).toBe(''));
+    expect((form.getByLabelText('Family') as HTMLSelectElement).value).toBe('reranker');
+  });
+
+  it('keeps the family and the fields typed in the first launch’s Connect form once the first launch ends', async () => {
+    const imported = entry('notes', { kind: 'local', dataset_version: hex('d') }, { licence: null, ground_truth: 'qrels' });
+    mockApi({ ...empty, 'POST /benchmarks/import': { body: imported } });
+    render(<Harness />);
+    const start = within(await screen.findByRole('region', { name: 'Get started' }));
+    const connect = within(start.getByRole('form', { name: 'Connect a service' }));
+    expect((connect.getByLabelText('Family') as HTMLSelectElement).value).toBe('generator');
+    fireEvent.change(connect.getByLabelText('Family'), { target: { value: 'reranker' } });
+    fireEvent.change(connect.getByLabelText('Name'), { target: { value: 'bge' } });
+    fireEvent.change(start.getByLabelText('Corpus directory'), { target: { value: '/data/notes' } });
+    fireEvent.change(start.getByLabelText('Import as'), { target: { value: 'notes' } });
+    fireEvent.click(start.getByRole('button', { name: 'Import' }));
+
+    const services = within(await screen.findByRole('region', { name: 'Services' }));
+    const form = within(services.getByRole('form', { name: 'Connect a service' }));
+    expect((form.getByLabelText('Family') as HTMLSelectElement).value).toBe('reranker');
+    expect((form.getByLabelText('Name') as HTMLInputElement).value).toBe('bge');
+  });
+
+  it('names a family in words in the Connect form, sending its configuration name', async () => {
+    mockApi(routes());
+    render(<Harness />);
+    const form = within(within(await screen.findByRole('region', { name: 'Services' })).getByRole('form', { name: 'Connect a service' }));
+    const option = form.getByRole('option', { name: 'context builder' }) as HTMLOptionElement;
+    expect(option.value).toBe('context_builder');
+    expect(form.queryByRole('option', { name: 'context_builder' })).toBeNull();
+  });
+
+  it('refuses the Connect form, saying why, in a build without remote', async () => {
+    mockApi(routes());
+    render(<Harness workspace={{ status: 'loaded', value: { ...WORKSPACE, capabilities: { ...WORKSPACE.capabilities, remote: false } } }} />);
+    const form = within(within(await screen.findByRole('region', { name: 'Services' })).getByRole('form', { name: 'Connect a service' }));
+    for (const field of ['Family', 'Name', 'Address', 'Served model']) expect((form.getByLabelText(field) as HTMLInputElement).disabled, field).toBe(true);
+    const button = form.getByRole('button', { name: 'Connect' });
+    expect(button.getAttribute('aria-disabled')).toBe('true');
+    expect(document.getElementById(button.getAttribute('aria-describedby') ?? '')?.textContent).toContain('remote feature');
+  });
+
+  it('gives the fields of both forms an example as their placeholder', async () => {
+    mockApi(routes());
+    render(<Harness />);
+    const benchmarks = within(await screen.findByRole('region', { name: 'Benchmarks' }));
+    expect(benchmarks.getByLabelText('Corpus directory').getAttribute('placeholder')).toMatch(/^\//);
+    expect(benchmarks.getByLabelText('Import as').getAttribute('placeholder')).not.toBeNull();
+    const form = within(within(region('Services')).getByRole('form', { name: 'Connect a service' }));
+    expect(form.getByLabelText('Name').getAttribute('placeholder')).not.toBeNull();
+    // The address has none: the one-origin scan refuses any scheme-and-host text in the UI's sources; its help line gives the shape.
+    expect(form.getByLabelText('Served model').getAttribute('placeholder')).not.toBeNull();
+  });
+
+  it('offers Cancel on a download under way, which cancels its job and says so until the stream says it ended', async () => {
+    const api = mockApi(routes({ 'POST /benchmarks/{name}/download': { body: { job_id: '7-0' } }, 'DELETE /jobs/{id}': { body: download('7-0', running(1_000_000, 17_100_000)) } }));
+    render(<Harness />);
+    await within(await screen.findByRole('region', { name: 'Benchmarks' })).findByText('beir/fiqa');
+    send({ event: 'resync', data: { jobs: [], faults: [] } });
+    fireEvent.click(within(row('beir/fiqa')).getByRole('button', { name: 'Download' }));
+    await waitFor(() => expect(row('beir/fiqa').textContent).toContain('Queued'));
+    send({ event: 'running', data: download('7-0', running(1_000_000, 17_100_000)) });
+    const cancel = within(row('beir/fiqa')).getByRole('button', { name: 'Cancel the download of beir/fiqa' });
+    fireEvent.click(cancel);
+    await waitFor(() => expect(api.requests).toContain('DELETE /api/v1/jobs/7-0'));
+    await waitFor(() => expect(within(row('beir/fiqa')).getByRole('button', { name: /Cancel/ }).getAttribute('aria-disabled')).toBe('true'));
+    expect(row('beir/fiqa').textContent).toContain('Cancelling');
+    send({ event: 'cancelled', data: download('7-0', { kind: 'cancelled', finished_at_ms: 4, partial_traces: 0 }) });
+    await waitFor(() => expect(within(row('beir/fiqa')).getByRole('button', { name: 'Retry' })).toBeTruthy());
+    expect(within(row('beir/fiqa')).queryByRole('button', { name: /Cancel/ })).toBeNull();
+  });
+
+  it('brings Cancel back when the queue refuses the cancellation', async () => {
+    const api = mockApi(routes({ 'POST /benchmarks/{name}/download': { body: { job_id: '7-0' } }, 'DELETE /jobs/{id}': problem('job_finished', 409, 'Job 7-0 has already finished.') }));
+    render(<Harness />);
+    await within(await screen.findByRole('region', { name: 'Benchmarks' })).findByText('beir/fiqa');
+    send({ event: 'resync', data: { jobs: [], faults: [] } });
+    fireEvent.click(within(row('beir/fiqa')).getByRole('button', { name: 'Download' }));
+    await waitFor(() => expect(row('beir/fiqa').textContent).toContain('Queued'));
+    send({ event: 'running', data: download('7-0', running(1_000_000, 17_100_000)) });
+    fireEvent.click(within(row('beir/fiqa')).getByRole('button', { name: 'Cancel the download of beir/fiqa' }));
+    await waitFor(() => expect(api.requests).toContain('DELETE /api/v1/jobs/7-0'));
+    const cancel = await within(row('beir/fiqa')).findByRole('button', { name: 'Cancel the download of beir/fiqa' });
+    expect(cancel.getAttribute('aria-disabled')).toBeNull();
+    expect(row('beir/fiqa').textContent).not.toContain('Cancelling');
+  });
+
+  it('offers Cancel on a queued download, which cancels its job', async () => {
+    const api = mockApi(routes({ 'POST /benchmarks/{name}/download': { body: { job_id: '7-0' } }, 'DELETE /jobs/{id}': { body: download('7-0', { kind: 'queued' }) } }));
+    render(<Harness />);
+    await within(await screen.findByRole('region', { name: 'Benchmarks' })).findByText('beir/fiqa');
+    send({ event: 'resync', data: { jobs: [], faults: [] } });
+    fireEvent.click(within(row('beir/fiqa')).getByRole('button', { name: 'Download' }));
+    await waitFor(() => expect(row('beir/fiqa').textContent).toContain('Queued'));
+    fireEvent.click(within(row('beir/fiqa')).getByRole('button', { name: 'Cancel the download of beir/fiqa' }));
+    await waitFor(() => expect(api.requests).toContain('DELETE /api/v1/jobs/7-0'));
+    await waitFor(() => expect(row('beir/fiqa').textContent).toContain('Cancelling'));
+    send({ event: 'cancelled', data: download('7-0', { kind: 'cancelled', finished_at_ms: 4, partial_traces: 0 }) });
+    await waitFor(() => expect(within(row('beir/fiqa')).getByRole('button', { name: 'Retry' })).toBeTruthy());
+  });
+
+  it('says what a service is in plain words', async () => {
+    mockApi(routes());
+    render(<Harness />);
+    const services = await screen.findByRole('region', { name: 'Services' });
+    expect(services.textContent).toContain('A service is a model server');
+    expect(services.textContent).not.toContain('provenance');
+  });
+
+  it('shows the screen’s name, and draws a licence as a link styled like every link', async () => {
+    mockApi(routes());
+    render(<Harness />);
+    await within(await screen.findByRole('region', { name: 'Benchmarks' })).findByText('beir/fiqa');
+    const link = within(row('beir/fiqa')).getByRole('link', { name: 'CC-BY-SA-4.0' });
+    expect(link.classList.contains('rg-setup__link')).toBe(true);
+    const css = (await import('./Setup.css?raw')).default;
+    const rules = parseRules(css);
+    expect(rules.some((r) => r.selector.includes('.rg-setup__link') && r.declarations.get('color') === 'var(--accent)' && r.declarations.get('text-decoration-line') === 'underline')).toBe(true);
+  });
+});
+
+describe('the screen’s name', () => {
+  it('is the shell’s level-one heading, shown, with no second copy hidden from assistive technology', async () => {
+    mockApi({ 'GET /workspace': { body: WORKSPACE }, ...routes() }, { build: BUILD });
+    render(<App client={createApiClient()} build={BUILD} reload={() => {}} />);
+    await screen.findByRole('region', { name: 'Benchmarks' });
+    const heading = screen.getByRole('heading', { level: 1 });
+    expect(heading.textContent).toBe('Setup');
+    expect(heading.classList.contains('rg-visually-hidden')).toBe(false);
+    expect(document.querySelectorAll('[aria-hidden="true"]').length === 0 || [...document.querySelectorAll('[aria-hidden="true"]')].every((el) => el.textContent !== 'Setup')).toBe(true);
+  });
+});
+
+describe('the screen’s focus', () => {
+  it('a move to Setup focuses its visible heading, the shell’s', async () => {
+    mockApi({ 'GET /workspace': { body: WORKSPACE }, 'GET /runs': { body: { runs: [], unreadable: [], shapes: {} } }, ...routes() }, { build: BUILD });
+    window.history.replaceState(null, '', '/#runs');
+    render(<App client={createApiClient()} build={BUILD} reload={() => {}} />);
+    await screen.findByRole('heading', { level: 1, name: 'Runs' });
+    act(() => {
+      window.location.hash = '#setup';
+    });
+    const heading = await screen.findByRole('heading', { level: 1, name: 'Setup' });
+    await waitFor(() => expect(document.activeElement).toBe(heading));
+    expect(heading.classList.contains('rg-setup__title')).toBe(true);
   });
 });
 
