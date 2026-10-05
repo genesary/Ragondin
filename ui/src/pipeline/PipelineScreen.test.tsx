@@ -44,6 +44,12 @@ afterEach(() => {
 });
 
 describe('reading the matrix', () => {
+  it('offers to edit the pipeline in the editor, from its header', async () => {
+    show(`#pipeline/${NAME}`);
+    await loaded();
+    expect(screen.getByRole('link', { name: `Edit ${NAME}` }).getAttribute('href')).toBe(`#editor/${NAME}`);
+  });
+
   it('asks the API for the pipeline the address names, every benchmark the registry knows included', async () => {
     const api = show(`#pipeline/${NAME}`);
     await loaded();

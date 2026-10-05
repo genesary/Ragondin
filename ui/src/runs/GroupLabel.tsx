@@ -60,6 +60,15 @@ export function GroupLabel({ group, shape }: GroupLabelProps) {
           })}
         </span>
       )}
+      {/* The first name the workspace holds as it is, opened in the editor. */}
+      {(() => {
+        const editable = group.names.find((_, i) => group.held[i] === 'exactly');
+        return editable === undefined ? null : (
+          <a className="rg-runs__edit" href={formatHash({ screen: 'editor', name: editable })} aria-label={`Edit ${editable}`}>
+            Edit
+          </a>
+        );
+      })()}
       {shape === null ? null : (
         <ol className="rg-runs__shape" aria-label="Shape">
           {shape.map((n) => (

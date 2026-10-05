@@ -11,6 +11,7 @@ import { EditorScreen } from './EditorScreen.tsx';
 import { exampleDocument } from './example.ts';
 import { HYBRID, SERVICES, WORKSPACE } from './fixtures.ts';
 import { rememberFork } from './session.ts';
+import { recentPipelines, rememberPipeline } from './recent.ts';
 
 const HASH = 'c'.repeat(64);
 /** The recorded workspace before its first pipeline: the first launch. */
@@ -63,6 +64,7 @@ afterEach(async () => {
   await new Promise((resolve) => setTimeout(resolve, 50));
   vi.unstubAllGlobals();
   window.sessionStorage.clear();
+  window.localStorage.clear();
 });
 
 describe('the Editor screen', () => {
@@ -213,3 +215,34 @@ describe('the Editor screen', () => {
     expect(api.requests.filter((r) => r === 'GET /api/v1/services')).toHaveLength(2);
   });
 });
+
+describe('opening a pipeline from the editor', () => {
+  const LISTED: MockRoutes = { ...ROUTES, 'GET /pipelines': { body: { pipelines: ['hybrid', 'lexical', 'rag'].map((name) => ({ name, etag: 'e'.repeat(64), modified_ms: null, hash: HASH, error: null })) } } };
+
+  it('offers the recent pipelines first, then every pipeline, from the empty state', async () => {
+    rememberPipeline('rag');
+    rememberPipeline('lexical');
+    mockApi(LISTED);
+    render(<Harness />);
+    const recent = await screen.findByRole('list', { name: 'Recent pipelines' });
+    expect(within(recent).getAllByRole('link').map((a) => [a.textContent, a.getAttribute('href')])).toEqual([
+      ['lexical', '#editor/lexical'],
+      ['rag', '#editor/rag'],
+    ]);
+    const picker = screen.getByRole('combobox', { name: 'Open a pipeline' }) as HTMLSelectElement;
+    expect([...picker.options].filter((o) => !o.disabled).map((o) => o.value)).toEqual(['lexical', 'rag', 'hybrid']);
+    fireEvent.change(picker, { target: { value: 'hybrid' } });
+    expect(window.location.hash).toBe('#editor/hybrid');
+  });
+
+  it('remembers a pipeline opened, and offers the others from the editor’s header', async () => {
+    mockApi({ ...LISTED, 'GET /pipelines/{name}': { body: STORED_DETAIL } });
+    render(<Harness name="hybrid" />);
+    const picker = (await screen.findByRole('combobox', { name: 'Open a pipeline' }, { timeout: SLOW })) as HTMLSelectElement;
+    expect(picker.value).toBe('hybrid');
+    expect(recentPipelines()).toEqual(['hybrid']);
+    fireEvent.change(picker, { target: { value: 'rag' } });
+    expect(window.location.hash).toBe('#editor/rag');
+  });
+});
+

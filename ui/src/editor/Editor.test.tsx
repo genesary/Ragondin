@@ -837,3 +837,21 @@ describe('deleting with the keyboard, and an edge by its own Remove', () => {
     expect(container.querySelector('path.rg-edge[data-from="fused"][data-to="reranked"]')).toBeTruthy();
   });
 });
+
+describe('the Launch action', () => {
+  it('opens the Runs launch panel on the stored pipeline', async () => {
+    setup(undefined, { initial: HYBRID, stored: 'hybrid' });
+    const launch = screen.getByRole('button', { name: 'Launch…' });
+    await waitFor(() => expect(launch.getAttribute('aria-disabled')).toBeNull());
+    fireEvent.click(launch);
+    expect(window.location.hash).toBe('#runs?launch=hybrid');
+  });
+
+  it('is refused, saying why, for a document not yet in the workspace or changed since', () => {
+    setup(undefined, { initial: HYBRID });
+    const launch = screen.getByRole('button', { name: /^Launch…/ });
+    expect(launch.getAttribute('aria-disabled')).toBe('true');
+    expect(document.getElementById(launch.getAttribute('aria-describedby')!)?.textContent).toBe('Not a workspace pipeline yet: a run takes a stored document.');
+  });
+});
+

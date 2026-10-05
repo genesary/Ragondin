@@ -13,6 +13,8 @@ import { exampleDocument, freshName } from './example.ts';
 import { ImportPanel } from './Import.tsx';
 import { grammarOf } from './ports.ts';
 import type { FileInit } from './saving.ts';
+import { PipelinePicker, pickerOrder } from './PipelinePicker.tsx';
+import { recentPipelines, rememberPipeline } from './recent.ts';
 import { forkedFrom } from './session.ts';
 import type { EditorLayout } from './store.ts';
 
@@ -64,6 +66,9 @@ type Callbacks = { onNamed: (name: string) => void; onReload: () => void };
 /** The editor over `opening`, once the services are read. */
 function Editing({ client, workspace, opening, selected, onSelect, onNamed, onReload }: { client: ApiClient; workspace: Workspace; opening: Opening; selected: string | null; onSelect: (id: string | null) => void } & Callbacks) {
   const [services, retry] = useOnce<ServiceListing>((signal) => client.get('/services', { signal }));
+  // The workspace's pipelines, for the header's picker: a listing that fails offers none, and the editor works on.
+  const [listing] = useOnce<PipelineListing>((signal) => client.get('/pipelines', { signal }));
+  const names = listing.status === 'loaded' ? listing.value.pipelines.map((p) => p.name) : [];
   const grammar = useMemo(() => grammarOf(workspace.capabilities), [workspace.capabilities]);
   return (
     <Resource state={services} loading="Reading the services Setup bound" error={(problem) => <ErrorState problem={problem} onRetry={retry} />}>
@@ -83,6 +88,7 @@ function Editing({ client, workspace, opening, selected, onSelect, onNamed, onRe
             forkedFrom={opening.forkedFrom}
             onNamed={onNamed}
             onReload={onReload}
+            picker={(current) => (names.length === 0 ? null : <PipelinePicker id="rg-editor-open" names={names} current={current} />)}
           />
         </Suspense>
       )}
@@ -113,11 +119,12 @@ function Unnamed({ client, workspace, ...callbacks }: { client: ApiClient; works
   // the names a new document's first write must avoid. A workspace the count
   // says holds pipelines is not listed until a new document needs a name.
   const maybeEmpty = workspace.status === 'loaded' && workspace.value.counts.pipelines === 0;
-  const [listing] = useOnce<PipelineListing>(maybeEmpty || chosen === 'new' ? (signal) => client.get('/pipelines', { signal }) : null);
+  // Listed always: the empty state offers the workspace's pipelines to open, the recent ones first.
+  const [listing] = useOnce<PipelineListing>(workspace.status === 'loaded' ? (signal) => client.get('/pipelines', { signal }) : null);
   const listed = maybeEmpty || chosen === 'new';
   if (listed && listing.status === 'loading') return <Loading label="Reading the workspace's pipelines" />;
   // A listing that failed proposes names blind; the server still refuses one taken.
-  const names = listed && listing.status === 'loaded' ? listing.value.pipelines.map((p) => p.name) : [];
+  const names = listing.status === 'loaded' ? listing.value.pipelines.map((p) => p.name) : [];
   const empty = maybeEmpty && listing.status === 'loaded' && names.length === 0;
 
   if (chosen === 'import') {
@@ -157,7 +164,32 @@ function Unnamed({ client, workspace, ...callbacks }: { client: ApiClient; works
       >
         Start a new pipeline on the canvas, from what this build can run, or import a pipeline document.
       </EmptyState>
+      {listing.status === 'loaded' && names.length > 0 ? <OpenOne names={names} /> : null}
     </Sheet>
+  );
+}
+
+/** The empty state's way to an existing pipeline: the recent ones as links, every one in a picker. */
+function OpenOne({ names }: { names: readonly string[] }) {
+  const recent = pickerOrder(names).filter((n) => recentPipelines().includes(n));
+  return (
+    <section className="rg-editor__open" aria-label="Open a pipeline">
+      {recent.length === 0 ? null : (
+        <>
+          <h3 id="rg-editor-recent" className="rg-editor__open-head">
+            Recent pipelines
+          </h3>
+          <ul className="rg-editor__recent" aria-labelledby="rg-editor-recent">
+            {recent.map((n) => (
+              <li key={n}>
+                <a href={formatHash({ screen: 'editor', name: n })}>{n}</a>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+      <PipelinePicker id="rg-editor-open-empty" names={names} current={null} />
+    </section>
   );
 }
 
@@ -206,6 +238,7 @@ function Stored({ client, name, current, node, workspace, ...callbacks }: { clie
           );
         }
         const stored = layoutOf(layout);
+        rememberPipeline(pipeline.name);
         const opening: Opening = {
           title: name,
           doc: pipeline.typed,

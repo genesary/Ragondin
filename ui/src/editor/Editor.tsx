@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type KeyboardEvent } from 'react';
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { Button, Inspector } from '../../design/index.ts';
 import type { ApiClient } from '../api/client.ts';
 import type { Capabilities, ParameterValue, ServiceStatus } from '../api/types.ts';
@@ -48,6 +48,8 @@ export type EditorProps = {
   onNamed?: (name: string) => void;
   /** "Discard my changes and reload": the file read again from disk. */
   onReload?: () => void;
+  /** The header's way to another pipeline, given the one written now, if any. */
+  picker?: (current: string | null) => ReactNode;
 };
 
 // A field with an undo of its own: text being typed. A checkbox, a radio or a
@@ -112,7 +114,7 @@ function HashButton({ hash }: { hash: string }) {
  * server's verdict on the document as it stands, and — given the `file` it
  * writes — continuous saving (`persist.ts`, `saving.ts`) and the export.
  */
-export function Editor({ client, title, stored = null, initial, layout, capabilities, services, grammar, selected, onSelect, file, forkedFrom = null, onNamed = () => {}, onReload = () => {} }: EditorProps) {
+export function Editor({ client, title, stored = null, initial, layout, capabilities, services, grammar, selected, onSelect, file, forkedFrom = null, onNamed = () => {}, onReload = () => {}, picker }: EditorProps) {
   const [state, apply] = useReducer(editorReducer, undefined, () => initialEditor(initial, layout));
   // A position a step changed is the person's and is written; where the
   // canvas placed a node itself on opening is kept, and written with the next.
@@ -280,6 +282,8 @@ export function Editor({ client, title, stored = null, initial, layout, capabili
   const runUpToNode = (id: string) => {
     if (onDisk !== null) navigate({ screen: 'runs', launch: { pipeline: onDisk, upTo: id } });
   };
+  // "Launch…": the Runs launch panel on the whole pipeline, offered as "Run up to this node" is, on the file on disk.
+  const launchRefusal = onDisk === null ? 'Not a workspace pipeline yet: a run takes a stored document.' : !unchanged ? 'The canvas differs from the stored document, and a run takes the stored one: wait for it to be saved.' : null;
 
   const nodeOf = (id: string) => doc.pipeline.nodes.find((n) => n.id === id);
   // A node removed — from its menu or by Delete — gives focus to a neighbour: what fed it, else the first input,
@@ -386,6 +390,18 @@ export function Editor({ client, title, stored = null, initial, layout, capabili
     <div ref={root} className="rg-editor" onKeyDown={onKeyDown}>
       <header className="rg-editor__bar">
         <h2 className="rg-editor__title">{name}</h2>
+        {picker?.(save.file.name ?? stored)}
+        <Button
+          kind="primary"
+          size="s"
+          icon="play"
+          onClick={() => {
+            if (onDisk !== null) navigate({ screen: 'runs', launch: { pipeline: onDisk } });
+          }}
+          {...(launchRefusal === null ? {} : { disabled: true, disabledReason: launchRefusal })}
+        >
+          Launch…
+        </Button>
         <div className="rg-editor__history" role="group" aria-label="History">
           <Button kind="quiet" size="s" icon="undo" onClick={() => dispatch({ type: 'undo' })} {...(canUndo(state) ? {} : { disabled: true, disabledReason: 'Nothing to undo.' })}>
             Undo

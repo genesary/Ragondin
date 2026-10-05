@@ -159,3 +159,9 @@
 /* A parameter the node does not set: its kind where the kind picker would be, and what each served one is for under its row. */
 .rg-editor-inspector__unset { margin-top: 20px; min-height: var(--size-control); display: flex; align-items: center; font: var(--type-caption); color: var(--ink-3); }
 .rg-editor-inspector__about { margin: calc(-1 * var(--space-1)) 0 var(--space-2); font: var(--type-caption); color: var(--ink-3); }
+
+/* The empty state's way to an existing pipeline: the recent ones as links, every one in a picker. */
+.rg-editor__open { display: grid; justify-items: center; gap: var(--space-3); margin: 0 auto var(--space-8); max-width: 32rem; }
+.rg-editor__open-head { margin: 0; font: var(--type-label); color: var(--ink-2); }
+.rg-editor__recent { display: flex; flex-wrap: wrap; justify-content: center; gap: var(--space-2) var(--space-4); margin: 0; padding: 0; list-style: none; font: 400 13px/20px var(--font-mono); }
+.rg-editor__open .rg-field { min-width: 16rem; }
