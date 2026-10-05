@@ -8,7 +8,7 @@ import { useRoute } from '../routes.ts';
 import { readStored } from '../shell/storage.ts';
 import { MATRIX, NAME, NO_RUNS, PREFIXED, RUN_OLD, RUN_PREFIX, SINCE_CHANGED, WITH_FIQA } from './fixtures.ts';
 import { LAST_PIPELINE } from './last.ts';
-import type { LaunchPair } from './Matrix.tsx';
+import type { LaunchRequest } from './Matrix.tsx';
 import { PipelineScreen } from './PipelineScreen.tsx';
 
 const summary = (name: string): PipelineSummary => ({ name, etag: 'e', hash: 'a'.repeat(64), modified_ms: null, error: null });
@@ -19,13 +19,13 @@ const problem = (code: Problem['code'], detail: string, status = 404): Problem =
 const routes = (matrix: MockRoutes['GET /pipelines/{name}/matrix'] = { body: MATRIX }): MockRoutes => ({ 'GET /pipelines/{name}/matrix': matrix, 'GET /pipelines': { body: LISTING } });
 
 /** What the shell does: hands the screen the name its address carries. */
-function Shell({ launch }: { launch?: ((pair: LaunchPair) => void) | undefined }) {
+function Shell({ launch }: { launch?: ((request: LaunchRequest) => void) | undefined }) {
   const route = useRoute();
   if (route?.screen !== 'pipeline') return <p>elsewhere {window.location.hash}</p>;
   return <PipelineScreen client={createApiClient()} name={route.name} {...(launch === undefined ? {} : { launch })} />;
 }
 
-function show(hash: string, mocks: MockRoutes = routes(), launch?: (pair: LaunchPair) => void) {
+function show(hash: string, mocks: MockRoutes = routes(), launch?: (request: LaunchRequest) => void) {
   window.history.replaceState(null, '', `/${hash}`);
   const api = mockApi(mocks);
   render(<Shell launch={launch} />);
@@ -213,13 +213,15 @@ describe('the verdict and the one primary action', () => {
     expect(screen.getByText('Measured on 3 of 3 benchmarks, 1 of them only up to rerank. 2 cells wait for a run of the whole pipeline.')).toBeTruthy();
   });
 
-  it('offers “Run the N missing cells” with the API’s count, refused with its reason until the launcher exists', async () => {
-    show(`#pipeline/${NAME}`, routes({ body: WITH_FIQA }));
+  it('offers “Run the N missing cells” with the API’s count, which opens the launch panel on the one column missing', async () => {
+    const launch = vi.fn();
+    show(`#pipeline/${NAME}`, routes({ body: WITH_FIQA }), launch);
     await loaded();
     const action = screen.getByRole('button', { name: 'Run the 6 missing cells' });
     expect(action.classList.contains('rg-btn--primary')).toBe(true);
-    expect(action.getAttribute('aria-disabled')).toBe('true');
-    expect(document.getElementById(action.getAttribute('aria-describedby') as string)?.textContent).toBe('Launching arrives with the launcher.');
+    expect(action.hasAttribute('aria-disabled')).toBe(false);
+    fireEvent.click(action);
+    expect(launch.mock.calls).toEqual([[{ pipeline: NAME, benchmarks: ['beir/fiqa'] }]]);
   });
 
   it('is absent when no cell is missing', async () => {
@@ -228,13 +230,40 @@ describe('the verdict and the one primary action', () => {
     expect(screen.queryByRole('button', { name: /missing cell/ })).toBeNull();
   });
 
-  it('hands the launcher each benchmark to run the whole pipeline on, when it exists', async () => {
+  it('hands “Run the N missing cells” every launchable column’s benchmark at once, and lists the columns it cannot launch with why', async () => {
     const launch = vi.fn();
-    const both: PipelineMatrix = { ...WITH_FIQA, missing: [...WITH_FIQA.missing, ...PREFIXED.missing, { benchmark: null, dataset_version: '0', nodes: ['bm25'] }] };
+    const both: PipelineMatrix = { ...WITH_FIQA, missing: [...WITH_FIQA.missing, ...PREFIXED.missing, { benchmark: null, dataset_version: '0'.repeat(64), nodes: ['bm25'] }] };
     show(`#pipeline/${NAME}`, routes({ body: both }), launch);
     await loaded();
     // The column with no benchmark name cannot be launched, and is not counted in the action.
+    const action = screen.getByRole('button', { name: 'Run the 8 missing cells' });
+    expect(action.hasAttribute('aria-disabled')).toBe(false);
+    fireEvent.click(action);
+    expect(launch.mock.calls).toEqual([[{ pipeline: NAME, benchmarks: ['beir/fiqa', 'beir/nfcorpus'] }]]);
+    expect(screen.getByText('Not launched: dataset 000000000000, which no benchmark name is pinned to, so there is nothing to launch it on.')).toBeTruthy();
+  });
+
+  it('hands each benchmark once, though two columns of missing cells carry its name', async () => {
+    const launch = vi.fn();
+    const twice: PipelineMatrix = { ...WITH_FIQA, missing: [...WITH_FIQA.missing, { benchmark: 'beir/fiqa', dataset_version: '1'.repeat(64), nodes: ['bm25'] }] };
+    show(`#pipeline/${NAME}`, routes({ body: twice }), launch);
+    await loaded();
+    fireEvent.click(screen.getByRole('button', { name: 'Run the 7 missing cells' }));
+    expect(launch.mock.calls).toEqual([[{ pipeline: NAME, benchmarks: ['beir/fiqa'] }]]);
+  });
+
+  it('opens Runs’ launch panel on every missing benchmark from “Run the N missing cells”', async () => {
+    const both: PipelineMatrix = { ...WITH_FIQA, missing: [...WITH_FIQA.missing, ...PREFIXED.missing] };
+    show(`#pipeline/${NAME}`, routes({ body: both }));
+    await loaded();
     fireEvent.click(screen.getByRole('button', { name: 'Run the 8 missing cells' }));
-    expect(launch.mock.calls).toEqual([[{ pipeline: NAME, benchmark: 'beir/fiqa' }], [{ pipeline: NAME, benchmark: 'beir/nfcorpus' }]]);
+    await screen.findByText(`elsewhere #runs?launch=${NAME}&benchmark=beir%2Ffiqa&benchmark=beir%2Fnfcorpus`);
+  });
+
+  it('opens Runs’ launch panel on the pipeline and the benchmark when a Run is pressed, with no launcher of its own', async () => {
+    show(`#pipeline/${NAME}`, routes({ body: WITH_FIQA }));
+    await loaded();
+    fireEvent.click(screen.getByRole('button', { name: 'Run on beir/fiqa' }));
+    await screen.findByText(`elsewhere #runs?launch=${NAME}&benchmark=beir%2Ffiqa`);
   });
 });

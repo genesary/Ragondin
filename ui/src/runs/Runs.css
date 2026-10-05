@@ -132,6 +132,11 @@
 .rg-launch__bindings ul { margin: var(--space-1) 0; padding: 0; list-style: none; font: var(--type-dense); }
 .rg-launch__bindings,
 .rg-launch__store { display: grid; gap: var(--space-1); min-width: 0; }
+/* Several benchmarks: one line each, its name, then why it is not launched or what came of its submission — words, never colour alone. */
+.rg-launch__several { display: grid; gap: var(--space-1); margin: 0; padding: 0; list-style: none; font: var(--type-dense); }
+.rg-launch__several li { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2); min-width: 0; overflow-wrap: anywhere; }
+.rg-launch__bench { color: var(--ink); }
+.rg-launch__error { font: var(--type-caption); color: var(--critical); }
 /* The action, its identity and the answer span the whole panel. */
 .rg-launch__action,
 .rg-launch > .rg-inline { grid-column: 1 / -1; }

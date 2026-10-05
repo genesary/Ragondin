@@ -7,8 +7,8 @@ import css from './Pipeline.css?raw';
 import { MATRIX, NAME, PREFIXED, ROWS, RUN_OLD, WITH_FIQA } from './fixtures.ts';
 import { Matrix } from './Matrix.tsx';
 
-const show = (matrix: PipelineMatrix = MATRIX, metric = 'ndcg@10', launch?: (pair: { pipeline: string; benchmark: string }) => void) =>
-  render(<Matrix matrix={matrix} metric={metric} {...(launch === undefined ? {} : { launch })} />);
+const show = (matrix: PipelineMatrix = MATRIX, metric = 'ndcg@10', launch: (request: { pipeline: string; benchmarks: string[] }) => void = () => {}) =>
+  render(<Matrix matrix={matrix} metric={metric} launch={launch} />);
 
 const names = (role: 'rowheader' | 'columnheader') => screen.getAllByRole(role).map((h) => h.textContent?.replace(/\s+/g, ' ').trim());
 
@@ -207,24 +207,16 @@ describe('an empty cell explains itself', () => {
     expect(stops).toEqual(['Run on beir/fiqa', 'Run on beir/trec-covid']);
   });
 
-  it('not run yet: the Run button is refused with its reason until the launcher exists', () => {
-    show(WITH_FIQA);
-    const cell = cellAt('bm25', 'beir/fiqa');
-    expect(cell.textContent).toContain('not run yet');
-    const run = within(cell).getByRole('button', { name: 'Run on beir/fiqa' });
-    expect(run.getAttribute('aria-disabled')).toBe('true');
-    expect(run.getAttribute('aria-describedby')).not.toBeNull();
-    expect(document.getElementById(run.getAttribute('aria-describedby') as string)?.textContent).toBe('Launching arrives with the launcher.');
-    expect(cell.querySelector('[data-never]')).toBeNull();
-  });
-
-  it('not run yet: with the launcher, the Run button hands it the pipeline and the benchmark', () => {
+  it('not run yet: the Run button hands the launcher the pipeline and the benchmark', () => {
     const launch = vi.fn();
     show(WITH_FIQA, 'ndcg@10', launch);
-    const run = within(cellAt('bm25', 'beir/fiqa')).getByRole('button', { name: 'Run on beir/fiqa' });
+    const cell = cellAt('bm25', 'beir/fiqa');
+    expect(cell.textContent).toContain('not run yet');
+    expect(cell.querySelector('[data-never]')).toBeNull();
+    const run = within(cell).getByRole('button', { name: 'Run on beir/fiqa' });
     expect(run.hasAttribute('aria-disabled')).toBe(false);
     fireEvent.click(run);
-    expect(launch).toHaveBeenCalledWith({ pipeline: NAME, benchmark: 'beir/fiqa' });
+    expect(launch).toHaveBeenCalledWith({ pipeline: NAME, benchmarks: ['beir/fiqa'] });
   });
 
   it('prefix stops: the node the prefix run stops at', () => {

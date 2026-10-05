@@ -12,7 +12,7 @@ import type { BenchmarkEntry, JobListing, JobSummary, PipelineDetail, PipelineSu
 import { CANCELLED, connect, doneAs, failedAt, hex, QUEUED, runJob, running, send } from '../jobs/fixtures.ts';
 import { JobQueueProvider } from '../jobs/queue.tsx';
 import { JobToasts } from '../jobs/Toasts.tsx';
-import { useRoute } from '../routes.ts';
+import { navigate, useRoute } from '../routes.ts';
 import { parseRules } from '../../design/testing/css.ts';
 import toastsCss from '../jobs/Toasts.css?raw';
 import runsCss from './Runs.css?raw';
@@ -276,6 +276,240 @@ describe('the launch panel up to a node', () => {
     const words = await within(panel()).findByText(/the prefix would be the whole pipeline/);
     expect(words.textContent).toContain('At node rerank.');
     expect((within(panel()).getByLabelText('Pipeline') as HTMLElement).getAttribute('aria-invalid')).toBe('true');
+  });
+});
+
+describe('the launch panel on a benchmark', () => {
+  it('opens on the pipeline and the benchmark the address names — the Pipeline screen’s Run — and launches them', async () => {
+    const { api, stream } = await show('#runs?launch=hybrid&benchmark=mine', routes({ 'POST /runs': { body: { job_id: 'j1', run_id: ANNOUNCED } } }));
+    connect(stream);
+    await within(panel()).findByText(`pipeline ${short(HYBRID)}`);
+    expect((within(panel()).getByLabelText('Pipeline') as HTMLSelectElement).value).toBe('hybrid');
+    const benchmark = (await within(panel()).findByLabelText('Benchmark')) as HTMLSelectElement;
+    expect(benchmark.value).toBe('mine');
+    fireEvent.click(within(panel()).getByRole('button', { name: 'Launch' }));
+    await within(panel()).findByRole('button', { name: 'Queued' });
+    expect(api.bodies[api.requests.indexOf('POST /api/v1/runs')]).toEqual({ pipeline: 'hybrid', benchmark: 'mine' });
+  });
+
+  it('refuses to launch on a benchmark the address names that is not ready, rather than another in its place', async () => {
+    const { api, stream } = await show('#runs?launch=hybrid&benchmark=beir%2Ffiqa');
+    connect(stream);
+    await within(panel()).findByText(`pipeline ${short(HYBRID)}`);
+    const benchmark = (await within(panel()).findByLabelText('Benchmark')) as HTMLSelectElement;
+    expect(benchmark.value).toBe('beir/fiqa');
+    expect(benchmark.selectedOptions[0]?.textContent).toBe('beir/fiqa — not ready');
+    const launch = within(panel()).getByRole('button', { name: 'Launch' });
+    expect(launch.getAttribute('aria-disabled')).toBe('true');
+    expect(document.getElementById(launch.getAttribute('aria-describedby') as string)?.textContent).toBe('beir/fiqa is not ready: download or import it in Setup, or choose another benchmark.');
+    // The way to make it ready, though other benchmarks are; and a help line that says the field holds more than ready ones.
+    expect(within(panel()).getByRole('link', { name: 'Open Setup' }).getAttribute('href')).toBe('#setup/benchmarks');
+    expect(within(panel()).getByText('Ready benchmarks, with the ground truth each carries, and beir/fiqa, which the address named.')).toBeTruthy();
+    expect(within(panel()).queryByText(/Ready benchmarks only/)).toBeNull();
+    // Choosing a ready one lifts the refusal.
+    fireEvent.change(benchmark, { target: { value: 'beir/scifact' } });
+    expect(within(panel()).getByRole('button', { name: 'Launch' }).hasAttribute('aria-disabled')).toBe(false);
+    expect(api.requests).not.toContain('POST /api/v1/runs');
+  });
+});
+
+describe('the launch panel on a benchmark it does not offer, or keeps', () => {
+  it('names a benchmark the workspace does not know as such, with no way to Setup', async () => {
+    const { stream } = await show('#runs?launch=hybrid&benchmark=beir%2Fnope');
+    connect(stream);
+    await within(panel()).findByText(`pipeline ${short(HYBRID)}`);
+    const benchmark = (await within(panel()).findByLabelText('Benchmark')) as HTMLSelectElement;
+    expect(benchmark.selectedOptions[0]?.textContent).toBe('beir/nope — unknown');
+    const launch = within(panel()).getByRole('button', { name: 'Launch' });
+    expect(document.getElementById(launch.getAttribute('aria-describedby') as string)?.textContent).toBe('beir/nope is not a benchmark of this workspace: choose another benchmark.');
+    expect(within(panel()).queryByRole('link', { name: 'Open Setup' })).toBeNull();
+  });
+
+  it('says a ready benchmark a prefix cannot be scored on is not offered, with its reason and no way to Setup', async () => {
+    const { stream } = await show('#runs?launch=hybrid&up_to=rerank&benchmark=mine');
+    connect(stream);
+    await within(panel()).findByText('prefix of hybrid, up to rerank');
+    const benchmark = (await within(panel()).findByLabelText('Benchmark')) as HTMLSelectElement;
+    expect(benchmark.value).toBe('mine');
+    expect(benchmark.selectedOptions[0]?.textContent).toBe('mine — not offered');
+    const launch = within(panel()).getByRole('button', { name: 'Launch' });
+    expect(launch.getAttribute('aria-disabled')).toBe('true');
+    expect(document.getElementById(launch.getAttribute('aria-describedby') as string)?.textContent).toBe('mine cannot score this prefix: choose another benchmark.');
+    expect(within(panel()).queryByRole('link', { name: 'Open Setup' })).toBeNull();
+  });
+
+  it('keeps the benchmark when going back to the whole pipeline', async () => {
+    const { stream } = await show('#runs?launch=hybrid&up_to=rerank&benchmark=mine');
+    connect(stream);
+    await within(panel()).findByText('prefix of hybrid, up to rerank');
+    fireEvent.click(within(panel()).getByRole('button', { name: 'Run the whole pipeline' }));
+    await waitFor(() => expect(window.location.hash).toBe('#runs?launch=hybrid&benchmark=mine'));
+    await waitFor(() => expect((within(panel()).getByLabelText('Benchmark') as HTMLSelectElement).value).toBe('mine'));
+  });
+
+  it('opens afresh on another benchmark when the address names one', async () => {
+    const { stream } = await show('#runs?launch=hybrid&benchmark=mine');
+    connect(stream);
+    await waitFor(() => expect((within(panel()).getByLabelText('Benchmark') as HTMLSelectElement).value).toBe('mine'));
+    act(() => navigate({ screen: 'runs', launch: { pipeline: 'hybrid', benchmarks: ['beir/scifact'] } }));
+    await waitFor(() => expect((within(panel()).getByLabelText('Benchmark') as HTMLSelectElement).value).toBe('beir/scifact'));
+  });
+
+  it('keeps the benchmark in the address when a run is selected', async () => {
+    const { stream } = await show('#runs?launch=hybrid&benchmark=mine');
+    connect(stream);
+    fireEvent.click(screen.getByRole('checkbox', { name: `Select run ${short(OLD)} on beir/scifact` }));
+    await waitFor(() => expect(window.location.hash).toBe(`#runs?sel=${OLD}&launch=hybrid&benchmark=mine`));
+  });
+});
+
+describe('the launch panel on several benchmarks', () => {
+  const SEVERAL = '#runs?launch=hybrid&benchmark=beir%2Fscifact&benchmark=mine&benchmark=beir%2Ffiqa&benchmark=beir%2Fnope';
+  const rowOf = (name: string) => within(screen.getByRole('list', { name: 'Benchmarks' })).getByText(name).closest('li') as HTMLElement;
+
+  it('shows the hash and the bindings once, lists every benchmark with what will happen on it, and offers one confirmation', async () => {
+    const { stream } = await show(SEVERAL);
+    connect(stream);
+    const launch = await within(panel()).findByRole('button', { name: 'Launch 2 runs' });
+    expect(within(panel()).getAllByText(`pipeline ${short(HYBRID)}`)).toHaveLength(1);
+    expect(within(panel()).getAllByText('generator/qwen')).toHaveLength(1);
+    // No benchmark picker: the benchmarks are the address's, each said for itself.
+    expect(within(panel()).queryByLabelText('Benchmark')).toBeNull();
+    expect(rowOf('beir/scifact').textContent).toContain('qrels');
+    expect(rowOf('mine').textContent).toContain('qrels and reference answers');
+    expect(rowOf('beir/fiqa').textContent).toContain('not launched: not ready — download or import it in Setup');
+    expect(rowOf('beir/nope').textContent).toContain('not launched: not a benchmark of this workspace');
+    expect(launch.hasAttribute('aria-disabled')).toBe(false);
+  });
+
+  it('sends one POST /runs per launchable benchmark, in order, and says each outcome — queued or already held', async () => {
+    const replies = (body: { benchmark: string }) =>
+      body.benchmark === 'beir/scifact'
+        ? { body: { job_id: 'j1', run_id: ANNOUNCED } }
+        : problem('run_exists', 409, 'A run with this identity exists.', 'Open it.', { link: `/api/v1/runs/${OLD}` });
+    const { api, stream } = await show(SEVERAL, routes({ 'POST /runs': replies }));
+    connect(stream);
+    fireEvent.click(await within(panel()).findByRole('button', { name: 'Launch 2 runs' }));
+    await within(panel()).findByText('1 queued, 1 already held by a run or a job.');
+    const posts = api.requests.flatMap((r, i) => (r === 'POST /api/v1/runs' ? [api.bodies[i]] : []));
+    expect(posts).toEqual([
+      { pipeline: 'hybrid', benchmark: 'beir/scifact' },
+      { pipeline: 'hybrid', benchmark: 'mine' },
+    ]);
+    expect(within(rowOf('beir/scifact')).getByText(`run ${short(ANNOUNCED)}`)).toBeTruthy();
+    expect(within(rowOf('beir/scifact')).getByRole('link', { name: 'Open the job on beir/scifact' }).getAttribute('href')).toBe('#runs/job/j1');
+    expect(rowOf('mine').textContent).toContain('A run with this identity already exists.');
+    expect(within(rowOf('mine')).getByRole('link', { name: 'Open what holds the run on mine' }).getAttribute('href')).toBe(`#replay/${OLD}`);
+    const done = within(panel()).getByRole('button', { name: 'Submitted' });
+    expect(done.getAttribute('aria-disabled')).toBe('true');
+  });
+
+  it('says a partial failure as it is: what was queued, and what was refused with its reason', async () => {
+    const replies = (body: { benchmark: string }) =>
+      body.benchmark === 'beir/scifact' ? { body: { job_id: 'j1', run_id: ANNOUNCED } } : problem('dataset_differs', 409, 'The dataset on disk is not the pinned one.', 'Download it again in Setup.');
+    const { stream } = await show('#runs?launch=hybrid&benchmark=beir%2Fscifact&benchmark=mine', routes({ 'POST /runs': replies }));
+    connect(stream);
+    fireEvent.click(await within(panel()).findByRole('button', { name: 'Launch 2 runs' }));
+    const counts = await within(panel()).findByText('1 queued, 1 refused.');
+    // The count is announced: a status line.
+    expect(counts.getAttribute('role')).toBe('status');
+    expect(within(rowOf('beir/scifact')).getByText(`run ${short(ANNOUNCED)}`)).toBeTruthy();
+    expect(rowOf('mine').textContent).toContain('refused: The dataset on disk is not the pinned one. Download it again in Setup. (dataset_differs)');
+  });
+
+  it('sends the rest when the first is refused', async () => {
+    const replies = (body: { benchmark: string }) =>
+      body.benchmark === 'beir/scifact' ? problem('dataset_differs', 409, 'The dataset on disk is not the pinned one.', 'Download it again in Setup.') : { body: { job_id: 'j2', run_id: ANNOUNCED } };
+    const { api, stream } = await show('#runs?launch=hybrid&benchmark=beir%2Fscifact&benchmark=mine', routes({ 'POST /runs': replies }));
+    connect(stream);
+    fireEvent.click(await within(panel()).findByRole('button', { name: 'Launch 2 runs' }));
+    await within(panel()).findByText('1 queued, 1 refused.');
+    expect(api.requests.filter((r) => r === 'POST /api/v1/runs')).toHaveLength(2);
+    expect(within(rowOf('mine')).getByText(`run ${short(ANNOUNCED)}`)).toBeTruthy();
+  });
+
+  it('retries the refused alone, with one confirmation, keeping what was queued', async () => {
+    let refuseMine = true;
+    const replies = (body: { benchmark: string }) =>
+      body.benchmark === 'beir/scifact'
+        ? { body: { job_id: 'j1', run_id: ANNOUNCED } }
+        : refuseMine
+          ? problem('service_unreachable', 503, 'The generator does not answer.', 'Start it, then retry.')
+          : { body: { job_id: 'j2', run_id: hex('b') } };
+    const { api, stream } = await show('#runs?launch=hybrid&benchmark=beir%2Fscifact&benchmark=mine', routes({ 'POST /runs': replies }));
+    connect(stream);
+    fireEvent.click(await within(panel()).findByRole('button', { name: 'Launch 2 runs' }));
+    const retry = await within(panel()).findByRole('button', { name: 'Retry the 1 refused' });
+    refuseMine = false;
+    fireEvent.click(retry);
+    await within(panel()).findByText('2 queued.');
+    const posts = api.requests.flatMap((r, i) => (r === 'POST /api/v1/runs' ? [api.bodies[i]] : []));
+    expect(posts).toEqual([
+      { pipeline: 'hybrid', benchmark: 'beir/scifact' },
+      { pipeline: 'hybrid', benchmark: 'mine' },
+      { pipeline: 'hybrid', benchmark: 'mine' },
+    ]);
+    expect(within(rowOf('beir/scifact')).getByText(`run ${short(ANNOUNCED)}`)).toBeTruthy();
+    expect(within(rowOf('mine')).getByText(`run ${short(hex('b'))}`)).toBeTruthy();
+    const done = within(panel()).getByRole('button', { name: 'Submitted' });
+    expect(document.getElementById(done.getAttribute('aria-describedby') as string)?.textContent).toBe('Submitted: each benchmark says its outcome.');
+  });
+
+  it('is busy while the runs are sent, locks the pipeline, and says closing does not stop them', async () => {
+    let answer: (reply: { body: { job_id: string; run_id: string } }) => void = () => {};
+    const replies = () => new Promise<{ body: { job_id: string; run_id: string } }>((resolve) => (answer = resolve));
+    const { api, stream } = await show('#runs?launch=hybrid&benchmark=beir%2Fscifact&benchmark=mine', routes({ 'POST /runs': replies }));
+    connect(stream);
+    fireEvent.click(await within(panel()).findByRole('button', { name: 'Launch 2 runs' }));
+    const busy = await within(panel()).findByRole('button', { name: 'Launching…' });
+    expect(busy.getAttribute('aria-busy')).toBe('true');
+    // A pipeline chosen now would have the old batch's answers written over it: the field waits.
+    expect((within(panel()).getByLabelText('Pipeline') as HTMLSelectElement).disabled).toBe(true);
+    expect(within(panel()).getByText('Closing this panel does not stop the runs not yet sent: they are sent all the same.')).toBeTruthy();
+    // A second press sends nothing more.
+    fireEvent.click(busy);
+    await act(async () => answer({ body: { job_id: 'j1', run_id: ANNOUNCED } }));
+    await act(async () => answer({ body: { job_id: 'j2', run_id: hex('b') } }));
+    await within(panel()).findByText('2 queued.');
+    expect(api.requests.filter((r) => r === 'POST /api/v1/runs')).toHaveLength(2);
+    expect((within(panel()).getByLabelText('Pipeline') as HTMLSelectElement).disabled).toBe(false);
+  });
+
+  it('forgets the outcomes when another pipeline is chosen', async () => {
+    const { stream } = await show('#runs?launch=hybrid&benchmark=beir%2Fscifact&benchmark=mine', routes({ 'POST /runs': { body: { job_id: 'j1', run_id: ANNOUNCED } } }));
+    connect(stream);
+    fireEvent.click(await within(panel()).findByRole('button', { name: 'Launch 2 runs' }));
+    await within(panel()).findByRole('button', { name: 'Submitted' });
+    fireEvent.change(within(panel()).getByLabelText('Pipeline'), { target: { value: 'broken' } });
+    expect(within(rowOf('beir/scifact')).queryByText(`run ${short(ANNOUNCED)}`)).toBeNull();
+    expect(rowOf('beir/scifact').textContent).toContain('qrels');
+  });
+
+  it('sends up_to with every run of a cut, and offers Setup only for a benchmark that is not ready', async () => {
+    const { api, stream } = await show('#runs?launch=hybrid&up_to=rerank&benchmark=beir%2Fscifact&benchmark=mine&benchmark=beir%2Fnope', routes({ 'POST /runs': { body: { job_id: 'j1', run_id: ANNOUNCED } } }));
+    connect(stream);
+    await within(panel()).findByText('prefix of hybrid, up to rerank');
+    expect(rowOf('mine').textContent).toContain('not launched: cannot score this prefix');
+    // Neither an unknown benchmark nor one the cut cannot score is made ready in Setup.
+    expect(within(panel()).queryByRole('link', { name: 'Open Setup' })).toBeNull();
+    fireEvent.click(await within(panel()).findByRole('button', { name: 'Launch 1 run' }));
+    await within(panel()).findByText('1 queued.');
+    expect(api.bodies[api.requests.indexOf('POST /api/v1/runs')]).toEqual({ pipeline: 'hybrid', benchmark: 'beir/scifact', up_to: 'rerank' });
+  });
+
+  it('offers Setup for a benchmark among several that is not ready', async () => {
+    const { stream } = await show(SEVERAL);
+    connect(stream);
+    await within(panel()).findByRole('button', { name: 'Launch 2 runs' });
+    expect(within(panel()).getByRole('link', { name: 'Open Setup' }).getAttribute('href')).toBe('#setup/benchmarks');
+  });
+
+  it('refuses to launch when none of the benchmarks can be, saying why', async () => {
+    const { stream } = await show('#runs?launch=hybrid&benchmark=beir%2Ffiqa&benchmark=beir%2Fnope');
+    connect(stream);
+    const launch = await within(panel()).findByRole('button', { name: 'Nothing to launch' });
+    expect(launch.getAttribute('aria-disabled')).toBe('true');
+    expect(document.getElementById(launch.getAttribute('aria-describedby') as string)?.textContent).toBe('None of these benchmarks can be launched: each says why.');
   });
 });
 

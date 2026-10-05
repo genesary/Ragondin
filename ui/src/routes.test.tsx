@@ -84,7 +84,25 @@ describe('#runs?launch=<pipeline>&up_to=<node>', () => {
     expect(parseHash(formatHash(route))).toEqual(route);
   });
 
-  it.each(['#runs?up_to=rerank', '#runs?launch=', '#runs?launch=p&up_to=', '#runs?launch=..'])('names no launch at %s, and so no route', (hash) => {
+  it('opens the panel on a pipeline and a benchmark — where the Pipeline screen’s Run lands — every value encoded', () => {
+    const route: Route = { screen: 'runs', launch: { pipeline: 'hybrid', benchmarks: ['beir/scifact'] } };
+    expect(formatHash(route)).toBe('#runs?launch=hybrid&benchmark=beir%2Fscifact');
+    expect(load('#runs?launch=hybrid&benchmark=beir%2Fscifact')).toEqual(route);
+    const cut: Route = { screen: 'runs', launch: { pipeline: 'hybrid', upTo: 'rerank', benchmarks: ['a,b'] } };
+    expect(parseHash(formatHash(cut))).toEqual(cut);
+  });
+
+  it('drops a benchmark the address repeats, keeping the first place of each — one run per benchmark', () => {
+    expect(load('#runs?launch=hybrid&benchmark=a&benchmark=b&benchmark=a')).toEqual({ screen: 'runs', launch: { pipeline: 'hybrid', benchmarks: ['a', 'b'] } });
+  });
+
+  it('carries several benchmarks, one value per key, in order — where “Run the N missing cells” lands', () => {
+    const route: Route = { screen: 'runs', sel: ['r1'], launch: { pipeline: 'hybrid', benchmarks: ['beir/fiqa', 'a&b', 'squad/dev'] } };
+    expect(formatHash(route)).toBe('#runs?sel=r1&launch=hybrid&benchmark=beir%2Ffiqa&benchmark=a%26b&benchmark=squad%2Fdev');
+    expect(parseHash(formatHash(route))).toEqual(route);
+  });
+
+  it.each(['#runs?up_to=rerank', '#runs?launch=', '#runs?launch=p&up_to=', '#runs?launch=..', '#runs?benchmark=beir%2Fscifact', '#runs?launch=p&benchmark=', '#runs?launch=p&benchmark=..', '#runs?launch=p&benchmark=a&benchmark=', '#runs?benchmark=a&benchmark=b'])('names no launch at %s, and so no route', (hash) => {
     expect(parseHash(hash)).toBeNull();
   });
 
