@@ -49,6 +49,8 @@ describe('importing a pipeline', () => {
     const alert = await screen.findByRole('alert');
     expect(alert.textContent).toContain('wires two nodes incompatibly');
     expect(alert.textContent).toContain('At node ranked, on the edge legs → ranked, port 0.');
+    // Said once: the title says it does not validate, so the server's prefix saying it again is dropped.
+    expect(alert.textContent).not.toContain('does not validate');
     expect(api.bodies[api.requests.indexOf('POST /api/v1/pipelines/validate')]).toEqual({ document: HAND });
     expect(api.requests.filter((r) => r.startsWith('PUT'))).toEqual([]);
     expect(onImported).not.toHaveBeenCalled();
@@ -74,15 +76,51 @@ describe('importing a pipeline', () => {
     });
     fill(HAND, 'taken');
     fireEvent.click(screen.getByRole('button', { name: 'Validate and import' }));
-    expect(within(await screen.findByRole('alert')).getByText(/A pipeline named `taken` already exists/)).toBeTruthy();
+    const alert = await screen.findByRole('alert');
+    expect(alert.querySelector('b code')?.textContent).toBe('taken');
+    expect(alert.textContent).toContain('A pipeline named taken already exists');
+    expect(alert.textContent).not.toContain('`');
     expect(onImported).not.toHaveBeenCalled();
   });
 
   it('reads a file chosen from disk into the document, and proposes its name', async () => {
     setup({});
     const file = new File([HAND], 'hybrid.yaml', { type: 'application/yaml' });
-    fireEvent.change(screen.getByLabelText('Choose a YAML file'), { target: { files: [file] } });
+    fireEvent.change(screen.getByLabelText(/Choose a YAML file/), { target: { files: [file] } });
     await waitFor(() => expect((screen.getByRole('textbox', { name: 'Pipeline document (YAML)' }) as HTMLTextAreaElement).value).toBe(HAND));
     expect((screen.getByRole('textbox', { name: 'Pipeline name' }) as HTMLInputElement).value).toBe('hybrid');
+  });
+
+  it('draws the file chooser as a button, and names the file chosen', async () => {
+    const { container } = render(<Harness onImported={() => {}} />);
+    const input = within(container).getByLabelText(/Choose a YAML file/) as HTMLInputElement;
+    expect(input.className).toBe('rg-visually-hidden');
+    expect(container.querySelector('label.rg-btn[for="' + input.id + '"]')).toBeTruthy();
+    expect(within(container).getByText('No file chosen')).toBeTruthy();
+    fireEvent.change(input, { target: { files: [new File([HAND], 'hybrid.yaml')] } });
+    expect(await within(container).findByText('hybrid.yaml')).toBeTruthy();
+  });
+
+  it('keeps the name in step with the file chosen until the name is typed', async () => {
+    setup({});
+    const chooser = screen.getByLabelText(/Choose a YAML file/);
+    const name = () => (screen.getByRole('textbox', { name: 'Pipeline name' }) as HTMLInputElement).value;
+    fireEvent.change(chooser, { target: { files: [new File([HAND], 'first.yaml')] } });
+    await waitFor(() => expect(name()).toBe('first'));
+    fireEvent.change(chooser, { target: { files: [new File([HAND], 'second.yml')] } });
+    await waitFor(() => expect(name()).toBe('second'));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Pipeline name' }), { target: { value: 'mine' } });
+    fireEvent.change(chooser, { target: { files: [new File([HAND], 'third.yaml')] } });
+    await waitFor(() => expect((screen.getByRole('textbox', { name: 'Pipeline document (YAML)' }) as HTMLTextAreaElement).value).toBe(HAND));
+    expect(name()).toBe('mine');
+  });
+
+  it('says beside the button why it cannot import yet', () => {
+    setup({});
+    expect(screen.getByText('Paste a pipeline document or choose a file.', { selector: '.rg-editor__import-why' })).toBeTruthy();
+    fireEvent.change(screen.getByRole('textbox', { name: 'Pipeline document (YAML)' }), { target: { value: HAND } });
+    expect(screen.getByText('Give the pipeline a name.', { selector: '.rg-editor__import-why' })).toBeTruthy();
+    fireEvent.change(screen.getByRole('textbox', { name: 'Pipeline name' }), { target: { value: 'mine' } });
+    expect(document.querySelector('.rg-editor__import-why')).toBeNull();
   });
 });

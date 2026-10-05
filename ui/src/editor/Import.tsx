@@ -16,6 +16,11 @@ export function locationWords(problem: ApiProblem): string {
   return `At node \`${at.node}\`${edge}.`;
 }
 
+// The prefix the server's refusal of a document starts with (`ApiError::PipelineInvalid`): the title already says
+// it, so the detail is shown without it.
+const INVALID_PREFIX = 'the pipeline does not validate: ';
+const withoutPrefix = (message: string) => (message.startsWith(INVALID_PREFIX) ? message.slice(INVALID_PREFIX.length) : message);
+
 // A file name's stem as a pipeline name: what the server's name rule keeps.
 const stem = (file: string) => file.replace(/\.(ya?ml)$/i, '').replace(/[^A-Za-z0-9._-]/g, '-').slice(0, 64);
 
@@ -30,15 +35,19 @@ export function ImportPanel({ client, onImported, onCancel }: ImportPanelProps) 
   const id = useId();
   const [text, setText] = useState('');
   const [name, setName] = useState('');
+  // Whether the person typed the name: until then it follows the file chosen.
+  const [named, setNamed] = useState(false);
+  const [chosen, setChosen] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [refused, setRefused] = useState<{ title: string; detail: string } | null>(null);
 
   const choose = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (file === undefined) return;
+    setChosen(file.name);
     void file.text().then((read) => {
       setText(read);
-      if (name === '') setName(stem(file.name));
+      if (!named) setName(stem(file.name));
     });
   };
 
@@ -49,7 +58,7 @@ export function ImportPanel({ client, onImported, onCancel }: ImportPanelProps) 
     const checked = await client.post('/pipelines/validate', { document: text });
     if (!checked.ok) {
       setBusy(false);
-      setRefused({ title: 'This document is not a valid pipeline. Nothing was written.', detail: [checked.problem.message, locationWords(checked.problem)].filter(Boolean).join(' ') });
+      setRefused({ title: 'This document is not a valid pipeline. Nothing was written.', detail: [withoutPrefix(checked.problem.message), locationWords(checked.problem)].filter(Boolean).join(' ') });
       return;
     }
     const written = await client.put('/pipelines/{name}', { document: text }, { name }, { headers: { 'If-None-Match': '*' } });
@@ -58,7 +67,7 @@ export function ImportPanel({ client, onImported, onCancel }: ImportPanelProps) 
       const taken = written.problem.code === 'precondition_failed';
       setRefused({
         title: taken ? `A pipeline named \`${name}\` already exists. Nothing was written.` : 'The pipeline could not be written.',
-        detail: taken ? 'Give this one another name.' : [written.problem.message, locationWords(written.problem)].filter(Boolean).join(' '),
+        detail: taken ? 'Give this one another name.' : [withoutPrefix(written.problem.message), locationWords(written.problem)].filter(Boolean).join(' '),
       });
       return;
     }
@@ -69,11 +78,13 @@ export function ImportPanel({ client, onImported, onCancel }: ImportPanelProps) 
   return (
     <Section heading="Import a pipeline" caption="Checked as ragondin validate checks a file, then written as it is, comments and all.">
       <form className="rg-editor__import" onSubmit={(e) => void submit(e)}>
-        <div className="rg-field">
-          <label className="rg-field__label" htmlFor={`${id}-file`}>
-            Choose a YAML file
+        <div className="rg-editor__import-file">
+          {/* The native control is kept for the keyboard and the file dialog, and drawn as one of the design's buttons. */}
+          <input id={`${id}-file`} className="rg-visually-hidden" type="file" accept=".yaml,.yml,application/yaml,text/yaml" onChange={choose} />
+          <label className="rg-btn rg-btn--secondary" htmlFor={`${id}-file`}>
+            Choose a YAML file…
           </label>
-          <input id={`${id}-file`} type="file" accept=".yaml,.yml,application/yaml,text/yaml" onChange={choose} />
+          <span className="rg-editor__import-chosen">{chosen ?? 'No file chosen'}</span>
         </div>
         <div className="rg-field">
           <label className="rg-field__label" htmlFor={`${id}-text`}>
@@ -81,9 +92,14 @@ export function ImportPanel({ client, onImported, onCancel }: ImportPanelProps) 
           </label>
           <textarea id={`${id}-text`} className="rg-editor__import-text" rows={12} spellCheck={false} value={text} onChange={(e) => setText(e.target.value)} />
         </div>
-        <Input id={`${id}-name`} label="Pipeline name" mono value={name} onChange={(e) => setName(e.target.value)} help="Written as pipelines/<name>.yaml." />
+        <Input id={`${id}-name`} label="Pipeline name" mono value={name} onChange={(e) => {
+            setName(e.target.value);
+            setNamed(true);
+          }}
+          help="Written as pipelines/<name>.yaml."
+        />
         {refused === null ? null : (
-          <InlineMessage tone="critical" title={refused.title}>
+          <InlineMessage tone="critical" title={<Words text={refused.title} />}>
             <Words text={refused.detail} />
           </InlineMessage>
         )}
@@ -94,6 +110,12 @@ export function ImportPanel({ client, onImported, onCancel }: ImportPanelProps) 
           <Button kind="quiet" onClick={onCancel}>
             Cancel
           </Button>
+          {/* Seen beside the button; the button itself says it to assistive technology. */}
+          {why === null ? null : (
+            <span className="rg-editor__import-why" aria-hidden="true">
+              {why}
+            </span>
+          )}
         </div>
       </form>
     </Section>

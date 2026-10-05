@@ -45,6 +45,8 @@ export type SaveState = {
   saved: string;
   /** "Keep this pipeline": write an unnamed document though it is unedited. */
   keep: boolean;
+  /** Whether this editor has written the file yet: until it has, nothing it shows was saved by it. */
+  wrote: boolean;
   phase: Phase;
 };
 
@@ -70,6 +72,7 @@ export function initialSave(doc: WireDocument, file: FileInit, rewrite: boolean)
     file: { name: file.name, etag: file.etag, handwritten: file.name !== null && !file.canonical && !rewrite, proposed: file.proposed },
     saved: json(doc),
     keep: false,
+    wrote: false,
     phase: { kind: 'idle' },
   };
 }
@@ -91,7 +94,7 @@ export function saveReducer(state: SaveState, event: SaveEvent): SaveState {
     }
     case 'written':
       if (phase.kind !== 'saving') return state;
-      return { file: { ...file, name: event.name, etag: event.etag, handwritten: false }, saved: json(event.doc), keep: false, phase: { kind: 'idle' } };
+      return { file: { ...file, name: event.name, etag: event.etag, handwritten: false }, saved: json(event.doc), keep: false, wrote: true, phase: { kind: 'idle' } };
     case 'refused': {
       if (phase.kind !== 'saving') return state;
       const precondition = event.problem.code === 'precondition_failed';

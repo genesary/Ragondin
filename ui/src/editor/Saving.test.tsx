@@ -98,7 +98,8 @@ describe('continuous saving', () => {
     await waitFor(() => expect(validations(api)).toHaveLength(1));
     await settle();
     expect(writes(api)).toEqual([]);
-    expect(saveLine().textContent).toBe('Saved');
+    // Nothing was saved: the file is as it was opened.
+    expect(saveLine().textContent).toBe('No changes since it was opened');
   });
 
   it('writes a valid change after the debounce, validated first, over the etag it read, as the typed document', async () => {
@@ -153,6 +154,12 @@ describe('continuous saving', () => {
     const exported = screen.getByRole('textbox', { name: 'The document as the server renders it' }) as HTMLTextAreaElement;
     expect(exported.value).toBe(RENDERING);
     expect(screen.getByRole('button', { name: 'Download hybrid.yaml' })).toBeTruthy();
+    // Read-only, said so, and selected whole when focused, ready to copy.
+    expect(exported.readOnly).toBe(true);
+    expect(exported.getAttribute('aria-readonly')).toBe('true');
+    const select = vi.spyOn(exported, 'select');
+    fireEvent.focus(exported);
+    expect(select).toHaveBeenCalled();
   });
 });
 
@@ -393,6 +400,27 @@ describe('a file written by hand', () => {
     place(/^concat/);
     await waitFor(() => expect(writes(api)).toHaveLength(2));
     expect(screen.queryByRole('region', { name: 'This file was written by hand' })).toBeNull();
+  });
+
+  it('says no change before any, never “Saved” for a file it has not written', async () => {
+    const { api } = setup({}, { file: HAND });
+    await waitFor(() => expect(validations(api)).toHaveLength(1));
+    await settle();
+    expect(saveLine().textContent).toBe('No changes since it was opened');
+  });
+
+  it('asks in a short message, its two choices side by side, what the rewrite drops one click away', async () => {
+    const { api } = setup({}, { file: HAND });
+    await waitFor(() => expect(validations(api)).toHaveLength(1));
+    place(/^rrf/);
+    const message = await screen.findByRole('region', { name: 'This file was written by hand' });
+    const rewrite = within(message).getByRole('button', { name: 'Rewrite this file' });
+    const saveAs = within(message).getByRole('button', { name: 'Save as a new file' });
+    expect(rewrite.closest('.rg-editor__choices')).not.toBeNull();
+    expect(rewrite.closest('.rg-editor__choices')).toBe(saveAs.closest('.rg-editor__choices'));
+    const details = message.querySelector('details');
+    expect(details?.querySelector('summary')?.textContent).toBe('What a rewrite drops');
+    expect(message.querySelector('.rg-inline p')?.textContent).not.toContain('key order');
   });
 
   it('“Save as a new file” leaves the original untouched', async () => {

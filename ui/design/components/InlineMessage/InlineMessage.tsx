@@ -8,8 +8,8 @@ const SPOKEN: Record<InlineMessageTone, string> = { critical: 'Error', warning: 
 
 export type InlineMessageProps = {
   tone: InlineMessageTone;
-  /** What is wrong, in one bold line, with the names and the numbers. */
-  title: string;
+  /** What is wrong, in one bold line, with the names and the numbers — words, or words with code spans. */
+  title: ReactNode;
   /** Why, or how to fix it. */
   children?: ReactNode;
   /** The fixing action. */

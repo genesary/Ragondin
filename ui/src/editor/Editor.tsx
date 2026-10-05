@@ -73,7 +73,9 @@ function saveWords(save: SaveState, dirty: boolean, verdict: Verdict, errors: nu
       if (verdict.status === 'invalid') return `Unsaved — ${errors} ${errors === 1 ? 'error' : 'errors'}`;
       if (verdict.status === 'failed') return 'Unsaved: the server could not be asked';
       if (dirty || (save.keep && save.file.name === null)) return 'Unsaved changes';
-      return save.file.name === null ? 'Not written yet: the first change, or Keep this pipeline, writes it' : 'Saved';
+      if (save.file.name === null) return 'Not written yet: the first change, or Keep this pipeline, writes it';
+      // "Saved" only once this editor has written: a file just opened was saved by nobody here.
+      return save.wrote ? 'Saved' : 'No changes since it was opened';
   }
 }
 

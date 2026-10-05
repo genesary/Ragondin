@@ -41,6 +41,9 @@
 .rg-editor__prompt, .rg-editor__export { display: grid; gap: var(--space-3); padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--line); }
 .rg-editor__new-name { display: flex; flex-wrap: wrap; align-items: end; gap: var(--space-2); }
 .rg-editor__new-name .rg-field { min-width: 16rem; }
+.rg-editor__dropped { font: var(--type-caption); color: var(--ink-2); }
+.rg-editor__dropped summary { cursor: pointer; }
+.rg-editor__dropped p { margin: var(--space-1) 0 0; }
 .rg-editor__export-text, .rg-editor__import-text {
   box-sizing: border-box;
   width: 100%;
@@ -52,8 +55,15 @@
   font: 400 13px/20px var(--font-mono);
   resize: vertical;
 }
+/* The export is read, not edited: drawn as a read-only surface. */
+.rg-editor__export-text { background: var(--surface-2); color: var(--ink-2); }
 .rg-editor__export-actions, .rg-editor__import-actions { display: flex; align-items: center; gap: var(--space-2); }
 .rg-editor__import { display: grid; gap: var(--space-3); max-width: 48rem; }
+.rg-editor__import-file { display: flex; align-items: center; gap: var(--space-3); }
+.rg-editor__import-file input:focus-visible + label { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.rg-editor__import-file label { cursor: pointer; }
+.rg-editor__import-chosen { font: 400 13px/20px var(--font-mono); color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rg-editor__import-why { font: var(--type-caption); color: var(--ink-3); }
 .rg-editor__stage { position: relative; min-width: 0; min-height: 0; display: flex; }
 
 /* The palette: one section per family, each entry a full-width button. */
