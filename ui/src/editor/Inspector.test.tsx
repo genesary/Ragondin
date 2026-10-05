@@ -9,7 +9,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createApiClient } from '../api/client.ts';
 import { mockApi, type MockRoutes } from '../api/testing.ts';
 import type { Problem } from '../api/types.ts';
-import { int, str } from '../parameters.ts';
+import { float, int, list, str } from '../parameters.ts';
 import type { WireDocument } from './document.ts';
 import { Editor } from './Editor.tsx';
 import { GRAMMAR, HYBRID, SERVICES, WORKSPACE } from './fixtures.ts';
@@ -151,6 +151,63 @@ describe('a value typed is committed after a short rest', () => {
     await new Promise((r) => setTimeout(r, PARAM_DEBOUNCE_MS + 400));
     expect(validations(api)).toHaveLength(1);
     expect(field.getAttribute('aria-invalid')).toBeNull();
+  });
+});
+
+describe('a value committed after a rest is left as typed until the field is left', () => {
+  // A float and a list on the first node: the two kinds whose field shows a value otherwise than it may be typed.
+  const TYPED: WireDocument = {
+    pipeline: { inputs: DRAFT.pipeline.inputs, nodes: DRAFT.pipeline.nodes.map((n, i) => (i === 0 ? { ...n, params: { ...n.params, weight: float(2.5), names: list(str('a')) } } : n)) },
+  };
+  const rest = () => new Promise((r) => setTimeout(r, PARAM_DEBOUNCE_MS + 300));
+  const lastParams = (api: ReturnType<typeof mockApi>) => validations(api).at(-1)?.typed.pipeline.nodes[0]?.params;
+
+  it('keeps "1." as typed once 1.0 is committed, so the next digit makes 1.5, and shows 1.5 when left', async () => {
+    const { api } = setup(undefined, { initial: TYPED, start: 'lexical' });
+    await waitFor(() => expect(validations(api)).toHaveLength(1));
+    const field = within(inspector('lexical')).getByLabelText('weight') as HTMLInputElement;
+    fireEvent.change(field, { target: { value: '1.' } });
+    await waitFor(() => expect(lastParams(api)?.weight).toEqual(float(1)), { timeout: PARAM_DEBOUNCE_MS + 1500 });
+    await rest();
+    expect(field.value).toBe('1.');
+    fireEvent.change(field, { target: { value: '1.5' } });
+    await waitFor(() => expect(lastParams(api)?.weight).toEqual(float(1.5)), { timeout: PARAM_DEBOUNCE_MS + 1500 });
+    expect(field.value).toBe('1.5');
+  });
+
+  it('shows a committed float in its own form once the field is left', async () => {
+    const { api } = setup(undefined, { initial: TYPED, start: 'lexical' });
+    await waitFor(() => expect(validations(api)).toHaveLength(1));
+    const field = within(inspector('lexical')).getByLabelText('weight') as HTMLInputElement;
+    fireEvent.change(field, { target: { value: '3.' } });
+    await waitFor(() => expect(lastParams(api)?.weight).toEqual(float(3)), { timeout: PARAM_DEBOUNCE_MS + 1500 });
+    expect(field.value).toBe('3.');
+    fireEvent.blur(field);
+    await waitFor(() => expect(field.value).toBe('3.0'));
+  });
+
+  it('keeps a list ending in ", " as typed once it is committed, so the next item follows the comma', async () => {
+    const { api } = setup(undefined, { initial: TYPED, start: 'lexical' });
+    await waitFor(() => expect(validations(api)).toHaveLength(1));
+    const field = within(inspector('lexical')).getByLabelText('names') as HTMLInputElement;
+    fireEvent.change(field, { target: { value: 'a, b, ' } });
+    await waitFor(() => expect(lastParams(api)?.names).toEqual(list(str('a'), str('b'))), { timeout: PARAM_DEBOUNCE_MS + 1500 });
+    await rest();
+    expect(field.value).toBe('a, b, ');
+    fireEvent.change(field, { target: { value: 'a, b, c' } });
+    await waitFor(() => expect(lastParams(api)?.names).toEqual(list(str('a'), str('b'), str('c'))), { timeout: PARAM_DEBOUNCE_MS + 1500 });
+    fireEvent.blur(field);
+    expect(field.value).toBe('a, b, c');
+  });
+
+  it('shows a value changed from outside, an undo, in place of what was typed', async () => {
+    const { api } = setup(undefined, { initial: TYPED, start: 'lexical' });
+    await waitFor(() => expect(validations(api)).toHaveLength(1));
+    const field = within(inspector('lexical')).getByLabelText('weight') as HTMLInputElement;
+    fireEvent.change(field, { target: { value: '1.' } });
+    await waitFor(() => expect(lastParams(api)?.weight).toEqual(float(1)), { timeout: PARAM_DEBOUNCE_MS + 1500 });
+    fireEvent.keyDown(inspector('lexical'), { key: 'z', ctrlKey: true });
+    await waitFor(() => expect(field.value).toBe('2.5'));
   });
 });
 

@@ -264,28 +264,45 @@ function Parameter({ prefix, name, value, served, onSet, onRemove }: { prefix: s
   const [text, setText] = useState(textOf(value));
   const [error, setError] = useState<string | undefined>(undefined);
   const [kindError, setKindError] = useState<string | undefined>(undefined);
-  useEffect(() => setText(textOf(value)), [value]);
+  const shown = textOf(value);
+  // The text of the value this field itself last committed. Its coming back is not a change from outside, so the
+  // field keeps what is typed — "1." stays "1.", never "1.0" under the next digit — and only another value, an undo
+  // for one, replaces it.
+  const mine = useRef<string | null>(null);
+  useEffect(() => {
+    const own = mine.current === shown;
+    mine.current = null;
+    if (!own) setText(shown);
+  }, [shown]);
   const row = useErrorInView(error ?? kindError);
   const readOnly = readOnlyReason(value);
-  const commit = () => {
+  // Leaving the field shows the value in its own form; a commit while it is typed leaves the text as typed.
+  const commit = (leaving: boolean) => {
     // Tabbing through a field, or Enter on it, changes nothing it was not asked to.
-    if (readOnly !== null || text === textOf(value)) return setError(undefined);
+    if (readOnly !== null || text === shown) return setError(undefined);
     const read = readAs(value.kind, text, value.kind === 'list' ? value.value : []);
     if ('error' in read) return setError(read.error);
     setError(undefined);
     setKindError(undefined);
-    onSet(read.value);
+    const next = textOf(read.value);
+    if (next !== shown) {
+      mine.current = next;
+      onSet(read.value);
+    }
+    if (leaving) setText(next);
   };
   // While it is typed, a value its kind carries is committed once the typing rests; one it cannot carry waits for the
-  // field to be left, so a value half typed ("1e" on the way to "1e3") is never called wrong.
+  // field to be left, so a value half typed ("1e" on the way to "1e3") is never called wrong. Text that reads as the
+  // value already held — "1." once 1.0 is committed — has nothing to commit.
   const latest = useRef(commit);
   latest.current = commit;
   useEffect(() => {
-    if (readOnly !== null || text === textOf(value)) return;
-    if ('error' in readAs(value.kind, text, value.kind === 'list' ? value.value : [])) return;
-    const timer = setTimeout(() => latest.current(), PARAM_DEBOUNCE_MS);
+    if (readOnly !== null || text === shown) return;
+    const read = readAs(value.kind, text, value.kind === 'list' ? value.value : []);
+    if ('error' in read || textOf(read.value) === shown) return;
+    const timer = setTimeout(() => latest.current(false), PARAM_DEBOUNCE_MS);
     return () => clearTimeout(timer);
-  }, [text, value, readOnly]);
+  }, [text, value, shown, readOnly]);
   // The value as it reads in the kind picked; refused in words when it cannot, and the kind kept.
   const rekind = (kind: Kind) => {
     const read = readAs(kind, textOf(value));
@@ -344,9 +361,9 @@ function Parameter({ prefix, name, value, served, onSet, onRemove }: { prefix: s
         onChange={(e) => {
           if (readOnly === null) setText(e.target.value);
         }}
-        onBlur={commit}
+        onBlur={() => commit(true)}
         onKeyDown={(e) => {
-          if (e.key === 'Enter') commit();
+          if (e.key === 'Enter') commit(false);
         }}
       />
       {kind}
