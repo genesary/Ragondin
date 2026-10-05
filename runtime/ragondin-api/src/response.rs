@@ -997,6 +997,29 @@ pub struct PipelineSummary {
     pub ends_in_answer: Option<bool>,
 }
 
+/// `POST /pipelines/{name}/rename`: the pipeline as the listing describes it
+/// under its new name, and what did not follow it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+#[schemars(transform = every_property_required)]
+pub struct PipelineRenamed {
+    /// Its new name.
+    pub name: String,
+    /// The digest of its bytes, unchanged by the rename.
+    pub etag: String,
+    /// When its file was last modified, in milliseconds since the Unix
+    /// epoch; `null` for a time before the epoch, which is unknown, never
+    /// `0`.
+    pub modified_ms: Option<u64>,
+    /// The content hash of its canonical logical form, when it validates.
+    pub hash: Option<String>,
+    /// Why it does not validate, when it does not.
+    pub error: Option<PipelineError>,
+    /// What could not follow the document once it had moved — its layout
+    /// left under the old name, a pairing not removed — in words; `null` when
+    /// the pipeline moved whole. The rename is done either way.
+    pub fault: Option<String>,
+}
+
 /// `GET /pipelines/{name}`: one pipeline document, verbatim, and as the
 /// editor holds it when it can.
 #[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]

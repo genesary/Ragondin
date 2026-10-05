@@ -22,9 +22,9 @@ use axum::http::{Request, Response};
 use ragondin_api::{
     content_type_for, router, ApiError, Asset, Assets, Backends, BenchmarkEntry, Cancellation,
     Capabilities, FamilyCapabilities, Launcher, LauncherError, Layout, LoadedDataset, Pairing,
-    PinnedBenchmark, PipelineFile, PipelineSource, Precondition, ProgressSink, Registry, Revision,
-    RunDataset, RunObserver, Server, ServerConfig, ServiceBinding, ServiceIdentity, Settings,
-    Submission, WorkspaceSettings,
+    PinnedBenchmark, PipelineFile, PipelineSource, Precondition, ProgressSink, Registry, Renamed,
+    Revision, RunDataset, RunObserver, Server, ServerConfig, ServiceBinding, ServiceIdentity,
+    Settings, Submission, WorkspaceSettings,
 };
 use ragondin_benchmarks::identity::dataset_version;
 use ragondin_benchmarks::Benchmark;
@@ -339,7 +339,7 @@ impl PipelineSource for FakePipelines {
         from: &str,
         to: &str,
         precondition: &Precondition,
-    ) -> Result<PipelineFile, ApiError> {
+    ) -> Result<Renamed, ApiError> {
         let _ = (to, precondition);
         Err(ApiError::PipelineNotFound {
             name: from.to_owned(),
@@ -480,7 +480,7 @@ impl PipelineSource for HeldPipelines {
         from: &str,
         to: &str,
         precondition: &Precondition,
-    ) -> Result<PipelineFile, ApiError> {
+    ) -> Result<Renamed, ApiError> {
         FakePipelines.rename(from, to, precondition).await
     }
 
@@ -552,7 +552,7 @@ impl PipelineSource for UnlistablePipelines {
         from: &str,
         to: &str,
         precondition: &Precondition,
-    ) -> Result<PipelineFile, ApiError> {
+    ) -> Result<Renamed, ApiError> {
         FakePipelines.rename(from, to, precondition).await
     }
 
@@ -639,7 +639,7 @@ impl<P: PipelineSource> PipelineSource for ListCounted<P> {
         from: &str,
         to: &str,
         precondition: &Precondition,
-    ) -> Result<PipelineFile, ApiError> {
+    ) -> Result<Renamed, ApiError> {
         self.inner.rename(from, to, precondition).await
     }
 

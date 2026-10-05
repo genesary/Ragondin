@@ -588,16 +588,25 @@ a prefix of it, can be scored on.
   rename of a document changed since it was read would move a version nobody
   looked at. `to` follows the name rule above and is `request_invalid` when it
   does not, or when it differs from a stored name only in case; a `to` a
-  stored pipeline has is `pipeline_exists` (409), never replaced. The
+  stored pipeline has is `pipeline_exists` (409), never replaced. A `to`
+  with files a pipeline `to` would own and no pipeline — `<to>.layout.json`,
+  `<to>.pairing/`, or a `<other>.pairing/<to>.json` — left by a pipeline
+  removed by hand, is `request_invalid`, the files named: the rename would
+  adopt another graph's positions and pairs, and the server deletes no file
+  it did not write. The
   document moves byte for byte with `fs::rename`, so its etag and its hash
   are unchanged; its layout follows; its pairings move to `<to>.pairing/`,
   and every pairing another pipeline keeps towards it is renamed, each file's
   own names rewritten, since a pairing names both its pipelines inside (§
   Compare). Every pairing is read before anything moves, so one this build
   cannot read refuses the rename whole (`backend_failed`); the new pairings
-  are written before the document moves and the old ones removed after. The
-  answer is the document as the listing describes it, `PipelineSummary`,
-  with its etag in `ETag`. **What is not rewritten**: a run's launch record
+  are written before the document moves and the old ones removed after.
+  **Once the document has moved the rename is done**: the layout's move and
+  each old pairing's removal are tried whatever became of the one before,
+  and what failed is answered as `fault`, in words, never as a 5xx that would
+  tell the editor the file is still under its old name. The answer is the
+  document as the listing describes it, with that `fault` (`PipelineRenamed`),
+  and its etag in `ETag`. **What is not rewritten**: a run's launch record
   is write-once (ADR-C39), so a run launched under the old name keeps it, and
   the Runs table groups it under that name, unlinked, as a name no longer in
   the workspace — and under the new name too while the document's hash is

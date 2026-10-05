@@ -21,7 +21,7 @@ use ragondin_config::read_document;
 use ragondin_experiments::UnixMillis;
 use ragondin_pipeline::LogicalPipeline;
 
-use crate::backends::{PipelineFile, Precondition, Revision};
+use crate::backends::{PipelineFile, Precondition, Renamed, Revision};
 use crate::convert;
 use crate::derived;
 use crate::error::ApiError;
@@ -31,8 +31,8 @@ use crate::request::{
     PipelineDocument, PreconditionHeaders, RenameHeaders, RenameRequest, ValidationRequest,
 };
 use crate::response::{
-    Layout, PipelineDetail, PipelineError, PipelineLayout, PipelineListing, PipelineSummary,
-    PipelineValidated, PipelineWritten,
+    Layout, PipelineDetail, PipelineError, PipelineLayout, PipelineListing, PipelineRenamed,
+    PipelineSummary, PipelineValidated, PipelineWritten,
 };
 use crate::validation;
 
@@ -159,7 +159,8 @@ pub(crate) async fn write(
 
 /// `POST /pipelines/{name}/rename`: `If-Match`, and the name to move to.
 /// The document moves byte for byte — its etag with it — and its layout and
-/// pairings follow; it is answered as the listing describes a pipeline.
+/// pairings follow; it is answered as the listing describes a pipeline,
+/// with what did not follow it.
 pub(crate) async fn rename(
     State(state): State<AppState>,
     ApiPath(name): ApiPath<String>,
@@ -172,7 +173,7 @@ pub(crate) async fn rename(
         Some(etag) => Precondition::Matches(revision_of_header(&etag)),
         None => Precondition::Unstated,
     };
-    let file = state
+    let Renamed { file, fault } = state
         .backends
         .pipelines
         .rename(&name, &to, &precondition)
@@ -180,12 +181,13 @@ pub(crate) async fn rename(
     let (hash, error) = verdict(&file.document);
     let revision = file.revision.clone();
     Ok(with_etag(
-        Json(PipelineSummary {
+        Json(PipelineRenamed {
             modified_ms: modified_ms(file.modified),
             name: file.name,
             etag: revision.as_str().to_owned(),
             hash,
             error,
+            fault,
         }),
         &revision,
     ))

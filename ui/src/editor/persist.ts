@@ -27,6 +27,9 @@ type Disk = { name: string | null; etag: string | null; saved: string; blocked: 
 /** The phases that wait on the person: nothing is written while one is up. */
 export const asking = (state: SaveState) => state.phase.kind === 'conflict' || state.phase.kind === 'handwritten' || state.phase.kind === 'naming';
 
+/** A rename out, and what the last one done did not take with it. */
+export type RenameState = { renaming: boolean; fault: string | null };
+
 /**
  * Writes what the editor held when it closed: `doc`, validated first unless
  * `verdict` already called it valid, over the etag of the last write — once
@@ -58,6 +61,9 @@ async function flush(client: ApiClient, doc: WireDocument, verdict: Verdict, sta
  * The saving state of `doc`, given the server's verdict on it. With no
  * `file`, nothing is ever written. `onNamed` hears the name the editor now
  * writes under, whenever it changes: a first creation, or a save as a new file.
+ * The fourth value says whether a rename is out — nothing is written until
+ * it answers, so no write lands under the name it moves away from — and what
+ * the last rename, done, could not take with it (`fault`), in the server's words.
  */
 export function useSaving(
   client: ApiClient,
@@ -65,19 +71,21 @@ export function useSaving(
   verdict: Verdict,
   file: FileInit | undefined,
   onNamed: (name: string) => void,
-): [SaveState, (event: SaveEvent) => void, (to: string) => Promise<string | null>] {
+): [SaveState, (event: SaveEvent) => void, (to: string) => Promise<string | null>, RenameState] {
   const enabled = file !== undefined;
   const [state, dispatch] = useReducer(saveReducer, undefined, () => initialSave(doc, file ?? NOTHING, file?.name != null && rewriteChosen(file.name)));
   const { phase } = state;
   const disk = useRef<Disk>({ name: state.file.name, etag: state.file.etag, saved: state.saved, blocked: false });
   const inflight = useRef<Promise<void> | null>(null);
+  const [renaming, setRenaming] = useState(false);
+  const [fault, setFault] = useState<string | null>(null);
   const latest = useRef({ client, doc, verdict, state });
   latest.current = { client, doc, verdict, state };
 
-  // Every valid document is offered; the state machine decides whether it is written.
+  // Every valid document is offered, once no rename is out; the state machine decides whether it is written.
   useEffect(() => {
-    if (enabled && verdict.status === 'valid') dispatch({ type: 'valid', doc });
-  }, [enabled, verdict, doc, phase, state.file.handwritten, state.keep]);
+    if (enabled && !renaming && verdict.status === 'valid') dispatch({ type: 'valid', doc });
+  }, [enabled, renaming, verdict, doc, phase, state.file.handwritten, state.keep]);
 
   // A write, once sent, is never cancelled: its answer is what says what is on disk.
   useEffect(() => {
@@ -126,18 +134,22 @@ export function useSaving(
     if (to === from) return null;
     if (latest.current.state.phase.kind === 'saving') return 'A save is under way: rename once it has answered.';
     if (asking(latest.current.state)) return 'Answer the question above first.';
+    setRenaming(true);
     const result = await client.post('/pipelines/{name}/rename', { to }, { name: from }, { headers: { 'If-Match': `"${disk.current.etag ?? ''}"` } });
+    // Lifted in the same update as the new name lands, so nothing held is written under the old one.
+    setRenaming(false);
     if (!result.ok) {
       if (result.problem.code === 'precondition_failed') return `${from}.yaml changed on disk since the editor read it: reload it, then rename it.`;
       return result.problem.code === 'pipeline_exists' ? `A pipeline named \`${to}\` already exists: choose another name.` : result.problem.message;
     }
     disk.current = { ...disk.current, name: result.value.name };
+    setFault(result.value.fault);
     renameSession(from, result.value.name);
     renameRecent(from, result.value.name);
     dispatch({ type: 'renamed', name: result.value.name });
     return null;
   };
-  return [state, act, rename];
+  return [state, act, rename, { renaming, fault }];
 }
 
 /**

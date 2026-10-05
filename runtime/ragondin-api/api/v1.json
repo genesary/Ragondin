@@ -3290,6 +3290,59 @@
         ],
         "type": "object"
       },
+      "PipelineRenamed": {
+        "description": "`POST /pipelines/{name}/rename`: the pipeline as the listing describes it\nunder its new name, and what did not follow it.",
+        "properties": {
+          "error": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PipelineError"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "Why it does not validate, when it does not."
+          },
+          "etag": {
+            "description": "The digest of its bytes, unchanged by the rename.",
+            "type": "string"
+          },
+          "fault": {
+            "description": "What could not follow the document once it had moved — its layout\nleft under the old name, a pairing not removed — in words; `null` when\nthe pipeline moved whole. The rename is done either way.",
+            "nullable": true,
+            "type": "string"
+          },
+          "hash": {
+            "description": "The content hash of its canonical logical form, when it validates.",
+            "nullable": true,
+            "type": "string"
+          },
+          "modified_ms": {
+            "description": "When its file was last modified, in milliseconds since the Unix\nepoch; `null` for a time before the epoch, which is unknown, never\n`0`.",
+            "format": "uint64",
+            "minimum": 0,
+            "nullable": true,
+            "type": "integer"
+          },
+          "name": {
+            "description": "Its new name.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "error",
+          "etag",
+          "fault",
+          "hash",
+          "modified_ms",
+          "name"
+        ],
+        "type": "object"
+      },
       "PipelineSummary": {
         "description": "A pipeline, as the listing shows it.",
         "properties": {
@@ -5784,7 +5837,7 @@
     },
     "/pipelines/{name}/rename": {
       "post": {
-        "description": "A rename states `If-Match`: the etag it read, or `*`. A stale etag, or none, is precondition_failed (412), with the current etag, and nothing moved. A `to` that is not a pipeline name, or that differs from a stored name only in case, is request_invalid; a `to` a stored pipeline has is pipeline_exists (409). The etag is unchanged, since the bytes are, and is also the response's `ETag` header. A run keeps the name it was launched as: its launch record is never rewritten.",
+        "description": "A rename states `If-Match`: the etag it read, or `*`. A stale etag, or none, is precondition_failed (412), with the current etag, and nothing moved. A `to` that is not a pipeline name, or that differs from a stored name only in case, is request_invalid; so is a `to` with a layout or a pairing kept under it and no pipeline, which the rename would otherwise adopt; a `to` a stored pipeline has is pipeline_exists (409). Once the document has moved the rename is done: what could not follow it — the layout, an old pairing not removed — is said in `fault`, never answered as a failure. The etag is unchanged, since the bytes are, and is also the response's `ETag` header. A run keeps the name it was launched as: its launch record is never rewritten.",
         "parameters": [
           {
             "in": "path",
@@ -5819,7 +5872,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PipelineSummary"
+                  "$ref": "#/components/schemas/PipelineRenamed"
                 }
               }
             },

@@ -481,6 +481,16 @@ describe('a document never written', () => {
     await waitFor(() => expect(onNamed).toHaveBeenCalledWith('example'));
   });
 
+  it('creates itself under the name offered when the editor closes while its name is asked, never over another file', async () => {
+    const { api, unmount } = setup({ 'PUT /pipelines/{name}': { body: { name: 'example', etag: NEW_ETAG, hash: HASH } } }, { file: UNNAMED });
+    await waitFor(() => expect(validations(api)).toHaveLength(1));
+    fireEvent.click(screen.getByRole('button', { name: 'Keep this pipeline' }));
+    await screen.findByRole('region', { name: 'Name this pipeline' });
+    unmount();
+    await waitFor(() => expect(writes(api, 'example')).toHaveLength(1));
+    expect(writes(api, 'example')[0]!.headers['If-None-Match']).toBe('*');
+  });
+
   it('offers “Run up to this node” once it is on disk, launching the file it wrote', async () => {
     const { api, container } = setup({ 'PUT /pipelines/{name}': { body: { name: 'example', etag: NEW_ETAG, hash: HASH } } }, { file: UNNAMED });
     await waitFor(() => expect(validations(api)).toHaveLength(1));
@@ -537,7 +547,7 @@ describe('a fork', () => {
 });
 
 describe('renaming a file from its title', () => {
-  const RENAMED = { body: { name: 'lexical-only', etag: ETAG, modified_ms: null, hash: HASH, error: null } };
+  const RENAMED = { body: { name: 'lexical-only', etag: ETAG, modified_ms: null, hash: HASH, error: null, fault: null as string | null } };
   const rename = (to: string) => {
     fireEvent.click(screen.getByRole('button', { name: 'Rename' }));
     const field = screen.getByRole('textbox', { name: 'Pipeline name' });
@@ -559,6 +569,31 @@ describe('renaming a file from its title', () => {
     await waitFor(() => expect(writes(api, 'lexical-only')).toHaveLength(1));
     expect(writes(api, 'lexical-only')[0]!.headers['If-Match']).toBe(`"${ETAG}"`);
     expect(writes(api)).toEqual([]);
+  });
+
+  it('holds the document and its positions while the rename is out, then writes them under the new name', async () => {
+    let answer: (reply: typeof RENAMED) => void = () => {};
+    const out = new Promise<typeof RENAMED>((resolve) => (answer = resolve));
+    const { api } = setup({ 'POST /pipelines/{name}/rename': () => out, 'PUT /pipelines/{name}': { body: { name: 'lexical-only', etag: NEW_ETAG, hash: HASH } } });
+    await waitFor(() => expect(validations(api)).toHaveLength(1));
+    rename('lexical-only');
+    await waitFor(() => expect(api.requests).toContain('POST /api/v1/pipelines/hybrid/rename'));
+    place(/^rrf/);
+    await settle();
+    expect(api.requests.filter((r) => r.startsWith('PUT'))).toEqual([]);
+    answer(RENAMED);
+    await waitFor(() => expect(writes(api, 'lexical-only')).toHaveLength(1));
+    await waitFor(() => expect(api.requests).toContain('PUT /api/v1/pipelines/lexical-only/layout'));
+    expect(api.requests.filter((r) => r.startsWith('PUT /api/v1/pipelines/hybrid'))).toEqual([]);
+  });
+
+  it('takes a rename the server did but could not finish as done, and says what did not follow', async () => {
+    const fault = 'pipeline hybrid is renamed lexical-only, but not all of it followed: its layout hybrid.layout.json stays where it was';
+    const { api } = setup({ 'POST /pipelines/{name}/rename': { body: { ...RENAMED.body, fault } }, 'PUT /pipelines/{name}': { body: { name: 'lexical-only', etag: NEW_ETAG, hash: HASH } } });
+    await waitFor(() => expect(validations(api)).toHaveLength(1));
+    rename('lexical-only');
+    expect(await screen.findByRole('heading', { name: 'lexical-only' })).toBeTruthy();
+    expect(screen.getByText(fault, { exact: false })).toBeTruthy();
   });
 
   it('says why a rename was refused, and keeps the name', async () => {

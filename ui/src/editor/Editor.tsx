@@ -200,12 +200,12 @@ export function Editor({ client, title, stored = null, initial, layout, capabili
   }, []);
   const { doc } = state;
   const verdict = useValidation(client, doc);
-  const [save, act, renameFile] = useSaving(client, doc, verdict, file, onNamed);
+  const [save, act, renameFile, { renaming, fault: renameFault }] = useSaving(client, doc, verdict, file, onNamed);
   // A name typed in the title of a document never written: shown as its name, and offered at its first write.
   const [proposedByPerson, setProposedByPerson] = useState(false);
   const written = save.file.etag === null ? null : save.file.name;
-  // While a prompt is up, or a save as a new file is out, the positions wait for the file chosen.
-  const holding = asking(save) || (save.phase.kind === 'saving' && save.phase.back !== null);
+  // While a prompt is up, a save as a new file or a rename is out, the positions wait for the file chosen.
+  const holding = asking(save) || renaming || (save.phase.kind === 'saving' && save.phase.back !== null);
   const layoutFailed = useLayoutSaving(client, written, state.layout, touched, holding);
   const dirty = isDirty(save, doc);
   // Leaving the page while something is not on disk asks the browser to confirm.
@@ -527,6 +527,7 @@ export function Editor({ client, title, stored = null, initial, layout, capabili
               </p>
             )}
             {layoutFailed === null ? null : <p className="rg-editor__layout-failed">The positions could not be saved: {layoutFailed.message}</p>}
+            {renameFault === null ? null : <p className="rg-editor__layout-failed">Renamed, with a fault: {renameFault}.</p>}
           </div>
         )}
       </header>

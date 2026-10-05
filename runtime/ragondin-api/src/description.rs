@@ -24,7 +24,7 @@ use crate::request::{
 };
 use crate::response::{
     BenchmarkListing, Comparison, DownloadAccepted, JobEvent, JobListing, PartialQueries,
-    PartialTrace, PipelineDetail, PipelineLayout, PipelineListing, PipelineMatrix,
+    PartialTrace, PipelineDetail, PipelineLayout, PipelineListing, PipelineMatrix, PipelineRenamed,
     PipelineValidated, PipelineWritten, ProbeResult, Problem, QueryTrace, RunAccepted, RunDetail,
     RunListing, RunQueries, ServiceListing, Workspace,
 };
@@ -368,10 +368,10 @@ pub const OPERATIONS: &[Operation] = &[
         method: "post",
         path: "/pipelines/{name}/rename",
         summary: "Renames a pipeline document: the file moves byte for byte, its layout and its pairings with it, and every pairing another pipeline keeps towards it follows.",
-        response: Response::Json("PipelineSummary"),
+        response: Response::Json("PipelineRenamed"),
         request: Some("RenameRequest"),
         description: Some(
-            "A rename states `If-Match`: the etag it read, or `*`. A stale etag, or none, is precondition_failed (412), with the current etag, and nothing moved. A `to` that is not a pipeline name, or that differs from a stored name only in case, is request_invalid; a `to` a stored pipeline has is pipeline_exists (409). The etag is unchanged, since the bytes are, and is also the response's `ETag` header. A run keeps the name it was launched as: its launch record is never rewritten.",
+            "A rename states `If-Match`: the etag it read, or `*`. A stale etag, or none, is precondition_failed (412), with the current etag, and nothing moved. A `to` that is not a pipeline name, or that differs from a stored name only in case, is request_invalid; so is a `to` with a layout or a pairing kept under it and no pipeline, which the rename would otherwise adopt; a `to` a stored pipeline has is pipeline_exists (409). Once the document has moved the rename is done: what could not follow it — the layout, an old pairing not removed — is said in `fault`, never answered as a failure. The etag is unchanged, since the bytes are, and is also the response's `ETag` header. A run keeps the name it was launched as: its launch record is never rewritten.",
         ),
     },
     Operation {
@@ -481,6 +481,7 @@ fn description() -> Value {
     generator.subschema_for::<PipelineListing>();
     generator.subschema_for::<PipelineDetail>();
     generator.subschema_for::<PipelineWritten>();
+    generator.subschema_for::<PipelineRenamed>();
     generator.subschema_for::<PipelineValidated>();
     generator.subschema_for::<PipelineLayout>();
     generator.subschema_for::<PipelineMatrix>();

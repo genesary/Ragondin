@@ -1297,6 +1297,33 @@ export type PipelineMatrix = {
   unreadable: UnreadableRun[];
 };
 
+/**
+ * `POST /pipelines/{name}/rename`: the pipeline as the listing describes it
+ * under its new name, and what did not follow it.
+ */
+export type PipelineRenamed = {
+  /** Why it does not validate, when it does not. */
+  error: PipelineError | null;
+  /** The digest of its bytes, unchanged by the rename. */
+  etag: string;
+  /**
+   * What could not follow the document once it had moved — its layout
+   * left under the old name, a pairing not removed — in words; `null` when
+   * the pipeline moved whole. The rename is done either way.
+   */
+  fault: string | null;
+  /** The content hash of its canonical logical form, when it validates. */
+  hash: string | null;
+  /**
+   * When its file was last modified, in milliseconds since the Unix
+   * epoch; `null` for a time before the epoch, which is unknown, never
+   * `0`.
+   */
+  modified_ms: number | null;
+  /** Its new name. */
+  name: string;
+};
+
 /** A pipeline, as the listing shows it. */
 export type PipelineSummary = {
   /**
@@ -2357,7 +2384,7 @@ export type Paths = {
         "If-Match"?: string;
       };
       body: RenameRequest;
-      response: PipelineSummary;
+      response: PipelineRenamed;
     };
   };
   "/runs": {

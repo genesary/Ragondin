@@ -1466,6 +1466,90 @@ async fn a_rename_moves_the_document_its_layout_and_its_pairings() {
     );
     let old = send(server(&workspace), get("/api/v1/pipelines/hybrid")).await;
     assert_eq!(old.status(), StatusCode::NOT_FOUND);
+    // Moved whole: nothing left to say.
+    assert!(body.get("fault").is_some_and(Value::is_null), "{body}");
+}
+
+#[tokio::test]
+async fn a_rename_onto_a_name_with_a_stray_layout_or_pairing_is_refused_and_moves_nothing() {
+    let workspace = scratch("rename_stray");
+    let etag = create(&workspace, "hybrid", HYBRID).await;
+    create(&workspace, "third", HYBRID_REFORMATTED).await;
+    let dir = workspace.pipelines();
+    let layout = r#"{"version":1,"nodes":{"lexical":{"x":16.0,"y":32.0}}}"#;
+    // What a pipeline no longer there left behind, each alone, a rename would adopt it; and what the
+    // refusal names: the file, or the directory holding it.
+    let strays = [
+        ("lexical-only.layout.json", "lexical-only.layout.json"),
+        ("lexical-only.pairing/third.json", "lexical-only.pairing"),
+        (
+            "third.pairing/lexical-only.json",
+            "third.pairing/lexical-only.json",
+        ),
+    ];
+
+    for (stray, named) in strays {
+        let path = dir.join(stray);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let text = match stray {
+            "lexical-only.layout.json" => layout.to_owned(),
+            "lexical-only.pairing/third.json" => pairing_file("lexical-only", "third"),
+            _ => pairing_file("third", "lexical-only"),
+        };
+        fs::write(&path, text).unwrap();
+        let response = rename(&workspace, "hybrid", "lexical-only", Some(&etag)).await;
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{stray}");
+        let body = body_json(response).await;
+        assert_eq!(body["code"], "request_invalid", "{stray}");
+        assert!(body["detail"].as_str().unwrap().contains(named), "{body}");
+        assert_eq!(on_disk(&workspace, "hybrid"), HYBRID.as_bytes());
+        assert!(!dir.join("lexical-only.yaml").exists(), "{stray}");
+        let _ = fs::remove_file(dir.join("lexical-only.layout.json"));
+        let _ = fs::remove_dir_all(dir.join("lexical-only.pairing"));
+        let _ = fs::remove_dir_all(dir.join("third.pairing"));
+    }
+}
+
+/// Once the document has moved, the rename is done: what could not follow it
+/// is said beside the answer, never answered as a failure of the whole.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_rename_whose_old_pairing_cannot_be_removed_is_done_and_says_so() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let workspace = scratch("rename_fault");
+    let etag = create(&workspace, "hybrid", HYBRID).await;
+    create(&workspace, "baseline", HYBRID_REFORMATTED).await;
+    let dir = workspace.pipelines();
+    fs::create_dir_all(dir.join("hybrid.pairing")).unwrap();
+    fs::write(
+        dir.join("hybrid.pairing/baseline.json"),
+        pairing_file("hybrid", "baseline"),
+    )
+    .unwrap();
+    // Readable, so the rename reads it; not writable, so its file cannot be removed.
+    fs::set_permissions(
+        dir.join("hybrid.pairing"),
+        fs::Permissions::from_mode(0o555),
+    )
+    .unwrap();
+
+    let response = rename(&workspace, "hybrid", "lexical-only", Some(&etag)).await;
+    let status = response.status();
+    let body = body_json(response).await;
+    fs::set_permissions(
+        dir.join("hybrid.pairing"),
+        fs::Permissions::from_mode(0o755),
+    )
+    .unwrap();
+
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["name"], "lexical-only");
+    let fault = body["fault"].as_str().expect("a fault is said");
+    assert!(fault.contains("hybrid.pairing"), "{fault}");
+    assert_eq!(on_disk(&workspace, "lexical-only"), HYBRID.as_bytes());
+    assert!(dir.join("lexical-only.pairing/baseline.json").exists());
 }
 
 #[tokio::test]
