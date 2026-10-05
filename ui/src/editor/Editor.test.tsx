@@ -340,7 +340,7 @@ describe('a selection undo or redo takes away', () => {
 });
 
 describe('the keyboard', () => {
-  it('opens the insert list on `/` and places the chosen entry, then focuses it', () => {
+  it('opens the insert list on `/` and places the chosen entry, then focuses it', async () => {
     const { container } = setup();
     fireEvent.keyDown(container.querySelector('.react-flow')!, { key: '/' });
     const list = screen.getByRole('menu', { name: 'Insert a node' });
@@ -350,7 +350,8 @@ describe('the keyboard', () => {
     fireEvent.keyDown(document.activeElement!, { key: 'Enter' });
     expect(screen.queryByRole('menu', { name: 'Insert a node' })).toBeNull();
     expect(nodeEl(container, 'dense')).toBeTruthy();
-    expect(document.activeElement).toBe(nodeEl(container, 'dense'));
+    // The library draws a node a frame after the render that adds it, and focus follows it there.
+    await waitFor(() => expect(document.activeElement).toBe(nodeEl(container, 'dense')));
   });
 
   it('places a node with the starting value of each required key, and nothing for an optional one', async () => {

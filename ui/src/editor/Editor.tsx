@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type Key
 import { Button, Inspector } from '../../design/index.ts';
 import type { ApiClient } from '../api/client.ts';
 import type { Capabilities, ParameterValue, ServiceStatus } from '../api/types.ts';
-import { Canvas, edgeId, type CanvasPorts, type Position } from '../canvas/index.ts';
+import { boundsOf, Canvas, clearSpot, edgeId, RANK_GAP, resolveLayout, toModel, type CanvasPorts, type Position } from '../canvas/index.ts';
 import { danglingInputs, freshId, toGraph, type WireDocument } from './document.ts';
 import { EditorInspector, type NodeVerdict } from './EditorInspector.tsx';
 import { missingRequired, parametersOf, startingParams } from './parameters.ts';
@@ -202,9 +202,13 @@ export function Editor({ client, title, stored = null, initial, layout, capabili
     return dangling[id] === undefined ? null : { message: dangling[id], port: port < 0 ? null : port };
   };
 
+  // A node placed lands where it is dropped; otherwise beside the selected node, else right of the graph — and, either
+  // way, moved down the grid clear of every card, so it never lands on one.
   const place = (component: string, impl: string, position?: Position) => {
-    const at = position ?? (selected === null ? undefined : state.layout[selected]);
-    const beside = position === undefined && at !== undefined ? { x: at.x + BESIDE, y: at.y } : at;
+    const anchor = selected === null ? undefined : state.layout[selected];
+    const bounds = boundsOf(state.layout);
+    const wanted = anchor !== undefined ? { x: anchor.x + BESIDE, y: anchor.y } : Object.keys(state.layout).length === 0 ? undefined : { x: bounds.x + bounds.width + RANK_GAP, y: bounds.y };
+    const beside = position ?? (wanted === undefined ? undefined : clearSpot(state.layout, wanted));
     // The id the store gives it, from the same document.
     const id = freshId(doc, impl);
     const params = startingParams(takes(component, impl, {}) ?? []);
@@ -223,27 +227,25 @@ export function Editor({ client, title, stored = null, initial, layout, capabili
   });
 
   // A focus request waits for its target to be drawn, and expires once its
-  // target is gone, so a later redo bringing it back takes no focus.
+  // target is gone, so a later redo bringing it back takes no focus. The
+  // canvas library draws a node a frame after the render that adds it, so
+  // a target not drawn yet is looked for again on the next frame.
+  const [, setLookAgain] = useState(0);
   useEffect(() => {
     if (focus === null) return;
     if (('node' in focus && !exists(focus.node)) || ('inspector' in focus && focus.inspector !== selected)) {
       setFocus(null);
       return;
     }
-    if ('node' in focus) {
-      // The canvas's node element: the one place the editor reaches into the canvas's markup, to give focus to what it just placed.
-      const el = root.current?.querySelector<HTMLElement>(`.react-flow__node[data-id="${CSS.escape(focus.node)}"]`);
-      if (el != null) {
-        el.focus();
-        setFocus(null);
-      }
-    } else {
-      const field = root.current?.querySelector<HTMLElement>(`.rg-canvas__inspector input`);
-      if (field != null) {
-        field.focus();
-        setFocus(null);
-      }
+    // The canvas's node element: the one place the editor reaches into the canvas's markup, to give focus to what it just placed.
+    const target = 'node' in focus ? root.current?.querySelector<HTMLElement>(`.react-flow__node[data-id="${CSS.escape(focus.node)}"]`) : root.current?.querySelector<HTMLElement>(`.rg-canvas__inspector input`);
+    if (target != null) {
+      target.focus();
+      setFocus(null);
+      return;
     }
+    const frame = requestAnimationFrame(() => setLookAgain((n) => n + 1));
+    return () => cancelAnimationFrame(frame);
   });
 
   // Undo and redo from the keyboard: inside the editor, and with focus on
@@ -392,6 +394,9 @@ export function Editor({ client, title, stored = null, initial, layout, capabili
             Redo
           </Button>
         </div>
+        <Button kind="quiet" size="s" icon="fit" onClick={() => dispatch({ type: 'arrange', positions: resolveLayout(toModel(graph)).positions })}>
+          Tidy layout
+        </Button>
         <Button kind="quiet" size="s" aria-expanded={exporting} onClick={() => setExporting(!exporting)} {...(rendering === null ? { disabled: true, disabledReason: 'Only a document the server calls valid is exported.' } : {})}>
           Export
         </Button>

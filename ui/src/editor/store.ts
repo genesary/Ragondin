@@ -24,6 +24,8 @@ export type EditorAction =
   | { type: 'remove'; node: string }
   | { type: 'duplicate'; node: string }
   | { type: 'move'; node: string; position: Position }
+  /** Many nodes moved at once — "Tidy layout" — as one step. */
+  | { type: 'arrange'; positions: Readonly<Record<string, Position>> }
   /** Where the canvas's automatic layout put nodes no position named: kept, never a step. */
   | { type: 'placed'; positions: Readonly<Record<string, Position>> }
   | { type: 'undo' }
@@ -87,6 +89,8 @@ function apply(state: Snapshot, action: Exclude<EditorAction, { type: 'undo' | '
     }
     case 'move':
       return { doc, layout: { ...layout, [action.node]: action.position } };
+    case 'arrange':
+      return { doc, layout: { ...layout, ...action.positions } };
   }
 }
 

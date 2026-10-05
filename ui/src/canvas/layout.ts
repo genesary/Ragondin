@@ -77,17 +77,33 @@ export function resolveLayout(model: CanvasModel, stored?: StoredLayout): Resolv
     positions[node.id] = { x: at.x, y: at.y };
     placed.push({ ...at, ...nodeSize() });
   }
-  const clashes = (box: (typeof placed)[number]) =>
-    placed.some((p) => box.x < p.x + p.width + GRID && p.x < box.x + box.width + GRID && box.y < p.y + p.height + GRID && p.y < box.y + box.height + GRID);
   // dagre runs only when a node needs it.
   const auto = missing.length === 0 ? {} : automatic(model);
   for (const node of missing) {
     const box = { ...auto[node.id]!, ...nodeSize() };
-    if (stored !== undefined) while (clashes(box)) box.y += GRID;
+    if (stored !== undefined) while (clashes(placed, box)) box.y += GRID;
     positions[node.id] = { x: box.x, y: box.y };
     placed.push(box);
   }
   return { positions, autoPlaced: missing.map((n) => n.id) };
+}
+
+type Placed = { x: number; y: number; width: number; height: number };
+
+/** Whether `box` comes within a grid step of a card in `placed`. */
+const clashes = (placed: readonly Placed[], box: Placed) =>
+  placed.some((p) => box.x < p.x + p.width + GRID && p.x < box.x + box.width + GRID && box.y < p.y + p.height + GRID && p.y < box.y + box.height + GRID);
+
+/**
+ * Where a card asked for at `at` goes among the cards at `positions`: `at`,
+ * snapped to the grid, moved down the grid until it is clear of every one —
+ * the rule the stored layout's missing nodes follow, for a node placed.
+ */
+export function clearSpot(positions: Readonly<Record<string, Position>>, at: Position): Position {
+  const placed = Object.values(positions).map((p) => ({ ...p, ...nodeSize() }));
+  const box = { x: snap(at.x), y: snap(at.y), ...nodeSize() };
+  while (clashes(placed, box)) box.y += GRID;
+  return { x: box.x, y: box.y };
 }
 
 /** A box in the graph's coordinates. */
