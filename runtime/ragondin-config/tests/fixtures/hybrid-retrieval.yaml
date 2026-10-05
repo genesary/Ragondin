@@ -6,7 +6,8 @@
 #
 # §8.3: this file *is* the Kubernetes custom resource, modulo the wire format.
 # No `version:` key: an absent version reads as the one this build writes, so a
-# configuration states one only to pin it deliberately.
+# hand-written configuration may leave it out. Its rendering,
+# `hybrid-retrieval.rendered.yaml`, states it, as every rendering does.
 pipeline:
   inputs: [question]              # the graph's signature (ADR-C18)
   nodes:

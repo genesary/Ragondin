@@ -6,7 +6,7 @@
 # It is a *wiring* fixture. Nothing here says anything about retrieval quality.
 #
 # No `version:` key: an absent version reads as the one this build writes, so a
-# configuration states one only to pin it deliberately.
+# hand-written configuration may leave it out; a rendered one always states it.
 pipeline:
   inputs: [question]              # the graph's signature (ADR-C18)
   nodes:

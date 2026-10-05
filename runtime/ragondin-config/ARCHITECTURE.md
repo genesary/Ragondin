@@ -73,34 +73,45 @@ nothing here presupposes an answer to it.
   `parse_document` is `read_document` then `validate`; `ragondin-api` calls
   the first half alone to serve the typed document of a pipeline that does
   not validate (ADR-C40 § 4), since such a document has no lowered form.
-- **The renderer writes JSON, which YAML reads** — a choice made here.
-  ADR-C40 § 5 asks that the rendering read back to the same `RawPipeline`,
-  that rendering it again change nothing, and that a string another reader
-  of the format could take for a boolean or a date be quoted. `serde_yaml`'s
-  writer quotes only what its own reader would retype: it leaves `yes`,
-  `on`, `off` and `2024-01-01` plain, which a YAML 1.1 reader takes for
-  booleans and a date, and it offers no way to ask for quotes. So
-  `render_document` writes `serde_json`'s indented JSON of the wire schema's
-  own `Serialize`: every string double-quoted, a float with its fractional
-  part (`60.0`), an integer without. The characters YAML folds or refuses
-  bare where JSON leaves them bare — U+007F to U+009F, U+2028, U+2029,
-  U+FFFE and U+FFFF — are written as `\uXXXX`, an escape both read as the
-  character, so every character a string may hold reads back; a test walks
-  them all. No YAML writer is written here, and no second YAML library is
-  taken on, which would escalate (`AGENTS.md` § Rules of engagement). **The
-  renderer refuses what would not read back as itself** — a non-finite
-  float, a parameter name too long once rendered for YAML to read it as a
-  key (the limit counts its quotes and escapes: about 1022 plain characters,
-  about 511 `é` or newlines) —
-  by reading its own rendering back through `read_document` and comparing,
-  so the promise holds by construction, not by the cases a test thought of. The cost, for #356,
-  which stores the rendering: a pipeline saved from the canvas is a JSON
-  document in a `.yaml` file. The tests in `tests/document.rs` hold the
-  round trip, the fixed point and the quoting over the ambiguous strings.
+- **The renderer writes block YAML, through a writer of this crate's own**
+  ([ADR-C41](../../docs/adr/ADR-C41-pipeline-document-written-as-block-yaml-by-a-bounded-writer.md),
+  decided in the escalation #462). ADR-C40 § 5 asks that the rendering read
+  back to the same `RawPipeline`, that rendering it again change nothing,
+  and that a string another reader of the format could take for a boolean
+  or a date be quoted. `serde_yaml`'s writer quotes only what its own reader
+  would retype, so `render_document`'s private body writes the text itself,
+  by ADR-C41 § 1's rules: `version: N` first; maps in block style in the
+  wire schema's key order, parameters in their keys' byte order, a blank
+  line between nodes, and no `params` key on a node that has none (an empty
+  map has no block form, and an absent one reads as empty); lists in flow
+  style, an empty one `[]`. A string — a key as much as a value — is plain
+  only when it starts with an ASCII letter or `_`, continues with
+  `[A-Za-z0-9_./-]`, and is not `y`, `n`, `yes`, `no`, `true`, `false`,
+  `on`, `off` or `null` in any case; every other one is double-quoted, with
+  `"`, `\`, the characters YAML does not count as printable, the line
+  breaks it would fold (LF, CR, U+0085, U+2028, U+2029) and U+FEFF escaped,
+  a tab as `\t`, and a character outside the Basic Multilingual Plane
+  written as itself. A float has a fractional part and, when it has an
+  exponent, a signed one (`1.0e+20`), with the shortest digits that read
+  back; an integer is decimal. The writer covers the wire schema and nothing
+  else, reads nothing, and edits no text in place (ADR-C41 § 4): patching
+  stored text is ADR-C40 § 9's own decision. It moves to a library only when
+  the YAML reader is replaced (ADR-C41 § 5). **The renderer refuses what
+  would not read back as itself** — a non-finite float, a parameter name too
+  long once rendered for YAML to read it as a key (the limit counts its
+  quotes and escapes: about 1024 plain characters, about 511 `é` or
+  newlines) — by reading its own rendering back through `read_document` and
+  comparing, so the promise holds by construction, not by the cases a test
+  thought of. The tests in `tests/document.rs` hold ADR-C41 § 3: the guard,
+  the fixed point, every case of every letter-first YAML 1.1 boolean and
+  null as a key and as a value, every Unicode scalar value, a bit-exact
+  float round trip, and the golden file
+  `tests/fixtures/hybrid-retrieval.rendered.yaml`, which renders to itself
+  byte for byte.
 - **The closure stays light, because two planes depend on this crate.**
   `ragondin-api` and `ragondin-experiments` reach `parse_document` through it,
   so its normal dependencies are `ragondin-pipeline`, `serde_yaml`,
-  `serde_json` (the renderer's writer), `thiserror` and `async-trait`. `ragondin-proto`, the edge
+  `thiserror` and `async-trait`. `ragondin-proto`, the edge
   `docs/code-architecture.md` §4.3 draws for the `Stream` source, is not
   declared: it would carry `tonic` and `prost` into both planes for nothing.
   The M7 work adds it with the source that uses it.
