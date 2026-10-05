@@ -81,7 +81,7 @@ describe('Canvas in write mode, drawing', () => {
   it('describes each node by the keys write mode adds', () => {
     const { container } = renderWrite();
     const described = nodeEl(container, 'lexical').getAttribute('aria-describedby')!;
-    expect(document.getElementById(described)?.textContent).toBe('Enter selects, Shift+F10 opens the menu, the arrow keys move it, Escape clears.');
+    expect(document.getElementById(described)?.textContent).toBe('Enter selects, Shift+F10 opens the menu, the arrow keys move it, Delete removes it, Escape clears.');
   });
 });
 
@@ -221,5 +221,62 @@ describe('Canvas in write mode, a node dropped from the palette', () => {
     fireEvent.dragOver(pane, { dataTransfer });
     fireEvent.drop(pane, { dataTransfer, clientX: 10, clientY: 10 });
     expect(onDropItem).toHaveBeenCalledWith('{"component":"fusion","impl":"rrf"}', expect.objectContaining({ x: expect.any(Number), y: expect.any(Number) }));
+  });
+});
+
+describe('Canvas in write mode, deleting by key and selecting an edge', () => {
+  const edgeEl = (root: HTMLElement, to: string) => root.querySelector(`path.rg-edge[data-from="question"][data-to="${to}"]`)!;
+
+  it('hands Delete or Backspace on a focused node to onDelete', () => {
+    const onDelete = vi.fn();
+    const { container } = renderWrite({ onDelete });
+    fireEvent.keyDown(nodeEl(container, 'lexical'), { key: 'Delete' });
+    fireEvent.keyDown(nodeEl(container, 'vectors'), { key: 'Backspace' });
+    expect(onDelete.mock.calls).toEqual([['lexical'], ['vectors']]);
+  });
+
+  it('deletes nothing by key in read mode', () => {
+    const onDelete = vi.fn();
+    const { container } = render(
+      <div style={{ width: 1200, height: 600 }}>
+        <Canvas graph={GRAPH} label="Pipeline" mode="read" onDelete={onDelete} />
+      </div>,
+    );
+    fireEvent.keyDown(nodeEl(container, 'lexical'), { key: 'Delete' });
+    expect(onDelete).not.toHaveBeenCalled();
+  });
+
+  it('selects an edge on a click, says so, and offers to remove it', () => {
+    const onRemoveEdge = vi.fn();
+    const { container } = renderWrite({ onRemoveEdge, refuseRemoveEdge: () => null });
+    fireEvent.click(edgeEl(container, 'reranked'));
+    expect(edgeEl(container, 'reranked').getAttribute('data-selected')).toBe('true');
+    expect(edgeEl(container, 'lexical').hasAttribute('data-selected')).toBe(false);
+    expect(within(container).getByRole('status').textContent).toBe('Edge question → reranked, input 1, selected: Delete removes it, Escape clears.');
+    fireEvent.click(within(container).getByRole('button', { name: 'Remove the edge question → reranked' }));
+    expect(onRemoveEdge).toHaveBeenCalledWith('question', 'reranked', 0);
+  });
+
+  it('removes the selected edge on Delete, and clears it on Escape', () => {
+    const onRemoveEdge = vi.fn();
+    const { container } = renderWrite({ onRemoveEdge, refuseRemoveEdge: () => null });
+    fireEvent.click(edgeEl(container, 'lexical'));
+    fireEvent.keyDown(container.querySelector('.rg-canvas')!, { key: 'Delete' });
+    expect(onRemoveEdge).toHaveBeenCalledWith('question', 'lexical', 0);
+    fireEvent.click(edgeEl(container, 'reranked'));
+    fireEvent.keyDown(container.querySelector('.rg-canvas')!, { key: 'Escape' });
+    expect(edgeEl(container, 'reranked').hasAttribute('data-selected')).toBe(false);
+    expect(within(container).queryByRole('button', { name: /Remove the edge/ })).toBeNull();
+  });
+
+  it('refuses to remove an edge the editor refuses, saying why, and Delete does nothing', () => {
+    const onRemoveEdge = vi.fn();
+    const { container } = renderWrite({ onRemoveEdge, refuseRemoveEdge: () => 'Only the last edge into `reranked` can be removed.' });
+    fireEvent.click(edgeEl(container, 'reranked'));
+    const remove = within(container).getByRole('button', { name: /Remove the edge question → reranked/ });
+    expect(remove.getAttribute('aria-disabled')).toBe('true');
+    fireEvent.click(remove);
+    fireEvent.keyDown(container.querySelector('.rg-canvas')!, { key: 'Delete' });
+    expect(onRemoveEdge).not.toHaveBeenCalled();
   });
 });

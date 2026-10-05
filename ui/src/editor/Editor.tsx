@@ -280,6 +280,21 @@ export function Editor({ client, title, stored = null, initial, layout, capabili
   };
 
   const nodeOf = (id: string) => doc.pipeline.nodes.find((n) => n.id === id);
+  // A node removed — from its menu or by Delete — gives focus to a neighbour: what fed it, else the first input,
+  // rather than to the page with the node's element. A declared input is not removed.
+  const deleteNode = (id: string) => {
+    const node = nodeOf(id);
+    if (node === undefined) return;
+    const neighbour = node.inputs.find((i) => i !== id && (nodeOf(i) !== undefined || doc.pipeline.inputs.includes(i))) ?? doc.pipeline.inputs[0];
+    dispatch({ type: 'remove', node: id });
+    if (selected === id) onSelect(null);
+    if (neighbour !== undefined) setFocus({ node: neighbour });
+  };
+  // Only the last edge into a node is removed: removing an earlier one would slide the later inputs into its port.
+  const edgeRemoval = (_from: string, to: string, port: number) => {
+    const node = nodeOf(to);
+    return node === undefined || port === node.inputs.length - 1 ? null : `Only the last edge into \`${to}\` can be removed: removing this one would slide the inputs after it into its port.`;
+  };
   const inspector = (id: string) => {
     const node = nodeOf(id);
     // Neither a node nor an input: a selection about to be cleared draws nothing.
@@ -332,14 +347,7 @@ export function Editor({ client, title, stored = null, initial, layout, capabili
           onSelect(copy);
         }}
         onConnect={(to, port) => dispatch({ type: 'connect', from: id, to, port })}
-        onDelete={() => {
-          // Focus goes to a neighbour — what fed the node, else the first
-          // input — rather than to the page with the node's element.
-          const neighbour = nodeOf(id)!.inputs.find((i) => i !== id && (nodeOf(i) !== undefined || doc.pipeline.inputs.includes(i))) ?? doc.pipeline.inputs[0];
-          dispatch({ type: 'remove', node: id });
-          if (selected === id) onSelect(null);
-          if (neighbour !== undefined) setFocus({ node: neighbour });
-        }}
+        onDelete={() => deleteNode(id)}
       />
     );
 
@@ -448,6 +456,9 @@ export function Editor({ client, title, stored = null, initial, layout, capabili
             issues={issues}
             todos={todos}
             invalidEdges={invalidEdges}
+            onDelete={deleteNode}
+            refuseRemoveEdge={edgeRemoval}
+            onRemoveEdge={(_from, to, port) => dispatch({ type: 'disconnect', node: to, port })}
           />
           {inserting === null ? null : (
             <InsertMenu

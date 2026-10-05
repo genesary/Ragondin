@@ -807,3 +807,32 @@ describe('with no grammar from the API', () => {
     expect(inPort(container, 'second', 0).getAttribute('data-drop')).toBe('open');
   });
 });
+
+describe('deleting with the keyboard, and an edge by its own Remove', () => {
+  it('removes the focused node on Delete, and an undo brings it back', () => {
+    const { container } = setup();
+    fireEvent.keyDown(nodeEl(container, 'fused')!, { key: 'Delete' });
+    expect(nodeEl(container, 'fused')).toBeNull();
+    expect(document.activeElement).toBe(nodeEl(container, 'lexical'));
+    fireEvent.keyDown(document.activeElement!, { key: 'z', ctrlKey: true });
+    expect(nodeEl(container, 'fused')).toBeTruthy();
+  });
+
+  it('never deletes the declared input by key', () => {
+    const { container } = setup();
+    fireEvent.keyDown(nodeEl(container, 'question')!, { key: 'Backspace' });
+    expect(nodeEl(container, 'question')).toBeTruthy();
+  });
+
+  it('removes the last edge into a node from the edge itself, undoably, and refuses an earlier one, saying why', () => {
+    const { container } = setup();
+    fireEvent.click(container.querySelector('path.rg-edge[data-from="question"][data-to="reranked"]')!);
+    const refused = screen.getByRole('button', { name: 'Remove the edge question → reranked' });
+    expect(refused.getAttribute('aria-disabled')).toBe('true');
+    fireEvent.click(container.querySelector('path.rg-edge[data-from="fused"][data-to="reranked"]')!);
+    fireEvent.click(screen.getByRole('button', { name: 'Remove the edge fused → reranked' }));
+    expect(container.querySelector('path.rg-edge[data-from="fused"][data-to="reranked"]')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    expect(container.querySelector('path.rg-edge[data-from="fused"][data-to="reranked"]')).toBeTruthy();
+  });
+});

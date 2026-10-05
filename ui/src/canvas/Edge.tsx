@@ -17,9 +17,18 @@ export type EdgeLineProps = {
   kind: PortKind;
   /** The validation named this edge: drawn dashed, so it reads without colour. */
   invalid?: boolean;
+  /** Selected in write mode: drawn heavier. */
+  selected?: boolean;
 };
 
 /** One edge, at rest: which ends it joins and what it carries are on the element, for a test or a stylesheet to read. */
-export function EdgeLine({ x1, y1, x2, y2, from, to, port, kind, invalid = false }: EdgeLineProps) {
-  return <path className="rg-edge" d={edgePath(x1, y1, x2, y2)} data-from={from} data-to={to} data-port={port} data-kind={kind} data-invalid={invalid || undefined} />;
+export function EdgeLine({ x1, y1, x2, y2, from, to, port, kind, invalid = false, selected = false }: EdgeLineProps) {
+  const d = edgePath(x1, y1, x2, y2);
+  return (
+    <>
+      {/* A wide, unpainted twin under the line, so a click need not land on its two pixels. */}
+      <path className="rg-edge__hit" d={d} />
+      <path className="rg-edge" d={d} data-from={from} data-to={to} data-port={port} data-kind={kind} data-invalid={invalid || undefined} data-selected={selected || undefined} />
+    </>
+  );
 }

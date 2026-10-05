@@ -141,6 +141,11 @@
 .rg-canvas[data-mode="write"] .rg-port[data-side="out"] { cursor: crosshair; }
 /* An edge the validation named: dashed, so it reads without colour. */
 .rg-edge[data-invalid="true"] { stroke: var(--critical); stroke-dasharray: 4 3; }
+/* Write mode: an edge is selected by a click on a wide unpainted twin, drawn heavier once selected, its Remove at its middle. */
+.rg-edge__hit { fill: none; stroke: transparent; stroke-width: 12; }
+.rg-canvas[data-mode="write"] .react-flow__edge { cursor: pointer; }
+.rg-edge[data-selected="true"] { stroke: var(--accent); stroke-width: 2.5; }
+.rg-canvas__edge-remove { position: absolute; z-index: 5; pointer-events: all; }
 /* The edge being drawn, to the pointer. */
 .rg-canvas__drawing { position: absolute; overflow: visible; width: 1px; height: 1px; pointer-events: none; }
 .rg-edge[data-drawing="true"] { stroke: var(--accent); stroke-dasharray: 4 3; }

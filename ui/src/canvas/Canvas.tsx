@@ -91,7 +91,16 @@ export type CanvasProps = {
   todos?: Readonly<Record<string, string>> | undefined;
   /** The edges the validation named, by `edgeId`. */
   invalidEdges?: readonly string[] | undefined;
+  /** Delete or Backspace on a focused node: the caller removes it. */
+  onDelete?: (id: string) => void;
+  /** The selected edge's "Remove", or Delete with it selected: the caller removes the edge into `port` of `to`. */
+  onRemoveEdge?: (from: string, to: string, port: number) => void;
+  /** Why the edge into `port` of `to` cannot be removed, or null. */
+  refuseRemoveEdge?: (from: string, to: string, port: number) => string | null;
 };
+
+/** The edge a click selected, in write mode: its ends and the port it enters. */
+type EdgeEnds = { from: string; to: string; port: number };
 
 /** Where a port stands while an edge is drawn: open to it, or refusing it with a reason. */
 type Drop = { state: 'open' } | { state: 'refused'; reason: string };
@@ -120,14 +129,14 @@ type CardData = {
   menu: ReactNode | null;
 };
 type CardNode = Node<CardData, 'card'>;
-type LineEdge = Edge<{ port: number; kind: PortKind; invalid: boolean }, 'line'>;
+type LineEdge = Edge<{ port: number; kind: PortKind; invalid: boolean; selected: boolean }, 'line'>;
 
 // The description every node points at: the keys that work in its mode, and
 // no other. The library's default names Space, the arrow keys and Delete,
-// which the canvas does not bind as the library would.
+// which the canvas binds itself, Delete in write mode only, or not at all.
 const NODE_DESCRIPTION: Record<CanvasMode, string> = {
   read: 'Enter selects, Shift+F10 opens the menu, Escape clears.',
-  write: 'Enter selects, Shift+F10 opens the menu, the arrow keys move it, Escape clears.',
+  write: 'Enter selects, Shift+F10 opens the menu, the arrow keys move it, Delete removes it, Escape clears.',
 };
 // The id the library gives that description, suffixed with the flow's id.
 const KEYS_DESCRIPTION = 'react-flow__node-desc';
@@ -244,7 +253,24 @@ const Card = memo(function Card({ data }: NodeProps<CardNode>) {
 });
 
 function Line({ sourceX, sourceY, targetX, targetY, source, target, data }: EdgeProps<LineEdge>) {
-  return <EdgeLine x1={sourceX} y1={sourceY} x2={targetX} y2={targetY} from={source} to={target} port={data?.port ?? 0} kind={data?.kind ?? 'opaque'} invalid={data?.invalid ?? false} />;
+  return <EdgeLine x1={sourceX} y1={sourceY} x2={targetX} y2={targetY} from={source} to={target} port={data?.port ?? 0} kind={data?.kind ?? 'opaque'} invalid={data?.invalid ?? false} selected={data?.selected ?? false} />;
+}
+
+/** Where the "Remove" of a selected edge sits: half way between the output it leaves and the input port it enters. */
+function edgeMiddle(from: Position, to: Position, port: number): Position {
+  return { x: (from.x + NODE_WIDTH + to.x) / 2, y: (from.y + portTop(0) + to.y + portTop(port)) / 2 };
+}
+
+/** The selected edge's one action, over the graph at the edge's middle: removed, or refused with why. */
+function EdgeRemove({ ends, at, refused, onRemove }: { ends: EdgeEnds; at: Position; refused: string | null; onRemove: () => void }) {
+  const name = `Remove the edge ${ends.from} → ${ends.to}`;
+  return (
+    <div className="rg-canvas__edge-remove nopan" style={{ transform: `translate(-50%, -50%) translate(${at.x}px, ${at.y}px)` }}>
+      <Button kind="secondary" size="s" icon="close" aria-label={name} onClick={onRemove} {...(refused === null ? {} : { disabled: true, disabledReason: refused })}>
+        Remove
+      </Button>
+    </div>
+  );
 }
 
 // Stable across renders, as the canvas library requires.
@@ -319,6 +345,9 @@ function Surface({
   issues = NO_ISSUES,
   todos = NO_ISSUES,
   invalidEdges,
+  onDelete,
+  onRemoveEdge,
+  refuseRemoveEdge,
 }: CanvasProps) {
   const editable = EDITABLE[mode];
   const flowId = useId();
@@ -327,6 +356,7 @@ function Surface({
   const [own, setOwn] = useState<string | null>(null);
   const [menu, setMenu] = useState<string | null>(null);
   const [drawing, setDrawing] = useState<Drawing | null>(null);
+  const [picked, setPicked] = useState<EdgeEnds | null>(null);
   // Where a node is while the library drags it; handed to `onMove` on release.
   const [dragged, setDragged] = useState<Record<string, Position>>({});
   // Each card's measured size, handed back to the library on its node (below).
@@ -337,6 +367,10 @@ function Surface({
     if (controlled === undefined) setOwn(id);
     onSelect?.(id);
   };
+  // One thing is selected at a time: a node selected lets go of the edge.
+  useEffect(() => {
+    if (selected !== null) setPicked(null);
+  }, [selected]);
 
   const model = useMemo(() => {
     const drawn = toModel(graph);
@@ -516,9 +550,17 @@ function Surface({
       target: e.to,
       sourceHandle: 'out',
       targetHandle: `in-${e.port}`,
-      data: { port: e.port, kind: e.kind, invalid: flagged.has(e.id) },
+      data: { port: e.port, kind: e.kind, invalid: flagged.has(e.id), selected: picked !== null && picked.from === e.from && picked.to === e.to && picked.port === e.port },
     }));
-  }, [model, editable, invalidEdges]);
+  }, [model, editable, invalidEdges, picked]);
+  // An edge that went away — removed, undone — is no longer selected.
+  const pickedEdge = picked !== null && model.edges.some((e) => e.from === picked.from && e.to === picked.to && e.port === picked.port) ? picked : null;
+  const removal = pickedEdge === null ? null : (refuseRemoveEdge?.(pickedEdge.from, pickedEdge.to, pickedEdge.port) ?? null);
+  const removeEdge = () => {
+    if (pickedEdge === null || removal !== null) return;
+    setPicked(null);
+    onRemoveEdge?.(pickedEdge.from, pickedEdge.to, pickedEdge.port);
+  };
 
   // The nodes are controlled: what the library changes comes back here. A
   // drag's positions and each card's measured size are kept — a size not
@@ -539,7 +581,13 @@ function Surface({
     // The open menu handles its own keys, Escape included.
     if (event.key === 'Escape') {
       setDrawing(null);
+      setPicked(null);
       select(null);
+      return;
+    }
+    if (editable && pickedEdge !== null && (event.key === 'Delete' || event.key === 'Backspace') && target.closest('[role="menu"]') === null) {
+      event.preventDefault();
+      removeEdge();
       return;
     }
     if (editable && event.key === '/' && target.closest('[role="menu"]') === null) {
@@ -556,6 +604,9 @@ function Surface({
     } else if ((event.key === 'F10' && event.shiftKey) || event.key === 'ContextMenu') {
       event.preventDefault();
       setMenu(id);
+    } else if (editable && (event.key === 'Delete' || event.key === 'Backspace')) {
+      event.preventDefault();
+      onDelete?.(id);
     } else if (editable && ARROWS[event.key] !== undefined) {
       event.preventDefault();
       const [dx, dy] = ARROWS[event.key]!;
@@ -579,7 +630,10 @@ function Surface({
 
   // What the status line says while an edge is drawn: the reason of the port under the pointer, or how to finish.
   const status = (() => {
-    if (drawing === null) return '';
+    if (drawing === null) {
+      if (pickedEdge === null) return '';
+      return `Edge ${pickedEdge.from} → ${pickedEdge.to}, input ${pickedEdge.port + 1}, selected: ${removal === null ? 'Delete removes it' : removal}${removal === null ? ', Escape clears.' : ' Escape clears.'}`;
+    }
     const over = drawing.over === null ? null : (refuse?.(drawing.from, drawing.over.node, drawing.over.port) ?? null);
     return over ?? `Connecting from ${drawing.from}. Drop on an open port; Escape cancels.`;
   })();
@@ -635,11 +689,24 @@ function Surface({
           }}
           onPaneClick={() => {
             setMenu(null);
+            setPicked(null);
             select(null);
           }}
+          {...(editable
+            ? {
+                onEdgeClick: (_: unknown, edge: LineEdge) => {
+                  setMenu(null);
+                  select(null);
+                  setPicked({ from: edge.source, to: edge.target, port: edge.data?.port ?? 0 });
+                },
+              }
+            : {})}
         >
           <Background id="minor" className="rg-canvas__grid" variant={BackgroundVariant.Dots} gap={16} size={1} />
           <Background id="major" className="rg-canvas__grid-major" variant={BackgroundVariant.Dots} gap={128} size={1.5} />
+          {pickedEdge === null ? null : (
+            <EdgeRemove ends={pickedEdge} at={edgeMiddle(positionOf(pickedEdge.from), positionOf(pickedEdge.to), pickedEdge.port)} refused={removal} onRemove={removeEdge} />
+          )}
           {source === null || drawing?.pointer == null ? null : (
             <ViewportPortal>
               <svg className="rg-canvas__drawing" aria-hidden="true">
