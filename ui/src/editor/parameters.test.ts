@@ -16,7 +16,6 @@ const CAPS: Capabilities = {
   families: [
     {
       family: 'retriever',
-      local: ['bm25', 'dense'],
       ports: null,
       not_carried: [],
       parameters: [
@@ -37,7 +36,6 @@ const CAPS: Capabilities = {
     },
     {
       family: 'generator',
-      local: [],
       ports: null,
       not_carried: [],
       parameters: [],

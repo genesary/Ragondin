@@ -7,11 +7,11 @@ import { WORKSPACE } from './fixtures.ts';
 /** The recorded capabilities, with the ONNX embedder carried: a build with `bm25` and `onnx`. */
 const WITH_ONNX: Capabilities = {
   ...WORKSPACE.capabilities,
-  families: WORKSPACE.capabilities.families.map((f) => (f.family === 'embedder' ? { ...f, local: ['onnx'], not_carried: [] } : f)),
+  families: WORKSPACE.capabilities.families.map((f) => (f.family === 'embedder' ? { ...f, parameters: [{ name: 'onnx', parameters: [], choice: null }], not_carried: [] } : f)),
 };
 const without = (caps: Capabilities, family: string, impl: string): Capabilities => ({
   ...caps,
-  families: caps.families.map((f) => (f.family === family ? { ...f, local: f.local.filter((l) => l !== impl) } : f)),
+  families: caps.families.map((f) => (f.family === family ? { ...f, parameters: f.parameters.filter((i) => i.name !== impl) } : f)),
 });
 
 const LEXICAL = {

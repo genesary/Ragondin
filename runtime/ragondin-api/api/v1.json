@@ -851,7 +851,7 @@
         "type": "object"
       },
       "FamilyCapabilities": {
-        "description": "One family: its ports, the local implementations this build carries in\nit, and those it does not carry and why.",
+        "description": "One family: its ports, the local implementations this build carries in\nit with their parameters, those it does not carry and why, and what a\nbound name takes.",
         "properties": {
           "bound": {
             "description": "The parameters a node takes under a name bound in the family with\n`--remote` or a service binding; empty for `embedder`.",
@@ -864,13 +864,6 @@
             "description": "The family, spelled as `--remote` and a service binding spell it: a\nnode family as a configuration's `component:` value, or `embedder`,\nwhich no node is and a `dense` node names with `embedder:`.",
             "type": "string"
           },
-          "local": {
-            "description": "The names this build gives a `Local` component in it: `impl:` values,\nor for `embedder`, `embedder:` values.",
-            "items": {
-              "type": "string"
-            },
-            "type": "array"
-          },
           "not_carried": {
             "description": "The names the binary gives a `Local` component of the family in some\nbuild and not in this one, each with what a build needs to carry it.",
             "items": {
@@ -879,7 +872,7 @@
             "type": "array"
           },
           "parameters": {
-            "description": "The parameters a node takes under each name in `local`, in `local`'s\norder; empty for `embedder`, whose keys are a `dense` node's.",
+            "description": "The names this build gives a `Local` component in it — `impl:`\nvalues, or for `embedder`, `embedder:` values — each with the\nparameters a node takes under it. An embedder takes none: its keys\nare a `dense` node's, in that node's choice.",
             "items": {
               "$ref": "#/components/schemas/ImplementationParameters"
             },
@@ -903,7 +896,6 @@
         "required": [
           "bound",
           "family",
-          "local",
           "not_carried",
           "parameters",
           "ports"
@@ -1200,7 +1192,7 @@
         ]
       },
       "ImplementationParameters": {
-        "description": "The parameters a node takes under one implementation name: the keys the\nexecutor reads for its family and the keys its constructor reads, as the\ncomposition root declares them.",
+        "description": "One implementation this build carries, and the parameters a node takes\nunder its name: the keys the executor reads for its family and the keys\nits constructor reads, as the composition root declares them.",
         "properties": {
           "choice": {
             "anyOf": [

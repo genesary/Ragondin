@@ -37,7 +37,6 @@ async fn the_workspace_reports_the_capabilities_the_launcher_returns() {
             families: vec![
                 FamilyCapabilities {
                     family: "reranker".to_owned(),
-                    local: vec![],
                     ports: family_ports("reranker"),
                     not_carried: vec![NotCarried {
                         name: "cross_encoder".to_owned(),
@@ -54,7 +53,6 @@ async fn the_workspace_reports_the_capabilities_the_launcher_returns() {
                 },
                 FamilyCapabilities {
                     family: "fusion".to_owned(),
-                    local: vec!["rrf".to_owned()],
                     ports: family_ports("fusion"),
                     not_carried: Vec::new(),
                     parameters: vec![ImplementationParameters {
@@ -72,7 +70,6 @@ async fn the_workspace_reports_the_capabilities_the_launcher_returns() {
                 },
                 FamilyCapabilities {
                     family: "retriever".to_owned(),
-                    local: vec!["dense".to_owned()],
                     ports: family_ports("retriever"),
                     not_carried: Vec::new(),
                     parameters: vec![ImplementationParameters {
@@ -96,7 +93,6 @@ async fn the_workspace_reports_the_capabilities_the_launcher_returns() {
                 },
                 FamilyCapabilities {
                     family: "embedder".to_owned(),
-                    local: vec![],
                     ports: family_ports("embedder"),
                     not_carried: Vec::new(),
                     parameters: Vec::new(),
@@ -121,7 +117,6 @@ async fn the_workspace_reports_the_capabilities_the_launcher_returns() {
             "families": [
                 {
                     "family": "reranker",
-                    "local": [],
                     "ports": {
                         "produces": "chunks",
                         "consumes": { "shape": "fixed", "kinds": ["query", "chunks"] },
@@ -142,7 +137,6 @@ async fn the_workspace_reports_the_capabilities_the_launcher_returns() {
                 },
                 {
                     "family": "fusion",
-                    "local": ["rrf"],
                     "ports": {
                         "produces": "chunks",
                         "consumes": { "shape": "variadic", "kind": "chunks" },
@@ -167,7 +161,6 @@ async fn the_workspace_reports_the_capabilities_the_launcher_returns() {
                 },
                 {
                     "family": "retriever",
-                    "local": ["dense"],
                     "ports": {
                         "produces": "chunks",
                         "consumes": { "shape": "fixed", "kinds": ["query"] },
@@ -200,7 +193,6 @@ async fn the_workspace_reports_the_capabilities_the_launcher_returns() {
                 },
                 {
                     "family": "embedder",
-                    "local": [],
                     "ports": null,
                     "not_carried": [],
                     "parameters": [],

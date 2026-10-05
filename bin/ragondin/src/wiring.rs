@@ -575,11 +575,26 @@ pub fn starting_value(family: Family, spec: &ParamSpec) -> Option<ParamValue> {
     if !spec.required {
         return None;
     }
-    Some(match (family, spec.name) {
-        (Family::Retriever | Family::Reranker, "top_k") => ParamValue::Int(10),
-        (Family::ContextBuilder, "budget") => ParamValue::Int(2000),
-        (Family::ContextBuilder, "separator") => ParamValue::String("\n\n".to_owned()),
-        (Family::Generator, "template") => ParamValue::String(
+    // The engine's keys are matched by what they are in its table, never by
+    // a copy of their names: a family's one required count is its cap on
+    // what it returns (`top_k`, or a context builder's `budget`, its twin in
+    // ADR-C31 § 2), and a generator's required text other than its served
+    // model is its template.
+    let engine = engine_family(family)
+        .map_or(&[][..], per_call_params)
+        .iter()
+        .find(|key| key.name == spec.name);
+    let count = engine.is_some_and(|key| key.required && key.kind == ParamKind::NonNegativeInteger);
+    let template = engine.is_some_and(|key| {
+        key.required && key.kind == ParamKind::String && key.name != SERVED_MODEL.name
+    });
+    Some(match family {
+        Family::Retriever | Family::Reranker if count => ParamValue::Int(10),
+        Family::ContextBuilder if count => ParamValue::Int(2000),
+        Family::ContextBuilder if spec.name == SEPARATOR.name => {
+            ParamValue::String("\n\n".to_owned())
+        }
+        Family::Generator if template => ParamValue::String(
             "Answer the question from the context.\n\nContext:\n{context}\n\nQuestion: {query}\nAnswer:"
                 .to_owned(),
         ),
@@ -1057,7 +1072,7 @@ fn concat(params: &Params) -> Result<ragondin_context_concat::ConcatContextBuild
 fn stub_generator(params: &Params) -> Result<ragondin_stub::StubGenerator> {
     Ok(ragondin_stub::StubGenerator::new(required_string(
         params,
-        SERVED_MODEL.name,
+        STUB_SERVED_MODEL.name,
     )?))
 }
 
@@ -1371,7 +1386,7 @@ async fn identity_of(
         #[cfg(feature = "stub")]
         LogicalNode::Generator(node) if node.implementation == STUB_GENERATOR => {
             use ragondin_contracts::Generator;
-            let served_model = required_string(&node.params, SERVED_MODEL.name)?;
+            let served_model = required_string(&node.params, STUB_SERVED_MODEL.name)?;
             let generator = stub_generator(&node.params)?;
             (
                 GENERATOR_ROLE,
@@ -2759,6 +2774,113 @@ mod tests {
             refusal.error.to_string().contains("`template` is required"),
             "{:#}",
             refusal.error
+        );
+    }
+
+    #[test]
+    fn the_union_never_makes_an_engine_required_key_optional() {
+        let engine = per_call_params(ComponentFamily::Retriever)[0];
+        assert!(engine.required, "the fixture needs a required engine key");
+        let optional = ParamSpec {
+            required: false,
+            ..engine
+        };
+
+        let joined = union(Family::Retriever, &[optional], &[]);
+
+        assert_eq!(joined.len(), 1);
+        assert_eq!(joined[0].name, engine.name);
+        assert!(
+            joined[0].required,
+            "a constructor key never relaxes the engine's"
+        );
+    }
+
+    /// The starting value under `name` on a node of `family` named `impl_`,
+    /// or under a bound name when `impl_` is `None`.
+    fn start(family: Family, impl_: Option<&str>, name: &str) -> Option<ParamValue> {
+        let list = match impl_ {
+            Some(local) => implementation_parameters(family, local).expect("a Local name"),
+            None => bound_parameters(family),
+        };
+        let spec = list
+            .iter()
+            .find(|spec| spec.name == name)
+            .unwrap_or_else(|| panic!("{family} takes `{name}`"));
+        starting_value(family, spec)
+    }
+
+    #[test]
+    fn the_starting_values_are_these() {
+        assert_eq!(
+            start(Family::Retriever, Some(BM25), "top_k"),
+            Some(ParamValue::Int(10))
+        );
+        assert_eq!(
+            start(Family::Retriever, None, "top_k"),
+            Some(ParamValue::Int(10))
+        );
+        assert_eq!(
+            start(Family::Reranker, None, "top_k"),
+            Some(ParamValue::Int(10))
+        );
+        assert_eq!(
+            start(Family::ContextBuilder, Some(CONCAT), "budget"),
+            Some(ParamValue::Int(2000))
+        );
+        assert_eq!(
+            start(Family::ContextBuilder, None, "budget"),
+            Some(ParamValue::Int(2000))
+        );
+        assert_eq!(
+            start(Family::ContextBuilder, Some(CONCAT), "separator"),
+            Some(ParamValue::String("\n\n".to_owned()))
+        );
+        let template = Some(ParamValue::String(
+            "Answer the question from the context.\n\nContext:\n{context}\n\nQuestion: {query}\nAnswer:"
+                .to_owned(),
+        ));
+        assert_eq!(start(Family::Generator, None, "template"), template);
+        assert_eq!(
+            start(Family::Generator, Some(STUB_GENERATOR), "template"),
+            template
+        );
+        assert_eq!(start(Family::Generator, None, "served_model"), None);
+        assert_eq!(
+            start(Family::Generator, Some(STUB_GENERATOR), "served_model"),
+            None
+        );
+        assert_eq!(start(Family::Reranker, None, "served_model"), None);
+    }
+
+    #[test]
+    fn a_dense_nodes_choice_picks_the_named_case_else_the_bound_one() {
+        let choice = DENSE_READS.choice.as_ref().expect("dense chooses");
+        assert_eq!(
+            choice.case(Some(ONNX_EMBEDDER)).map(|c| c.value),
+            Some(Some(ONNX_EMBEDDER))
+        );
+        assert_eq!(choice.case(Some("bge")).map(|c| c.value), Some(None));
+        assert!(choice.case(Some("")).is_none());
+        assert!(choice.case(None).is_none());
+
+        let names = |params: &str| {
+            let pipeline = pipeline(&wrap(&dense_node("vectors", params)));
+            node_parameters(&pipeline.nodes()[0], &unbound())
+                .expect("a Local name")
+                .iter()
+                .map(|spec| spec.name)
+                .collect::<Vec<_>>()
+        };
+        let bound = names("{ top_k: 10, embedder: bge }");
+        assert!(
+            bound.contains(&"served_model") && !bound.contains(&"model"),
+            "{bound:?}"
+        );
+        let onnx = names("{ top_k: 10, embedder: onnx }");
+        assert!(
+            onnx.contains(&"model") && !onnx.contains(&"served_model"),
+            "{onnx:?}"
         );
     }
 }

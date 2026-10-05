@@ -9,7 +9,7 @@ import type { Capabilities } from '../api/types.ts';
 import type { WireDocument } from './document.ts';
 import { parametersOf, startingParams } from './parameters.ts';
 
-const carries = (caps: Capabilities, family: string, impl: string) => caps.families.find((f) => f.family === family)?.local.includes(impl) === true;
+const carries = (caps: Capabilities, family: string, impl: string) => caps.families.find((f) => f.family === family)?.parameters.some((i) => i.name === impl) === true;
 
 /**
  * The lexical leg on the query, placed as the palette places it — with the

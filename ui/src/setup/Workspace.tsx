@@ -78,7 +78,7 @@ export function BuildSection({ state, onRetry }: Props) {
                 ]}
                 rows={workspace.capabilities.families.map((f) => ({
                   id: f.family,
-                  cells: [f.family, f.local.length === 0 ? <span className="rg-setup__absent">none in this build</span> : f.local.join(', ')],
+                  cells: [f.family, f.parameters.length === 0 ? <span className="rg-setup__absent">none in this build</span> : f.parameters.map((i) => i.name).join(', ')],
                 }))}
               />
               <p className="rg-setup__note">Adding a Local component is a rebuild, not a setting.</p>

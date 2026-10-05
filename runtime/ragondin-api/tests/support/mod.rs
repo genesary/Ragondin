@@ -125,6 +125,18 @@ pub struct FakeLauncher {
     pub capabilities: Capabilities,
 }
 
+/// Carried names that take no parameter.
+fn carried(names: &[&str]) -> Vec<ragondin_api::ImplementationParameters> {
+    names
+        .iter()
+        .map(|name| ragondin_api::ImplementationParameters {
+            name: (*name).to_owned(),
+            parameters: Vec::new(),
+            choice: None,
+        })
+        .collect()
+}
+
 impl Default for FakeLauncher {
     fn default() -> Self {
         Self {
@@ -132,18 +144,16 @@ impl Default for FakeLauncher {
                 families: vec![
                     FamilyCapabilities {
                         family: "generator".to_owned(),
-                        local: vec!["stub_generator".to_owned()],
                         ports: ragondin_api::family_ports("generator"),
                         not_carried: Vec::new(),
-                        parameters: Vec::new(),
+                        parameters: carried(&["stub_generator"]),
                         bound: Vec::new(),
                     },
                     FamilyCapabilities {
                         family: "retriever".to_owned(),
-                        local: vec!["bm25".to_owned(), "stub_retriever".to_owned()],
                         ports: ragondin_api::family_ports("retriever"),
                         not_carried: Vec::new(),
-                        parameters: Vec::new(),
+                        parameters: carried(&["bm25", "stub_retriever"]),
                         bound: Vec::new(),
                     },
                 ],

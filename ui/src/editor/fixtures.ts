@@ -90,7 +90,6 @@ export const WORKSPACE: Workspace = {
     families: [
       {
         family: 'retriever',
-        local: ['bm25', 'dense'],
         ports: { produces: 'chunks', consumes: { shape: 'fixed', kinds: ['query'] } },
         not_carried: [],
         parameters: [
@@ -184,7 +183,6 @@ export const WORKSPACE: Workspace = {
       },
       {
         family: 'fusion',
-        local: ['rrf'],
         ports: { produces: 'chunks', consumes: { shape: 'variadic', kind: 'chunks' } },
         not_carried: [],
         parameters: [
@@ -206,7 +204,6 @@ export const WORKSPACE: Workspace = {
       },
       {
         family: 'reranker',
-        local: [],
         ports: { produces: 'chunks', consumes: { shape: 'fixed', kinds: ['query', 'chunks'] } },
         not_carried: [{ name: 'cross_encoder', reason: 'needs the `onnx` feature' }],
         parameters: [],
@@ -223,7 +220,6 @@ export const WORKSPACE: Workspace = {
       },
       {
         family: 'context_builder',
-        local: ['concat'],
         ports: { produces: 'context', consumes: { shape: 'fixed', kinds: ['query', 'chunks'] } },
         not_carried: [],
         parameters: [
@@ -260,7 +256,6 @@ export const WORKSPACE: Workspace = {
       },
       {
         family: 'generator',
-        local: [],
         ports: { produces: 'answer', consumes: { shape: 'fixed', kinds: ['query', 'context'] } },
         not_carried: [{ name: 'stub_generator', reason: 'needs the `stub` feature' }],
         parameters: [],
@@ -302,7 +297,7 @@ export const WORKSPACE: Workspace = {
           },
         ],
       },
-      { family: 'embedder', local: [], ports: null, not_carried: [{ name: 'onnx', reason: 'needs the `onnx` feature' }], parameters: [], bound: [] },
+      { family: 'embedder', ports: null, not_carried: [{ name: 'onnx', reason: 'needs the `onnx` feature' }], parameters: [], bound: [] },
     ],
     remote: true,
   },

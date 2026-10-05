@@ -319,7 +319,8 @@ export type EdgeLocation = {
 
 /**
  * One family: its ports, the local implementations this build carries in
- * it, and those it does not carry and why.
+ * it with their parameters, those it does not carry and why, and what a
+ * bound name takes.
  */
 export type FamilyCapabilities = {
   /**
@@ -334,18 +335,15 @@ export type FamilyCapabilities = {
    */
   family: string;
   /**
-   * The names this build gives a `Local` component in it: `impl:` values,
-   * or for `embedder`, `embedder:` values.
-   */
-  local: string[];
-  /**
    * The names the binary gives a `Local` component of the family in some
    * build and not in this one, each with what a build needs to carry it.
    */
   not_carried: NotCarried[];
   /**
-   * The parameters a node takes under each name in `local`, in `local`'s
-   * order; empty for `embedder`, whose keys are a `dense` node's.
+   * The names this build gives a `Local` component in it — `impl:`
+   * values, or for `embedder`, `embedder:` values — each with the
+   * parameters a node takes under it. An embedder takes none: its keys
+   * are a `dense` node's, in that node's choice.
    */
   parameters: ImplementationParameters[];
   /**
@@ -479,9 +477,9 @@ export type GraphNode = {
 export type GroundTruth = "none" | "qrels" | "reference_answers" | "both";
 
 /**
- * The parameters a node takes under one implementation name: the keys the
- * executor reads for its family and the keys its constructor reads, as the
- * composition root declares them.
+ * One implementation this build carries, and the parameters a node takes
+ * under its name: the keys the executor reads for its family and the keys
+ * its constructor reads, as the composition root declares them.
  */
 export type ImplementationParameters = {
   /** A key whose value adds further parameters, if it has one. */

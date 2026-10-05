@@ -82,10 +82,6 @@ impl Launcher for BinaryLauncher {
                 .into_iter()
                 .map(|family| FamilyCapabilities {
                     family: family.name().to_owned(),
-                    local: wiring::carried()
-                        .filter(|(of, _)| *of == family)
-                        .map(|(_, name)| name.to_owned())
-                        .collect(),
                     ports: ragondin_api::family_ports(family.name()),
                     not_carried: wiring::not_carried()
                         .filter(|(of, _, _)| *of == family)
@@ -96,7 +92,7 @@ impl Launcher for BinaryLauncher {
                         .collect(),
                     parameters: wiring::carried()
                         .filter(|(of, _)| *of == family)
-                        .filter_map(|(_, name)| implementation(family, name))
+                        .map(|(_, name)| implementation(family, name))
                         .collect(),
                     bound: parameters(family, &wiring::bound_parameters(family)),
                 })
@@ -452,11 +448,12 @@ async fn read_identity(
     })
 }
 
-/// The parameters `family`/`name` takes, as the API serves them: its own,
-/// and its choice's; `None` for an embedder, whose keys are a `dense` node's.
-fn implementation(family: Family, name: &str) -> Option<ImplementationParameters> {
-    let declared = wiring::implementation_parameters(family, name)?;
-    Some(ImplementationParameters {
+/// The carried name `family`/`name` with the parameters it takes, as the
+/// API serves them: its own, and its choice's; none for an embedder, whose
+/// keys are a `dense` node's.
+fn implementation(family: Family, name: &str) -> ImplementationParameters {
+    let declared = wiring::implementation_parameters(family, name).unwrap_or_default();
+    ImplementationParameters {
         name: name.to_owned(),
         parameters: parameters(family, &declared),
         choice: wiring::implementation_choice(family, name).map(|choice| ParameterChoice {
@@ -470,7 +467,7 @@ fn implementation(family: Family, name: &str) -> Option<ImplementationParameters
                 })
                 .collect(),
         }),
-    })
+    }
 }
 
 /// Each of `specs` as the API serves it, with the starting value the
@@ -517,9 +514,16 @@ mod tests {
         capabilities
             .families
             .iter()
-            .map(|FamilyCapabilities { family, local, .. }| {
-                (family.as_str(), local.iter().map(String::as_str).collect())
-            })
+            .map(
+                |FamilyCapabilities {
+                     family, parameters, ..
+                 }| {
+                    (
+                        family.as_str(),
+                        parameters.iter().map(|entry| entry.name.as_str()).collect(),
+                    )
+                },
+            )
             .collect()
     }
 
@@ -589,12 +593,21 @@ mod tests {
                 .into_iter()
                 .find(|family| family.name() == entry.family)
                 .expect("a family `--remote` names");
+            let names: Vec<&str> = entry.parameters.iter().map(|p| p.name.as_str()).collect();
+            let carried: Vec<&str> = wiring::carried()
+                .filter(|(of, _)| *of == family)
+                .map(|(_, name)| name)
+                .collect();
+            assert_eq!(names, carried, "{family}");
             if family == Family::Embedder {
-                assert!(entry.parameters.is_empty() && entry.bound.is_empty());
+                // An embedder's keys are a `dense` node's: it is listed, and takes none.
+                assert!(entry
+                    .parameters
+                    .iter()
+                    .all(|p| p.parameters.is_empty() && p.choice.is_none()));
+                assert!(entry.bound.is_empty());
                 continue;
             }
-            let names: Vec<&str> = entry.parameters.iter().map(|p| p.name.as_str()).collect();
-            assert_eq!(names, entry.local, "{family}");
             for served in &entry.parameters {
                 let declared =
                     wiring::implementation_parameters(family, &served.name).expect("a Local name");

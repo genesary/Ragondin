@@ -82,7 +82,8 @@ pub struct Capabilities {
 }
 
 /// One family: its ports, the local implementations this build carries in
-/// it, and those it does not carry and why.
+/// it with their parameters, those it does not carry and why, and what a
+/// bound name takes.
 #[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
 #[schemars(transform = every_property_required)]
 pub struct FamilyCapabilities {
@@ -90,9 +91,6 @@ pub struct FamilyCapabilities {
     /// node family as a configuration's `component:` value, or `embedder`,
     /// which no node is and a `dense` node names with `embedder:`.
     pub family: String,
-    /// The names this build gives a `Local` component in it: `impl:` values,
-    /// or for `embedder`, `embedder:` values.
-    pub local: Vec<String>,
     /// The ports a node of the family declares, as the pipeline grammar
     /// derives them from the family alone; `null` for `embedder`, which no
     /// node is.
@@ -100,17 +98,19 @@ pub struct FamilyCapabilities {
     /// The names the binary gives a `Local` component of the family in some
     /// build and not in this one, each with what a build needs to carry it.
     pub not_carried: Vec<NotCarried>,
-    /// The parameters a node takes under each name in `local`, in `local`'s
-    /// order; empty for `embedder`, whose keys are a `dense` node's.
+    /// The names this build gives a `Local` component in it — `impl:`
+    /// values, or for `embedder`, `embedder:` values — each with the
+    /// parameters a node takes under it. An embedder takes none: its keys
+    /// are a `dense` node's, in that node's choice.
     pub parameters: Vec<ImplementationParameters>,
     /// The parameters a node takes under a name bound in the family with
     /// `--remote` or a service binding; empty for `embedder`.
     pub bound: Vec<Parameter>,
 }
 
-/// The parameters a node takes under one implementation name: the keys the
-/// executor reads for its family and the keys its constructor reads, as the
-/// composition root declares them.
+/// One implementation this build carries, and the parameters a node takes
+/// under its name: the keys the executor reads for its family and the keys
+/// its constructor reads, as the composition root declares them.
 #[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
 #[schemars(transform = every_property_required)]
 pub struct ImplementationParameters {

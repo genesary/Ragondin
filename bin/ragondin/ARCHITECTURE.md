@@ -738,18 +738,20 @@ API crate holds it as an `Arc<dyn Launcher>` and names no component.
 
 - **`capabilities`**: every family `--remote` names, in `Family::ALL`'s order
   — `retriever`, `fusion`, `reranker`, `context_builder`, `generator`,
-  `embedder` — each with the `Local` names this build carries
+  `embedder` — each with the `Local` names this build carries, as the one
+  list `parameters`
   (`wiring::carried`, the `LOCAL` table filtered by the features that compile
   each one), the names it does not carry with the reason in words
   (`wiring::not_carried`, the complement over the same table: "needs the
   `onnx` feature", "needs the `onnx` or the `remote` feature"), the family's
   ports (`ragondin_api::family_ports`, which reads `ragondin-pipeline`'s
   `produced_kind` and `consumed_kinds`; `null` for `embedder`), the
-  parameters a node takes under each carried name (`parameters`, from
+  parameters a node takes under each carried name (from
   `wiring::implementation_parameters` and `wiring::implementation_choice`)
   and under a bound name (`bound`, from `wiring::bound_parameters`), each with
   its kind, whether it is required, its description and its starting value
-  (`wiring::starting_value`), both empty for `embedder`, and whether
+  (`wiring::starting_value`) — none for `embedder`, whose keys are a `dense`
+  node's — and whether
   `remote` is on. `embedder` is listed though it is not a `component:` value,
   because `onnx` is a `Local` implementation a `dense` node names. A family
   whose every implementation is gated off is listed with none carried.

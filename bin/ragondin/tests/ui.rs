@@ -213,11 +213,11 @@ mod with_the_feature {
                 .expect("a list of families")
                 .iter()
                 .find(|entry| entry["family"] == family)
-                .unwrap_or_else(|| panic!("`{family}` is listed: {capabilities}"))["local"]
+                .unwrap_or_else(|| panic!("`{family}` is listed: {capabilities}"))["parameters"]
                 .as_array()
-                .expect("a list of names")
+                .expect("a list of carried names")
                 .iter()
-                .map(|name| name.as_str().expect("a name").to_owned())
+                .map(|entry| entry["name"].as_str().expect("a name").to_owned())
                 .collect()
         };
         // In every build: rank and string arithmetic, never gated.

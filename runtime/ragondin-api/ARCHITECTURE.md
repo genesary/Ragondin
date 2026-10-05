@@ -765,8 +765,8 @@ backend) — and the services connected.
 
 What the launcher returns, served as it returns it. Per family:
 
-- **The `Local` names carried, and those not carried with the reason in
-  words** — the binary's, from its own `LOCAL` table and the features each
+- **The `Local` names carried — `parameters`, one entry per name, the one
+  list of them — and those not carried with the reason in words** — the binary's, from its own `LOCAL` table and the features each
   entry needs (`bin/ragondin/ARCHITECTURE.md` § What `Launcher` answers
   here): only the composition root knows them (INV-12).
 - **The family's ports**: what a node of it produces, and what it consumes —
@@ -781,15 +781,15 @@ What the launcher returns, served as it returns it. Per family:
   and refuses a mis-kinded edge during a drag, from this — never from a table
   of its own. It does not depend on the build, so it is the same in every
   build; the launcher fills it because the response type is one value.
-- **The parameters a node takes**, under each carried name (`parameters`,
-  one `ImplementationParameters` per name in `local`'s order) and under a
-  name bound in the family (`bound`): each `Parameter`'s name, kind
+- **The parameters a node takes**, under each carried name (each
+  `ImplementationParameters` in `parameters`) and under a name bound in the
+  family (`bound`): each `Parameter`'s name, kind
   (`non_negative_integer`, `string` or `float`), whether it is required, a
   one-sentence description, and its `start`, the value the editor writes
   under it when a node is placed, or `null`. An implementation whose key set
   depends on a value carries a `choice`: the key, and per value the
   parameters it adds — `value: null` for any other non-empty value, a bound
-  name. Both lists are empty for `embedder`. **They are the composition
+  name. An embedder's entries take no parameter, and its `bound` is empty: its keys are a `dense` node's. **They are the composition
   root's** — the engine's per-call table unioned with its constructors' keys,
   and its starting values (`bin/ragondin/ARCHITECTURE.md`): this crate
   serves them and restates none. A `start` is never applied to an absent
