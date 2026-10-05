@@ -99,6 +99,7 @@ export function rowsFromJobs(jobs: Jobs, runs: readonly RunRow[]): RunRow[] {
         latencyMs: null,
         startedAt: null,
         prefix: work.up_to === null ? null : { parents: [work.pipeline], upTo: work.up_to },
+        contentPrefix: null,
         job: {
           submission: { pipeline: work.pipeline, benchmark: work.benchmark, up_to: work.up_to },
           place: place === -1 ? null : place,

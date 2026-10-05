@@ -455,8 +455,8 @@ function Column({ theme }: { theme: 'light' | 'dark' }) {
 
       <Block name="PrefixLabel">
         <div className="rg-preview__row">
-          <PrefixLabel parent="hybrid-rerank-gen" upTo="rerank" />
-          <PrefixLabel parent={null} upTo="rrf" />
+          <PrefixLabel parents={['hybrid-rerank-gen']} upTo="rerank" />
+          <PrefixLabel parents={['hybrid', 'hybrid-fork', 'hybrid-old']} upTo="rrf" />
         </div>
       </Block>
 

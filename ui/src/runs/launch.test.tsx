@@ -8,7 +8,7 @@ import { useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createApiClient } from '../api/client.ts';
 import { FakeEventSource, installFakeEventSource, mockApi, type MockRoutes } from '../api/testing.ts';
-import type { BenchmarkEntry, JobListing, JobSummary, PipelineSummary, Problem, RunListing, RunSummary } from '../api/types.ts';
+import type { BenchmarkEntry, JobListing, JobSummary, PipelineDetail, PipelineSummary, Problem, RunListing, RunSummary } from '../api/types.ts';
 import { CANCELLED, connect, doneAs, failedAt, hex, QUEUED, runJob, running, send } from '../jobs/fixtures.ts';
 import { JobQueueProvider } from '../jobs/queue.tsx';
 import { JobToasts } from '../jobs/Toasts.tsx';
@@ -56,8 +56,34 @@ const problem = (code: Problem['code'], status: number, detail: string, hint: st
   problem: { type: `urn:ragondin:problem:${code}`, title: code, status, detail, code, hint, ...over },
 });
 
+/**
+ * `hybrid` as `GET /pipelines/{name}` serves it: a reranker, then a generator
+ * whose answer a judge reads — so a cut at the generator ends in an answer.
+ */
+const node = (id: string, component: string, inputs: string[]) => ({ id, component, impl: component, inputs, params: {} });
+const HYBRID_DETAIL: PipelineDetail = {
+  name: 'hybrid',
+  document: 'pipeline: …',
+  etag: 'e',
+  hash: HYBRID,
+  error: null,
+  typed: {
+    pipeline: {
+      inputs: ['question'],
+      nodes: [
+        node('bm25', 'retriever', ['question']),
+        node('rerank', 'reranker', ['question', 'bm25']),
+        node('context', 'context_builder', ['question', 'rerank']),
+        node('generate', 'generator', ['question', 'context']),
+        node('judge', 'extension', ['generate']),
+      ],
+    },
+  },
+};
+
 const routes = (over: MockRoutes = {}): MockRoutes => ({
   'GET /runs': { body: LISTING },
+  'GET /pipelines/{name}': { body: HYBRID_DETAIL },
   'GET /pipelines': { body: PIPELINES },
   'GET /benchmarks': { body: BENCHMARKS },
   'GET /services': { body: SERVICES },
@@ -205,7 +231,9 @@ describe('the launch panel up to a node', () => {
     const benchmark = within(sheet).getByLabelText('Benchmark') as HTMLSelectElement;
     // `mine` carries reference answers: a prefix ending before the generator produces no answer to score.
     expect([...benchmark.options].map((o) => o.textContent)).toEqual(['beir/scifact — qrels']);
-    expect(within(sheet).getByText(/Not offered: mine, which carries reference answers/)).toBeTruthy();
+    const absent = within(sheet).getByText(/Not offered: mine, which carries reference answers/);
+    // The note describes the field it explains.
+    expect(benchmark.getAttribute('aria-describedby')?.split(' ')).toContain(absent.id);
     // The identity is the cut's, announced by the API: the parent's hash is not shown as if it were the run's.
     expect(within(sheet).queryByText(`pipeline ${short(HYBRID)}`)).toBeNull();
     expect(within(sheet).getByText(/identity is announced when it is queued/)).toBeTruthy();
@@ -214,6 +242,15 @@ describe('the launch panel up to a node', () => {
     await within(sheet).findByRole('button', { name: 'Queued' });
     expect(api.bodies[api.requests.indexOf('POST /api/v1/runs')]).toEqual({ pipeline: 'hybrid', benchmark: 'beir/scifact', up_to: 'rerank' });
     expect(within(sheet).getByText(`run ${short(ANNOUNCED)}`)).toBeTruthy();
+  });
+
+  it('offers a benchmark with reference answers to a cut that ends in an answer', async () => {
+    const { stream } = await show('#runs?launch=hybrid&up_to=generate');
+    connect(stream);
+    await within(panel()).findByText('prefix of hybrid, up to generate');
+    const benchmark = within(panel()).getByLabelText('Benchmark') as HTMLSelectElement;
+    await waitFor(() => expect([...benchmark.options].map((o) => o.textContent)).toEqual(['beir/scifact — qrels', 'mine — qrels and reference answers']));
+    expect(within(panel()).queryByText(/Not offered/)).toBeNull();
   });
 
   it('goes back to the whole pipeline, every ready benchmark offered again', async () => {

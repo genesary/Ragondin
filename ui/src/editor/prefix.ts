@@ -20,7 +20,7 @@ function listed(names: readonly string[]): string {
 
 /**
  * Whether `node` of `doc` can be run up to. Refused on the pipeline's output
- * — the node no node reads, so the prefix would be the whole pipeline — and
+ * — the one node no node reads, so the prefix would be the whole pipeline — and
  * on a context builder, whose context nothing scores (ADR-C30 § 3); and while
  * the canvas is not the stored document, since a run takes the document on
  * disk. Otherwise the line names the nodes kept — the node and every node it
@@ -32,7 +32,10 @@ export function runUpTo(doc: WireDocument, node: string, stored: Stored): RunUpT
   const nodes = doc.pipeline.nodes;
   const target = nodes.find((n) => n.id === node);
   if (target === undefined) return { kind: 'refused', reason: 'Only a node can be run up to.' };
-  if (!nodes.some((n) => n.inputs.includes(node))) return { kind: 'refused', reason: 'This node is the pipeline’s output: the prefix would be the whole pipeline.' };
+  // The output as the server finds it (`ragondin_experiments::terminal`): the one node nothing reads, when there is
+  // exactly one. With a stray node nothing reads either there is none, and the server cuts at both.
+  const unread = nodes.filter((n) => !nodes.some((m) => m.inputs.includes(n.id)));
+  if (unread.length === 1 && unread[0]?.id === node) return { kind: 'refused', reason: 'This node is the pipeline’s output: the prefix would be the whole pipeline.' };
   if (target.component === 'context_builder') return { kind: 'refused', reason: 'A context is scored by nothing: run up to the node that feeds it chunks.' };
   if (stored.name === null) return { kind: 'refused', reason: 'Not a workspace pipeline yet: a run takes a stored document.' };
   if (!stored.unchanged) return { kind: 'refused', reason: 'The canvas differs from the stored document, and a run takes the stored one.' };

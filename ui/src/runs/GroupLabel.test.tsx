@@ -22,6 +22,7 @@ const row = (id: string): RunRow => ({
   latencyMs: null,
   startedAt: null,
   prefix: null,
+  contentPrefix: null,
   job: null,
   announced: null,
 });

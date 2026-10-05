@@ -178,7 +178,7 @@ export function jobRow(row: RunRow, { columns, stale, cancelling, onCancel, onMo
       <span className="rg-runs__fact">announced</span>
       {row.prefix === null ? null : (
         <span className="rg-runs__prefix">
-          <PrefixLabel parent={row.prefix.parents.join(', ')} upTo={row.prefix.upTo} />
+          <PrefixLabel parents={row.prefix.parents} upTo={row.prefix.upTo} />
         </span>
       )}
     </>

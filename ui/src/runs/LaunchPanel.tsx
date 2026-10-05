@@ -12,7 +12,7 @@
 import { useCallback, useEffect, useId, useRef, useState, type Ref } from 'react';
 import { Button, ButtonLink, InlineMessage, PrefixLabel, Section, Select } from '../../design/index.ts';
 import type { ApiClient, ApiProblem } from '../api/client.ts';
-import type { BenchmarkEntry, BenchmarkListing, PipelineListing, RunRequest, ServiceListing } from '../api/types.ts';
+import type { BenchmarkEntry, BenchmarkListing, PipelineDetail, PipelineListing, RunRequest, ServiceListing } from '../api/types.ts';
 import { formatHash, type Route } from '../routes.ts';
 import { groundTruthLabel } from '../setup/model.ts';
 import { ErrorState, Loading, type RequestState } from '../shell/states.tsx';
@@ -39,18 +39,22 @@ type Launch = { kind: 'idle' } | { kind: 'sending' } | { kind: 'queued'; job: st
 const PIPELINE_CODES = new Set(['pipeline_invalid', 'impl_not_in_build', 'pipeline_not_found', 'prefix_node_not_found', 'prefix_is_whole_pipeline', 'prefix_ends_in_context']);
 const BENCHMARK_CODES = new Set(['benchmark_not_found', 'dataset_absent', 'dataset_differs', 'prefix_not_scorable']);
 
+const carriesAnswers = (b: BenchmarkEntry) => b.ground_truth === 'reference_answers' || b.ground_truth === 'both';
+
 /**
- * Whether a prefix can be scored on a benchmark: only on one that carries
- * qrels and no reference answers. A prefix ends before the generator, and
- * the harness refuses a run whose output is not an answer on a benchmark that
- * carries reference answers (ADR-C30 § 5); with no qrels, nothing scores it.
+ * Whether a prefix can be scored on a benchmark, as `POST /runs` and the
+ * harness judge it. A cut whose output is an answer — at a generator — can be
+ * scored on any benchmark that carries a ground truth. Any other cut produces
+ * a ranking: the harness refuses it on a benchmark that carries reference
+ * answers (ADR-C30 § 5), so only qrels alone score it.
  */
-const scoresAPrefix = (b: BenchmarkEntry) => b.ground_truth === 'qrels';
+const scoresAPrefix = (answers: boolean) => (b: BenchmarkEntry) =>
+  answers ? b.ground_truth === 'qrels' || carriesAnswers(b) : b.ground_truth === 'qrels';
 
 /** Why the benchmarks a prefix cannot be scored on are not offered, in one sentence; null when every one is. */
 function notOffered(absent: readonly BenchmarkEntry[]): string | null {
   if (absent.length === 0) return null;
-  const answers = absent.filter((b) => b.ground_truth === 'reference_answers' || b.ground_truth === 'both').map((b) => b.name);
+  const answers = absent.filter(carriesAnswers).map((b) => b.name);
   const nothing = absent.filter((b) => !answers.includes(b.name)).map((b) => b.name);
   const clause = (names: string[], what: string) => `${names.join(', ')}, which ${names.length === 1 ? 'carries' : 'carry'} ${what}`;
   const parts = [
@@ -127,18 +131,25 @@ export function LaunchPanel({ client, store, anchor, pipeline: opened, upTo = nu
   const [pipelines, retryPipelines] = useListing<PipelineListing>((signal) => client.get('/pipelines', { signal }));
   const [benchmarks, retryBenchmarks] = useListing<BenchmarkListing>((signal) => client.get('/benchmarks', { signal }));
   const [services, retryServices] = useListing<ServiceListing>((signal) => client.get('/services', { signal }));
+  // Up to a node, the stored document says what the node is: a cut at a generator ends in an answer.
+  const [detail] = useListing<PipelineDetail | null>((signal) =>
+    upTo === null || opened === undefined ? Promise.resolve({ ok: true as const, value: null }) : client.get('/pipelines/{name}', { name: opened }, { signal }),
+  );
   const [chosenPipeline, setPipeline] = useState<string | null>(opened ?? null);
   const [chosenBenchmark, setBenchmark] = useState<string | null>(null);
   const [launch, setLaunch] = useState<Launch>({ kind: 'idle' });
-  const ids = { pipeline: useId(), benchmark: useId() };
+  const ids = { pipeline: useId(), benchmark: useId(), absent: useId() };
 
   // Up to a node, the pipeline is the one the node is in: no other is offered.
   const listed = pipelines.status === 'loaded' ? pipelines.value.pipelines : [];
   const docs = upTo === null ? listed : listed.filter((p) => p.name === opened);
   // Ready ones only: a benchmark on disk whose digest is the one expected of it; up to a node, those a prefix can be scored on.
   const onDisk = benchmarks.status === 'loaded' ? benchmarks.value.benchmarks.filter((b) => b.state.kind === 'ready' || b.state.kind === 'local') : [];
-  const ready = upTo === null ? onDisk : onDisk.filter(scoresAPrefix);
-  const absent = upTo === null ? null : notOffered(onDisk.filter((b) => !scoresAPrefix(b)));
+  // Until the document is read — or when it cannot be — the cut is taken to end in a ranking, the narrower offer.
+  const cutNode = detail.status === 'loaded' ? detail.value?.typed?.pipeline.nodes.find((n) => n.id === upTo) : undefined;
+  const scores = scoresAPrefix(cutNode?.component === 'generator');
+  const ready = upTo === null ? onDisk : onDisk.filter(scores);
+  const absent = upTo === null ? null : notOffered(onDisk.filter((b) => !scores(b)));
   const pipeline = docs.find((p) => p.name === chosenPipeline) ?? docs.find((p) => p.hash !== null) ?? docs[0] ?? null;
   const benchmark = ready.find((b) => b.name === chosenBenchmark) ?? ready[0] ?? null;
 
@@ -199,7 +210,7 @@ export function LaunchPanel({ client, store, anchor, pipeline: opened, upTo = nu
               </p>
             ) : (
               <div className="rg-launch__prefix">
-                <PrefixLabel parent={opened ?? null} upTo={upTo} />
+                <PrefixLabel parents={opened === undefined ? [] : [opened]} upTo={upTo} />
                 <p className="rg-launch__note">The prefix is a pipeline of its own: its identity is announced when it is queued.</p>
                 {onWhole === undefined ? null : (
                   <Button size="s" kind="quiet" onClick={onWhole}>
@@ -222,8 +233,13 @@ export function LaunchPanel({ client, store, anchor, pipeline: opened, upTo = nu
               options={ready.map((b) => ({ value: b.name, label: b.ground_truth === null ? b.name : `${b.name} — ${groundTruthLabel(b.ground_truth)}` }))}
               onChange={(e) => choose(setBenchmark)(e.target.value)}
               {...(benchmarkError === undefined ? { help: 'Ready benchmarks only, with the ground truth each carries.' } : { error: benchmarkError })}
+              {...(absent === null ? {} : { 'aria-describedby': ids.absent })}
             />
-            {absent === null ? null : <p className="rg-launch__note">{absent}</p>}
+            {absent === null ? null : (
+              <p id={ids.absent} className="rg-launch__note">
+                {absent}
+              </p>
+            )}
             {ready.length === 0 ? (
               <ButtonLink size="s" href={formatHash({ screen: 'setup', section: 'benchmarks' })}>
                 Open Setup

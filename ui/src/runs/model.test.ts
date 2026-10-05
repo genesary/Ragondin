@@ -19,6 +19,7 @@ const row = (id: string, over: Partial<RunRow> = {}): RunRow => ({
   latencyMs: null,
   startedAt: null,
   prefix: null,
+  contentPrefix: null,
   job: null,
   announced: null,
   ...over,
@@ -121,6 +122,18 @@ describe('rowsFromListing', () => {
     const record = { name: 'hybrid', prefix_of: { up_to: 'rerank', parent_pipeline_hash: hex('a') }, held: 'exactly' as const };
     const [read] = rowsFromListing(listingOf(summary(hex('1'), { launched_as: record, prefix_of_documents: [{ pipeline: 'fork', up_to: 'rerank' }] })));
     expect(read).toMatchObject({ prefix: { parents: ['hybrid'], upTo: 'rerank' } });
+  });
+
+  it('keeps the structural relation beside a record that says otherwise, as a fact of its own (ADR-C39 § 4)', () => {
+    const record = { name: 'hybrid', prefix_of: { up_to: 'rerank', parent_pipeline_hash: hex('a') }, held: 'exactly' as const };
+    const [other] = rowsFromListing(listingOf(summary(hex('1'), { launched_as: record, prefix_of_documents: [{ pipeline: 'fork', up_to: 'rerank' }] })));
+    expect(other).toMatchObject({ contentPrefix: { parents: ['fork'], upTo: 'rerank' } });
+    // The same parent twice says nothing new: no second label.
+    const [same] = rowsFromListing(listingOf(summary(hex('1'), { launched_as: record, prefix_of_documents: [{ pipeline: 'hybrid', up_to: 'rerank' }] })));
+    expect(same).toMatchObject({ contentPrefix: null });
+    // Without a recorded prefix the structural relation is the row's prefix itself.
+    const [plain] = rowsFromListing(listingOf(summary(hex('1'), { prefix_of_documents: [{ pipeline: 'fork', up_to: 'rerank' }] })));
+    expect(plain).toMatchObject({ prefix: { parents: ['fork'], upTo: 'rerank' }, contentPrefix: null });
   });
 
   it('carries every pipeline and benchmark name the listing gives, and the start time as an instant', () => {

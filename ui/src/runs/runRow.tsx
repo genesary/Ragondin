@@ -6,7 +6,7 @@
 // keyboard as one of the table's single tab stop, so the checkbox and the link
 // inside it leave the tab order; a click still reaches both.
 import type { ReactNode } from 'react';
-import { Checkbox, MetricChip, PrefixLabel, StatusChip, type TableRow } from '../../design/index.ts';
+import { Checkbox, MetricChip, PrefixLabel, prefixWords, StatusChip, type TableRow } from '../../design/index.ts';
 import { formatHash } from '../routes.ts';
 import { benchmarkLabel, formatLatency, formatMetric, metricLabel, openRoute, otherFact, rowKey, shortHash, type RunRow } from './model.ts';
 import type { Refusal } from './selection.ts';
@@ -81,9 +81,11 @@ export function runRow(row: RunRow, { selected, refusal, columns, onToggle }: Ru
       </a>
       {row.prefix === null ? null : (
         <span className="rg-runs__prefix">
-          <PrefixLabel parent={row.prefix.parents.join(', ')} upTo={row.prefix.upTo} />
+          <PrefixLabel parents={row.prefix.parents} upTo={row.prefix.upTo} />
         </span>
       )}
+      {/* The structural relation, when the record names another: a fact of its own, beside the recorded one. */}
+      {row.contentPrefix === null ? null : <span className="rg-runs__fact">content: {prefixWords(row.contentPrefix.parents, row.contentPrefix.upTo)}</span>}
       {/* The fact the group is not headed by: text from the first draw, so nothing moves in later. */}
       {fact === null ? null : <span className="rg-runs__fact">{fact}</span>}
       {row.announced === null ? null : (

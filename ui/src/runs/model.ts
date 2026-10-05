@@ -95,6 +95,14 @@ export type RunRow = {
    * the command line is one too. A job's is the parent it was submitted from.
    */
   prefix: { parents: string[]; upTo: string } | null;
+  /**
+   * What the structural test says the run's content is a prefix of, when its
+   * launch record names a prefix and the test names other documents: ADR-C39
+   * § 4's other fact, drawn beside the recorded one and never merged into it.
+   * Null otherwise — with no recorded prefix, the structural relation is
+   * `prefix` itself.
+   */
+  contentPrefix: { parents: string[]; upTo: string } | null;
   /** What the queue says of a job's row; null for a run of the store. */
   job: JobFacts | null;
   /**
@@ -220,6 +228,7 @@ export function rowsFromListing(listing: RunListing): RunRow[] {
       latencyMs: run.median_query_latency_nanos === null ? null : run.median_query_latency_nanos / 1e6,
       startedAt: run.started_at_ms === null ? null : new Date(run.started_at_ms).toISOString(),
       prefix: prefixOf(run),
+      contentPrefix: contentPrefixOf(run),
       job: null,
       announced: null,
     };
@@ -240,13 +249,26 @@ export function prefixOf(run: Pick<RunSummary, 'launched_as' | 'prefix_of_docume
 }
 
 /**
+ * The structural relation beside a recorded prefix, when it names other
+ * documents than the record's parent; null otherwise.
+ */
+function contentPrefixOf(run: RunSummary): RunRow['contentPrefix'] {
+  const record = run.launched_as;
+  const [first] = run.prefix_of_documents;
+  if (record?.name == null || record.prefix_of === null || first === undefined) return null;
+  const parents = run.prefix_of_documents.map((d) => d.pipeline);
+  if (parents.length === 1 && parents[0] === record.name) return null;
+  return { parents, upTo: first.up_to };
+}
+
+/**
  * A run's prefix relation as one selector option's words — "prefix of
  * hybrid, up to rerank" — or null for a run that is no prefix: Compare's and
  * Replay's run selectors name it as Runs' label does.
  */
 export function prefixText(run: Pick<RunSummary, 'launched_as' | 'prefix_of_documents'>): string | null {
   const prefix = prefixOf(run);
-  return prefix === null ? null : prefixWords(prefix.parents.join(', '), prefix.upTo);
+  return prefix === null ? null : prefixWords(prefix.parents, prefix.upTo);
 }
 
 /**

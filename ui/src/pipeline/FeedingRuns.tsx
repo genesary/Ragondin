@@ -55,7 +55,7 @@ export function FeedingRuns({ runs, pipeline }: { runs: readonly FeedingRun[]; p
               {run.started_at_ms === null ? null : <time dateTime={new Date(run.started_at_ms).toISOString()}>{started(run.started_at_ms)}</time>}
               {run.prefix_of === null ? null : (
                 <span className="rg-pipeline__label">
-                  <PrefixLabel parent={run.prefix_of.pipeline} upTo={run.prefix_of.up_to} />
+                  <PrefixLabel parents={[run.prefix_of.pipeline]} upTo={run.prefix_of.up_to} />
                 </span>
               )}
               {changed === null ? null : <span className="rg-pipeline__label">{changed}</span>}
