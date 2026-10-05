@@ -547,7 +547,7 @@ describe('a fork', () => {
 });
 
 describe('renaming a file from its title', () => {
-  const RENAMED = { body: { name: 'lexical-only', etag: ETAG, modified_ms: null, hash: HASH, error: null, fault: null as string | null } };
+  const RENAMED = { body: { name: 'lexical-only', etag: ETAG, modified_ms: null, hash: HASH, error: null, ends_in_answer: true, fault: null as string | null } };
   const rename = (to: string) => {
     fireEvent.click(screen.getByRole('button', { name: 'Rename' }));
     const field = screen.getByRole('textbox', { name: 'Pipeline name' });

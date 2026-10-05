@@ -1014,6 +1014,9 @@ pub struct PipelineRenamed {
     pub hash: Option<String>,
     /// Why it does not validate, when it does not.
     pub error: Option<PipelineError>,
+    /// Whether its output is an answer, as the listing says it; `null` when
+    /// it does not validate.
+    pub ends_in_answer: Option<bool>,
     /// What could not follow the document once it had moved — its layout
     /// left under the old name, a pairing not removed — in words; `null` when
     /// the pipeline moved whole. The rename is done either way.

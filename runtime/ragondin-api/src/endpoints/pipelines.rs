@@ -178,7 +178,9 @@ pub(crate) async fn rename(
         .pipelines
         .rename(&name, &to, &precondition)
         .await?;
-    let (hash, error) = verdict(&file.document);
+    let lowered = validation::lower(&file.document);
+    let ends_in_answer = lowered.as_ref().ok().map(derived::ends_in_answer);
+    let (hash, error) = verdict(lowered);
     let revision = file.revision.clone();
     Ok(with_etag(
         Json(PipelineRenamed {
@@ -187,6 +189,7 @@ pub(crate) async fn rename(
             etag: revision.as_str().to_owned(),
             hash,
             error,
+            ends_in_answer,
             fault,
         }),
         &revision,

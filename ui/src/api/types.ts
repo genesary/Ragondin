@@ -1302,6 +1302,11 @@ export type PipelineMatrix = {
  * under its new name, and what did not follow it.
  */
 export type PipelineRenamed = {
+  /**
+   * Whether its output is an answer, as the listing says it; `null` when
+   * it does not validate.
+   */
+  ends_in_answer: boolean | null;
   /** Why it does not validate, when it does not. */
   error: PipelineError | null;
   /** The digest of its bytes, unchanged by the rename. */

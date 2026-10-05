@@ -3293,6 +3293,11 @@
       "PipelineRenamed": {
         "description": "`POST /pipelines/{name}/rename`: the pipeline as the listing describes it\nunder its new name, and what did not follow it.",
         "properties": {
+          "ends_in_answer": {
+            "description": "Whether its output is an answer, as the listing says it; `null` when\nit does not validate.",
+            "nullable": true,
+            "type": "boolean"
+          },
           "error": {
             "anyOf": [
               {
@@ -3334,6 +3339,7 @@
           }
         },
         "required": [
+          "ends_in_answer",
           "error",
           "etag",
           "fault",
