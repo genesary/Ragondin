@@ -523,7 +523,6 @@ fn not_found(name: &str) -> ApiError {
     }
 }
 
-
 /// The layout at `path`, or `None` when there is no file: a layout of
 /// another version, or not a layout at all, is `backend_failed`, never
 /// guessed at.
