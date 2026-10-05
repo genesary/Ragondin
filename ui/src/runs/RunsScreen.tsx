@@ -50,7 +50,7 @@ const selectWith = (job: string | undefined, launch: RunsScreenProps['launch']) 
 // Which events say the queue's order, one entry per name of the generated
 // union: a name added to `JobEvent` does not compile until it is decided here.
 // A fault, a tick and a transition move no job among the queued.
-const SAYS_ORDER: Record<JobEvent['event'], boolean> = { queued: false, running: false, done: false, failed: false, cancelled: false, fault: false, reordered: true, resync: true };
+const SAYS_ORDER: Record<JobEvent['event'], boolean> = { queued: false, running: false, done: false, failed: false, cancelled: false, fault: false, dismissed: false, reordered: true, resync: true };
 
 const runs = (n: number) => `${n.toLocaleString('en-US')} run${n === 1 ? '' : 's'}`;
 

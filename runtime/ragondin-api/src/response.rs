@@ -950,6 +950,22 @@ pub enum GroundTruth {
 pub struct BenchmarkListing {
     /// The manifest's entries in manifest order, then the imports by name.
     pub benchmarks: Vec<BenchmarkEntry>,
+    /// Which ground truths a pipeline can be scored on, by what it ends in:
+    /// `ragondin-benchmarks`' `CarriedPieces::scorable` asked of each, so a
+    /// client offers a pipeline the benchmarks it can be scored on without
+    /// restating the rule (ADR-C30 § 5).
+    pub scorable: Scorable,
+}
+
+/// The ground truths a pipeline can be scored on, by whether it ends in an
+/// answer, each list in [`GroundTruth`]'s order.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct Scorable {
+    /// For a pipeline whose output is an answer — one ending in a generator.
+    pub ending_in_answer: Vec<GroundTruth>,
+    /// For a pipeline whose output is anything else — a ranking or a
+    /// context.
+    pub ending_elsewhere: Vec<GroundTruth>,
 }
 
 /// `GET /pipelines`: every pipeline document in the workspace.
@@ -975,6 +991,10 @@ pub struct PipelineSummary {
     pub hash: Option<String>,
     /// Why it does not validate, when it does not.
     pub error: Option<PipelineError>,
+    /// Whether its output is an answer — its terminal node produces one —
+    /// when it validates; `null` when it does not. With
+    /// [`BenchmarkListing::scorable`], which benchmarks it can be scored on.
+    pub ends_in_answer: Option<bool>,
 }
 
 /// `GET /pipelines/{name}`: one pipeline document, verbatim, and as the
@@ -1928,6 +1948,9 @@ pub enum JobEvent {
     /// A fault reported beside a job, which does not change its state: the
     /// job, its faults with the new one last.
     Fault(JobSummary),
+    /// An ended job dismissed, which does not change its state: the job, its
+    /// dismissal's time set.
+    Dismissed(JobSummary),
     /// The whole queue, sent when the stream cannot replay what a client
     /// missed.
     Resync(JobListing),
@@ -1964,6 +1987,11 @@ pub struct JobSummary {
     /// it, so a restart reads them back; one that could not be written says
     /// it is held in memory only, until a later write of the job carries it.
     pub faults: Vec<ReportedFault>,
+    /// When it was dismissed — an ended job a person has finished with — in
+    /// milliseconds since the epoch; `null` while it is not. A dismissed job
+    /// is still listed, its state and its partial traces unchanged: a client
+    /// leaves it out of what it shows.
+    pub dismissed_at_ms: Option<u64>,
 }
 
 /// A fault beside a job, which did not change its state.

@@ -9,6 +9,7 @@ const job = (id: string, state: JobSummary['state'], benchmark = 'beir/scifact')
   position: 0,
   state,
   work: { kind: 'download', benchmark },
+  dismissed_at_ms: null,
   faults: [],
 });
 

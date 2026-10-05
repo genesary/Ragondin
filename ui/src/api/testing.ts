@@ -6,7 +6,7 @@
 import { vi } from 'vitest';
 import { API_BASE } from './base.ts';
 import { BUILD_HEADER, type Answer, type Body, type PathWith } from './client.ts';
-import type { Problem } from './types.ts';
+import type { Problem, Scorable } from './types.ts';
 
 /** An `EventSource` a test drives by hand. */
 export class FakeEventSource {
@@ -176,3 +176,10 @@ export function mockApi(routes: MockRoutes, { build = 'test-build' }: { build?: 
   }
   return { requests, bodies, signals, headers };
 }
+
+/**
+ * `GET /benchmarks`' `scorable`, as the API serves it: which ground truths a
+ * pipeline can be scored on by what it ends in. A test listing carries it as
+ * the server would, never a rule of its own.
+ */
+export const SCORABLE: Scorable = { ending_in_answer: ['none', 'qrels', 'reference_answers', 'both'], ending_elsewhere: ['none', 'qrels'] };

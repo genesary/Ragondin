@@ -147,6 +147,28 @@ async fn the_listing_names_each_pipeline_with_its_hash_or_its_error() {
     assert_eq!(pipelines[1]["etag"].as_str().unwrap().len(), 64);
 }
 
+/// A retriever, a context builder and a generator: its output is an answer.
+const ANSWERING: &str = "pipeline:\n  inputs: [question]\n  nodes:\n    - id: lexical\n      component: retriever\n      impl: bm25\n      inputs: [question]\n    - id: concat\n      component: context_builder\n      impl: concat\n      inputs: [question, lexical]\n    - id: generate\n      component: generator\n      impl: answerer\n      inputs: [question, concat]\n";
+
+#[tokio::test]
+async fn the_listing_says_whether_each_pipeline_ends_in_an_answer() {
+    let workspace = scratch("listing_output");
+    fs::write(workspace.pipelines().join("answering.yaml"), ANSWERING).unwrap();
+    fs::write(workspace.pipelines().join("broken.yaml"), MIS_KINDED).unwrap();
+    fs::write(workspace.pipelines().join("hybrid.yaml"), HYBRID).unwrap();
+
+    let body = body_json(send(server(&workspace), get("/api/v1/pipelines")).await).await;
+
+    let ends: Vec<&Value> = body["pipelines"]
+        .as_array()
+        .expect("a list")
+        .iter()
+        .map(|p| &p["ends_in_answer"])
+        .collect();
+    // A document that does not validate has no output to speak of.
+    assert_eq!(ends, [&json!(true), &Value::Null, &json!(false)]);
+}
+
 #[tokio::test]
 async fn a_write_with_a_stale_etag_is_refused_with_412_and_the_current_etag() {
     let workspace = scratch("stale");

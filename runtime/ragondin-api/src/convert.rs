@@ -30,8 +30,8 @@ use crate::response::{
     DatasetStatus, DatasetVersions, EdgeKind, FamilyPorts, FoundVersions, Graph, GraphEdge,
     GraphInput, GraphNode, GroundTruth, LaunchedAs, LaunchedPrefix, MetricDirection, MetricFamily,
     MetricRow, NameHeld, NodeMetrics, ParameterName, ParameterRow, ParameterValue, PartialNode,
-    PrefixOf, RunDetail, RunInputs, RunSummary, ServiceBinding, TraceNodeView, TracePassage,
-    TraceValue, TypedDocument, TypedGraph, TypedNode,
+    PrefixOf, RunDetail, RunInputs, RunSummary, Scorable, ServiceBinding, TraceNodeView,
+    TracePassage, TraceValue, TypedDocument, TypedGraph, TypedNode,
 };
 
 /// One run, as the listing shows it, with the names the request found for
@@ -644,6 +644,27 @@ pub(crate) fn carried(ground_truth: GroundTruth) -> CarriedPieces {
         GroundTruth::Qrels => CarriedPieces::QrelsOnly,
         GroundTruth::ReferenceAnswers => CarriedPieces::ReferenceAnswersOnly,
         GroundTruth::Both => CarriedPieces::QrelsAndReferenceAnswers,
+    }
+}
+
+/// Which ground truths a pipeline can be scored on, by whether it ends in an
+/// answer: `CarriedPieces::scorable` asked of every [`GroundTruth`], the rule
+/// served rather than restated by a client.
+pub(crate) fn scorable() -> Scorable {
+    let all = [
+        GroundTruth::None,
+        GroundTruth::Qrels,
+        GroundTruth::ReferenceAnswers,
+        GroundTruth::Both,
+    ];
+    let by = |ends_in_answer: bool| {
+        all.into_iter()
+            .filter(|&truth| carried(truth).scorable(ends_in_answer))
+            .collect()
+    };
+    Scorable {
+        ending_in_answer: by(true),
+        ending_elsewhere: by(false),
     }
 }
 

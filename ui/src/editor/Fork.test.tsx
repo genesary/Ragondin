@@ -22,7 +22,7 @@ function Harness({ node }: { node?: string }) {
 function setup(routes: MockRoutes = {}, node?: string) {
   const api = mockApi({
     'GET /runs/{id}': { body: RUN },
-    'GET /pipelines': { body: { pipelines: [{ name: 'hybrid', etag: 'e'.repeat(64), modified_ms: null, hash: null, error: null }] } },
+    'GET /pipelines': { body: { pipelines: [{ name: 'hybrid', etag: 'e'.repeat(64), modified_ms: null, hash: null, ends_in_answer: false, error: null }] } },
     'PUT /pipelines/{name}': { body: { name: 'hybrid-fork', etag: 'f'.repeat(64), hash: RUN.inputs.pipeline } },
     'GET /runs/{id}/layout': { body: { layout: null } },
     'PUT /pipelines/{name}/layout': { body: { layout: LAYOUT } },

@@ -265,9 +265,10 @@ pub enum ApiError {
         /// The terminal state it is in.
         state: String,
     },
-    /// A read of the partial traces of a job still queued or running: a
-    /// run's traces are written when it stops.
-    #[error("job {id} is {state}: its traces are kept only once it fails or is cancelled")]
+    /// A read of the partial traces, or a dismissal, of a job still queued
+    /// or running: a run's traces are written when it stops, and only an
+    /// ended job is dismissed.
+    #[error("job {id} is {state}: it has not ended")]
     JobNotEnded {
         /// The job's id.
         id: String,
@@ -629,7 +630,7 @@ impl ApiError {
                 "Nothing to cancel: submit it again to run it again.".to_owned()
             }
             Self::JobNotEnded { .. } => {
-                "Wait for the job to end: a run that fails or is cancelled keeps the traces of the queries it executed.".to_owned()
+                "Wait for the job to end, or cancel it: a run that fails or is cancelled keeps the traces of the queries it executed, and an ended job can be dismissed.".to_owned()
             }
             Self::NoPartialTraces { .. } => {
                 "Nothing to replay from the job: a done run is replayed from the store, and a crash keeps none it can vouch for.".to_owned()

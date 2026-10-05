@@ -10,7 +10,7 @@ export type Jobs = ReadonlyMap<string, JobSummary>;
 // Every event name the description gives the stream, listed once: a record
 // over the generated union, so a name added to `JobEvent` does not compile
 // until it is here.
-const NAMES: Record<JobEvent['event'], true> = { queued: true, running: true, done: true, failed: true, cancelled: true, reordered: true, fault: true, resync: true };
+const NAMES: Record<JobEvent['event'], true> = { queued: true, running: true, done: true, failed: true, cancelled: true, reordered: true, fault: true, dismissed: true, resync: true };
 const isName = (name: string): name is JobEvent['event'] => Object.hasOwn(NAMES, name);
 
 const isObject = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);

@@ -101,7 +101,7 @@ describe('the outcome of a run, as a toast', () => {
   it('raises nothing for what had already ended when the page opened, nor for a download', () => {
     const stream = show();
     connect(stream, [runJob('j1', doneAs(RUN)), runJob('j2', failedAt(null, 'interrupted'))]);
-    const download: JobSummary = { id: 'd1', created_at_ms: 1, position: 0, state: QUEUED, work: { kind: 'download', benchmark: 'beir/fiqa' }, faults: [] };
+    const download: JobSummary = { id: 'd1', created_at_ms: 1, position: 0, state: QUEUED, work: { kind: 'download', benchmark: 'beir/fiqa' }, dismissed_at_ms: null, faults: [] };
     send(stream, { event: 'queued', data: download });
     send(stream, { event: 'done', data: { ...download, state: doneAs('') } });
     expect(toasts()).toHaveLength(0);

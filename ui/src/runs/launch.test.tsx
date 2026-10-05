@@ -7,7 +7,7 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import { useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createApiClient } from '../api/client.ts';
-import { FakeEventSource, installFakeEventSource, mockApi, type MockRoutes } from '../api/testing.ts';
+import { FakeEventSource, installFakeEventSource, mockApi, SCORABLE, type MockRoutes } from '../api/testing.ts';
 import type { BenchmarkEntry, JobListing, JobSummary, PipelineDetail, PipelineSummary, Problem, RunListing, RunSummary } from '../api/types.ts';
 import { CANCELLED, connect, doneAs, failedAt, hex, QUEUED, runJob, running, send } from '../jobs/fixtures.ts';
 import { JobQueueProvider } from '../jobs/queue.tsx';
@@ -23,11 +23,12 @@ const HYBRID = hex('c');
 const ANNOUNCED = hex('a');
 const short = (id: string) => id.slice(0, 12);
 
-const pipeline = (name: string, over: Partial<PipelineSummary> = {}): PipelineSummary => ({ name, etag: 'e', hash: HYBRID, error: null, modified_ms: 1, ...over });
+const pipeline = (name: string, over: Partial<PipelineSummary> = {}): PipelineSummary => ({ name, etag: 'e', hash: HYBRID, error: null, ends_in_answer: false, modified_ms: 1, ...over });
 const PIPELINES = { pipelines: [pipeline('hybrid'), pipeline('broken', { hash: null, error: { detail: 'node `rerank` reads `fused`, which no node writes', location: { node: 'rerank', edge: null } } })] };
 
 const bench = (name: string, state: BenchmarkEntry['state'], truth: BenchmarkEntry['ground_truth'] = 'qrels'): BenchmarkEntry => ({ name, format: 'beir', ground_truth: truth, licence: null, licence_url: null, state });
 const BENCHMARKS = {
+  scorable: SCORABLE,
   benchmarks: [bench('beir/scifact', { kind: 'ready', dataset_version: SCIFACT }), bench('beir/fiqa', { kind: 'available', size_bytes: 1 }, null), bench('mine', { kind: 'local', dataset_version: hex('7') }, 'both')],
 };
 const SERVICES = { services: [{ family: 'generator', name: 'qwen', uri: 'http://127.0.0.1:8080', connected: true, identity: 'qwen2.5-7b' }] };

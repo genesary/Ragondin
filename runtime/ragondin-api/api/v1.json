@@ -90,10 +90,19 @@
               "$ref": "#/components/schemas/BenchmarkEntry"
             },
             "type": "array"
+          },
+          "scorable": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Scorable"
+              }
+            ],
+            "description": "Which ground truths a pipeline can be scored on, by what it ends in:\n`ragondin-benchmarks`' `CarriedPieces::scorable` asked of each, so a\nclient offers a pipeline the benchmarks it can be scored on without\nrestating the rule (ADR-C30 § 5)."
           }
         },
         "required": [
-          "benchmarks"
+          "benchmarks",
+          "scorable"
         ],
         "type": "object"
       },
@@ -1415,6 +1424,25 @@
             "type": "object"
           },
           {
+            "description": "An ended job dismissed, which does not change its state: the job, its\ndismissal's time set.",
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/JobSummary"
+              },
+              "event": {
+                "enum": [
+                  "dismissed"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "event",
+              "data"
+            ],
+            "type": "object"
+          },
+          {
             "description": "The whole queue, sent when the stream cannot replay what a client\nmissed.",
             "properties": {
               "data": {
@@ -1668,6 +1696,13 @@
             "nullable": true,
             "type": "integer"
           },
+          "dismissed_at_ms": {
+            "description": "When it was dismissed — an ended job a person has finished with — in\nmilliseconds since the epoch; `null` while it is not. A dismissed job\nis still listed, its state and its partial traces unchanged: a client\nleaves it out of what it shows.",
+            "format": "uint64",
+            "minimum": 0,
+            "nullable": true,
+            "type": "integer"
+          },
           "faults": {
             "description": "What went wrong beside it without stopping it — a layout not copied\nat launch, latencies left out of its median, a write of its record\nthat failed — in the order reported. Written into the job's file with\nit, so a restart reads them back; one that could not be written says\nit is held in memory only, until a later write of the job carries it.",
             "items": {
@@ -1704,6 +1739,7 @@
         },
         "required": [
           "created_at_ms",
+          "dismissed_at_ms",
           "faults",
           "id",
           "position",
@@ -3248,6 +3284,11 @@
       "PipelineSummary": {
         "description": "A pipeline, as the listing shows it.",
         "properties": {
+          "ends_in_answer": {
+            "description": "Whether its output is an answer — its terminal node produces one —\nwhen it validates; `null` when it does not. With\n[`BenchmarkListing::scorable`], which benchmarks it can be scored on.",
+            "nullable": true,
+            "type": "boolean"
+          },
           "error": {
             "anyOf": [
               {
@@ -3284,6 +3325,7 @@
           }
         },
         "required": [
+          "ends_in_answer",
           "error",
           "etag",
           "hash",
@@ -4088,6 +4130,30 @@
           "prefix_of_documents",
           "refused_pipeline_names",
           "started_at_ms"
+        ],
+        "type": "object"
+      },
+      "Scorable": {
+        "description": "The ground truths a pipeline can be scored on, by whether it ends in an\nanswer, each list in [`GroundTruth`]'s order.",
+        "properties": {
+          "ending_elsewhere": {
+            "description": "For a pipeline whose output is anything else — a ranking or a\ncontext.",
+            "items": {
+              "$ref": "#/components/schemas/GroundTruth"
+            },
+            "type": "array"
+          },
+          "ending_in_answer": {
+            "description": "For a pipeline whose output is an answer — one ending in a generator.",
+            "items": {
+              "$ref": "#/components/schemas/GroundTruth"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "ending_in_answer",
+          "ending_elsewhere"
         ],
         "type": "object"
       },
@@ -5270,6 +5336,44 @@
           }
         },
         "summary": "Moves a queued job among its lane's queued jobs, and answers the queue in its new order."
+      }
+    },
+    "/jobs/{id}/dismiss": {
+      "post": {
+        "description": "Its state and the traces it kept under jobs/<id>/partial/ are unchanged; the dismissed event carries it, and a job dismissed already keeps its first time. A job still queued or running is job_not_ended (409).",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobSummary"
+                }
+              }
+            },
+            "description": "Dismisses an ended job: it stays listed, its dismissed_at_ms set, for a client to leave out of what it shows."
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "An error, as application/problem+json."
+          }
+        },
+        "summary": "Dismisses an ended job: it stays listed, its dismissed_at_ms set, for a client to leave out of what it shows."
       }
     },
     "/jobs/{id}/queries": {

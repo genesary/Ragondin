@@ -456,6 +456,7 @@ impl Queue {
                 at: created_at,
             }],
             faults: Vec::new(),
+            dismissed_at: None,
         };
         self.write(&mut job)
             .await
@@ -506,6 +507,34 @@ impl Queue {
                 state: ended.name().to_owned(),
             }),
         }
+    }
+
+    /// Dismisses the ended job `id`: records when, written before memory
+    /// changes, and publishes `dismissed`. Its state and the traces it kept
+    /// are left as they are; a job dismissed already keeps its first time.
+    /// `job_not_ended` while it is queued or running.
+    pub(crate) async fn dismiss(&self, id: &str) -> Result<JobSummary, ApiError> {
+        let mut state = self.state.lock().await;
+        let index = state.find(id)?;
+        let entry = &state.jobs[index];
+        if !entry.job.state.is_terminal() {
+            return Err(ApiError::JobNotEnded {
+                id: id.to_owned(),
+                state: entry.job.state.name().to_owned(),
+            });
+        }
+        if entry.job.dismissed_at.is_some() {
+            return Ok(summary(&entry.job));
+        }
+        let mut job = entry.job.clone();
+        job.dismissed_at = now();
+        self.write(&mut job)
+            .await
+            .map_err(|detail| ApiError::BackendFailed { detail })?;
+        let view = summary(&job);
+        state.jobs[index].job = job;
+        self.publish(&mut state, &JobEvent::Dismissed(view.clone()));
+        Ok(view)
     }
 
     /// Moves the queued job `id` to `position` among its lane's queued jobs
@@ -1073,6 +1102,7 @@ fn parts(event: &JobEvent) -> (&'static str, String) {
         JobEvent::Cancelled(job) => ("cancelled", to_json(job)),
         JobEvent::Reordered(job) => ("reordered", to_json(job)),
         JobEvent::Fault(job) => ("fault", to_json(job)),
+        JobEvent::Dismissed(job) => ("dismissed", to_json(job)),
         JobEvent::Resync(listing) => ("resync", to_json(listing)),
     }
 }
@@ -1103,6 +1133,7 @@ mod tests {
             },
             state: JobStatus::Queued,
             faults: Vec::new(),
+            dismissed_at_ms: None,
         };
         let listing = JobListing {
             jobs: vec![job.clone()],
@@ -1115,7 +1146,8 @@ mod tests {
             JobEvent::Failed(job.clone()),
             JobEvent::Cancelled(job.clone()),
             JobEvent::Reordered(job.clone()),
-            JobEvent::Fault(job),
+            JobEvent::Fault(job.clone()),
+            JobEvent::Dismissed(job),
             JobEvent::Resync(listing),
         ] {
             let tagged = serde_json::to_value(&event).unwrap();

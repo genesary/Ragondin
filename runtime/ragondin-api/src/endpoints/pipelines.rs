@@ -18,9 +18,11 @@ use axum::response::{IntoResponse, Response};
 use axum::Json;
 use ragondin_config::read_document;
 use ragondin_experiments::UnixMillis;
+use ragondin_pipeline::LogicalPipeline;
 
 use crate::backends::{PipelineFile, Precondition, Revision};
 use crate::convert;
+use crate::derived::Outputs;
 use crate::error::ApiError;
 use crate::extract::{ApiHeaders, ApiJson, ApiPath, ApiQuery, NoParameters};
 use crate::handlers::{load_run, AppState};
@@ -41,13 +43,22 @@ pub(crate) async fn list(
         pipelines: files
             .into_iter()
             .map(|file| {
-                let (hash, error) = verdict(&file.document);
+                let lowered = validation::lower(&file.document);
+                // What it ends in, read off the pipeline the hash is of: the
+                // harness scores an answer only when its terminal node
+                // produces one.
+                let ends_in_answer = lowered
+                    .as_ref()
+                    .ok()
+                    .map(|pipeline| Outputs::of(pipeline).answer.is_some());
+                let (hash, error) = verdict_of(lowered);
                 PipelineSummary {
                     modified_ms: modified_ms(file.modified),
                     name: file.name,
                     etag: file.revision.as_str().to_owned(),
                     hash,
                     error,
+                    ends_in_answer,
                 }
             })
             .collect(),
@@ -202,7 +213,14 @@ pub(crate) async fn write_layout(
 
 /// The hash a document validates to, or why it does not.
 fn verdict(document: &str) -> (Option<String>, Option<PipelineError>) {
-    match validation::check(document) {
+    verdict_of(validation::lower(document))
+}
+
+/// [`verdict`], of a document already lowered.
+fn verdict_of(
+    lowered: Result<LogicalPipeline, ApiError>,
+) -> (Option<String>, Option<PipelineError>) {
+    match lowered.map(|pipeline| pipeline.content_hash().to_string()) {
         Ok(hash) => (Some(hash), None),
         Err(ApiError::PipelineInvalid { detail, location }) => {
             (None, Some(PipelineError { detail, location }))

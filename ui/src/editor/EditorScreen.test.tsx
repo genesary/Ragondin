@@ -191,13 +191,13 @@ describe('the Editor screen', () => {
   });
 
   it('opens no example when the listing finds a pipeline the shell’s count is too old to know', async () => {
-    mockApi({ ...ROUTES, 'GET /pipelines': { body: { pipelines: [{ name: 'hybrid', etag: 'e'.repeat(64), modified_ms: null, hash: HASH, error: null }] } } });
+    mockApi({ ...ROUTES, 'GET /pipelines': { body: { pipelines: [{ name: 'hybrid', etag: 'e'.repeat(64), modified_ms: null, hash: HASH, ends_in_answer: false, error: null }] } } });
     render(<Harness workspace={{ status: 'loaded', value: EMPTY_WORKSPACE }} />);
     expect(await screen.findByRole('heading', { name: 'No pipeline open' })).toBeTruthy();
   });
 
   it('on a workspace holding pipelines, offers a new one or an import', async () => {
-    mockApi({ ...ROUTES, 'GET /pipelines': { body: { pipelines: [{ name: 'hybrid', etag: 'e'.repeat(64), modified_ms: null, hash: HASH, error: null }] } } });
+    mockApi({ ...ROUTES, 'GET /pipelines': { body: { pipelines: [{ name: 'hybrid', etag: 'e'.repeat(64), modified_ms: null, hash: HASH, ends_in_answer: false, error: null }] } } });
     render(<Harness />);
     expect(await screen.findByRole('heading', { name: 'No pipeline open' })).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Import a pipeline' }));

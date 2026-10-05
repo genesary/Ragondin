@@ -1480,7 +1480,7 @@ code.
 | `job_not_found` | 404 | no job under this id in the queue | `GET`/`PATCH`/`DELETE /jobs/{id}` |
 | `job_not_queued` | 409 | a reorder of a job that is running or ended; the detail names its state | `PATCH /jobs/{id}` |
 | `job_finished` | 409 | a cancellation of a job that already ended | `DELETE /jobs/{id}` |
-| `job_not_ended` | 409 | a read of the partial traces of a job still queued or running; the detail names its state | `GET /jobs/{id}/queries`, `GET /jobs/{id}/trace/{query}` |
+| `job_not_ended` | 409 | a read of the partial traces, or a dismissal, of a job still queued or running; the detail names its state | `GET /jobs/{id}/queries`, `GET /jobs/{id}/trace/{query}`, `POST /jobs/{id}/dismiss` |
 | `no_partial_traces` | 404 | a read of the partial traces of a job that has none: done, a download, or a run that kept none — interrupted by a crash, stopped before its first query, or whose traces could not be written; the detail says which | `GET /jobs/{id}/queries`, `GET /jobs/{id}/trace/{query}` |
 | `prefix_node_not_found` | 422 | a prefix run's `up_to` names no node of the document — a declared input is not a node; `location` names it | `POST /runs` |
 | `prefix_is_whole_pipeline` | 422 | a prefix run's `up_to` is the pipeline's output: the prefix would be the whole pipeline; `location` names it | `POST /runs` |

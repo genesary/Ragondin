@@ -2009,3 +2009,81 @@ async fn an_old_job_file_whose_traces_do_not_read_counts_none_and_says_why() {
         "{body}"
     );
 }
+
+fn dismiss(id: &str) -> axum::http::Request<axum::body::Body> {
+    write_request(
+        "POST",
+        &format!("/api/v1/jobs/{id}/dismiss"),
+        &json!(null),
+        &[],
+    )
+}
+
+#[tokio::test]
+async fn dismissing_an_ended_job_records_it_publishes_it_and_keeps_its_traces() {
+    let workspace = scratch("jobs-dismiss-ended");
+    let launcher = Arc::new(ScriptedLauncher::new(Script {
+        queries: vec![100, 200, 300],
+        fail_at: Some(2),
+        ..Script::default()
+    }));
+    let app = server(&workspace, launcher);
+    let id = accepted(&app, PIPELINE).await;
+    let failed = job_until(&app, &id, finished).await;
+    assert_eq!(failed["dismissed_at_ms"], Value::Null, "{failed}");
+    let watcher = {
+        let app = app.clone();
+        tokio::spawn(async move {
+            events(&app, None, |events| {
+                events.iter().any(|event| event.name == "dismissed")
+            })
+            .await
+        })
+    };
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let response = send(app.clone(), dismiss(&id)).await;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let dismissed = json(response).await;
+    let at = dismissed["dismissed_at_ms"].as_u64().expect("a time");
+    // Dismissing hides the job, it does not change what happened to it.
+    assert_eq!(dismissed["state"], failed["state"]);
+    let events = watcher.await.unwrap();
+    let event = events.iter().find(|e| e.name == "dismissed").unwrap();
+    assert_eq!(event.data, dismissed);
+    // Written, so a restart keeps it; the traces it kept are still there.
+    assert_eq!(job_file(&workspace, &id)["dismissed_at"], at);
+    assert!(workspace
+        .join("jobs")
+        .join(&id)
+        .join("partial/traces.json")
+        .exists());
+    let restarted = server(&workspace, Arc::new(ScriptedLauncher::default()));
+    let job = json(send(restarted.clone(), get(&format!("/api/v1/jobs/{id}"))).await).await;
+    assert_eq!(job["dismissed_at_ms"], at, "{job}");
+    // A second dismissal changes nothing: the first time stands.
+    let again = json(send(restarted, dismiss(&id)).await).await;
+    assert_eq!(again["dismissed_at_ms"], at);
+}
+
+#[tokio::test]
+async fn a_job_not_yet_ended_cannot_be_dismissed() {
+    let workspace = scratch("jobs-dismiss-live");
+    let launcher = Arc::new(ScriptedLauncher::new(Script {
+        queries: vec![100],
+        gate_after: Some(1),
+        ..Script::default()
+    }));
+    let app = server(&workspace, Arc::clone(&launcher));
+    let running = accepted(&app, PIPELINE).await;
+    let queued = accepted(&app, OTHER_PIPELINE).await;
+    job_until(&app, &running, |job| kind(job) == "running").await;
+
+    for id in [&running, &queued] {
+        let response = send(app.clone(), dismiss(id)).await;
+        assert_eq!(response.status(), StatusCode::CONFLICT, "{id}");
+        assert_eq!(json(response).await["code"], "job_not_ended");
+    }
+    launcher.gate.add_permits(1);
+}

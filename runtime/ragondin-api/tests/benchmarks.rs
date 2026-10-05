@@ -67,3 +67,22 @@ async fn an_import_the_registry_refuses_answers_its_code() {
     assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(body_json(response).await["code"], "import_refused");
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_listing_says_which_ground_truths_each_output_can_be_scored_on() {
+    let datasets = scratch("endpoint_scorable");
+    let app = server(FsRegistry::new(datasets, Vec::new()));
+
+    let listing = body_json(send(app, get("/api/v1/benchmarks")).await).await;
+
+    // `CarriedPieces::scorable`, asked of every ground truth: a pipeline that
+    // ends elsewhere than in an answer cannot be scored against reference
+    // answers (ADR-C30 § 5).
+    assert_eq!(
+        listing["scorable"],
+        json!({
+            "ending_in_answer": ["none", "qrels", "reference_answers", "both"],
+            "ending_elsewhere": ["none", "qrels"],
+        })
+    );
+}

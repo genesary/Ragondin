@@ -97,7 +97,7 @@ describe('rowsFromJobs', () => {
   });
 
   it('draws no download', () => {
-    const download: JobSummary = { id: 'd', created_at_ms: 1, position: 0, state: QUEUED, work: { kind: 'download', benchmark: 'beir/fiqa' }, faults: [] };
+    const download: JobSummary = { id: 'd', created_at_ms: 1, position: 0, state: QUEUED, work: { kind: 'download', benchmark: 'beir/fiqa' }, dismissed_at_ms: null, faults: [] };
     expect(rowsFromJobs(jobs(download), [])).toEqual([]);
   });
 });
