@@ -8,8 +8,8 @@
 use std::collections::BTreeMap;
 
 use ragondin_experiments::{
-    compare, ConfigDocument, ConfigurationComparison, ParameterDifference, ParameterKey, Run,
-    RunId, RunInputs, Side,
+    compare, lower_configuration, ConfigDocument, ConfigurationComparison, ParameterDifference,
+    ParameterKey, Run, RunId, RunInputs, Side,
 };
 use ragondin_pipeline::{NodeId, ParamValue, PipelineHash};
 
@@ -17,7 +17,7 @@ fn a_run(byte: u8, config: &str) -> Run {
     Run {
         id: RunId::from_digest([byte; 32]),
         inputs: RunInputs {
-            pipeline: PipelineHash::from_digest([0xbe; 32]),
+            pipeline: recorded(config),
             dataset_version: "beir/scifact@2021-05-01".to_owned(),
             index_version: "bm25-ram@7".to_owned(),
             model_hashes: BTreeMap::new(),
@@ -30,6 +30,16 @@ fn a_run(byte: u8, config: &str) -> Run {
         times: None,
         provenance: None,
     }
+}
+
+/// The hash a run of `config` records: its document's canonical hash, as the
+/// harness computes it — or, for a document this build cannot lower, a
+/// stand-in, since nothing can recompute one to check it against.
+fn recorded(config: &str) -> PipelineHash {
+    lower_configuration(&ConfigDocument::new(config)).map_or_else(
+        |_| PipelineHash::from_digest([0xbe; 32]),
+        |pipeline| pipeline.content_hash(),
+    )
 }
 
 const BASELINE: &str = "\
@@ -322,4 +332,55 @@ fn a_stored_document_that_does_not_lower_says_why_in_the_same_words() {
         "the stored configuration does not validate: \
          node `r`: input `nowhere` names neither a node nor a declared input"
     );
+}
+
+/// A stored run's document is read only as the pipeline the run recorded: its
+/// recomputed canonical hash must be `inputs.pipeline`. An untouched document
+/// lowers as `lower_configuration` lowers it.
+#[test]
+fn a_stored_run_lowers_when_its_document_hashes_to_the_pipeline_it_recorded() {
+    let run = a_run(0x01, BASELINE);
+
+    let pipeline = ragondin_experiments::lower_run(&run).expect("the document is the one that ran");
+
+    assert_eq!(pipeline, lower_configuration(&run.config).unwrap());
+}
+
+/// A `config.yaml` edited after the run — or one this build reads differently
+/// from the build that ran it — lowers to another hash than the recorded one,
+/// and is refused with both hashes named, never read as the run's pipeline.
+#[test]
+fn a_stored_run_whose_document_hashes_to_another_pipeline_is_refused() {
+    let mut run = a_run(0x01, BASELINE);
+    run.config = ConfigDocument::new(BASELINE.replace("k1: 1.2", "k1: 0.9"));
+    let edited = lower_configuration(&run.config).unwrap().content_hash();
+
+    let refused = ragondin_experiments::lower_run(&run).expect_err("the document was changed");
+
+    assert_eq!(
+        refused,
+        format!(
+            "the stored configuration lowers to pipeline {edited}, not to the pipeline {} \
+             the run recorded: it was changed after the run, or this build reads it \
+             differently from the build that ran it",
+            run.inputs.pipeline
+        )
+    );
+}
+
+#[test]
+fn a_comparison_with_a_document_changed_after_its_run_is_unavailable_on_its_side() {
+    let mut tampered = a_run(0x02, BASELINE);
+    tampered.config = ConfigDocument::new(BASELINE.replace("top_k: 10", "top_k: 3"));
+
+    let comparison = compare(&a_run(0x01, BASELINE), &tampered);
+
+    match &comparison.configuration {
+        ConfigurationComparison::Unavailable { side, reason } => {
+            assert_eq!(*side, Side::Right);
+            assert!(reason.contains("not to the pipeline"), "{reason}");
+        }
+        other => panic!("the right document is not the one its run ran: {other:?}"),
+    }
+    assert_eq!(comparison.metrics.len(), 1);
 }

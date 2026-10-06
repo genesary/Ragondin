@@ -223,8 +223,8 @@ pub struct RunListing {
     /// The shape of every pipeline a readable run ran, once per pipeline,
     /// keyed by its canonical hash ([`RunSummary::pipeline`]): the graph
     /// `GET /runs/{id}` serves for a run of it, by the same conversion. A
-    /// pipeline whose every run's stored document no longer lowers has no
-    /// entry, as `GET /runs/{id}` has no graph for it.
+    /// pipeline none of whose runs' stored documents still lowers to it has
+    /// no entry, as `GET /runs/{id}` has no graph for it.
     pub shapes: BTreeMap<String, Graph>,
     /// Why a run's median query latency could not be read from or written
     /// to the workspace's `cache/`, the first such reason; absent when the
@@ -270,7 +270,7 @@ pub struct RunSummary {
     /// prefix of — its declared inputs the same, each of its nodes one of the
     /// document's, equal in canonical form, and fewer of them — each with the
     /// node the run stops at, sorted by name; empty when it is a prefix of
-    /// none, or its stored document no longer lowers. A content fact like
+    /// none, or its stored document no longer lowers to its pipeline. A content fact like
     /// [`pipeline_names`](Self::pipeline_names), asked of every run whatever
     /// [`launched_as`](Self::launched_as) records (ADR-C39 § 5), so a prefix
     /// written by hand and run from the command line is one too; the pipeline
@@ -1329,11 +1329,12 @@ pub enum ConfigurationMatrix {
         /// rather than as a row of unset parameters.
         partial_nodes: Vec<PartialNode>,
     },
-    /// A run's stored configuration does not lower under this build.
+    /// A run's stored configuration does not lower under this build, or
+    /// lowers to another pipeline than the one the run recorded.
     Unavailable {
         /// That run's id.
         run: String,
-        /// What the parser or the validation pass said.
+        /// What the parser or the validation pass said, or both hashes.
         reason: String,
     },
 }

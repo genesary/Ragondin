@@ -35,7 +35,8 @@ use crate::run::{ConfigDocument, Run, RunId};
 /// caller can render the two columns without deciding what to show.
 ///
 /// Infallible even when a stored configuration does not lower — a run stored
-/// under an older schema, say: the metrics are still compared, and
+/// under an older schema, say — or lowers to another pipeline than the one
+/// its run recorded: the metrics are still compared, and
 /// [`RunComparison::configuration`] says which side could not be read and why.
 ///
 /// The two-run case of [`compare_runs`], computed by the same table and the
@@ -140,11 +141,12 @@ fn table(runs: &[&Run]) -> Vec<MetricRow> {
 
 /// Every parameter not identical across `runs`' lowered configurations,
 /// sorted by node id and then by key — or the first run whose configuration
-/// does not lower.
+/// does not lower, or lowers to another pipeline than the one it recorded
+/// ([`lower_run`]).
 fn matrix(runs: &[&Run]) -> ConfigurationMatrix {
     let mut pipelines = Vec::with_capacity(runs.len());
     for (column, run) in runs.iter().enumerate() {
-        match lower_configuration(&run.config) {
+        match lower_run(run) {
             Ok(pipeline) => pipelines.push(pipeline),
             Err(reason) => {
                 return ConfigurationMatrix::Unavailable {
@@ -206,6 +208,30 @@ pub fn lower_configuration(document: &ConfigDocument) -> Result<LogicalPipeline,
             format!("the stored configuration does not validate: {source}")
         }
     })
+}
+
+/// Lowers a stored run's configuration ([`lower_configuration`]) and keeps it
+/// only if its recomputed canonical hash is the one the run recorded,
+/// `inputs.pipeline`. Otherwise the document is not the pipeline that ran —
+/// edited after the run, or read differently by this build than by the one
+/// that ran it, which a grammar change that leaves the schema version
+/// untouched would do silently — and the `Err` names both hashes.
+///
+/// Every reader of a stored run's configuration goes through this, never
+/// through [`lower_configuration`] alone: [`compare`] and [`compare_runs`]
+/// here, and `ragondin-api`'s run graph.
+pub fn lower_run(run: &Run) -> Result<LogicalPipeline, String> {
+    let pipeline = lower_configuration(&run.config)?;
+    let recomputed = pipeline.content_hash();
+    if recomputed != run.inputs.pipeline {
+        return Err(format!(
+            "the stored configuration lowers to pipeline {recomputed}, not to the pipeline {} \
+             the run recorded: it was changed after the run, or this build reads it \
+             differently from the build that ran it",
+            run.inputs.pipeline
+        ));
+    }
+    Ok(pipeline)
 }
 
 /// Every node's component family, `impl:` name and parameters, keyed by node
@@ -338,8 +364,9 @@ pub enum ConfigurationComparison {
         /// inputs can still differ, and this is what says so.
         same_logical_form: bool,
     },
-    /// One side's stored document does not lower under this build — the left
-    /// one, when neither does.
+    /// One side's stored document does not lower under this build, or lowers
+    /// to another pipeline than the one its run recorded ([`lower_run`]) —
+    /// the left one, when neither reads.
     Unavailable {
         /// The run whose configuration could not be read.
         side: Side,
@@ -480,7 +507,8 @@ pub enum ConfigurationMatrix {
         /// their wiring have no row and are still not one configuration.
         same_logical_form: bool,
     },
-    /// A run's stored document does not lower under this build — the first
+    /// A run's stored document does not lower under this build, or lowers to
+    /// another pipeline than the one it recorded ([`lower_run`]) — the first
     /// such run, in column order.
     Unavailable {
         /// The run whose configuration could not be read.

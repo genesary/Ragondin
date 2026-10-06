@@ -419,6 +419,18 @@ Why here and not elsewhere:
   a stored run needs the same graph `compare` computes — `ragondin-api` draws
   a run's graph from it — so it calls this function rather than writing a
   third reader. Its `Err` is the reason in words, as `Unavailable` carries it.
+- **A stored run's document is read only as the pipeline the run recorded.**
+  `lower_run` lowers it through `lower_configuration` and compares the
+  recomputed `content_hash` with `inputs.pipeline`; a mismatch is an `Err`
+  naming both hashes, and `compare` and `compare_runs` report it as
+  `Unavailable`. Before the first release the grammar can change without the
+  schema version changing, and the reader ignores keys it does not know, so a
+  document this build reads differently from the build that ran it lowers
+  without complaint — as does a `config.yaml` edited by hand after the run.
+  The recorded hash is what was run; a graph or a parameter list from a
+  document that no longer hashes to it would describe a pipeline that never
+  ran. Every reader of a stored run's configuration calls `lower_run`;
+  `lower_configuration` alone is for a document no run recorded.
 
 What is compared, and what is not: every node's component family, its `impl:`
 name (an extension node's `kind`, which is where its `impl:` lands on lowering)
@@ -472,6 +484,7 @@ Choices made here (`AGENTS.md` § Rules of engagement):
   not record the metric is never the best, and its delta is absent, never
   zero.
 - **`ConfigurationMatrix::Unavailable` names the run and its column**, the
-  first whose configuration does not lower: the column is what lets
+  first whose configuration does not lower, or lowers to another pipeline
+  than the one it recorded: the column is what lets
   `compare` say *left* or *right* even when one run is compared with
   itself.

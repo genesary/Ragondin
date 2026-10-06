@@ -475,7 +475,7 @@
             "type": "object"
           },
           {
-            "description": "A run's stored configuration does not lower under this build.",
+            "description": "A run's stored configuration does not lower under this build, or\nlowers to another pipeline than the one the run recorded.",
             "properties": {
               "kind": {
                 "enum": [
@@ -484,7 +484,7 @@
                 "type": "string"
               },
               "reason": {
-                "description": "What the parser or the validation pass said.",
+                "description": "What the parser or the validation pass said, or both hashes.",
                 "type": "string"
               },
               "run": {
@@ -3989,7 +3989,7 @@
             "additionalProperties": {
               "$ref": "#/components/schemas/Graph"
             },
-            "description": "The shape of every pipeline a readable run ran, once per pipeline,\nkeyed by its canonical hash ([`RunSummary::pipeline`]): the graph\n`GET /runs/{id}` serves for a run of it, by the same conversion. A\npipeline whose every run's stored document no longer lowers has no\nentry, as `GET /runs/{id}` has no graph for it.",
+            "description": "The shape of every pipeline a readable run ran, once per pipeline,\nkeyed by its canonical hash ([`RunSummary::pipeline`]): the graph\n`GET /runs/{id}` serves for a run of it, by the same conversion. A\npipeline none of whose runs' stored documents still lowers to it has\nno entry, as `GET /runs/{id}` has no graph for it.",
             "type": "object"
           },
           "unreadable": {
@@ -4176,7 +4176,7 @@
             "type": "array"
           },
           "prefix_of_documents": {
-            "description": "Every current workspace document the run's pipeline is a structural\nprefix of — its declared inputs the same, each of its nodes one of the\ndocument's, equal in canonical form, and fewer of them — each with the\nnode the run stops at, sorted by name; empty when it is a prefix of\nnone, or its stored document no longer lowers. A content fact like\n[`pipeline_names`](Self::pipeline_names), asked of every run whatever\n[`launched_as`](Self::launched_as) records (ADR-C39 § 5), so a prefix\nwritten by hand and run from the command line is one too; the pipeline\nmatrix counts a prefix by the same test.",
+            "description": "Every current workspace document the run's pipeline is a structural\nprefix of — its declared inputs the same, each of its nodes one of the\ndocument's, equal in canonical form, and fewer of them — each with the\nnode the run stops at, sorted by name; empty when it is a prefix of\nnone, or its stored document no longer lowers to its pipeline. A content fact like\n[`pipeline_names`](Self::pipeline_names), asked of every run whatever\n[`launched_as`](Self::launched_as) records (ADR-C39 § 5), so a prefix\nwritten by hand and run from the command line is one too; the pipeline\nmatrix counts a prefix by the same test.",
             "items": {
               "$ref": "#/components/schemas/PrefixOf"
             },

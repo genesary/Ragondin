@@ -31,7 +31,7 @@ use std::sync::Arc;
 
 use axum::extract::State;
 use axum::Json;
-use ragondin_experiments::{compare_runs, terminal, ConfigDocument, Run};
+use ragondin_experiments::{compare_runs, terminal, ConfigDocument, Run, RunInputs};
 use ragondin_pipeline::{produced_kind, LogicalPipeline, NodeId, ValueKind};
 
 use ragondin_benchmarks::CarriedPieces;
@@ -358,21 +358,26 @@ fn counted(
         } else {
             SinceChangedLaunch::AsPipeline
         },
-        difference: difference(&run, document),
+        difference: difference(&run, document, current),
     };
     Some(Counted::new(run, Standing::SinceChanged(since)))
 }
 
-/// The parameter difference between the pipeline's current `document` and
-/// `run`'s, the current document's column first: `compare_runs`'
-/// configuration matrix, the one `POST /compare` serves, over the current
-/// document set in a run of its own beside `run`. Only the configuration is
-/// read of that run: it carries `run`'s inputs, so the two are one
-/// benchmark's and always comparable.
-fn difference(run: &Run, document: &str) -> ConfigurationMatrix {
+/// The parameter difference between the pipeline's current `document`, which
+/// lowers to `lowered`, and `run`'s, the current document's column first:
+/// `compare_runs`' configuration matrix, the one `POST /compare` serves, over
+/// the current document set in a run of its own beside `run`. Only the
+/// configuration is read of that run: it carries `run`'s inputs, so the two
+/// are one benchmark's and always comparable, except its pipeline hash, which
+/// is the current document's own — `compare_runs` reads a run's document only
+/// as the pipeline it recorded.
+fn difference(run: &Run, document: &str, lowered: &LogicalPipeline) -> ConfigurationMatrix {
     let current = Run {
         id: run.id,
-        inputs: run.inputs.clone(),
+        inputs: RunInputs {
+            pipeline: lowered.content_hash(),
+            ..run.inputs.clone()
+        },
         metrics: ragondin_experiments::Metrics::default(),
         config: ConfigDocument::new(document),
         traces: BTreeMap::new(),

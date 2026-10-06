@@ -1023,6 +1023,39 @@ async fn a_request_refused_for_an_unreadable_run_keeps_no_pairing() {
     assert!(!workspace.pipelines().join("hybrid-rerank.pairing").exists());
 }
 
+/// A run whose `config.yaml` was edited after it lowers, to another pipeline
+/// than the one it recorded: its stages are not drawn from the edit, and the
+/// request is refused as `run_unreadable`, naming the recorded hash.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_run_whose_document_changed_after_it_is_run_unreadable() {
+    let (hybrid, colbert) = (hybrid_rerank_run(0x01), colbert_rerank_run(0x02));
+    let mut tampered = dense_only_run(0x03);
+    tampered.config =
+        ragondin_experiments::ConfigDocument::new(DENSE_ONLY.replace("top_k: 100", "top_k: 9"));
+    let (root, workspace) = paired_workspace("compare_tampered_is_unreadable");
+
+    let (status, body) = post_compare(
+        app(
+            vec![hybrid.clone(), colbert.clone(), tampered.clone()],
+            &root,
+            Some(FsPipelines::new(&workspace)),
+        ),
+        json!({
+            "run_ids": ids(&[&hybrid, &colbert, &tampered]),
+            "baseline": hybrid.id.to_string(),
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+    assert_eq!(body["code"], "run_unreadable");
+    let detail = body["detail"].as_str().unwrap();
+    assert!(
+        detail.contains(&tampered.inputs.pipeline.to_string()),
+        "{detail}"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_request_refused_as_not_comparable_keeps_no_pairing() {
     let (hybrid, mut colbert) = (hybrid_rerank_run(0x01), colbert_rerank_run(0x02));

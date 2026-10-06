@@ -10,8 +10,8 @@ use ragondin_benchmarks::datasets::{
 use ragondin_benchmarks::manifest::ManifestEntry;
 use ragondin_benchmarks::CarriedPieces;
 use ragondin_experiments::{
-    lower_configuration, Direction, ParameterKey, Run, RunBinding, RunInputs as StoredInputs,
-    Trace, TraceChunk, TraceSummary,
+    Direction, ParameterKey, Run, RunBinding, RunInputs as StoredInputs, Trace, TraceChunk,
+    TraceSummary,
 };
 use ragondin_metrics::{Family, Metric};
 use ragondin_pipeline::{
@@ -24,6 +24,7 @@ use ragondin_types::DocId;
 use crate::backends::RunDataset;
 use crate::derived::NodeFigures;
 use crate::error::ApiError;
+use crate::handlers;
 use crate::lineage;
 use crate::response::{
     BenchmarkEntry, BenchmarkState, ConfigurationMatrix, ConsumedPorts, DatasetCheck,
@@ -113,13 +114,11 @@ pub(crate) fn prefixes(index: &lineage::Index, pipeline: &LogicalPipeline) -> Ve
 }
 
 /// One run, whole: its stored fields and the graph lowered from its stored
-/// configuration by `ragondin-experiments`' one lowering path. A document
-/// that no longer lowers is `run_unreadable`, never a guessed graph.
+/// configuration by [`handlers::lower`]. A document that no longer lowers, or
+/// lowers to another pipeline than the one the run recorded, is
+/// `run_unreadable`, never a guessed graph.
 pub(crate) fn detail(run: &Run) -> Result<RunDetail, ApiError> {
-    let pipeline = lower_configuration(&run.config).map_err(|reason| ApiError::RunUnreadable {
-        run_id: run.id.to_string(),
-        reason,
-    })?;
+    let pipeline = handlers::lower(run)?;
     let (started_at_ms, finished_at_ms) = times(run);
     Ok(RunDetail {
         id: run.id.to_string(),

@@ -11,7 +11,7 @@ use axum::extract::State;
 use axum::http::{Method, Uri};
 use axum::Json;
 use ragondin_experiments::{
-    lower_configuration, Run, RunId, RunStore, RunStoreError, Trace, TraceDocument, TraceSummary,
+    lower_run, Run, RunId, RunStore, RunStoreError, Trace, TraceDocument, TraceSummary,
 };
 use ragondin_pipeline::LogicalPipeline;
 use ragondin_types::QueryId;
@@ -147,13 +147,13 @@ pub(crate) async fn runs(
             cache_error: None,
         };
         // One canonical hash is one canonical form: each pipeline is lowered
-        // once, from the first of its runs whose document lowers, and its
-        // shape and its prefix relation are read off that one lowering.
+        // once, from the first of its runs whose document lowers to it, and
+        // its shape and its prefix relation are read off that one lowering.
         let mut prefixes: HashMap<String, Vec<PrefixOf>> = HashMap::new();
         for run in runs {
             let hash = run.inputs.pipeline.to_string();
             if !prefixes.contains_key(&hash) {
-                if let Ok(pipeline) = lower_configuration(&run.config) {
+                if let Ok(pipeline) = lower_run(&run) {
                     listing
                         .shapes
                         .insert(hash.clone(), convert::graph(&pipeline));
@@ -492,9 +492,11 @@ pub(crate) async fn load_run(state: &AppState, id: String) -> Result<Run, ApiErr
 }
 
 /// The run's pipeline, lowered from its stored document by
-/// `ragondin-experiments`' one lowering path.
+/// `ragondin-experiments`' one lowering path for a stored run, `lower_run`: a
+/// document that does not lower, or lowers to another pipeline than the one
+/// the run recorded, is `run_unreadable`.
 pub(crate) fn lower(run: &Run) -> Result<LogicalPipeline, ApiError> {
-    lower_configuration(&run.config).map_err(|reason| ApiError::RunUnreadable {
+    lower_run(run).map_err(|reason| ApiError::RunUnreadable {
         run_id: run.id.to_string(),
         reason,
     })
