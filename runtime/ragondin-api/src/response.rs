@@ -1656,7 +1656,9 @@ pub struct PipelineMatrix {
     /// benchmark where such a run exists.
     pub missing: Vec<MissingCells>,
     /// The runs the store lists and cannot load, with its reason: neither
-    /// counted nor silently dropped, as `GET /runs` lists them.
+    /// counted nor silently dropped, as `GET /runs` lists them. Also every
+    /// run that would count nowhere because its stored document lowers to
+    /// another pipeline than the one it recorded, with both hashes.
     pub unreadable: Vec<UnreadableRun>,
     /// Why derived figures could not be cached under the workspace's
     /// `cache/`, one entry per failure; empty otherwise. The response is

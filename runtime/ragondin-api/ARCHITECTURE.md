@@ -1525,7 +1525,7 @@ code.
 | `impl_not_in_build` | 422 | an `impl:` this binary lacks, or — with the feature named — a `Remote` component a build without `remote` cannot construct | the probe, in a build without `remote`; `POST /runs` |
 | `service_unreachable` | 502 | a probe or a submission reached no service; the detail carries the address, the network error and the identity last read under the name, or at the address for a submission | the probe, `POST /runs` |
 | `run_exists` | 409 | a submission's run id is held by a job not yet ended or by the store; `link` is that job's or that run's path | `POST /runs` |
-| `run_unreadable` | 500 | a stored run this build cannot read: torn, malformed, or a configuration that no longer lowers to the pipeline the run recorded | `GET /runs/{id}` |
+| `run_unreadable` | 500 | a stored run this build cannot read: torn, malformed, or a configuration that no longer lowers to the pipeline the run recorded | `GET /runs/{id}`, `GET /runs/{id}/queries`, `GET /runs/{id}/trace/{query}`, `GET /runs/{id}/layout`, `POST /compare`, `GET /pipelines/{name}/matrix` (a run filling a column whose trace does not read) |
 | `run_not_found` | 404 | no run under this id, or a string that is not a run id | `GET /runs/{id}` and below |
 | `query_not_found` | 404 | a query id the run's traces, or a job's partial traces, do not hold; the hint names the listing to pick from | `GET /runs/{id}/trace/{query}`, `GET /jobs/{id}/trace/{query}` |
 | `parameter_invalid` | 400 | a query parameter the endpoint does not take, given twice, or a value it cannot read; a query string that is not percent-encoded UTF-8; a path value that does not decode to UTF-8 or does not read, naming the path parameter; a header the endpoint reads, sent twice, naming it. `name` carries the parameter when it is known | every endpoint |
@@ -2146,6 +2146,15 @@ record (`name`, and `prefix_of` with `up_to` and `parent_pipeline_hash`),
 canonical hash is the run's, from `lineage::index`'s `by_hash` — then
 `prefix_of` (this pipeline and the node the run stops at) for a prefix,
 `fills_column`, and `content_since_changed`.
+
+**A stored document that is not the pipeline that ran.** A run that would
+count nowhere because its stored document lowers to another pipeline than the
+one it recorded (`lower_run`) is listed in `unreadable` with that reason,
+both hashes, beside the runs the store cannot load — never dropped silently;
+one whose record names *N* still feeds the matrix, its difference
+`unavailable` with the same reason. The matrix can show a run whose stored
+copy the detail refuses, because it fills cells by identity when the recorded
+hash equals the current one.
 
 **The prefix rule** (`lineage::is_prefix`). Run *B*'s lowered graph is a
 prefix of *N*'s current one when *B* declares the same inputs, every node of

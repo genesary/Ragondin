@@ -31,7 +31,9 @@ use std::sync::Arc;
 
 use axum::extract::State;
 use axum::Json;
-use ragondin_experiments::{compare_runs, terminal, ConfigDocument, Run, RunInputs};
+use ragondin_experiments::{
+    compare_runs, lower_configuration, lower_run, terminal, ConfigDocument, Run, RunInputs,
+};
 use ragondin_pipeline::{produced_kind, LogicalPipeline, NodeId, ValueKind};
 
 use ragondin_benchmarks::CarriedPieces;
@@ -48,7 +50,7 @@ use crate::request::{IncludeAvailable, PipelineMatrixParameters};
 use crate::response::{
     ConfigurationMatrix, ContentSinceChanged, FailedAttempt, FeedingRun, GroundTruth, MatrixCell,
     MatrixColumn, MatrixGain, MatrixRow, MissingCells, PipelineMatrix, PrefixOf,
-    SinceChangedLaunch,
+    SinceChangedLaunch, UnreadableRun,
 };
 use crate::stages::Stages;
 use crate::{cache, convert, lineage, validation};
@@ -118,11 +120,15 @@ pub(crate) async fn matrix(
         names.sort();
     }
 
-    let (runs, unreadable) = handlers::load_all(&state).await?;
-    let mut counted: Vec<Counted> = runs
-        .into_iter()
-        .filter_map(|run| self::counted(run, &name, &hash, &current, &file.document))
-        .collect();
+    let (runs, mut unreadable) = handlers::load_all(&state).await?;
+    let mut counted: Vec<Counted> = Vec::new();
+    for run in runs {
+        match self::counted(run, &name, &hash, &current, &file.document) {
+            Ok(Some(each)) => counted.push(each),
+            Ok(None) => {}
+            Err(run) => unreadable.push(run),
+        }
+    }
     counted.sort_by(|a, b| most_recent_first(a.recency(), b.recency()));
     // Sorted most recent first: on each benchmark the most recent run of the
     // whole current form fills the column, or, with none, the most recent
@@ -311,45 +317,65 @@ pub(crate) async fn matrix(
 /// lowers to `current` and hashes to `hash`, and as what (ADR-C39 § 5 to
 /// § 7): it fills cells by the current content alone, and otherwise feeds the
 /// matrix only when its launch record names the pipeline.
+///
+/// A run whose stored document lowers to another pipeline than the one it
+/// recorded (`lower_run`) and that would otherwise count nowhere is `Err`,
+/// listed among the matrix's unreadable runs rather than dropped silently;
+/// one whose record names the pipeline still feeds it, its difference
+/// unavailable with the same reason.
 fn counted(
     run: Run,
     name: &str,
     hash: &str,
     current: &LogicalPipeline,
     document: &str,
-) -> Option<Counted> {
+) -> Result<Option<Counted>, UnreadableRun> {
     if run.inputs.pipeline.to_string() == hash {
         // One canonical hash is one canonical form: the current pipeline.
         let standing = Standing::Fills {
             pipeline: current.clone(),
             up_to: None,
         };
-        return Some(Counted::new(run, standing));
+        return Ok(Some(Counted::new(run, standing)));
     }
     let record = run.provenance.as_ref();
     let recorded_prefix = record
         .and_then(|record| record.prefix_of())
         .is_some_and(|prefix| prefix.parent_pipeline_hash().to_string() == hash);
-    if let Ok(pipeline) = handlers::lower(&run) {
-        // The structural test is asked of every run the record does not
-        // already place: a run's first record wins, so it may name another
-        // parent than one it is also a prefix of.
-        if recorded_prefix || lineage::is_prefix(&pipeline, current) {
-            // A part of the current form with no single output — two
-            // terminal nodes — is no prefix a cell can be cut at, and no
-            // earlier content either: it counts nowhere.
-            let up_to = terminal(&pipeline)?.id().clone();
-            let standing = Standing::Fills {
-                pipeline,
-                up_to: Some(up_to),
-            };
-            return Some(Counted::new(run, standing));
+    let names_this = record.is_some_and(|record| record.name() == Some(name));
+    match lower_run(&run) {
+        Ok(pipeline) => {
+            // The structural test is asked of every run the record does not
+            // already place: a run's first record wins, so it may name
+            // another parent than one it is also a prefix of.
+            if recorded_prefix || lineage::is_prefix(&pipeline, current) {
+                // A part of the current form with no single output — two
+                // terminal nodes — is no prefix a cell can be cut at, and no
+                // earlier content either: it counts nowhere.
+                let Some(up_to) = terminal(&pipeline).map(|node| node.id().clone()) else {
+                    return Ok(None);
+                };
+                let standing = Standing::Fills {
+                    pipeline,
+                    up_to: Some(up_to),
+                };
+                return Ok(Some(Counted::new(run, standing)));
+            }
         }
+        // A document that lowers, but not to the pipeline the run recorded,
+        // is not the pipeline that ran. A document that does not lower at
+        // all is a run of no pipeline this build reads, and counts nowhere.
+        Err(reason) if !names_this && lower_configuration(&run.config).is_ok() => {
+            return Err(UnreadableRun {
+                id: run.id.to_string(),
+                reason,
+            });
+        }
+        Err(_) => {}
     }
-    let record = record?;
-    if record.name() != Some(name) {
-        return None;
-    }
+    let Some(record) = record.filter(|_| names_this) else {
+        return Ok(None);
+    };
     let since = ContentSinceChanged {
         // A record with `prefix_of` names the parent: the run is a prefix
         // of an earlier version, never an earlier version (ADR-C39 § 2).
@@ -360,7 +386,7 @@ fn counted(
         },
         difference: difference(&run, document, current),
     };
-    Some(Counted::new(run, Standing::SinceChanged(since)))
+    Ok(Some(Counted::new(run, Standing::SinceChanged(since))))
 }
 
 /// The parameter difference between the pipeline's current `document`, which

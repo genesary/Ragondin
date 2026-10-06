@@ -3271,7 +3271,7 @@
             "type": "array"
           },
           "unreadable": {
-            "description": "The runs the store lists and cannot load, with its reason: neither\ncounted nor silently dropped, as `GET /runs` lists them.",
+            "description": "The runs the store lists and cannot load, with its reason: neither\ncounted nor silently dropped, as `GET /runs` lists them. Also every\nrun that would count nowhere because its stored document lowers to\nanother pipeline than the one it recorded, with both hashes.",
             "items": {
               "$ref": "#/components/schemas/UnreadableRun"
             },

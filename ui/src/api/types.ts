@@ -1293,7 +1293,9 @@ export type PipelineMatrix = {
   rows: MatrixRow[];
   /**
    * The runs the store lists and cannot load, with its reason: neither
-   * counted nor silently dropped, as `GET /runs` lists them.
+   * counted nor silently dropped, as `GET /runs` lists them. Also every
+   * run that would count nowhere because its stored document lowers to
+   * another pipeline than the one it recorded, with both hashes.
    */
   unreadable: UnreadableRun[];
 };

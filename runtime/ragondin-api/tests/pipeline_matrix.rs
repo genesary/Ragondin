@@ -682,9 +682,10 @@ async fn a_run_launched_as_the_pipeline_whose_content_has_since_changed_fills_no
 
 /// A run whose `config.yaml` was edited after it into a prefix of the current
 /// document is not a prefix run: its recorded pipeline is another one, so it
-/// fills nothing and, with no launch record, counts nowhere.
+/// fills nothing and, with no launch record, feeds nothing — and it is listed
+/// among the unreadable runs with both hashes, never dropped silently.
 #[tokio::test]
-async fn a_run_whose_document_was_edited_into_a_prefix_after_it_fills_nothing() {
+async fn a_run_whose_document_was_edited_into_a_prefix_after_it_is_listed_unreadable() {
     let mut tampered = run(
         1,
         &UP_TO_RERANK.replace("top_k: 50", "top_k: 7"),
@@ -702,6 +703,16 @@ async fn a_run_whose_document_was_edited_into_a_prefix_after_it_fills_nothing() 
     .await;
 
     assert_eq!(feeding(&body, &id(1)), None, "{body}");
+    assert_eq!(body["unreadable"][0]["id"], id(1), "{body}");
+    let reason = body["unreadable"][0]["reason"].as_str().unwrap();
+    assert!(
+        reason.contains(&hash_of(UP_TO_RERANK).to_string()),
+        "{reason}"
+    );
+    assert!(
+        reason.contains(&hash_of(&UP_TO_RERANK.replace("top_k: 50", "top_k: 7")).to_string()),
+        "{reason}"
+    );
 }
 
 /// A run launched as the pipeline whose `config.yaml` was edited after it:
