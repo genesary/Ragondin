@@ -680,6 +680,70 @@ async fn a_run_launched_as_the_pipeline_whose_content_has_since_changed_fills_no
     assert_eq!(body["missing"][0]["benchmark"], "beir/scifact");
 }
 
+/// A run whose `config.yaml` was edited after it into a prefix of the current
+/// document is not a prefix run: its recorded pipeline is another one, so it
+/// fills nothing and, with no launch record, feeds nothing — and it is listed
+/// among the unreadable runs with both hashes, never dropped silently.
+#[tokio::test]
+async fn a_run_whose_document_was_edited_into_a_prefix_after_it_is_listed_unreadable() {
+    let mut tampered = run(
+        1,
+        &UP_TO_RERANK.replace("top_k: 50", "top_k: 7"),
+        &scifact(),
+        "sci",
+        Some(1_000),
+    );
+    tampered.config = ConfigDocument::new(UP_TO_RERANK);
+
+    let body = matrix_of(app(
+        "matrix-tampered-prefix",
+        &[(NAME, HYBRID_RERANK_GEN)],
+        vec![tampered],
+    ))
+    .await;
+
+    assert_eq!(feeding(&body, &id(1)), None, "{body}");
+    assert_eq!(body["unreadable"][0]["id"], id(1), "{body}");
+    let reason = body["unreadable"][0]["reason"].as_str().unwrap();
+    assert!(
+        reason.contains(&hash_of(UP_TO_RERANK).to_string()),
+        "{reason}"
+    );
+    assert!(
+        reason.contains(&hash_of(&UP_TO_RERANK.replace("top_k: 50", "top_k: 7")).to_string()),
+        "{reason}"
+    );
+}
+
+/// A run launched as the pipeline whose `config.yaml` was edited after it:
+/// its difference against the current document is unavailable, for its
+/// document is not the one that ran — never a difference against an edit.
+#[tokio::test]
+async fn a_since_changed_run_whose_document_was_edited_after_it_has_no_difference() {
+    let earlier = HYBRID_RERANK_GEN.replace("top_k: 50", "top_k: 10");
+    let edited = HYBRID_RERANK_GEN.replace("top_k: 50", "top_k: 7");
+    let mut tampered = launched(
+        run(1, &earlier, &scifact(), "sci", Some(1_000)),
+        RunProvenance::named(NAME),
+    );
+    tampered.config = ConfigDocument::new(edited.as_str());
+
+    let body = matrix_of(app(
+        "matrix-tampered-since-changed",
+        &[(NAME, HYBRID_RERANK_GEN)],
+        vec![tampered],
+    ))
+    .await;
+
+    let since = &feeding(&body, &id(1)).expect("launched as the pipeline")["content_since_changed"];
+    let difference = &since["difference"];
+    assert_eq!(difference["kind"], "unavailable", "{difference}");
+    assert_eq!(difference["run"], id(1));
+    let reason = difference["reason"].as_str().unwrap();
+    assert!(reason.contains(&hash_of(&edited).to_string()), "{reason}");
+    assert!(reason.contains(&hash_of(&earlier).to_string()), "{reason}");
+}
+
 #[tokio::test]
 async fn a_run_recorded_as_a_prefix_of_the_current_version_fills_by_its_record() {
     // Not a prefix by structure — its declared input is named otherwise — but

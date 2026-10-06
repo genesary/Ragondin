@@ -477,6 +477,78 @@ async fn a_stored_document_that_no_longer_lowers_is_run_unreadable_not_guessed()
     assert!(body["detail"].as_str().unwrap().contains("schema version"));
 }
 
+/// The fixture run with its `config.yaml` edited after the run: a document
+/// that still lowers, to another pipeline than the one the run recorded.
+fn tampered_run() -> Run {
+    let mut run = fixture_run();
+    run.config = ConfigDocument::new(run.config.as_str().replace("budget: 1", "budget: 2"));
+    run
+}
+
+#[tokio::test]
+async fn a_stored_document_changed_after_its_run_is_run_unreadable_not_read_as_what_ran() {
+    let response = send(
+        app(FakeRunStore::holding([tampered_run()])),
+        get(&format!("/api/v1/runs/{FIXTURE_RUN}")),
+    )
+    .await;
+
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    let body = json(response).await;
+    assert_eq!(body["code"], "run_unreadable");
+    let detail = body["detail"].as_str().unwrap();
+    assert!(
+        detail.contains(&fixture_run().inputs.pipeline.to_string()),
+        "{detail}"
+    );
+    assert!(detail.contains("not to the pipeline"), "{detail}");
+}
+
+/// `GET /runs/{id}/queries` and `GET /runs/{id}/trace/{query}` read the run's
+/// pipeline by the same guard as the detail: a document changed after the run
+/// is `run_unreadable` there too, naming the recorded hash.
+#[tokio::test]
+async fn the_query_listing_of_a_run_whose_document_changed_after_it_is_run_unreadable() {
+    assert_refused_as_tampered(&format!("/api/v1/runs/{FIXTURE_RUN}/queries")).await;
+}
+
+#[tokio::test]
+async fn the_trace_of_a_run_whose_document_changed_after_it_is_run_unreadable() {
+    assert_refused_as_tampered(&format!("/api/v1/runs/{FIXTURE_RUN}/trace/q-1")).await;
+}
+
+async fn assert_refused_as_tampered(path: &str) {
+    let response = send(app(FakeRunStore::holding([tampered_run()])), get(path)).await;
+
+    assert_eq!(
+        response.status(),
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "{path}"
+    );
+    let body = json(response).await;
+    assert_eq!(body["code"], "run_unreadable", "{path}: {body}");
+    let detail = body["detail"].as_str().unwrap();
+    assert!(
+        detail.contains(&fixture_run().inputs.pipeline.to_string()),
+        "{path}: {detail}"
+    );
+}
+
+#[tokio::test]
+async fn a_pipeline_whose_only_run_s_document_changed_after_it_has_no_shape() {
+    let body = json(
+        send(
+            app(FakeRunStore::holding([tampered_run()])),
+            get("/api/v1/runs"),
+        )
+        .await,
+    )
+    .await;
+
+    assert_eq!(body["runs"][0]["id"], FIXTURE_RUN);
+    assert_eq!(body["shapes"], json!({}));
+}
+
 #[tokio::test]
 async fn every_metric_in_the_listing_carries_its_family() {
     let body = json(

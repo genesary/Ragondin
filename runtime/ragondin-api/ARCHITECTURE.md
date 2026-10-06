@@ -97,8 +97,8 @@ the one definition of a pipeline document's load, its first half
 (§ The pipelines, § The typed document); its closure
 is `ragondin-pipeline`, the YAML parser and two macro crates,
 no RPC or HTTP stack — `ragondin-experiments` — the `RunStore`
-trait, the `Run` record, the typed `Trace`, `lower_configuration`, the
-walk to a run's ranking node, and `compare_runs` — `ragondin-pipeline`, for the `LogicalPipeline`
+trait, the `Run` record, the typed `Trace`, `lower_configuration` and
+`lower_run`, the walk to a run's ranking node, and `compare_runs` — `ragondin-pipeline`, for the `LogicalPipeline`
 that lowering yields,
 `ragondin-benchmarks`, for the manifest, the download, the verification and
 the import the `Registry` file backend is written over, and for the digests
@@ -1285,9 +1285,14 @@ anyway is what it does not see, and the description's schema list, generated
 from `response.rs`'s types only, is where a reviewer would see one arrive.
 
 **The lowered graph is computed on the server**, by the lowering
-`ragondin-experiments`' `compare` already runs — `lower_configuration`, which
-runs `ragondin-config`'s `parse_document` over the kept text. This crate calls
-that function; it does not parse YAML itself. A node
+`ragondin-experiments`' `compare` already runs — `lower_run`, which runs
+`ragondin-config`'s `parse_document` over the kept text through
+`lower_configuration` and keeps the result only when its canonical hash is
+the run's recorded `inputs.pipeline`. This crate calls that function
+(`handlers::lower`); it does not parse YAML itself. A document that lowers
+to another hash — edited after the run, or read differently by this build —
+is `run_unreadable` naming both hashes, never a graph of a pipeline that did
+not run. A node
 carries its id, family, `impl:` name and parameters, each a tagged
 `ParameterValue` (§ The typed document); an edge carries its
 producer, consumer, port and the kind of value its producer puts on it — the
@@ -1380,9 +1385,9 @@ listing — reported, never repaired.
 canonical hash, by the conversion `GET /runs/{id}` serves (`convert::graph`,
 which `convert::detail` calls too), so a screen draws every group's shape
 from the listing. One canonical hash is one canonical form and so one graph;
-it is lowered once, from the first of its runs whose document lowers — the
-lowering its runs' `prefix_of_documents` are read off too — and a pipeline
-none of whose documents lowers has no entry. The workspace's
+it is lowered once, from the first of its runs whose document lowers to that
+hash (`lower_run`) — the lowering its runs' `prefix_of_documents` are read
+off too — and a pipeline none of whose documents lowers to it has no entry. The workspace's
 pipelines and the registry's pins are each read once per request, and a
 failure of either fails the listing, by design, rather than answering with
 every name list silently empty. A cache that fails does not: its first
@@ -1549,7 +1554,7 @@ code.
 | `impl_not_in_build` | 422 | an `impl:` this binary lacks, or — with the feature named — a `Remote` component a build without `remote` cannot construct | the probe, in a build without `remote`; `POST /runs` |
 | `service_unreachable` | 502 | a probe or a submission reached no service; the detail carries the address, the network error and the identity last read under the name, or at the address for a submission | the probe, `POST /runs` |
 | `run_exists` | 409 | a submission's run id is held by a job not yet ended or by the store; `link` is that job's or that run's path | `POST /runs` |
-| `run_unreadable` | 500 | a stored run this build cannot read: torn, malformed, or a configuration that no longer lowers | `GET /runs/{id}` |
+| `run_unreadable` | 500 | a stored run this build cannot read: torn, malformed, or a configuration that no longer lowers to the pipeline the run recorded | `GET /runs/{id}`, `GET /runs/{id}/queries`, `GET /runs/{id}/trace/{query}`, `GET /runs/{id}/layout`, `POST /compare`, `GET /pipelines/{name}/matrix` (a run filling a column whose trace does not read) |
 | `run_not_found` | 404 | no run under this id, or a string that is not a run id | `GET /runs/{id}` and below |
 | `query_not_found` | 404 | a query id the run's traces, or a job's partial traces, do not hold; the hint names the listing to pick from | `GET /runs/{id}/trace/{query}`, `GET /jobs/{id}/trace/{query}` |
 | `parameter_invalid` | 400 | a query parameter the endpoint does not take, given twice, or a value it cannot read; a query string that is not percent-encoded UTF-8; a path value that does not decode to UTF-8 or does not read, naming the path parameter; a header the endpoint reads, sent twice, naming it. `name` carries the parameter when it is known | every endpoint |
@@ -2149,7 +2154,9 @@ feeding run, "launched as *N*; content since changed", carrying in
 `content_since_changed` its parameter difference against *N*'s current
 document: `compare_runs`' configuration matrix, the one `POST /compare` serves,
 over the current document set beside it in a run of its own that carries the
-run's inputs, the current document's column first — the existing diff, not a
+run's inputs with the current document's own hash — `compare_runs` reads a
+run's document only as the pipeline it recorded — the current document's
+column first — the existing diff, not a
 second one. `content_since_changed.launched` says how its record launched it:
 `as_pipeline`, "launched as *N*; content since changed", or `as_prefix` for a
 record carrying `prefix_of`, "a prefix of an earlier version of *N*" — such a
@@ -2168,6 +2175,15 @@ record (`name`, and `prefix_of` with `up_to` and `parent_pipeline_hash`),
 canonical hash is the run's, from `lineage::index`'s `by_hash` — then
 `prefix_of` (this pipeline and the node the run stops at) for a prefix,
 `fills_column`, and `content_since_changed`.
+
+**A stored document that is not the pipeline that ran.** A run that would
+count nowhere because its stored document lowers to another pipeline than the
+one it recorded (`lower_run`) is listed in `unreadable` with that reason,
+both hashes, beside the runs the store cannot load — never dropped silently;
+one whose record names *N* still feeds the matrix, its difference
+`unavailable` with the same reason. The matrix can show a run whose stored
+copy the detail refuses, because it fills cells by identity when the recorded
+hash equals the current one.
 
 **The prefix rule** (`lineage::is_prefix`). Run *B*'s lowered graph is a
 prefix of *N*'s current one when *B* declares the same inputs, every node of

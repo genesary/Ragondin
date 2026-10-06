@@ -224,7 +224,7 @@ export type ConfigurationMatrix = {
   same_logical_form: boolean;
 } | {
   kind: "unavailable";
-  /** What the parser or the validation pass said. */
+  /** What the parser or the validation pass said, or both hashes. */
   reason: string;
   /** That run's id. */
   run: string;
@@ -1293,7 +1293,9 @@ export type PipelineMatrix = {
   rows: MatrixRow[];
   /**
    * The runs the store lists and cannot load, with its reason: neither
-   * counted nor silently dropped, as `GET /runs` lists them.
+   * counted nor silently dropped, as `GET /runs` lists them. Also every
+   * run that would count nowhere because its stored document lowers to
+   * another pipeline than the one it recorded, with both hashes.
    */
   unreadable: UnreadableRun[];
 };
@@ -1669,8 +1671,8 @@ export type RunListing = {
    * The shape of every pipeline a readable run ran, once per pipeline,
    * keyed by its canonical hash ([`RunSummary::pipeline`]): the graph
    * `GET /runs/{id}` serves for a run of it, by the same conversion. A
-   * pipeline whose every run's stored document no longer lowers has no
-   * entry, as `GET /runs/{id}` has no graph for it.
+   * pipeline none of whose runs' stored documents still lowers to it has
+   * no entry, as `GET /runs/{id}` has no graph for it.
    */
   shapes: Record<string, Graph>;
   /**
@@ -1815,7 +1817,7 @@ export type RunSummary = {
    * prefix of — its declared inputs the same, each of its nodes one of the
    * document's, equal in canonical form, and fewer of them — each with the
    * node the run stops at, sorted by name; empty when it is a prefix of
-   * none, or its stored document no longer lowers. A content fact like
+   * none, or its stored document no longer lowers to its pipeline. A content fact like
    * [`pipeline_names`](Self::pipeline_names), asked of every run whatever
    * [`launched_as`](Self::launched_as) records (ADR-C39 § 5), so a prefix
    * written by hand and run from the command line is one too; the pipeline

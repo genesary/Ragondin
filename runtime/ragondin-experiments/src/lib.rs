@@ -51,7 +51,7 @@ pub mod walk;
 pub mod conformance;
 
 pub use compare::{
-    compare, compare_runs, lower_configuration, Comparison, ConfigurationComparison,
+    compare, compare_runs, lower_configuration, lower_run, Comparison, ConfigurationComparison,
     ConfigurationMatrix, Direction, MetricComparison, MetricRow, NotComparable,
     ParameterDifference, ParameterKey, ParameterRow, RunComparison, Side,
 };

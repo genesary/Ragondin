@@ -11,7 +11,9 @@ use std::path::Path;
 use std::process::Output;
 
 use assert_cmd::Command;
-use ragondin_experiments::{ConfigDocument, FileSystemRunStore, Run, RunId, RunInputs};
+use ragondin_experiments::{
+    lower_configuration, ConfigDocument, FileSystemRunStore, Run, RunId, RunInputs,
+};
 use ragondin_pipeline::PipelineHash;
 
 fn ragondin(args: &[&str]) -> Output {
@@ -50,7 +52,7 @@ fn a_run(id: RunId, metrics: &[(&str, f64)]) -> Run {
     Run {
         id,
         inputs: RunInputs {
-            pipeline: PipelineHash::from_digest([0xbe; 32]),
+            pipeline: recorded(&a_configuration(10)),
             dataset_version: "beir/scifact@2021-05-01".to_owned(),
             index_version: "bm25-ram@7".to_owned(),
             model_hashes: BTreeMap::new(),
@@ -154,6 +156,21 @@ fn comparing_an_unknown_run_id_is_a_diagnosis_not_a_crash() {
 }
 
 /// A valid one-node configuration whose retriever sets `top_k` as given.
+/// The hash a run of `config` records: its document's canonical hash, as the
+/// harness computes it. A stored run's document is read only as that pipeline.
+fn recorded(config: &str) -> PipelineHash {
+    lower_configuration(&ConfigDocument::new(config))
+        .expect("a test configuration lowers")
+        .content_hash()
+}
+
+/// `run` with the stored configuration `config`, and the hash it records.
+fn configured(mut run: Run, config: &str) -> Run {
+    run.inputs.pipeline = recorded(config);
+    run.config = ConfigDocument::new(config);
+    run
+}
+
 fn a_configuration(top_k: u32) -> String {
     format!(
         "pipeline:\n  inputs: [question]\n  nodes:\n    - id: sparse\n      component: retriever\n      impl: bm25\n      inputs: [question]\n      params: {{ top_k: {top_k} }}\n"
@@ -163,10 +180,14 @@ fn a_configuration(top_k: u32) -> String {
 #[test]
 fn compare_names_the_configuration_parameter_the_two_runs_differ_in() {
     let store = store("configuration");
-    let mut baseline = a_run(run_id(0x66), &[("ndcg@10", 0.64)]);
-    baseline.config = ConfigDocument::new(a_configuration(10));
-    let mut candidate = a_run(run_id(0x77), &[("ndcg@10", 0.71)]);
-    candidate.config = ConfigDocument::new(a_configuration(20));
+    let baseline = configured(
+        a_run(run_id(0x66), &[("ndcg@10", 0.64)]),
+        &a_configuration(10),
+    );
+    let candidate = configured(
+        a_run(run_id(0x77), &[("ndcg@10", 0.71)]),
+        &a_configuration(20),
+    );
     store
         .save(&baseline)
         .expect("the baseline run must be writable");

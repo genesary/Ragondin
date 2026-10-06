@@ -7,8 +7,9 @@
 use std::collections::BTreeMap;
 
 use ragondin_experiments::{
-    compare, compare_runs, ConfigDocument, ConfigurationComparison, ConfigurationMatrix, Direction,
-    NotComparable, ParameterKey, ParameterRow, Run, RunId, RunInputs, Side,
+    compare, compare_runs, lower_configuration, ConfigDocument, ConfigurationComparison,
+    ConfigurationMatrix, Direction, NotComparable, ParameterKey, ParameterRow, Run, RunId,
+    RunInputs, Side,
 };
 use ragondin_pipeline::{NodeId, ParamValue, PipelineHash};
 
@@ -18,7 +19,7 @@ fn a_run(byte: u8, config: &str, metrics: &[(&str, f64)]) -> Run {
     Run {
         id: RunId::from_digest([byte; 32]),
         inputs: RunInputs {
-            pipeline: PipelineHash::from_digest([byte; 32]),
+            pipeline: recorded(byte, config),
             dataset_version: SCIFACT.to_owned(),
             index_version: "bm25-ram@7".to_owned(),
             model_hashes: BTreeMap::new(),
@@ -31,6 +32,16 @@ fn a_run(byte: u8, config: &str, metrics: &[(&str, f64)]) -> Run {
         times: None,
         provenance: None,
     }
+}
+
+/// The hash a run of `config` records: its document's canonical hash, as the
+/// harness computes it — or, for a document this build cannot lower, a
+/// stand-in, since nothing can recompute one to check it against.
+fn recorded(byte: u8, config: &str) -> PipelineHash {
+    lower_configuration(&ConfigDocument::new(config)).map_or_else(
+        |_| PipelineHash::from_digest([byte; 32]),
+        |pipeline| pipeline.content_hash(),
+    )
 }
 
 const DENSE: &str = "\
@@ -319,6 +330,42 @@ fn a_configuration_that_does_not_lower_names_its_run_and_the_metrics_are_still_c
             );
         }
         other => panic!("the third document does not lower: {other:?}"),
+    }
+    assert_eq!(comparison.metrics[0].values, [Some(0.2), None, Some(0.1)]);
+}
+
+/// A `config.yaml` edited after its run lowers, but to another pipeline than
+/// the one the run recorded: reading it would show a configuration that never
+/// ran, so the matrix is unavailable, naming the run.
+#[test]
+fn a_configuration_changed_after_its_run_names_its_run_and_both_hashes() {
+    let mut tampered = a_run(0x03, DENSE, &[("ndcg@10", 0.1)]);
+    tampered.config = ConfigDocument::new(DENSE.replace("top_k: 100", "top_k: 5"));
+    let edited = lower_configuration(&tampered.config)
+        .unwrap()
+        .content_hash();
+
+    let comparison = compare_runs(
+        &a_run(0x01, DENSE, &[("ndcg@10", 0.2)]),
+        &[&a_run(0x02, DENSE, &[]), &tampered],
+    )
+    .unwrap();
+
+    match &comparison.configuration {
+        ConfigurationMatrix::Unavailable {
+            run,
+            column,
+            reason,
+        } => {
+            assert_eq!(*run, tampered.id);
+            assert_eq!(*column, 2);
+            assert!(reason.contains(&edited.to_string()), "{reason}");
+            assert!(
+                reason.contains(&tampered.inputs.pipeline.to_string()),
+                "{reason}"
+            );
+        }
+        other => panic!("the third document is not the one its run ran: {other:?}"),
     }
     assert_eq!(comparison.metrics[0].values, [Some(0.2), None, Some(0.1)]);
 }
