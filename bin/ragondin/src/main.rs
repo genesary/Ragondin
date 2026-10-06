@@ -170,7 +170,13 @@ enum Command {
         The UI's pages are served at `/` and the API under `/api/v1/`, over a \
         workspace: `workspace.toml` (the datasets directory and the services), \
         `pipelines/`, `layouts/`, `runs/`, `jobs/`, `cache/` and `datasets/`, \
-        each created when missing. `--workspace <dir>` names it, its runs in \
+        each created when missing. A new workspace is created only in a missing \
+        or empty folder, and announced on stderr as `created a new workspace \
+        at <dir>`; empty allows `.DS_Store`, `Thumbs.db`, `desktop.ini` and the \
+        workspace's own directories, such as a `runs/` that `bench` wrote. A \
+        folder that holds other files and no `workspace.toml` is refused, \
+        untouched, naming a subfolder that is a workspace when it has one. \
+        `--workspace <dir>` names it, its runs in \
         `<dir>/runs`. `--store <dir>` names the run store instead, as `bench \
         --store` does: the workspace is the store's parent when the store is \
         called `runs`, and the store's own directory otherwise, so `bench \

@@ -52,10 +52,15 @@
 //! Neither workspace opens as written from anywhere: the workspace is the
 //! `workspace/` below the output directory, and its documents' model paths
 //! are relative to the directory the server runs in. `ragondin ui
-//! --workspace <out>` opens an empty workspace in `<out>`, and `ragondin ui
-//! --workspace <out>/workspace` started elsewhere refuses the dense
-//! pipelines, their models not found; the recipes start it inside the
-//! workspace, as [`serve`] does.
+//! --workspace <out>` is refused, `<out>` holding files and no
+//! `workspace.toml`, and names `<out>/workspace`; `ragondin ui --workspace
+//! <out>/workspace` started elsewhere refuses the dense pipelines, their
+//! models not found; the recipes start it inside the workspace, as [`serve`]
+//! does.
+//!
+//! Each generator opens its workspace through the server while the folder is
+//! still empty, and copies the models in after: `ragondin ui` creates a new
+//! workspace only in an empty folder.
 //!
 //! Shared by `tests/fixture_workspace.rs`, `tests/demo_workspace.rs` and
 //! `tests/ui_parity.rs`, beside `support/ui.rs`, whose `Server` it starts.
@@ -396,10 +401,12 @@ fn write_manifest(out: &Path, name: &str, manifest: &serde_json::Value) {
 pub fn generate(out: &Path) -> FixtureWorkspace {
     let workspace = prepare(out, "fixture.json");
     let fixture = exit_criterion();
-    copy_models(&workspace);
     let corpus = write_retrieval_corpus(out);
 
+    // Opened while empty, then given its models: a new workspace is created
+    // only in an empty folder.
     let server = serve(&workspace);
+    copy_models(&workspace);
     let benchmark = import(&server, BENCHMARK_NAME, &corpus);
     assert_eq!(benchmark, BENCHMARK);
 
@@ -506,11 +513,12 @@ pub fn demo_document(name: &str) -> String {
 ///   before it empties the directory.
 pub fn generate_demo(out: &Path) -> DemoWorkspace {
     let workspace = prepare(out, "demo.json");
-    copy_models(&workspace);
     let corpus = write_retrieval_corpus(out);
     let fixtures = fixtures();
 
+    // Opened while empty, then given its models, as the fixture is.
     let server = serve(&workspace);
+    copy_models(&workspace);
     let imports = [
         (BENCHMARK_NAME, corpus),
         ("beir-mini", fixtures.join("beir-mini")),

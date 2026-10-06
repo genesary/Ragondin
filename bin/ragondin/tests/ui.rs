@@ -394,6 +394,70 @@ mod with_the_feature {
         );
     }
 
+    /// What `ragondin ui --workspace <root>` printed on stderr by the time it
+    /// was serving: started, its banner read off stdout, then stopped.
+    fn stderr_until_serving(root: &std::path::Path) -> String {
+        use std::io::{BufRead, BufReader, Read};
+        let mut child = std::process::Command::new(assert_cmd::cargo::cargo_bin("ragondin"))
+            .args(["ui", "--port", "0", "--workspace", root.to_str().unwrap()])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("the binary starts");
+        let mut banner = String::new();
+        BufReader::new(child.stdout.take().unwrap())
+            .read_line(&mut banner)
+            .expect("the server prints its address");
+        assert!(banner.contains("http://"), "{banner}");
+        let _ = child.kill();
+        let _ = child.wait();
+        let mut printed = String::new();
+        child
+            .stderr
+            .take()
+            .unwrap()
+            .read_to_string(&mut printed)
+            .unwrap();
+        printed
+    }
+
+    #[test]
+    fn a_new_workspace_is_announced_and_an_existing_one_is_not() {
+        let root = workspace("announced");
+
+        let first = stderr_until_serving(&root);
+        assert!(
+            first.contains(&format!("created a new workspace at {}", root.display())),
+            "{first}"
+        );
+
+        let second = stderr_until_serving(&root);
+        assert!(!second.contains("created a new workspace"), "{second}");
+    }
+
+    #[test]
+    fn a_folder_holding_files_and_no_workspace_toml_is_refused_naming_its_workspace_subfolder() {
+        // The trap of #492: the fixture's output directory named instead of
+        // the workspace below it.
+        let out = workspace("parent_of_a_workspace");
+        std::fs::write(out.join("fixture.json"), "{}").unwrap();
+        let inner = out.join("workspace");
+        std::fs::create_dir_all(&inner).unwrap();
+        drop(Server::start(&inner, &[]));
+
+        let output = ragondin(&["ui", "--workspace", out.to_str().unwrap(), "--port", "0"]);
+
+        assert!(!output.status.success());
+        let report = stderr(&output);
+        assert!(report.contains(out.to_str().unwrap()), "{report}");
+        assert!(
+            report.contains(&format!("did you mean {}?", inner.display())),
+            "{report}"
+        );
+        assert!(!out.join("workspace.toml").exists(), "nothing created");
+        assert!(!report.contains("panicked"), "{report}");
+    }
+
     #[test]
     fn a_staging_directory_an_interrupted_download_left_is_swept_at_startup() {
         let root = workspace("sweep");

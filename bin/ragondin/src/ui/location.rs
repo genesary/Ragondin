@@ -11,7 +11,10 @@
 //!   the first launch is a screen and not an error.
 //!
 //! A workspace named by an argument must already be a directory: a typo is
-//! refused, never created. Only the home workspace is created whole.
+//! refused, never created. Only the home workspace is created whole. Inside
+//! the directory, [`Workspace::open_with_store`] creates a new workspace only
+//! when the directory is empty, and refuses one that holds other files and no
+//! `workspace.toml`; [`super::run`] announces a new one on stderr.
 
 use std::path::{Path, PathBuf};
 
@@ -108,8 +111,9 @@ pub fn resolve(
 impl Location {
     /// Opens the workspace: the home one is created first, then
     /// [`Workspace::open_with_store`] reads `workspace.toml` and creates what
-    /// is missing — or refuses a malformed file, naming it and its line,
-    /// having created nothing.
+    /// is missing — or refuses a malformed file, naming it and its line, or a
+    /// directory that holds files and no `workspace.toml`, having created
+    /// nothing.
     pub fn open(&self) -> Result<Workspace> {
         if self.reason == Reason::Home {
             std::fs::create_dir_all(&self.root).map_err(|error| {

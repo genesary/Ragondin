@@ -709,11 +709,12 @@ leaves one and finds it gone once the server answers.
   argument means one store to both commands: the workspace is the store's
   parent when the store's last component is `runs` — `--store <ws>/runs`
   opens `<ws>` — and the store's own directory otherwise. **In that second
-  case the workspace's directories and `workspace.toml` are created inside
-  the run store**, beside its run directories: the store lists only
-  directories named by a run id, so they do not disturb it, but a store
-  shared with `bench` gains them. Name the store `runs`, or use
-  `--workspace`, to keep the two apart. The two flags are exclusive.
+  case the workspace is the run store itself**: an empty store becomes a
+  workspace, its directories and `workspace.toml` beside the run
+  directories to come, but a store `bench` already wrote runs into holds
+  files that are not a workspace's and is refused (below). Name the store
+  `runs`, or use `--workspace`, to keep the two apart. The two flags are
+  exclusive.
 - **Neither**: `./runs` when it is a directory, the workspace then being the
   current directory; otherwise `$HOME/.ragondin`, its store `runs/` inside,
   so the first launch is a screen and not an error. Without `HOME` and
@@ -725,6 +726,20 @@ leaves one and finds it gone once the server answers.
   the workspace is left as it was — then creates each missing directory
   (`pipelines/`, `layouts/`, the store, `jobs/`, `cache/`, `datasets/`) and
   a missing `workspace.toml`, with nothing set.
+- **A new workspace only in a missing or empty folder** (#492). A folder
+  without `workspace.toml` that holds anything but `.DS_Store`, `Thumbs.db`,
+  `desktop.ini` and the workspace's own directories is refused, untouched,
+  the message naming it and, when it has one, the subfolder that is a
+  workspace — so naming the fixture's output directory instead of the
+  `workspace/` below it is an error, not an empty screen.
+  `runtime/ragondin-api/ARCHITECTURE.md` § The workspace on disk argues what
+  counts as empty. A
+  workspace that was created prints `ragondin ui: created a new workspace at
+  <dir>` on **stderr**, before the banner: stdout's first line stays the
+  banner, which the tests and the end-to-end runner read the address from.
+  This applies to every rule above, `./runs` and the home workspace
+  included: `ragondin ui` in a folder holding a `runs/` and other files is
+  refused rather than turned into a workspace.
 
 `--workspace` is kept beside `--store` because #339 shipped it and it names
 the workspace directly; `--store` is the argument the parity with `bench`
