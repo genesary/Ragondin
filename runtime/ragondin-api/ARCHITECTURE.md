@@ -399,6 +399,9 @@ on #492). Without a `workspace.toml`, the root must be missing or empty;
 otherwise `open` refuses with `WorkspaceError::NotAWorkspace`, having
 created nothing, naming the folder and a `suggestion`: the first subfolder,
 by name, that holds a `workspace.toml`, or else a `workspace/` subfolder.
+The message ends with the way to adopt the folder on purpose: an empty
+`workspace.toml` created in it, which `open` then reads as an existing
+workspace with nothing set.
 `Workspace::created` says whether this open wrote `workspace.toml`; the
 library prints nothing, and its caller announces the new workspace.
 

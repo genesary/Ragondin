@@ -349,3 +349,73 @@ fn an_existing_workspace_holding_other_files_opens_unchanged() {
     assert!(!workspace.created());
     assert_eq!(tree(&root), before);
 }
+
+#[test]
+fn a_file_named_like_the_store_is_not_the_workspace_s_own_directory() {
+    // Alone in the folder, so the refusal can come only from its being a
+    // file: a `runs/` directory there would count as empty.
+    let root = scratch("runs_file_alone");
+    fs::write(root.join("runs"), "not a directory").expect("written");
+    let before = tree(&root);
+
+    match Workspace::open(&root) {
+        Err(WorkspaceError::NotAWorkspace { path, .. }) => assert_eq!(path, root),
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(tree(&root), before, "nothing created");
+}
+
+#[test]
+fn a_folder_holding_only_the_layout_an_interrupted_first_open_left_opens_as_new() {
+    // An open interrupted after its directories and before its
+    // `workspace.toml` leaves exactly these.
+    let root = scratch("interrupted_first_open");
+    for directory in ["pipelines", "layouts", "jobs", "cache"] {
+        fs::create_dir_all(root.join(directory)).expect("created");
+    }
+
+    let workspace = Workspace::open(&root).expect("only the layout counts as empty");
+
+    assert!(workspace.created());
+    assert!(root.join("workspace.toml").is_file());
+}
+
+#[test]
+fn the_suggestion_is_the_first_workspace_subfolder_by_name() {
+    let out = scratch("suggests_first");
+    // Created in reverse order, so that the order of creation is not the
+    // order the suggestion follows.
+    Workspace::open(out.join("zeta")).expect("the second workspace opens");
+    Workspace::open(out.join("alpha")).expect("the first workspace opens");
+    fs::write(out.join("notes.txt"), "mine").expect("written");
+
+    match Workspace::open(&out) {
+        Err(WorkspaceError::NotAWorkspace { suggestion, .. }) => {
+            assert_eq!(suggestion, Some(out.join("alpha")));
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn the_refusal_says_an_empty_workspace_toml_adopts_the_folder_and_it_does() {
+    let root = scratch("adopted");
+    fs::write(root.join("notes.txt"), "mine").expect("written");
+
+    let message = Workspace::open(&root)
+        .expect_err("a folder of someone's files is refused")
+        .to_string();
+    assert!(
+        message.contains("create an empty workspace.toml in it"),
+        "{message}"
+    );
+
+    fs::write(root.join("workspace.toml"), "").expect("written");
+    let workspace = Workspace::open(&root).expect("an empty workspace.toml adopts it");
+    assert!(!workspace.created(), "adopted, not created");
+    assert!(root.join("pipelines").is_dir());
+    assert_eq!(
+        fs::read_to_string(root.join("notes.txt")).expect("kept"),
+        "mine"
+    );
+}

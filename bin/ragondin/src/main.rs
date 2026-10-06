@@ -175,7 +175,8 @@ enum Command {
         at <dir>`; empty allows `.DS_Store`, `Thumbs.db`, `desktop.ini` and the \
         workspace's own directories, such as a `runs/` that `bench` wrote. A \
         folder that holds other files and no `workspace.toml` is refused, \
-        untouched, naming a subfolder that is a workspace when it has one. \
+        untouched, naming a subfolder that is a workspace when it has one; an \
+        empty `workspace.toml` created in it adopts it on purpose. \
         `--workspace <dir>` names it, its runs in \
         `<dir>/runs`. `--store <dir>` names the run store instead, as `bench \
         --store` does: the workspace is the store's parent when the store is \

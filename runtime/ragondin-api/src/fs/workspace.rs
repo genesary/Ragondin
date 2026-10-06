@@ -60,10 +60,12 @@ pub enum WorkspaceError {
     /// The folder holds files but no `workspace.toml`: it is not a
     /// workspace, and a new one is created only in a missing or empty
     /// folder ([`Workspace::open`] says what counts as empty). Refused
-    /// untouched: nothing was created.
+    /// untouched: nothing was created. An empty `workspace.toml` written
+    /// into it adopts the folder on purpose, and the message says so.
     #[error(
         "{} holds files but no workspace.toml, so it is not a workspace, and a new workspace \
-         is created only in a missing or empty folder; {}",
+         is created only in a missing or empty folder; {}; to use this folder as a workspace \
+         anyway, create an empty workspace.toml in it",
         path.display(),
         match suggestion {
             Some(suggestion) => format!("did you mean {}?", suggestion.display()),

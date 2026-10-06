@@ -2,10 +2,11 @@
 //! `--store`, or from nothing (the design document § 3 and § 6).
 //!
 //! - `--workspace <dir>` names the workspace; its store is `<dir>/runs`.
-//! - `--store <dir>` names the store, as `bench --store` does, so the two
-//!   commands given one argument use one store. The workspace is the store's
-//!   parent when the store is called `runs` — `--store <ws>/runs` opens `<ws>`
-//!   — and the store's own directory otherwise.
+//! - `--store <dir>` names the store, as `bench --store` does. The workspace
+//!   is the store's parent when the store is called `runs` — `--store
+//!   <ws>/runs` opens `<ws>`, so the two commands given one argument use one
+//!   store — and the store's own directory otherwise, which is refused once
+//!   `bench` has written runs into it.
 //! - Nothing: `./runs` when it is a directory, the workspace then being the
 //!   current directory; otherwise `~/.ragondin`, created with its `runs/`, so
 //!   the first launch is a screen and not an error.

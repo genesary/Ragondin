@@ -731,7 +731,9 @@ leaves one and finds it gone once the server answers.
   `desktop.ini` and the workspace's own directories is refused, untouched,
   the message naming it and, when it has one, the subfolder that is a
   workspace — so naming the fixture's output directory instead of the
-  `workspace/` below it is an error, not an empty screen.
+  `workspace/` below it is an error, not an empty screen. The message ends
+  with the way to adopt such a folder on purpose: create an empty
+  `workspace.toml` in it, which opens as an existing workspace.
   `runtime/ragondin-api/ARCHITECTURE.md` § The workspace on disk argues what
   counts as empty. A
   workspace that was created prints `ragondin ui: created a new workspace at
