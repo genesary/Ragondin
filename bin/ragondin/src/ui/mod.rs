@@ -66,6 +66,14 @@ pub async fn run(request: &Request<'_>) -> Result<()> {
         std::env::var_os("HOME").as_deref().map(Path::new),
     )?;
     let workspace = location.open()?;
+    // On stderr: stdout's first line is the banner a reader takes the
+    // address from.
+    if workspace.created() {
+        eprintln!(
+            "ragondin ui: created a new workspace at {}",
+            workspace.root().display()
+        );
+    }
 
     let settings = FsSettings::new(&workspace);
     let datasets = settings

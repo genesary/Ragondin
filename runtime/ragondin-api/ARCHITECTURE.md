@@ -394,6 +394,35 @@ directory and a missing `workspace.toml`, with nothing set; an existing
 workspace is left as it is. `open_with_store` takes the store's directory
 when it is not `<root>/runs` (the binary's `--store`).
 
+**A new workspace only in a missing or empty folder** (the owner's decision
+on #492). Without a `workspace.toml`, the root must be missing or empty;
+otherwise `open` refuses with `WorkspaceError::NotAWorkspace`, having
+created nothing, naming the folder and a `suggestion`: the first subfolder,
+by name, that holds a `workspace.toml`, or else a `workspace/` subfolder.
+The message ends with the way to adopt the folder on purpose: an empty
+`workspace.toml` created in it, which `open` then reads as an existing
+workspace with nothing set.
+`Workspace::created` says whether this open wrote `workspace.toml`; the
+library prints nothing, and its caller announces the new workspace.
+
+**What counts as empty** is this crate's choice, recorded here. A root is
+empty when every entry is either
+
+- a file manager's metadata, `.DS_Store`, `Thumbs.db` or `desktop.ini`,
+  which a folder gains by being looked at; or
+- a **directory the workspace itself creates**: one of its layout's
+  (`pipelines/`, `layouts/`, `jobs/`, `cache/`, `datasets/`) or its store.
+
+The second clause keeps two real paths open that a literal "nothing in it"
+would close: `bench --store <ws>/runs` run before any UI opened `<ws>`
+leaves only `runs/`, which `ui --store <ws>/runs` must still open; and an
+open interrupted between its directories and its `workspace.toml` leaves
+only the layout. It does not reopen the trap the rule closes: a folder of
+someone's files, or the output directory around a generated workspace,
+holds entries no workspace creates. A layout name that is a **file** is not
+the workspace's own. Hidden files other than the three are not ignored:
+`.git/` in a folder means someone's project.
+
 ### `workspace.toml`, read and edited in place
 
 The settings are deployment data (ADR-C32 § 2): an address here stays out of

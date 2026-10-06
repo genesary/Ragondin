@@ -229,3 +229,193 @@ async fn escapes_survive_the_round_trip() {
 
     assert_eq!(settings.read().await.expect("reads"), written);
 }
+
+// --- Where a new workspace may be created (#492) --------------------------------
+
+#[test]
+fn a_missing_folder_is_created_as_a_new_workspace_and_says_so() {
+    let root = scratch("missing").join("new");
+
+    let workspace = Workspace::open(&root).expect("a missing folder is a workspace to be");
+
+    assert!(
+        workspace.created(),
+        "a new workspace reports it was created"
+    );
+    assert!(root.join("workspace.toml").is_file());
+    let reopened = Workspace::open(&root).expect("it reopens");
+    assert!(
+        !reopened.created(),
+        "an existing workspace is opened, not created"
+    );
+}
+
+#[test]
+fn a_folder_holding_files_but_no_workspace_toml_is_refused_untouched_naming_it() {
+    let root = scratch("foreign");
+    fs::write(root.join("notes.txt"), "mine").expect("written");
+    // A file where the layout has a directory is not the workspace's own.
+    fs::write(root.join("runs"), "not a directory").expect("written");
+    let before = tree(&root);
+
+    let error = Workspace::open(&root).expect_err("a folder of someone's files is refused");
+
+    match &error {
+        WorkspaceError::NotAWorkspace { path, suggestion } => {
+            assert_eq!(path, &root);
+            assert_eq!(suggestion, &None);
+        }
+        other => panic!("{other:?}"),
+    }
+    let message = error.to_string();
+    assert!(message.contains(&root.display().to_string()), "{message}");
+    assert!(message.contains("workspace.toml"), "{message}");
+    assert!(message.contains("missing or empty"), "{message}");
+    assert_eq!(tree(&root), before, "nothing created");
+}
+
+#[test]
+fn the_refusal_suggests_a_subfolder_that_is_a_workspace() {
+    // The fixture's shape: the workspace is `<out>/workspace`, beside what
+    // the generator wrote around it.
+    let out = scratch("suggests");
+    fs::create_dir_all(out.join("corpus")).expect("created");
+    fs::write(out.join("fixture.json"), "{}").expect("written");
+    Workspace::open(out.join("workspace")).expect("the inner workspace opens");
+
+    let error = Workspace::open(&out).expect_err("the parent is refused");
+
+    match &error {
+        WorkspaceError::NotAWorkspace { suggestion, .. } => {
+            assert_eq!(suggestion.as_deref(), Some(out.join("workspace").as_path()));
+        }
+        other => panic!("{other:?}"),
+    }
+    let message = error.to_string();
+    assert!(
+        message.contains(&out.join("workspace").display().to_string()),
+        "{message}"
+    );
+}
+
+#[test]
+fn a_workspace_subfolder_is_suggested_even_before_it_holds_a_workspace() {
+    let out = scratch("suggests_bare");
+    fs::create_dir_all(out.join("workspace")).expect("created");
+    fs::write(out.join("demo.json"), "{}").expect("written");
+
+    match Workspace::open(&out) {
+        Err(WorkspaceError::NotAWorkspace { suggestion, .. }) => {
+            assert_eq!(suggestion, Some(out.join("workspace")));
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn a_folder_holding_only_os_metadata_or_the_workspace_s_own_directories_counts_as_empty() {
+    // `.DS_Store` is what Finder leaves in a folder it merely showed;
+    // `runs/` is what `bench --store <root>/runs` writes before any UI opened
+    // the folder; `datasets/` a staging directory an import left.
+    let root = scratch("empty_enough");
+    fs::write(root.join(".DS_Store"), [0u8; 4]).expect("written");
+    fs::create_dir_all(root.join("runs/0123")).expect("created");
+    fs::create_dir_all(root.join("datasets")).expect("created");
+
+    let workspace = Workspace::open(&root).expect("counts as empty");
+
+    assert!(workspace.created());
+    assert!(root.join("runs/0123").is_dir(), "what was there is kept");
+}
+
+#[test]
+fn a_store_inside_the_root_under_another_name_is_the_workspace_s_own() {
+    let root = scratch("own_store");
+    fs::create_dir_all(root.join("my-store/0123")).expect("created");
+
+    Workspace::open_with_store(&root, root.join("my-store")).expect("its own store");
+}
+
+#[test]
+fn an_existing_workspace_holding_other_files_opens_unchanged() {
+    let root = scratch("existing_with_files");
+    Workspace::open(&root).expect("created");
+    fs::create_dir_all(root.join("models")).expect("created");
+    fs::write(root.join("models/model.onnx"), "weights").expect("written");
+    let before = tree(&root);
+
+    let workspace = Workspace::open(&root).expect("an existing workspace opens");
+
+    assert!(!workspace.created());
+    assert_eq!(tree(&root), before);
+}
+
+#[test]
+fn a_file_named_like_the_store_is_not_the_workspace_s_own_directory() {
+    // Alone in the folder, so the refusal can come only from its being a
+    // file: a `runs/` directory there would count as empty.
+    let root = scratch("runs_file_alone");
+    fs::write(root.join("runs"), "not a directory").expect("written");
+    let before = tree(&root);
+
+    match Workspace::open(&root) {
+        Err(WorkspaceError::NotAWorkspace { path, .. }) => assert_eq!(path, root),
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(tree(&root), before, "nothing created");
+}
+
+#[test]
+fn a_folder_holding_only_the_layout_an_interrupted_first_open_left_opens_as_new() {
+    // An open interrupted after its directories and before its
+    // `workspace.toml` leaves exactly these.
+    let root = scratch("interrupted_first_open");
+    for directory in ["pipelines", "layouts", "jobs", "cache"] {
+        fs::create_dir_all(root.join(directory)).expect("created");
+    }
+
+    let workspace = Workspace::open(&root).expect("only the layout counts as empty");
+
+    assert!(workspace.created());
+    assert!(root.join("workspace.toml").is_file());
+}
+
+#[test]
+fn the_suggestion_is_the_first_workspace_subfolder_by_name() {
+    let out = scratch("suggests_first");
+    // Created in reverse order, so that the order of creation is not the
+    // order the suggestion follows.
+    Workspace::open(out.join("zeta")).expect("the second workspace opens");
+    Workspace::open(out.join("alpha")).expect("the first workspace opens");
+    fs::write(out.join("notes.txt"), "mine").expect("written");
+
+    match Workspace::open(&out) {
+        Err(WorkspaceError::NotAWorkspace { suggestion, .. }) => {
+            assert_eq!(suggestion, Some(out.join("alpha")));
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn the_refusal_says_an_empty_workspace_toml_adopts_the_folder_and_it_does() {
+    let root = scratch("adopted");
+    fs::write(root.join("notes.txt"), "mine").expect("written");
+
+    let message = Workspace::open(&root)
+        .expect_err("a folder of someone's files is refused")
+        .to_string();
+    assert!(
+        message.contains("create an empty workspace.toml in it"),
+        "{message}"
+    );
+
+    fs::write(root.join("workspace.toml"), "").expect("written");
+    let workspace = Workspace::open(&root).expect("an empty workspace.toml adopts it");
+    assert!(!workspace.created(), "adopted, not created");
+    assert!(root.join("pipelines").is_dir());
+    assert_eq!(
+        fs::read_to_string(root.join("notes.txt")).expect("kept"),
+        "mine"
+    );
+}
